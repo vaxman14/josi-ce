@@ -21,10 +21,11 @@ one was entirely about the grant.
 
 | | |
 |---|---|
-| Tests | **730 passed** across 26 files |
-| Mutation testing | `scripts/mutate-phase9.sh`, 97 mutations |
-| Secret scan | clean, 210 files |
-| Migrations | 0007–0010, applied in order against a real PostgreSQL |
+| Tests | **734 passed** across 26 files |
+| Mutation testing | **97 of 97 caught** (`scripts/mutate-phase9.sh`) |
+| Runtime on claw | **94 checks, 0 failed** — real PostgreSQL, real symlinks |
+| Secret scan | clean, 213 files |
+| Host impact | 25 containers before, 25 after, no leftovers |
 
 ## The controls that carry the most weight
 
@@ -139,6 +140,40 @@ copy waits in the bin for the administrator's window. When permission is
 **withdrawn**, everything goes immediately. Treating those the same would mean
 revoking access left copies of the documents on the server for up to 90 days.
 
+## What runtime verification actually did
+
+A real folder tree with **real symlinks**, built inside the container: a link
+pointing at Josi's own volume, a link pointing at `/etc`, and a sibling directory
+whose name is a prefix of the mapped root. Then PostgreSQL's own generated
+`tsvector` columns and `websearch_to_tsquery` — neither of which pglite is
+guaranteed to agree with — and the append-only trigger, exercised against the
+real database rather than a shim.
+
+Nothing left the host: no provider, no scanner, no model.
+
+**It took five runs, and each failure was worth having.**
+
+1. **`npm ci` failed on a clean host.** `package-lock.json` had never learned
+   about `packages/storage`. The Phase 4 packaging test asserted the Dockerfile
+   `COPY` lines and said nothing about the lockfile — two independent things must
+   be true for a clean build and only one was tested.
+2. **The compose file had no `/data` mount at all** — nowhere to bind a shared
+   folder, nowhere for a recovery copy to live. Phase 9 mapping was unusable as
+   shipped, and 734 unit tests passed because none of them mount anything.
+3. **`psql -tAc` prints the `INSERT 0 1` command tag** alongside the `RETURNING`
+   value, so every id was two lines and every JSON body built from one was
+   malformed. The body parser answered 400 — and four containment assertions read
+   that 400 as the refusal they were testing for. They reported PASS while the
+   server had never evaluated the path.
+4. **The teardown deleted the file it needed to tear down with.** `COMPOSE` names
+   the override with `-f`, and cleanup removed it before running `compose down`,
+   so the stack stayed up between runs.
+5. **Three assertions that could not explain themselves.** Two grepped for a
+   substring and discarded the output; one compared a boolean against `f` when
+   `boolean || text` renders `false`. A DELETE matching nothing raises nothing,
+   so two of them would have passed had their fixture rows been missing — and one
+   did.
+
 ## A conflict worth recording
 
 **Phase 1's append-only trigger refused Phase 9's retention sweep.** M73 requires
@@ -219,10 +254,10 @@ embedding, and `cosine` is never called against real vectors.
 *would* live and the database refuses bad locations, but no bytes are copied and
 `runRecycleBin` returns paths nobody unlinks.
 
-**Nothing ran on claw.** This phase has had no runtime verification against real
-PostgreSQL and real containers. Every earlier phase found something that way — the
-jsonb double-encoding in Phase 6 and the callback assertion in Phase 7 are the
-clearest cases — so the absence here is a real gap, not a formality.
+**No shared folder is mounted by default, by design.** M45 is deny-by-default at
+the mount layer too, so an operator must edit compose before Josi can see
+anything. That is correct, and it means a fresh install has nothing to map until
+they do.
 
 **The web UI has no storage screens.** There is no way for a person to map a
 folder, give consent, or see why a file was skipped except through the API.

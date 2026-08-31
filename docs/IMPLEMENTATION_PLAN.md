@@ -371,8 +371,9 @@ leaves the file byte-identical.
 **Risk:** the highest-risk phase — extraction, OCR and watching all touch
 untrusted bytes. Each gets an explicit threat-model entry and a hostile fixture.
 
-**Status: security spine done; the machinery that touches real bytes is not.**
-730 tests, 97 mutations. Evidence: `docs/PHASE_9_EVIDENCE.md`.
+**Status: security spine done and verified; the machinery that touches real
+bytes is not built.** 734 tests, **97 of 97 mutations caught**, **94 runtime
+checks on claw with 0 failures**. Evidence: `docs/PHASE_9_EVIDENCE.md`.
 
 Built in four cycles, and the first was entirely about the GRANT rather than the
 parser — because a bad parser crashes and a bad grant quietly works. Containment
@@ -386,8 +387,12 @@ somebody else and then read it out of the index they also run.
 embeddings, recovery-copy writing, and the storage screens in the web UI.** The
 controls are in place and proven before anything is wired to them, which is the
 right order for this phase — but an installation running this code can map a
-folder and search nothing, because nothing fills the index. **No runtime
-verification on claw has been done for Phase 9.**
+folder and search nothing, because nothing fills the index.
+
+Runtime verification took five runs and found two product defects the unit suite
+could not: `npm ci` failing on a clean host because the lockfile never learned
+about the new workspace, and a compose file with no `/data` mount at all —
+nowhere to bind a shared folder and nowhere for a recovery copy to live.
 
 Phase 1's append-only trigger refused the M73 retention sweep — the guard working
 as designed. Rather than a bypass flag, the trigger now permits deleting only
