@@ -220,25 +220,32 @@ mark_sha=$("${COMPOSE[@]}" exec -T web sh -c "sha256sum /app/web/brand/josi-mark
 
 # ---------------------------------------------------------------------------
 step "running the browser suite (WebKit, touch emulation)"
-if ! command -v npx >/dev/null 2>&1; then
-  bad "node/npx is not available on this host"
+# The browser runs in Microsoft's own Playwright image, on this project's
+# network, rather than on the host.
+#
+# WebKit needs a dozen system libraries (libicu, libwoff1, libvpx, libavif…)
+# and the first attempt failed on a host that did not have them. Installing
+# them would mean apt-get on somebody's Docker host to run a test — a change
+# outside the isolated project this script promises to be. The official image
+# has them, is pinned to the same 1.49.1 as the devDependency, and reaches the
+# app over the container network as `web:8080`.
+#
+# The repo is mounted so the suite runs the source in this checkout; the image
+# supplies the browsers at /ms-playwright.
+PW_IMAGE="mcr.microsoft.com/playwright:v1.49.1-noble"
+npm ci --no-audit --no-fund >/tmp/npm-ci.log 2>&1 \
+  && ok "workspace installed" || bad "npm ci failed: $(tail -3 /tmp/npm-ci.log)"
+
+if docker run --rm \
+     --network "$NET" \
+     -v "$(pwd)":/work -w /work \
+     -e E2E_BASE="http://web:8080" \
+     -e E2E_ADMIN=owner -e E2E_ADMIN_PW="$ADMIN_PW" \
+     -e E2E_MEMBER=alice -e E2E_MEMBER_PW="$ALICE_PW" \
+     "$PW_IMAGE" node scripts/e2e-web.mjs; then
+  ok "browser suite passed"
 else
-  # `npx playwright install` downloads the BROWSER; it does not make the
-  # `playwright` package importable. The script needs both, so the workspace is
-  # installed first — playwright is a pinned devDependency, and `npm prune
-  # --omit=dev` in the Dockerfile keeps it out of the shipped image.
-  npm ci --no-audit --no-fund >/tmp/npm-ci.log 2>&1 \
-    && ok "workspace installed" || bad "npm ci failed: $(tail -3 /tmp/npm-ci.log)"
-  npx playwright install webkit >/tmp/pw-install.log 2>&1 \
-    && ok "WebKit downloaded" || bad "could not install WebKit: $(tail -2 /tmp/pw-install.log)"
-  if E2E_BASE="http://127.0.0.1:${JOSI_HTTP_PORT}" \
-     E2E_ADMIN=owner E2E_ADMIN_PW="$ADMIN_PW" \
-     E2E_MEMBER=alice E2E_MEMBER_PW="$ALICE_PW" \
-     node scripts/e2e-web.mjs; then
-    ok "browser suite passed"
-  else
-    bad "browser suite failed (output above)"
-  fi
+  bad "browser suite failed (output above)"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
