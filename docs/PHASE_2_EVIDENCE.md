@@ -147,10 +147,35 @@ $ docker run --rm --platform linux/arm64 josi-ce:arm64-proof node -e '@node-rs/a
 argon2 ok, hash len 97
 ```
 
-| Platform | Image size | Built | Executes | Native bindings |
-|---|---|---|---|---|
-| linux/amd64 | 86,089,208 B (86.1 MB) | yes | yes (native, full stack ran) | yes |
-| linux/arm64 | 85,919,548 B (85.9 MB) | yes (QEMU) | yes (`process.arch: arm64`) | **yes — argon2 hashed** |
+### Image size — the number that matters is not the one `inspect` prints
+
+`docker image inspect --format '{{.Size}}'` reports only the layers this image
+adds on top of its base. `docker system df -v` reports what an operator actually
+stores and downloads. They differ by a factor of four here, so both are recorded:
+
+```
+$ docker system df -v
+REPOSITORY   TAG           SIZE     SHARED SIZE   UNIQUE SIZE
+josi-ce      local         352MB    266MB         86.09MB
+josi-ce      arm64-proof   372MB    0B            371.9MB
+```
+
+| Platform | Total image | CE's own layers | Base (`node:22-bookworm-slim`) | Built | Executes | Native bindings |
+|---|---|---|---|---|---|---|
+| linux/amd64 | **352 MB** | 86.1 MB | 266 MB | yes | yes (native, full stack ran) | yes |
+| linux/arm64 | **372 MB** | 85.9 MB | ~286 MB | yes (QEMU) | yes (`process.arch: arm64`) | **yes — argon2 hashed** |
+
+An earlier draft of this file reported "86 MB", which was the unique-layer
+figure and would have understated a fresh pull by ~4×. On a Raspberry Pi with a
+small SD card that is a material difference, so the total is the headline.
+
+**Three quarters of the image is the Node base**, not Josi. `node:22-alpine`
+would cut roughly 200 MB, but Alpine is musl rather than glibc and
+`@node-rs/argon2`'s prebuilt binaries would need the musl variant — which is
+exactly the assumption this phase went to the trouble of testing. Switching the
+base is a real optimisation for low-end hardware and a candidate for a later
+phase; it is not a change to make after verification has already been run
+against this one.
 
 The argon2 check matters specifically: `@node-rs/argon2` is the one native
 dependency, and `npm ci --ignore-scripts` relies on its prebuilt per-platform
@@ -189,8 +214,8 @@ requested.
 | **Database unreachable from the edge network** | disposable container on `edge`: reaches `web:8080`, cannot reach `db:5432` |
 | Data survives `restart` | marker row re-read |
 | Data survives `down` + `up` (named volume) | marker row re-read |
-| amd64 image builds and runs | 86.1 MB |
-| arm64 image builds, runs, native bindings load | 85.9 MB |
+| amd64 image builds and runs | 352 MB total (86.1 MB CE layers) |
+| arm64 image builds, runs, native bindings load | 372 MB total (85.9 MB CE layers) |
 | Installer: 32-byte CSPRNG key, mode 600, never printed, refuses overwrite | executed locally and on the test host |
 
 ### Still unproven
@@ -204,7 +229,8 @@ requested.
 | ARM64 **on real ARM hardware** | Verified under QEMU emulation only | A Raspberry Pi or ARM server |
 | Capacity / concurrency | **Deliberately unmeasured.** Canonical map M97 forbids published numbers without benchmarks on Pi-class ARM64, old x86-64, and a modern mini-PC. | Those three benchmark runs |
 
-Image sizes above are measurements, not capacity claims.
+Image sizes above are measurements of disk footprint, not capacity claims. They
+say nothing about how many users an installation supports.
 
 ---
 
