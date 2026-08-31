@@ -213,12 +213,22 @@ Controller(Sink(), hostname=\"0.0.0.0\", port=1025).start()
 asyncio.get_event_loop().run_forever()
 "' >/dev/null 2>&1 && ok "mail sink started" || bad "mail sink failed to start"
 
-for _ in $(seq 1 40); do
-  "${COMPOSE[@]}" exec -T web sh -c 'nc -z mailsink 1025' >/dev/null 2>&1 && break
-  sleep 2
-done
-"${COMPOSE[@]}" exec -T web sh -c 'nc -z mailsink 1025' >/dev/null 2>&1 \
-  && ok "the sink is reachable from the app" || bad "the sink never came up"
+# Probed with node rather than `nc`, which the hardened app image does not
+# carry — the first version of this check reported the sink was down while it
+# was up and taking mail, which is a check that proves nothing.
+#
+# It runs from inside the web container on purpose: what matters is that the
+# APP can reach the sink, not that the host can.
+sink_up() {
+  "${COMPOSE[@]}" exec -T web node -e '
+    const s = require("net").connect(1025, "mailsink");
+    s.on("connect", () => { s.end(); process.exit(0); });
+    s.on("error", () => process.exit(1));
+    setTimeout(() => process.exit(1), 3000);
+  ' >/dev/null 2>&1
+}
+for _ in $(seq 1 60); do sink_up && break; sleep 2; done
+sink_up && ok "the sink is reachable from the app" || bad "the sink never came up"
 
 step "giving alice a display name"
 # The From header carries the person's name, so the test needs one to assert on.
