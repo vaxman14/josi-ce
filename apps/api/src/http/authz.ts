@@ -131,6 +131,10 @@ const CONTENT_KEYS = new Set([
   'secrets_enc', 'secrets', 'granted_scopes', 'meta', 'account_email',
   'body', 'subject', 'content', 'text', 'snippet', 'filename', 'path',
   'access_token', 'refresh_token', 'password_hash',
+  // Ciphertext is still a credential. Serving it hands an attacker something to
+  // work on offline, and there is no reason any surface needs it — a boolean
+  // "a key is set" answers every legitimate question.
+  'api_key_enc', 'apiKeyEnc', 'apiKeyCiphertext', 'apiKey', 'api_key', 'password_enc',
 ]);
 
 /** Belt and braces for admin DTOs. A field that looks like content or a

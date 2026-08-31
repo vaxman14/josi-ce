@@ -12,6 +12,7 @@ import { requireCsrf } from './http/cookies.js';
 import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
+import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 
@@ -23,6 +24,10 @@ export interface AppConfig {
   /** Master-key options for the readiness probe, or `false` to skip the check
    * (tests, and the migration container which runs before a key exists). */
   masterKeyCheck?: LoadOptions | false;
+  /** Provider HTTP and DNS, injected by the tests so no suite ever contacts a
+   * real model provider. Unset in production, where the real ones are used. */
+  llmFetch?: typeof fetch;
+  llmResolve?: (hostname: string) => Promise<string[]>;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -61,6 +66,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/setup', setupRoutes({ db, masterKey: cfg.masterKeyCheck }));
   api.use('/auth', authRoutes({ db, cookieSecure: cfg.cookieSecure }));
   api.use('/connections', connectionRoutes({ db }));
+  api.use('/llm', llmRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  // Mounted before /admin so the more specific prefix wins; both are behind
+  // requireSuperAdmin either way.
+  api.use('/admin/llm', adminLlmRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
 

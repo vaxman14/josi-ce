@@ -14,6 +14,7 @@ export default defineConfig({
     alias: {
       '@josi-ce/core': new URL('./packages/core/src/index.ts', import.meta.url).pathname,
       '@josi-ce/auth': new URL('./packages/auth/src/index.ts', import.meta.url).pathname,
+      '@josi-ce/llm': new URL('./packages/llm/src/index.ts', import.meta.url).pathname,
     },
   },
 });
