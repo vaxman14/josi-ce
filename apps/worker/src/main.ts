@@ -5,6 +5,7 @@
 // checking and least-privilege networking against — and because adding it later
 // would mean revisiting all three.
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
+import { processQueue } from './jobs.js';
 import { writeFileSync } from 'node:fs';
 
 const HEARTBEAT_FILE = '/tmp/worker-alive';
@@ -34,9 +35,13 @@ function heartbeat(): void {
   }
 }
 
+const WORKER_ID = `worker-${process.pid}`;
+
 async function tick(): Promise<void> {
-  // Proves the pool is alive. Real job processing arrives in Phase 5.
-  await db.query('select 1');
+  const outcome = await processQueue(db, WORKER_ID);
+  if (outcome.claimed) {
+    console.log(`josi-ce worker: ${outcome.done} done, ${outcome.failed} failed`);
+  }
   heartbeat();
 }
 

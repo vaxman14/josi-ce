@@ -17,7 +17,19 @@
 // point on purpose: a second one is how a leak gets written.
 import type { Db } from './db.js';
 
-export type ResourceType = 'connection' | 'folder_mapping' | 'email_thread';
+export type ResourceType =
+  | 'connection'
+  | 'folder_mapping'
+  | 'email_thread'
+  // Phase 5. These are owner-scoped for the same reason the three above are:
+  // the canonical map says content is private unless its owner shares it, and
+  // says workspace membership and super-admin status never grant access. The
+  // extraction map had proposed making them workspace-shared, carried over from
+  // the engine where one tenant IS one business; PHASE_5_EVIDENCE.md records
+  // why that does not transfer.
+  | 'task'
+  | 'thread'
+  | 'contact';
 
 export type AccessLevel = 'none' | 'read' | 'write' | 'owner';
 
@@ -42,6 +54,9 @@ const OWNED_TABLES: Record<ResourceType, string> = {
   connection: 'connections',
   folder_mapping: 'folder_mappings',
   email_thread: 'email_threads',
+  task: 'tasks',
+  thread: 'threads',
+  contact: 'contacts',
 };
 
 /** Resource types that may never be shared, whatever the owner asks for.

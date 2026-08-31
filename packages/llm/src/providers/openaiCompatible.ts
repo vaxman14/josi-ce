@@ -46,10 +46,34 @@ export function openAiCompatibleProvider(opts: OpenAiCompatibleOptions): LlmProv
     external: opts.external,
 
     async chat(request: ChatRequest): Promise<ChatResponse> {
-      const messages = [
+      // A tool round-trip in this dialect is: an assistant message carrying
+      // `tool_calls`, then ONE `tool` message per call, keyed by call id.
+      const messages: Array<Record<string, unknown>> = [
         ...(request.system ? [{ role: 'system', content: request.system }] : []),
-        ...request.messages,
       ];
+      for (const m of request.messages) {
+        if (m.toolResults?.length) {
+          // The results arrive as their own messages, not as a user turn.
+          for (const r of m.toolResults) {
+            messages.push({ role: 'tool', tool_call_id: r.toolCallId, content: r.content });
+          }
+          if (m.content) messages.push({ role: m.role, content: m.content });
+          continue;
+        }
+        if (m.toolCalls?.length) {
+          messages.push({
+            role: 'assistant',
+            content: m.content || null,
+            tool_calls: m.toolCalls.map((c) => ({
+              id: c.id,
+              type: 'function',
+              function: { name: c.name, arguments: JSON.stringify(c.input) },
+            })),
+          });
+          continue;
+        }
+        messages.push({ role: m.role, content: m.content });
+      }
 
       const body: Record<string, unknown> = {
         model: opts.model,

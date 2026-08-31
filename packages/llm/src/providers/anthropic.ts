@@ -46,11 +46,35 @@ export function anthropicProvider(opts: AnthropicOptions): LlmProvider {
       const body: Record<string, unknown> = {
         model: opts.model,
         max_tokens: request.maxTokens ?? 1024,
-        messages: request.messages.map((m) => ({
-          // Anthropic has no 'system' role in the messages array.
-          role: m.role === 'assistant' ? 'assistant' : 'user',
-          content: m.content,
-        })),
+        // Anthropic has no 'system' role in the messages array, and a tool
+        // round-trip is content BLOCKS: `tool_use` on the assistant turn,
+        // `tool_result` inside the following user turn.
+        messages: request.messages.map((m) => {
+          const role = m.role === 'assistant' ? 'assistant' : 'user';
+          if (m.toolResults?.length) {
+            return {
+              role: 'user',
+              content: [
+                ...m.toolResults.map((r) => ({
+                  type: 'tool_result', tool_use_id: r.toolCallId, content: r.content,
+                })),
+                ...(m.content ? [{ type: 'text', text: m.content }] : []),
+              ],
+            };
+          }
+          if (m.toolCalls?.length) {
+            return {
+              role: 'assistant',
+              content: [
+                ...(m.content ? [{ type: 'text', text: m.content }] : []),
+                ...m.toolCalls.map((c) => ({
+                  type: 'tool_use', id: c.id, name: c.name, input: c.input,
+                })),
+              ],
+            };
+          }
+          return { role, content: m.content };
+        }),
       };
       if (request.system) body.system = request.system;
       if (request.temperature !== undefined) body.temperature = request.temperature;

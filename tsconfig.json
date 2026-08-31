@@ -11,6 +11,9 @@
       "path": "packages/llm"
     },
     {
+      "path": "packages/agent"
+    },
+    {
       "path": "apps/api"
     },
     {

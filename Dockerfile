@@ -21,6 +21,7 @@ COPY package.json package-lock.json ./
 COPY packages/core/package.json packages/core/
 COPY packages/auth/package.json packages/auth/
 COPY packages/llm/package.json packages/llm/
+COPY packages/agent/package.json packages/agent/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
 RUN npm ci --ignore-scripts

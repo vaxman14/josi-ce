@@ -13,6 +13,7 @@ import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
+import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 
@@ -69,6 +70,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/llm', llmRoutes({ db, masterKey: cfg.masterKeyCheck }));
   // Mounted before /admin so the more specific prefix wins; both are behind
   // requireSuperAdmin either way.
+  api.use('/assistant', assistantRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve }));
+  api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));

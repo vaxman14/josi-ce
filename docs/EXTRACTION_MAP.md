@@ -156,9 +156,28 @@ archaeology of a business they are not part of.
 | `events` | kept as the audit trail; `+ retention policy` | map 73 |
 
 **Rows that gain `owner_user_id` and a share check:** `connections`,
-`folder_mappings`, `documents`, `email_threads`. Everything else
-(`contacts`, `tasks`, `threads`) is workspace-shared, matching how the engine
-already behaves within one tenant.
+`folder_mappings`, `documents`, `email_threads`, and — **corrected in Phase 5** —
+`contacts`, `tasks`, `threads`.
+
+> ~~Everything else (`contacts`, `tasks`, `threads`) is workspace-shared,
+> matching how the engine already behaves within one tenant.~~
+>
+> **This was wrong, and Phase 5 changed it.** The reasoning above holds inside a
+> tenant because a tenant *is* one business speaking with one voice. A CE
+> workspace is not: it is several people who happen to share an installation.
+>
+> The canonical map says the same thing in every neighbouring feature —
+> operational email threads are "visible only to the user who initiated the
+> conversation by default", mapped folders and their indexes are "private to the
+> owning user by default", and "neither workspace membership nor super-admin
+> status automatically grants content access". A member's conversation with Josi
+> carries whatever they told it, which is exactly the material those lines
+> protect. Shipping it workspace-readable would have made the one table nobody
+> argued about the leak.
+>
+> `messages` deliberately carry no owner of their own: they are reachable only
+> through their thread, so a share cannot be half-applied. Recorded in
+> `PHASE_5_EVIDENCE.md`.
 
 ---
 

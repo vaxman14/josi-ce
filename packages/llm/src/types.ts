@@ -15,9 +15,25 @@ export function isExternalProvider(kind: string): boolean {
   return (EXTERNAL_PROVIDERS as readonly string[]).includes(kind);
 }
 
+export interface ToolResult {
+  /** The id of the call this answers. */
+  toolCallId: string;
+  name: string;
+  /** JSON text. The seam does not care what is inside it. */
+  content: string;
+}
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  /** Set on an assistant turn that asked for tools. Providers disagree wildly
+   * about how a tool round-trip is represented on the wire — OpenAI uses a
+   * separate `tool` role keyed by call id, Anthropic uses `tool_result` blocks
+   * inside a user turn. Both are expressed here and translated by the adapter,
+   * so an agent above this line never learns which dialect it is talking. */
+  toolCalls?: ToolCall[];
+  /** Set on the user turn that carries those calls' results. */
+  toolResults?: ToolResult[];
 }
 
 export interface ToolDefinition {
