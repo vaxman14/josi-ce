@@ -189,6 +189,20 @@ describe('the proxy', () => {
   it('binds its admin API to loopback', () => {
     expect(caddyfile).toMatch(/admin 127\.0\.0\.1:2019/);
   });
+
+  it('never passes a bare, defaultless env substitution as a directive argument', () => {
+    // Caddy substitutes an unset variable with nothing, so `email {$FOO}` with
+    // FOO unset becomes a bare `email` — a parse error that restart-loops the
+    // container on every install that did not set it. Cost a real boot to find.
+    // Either give the substitution a default, or do not emit the line.
+    const offenders = caddyfile
+      .split('\n')
+      .map((line, i) => [i + 1, line.trim()] as const)
+      .filter(([, line]) => !line.startsWith('#'))
+      // A directive whose only argument is {$VAR} with no `:default`.
+      .filter(([, line]) => /^[a-z_]+\s+\{\$[A-Z0-9_]+\}\s*$/.test(line));
+    expect(offenders, `defaultless substitution(s): ${JSON.stringify(offenders)}`).toEqual([]);
+  });
 });
 
 describe('no capacity claims are made anywhere', () => {

@@ -181,30 +181,39 @@ if echo "$db_ports" | grep -q 'HostPort'; then
 else
   ok "the database publishes no host port"
 fi
-# Caddy is on `edge` only, so the database must be unreachable from it.
+# The claim is about the NETWORK, not about caddy's shell.
 #
-# The container has to be RUNNING for this to mean anything. `docker compose
-# exec` into a stopped container also fails, and reading that as "cannot reach
-# the database" is a test that passes when the service is broken — which is
-# exactly what happened on the first run against a host where port 80 was taken.
-caddy_id=$("${COMPOSE[@]}" ps -q caddy 2>/dev/null || true)
-caddy_running=$([[ -n "$caddy_id" ]] && docker inspect -f '{{.State.Running}}' "$caddy_id" 2>/dev/null || echo false)
-if [[ "$caddy_running" != "true" ]]; then
-  bad "caddy is not running, so its network isolation cannot be asserted"
+# Probing by exec'ing into caddy made the result depend on which tools that
+# image happens to ship and on caddy being healthy — so a broken caddy produced
+# a passing isolation result. Instead, attach a disposable container to the
+# `edge` network (the one caddy is on) and ask it directly. Same vantage point,
+# no dependency on the service under test.
+edge_net="${PROJECT}_edge"
+probe() { # probe <host> <port>
+  docker run --rm --network "$edge_net" alpine:3 \
+    sh -c "nc -z -w3 $1 $2" >/dev/null 2>&1
+}
+if ! docker network inspect "$edge_net" >/dev/null 2>&1; then
+  bad "the edge network does not exist"
 else
-  # Prove the probe itself works before trusting a negative from it: caddy must
-  # be able to reach `web`, which shares the edge network with it.
-  if "${COMPOSE[@]}" exec -T caddy sh -c 'nc -z -w2 web 8080' >/dev/null 2>&1; then
-    ok "the reachability probe works (caddy can reach web on the edge network)"
-    if "${COMPOSE[@]}" exec -T caddy sh -c 'nc -z -w2 db 5432' >/dev/null 2>&1; then
-      bad "caddy can reach the database"
+  # Positive control first: a negative result only means something if the probe
+  # can detect a positive.
+  if probe web 8080; then
+    ok "probe works: a container on the edge network reaches web:8080"
+    if probe db 5432; then
+      bad "the database is reachable from the edge network"
     else
-      ok "caddy cannot reach the database"
+      ok "the database is NOT reachable from the edge network"
     fi
   else
-    bad "the probe is broken: caddy cannot reach web either, so a negative proves nothing"
+    bad "probe is broken: cannot reach web:8080 from the edge network, so a negative proves nothing"
   fi
 fi
+
+# And caddy itself must actually be up, since it is a required service.
+caddy_id=$("${COMPOSE[@]}" ps -q caddy 2>/dev/null || true)
+caddy_running=$([[ -n "$caddy_id" ]] && docker inspect -f '{{.State.Running}}' "$caddy_id" 2>/dev/null || echo false)
+[[ "$caddy_running" == "true" ]] && ok "caddy is running" || bad "caddy is not running"
 if "${COMPOSE[@]}" exec -T web sh -c 'curl -fsS -o /dev/null http://127.0.0.1:8080/health'; then
   ok "web serves on its own port"
 else

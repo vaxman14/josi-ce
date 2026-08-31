@@ -9,10 +9,19 @@
 # and point their own proxy at the `web` service on port 8080.
 
 {
-	# An email enables certificate expiry notices. Left unset, Caddy still
-	# issues; it just cannot warn anyone.
-	email {$JOSI_ACME_EMAIL}
 	admin 127.0.0.1:2019
+
+	# NO `email {$JOSI_ACME_EMAIL}` HERE, deliberately.
+	#
+	# Caddy substitutes an unset variable with nothing, so that line becomes a
+	# bare `email` — which is a parse error, and the container then restart-loops
+	# on every install that did not set the variable. That is the default case.
+	# Found by actually booting the stack; it is invisible to static review.
+	#
+	# ACME issuance works without a contact address. An operator who wants
+	# expiry notices uncomments this and fills it in:
+	#
+	#   email you@example.com
 }
 
 {$JOSI_DOMAIN} {
