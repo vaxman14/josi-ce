@@ -186,6 +186,22 @@ describe('the operator OAuth application', () => {
     expect(row.client_secret_enc).not.toContain(CLIENT_SECRET);
   });
 
+  it('never returns the CIPHERTEXT of the secret either', async () => {
+    // Found by mutation M19, and it is the same defect Phase 4's M18 exposed:
+    // asserting the PLAINTEXT is absent says nothing about the sealed value.
+    // Serving ciphertext hands an attacker something to work on offline, and
+    // "a client secret is set" answers every legitimate question.
+    //
+    // I added exactly this guard for the LLM provider DTO in Phase 4 and did
+    // not carry it to the connector DTO. This test is what makes that stick.
+    await configureClient();
+    const view = await call('/api/admin/connectors', { jar: cookies.admin });
+    const dump = JSON.stringify(view.body);
+    expect(dump).not.toContain(CLIENT_SECRET);
+    expect(dump).not.toMatch(/v1\.[A-Za-z0-9+/=]{10}/);
+    expect(dump).not.toMatch(/client_secret|clientSecret/i);
+  });
+
   it('cannot be configured by a member', async () => {
     const res = await call('/api/admin/connectors/clients/google', {
       method: 'PUT', jar: cookies.alice,
@@ -272,6 +288,33 @@ describe('connecting an account', () => {
     const res = await call('/api/connections/google/callback?state=made-up&code=abc', { jar: cookies.alice });
     expect(res.headers.get('location')).toMatch(/error=unknown/);
     expect(providerCalls).toHaveLength(0);
+  });
+
+  it('ignores anything the query string says about who is connecting', async () => {
+    // Found by mutation M14: making the callback read `?user=` from the query
+    // string left every test passing, because none of them supplied one. The
+    // vulnerability was latent rather than absent, and "the callback believes
+    // the stored handshake" was a comment nothing checked.
+    const started = await call('/api/connections/google/start', {
+      method: 'POST', jar: cookies.alice, body: {},
+    });
+    const state = new URL(started.body.url).searchParams.get('state')!;
+
+    // Alice's own callback, with Bob's id smuggled in every plausible spelling.
+    const injected = [
+      `user=${ids.bob}`, `userId=${ids.bob}`, `owner=${ids.bob}`,
+      `owner_user_id=${ids.bob}`, `sub=${ids.bob}`,
+    ].join('&');
+    const res = await call(
+      `/api/connections/google/callback?state=${encodeURIComponent(state)}&code=abc&${injected}`,
+      { jar: cookies.alice },
+    );
+    expect(res.status).toBe(302);
+
+    const rows = await db.query<{ owner_user_id: string }>(`select owner_user_id from connections`);
+    expect(rows).toHaveLength(1);
+    // The connection belongs to whoever STARTED the handshake.
+    expect(rows[0].owner_user_id).toBe(ids.alice);
   });
 
   it('handles the person clicking cancel at the provider', async () => {

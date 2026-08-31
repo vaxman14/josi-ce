@@ -28,6 +28,9 @@ export async function clientStatuses(db: Db): Promise<ClientStatus[]> {
   const found = new Map(rows.map((r) => [r.provider, r]));
   return (['google', 'microsoft'] as Provider[]).map((provider) => {
     const row = found.get(provider);
+    // Built field by field rather than spread. A `...row` here would serve the
+    // sealed secret the moment somebody widened the SELECT — which is exactly
+    // what mutation M19 did, and what Phase 4's M18 did before it.
     return {
       provider,
       configured: !!row,
