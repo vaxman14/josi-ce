@@ -279,6 +279,8 @@ assert_mutated && run; restore
 
 echo
 echo "=== M25: the audit-payload content guard is removed ==="
+# Initially NOT caught: the guard had been untested since Phase 1. Four tests
+# were added in packages/core/test/assistant.test.ts; this now fails three.
 python3 - <<'PY'
 p='packages/core/src/events.ts'; s=open(p).read()
 s=s.replace("  assertMetadataOnly(payload);","")
