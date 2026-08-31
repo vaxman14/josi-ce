@@ -15,10 +15,10 @@ deliberately no third state and no "unassigned" bucket to drift into.
 
 | | |
 |---|---|
-| Unit and integration tests | **516 passed** (`packages/mail` 62, plus the earlier phases) |
-| Mutation testing | **27 of 27 caught** (`scripts/mutate-phase8.sh`) |
-| Runtime on claw | `scripts/test-mail-runtime.sh`, real PostgreSQL, real SMTP |
-| Secret scan | clean, 186 files |
+| Unit and integration tests | **522 passed** across 19 files |
+| Mutation testing | **31 of 31 caught** (`scripts/mutate-phase8.sh`) |
+| Runtime on claw | **62 checks, 0 failed** — real PostgreSQL, real SMTP |
+| Secret scan | clean, 187 files |
 | Host impact | 25 containers before, 25 after, no leftovers |
 
 ## What runtime verification actually did
@@ -58,6 +58,10 @@ What was read off the wire:
 | The approval states how much history a new recipient will see | `history_from`, surfaced in the approval text | unit, runtime |
 | BCC is refused outright | 409 | unit, mutation M6, runtime |
 | A colleague cannot reach another member's thread | 404, not 403, on GET and DELETE; absent from their list | unit, mutation M37, runtime |
+| A share is the only way in, and the owner alone can grant it | Share/unshare routes require `owner`; the admin gets 404 trying to share her thread | unit, mutation M28, runtime |
+| A share is read-only unless the owner says otherwise | A read-only share reads (200) and cannot send (404) | unit, mutation M29, runtime |
+| Access does not compound | A colleague with **write** access is refused when sharing onward, and no share row appears | unit, mutation M28, runtime |
+| Revoking works | After unshare the colleague is back to 404 | unit, mutation M30, runtime |
 | The super admin sees delivery metadata and no content | `email_sends` has no subject or body column at all; the admin view joins only it and `users`; the admin gets 404 on the thread itself | unit, mutation M25, runtime |
 | Deleting is recoverable | Trash window, row still present and marked deleted, restore works | unit, mutation M21–M22, runtime |
 | Retention warns before it deletes | `retentionNotice` | unit, mutation M24 |
@@ -123,7 +127,19 @@ carry a subject, a body, or a recipient list straight into an API response.
 The transporter is now injectable, matching the `fetchImpl` pattern used in the
 LLM and connector packages, so the test exercises the real function.
 
-**A third, in the test harness itself.** The first runtime run reported "the
+**M37 was half built.** The ownership spine has honoured `resource_shares`
+since Phase 1 and every mail route asks it — but nothing reachable over HTTP
+could ever *create* one. "Threads are visible only to the owner unless shared"
+was therefore true in the least useful sense: sharing was impossible. Found by
+reading the decision map against the code rather than by any test, because a
+test for a feature that does not exist does not fail.
+
+The half that was missing is now there, and it is deliberately stricter than
+"can write": sharing requires **ownership**, so a colleague trusted to help with
+a conversation cannot decide who else reads it. The `authz` guard gained an
+`owner` level backed by core's own `canShare`, keeping one decision point.
+
+**A fourth, in the test harness itself.** The first runtime run reported "the
 sink never came up" while the sink was up and taking mail — the probe used `nc`,
 which the hardened app image does not carry. A check that fails when the thing
 works proves nothing; it now probes with node from inside the web container, so

@@ -306,6 +306,26 @@ refused; a reply loop terminates.
 **Risk:** an unowned shared inbox forming → every inbound message resolves to an
 initiating user or is quarantined.
 
+**Status: done.** 522 tests, 31 of 31 mutations caught, 60 runtime checks on
+claw. Evidence: `docs/PHASE_8_EVIDENCE.md`.
+
+Runtime ran a **real SMTP server** on the project network rather than a stub, so
+nodemailer's actual EHLO/DATA path executed and the test could read the bytes
+that would have gone out: the From identity, the Reply-To routing token, the
+disclosure, the loop-prevention headers, and the absence of a Bcc. No mail left
+the host.
+
+**Three defects worth remembering.** A message *fingerprint* was passed where
+`requestApproval` expected a *payload*, so it hashed the hash and no approval
+could ever match — every attachment and new-recipient send would have been
+impossible in production. The unit test missed it by building approval rows by
+hand; the wire test caught it. Mutation M14 exposed that `smtpTransport`, the
+function production uses, was called by no test at all, leaving its error
+sanitising unprotected — the worst place for it, since a bounce quotes the
+message that bounced. And **M37 was only half built**: the ownership spine had
+honoured shares since Phase 1, but no HTTP route could create one, so "private
+unless shared" held only because sharing was impossible.
+
 ---
 
 ## Phase 9 — Documents and storage security
