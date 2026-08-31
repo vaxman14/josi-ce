@@ -17,7 +17,14 @@ export function AdminOverview() {
   const [data, setData] = useState<AdminAssistant | null>(null);
 
   useEffect(() => { void api.get<AdminAssistant>('/admin/assistant').then(setData).catch(() => undefined); }, []);
-  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!data) {
+    return (
+      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
+        <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">

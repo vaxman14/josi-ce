@@ -41,6 +41,23 @@ async function signIn(page, who) {
 const overflow = (page) =>
   page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 
+/** Collects what the page complained about.
+ *
+ * `pageerror` fires only for UNCAUGHT exceptions — once an ErrorBoundary
+ * catches one, the only record is what it logged. So both are watched, or a
+ * caught crash looks like a page that simply rendered nothing. */
+function watch(page) {
+  const problems = [];
+  page.on('pageerror', (err) => problems.push(`uncaught: ${String(err).split('\n')[0].slice(0, 200)}`));
+  page.on('console', (msg) => {
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    if (/favicon/i.test(text)) return;
+    problems.push(`console: ${text.slice(0, 200)}`);
+  });
+  return problems;
+}
+
 // --------------------------------------------------------------- the send path
 async function testTouchSend(browser) {
   step('Talk: a real tap on a touch-capable WebKit');
@@ -116,15 +133,23 @@ async function testWidths(browser) {
   for (const width of WIDTHS) {
     const ctx = await browser.newContext({ viewport: { width, height: 780 }, hasTouch: true, isMobile: true });
     const page = await ctx.newPage();
+    const problems = watch(page);
     try {
       await signIn(page, MEMBER);
       const bad = [];
+      const blank = [];
       for (const path of MEMBER_PAGES) {
         await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
         const px = await overflow(page);
         if (px > 0) bad.push(`${path} +${px}px`);
+        // A blank page has no overflow either.
+        if ((await page.locator('main h1').count()) === 0) blank.push(path);
       }
       record(`no horizontal scroll on any page at ${width}px`, bad.length === 0, bad.join(', '));
+      if (width === WIDTHS[0]) {
+        record('every member page rendered its heading', blank.length === 0, blank.join(', '));
+        record('no member page reported an error', problems.length === 0, problems.slice(0, 2).join(' | '));
+      }
     } catch (err) {
       record(`layout at ${width}px`, false, String(err).split('\n')[0]);
     } finally {
@@ -297,8 +322,7 @@ async function testRoles(browser) {
     // A blank page is indistinguishable from a loading one unless the
     // exception is captured. Found the hard way: `main` was empty and the
     // suite could only report the emptiness, not the cause.
-    const pageErrors = [];
-    adminPage.on('pageerror', (err) => pageErrors.push(String(err).split('\n')[0].slice(0, 160)));
+    const pageErrors = watch(adminPage);
     await signIn(adminPage, ADMIN);
     record('the admin header offers the admin section',
       (await adminPage.locator('header a[href="/admin"]').count()) > 0);
@@ -332,7 +356,7 @@ async function testRoles(browser) {
     } else {
       record('the model page rendered', true);
     }
-    record('no uncaught exception on any admin page', pageErrors.length === 0, pageErrors.join(' | '));
+    record('nothing on an admin page reported an error', pageErrors.length === 0, pageErrors.join(' | '));
     const unavailable = await adminPage.getByText(/unavailable/i).count();
     const subscribeButton = await adminPage.getByRole('button', { name: /subscription|connect claude|connect chatgpt/i }).count();
     record('subscription options are shown as unavailable', unavailable > 0, `${unavailable} marked`);

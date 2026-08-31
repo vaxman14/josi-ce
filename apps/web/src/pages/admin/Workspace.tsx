@@ -29,11 +29,12 @@ export function AdminWorkspace() {
     }
   }
 
-  if (!workspace) return <p className="text-sm text-muted-foreground">Loading…</p>;
-
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
+      {/* See the note in Model.tsx: the heading does not wait on a fetch. */}
       <h1 className="text-xl font-semibold tracking-tight">Workspace</h1>
+      {!workspace ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {workspace ? (
       <Card>
         <CardTitle>Business profile</CardTitle>
         <form onSubmit={save} className="space-y-3">
@@ -50,6 +51,7 @@ export function AdminWorkspace() {
           {saved ? <p className="text-sm text-emerald-400">Saved.</p> : null}
         </form>
       </Card>
+      ) : null}
 
       <Card>
         <CardTitle>Branding</CardTitle>

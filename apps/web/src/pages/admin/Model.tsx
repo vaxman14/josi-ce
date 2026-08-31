@@ -45,11 +45,16 @@ export function AdminModel() {
     }
   }
 
-  if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
-
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
+      {/* The heading renders before the data does. A page that withholds its
+          own title until a fetch resolves leaves the person looking at bare
+          "Loading…" with no idea where they are, and gives a screen reader
+          nothing to announce. */}
       <h1 className="text-xl font-semibold tracking-tight">Model</h1>
+      {!data ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {data ? (
+        <>
 
       <Card>
         <CardTitle>Primary</CardTitle>
@@ -115,6 +120,8 @@ export function AdminModel() {
           ))}
         </ul>
       </Card>
+        </>
+      ) : null}
     </div>
   );
 }

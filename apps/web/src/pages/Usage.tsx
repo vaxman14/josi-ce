@@ -12,7 +12,15 @@ export function Usage() {
 
   useEffect(() => { void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => undefined); }, []);
 
-  if (!status) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!status) {
+    // The heading renders even while the numbers are still coming.
+    return (
+      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
+        <h1 className="text-xl font-semibold tracking-tight">Usage</h1>
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
   const { usage, cap } = status;
 
   return (
