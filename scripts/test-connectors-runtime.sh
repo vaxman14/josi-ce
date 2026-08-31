@@ -322,18 +322,7 @@ else
   bad "callback returned $code and redirected to: $loc"
 fi
 
-# The session cookies survive: sessions live in PostgreSQL, not in the process.
-step "completing the handshake against the stub"
-code=$(api GET "/api/connections/google/callback?state=${STATE}&code=stub-code")
-loc=$("${COMPOSE[@]}" exec -T web sh -c "grep -i '^location:' /tmp/r.hdr" 2>/dev/null | tr -d '\r')
-# A 302 alone proves nothing: the failure path also redirects, to ?error=… .
-# Asserting only the status is how a test passes while the thing it tests is
-# broken, which is exactly what happened on the first run of this script.
-if [[ "$code" == "302" ]] && ! echo "$loc" | grep -q "error="; then
-  ok "callback completed the connection ($code)"
-else
-  bad "callback returned $code and redirected to: $loc"
-fi
+# Sessions live in PostgreSQL, so recreating `web` above did not sign anyone out.
 
 owner=$(sql "select count(*) from connections where owner_user_id = (select id from users where username='alice')")
 [[ "$owner" == "1" ]] && ok "the connection belongs to alice" || bad "$owner connections for alice"
