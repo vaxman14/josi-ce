@@ -1,0 +1,19 @@
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    // Each suite spins its own in-memory Postgres; running them in one process
+    // keeps memory sane on the low-end hardware CE targets.
+    pool: 'threads',
+    poolOptions: { threads: { singleThread: true } },
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
+    include: ['packages/**/test/**/*.test.ts', 'apps/**/test/**/*.test.ts'],
+  },
+  resolve: {
+    alias: {
+      '@josi-ce/core': new URL('./packages/core/src/index.ts', import.meta.url).pathname,
+      '@josi-ce/auth': new URL('./packages/auth/src/index.ts', import.meta.url).pathname,
+    },
+  },
+});

@@ -283,6 +283,29 @@ explicitly accepted with a reason.
 
 ---
 
+## Resequenced 2026-08-30: "smallest secure runnable install" first
+
+Roman resequenced delivery to reach a working product sooner **without weakening
+Phase 1**. Order is now:
+
+> **Milestone A (runnable install):** Phase 1 → 2 → 3 → **5** → **6**
+> **Then, in dependency order:** Phase 4 completion → 7 → 8 → 9 → 10 → 11
+
+Milestone A is done when a fresh Docker install can: boot, complete setup, create
+multiple users, connect a supported LLM path, persist to PostgreSQL, and pass the
+hostile authorization tests.
+
+Phase 4 (LLM providers) is *partially* pulled into Milestone A — enough provider
+support to satisfy "connect a supported LLM/API path" and the capability probe
+that gates dependent features. Caps, fallback, usage attribution and Local-only
+enforcement complete in Phase 4 proper, after Milestone A.
+
+Phase 9 (documents/storage) explicitly waits until the core product is
+operational, as instructed.
+
+Nothing in Phase 1 is deferred or softened by this resequence. It remains the
+first phase and the gate on everything else.
+
 ## Sequencing rationale
 
 Phases 1–3 are the trust boundary: model, packaging, setup. Nothing later can
