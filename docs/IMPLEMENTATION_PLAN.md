@@ -227,6 +227,22 @@ not.
 **Risk:** regressing the engine's iPhone Talk behaviour → port the WebKit
 touch-send test with it.
 
+**Status: done.** 43/43 browser checks in WebKit with touch emulation, 28/28
+runtime checks, 339 unit tests. The setup wizard's screens, which Phase 3
+deferred here, are included. See `PHASE_6_EVIDENCE.md`.
+
+**Amended during the phase — CE fetches nothing from anywhere.** The engine
+loads fonts from a CDN; a self-hosted product doing that tells a third party the
+IP of everyone who opens it, breaks air-gapped, and contradicts the Local-only
+badge. CE uses the system font stack, and `default-src 'self'` makes that
+checkable rather than a promise.
+
+**The browser found a defect four phases of green suites had not.** The admin
+model page crashed because Phase 4 wrote a jsonb column with `JSON.stringify`
+and a cast instead of the `json()` helper — silent under pglite, permanent under
+postgres.js. Verified that the unit suite *cannot* catch it by re-introducing
+the bug; a static check on the shape now can.
+
 ---
 
 ## Phase 7 — Connectors
