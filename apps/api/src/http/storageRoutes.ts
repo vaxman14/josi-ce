@@ -14,14 +14,32 @@
 import { Router, type Request, type Response } from 'express';
 import { appendEvent, type Db } from '@josi-ce/core';
 import {
-  MappingError, PathEscape, capabilityFor, consentText, createMapping,
-  mappingsBlockingUserRemoval, purgeDerived, setIndexing, setPermissions, unmapFolder,
+  MappingError, PathEscape, SemanticForbidden, SemanticNotConsented, SharingDisabled,
+  SEMANTIC_DISCLOSURE, assertSemanticAllowed, assertSharingAllowed, auditRetentionNotice,
+  capabilityFor, citationLabel, consentText, createMapping, historyDisclosure,
+  mappingStatus, mappingsBlockingUserRemoval, mayManualSync, purgeDerived,
+  queueHealth, recordSemanticConsent, revokeSemanticConsent, searchDocuments,
+  setGlobalPause, setIndexing, setPermissions, sharingPolicy, syncHealth, unmapFolder,
+  SKIP_EXPLANATIONS,
 } from '@josi-ce/storage';
 import { requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
+/** Just the fields the disclosures are generated from. */
+interface StoragePolicyRow {
+  history_mode: 'disabled' | 'one' | 'two';
+  history_kind: 'snapshot' | 'recovery_copy';
+  recycle_bin_days: number;
+  audit_retention: '30d' | '90d' | 'one_year' | 'forever';
+  [key: string]: unknown;
+}
+
 export interface StorageRoutesCtx {
   db: Db;
+}
+
+class RouteError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
 }
 
 const str = (v: unknown, max = 500): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -36,6 +54,20 @@ function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
       // anything about what is actually on disk.
       if (err instanceof PathEscape) {
         res.status(400).json({ error: err.message });
+        return;
+      }
+      if (err instanceof RouteError) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      if (err instanceof SemanticForbidden || err instanceof SharingDisabled) {
+        res.status(403).json({ error: err.message });
+        return;
+      }
+      if (err instanceof SemanticNotConsented) {
+        // 409, not 403: this is a thing the person can resolve themselves, and
+        // the response says how.
+        res.status(409).json({ error: err.message, disclosure: SEMANTIC_DISCLOSURE });
         return;
       }
       if (err instanceof MappingError) {
@@ -220,6 +252,198 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
     }),
   );
 
+  /** M74: what happened to the files in one of your folders, and why. */
+  r.get(
+    '/mappings/:id/status',
+    requireOwnership({ db }, { type: 'folder_mapping', need: 'read' }),
+    handle(async (req, res) => {
+      const status = await mappingStatus(db, param(req, 'id'));
+      return res.json({
+        ...status,
+        // A vocabulary token shown to a person is not an explanation.
+        explanations: Object.fromEntries(
+          status.skipped.map((s) => [s.reason, SKIP_EXPLANATIONS[s.reason as keyof typeof SKIP_EXPLANATIONS]]),
+        ),
+      });
+    }),
+  );
+
+  /** Search. Owner-scoped by construction — the session supplies the owner and
+   * there is no parameter that could widen it. */
+  r.get(
+    '/search',
+    handle(async (req, res) => {
+      const q = str(req.query?.q, 500);
+      const hits = await searchDocuments(db, {
+        ownerUserId: req.user!.id,
+        query: q,
+        mappingId: str(req.query?.mappingId, 64) || null,
+        limit: Number(req.query?.limit) || 10,
+      });
+      return res.json({
+        hits: hits.map((h) => ({
+          documentId: h.documentId,
+          mappingId: h.mappingId,
+          citation: citationLabel(h),
+          locator: h.locator,
+          snippet: h.snippet,
+          fromOcr: h.fromOcr,
+        })),
+      });
+    }),
+  );
+
+  /** M51: agreeing to send document text to an embedding service. */
+  r.get(
+    '/semantic',
+    handle(async (req, res) => {
+      const [consent] = await db.query(
+        `select provider, consented_at from semantic_consents where user_id = $1`,
+        [req.user!.id],
+      );
+      const [policy] = await db.query<{ semantic_enabled: boolean }>(
+        `select semantic_enabled from storage_policy where id = true`,
+      );
+      const [security] = await db.query<{ local_only: boolean }>(
+        `select local_only from security_policy where id = true`,
+      );
+      return res.json({
+        available: !!policy?.semantic_enabled && !security?.local_only,
+        localOnly: !!security?.local_only,
+        disclosure: SEMANTIC_DISCLOSURE,
+        consent: consent ?? null,
+      });
+    }),
+  );
+
+  r.post(
+    '/semantic/consent',
+    handle(async (req, res) => {
+      await recordSemanticConsent(db, {
+        userId: req.user!.id,
+        provider: str(req.body?.provider, 64) || 'configured provider',
+      });
+      return res.json({ consented: true, disclosure: SEMANTIC_DISCLOSURE });
+    }),
+  );
+
+  r.delete(
+    '/semantic/consent',
+    handle(async (req, res) => {
+      const purged = await revokeSemanticConsent(db, req.user!.id);
+      return res.json({ consented: false, purged });
+    }),
+  );
+
+  /** M69: sharing a mapped folder, subject to the administrator's switches.
+   *
+   * The same ownership rule as Phase 8's mail threads: sharing needs `owner`,
+   * so a colleague given access cannot pass it on. */
+  r.post(
+    '/mappings/:id/share',
+    requireOwnership({ db }, { type: 'folder_mapping', need: 'owner' }),
+    handle(async (req, res) => {
+      const workspace = req.body?.workspace === true;
+      const withUserId = str(req.body?.userId, 64);
+      assertSharingAllowed(await sharingPolicy(db), { workspace });
+
+      if (!withUserId && !workspace) {
+        throw new RouteError(400, 'name a colleague to share with, or share with the workspace');
+      }
+      if (withUserId) {
+        const [target] = await db.query<{ id: string }>(
+          `select id from users where id = $1 and status = 'active'`, [withUserId],
+        );
+        if (!target) throw new RouteError(404, 'no such colleague');
+      }
+
+      const mappingId = param(req, 'id');
+      await db.query(
+        `insert into resource_shares
+           (resource_type, resource_id, owner_user_id, shared_with_user_id, shared_with_workspace, can_write)
+         values ('folder_mapping', $1, $2, $3, $4, false)
+         on conflict do nothing`,
+        [mappingId, req.user!.id, withUserId || null, workspace],
+      );
+      await appendEvent(db, {
+        actorUserId: req.user!.id,
+        actor: 'user',
+        kind: 'storage.mapping_shared',
+        subjectType: 'folder_mapping',
+        subjectId: mappingId,
+        payload: { workspace },
+      });
+      return res.json({
+        shared: true,
+        notice: workspace
+          ? 'Everyone in this workspace can now read the files in this folder.'
+          : 'They can now read the files in this folder. They cannot change it or share it on.',
+      });
+    }),
+  );
+
+  r.delete(
+    '/mappings/:id/share',
+    requireOwnership({ db }, { type: 'folder_mapping', need: 'owner' }),
+    handle(async (req, res) => {
+      const mappingId = param(req, 'id');
+      const workspace = req.body?.workspace === true;
+      if (workspace) {
+        await db.query(
+          `delete from resource_shares where resource_type = 'folder_mapping'
+           and resource_id = $1 and shared_with_workspace = true`, [mappingId],
+        );
+      } else {
+        await db.query(
+          `delete from resource_shares where resource_type = 'folder_mapping'
+           and resource_id = $1 and shared_with_user_id = $2`,
+          [mappingId, str(req.body?.userId, 64) || null],
+        );
+      }
+      await appendEvent(db, {
+        actorUserId: req.user!.id,
+        actor: 'user',
+        kind: 'storage.mapping_unshared',
+        subjectType: 'folder_mapping',
+        subjectId: mappingId,
+        payload: { workspace },
+      });
+      return res.json({ shared: false });
+    }),
+  );
+
+  /** M77: Sync now, rate-limited, and unable to bypass the global pause. */
+  r.post(
+    '/mappings/:id/sync',
+    requireOwnership({ db }, { type: 'folder_mapping', need: 'owner' }),
+    handle(async (req, res) => {
+      const mappingId = param(req, 'id');
+      const [policy] = await db.query<{
+        cloud_sync_minutes: number; manual_sync_enabled: boolean; processing_paused: boolean;
+      }>(
+        `select cloud_sync_minutes, manual_sync_enabled, processing_paused
+         from storage_policy where id = true`,
+      );
+      const [state] = await db.query<{ last_manual_sync_at: string | null }>(
+        `select last_manual_sync_at from sync_state where mapping_id = $1`, [mappingId],
+      );
+
+      const verdict = mayManualSync(policy, state ?? { last_manual_sync_at: null }, new Date());
+      if (!verdict.ok) {
+        if (verdict.retryAfterSeconds) res.set('Retry-After', String(verdict.retryAfterSeconds));
+        return res.status(429).json({ error: verdict.reason, retryAfterSeconds: verdict.retryAfterSeconds });
+      }
+
+      await db.query(
+        `insert into sync_state (mapping_id, owner_user_id, last_manual_sync_at)
+         values ($1, $2, now())
+         on conflict (mapping_id) do update set last_manual_sync_at = now()`,
+        [mappingId, req.user!.id],
+      );
+      return res.json({ queued: true });
+    }),
+  );
+
   // -------------------------------------------------------------------------
   // Administrator. Capabilities and policy. No content, no filenames, no paths.
   // -------------------------------------------------------------------------
@@ -348,10 +572,103 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
     '/admin/policy',
     requireSuperAdmin,
     handle(async (_req, res) => {
-      const [policy] = await db.query(`select * from storage_policy where id = true`);
-      return res.json({ policy });
+      const [policy] = await db.query<StoragePolicyRow>(`select * from storage_policy where id = true`);
+      return res.json({
+        policy,
+        historyDisclosure: historyDisclosure(policy),
+        auditNotice: auditRetentionNotice(policy.audit_retention),
+      });
     }),
   );
+
+  /** M75: stop new work. Deletes nothing; search keeps answering. */
+  r.put(
+    '/admin/pause',
+    requireSuperAdmin,
+    handle(async (req, res) => {
+      const paused = req.body?.paused === true;
+      await setGlobalPause(db, { paused, byUserId: req.user!.id });
+      return res.json({
+        paused,
+        notice: paused
+          ? 'New indexing, OCR and extraction are stopped. Nothing has been deleted and existing search still works.'
+          : 'Processing has resumed.',
+      });
+    }),
+  );
+
+  /** M74/M78: queue and connection health. Counts and categories only. */
+  r.get(
+    '/admin/queue',
+    requireSuperAdmin,
+    handle(async (_req, res) => res.json(await queueHealth(db))),
+  );
+
+  r.get(
+    '/admin/sync-health',
+    requireSuperAdmin,
+    handle(async (_req, res) => res.json({ mappings: await syncHealth(db) })),
+  );
+
+  /** The settings that change what is kept, with the sentences that describe
+   * what they actually do. M61 requires the history policy to be plainly
+   * visible; M73 requires the "forever" warning. */
+  r.put(
+    '/admin/policy',
+    requireSuperAdmin,
+    handle(async (req, res) => {
+      const b = req.body ?? {};
+      const oneOf = (v: unknown, allowed: string[]): string | null =>
+        typeof v === 'string' && allowed.includes(v) ? v : null;
+
+      const historyMode = oneOf(b.historyMode, ['disabled', 'one', 'two']);
+      const historyKind = oneOf(b.historyKind, ['snapshot', 'recovery_copy']);
+      const auditRetention = oneOf(b.auditRetention, ['30d', '90d', 'one_year', 'forever']);
+      const scanMode = oneOf(b.clamavScanMode, ['on_index', 'on_change']);
+      const recycleDays = [7, 30, 90].includes(b.recycleBinDays) ? b.recycleBinDays : null;
+      const syncMinutes = [5, 15, 30, 60].includes(b.cloudSyncMinutes) ? b.cloudSyncMinutes : null;
+
+      const [policy] = await db.query<StoragePolicyRow>(
+        `update storage_policy set
+           history_mode = coalesce($1, history_mode),
+           history_kind = coalesce($2, history_kind),
+           recycle_bin_days = coalesce($3, recycle_bin_days),
+           audit_retention = coalesce($4, audit_retention),
+           clamav_enabled = coalesce($5, clamav_enabled),
+           clamav_scan_mode = coalesce($6, clamav_scan_mode),
+           clamav_auto_update = coalesce($7, clamav_auto_update),
+           ocr_enabled = coalesce($8, ocr_enabled),
+           semantic_enabled = coalesce($9, semantic_enabled),
+           sharing_enabled = coalesce($10, sharing_enabled),
+           workspace_sharing_enabled = coalesce($11, workspace_sharing_enabled),
+           archives_enabled = coalesce($12, archives_enabled),
+           manual_sync_enabled = coalesce($13, manual_sync_enabled),
+           cloud_sync_minutes = coalesce($14, cloud_sync_minutes)
+         where id = true returning *`,
+        [
+          historyMode, historyKind, recycleDays, auditRetention,
+          flag(b.clamavEnabled) ?? null, scanMode, flag(b.clamavAutoUpdate) ?? null,
+          flag(b.ocrEnabled) ?? null, flag(b.semanticEnabled) ?? null,
+          flag(b.sharingEnabled) ?? null, flag(b.workspaceSharingEnabled) ?? null,
+          flag(b.archivesEnabled) ?? null, flag(b.manualSyncEnabled) ?? null, syncMinutes,
+        ],
+      );
+      await appendEvent(db, {
+        actorUserId: req.user!.id,
+        actor: 'super_admin',
+        kind: 'storage.policy_changed',
+        payload: { fields: Object.keys(b) },
+      });
+      return res.json({
+        policy,
+        // What these settings MEAN, generated from the settings themselves so
+        // the wording cannot drift from the behaviour.
+        historyDisclosure: historyDisclosure(policy),
+        auditNotice: auditRetentionNotice(policy.audit_retention),
+      });
+    }),
+  );
+
 
   return r;
 }

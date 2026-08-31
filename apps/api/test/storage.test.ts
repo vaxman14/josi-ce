@@ -408,6 +408,242 @@ describe('removing a user — M70', () => {
   });
 });
 
+describe('search is owner-scoped over the wire — M68', () => {
+  const SECRET = 'northern-region-restructuring';
+
+  const addDoc = async (who: 'alice' | 'bob', mappingId: string, text: string) => {
+    const [doc] = await db.query<{ id: string }>(
+      `insert into documents (mapping_id, owner_user_id, relative_path, filename, state)
+       values ($1, $2, $3, $3, 'indexed') returning id`,
+      [mappingId, ids[who], `${who}.pdf`],
+    );
+    await db.query(
+      `insert into document_segments (document_id, owner_user_id, ordinal, locator_kind, locator, content)
+       values ($1, $2, 0, 'page', '3', $3)`,
+      [doc.id, ids[who], text],
+    );
+    return doc.id;
+  };
+
+  it('never returns a colleague\'s document', async () => {
+    await enable('alice');
+    await enable('bob');
+    const aliceMap = (await mapFolder(cookies.alice)).body.mapping.id;
+    const bobMap = (await call('/api/storage/mappings', {
+      method: 'POST', jar: cookies.bob,
+      body: { provider: 'local', rootId, relativePath: '' },
+    })).body.mapping.id;
+
+    await addDoc('alice', aliceMap, `The ${SECRET} plan is confidential.`);
+    await addDoc('bob', bobMap, 'Bob has his own unrelated notes.');
+
+    const mine = await call(`/api/storage/search?q=${encodeURIComponent(SECRET)}`, { jar: cookies.alice });
+    expect(mine.body.hits).toHaveLength(1);
+    expect(mine.body.hits[0].citation).toContain('page 3');
+
+    for (const who of ['bob', 'admin'] as const) {
+      const res = await call(`/api/storage/search?q=${encodeURIComponent(SECRET)}`, { jar: cookies[who] });
+      expect(res.body.hits, who).toHaveLength(0);
+      expect(JSON.stringify(res.body), who).not.toContain(SECRET);
+    }
+  });
+
+  it('cannot be widened by a parameter', async () => {
+    await enable('alice');
+    const aliceMap = (await mapFolder(cookies.alice)).body.mapping.id;
+    await addDoc('alice', aliceMap, `The ${SECRET} plan is confidential.`);
+
+    // Anything a caller might try to pass to escape the owner scope. The owner
+    // comes from the session and there is no parameter for it.
+    for (const q of [
+      `q=${SECRET}&ownerUserId=${ids.alice}`,
+      `q=${SECRET}&owner_user_id=${ids.alice}`,
+      `q=${SECRET}&mappingId=${aliceMap}`,
+    ]) {
+      const res = await call(`/api/storage/search?${q}`, { jar: cookies.bob });
+      expect(res.body.hits, q).toHaveLength(0);
+    }
+  });
+});
+
+describe('semantic search over the wire — M51', () => {
+  beforeEach(() => enable('alice'));
+
+  it('is unavailable until the administrator enables it', async () => {
+    const res = await call('/api/storage/semantic', { jar: cookies.alice });
+    expect(res.body.available).toBe(false);
+    expect(res.body.disclosure).toContain('leaves this server');
+  });
+
+  it('refuses consent in Local-only, and says so', async () => {
+    await db.query(`update storage_policy set semantic_enabled = true`);
+    await db.query(`update security_policy set local_only = true`);
+
+    const res = await call('/api/storage/semantic/consent', {
+      method: 'POST', jar: cookies.alice, body: { provider: 'openai' },
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain('Local-only');
+    expect(await db.query(`select 1 from semantic_consents`)).toHaveLength(0);
+    await db.query(`update security_policy set local_only = false`);
+  });
+
+  it('records consent, then withdrawing it purges the vectors', async () => {
+    await db.query(`update storage_policy set semantic_enabled = true`);
+    const on = await call('/api/storage/semantic/consent', {
+      method: 'POST', jar: cookies.alice, body: { provider: 'openai' },
+    });
+    expect(on.status).toBe(200);
+
+    const off = await call('/api/storage/semantic/consent', { method: 'DELETE', jar: cookies.alice });
+    expect(off.status).toBe(200);
+    expect(off.body.consented).toBe(false);
+    expect(await db.query(`select 1 from semantic_consents`)).toHaveLength(0);
+  });
+});
+
+describe('sharing a folder — M69', () => {
+  let mappingId: string;
+  beforeEach(async () => {
+    await enable('alice');
+    mappingId = (await mapFolder(cookies.alice)).body.mapping.id;
+    await db.query(`update storage_policy set sharing_enabled = true, workspace_sharing_enabled = true`);
+  });
+
+  it('lets a colleague read, and nothing more', async () => {
+    const res = await call(`/api/storage/mappings/${mappingId}/share`, {
+      method: 'POST', jar: cookies.alice, body: { userId: ids.bob },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.notice).toContain('cannot change it or share it on');
+
+    expect((await call(`/api/storage/mappings/${mappingId}`, { jar: cookies.bob })).status).toBe(200);
+    expect((await call(`/api/storage/mappings/${mappingId}`, { method: 'DELETE', jar: cookies.bob })).status).toBe(404);
+    expect((await call(`/api/storage/mappings/${mappingId}/share`, {
+      method: 'POST', jar: cookies.bob, body: { workspace: true },
+    })).status).toBe(404);
+  });
+
+  it('the administrator can turn sharing off entirely', async () => {
+    await db.query(`update storage_policy set sharing_enabled = false`);
+    const res = await call(`/api/storage/mappings/${mappingId}/share`, {
+      method: 'POST', jar: cookies.alice, body: { userId: ids.bob },
+    });
+    expect(res.status).toBe(403);
+    expect((await call(`/api/storage/mappings/${mappingId}`, { jar: cookies.bob })).status).toBe(404);
+  });
+
+  it('can forbid workspace-wide while allowing person-to-person', async () => {
+    await db.query(`update storage_policy set workspace_sharing_enabled = false`);
+    const broadcast = await call(`/api/storage/mappings/${mappingId}/share`, {
+      method: 'POST', jar: cookies.alice, body: { workspace: true },
+    });
+    expect(broadcast.status).toBe(403);
+    expect(broadcast.body.error).toContain('not with everyone');
+
+    const direct = await call(`/api/storage/mappings/${mappingId}/share`, {
+      method: 'POST', jar: cookies.alice, body: { userId: ids.bob },
+    });
+    expect(direct.status).toBe(200);
+  });
+
+  it('unsharing takes the access back', async () => {
+    await call(`/api/storage/mappings/${mappingId}/share`, {
+      method: 'POST', jar: cookies.alice, body: { userId: ids.bob },
+    });
+    await call(`/api/storage/mappings/${mappingId}/share`, {
+      method: 'DELETE', jar: cookies.alice, body: { userId: ids.bob },
+    });
+    expect((await call(`/api/storage/mappings/${mappingId}`, { jar: cookies.bob })).status).toBe(404);
+  });
+});
+
+describe('the global pause and Sync now — M75, M77', () => {
+  let mappingId: string;
+  beforeEach(async () => {
+    await enable('alice');
+    mappingId = (await mapFolder(cookies.alice)).body.mapping.id;
+    await db.query(`update storage_policy set processing_paused = false, manual_sync_enabled = true`);
+    await db.query(`delete from sync_state`);
+  });
+
+  it('pausing deletes nothing and says so', async () => {
+    const res = await call('/api/storage/admin/pause', {
+      method: 'PUT', jar: cookies.admin, body: { paused: true },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.notice).toContain('Nothing has been deleted');
+    expect(res.body.notice).toContain('existing search still works');
+  });
+
+  it('a member cannot pause the installation', async () => {
+    const res = await call('/api/storage/admin/pause', {
+      method: 'PUT', jar: cookies.alice, body: { paused: true },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('Sync now is rate-limited', async () => {
+    const first = await call(`/api/storage/mappings/${mappingId}/sync`, { method: 'POST', jar: cookies.alice });
+    expect(first.status).toBe(200);
+    const second = await call(`/api/storage/mappings/${mappingId}/sync`, { method: 'POST', jar: cookies.alice });
+    expect(second.status).toBe(429);
+    expect(second.body.retryAfterSeconds).toBeGreaterThan(0);
+  });
+
+  it('Sync now cannot bypass the global pause', async () => {
+    await call('/api/storage/admin/pause', {
+      method: 'PUT', jar: cookies.admin, body: { paused: true },
+    });
+    const res = await call(`/api/storage/mappings/${mappingId}/sync`, { method: 'POST', jar: cookies.alice });
+    expect(res.status).toBe(429);
+    expect(res.body.error).toContain('paused for the whole installation');
+    await call('/api/storage/admin/pause', {
+      method: 'PUT', jar: cookies.admin, body: { paused: false },
+    });
+  });
+});
+
+describe('the policy screen says what the settings do — M61, M62, M73', () => {
+  it('spells out that recovery copies are not encrypted', async () => {
+    const res = await call('/api/storage/admin/policy', {
+      method: 'PUT', jar: cookies.admin,
+      body: { historyMode: 'two', historyKind: 'recovery_copy' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.historyDisclosure).toContain('NOT encrypted by Josi');
+    expect(res.body.historyDisclosure).toContain('full-disk or volume encryption');
+  });
+
+  it('warns that keeping the audit trail forever grows without limit', async () => {
+    const res = await call('/api/storage/admin/policy', {
+      method: 'PUT', jar: cookies.admin, body: { auditRetention: 'forever' },
+    });
+    expect(res.body.auditNotice).toContain('grows without limit');
+    await call('/api/storage/admin/policy', {
+      method: 'PUT', jar: cookies.admin, body: { auditRetention: 'one_year' },
+    });
+  });
+
+  it('refuses a value outside the allowed set rather than storing it', async () => {
+    await call('/api/storage/admin/policy', {
+      method: 'PUT', jar: cookies.admin, body: { historyMode: 'everything', auditRetention: 'never' },
+    });
+    const [row] = await db.query<{ history_mode: string; audit_retention: string }>(
+      `select history_mode, audit_retention from storage_policy where id = true`,
+    );
+    expect(row.history_mode).not.toBe('everything');
+    expect(row.audit_retention).not.toBe('never');
+  });
+
+  it('members cannot change it', async () => {
+    const res = await call('/api/storage/admin/policy', {
+      method: 'PUT', jar: cookies.alice, body: { historyMode: 'two' },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('what a person can see about their own options', () => {
   it('shows no roots at all before the administrator enables mapping', async () => {
     const res = await call('/api/storage/available', { jar: cookies.bob });

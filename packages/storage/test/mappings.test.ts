@@ -113,6 +113,29 @@ describe('what a mapping starts as — M47', () => {
     expect(m.indexing_enabled).toBe(false);
   });
 
+  // The COLUMN default, not the code path. `createMapping` always supplies a
+  // value, so mutating the schema default broke no test — which means the
+  // database's own safe default was unprotected. It matters because a later
+  // phase inserting a mapping row directly (a migration, a transfer, a repair
+  // script) would silently get whatever the schema says.
+  it('the schema itself defaults to the safe settings', async () => {
+    const [row] = await db.query<{
+      recursive: boolean; may_create: boolean; may_edit: boolean;
+      may_move: boolean; may_delete: boolean; indexing_enabled: boolean; status: string;
+    }>(
+      `insert into folder_mappings (owner_user_id, provider, root_id, relative_path, display_path)
+       values ($1, 'local', $2, 'reports', 'Documents/reports') returning *`,
+      [ids.bob, rootId],
+    );
+    expect(row.recursive).toBe(false);
+    expect(row.may_create).toBe(false);
+    expect(row.may_edit).toBe(false);
+    expect(row.may_move).toBe(false);
+    expect(row.may_delete).toBe(false);
+    expect(row.indexing_enabled).toBe(false);
+    expect(row.status).toBe('active');
+  });
+
   it('is not recursive unless asked for', async () => {
     expect((await mapDocs()).recursive).toBe(false);
     await db.query(`delete from folder_mappings`);
