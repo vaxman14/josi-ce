@@ -264,6 +264,20 @@ tightening overrides user preference but admin loosening is refused.
 `effectiveCapability = min(userGrant, adminPolicy)` function with a truth-table
 test.
 
+**Status: done.** All four acceptance criteria proven over the wire and again at
+runtime. 92 new tests (431 total), 24/24 mutations caught, 58/58 runtime checks.
+See `PHASE_7_EVIDENCE.md`.
+
+The named risk is answered by `effectiveCapability`, with the truth table asked
+for plus a monotonicity test: from fully enabled, flipping any single input to
+false makes the answer false. The policy table has an `allowed` column and no
+`granted` column, so the shape itself cannot bestow.
+
+**Two mutations were not caught first time**, and both are recorded rather than
+quietly fixed: a callback that trusted `?user=` (latent — no test supplied one),
+and the client secret's ciphertext being returned to the admin, which is the
+same defect Phase 4's M18 exposed and which I failed to carry across.
+
 ---
 
 ## Phase 8 — Mail: SMTP profiles + operational email
