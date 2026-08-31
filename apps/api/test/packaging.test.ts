@@ -3,7 +3,7 @@
 // database port, puts the master key in an environment variable, or starts
 // ClamAV by default fails the suite instead of shipping.
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 
@@ -238,6 +238,34 @@ describe('no capacity claims are made anywhere', () => {
     // Phrases that would be a claim rather than a description.
     for (const pattern of [/supports up to \d+/i, /\d+\s*(concurrent )?users/i, /handles \d+/i]) {
       expect(readme, String(pattern)).not.toMatch(pattern);
+    }
+  });
+});
+
+describe('the image can actually be built', () => {
+  /** Found the hard way in Phase 4: `packages/llm` was added to the workspace
+   * but not to the Dockerfile's dependency layer. `tsc -b` passed locally
+   * against an already-linked node_modules and the image build failed on a
+   * clean host with "cannot find module @josi-ce/llm".
+   *
+   * npm creates a workspace's node_modules symlink only if its package.json
+   * exists at `npm ci` time, so every workspace must be COPYed before it. */
+  it('copies every workspace package.json before npm ci', () => {
+    const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { workspaces: string[] };
+    const workspaces = rootPkg.workspaces.flatMap((pattern) => {
+      const dir = pattern.replace(/\/\*$/, '');
+      return readdirSync(join(root, dir), { withFileTypes: true })
+        .filter((e) => e.isDirectory() && existsSync(join(root, dir, e.name, 'package.json')))
+        .map((e) => `${dir}/${e.name}`);
+    });
+
+    expect(workspaces.length).toBeGreaterThan(2);
+    const beforeInstall = dockerfile.split('RUN npm ci')[0];
+    for (const ws of workspaces) {
+      // The API and worker share one image; whichever workspaces exist, each
+      // one's manifest has to be present before the install.
+      expect(beforeInstall, `${ws}/package.json is not COPYed before npm ci`)
+        .toContain(`${ws}/package.json`);
     }
   });
 });

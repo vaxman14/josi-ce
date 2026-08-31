@@ -41,7 +41,17 @@ rm -rf secrets && bash scripts/install.sh >/dev/null
 ok "secrets generated"
 
 step "bringing the stack up"
-if "${COMPOSE[@]}" up -d --build >/tmp/p4-up.log 2>&1; then ok "compose up"; else bad "compose up failed"; tail -20 /tmp/p4-up.log; fi
+# Abort rather than continue. A previous run reported "6 passed, 47 failed"
+# against a stack that never started — and those 6 passes were meaningless
+# ("no secret in any container log" is trivially true when there are no logs).
+# A test that can pass while the service is down is not a test.
+if "${COMPOSE[@]}" up -d --build >/tmp/p4-up.log 2>&1; then
+  ok "compose up"
+else
+  echo "  FATAL  compose up failed — nothing below would mean anything"
+  tail -30 /tmp/p4-up.log
+  exit 1
+fi
 
 SESSION=""
 # CSRF is double-submit, so a matching cookie/header pair is all it needs. The
@@ -70,7 +80,13 @@ for _ in $(seq 1 60); do
   [[ "$(api GET /health)" == "200" ]] && { ready=1; break; }
   sleep 2
 done
-[[ $ready -eq 1 ]] && ok "/health responds" || bad "/health never responded"
+if [[ $ready -eq 1 ]]; then
+  ok "/health responds"
+else
+  echo "  FATAL  /health never responded — nothing below would mean anything"
+  "${COMPOSE[@]}" logs --tail 30 web
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # A stub self-hosted runtime. Answers the OpenAI chat-completions shape:

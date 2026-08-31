@@ -13,9 +13,16 @@ WORKDIR /app
 # install time. @node-rs/argon2 ships prebuilt native binaries per platform, so
 # it needs no build step on either architecture.
 COPY package.json package-lock.json ./
+# EVERY workspace must be listed here. npm creates the node_modules symlink for
+# a workspace only if its package.json exists at install time, so a missing line
+# here becomes "cannot find module @josi-ce/x" during the build — which is
+# exactly how Phase 4 broke the image while `tsc -b` passed locally against an
+# already-linked tree.
 COPY packages/core/package.json packages/core/
 COPY packages/auth/package.json packages/auth/
+COPY packages/llm/package.json packages/llm/
 COPY apps/api/package.json apps/api/
+COPY apps/worker/package.json apps/worker/
 RUN npm ci --ignore-scripts
 
 COPY tsconfig.base.json tsconfig.json ./
