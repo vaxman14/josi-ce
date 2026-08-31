@@ -231,7 +231,14 @@ case "$v" in v1.*) ok "the PKCE verifier is sealed at rest" ;; *) bad "verifier 
 # The stub provider. Answers the token and identity endpoints as Google would.
 step "starting a stub provider on the project network"
 docker rm -f "${PROJECT}-fakeoauth" >/dev/null 2>&1 || true
-docker run -d --rm --name "${PROJECT}-fakeoauth" --network "$NET" --network-alias fakeoauth \
+# The aliases are the mechanism. Docker's embedded DNS resolves a network alias
+# for every container on that network, so the app reaches the stub while still
+# asking for Google's real hostnames — no /etc/hosts edit (the web container has
+# a read-only root filesystem, correctly) and no container recreation.
+docker run -d --rm --name "${PROJECT}-fakeoauth" --network "$NET" \
+  --network-alias fakeoauth \
+  --network-alias oauth2.googleapis.com \
+  --network-alias openidconnect.googleapis.com \
   python:3.12-alpine python3 -c '
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -255,29 +262,14 @@ HTTPServer(("0.0.0.0", 8080), H).serve_forever()
 ' >/dev/null 2>&1 && ok "stub provider started" || bad "stub failed to start"
 sleep 3
 
-step "pointing the provider hostnames at the stub"
-# The app talks to Google's real hostnames. Editing /etc/hosts inside the web
-# container does not work — Phase 2 gave it a READ-ONLY root filesystem, which
-# is the hardening doing its job. So the mapping goes in through Docker itself,
-# in a test-only compose override. The product compose is not touched.
-STUB_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${PROJECT}-fakeoauth" 2>/dev/null)
-[[ -n "$STUB_IP" ]] && ok "stub address $STUB_IP" || bad "could not read the stub address"
-
-cat > /tmp/josi-e2e-oauth.yml <<YML
-services:
-  web:
-    extra_hosts:
-      - "oauth2.googleapis.com:${STUB_IP}"
-      - "openidconnect.googleapis.com:${STUB_IP}"
-YML
-if docker compose -p "$PROJECT" -f docker-compose.yml -f /tmp/josi-e2e-oauth.yml up -d web >/tmp/p7-hosts.log 2>&1; then
-  ok "web recreated with the stub mapped"
+step "the provider hostnames resolve to the stub"
+resolved=$("${COMPOSE[@]}" exec -T web sh -c "getent hosts oauth2.googleapis.com | head -1" 2>/dev/null | tr -d '\r')
+stub_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${PROJECT}-fakeoauth" 2>/dev/null)
+if echo "$resolved" | grep -q "$stub_ip"; then
+  ok "oauth2.googleapis.com resolves to the stub ($stub_ip)"
 else
-  bad "could not remap: $(tail -2 /tmp/p7-hosts.log)"
+  bad "resolves to '$resolved', expected $stub_ip"
 fi
-for _ in $(seq 1 30); do [[ "$(api GET /health)" == "200" ]] && break; sleep 2; done
-mapped=$("${COMPOSE[@]}" exec -T web sh -c "getent hosts oauth2.googleapis.com | head -1" 2>/dev/null | tr -d '\r')
-echo "$mapped" | grep -q "$STUB_IP" && ok "oauth2.googleapis.com resolves to the stub" || bad "resolves to: $mapped"
 
 # The session cookies survive: sessions live in PostgreSQL, not in the process.
 step "completing the handshake against the stub"
