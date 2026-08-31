@@ -34,6 +34,7 @@ const ADMIN_NAV = [
   { to: '/admin/people', label: 'People' },
   { to: '/admin/model', label: 'Model' },
   { to: '/admin/policy', label: 'Policy' },
+  { to: '/admin/connectors', label: 'Connectors' },
   { to: '/admin/workspace', label: 'Workspace' },
 ];
 

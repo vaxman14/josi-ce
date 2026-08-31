@@ -20,7 +20,9 @@ const MEMBER_PAGES = [
   '/app', '/app/talk', '/app/tasks', '/app/approvals', '/app/conversations',
   '/app/contacts', '/app/connections', '/app/usage', '/app/settings', '/app/apps',
 ];
-const ADMIN_PAGES = ['/admin', '/admin/people', '/admin/model', '/admin/policy', '/admin/workspace'];
+const ADMIN_PAGES = [
+  '/admin', '/admin/people', '/admin/model', '/admin/policy', '/admin/connectors', '/admin/workspace',
+];
 
 let pass = 0;
 let fail = 0;
@@ -336,12 +338,15 @@ async function testNoExternalAndNoPlaceholders(browser) {
     record('the companion apps page says Coming soon', comingSoon > 0);
     record('and offers no download or install action', actions === 0, `${actions} action(s)`);
 
-    // Connections: honest about not being available, and no dead Connect button.
+    // Connections is real as of Phase 7, so the check changes shape: with no
+    // OAuth application registered there must still be nothing to press, and
+    // the page must say why rather than offering a button that fails at the
+    // provider.
     await page.goto(`${BASE}/app/connections`, { waitUntil: 'networkidle' });
     const notBuilt = await page.locator('[data-not-built="true"]').count();
-    const connectButton = await page.getByRole('button', { name: /connect/i }).count();
-    record('connections says what is not available yet', notBuilt > 0);
-    record('and offers no Connect button that does nothing', connectButton === 0);
+    const connectButton = await page.getByRole('button', { name: /^Connect / }).count();
+    record('connections says the installation is not set up', notBuilt > 0);
+    record('and offers no Connect button while that is true', connectButton === 0);
 
     // Nothing anywhere is a disabled control standing in for a feature.
     const disabledDecoys = await page.evaluate(() => {

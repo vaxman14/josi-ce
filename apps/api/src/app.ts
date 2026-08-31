@@ -12,6 +12,7 @@ import { requireCsrf } from './http/cookies.js';
 import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
+import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { setupGate } from './http/setupGate.js';
@@ -30,6 +31,9 @@ export interface AppConfig {
    * real model provider. Unset in production, where the real ones are used. */
   llmFetch?: typeof fetch;
   llmResolve?: (hostname: string) => Promise<string[]>;
+  /** Provider HTTP for connectors, injected by the tests so no suite ever
+   * contacts Google or Microsoft. */
+  connectorFetch?: typeof fetch;
   /** Directory holding the built web bundle. Absent = API only. */
   webDir?: string;
 }
@@ -69,7 +73,11 @@ export function createApp(db: Db, cfg: AppConfig): Express {
 
   api.use('/setup', setupRoutes({ db, masterKey: cfg.masterKeyCheck }));
   api.use('/auth', authRoutes({ db, cookieSecure: cfg.cookieSecure }));
-  api.use('/connections', connectionRoutes({ db }));
+  // Phase 7 owns /connections now: the Phase 1 router proved the ownership
+  // shape against a real table; this one actually connects accounts.
+  api.use('/connections', connectorRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
+  }));
   api.use('/llm', llmRoutes({ db, masterKey: cfg.masterKeyCheck }));
   // Mounted before /admin so the more specific prefix wins; both are behind
   // requireSuperAdmin either way.
@@ -77,6 +85,9 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
+  api.use('/admin/connectors', adminConnectorRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
+  }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
 
   api.use((_req, res) => res.status(404).json({ error: 'no such endpoint' }));

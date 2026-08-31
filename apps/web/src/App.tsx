@@ -18,6 +18,7 @@ import { AdminOverview } from '@/pages/admin/Overview';
 import { AdminPeople } from '@/pages/admin/People';
 import { AdminModel } from '@/pages/admin/Model';
 import { AdminPolicy } from '@/pages/admin/Policy';
+import { AdminConnectors } from '@/pages/admin/Connectors';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 
 /** Routing is convenience, not security.
@@ -81,6 +82,7 @@ export function App() {
         <Route path="people" element={<AdminPeople />} />
         <Route path="model" element={<AdminModel />} />
         <Route path="policy" element={<AdminPolicy />} />
+        <Route path="connectors" element={<AdminConnectors />} />
         <Route path="workspace" element={<AdminWorkspace />} />
       </Route>
 
