@@ -103,6 +103,22 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    volumes:
+      # Josi's OWN storage: recovery copies (M60/M62) live here, never in a
+      # user's mapped folder. A named volume so they survive the container being
+      # replaced, and so `docker compose down` does not silently destroy the
+      # only copy of a file somebody deleted.
+      - josi_versions:/data/versions
+      # Shared folders (M45). Deny-by-default: nothing is mounted here unless an
+      # operator writes it, and mounting alone grants nothing — a root must also
+      # be registered before Josi will touch it.
+      #
+      # Mount READ-ONLY unless you intend Josi to write. The application has its
+      # own read-only flag per root, but `:ro` here is the one the kernel
+      # enforces.
+      #
+      #   - /srv/documents:/data/roots/documents:ro
+      #   - /srv/contracts:/data/roots/contracts:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -142,6 +158,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    volumes:
+      # Josi's OWN storage: recovery copies (M60/M62) live here, never in a
+      # user's mapped folder. A named volume so they survive the container being
+      # replaced, and so `docker compose down` does not silently destroy the
+      # only copy of a file somebody deleted.
+      - josi_versions:/data/versions
+      # Shared folders (M45). Deny-by-default: nothing is mounted here unless an
+      # operator writes it, and mounting alone grants nothing — a root must also
+      # be registered before Josi will touch it.
+      #
+      # Mount READ-ONLY unless you intend Josi to write. The application has its
+      # own read-only flag per root, but `:ro` here is the one the kernel
+      # enforces.
+      #
+      #   - /srv/documents:/data/roots/documents:ro
+      #   - /srv/contracts:/data/roots/contracts:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -263,6 +295,7 @@ secrets:
 
 volumes:
   db_data:
+  josi_versions:
   caddy_data:
   caddy_config:
   clamav_data:

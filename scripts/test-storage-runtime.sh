@@ -30,6 +30,7 @@ step() { printf '\n== %s\n' "$*"; }
 cleanup() {
   step "tearing down (only this project)"
   docker rm -f "$STUB" >/dev/null 2>&1 || true
+  rm -f "/tmp/${PROJECT}-roots.yml" 2>/dev/null || true
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -44,6 +45,23 @@ export JOSI_HTTPS_PORT="${JOSI_HTTPS_PORT:-443}"
 # itself is covered by the Phase 2 proxy tests; this concession is recorded in
 # PHASE_6_EVIDENCE.md rather than left for someone to find.
 export JOSI_COOKIE_SECURE=false
+
+# Production mounts NO shared folder by default — that is M45's deny-by-default
+# at the mount layer, and the packaging test asserts it. So the test supplies its
+# own mount rather than the product shipping one.
+cat > /tmp/${PROJECT}-roots.yml <<'OVERRIDE'
+services:
+  web:
+    volumes:
+      - josi_test_roots:/data/roots
+  worker:
+    volumes:
+      - josi_test_roots:/data/roots
+volumes:
+  josi_test_roots:
+OVERRIDE
+# Passing -f stops compose auto-loading docker-compose.yml, so name both.
+COMPOSE+=(-f docker-compose.yml -f /tmp/${PROJECT}-roots.yml)
 
 step "clean project state"
 docker rm -f "$STUB" >/dev/null 2>&1 || true
@@ -83,6 +101,10 @@ api() { # api <method> <path> [json]
 }
 body() { "${COMPOSE[@]}" exec -T web cat /tmp/r.json 2>/dev/null; }
 sql()  { "${COMPOSE[@]}" exec -T db psql -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -tAc "$1" 2>/dev/null | tr -d '\r'; }
+# The same, but keeping stderr. Needed for every "the database must refuse this"
+# check: the quiet version sent the refusal to /dev/null, so the assertion could
+# never see the thing it existed to observe.
+sqlerr() { "${COMPOSE[@]}" exec -T db psql -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -tAc "$1" 2>&1 | tr -d '\r'; }
 has()  { body | grep -q "$1"; }
 
 step "waiting for readiness"
@@ -204,15 +226,15 @@ BOB_SESSION=$(login bob "$BOB_PW")
 step "building a real folder tree with real symlinks"
 "${COMPOSE[@]}" exec -T -u root web sh -c '
   set -e
-  rm -rf /data/roots /data/outside
+  rm -rf /data/roots/docs /data/roots/docs-private /data/versions/outside
   mkdir -p /data/roots/docs/layoffs-legal-review
   mkdir -p /data/roots/docs-private
-  mkdir -p /data/outside
-  echo "SALARY-DATA-DO-NOT-INDEX" > /data/outside/salaries.csv
+  mkdir -p /data/versions/outside
+  echo "SALARY-DATA-DO-NOT-INDEX" > /data/versions/outside/salaries.csv
   echo "SIBLING-PREFIX-SECRET" > /data/roots/docs-private/notes.txt
-  ln -sfn /data/outside /data/roots/docs/escape
+  ln -sfn /data/versions/outside /data/roots/docs/escape
   ln -sfn /etc /data/roots/docs/etc-link
-  chown -R 10001:10001 /data/roots /data/outside 2>/dev/null || true
+  chown -R 10001:10001 /data/roots /data/versions 2>/dev/null || true
 ' >/dev/null 2>&1 && ok "tree built" || bad "could not build the folder tree"
 
 "${COMPOSE[@]}" exec -T web sh -c 'test -L /data/roots/docs/escape' >/dev/null 2>&1 \
@@ -259,7 +281,7 @@ SESSION="$ALICE_SESSION"
 map_attempt() { api POST /api/storage/mappings \
   "{\"provider\":\"local\",\"rootId\":\"$ROOT_ID\",\"relativePath\":\"$1\"}"; }
 
-for bad_path in '../docs-private' '../outside' 'layoffs-legal-review/../../docs-private' '/etc'; do
+for bad_path in '../docs-private' '../../versions/outside' 'layoffs-legal-review/../../docs-private' '/etc'; do
   code=$(map_attempt "$bad_path")
   [[ "$code" == "400" ]] && ok "traversal refused: $bad_path ($code)" || bad "$bad_path returned $code"
 done
@@ -457,8 +479,8 @@ code=$(api PUT /api/storage/admin/policy '{"historyMode":"two","historyKind":"re
 if body | grep -q 'NOT encrypted by Josi'; then ok "and says so plainly"; else bad "no encryption statement: $(body)"; fi
 
 step "a recovery copy cannot be stored outside Josi's own volume — M60"
-if sql "insert into document_versions (document_id, owner_user_id, ordinal, content_hash, kind, stored_path)
-        values ('$DOC2', '$ALICE_ID', 1, 'h', 'recovery_copy', '/data/roots/docs/leak.bin')" 2>&1 | grep -qi 'violates'; then
+if sqlerr "insert into document_versions (document_id, owner_user_id, ordinal, content_hash, kind, stored_path)
+           values ('$DOC2', '$ALICE_ID', 1, 'h', 'recovery_copy', '/data/roots/docs/leak.bin')" | grep -qi 'violates'; then
   ok "the database refuses it"
 else bad "a recovery copy was accepted into a mapped folder"; fi
 
@@ -466,10 +488,10 @@ step "audit retention deletes only past the window — M73"
 sql "insert into events (actor, kind, payload, created_at)
      values ('system','runtime.old','{}', now() - interval '400 days'),
             ('system','runtime.new','{}', now())" >/dev/null
-if sql "delete from events where kind = 'runtime.new'" 2>&1 | grep -qi 'append-only'; then
+if sqlerr "delete from events where kind = 'runtime.new'" | grep -qi 'append-only'; then
   ok "a recent entry cannot be deleted"
 else bad "a recent audit entry was deletable"; fi
-if sql "delete from events where kind = 'runtime.old'" 2>&1 | grep -qi 'append-only'; then
+if sqlerr "delete from events where kind = 'runtime.old'" | grep -qi 'append-only'; then
   bad "retention could not remove an aged entry"
 else ok "an aged entry can be removed"; fi
 

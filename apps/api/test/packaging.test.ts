@@ -215,6 +215,43 @@ describe('container hardening', () => {
   });
 });
 
+describe('storage mounts — M45, M60', () => {
+  /** Phase 9's runtime run on a real host found the compose file had no /data
+   * mount at all: nowhere to bind a shared folder, and nowhere for a recovery
+   * copy to live. Every unit test passed, because none of them mount anything. */
+  it('gives the app a durable place for its own recovery copies', () => {
+    for (const name of ['web', 'worker']) {
+      const volumes: string[] = service(name).volumes ?? [];
+      expect(volumes, `${name} must mount /data/versions`)
+        .toContain('josi_versions:/data/versions');
+    }
+    // A named volume, so replacing a container does not destroy the only copy
+    // of a file somebody deleted.
+    expect(compose.volumes).toHaveProperty('josi_versions');
+  });
+
+  it('mounts no shared folder by default', () => {
+    // M45 is deny-by-default at the mount layer too. An installation that ships
+    // with somebody's documents already mounted has made the decision for them.
+    for (const name of ['web', 'worker']) {
+      const volumes: string[] = service(name).volumes ?? [];
+      const roots = volumes.filter((v) => v.includes('/data/roots'));
+      expect(roots, `${name} must not mount a shared folder by default`).toEqual([]);
+    }
+  });
+
+  it('documents the example mount as read-only', () => {
+    // The application has its own per-root writable flag, but `:ro` is the one
+    // the kernel enforces, so the example an operator copies must carry it.
+    const raw = readFileSync(join(root, 'docker-compose.yml'), 'utf8');
+    const examples = raw.split('\n').filter((l) => l.includes('/data/roots/') && l.trim().startsWith('#'));
+    expect(examples.length).toBeGreaterThan(0);
+    for (const line of examples) {
+      expect(line, `example mount must be read-only: ${line.trim()}`).toMatch(/:ro\s*$/);
+    }
+  });
+});
+
 describe('the proxy', () => {
   it('is templated on a domain rather than hard-coded to anything', () => {
     expect(caddyfile).toMatch(/\{\$JOSI_DOMAIN\}/);
