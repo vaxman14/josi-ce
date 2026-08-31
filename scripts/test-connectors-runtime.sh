@@ -230,17 +230,33 @@ case "$v" in v1.*) ok "the PKCE verifier is sealed at rest" ;; *) bad "verifier 
 # ---------------------------------------------------------------------------
 # The stub provider. Answers the token and identity endpoints as Google would.
 step "starting a stub provider on the project network"
+# The app calls https://oauth2.googleapis.com — real scheme, real hostname, real
+# TLS. A plain-HTTP stub is not reachable at all: the client connects to :443
+# and finds nothing, which is what the previous run showed as `error=network`.
+#
+# So the stub serves HTTPS on 443 with a self-signed certificate naming both
+# provider hostnames, and the web container is given that certificate as an
+# extra CA. Certificate verification stays ON — disabling it would mean testing
+# a security feature with its checks switched off.
+rm -rf /tmp/josi-stub-tls && mkdir -p /tmp/josi-stub-tls
+docker run --rm -v /tmp/josi-stub-tls:/out alpine/openssl:latest req -x509 -nodes -newkey rsa:2048 \
+  -keyout /out/stub.key -out /out/stub.crt -days 2 -subj "/CN=oauth2.googleapis.com" \
+  -addext "subjectAltName=DNS:oauth2.googleapis.com,DNS:openidconnect.googleapis.com" \
+  >/tmp/p7-cert.log 2>&1 \
+  && ok "stub certificate generated" || bad "openssl failed: $(tail -2 /tmp/p7-cert.log)"
+
 docker rm -f "${PROJECT}-fakeoauth" >/dev/null 2>&1 || true
-# The aliases are the mechanism. Docker's embedded DNS resolves a network alias
-# for every container on that network, so the app reaches the stub while still
-# asking for Google's real hostnames — no /etc/hosts edit (the web container has
-# a read-only root filesystem, correctly) and no container recreation.
+# The aliases are the DNS mechanism: Docker's embedded resolver answers a
+# network alias for every container on the network, so the app reaches the stub
+# while still asking for Google's real hostnames. No /etc/hosts edit — the web
+# container has a read-only root filesystem, correctly.
 docker run -d --rm --name "${PROJECT}-fakeoauth" --network "$NET" \
   --network-alias fakeoauth \
   --network-alias oauth2.googleapis.com \
   --network-alias openidconnect.googleapis.com \
+  -v /tmp/josi-stub-tls:/tls:ro \
   python:3.12-alpine python3 -c '
-import json
+import json, ssl
 from http.server import BaseHTTPRequestHandler, HTTPServer
 class H(BaseHTTPRequestHandler):
     def _send(self, body):
@@ -258,17 +274,52 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self._send({"sub": "stub-account", "email": "alice.private@gmail.test"})
     def log_message(self, *a): pass
-HTTPServer(("0.0.0.0", 8080), H).serve_forever()
-' >/dev/null 2>&1 && ok "stub provider started" || bad "stub failed to start"
-sleep 3
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain("/tls/stub.crt", "/tls/stub.key")
+srv = HTTPServer(("0.0.0.0", 443), H)
+srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+srv.serve_forever()
+' >/dev/null 2>&1 && ok "stub provider started on https/443" || bad "stub failed to start"
+sleep 4
 
 step "the provider hostnames resolve to the stub"
-resolved=$("${COMPOSE[@]}" exec -T web sh -c "getent hosts oauth2.googleapis.com | head -1" 2>/dev/null | tr -d '\r')
 stub_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${PROJECT}-fakeoauth" 2>/dev/null)
-if echo "$resolved" | grep -q "$stub_ip"; then
-  ok "oauth2.googleapis.com resolves to the stub ($stub_ip)"
+resolved=$("${COMPOSE[@]}" exec -T web sh -c "getent hosts oauth2.googleapis.com | head -1" 2>/dev/null | tr -d '\r')
+echo "$resolved" | grep -q "$stub_ip" \
+  && ok "oauth2.googleapis.com resolves to the stub ($stub_ip)" \
+  || bad "resolves to '$resolved', expected $stub_ip"
+
+step "teaching the app to trust the stub certificate"
+cat > /tmp/josi-e2e-oauth.yml <<YML
+services:
+  web:
+    environment:
+      NODE_EXTRA_CA_CERTS: /tls/stub.crt
+    volumes:
+      - /tmp/josi-stub-tls:/tls:ro
+YML
+docker compose -p "$PROJECT" -f docker-compose.yml -f /tmp/josi-e2e-oauth.yml up -d web \
+  >/tmp/p7-hosts.log 2>&1 && ok "web recreated with the stub CA" || bad "recreate failed: $(tail -2 /tmp/p7-hosts.log)"
+for _ in $(seq 1 40); do [[ "$(api GET /health)" == "200" ]] && break; sleep 2; done
+
+# Verify the override actually took. The previous attempt reported success while
+# changing nothing, which is how a broken prerequisite masquerades as a working
+# one.
+ca=$("${COMPOSE[@]}" exec -T web sh -c 'echo "$NODE_EXTRA_CA_CERTS"' 2>/dev/null | tr -d '\r')
+[[ "$ca" == "/tls/stub.crt" ]] && ok "the CA env var is set in the container" || bad "NODE_EXTRA_CA_CERTS is '$ca'"
+"${COMPOSE[@]}" exec -T web sh -c 'test -r /tls/stub.crt' 2>/dev/null \
+  && ok "the certificate is readable in the container" || bad "certificate not mounted"
+
+step "completing the handshake against the stub"
+code=$(api GET "/api/connections/google/callback?state=${STATE}&code=stub-code")
+loc=$("${COMPOSE[@]}" exec -T web sh -c "grep -i '^location:' /tmp/r.hdr" 2>/dev/null | tr -d '\r')
+# A 302 alone proves nothing: the failure path also redirects, to ?error=… .
+# Asserting only the status is how a test passes while the thing it tests is
+# broken, which is what the first run of this script did.
+if [[ "$code" == "302" ]] && ! echo "$loc" | grep -q "error="; then
+  ok "callback completed the connection ($code)"
 else
-  bad "resolves to '$resolved', expected $stub_ip"
+  bad "callback returned $code and redirected to: $loc"
 fi
 
 # The session cookies survive: sessions live in PostgreSQL, not in the process.
