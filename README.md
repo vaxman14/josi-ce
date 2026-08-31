@@ -72,8 +72,21 @@ supported within realistic limits.
 
 ## Installation
 
-*Written in Phase 2. This section will contain the real fresh-install steps,
-not a sketch.*
+The complete operator guide is in
+[`docs/INSTALLATION.md`](docs/INSTALLATION.md). It covers prerequisites, DNS,
+every supplied environment setting, secret generation, bundled Caddy, an
+existing reverse proxy, optional OCR and ClamAV profiles, verification,
+operations, security, and troubleshooting. It also labels unfinished Phase 10
+backup/update workflows explicitly instead of inventing commands for features
+that do not exist yet.
+
+For a local evaluation after reading the guide:
+
+```bash
+cp .env.example .env
+./scripts/install.sh
+docker compose up -d
+```
 
 ## Backups and the master key
 
