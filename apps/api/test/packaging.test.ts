@@ -329,3 +329,46 @@ describe('the web app ships with the image', () => {
     }
   });
 });
+
+describe('jsonb is never hand-serialised', () => {
+  /** The Phase 6 browser run found the admin model page crashing on
+   * `probeSteps.map is not a function`. A route had written a jsonb column with
+   * `JSON.stringify(...)` and a `::jsonb` cast instead of the `json()` helper.
+   *
+   * Under postgres.js that stores a jsonb STRING SCALAR rather than an array,
+   * and reading it back yields a string. `packages/core/src/db.ts` says exactly
+   * this — "silent in tests and permanent in production" — and it is: the unit
+   * suite passes against pglite with the bug present, which was verified by
+   * re-introducing it.
+   *
+   * So the unit suite cannot catch the behaviour. It can catch the SHAPE, which
+   * is what this does: no source file may pair a hand-serialised value with a
+   * jsonb cast, because `json()` is the thing that exists for it. */
+  it('no route pairs JSON.stringify with a ::jsonb cast', () => {
+    const roots = ['apps/api/src', 'apps/worker/src', 'packages/core/src', 'packages/llm/src', 'packages/agent/src'];
+    const offenders: string[] = [];
+
+    const walk = (dir: string): string[] => {
+      const out: string[] = [];
+      for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) out.push(...walk(rel));
+        else if (entry.name.endsWith('.ts')) out.push(rel);
+      }
+      return out;
+    };
+
+    for (const dir of roots) {
+      if (!existsSync(join(root, dir))) continue;
+      for (const file of walk(dir)) {
+        const src = readFileSync(join(root, file), 'utf8');
+        // db.ts documents the trap and is allowed to name it.
+        if (file.endsWith('core/src/db.ts')) continue;
+        if (/::jsonb/.test(src) && /JSON\.stringify\(/.test(src)) {
+          offenders.push(file);
+        }
+      }
+    }
+    expect(offenders, `use json() from @josi-ce/core instead: ${offenders.join(', ')}`).toEqual([]);
+  });
+});

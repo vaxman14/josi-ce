@@ -14,7 +14,7 @@
 // control: the next route forgets it.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, asSecret, loadMasterKey, seal,
+  appendEvent, asSecret, json, loadMasterKey, seal,
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
@@ -40,6 +40,20 @@ class RouteError extends Error {
 }
 
 const str = (v: unknown, max = 500): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+
+/** jsonb that should be a list, made into one no matter how it was stored. */
+function asArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
 const KNOWN_PROVIDERS = ['openai', 'anthropic', 'xai', 'openai_compatible'];
 
 function requireMasterKey(ctx: LlmRoutesCtx): MasterKey {
@@ -108,7 +122,9 @@ async function providerDto(db: Db, role: 'primary' | 'fallback'): Promise<Provid
     active: !!stored.activated_at,
     probedAt: stored.probed_at,
     capabilities: capabilitiesOf(stored),
-    probeSteps: steps?.probe_steps ?? [],
+    // Normalised here as well: a row written before the fix above, or by any
+    // other means, must not reach a caller as something that is not a list.
+    probeSteps: asArray(steps?.probe_steps),
   };
   // Belt and braces: a careless `...stored` spread added later throws here
   // rather than serialising the sealed key.
@@ -289,12 +305,18 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
 
       await db.query(
         `update llm_providers set
-           probed_at = $2, probe_steps = $3::jsonb,
+           probed_at = $2, probe_steps = $3,
            cap_chat = $4, cap_structured_output = $5, cap_tool_calling = $6, cap_context_tokens = $7,
            activated_at = case when $4 then coalesce(activated_at, now()) else null end
          where role = $1`,
         [
-          role, result.probedAt, JSON.stringify(result.steps),
+          // json(), not JSON.stringify + ::jsonb. Hand-serialising is what
+          // db.ts warns about: postgres.js types a JS string as text, so the
+          // cast stores a jsonb STRING SCALAR rather than an array, and reading
+          // it back yields a string. It is silent in pglite and permanent in
+          // production — the admin model page crashed on `.map is not a
+          // function` because of exactly this.
+          role, result.probedAt, json(result.steps),
           result.capabilities.chat, result.capabilities.structuredOutput,
           result.capabilities.toolCalling, result.capabilities.contextTokens,
         ],

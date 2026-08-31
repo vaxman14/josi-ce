@@ -75,7 +75,10 @@ export function AdminModel() {
             <div className="mt-3">
               <Button onClick={() => void probe()} disabled={busy}>{busy ? 'Testing…' : 'Test this model'}</Button>
             </div>
-            {data.primary.probeSteps?.length ? (
+            {/* Array.isArray, not `?.length` — a string has a length too,
+                which is exactly how a double-encoded jsonb column got past
+                this guard and threw on .map. */}
+            {Array.isArray(data.primary.probeSteps) && data.primary.probeSteps.length ? (
               <ul className="mt-3 space-y-1 text-sm">
                 {data.primary.probeSteps.map((s) => (
                   <li key={s.id} className="flex min-w-0 gap-2">

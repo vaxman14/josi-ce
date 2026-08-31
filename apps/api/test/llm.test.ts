@@ -322,6 +322,28 @@ describe('probing', () => {
     expect(res.body.provider.active).toBe(true);
   });
 
+  it('returns probe steps as a LIST, not a string that happens to have a length', async () => {
+    // The Phase 6 browser run found the admin model page crashing on
+    // `probeSteps.map is not a function`. The column had been written with
+    // JSON.stringify + ::jsonb instead of the json() helper, which stores a
+    // jsonb string scalar — silent in pglite, permanent in production.
+    //
+    // Asserting the TYPE rather than the truthiness is the point: the UI guard
+    // used `?.length`, and a string has one.
+    await configure();
+    const res = await call('/api/admin/llm/providers/primary/probe', { method: 'POST', jar: cookies.admin });
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.provider.probeSteps)).toBe(true);
+    expect(res.body.provider.probeSteps.length).toBeGreaterThan(0);
+    expect(typeof res.body.provider.probeSteps[0]).toBe('object');
+    expect(res.body.provider.probeSteps[0]).toHaveProperty('label');
+
+    // And through the config endpoint, which is what the page actually reads.
+    const view = await call('/api/admin/llm', { jar: cookies.admin });
+    expect(Array.isArray(view.body.primary.probeSteps)).toBe(true);
+    expect(typeof view.body.primary.probeSteps[0]).toBe('object');
+  });
+
   it('refuses to probe a provider that is not configured', async () => {
     expect((await call('/api/admin/llm/providers/fallback/probe', { method: 'POST', jar: cookies.admin })).status).toBe(404);
   });

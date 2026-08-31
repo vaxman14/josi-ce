@@ -53,6 +53,11 @@ function watch(page) {
     if (msg.type() !== 'error') return;
     const text = msg.text();
     if (/favicon/i.test(text)) return;
+    // A status the app asks for and handles is not a fault: /api/setup/state
+    // answers 404 once setup is done, and /api/auth/me answers 401 before
+    // sign-in. Both are the app negotiating, and filtering them keeps this
+    // check about real exceptions rather than teaching everyone to ignore it.
+    if (/Failed to load resource/i.test(text)) return;
     problems.push(`console: ${text.slice(0, 200)}`);
   });
   return problems;
