@@ -109,11 +109,22 @@ connectors (optional) → security/privacy → telemetry opt-in → review/finis
   it 404s.
 - Writes encrypted secrets through the master key.
 
-**Acceptance:** a fresh DB serves the wizard and refuses all other routes; after
-completion the wizard is gone and cannot recreate a super admin; a half-finished
-wizard resumes at the right step; telemetry is off unless affirmatively ticked.
-**Risk:** the wizard is an unauthenticated super-admin factory → single-use,
-state-machine gated, and bound to the install identity.
+**Acceptance (met — see `PHASE_3_EVIDENCE.md`):** a fresh DB serves the wizard
+and refuses all other routes (503, `setupRequired: true`); after completion every
+setup route is 404 and cannot recreate a super admin; a half-finished wizard
+resumes at the first incomplete step across a process restart; telemetry is off
+unless affirmatively ticked. 124 static tests, 37 runtime checks, 8 mutations all
+caught.
+
+**Scope note:** Phase 3 delivers the setup API and its state machine. The
+wizard's screens are Phase 6, with the rest of the web app.
+
+**Risk (realised and handled):** the wizard is an unauthenticated super-admin
+factory. Single-use, state-machine gated, bound to the stored install identity.
+The single-use guarantee was initially UNTESTED — pglite serialises queries, so
+an HTTP-level concurrency test could not reach the SQL latch. Fixed by extracting
+`sealSetupOnce()` for direct testing and by proving genuine concurrency against
+real PostgreSQL at runtime.
 
 ---
 
