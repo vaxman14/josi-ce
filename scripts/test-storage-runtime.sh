@@ -100,11 +100,16 @@ api() { # api <method> <path> [json]
   fi
 }
 body() { "${COMPOSE[@]}" exec -T web cat /tmp/r.json 2>/dev/null; }
-sql()  { "${COMPOSE[@]}" exec -T db psql -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -tAc "$1" 2>/dev/null | tr -d '\r'; }
+# -q matters: without it psql prints the command tag ("INSERT 0 1") to stdout
+# alongside the RETURNING value, so `X=$(sql "insert ... returning id")` yields
+# two lines and every JSON body built from it is malformed. That produced a
+# 400 from the body parser which several assertions then read as the refusal
+# they were testing for — passing for entirely the wrong reason.
+sql()  { "${COMPOSE[@]}" exec -T db psql -q -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -tAc "$1" 2>/dev/null | tr -d '\r' | head -1; }
 # The same, but keeping stderr. Needed for every "the database must refuse this"
 # check: the quiet version sent the refusal to /dev/null, so the assertion could
 # never see the thing it existed to observe.
-sqlerr() { "${COMPOSE[@]}" exec -T db psql -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -tAc "$1" 2>&1 | tr -d '\r'; }
+sqlerr() { "${COMPOSE[@]}" exec -T db psql -q -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -tAc "$1" 2>&1 | tr -d '\r'; }
 has()  { body | grep -q "$1"; }
 
 step "waiting for readiness"
@@ -283,7 +288,14 @@ map_attempt() { api POST /api/storage/mappings \
 
 for bad_path in '../docs-private' '../../versions/outside' 'layoffs-legal-review/../../docs-private' '/etc'; do
   code=$(map_attempt "$bad_path")
-  [[ "$code" == "400" ]] && ok "traversal refused: $bad_path ($code)" || bad "$bad_path returned $code"
+  # A JSON body, not Express's HTML "Bad Request" page. An earlier run passed
+  # this check while the request was being rejected by the body parser, which
+  # proved nothing about containment.
+  if [[ "$code" == "400" ]] && body | grep -q '"error"'; then
+    ok "traversal refused by the application: $bad_path ($code)"
+  else
+    bad "$bad_path returned $code: $(body | head -3)"
+  fi
 done
 
 # The two that a string-only implementation gets wrong.
