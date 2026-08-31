@@ -83,6 +83,9 @@ services:
       MASTER_KEY_FILE: /run/secrets/josi_master_key
       APP_URL: ${JOSI_APP_URL:-http://localhost:8080}
       COOKIE_SECURE: ${JOSI_COOKIE_SECURE:-true}
+      # Where the built web bundle lives inside the image. The API serves it
+      # from its own origin; unset, the API runs headless.
+      WEB_DIR: /app/web
     secrets:
       - josi_master_key
       - josi_db_password

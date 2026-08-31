@@ -1,0 +1,105 @@
+// A small set of primitives, written rather than pulled in.
+//
+// The engine uses shadcn/Radix, which is excellent and is ~15 dependencies.
+// CE targets a Raspberry Pi and ships to strangers, so every dependency is
+// weight in the image and surface in the supply chain. These cover what the
+// nine pages actually use.
+//
+// The 44px rule lives HERE, in the components, not in each call site: an iOS
+// tap target smaller than 44x44 is the accessibility failure the acceptance
+// criteria name, and it is not something to remember page by page.
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
+import { cn } from '@/lib/cn';
+
+export function Button({
+  variant = 'primary', className, ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger' }) {
+  return (
+    <button
+      {...props}
+      className={cn(
+        // min-h-11 is 44px. Not negotiable and not overridable by a caller
+        // passing a smaller height, because it comes first in the class list.
+        'inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium',
+        'transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+        variant === 'primary' && 'bg-primary text-primary-foreground hover:opacity-90',
+        variant === 'secondary' && 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+        variant === 'ghost' && 'text-foreground hover:bg-secondary',
+        variant === 'danger' && 'bg-destructive text-destructive-foreground hover:opacity-90',
+        className,
+      )}
+    />
+  );
+}
+
+export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className={cn(
+        // text-base is load-bearing on iOS: anything smaller makes Safari zoom
+        // the page when the field takes focus, which reads as a layout bug.
+        'min-h-11 w-full min-w-0 rounded-md border border-input bg-background px-3 text-base',
+        'placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm',
+        className,
+      )}
+    />
+  );
+}
+
+export function Card({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <div className={cn('min-w-0 rounded-lg border border-border bg-card p-4', className)}>{children}</div>
+  );
+}
+
+export function CardTitle({ children }: { children: ReactNode }) {
+  return <h2 className="mb-1 text-base font-semibold tracking-tight">{children}</h2>;
+}
+
+export function Badge({
+  tone = 'muted', children,
+}: { tone?: 'muted' | 'primary' | 'danger' | 'ok'; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+        tone === 'muted' && 'bg-secondary text-secondary-foreground',
+        tone === 'primary' && 'bg-primary/20 text-primary',
+        tone === 'danger' && 'bg-destructive/20 text-destructive',
+        tone === 'ok' && 'bg-emerald-500/20 text-emerald-300',
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** An honest empty state. Says what would be here and why it is not, which is
+ * the difference between "nothing yet" and "something is broken". */
+export function Empty({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border p-6 text-center">
+      <p className="text-sm font-medium">{title}</p>
+      {children ? <p className="mx-auto mt-1 max-w-prose text-sm text-muted-foreground">{children}</p> : null}
+    </div>
+  );
+}
+
+export function ErrorNote({ children }: { children: ReactNode }) {
+  return <p role="alert" className="text-sm text-destructive">{children}</p>;
+}
+
+/** What a feature says when it is genuinely not built yet.
+ *
+ * Deliberately not a disabled button that looks pressable, and never a date.
+ * The acceptance criterion is "no placeholder presented as working", and the
+ * e2e suite asserts that pages carrying this contain no enabled action. */
+export function NotYet({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-border bg-secondary/40 p-4" data-not-built="true">
+      <p className="text-sm font-semibold">{title}</p>
+      <p className="mt-1 text-sm text-muted-foreground">{children}</p>
+    </div>
+  );
+}

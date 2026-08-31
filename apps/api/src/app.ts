@@ -16,6 +16,7 @@ import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
+import { mountWebApp } from './http/staticApp.js';
 
 export interface AppConfig {
   /** https in production; false lets cookies work over plain http locally. */
@@ -29,6 +30,8 @@ export interface AppConfig {
    * real model provider. Unset in production, where the real ones are used. */
   llmFetch?: typeof fetch;
   llmResolve?: (hostname: string) => Promise<string[]>;
+  /** Directory holding the built web bundle. Absent = API only. */
+  webDir?: string;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -87,5 +90,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   });
 
   app.use('/api', api);
+
+  // Last: the SPA and its security headers. Mounted after /api so an unknown
+  // endpoint still answers with the API's JSON 404 rather than an HTML page.
+  mountWebApp(app, { dir: cfg.webDir });
+
   return app;
 }

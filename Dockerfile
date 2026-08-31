@@ -24,12 +24,18 @@ COPY packages/llm/package.json packages/llm/
 COPY packages/agent/package.json packages/agent/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
+COPY apps/web/package.json apps/web/
 RUN npm ci --ignore-scripts
 
 COPY tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
 COPY apps ./apps
 RUN npx tsc -b
+
+# The web bundle. Built here rather than committed, so what ships is always
+# built from the source in this image — and the API serves it from its own
+# origin, which is why the app needs no cross-origin cookie story at all.
+RUN npm run build --workspace @josi-ce/web
 
 # Drop dev dependencies from what gets copied forward. Done here rather than in
 # the runtime stage so the runtime image never contains a package manager cache.
@@ -55,6 +61,8 @@ COPY --from=build --chown=root:root /app/node_modules ./node_modules
 COPY --from=build --chown=root:root /app/packages ./packages
 COPY --from=build --chown=root:root /app/apps ./apps
 COPY --from=build --chown=root:root /app/package.json ./package.json
+# The built SPA. `WEB_DIR` points the API at it; absent, the API serves no UI.
+COPY --from=build --chown=root:root /app/apps/web/dist ./web
 
 USER node
 

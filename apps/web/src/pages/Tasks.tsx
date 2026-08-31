@@ -1,0 +1,110 @@
+// Work Josi has taken on.
+import { useEffect, useState } from 'react';
+import { api, type Task, type TaskType } from '@/lib/api';
+import { Badge, Button, Card, Empty, ErrorNote, Input } from '@/components/ui';
+
+export function Tasks() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [types, setTypes] = useState<TaskType[]>([]);
+  const [templateKey, setTemplateKey] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = () =>
+    api.get<{ tasks: Task[] }>('/assistant/tasks').then((r) => setTasks(r.tasks)).catch(() => undefined);
+
+  useEffect(() => {
+    void load();
+    void api.get<{ types: TaskType[] }>('/assistant/task-types').then((r) => {
+      setTypes(r.types);
+      setTemplateKey(r.types[0]?.key ?? '');
+    }).catch(() => undefined);
+  }, []);
+
+  const selected = types.find((t) => t.key === templateKey);
+
+  async function create(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setBusy(true);
+    setError('');
+    const form = new FormData(event.currentTarget);
+    const slots: Record<string, string> = {};
+    for (const key of selected.contract.slots.required) slots[key] = String(form.get(key) ?? '');
+    try {
+      await api.post('/assistant/tasks', { templateKey, slots });
+      await load();
+      event.currentTarget.reset();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create that');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
+      <h1 className="text-xl font-semibold tracking-tight">Tasks</h1>
+
+      <Card>
+        <form onSubmit={create} className="space-y-3">
+          <label className="block text-sm font-medium" htmlFor="template">New task</label>
+          <select
+            id="template"
+            value={templateKey}
+            onChange={(e) => setTemplateKey(e.target.value)}
+            className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
+          >
+            {types.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}
+          </select>
+
+          {/* What this kind of work is still waiting on, stated before it is
+              created rather than discovered afterwards. */}
+          {selected?.requiresCapability ? (
+            <p className="text-sm text-muted-foreground">
+              Josi can prepare this, but nothing is connected to carry it out yet
+              ({selected.requiresCapability.replace(/_/g, ' ')}), so it will wait.
+            </p>
+          ) : null}
+
+          {selected?.contract.slots.required.map((slot) => (
+            <div key={slot}>
+              <label className="mb-1 block text-sm" htmlFor={`slot-${slot}`}>{slot.replace(/_/g, ' ')}</label>
+              <Input id={`slot-${slot}`} name={slot} required />
+            </div>
+          ))}
+
+          {error ? <ErrorNote>{error}</ErrorNote> : null}
+          <Button type="submit" disabled={busy || !selected}>{busy ? 'Creating…' : 'Create task'}</Button>
+        </form>
+      </Card>
+
+      {tasks.length === 0 ? (
+        <Empty title="No tasks yet">Ask Josi for something on the Talk page, or create one above.</Empty>
+      ) : (
+        <ul className="space-y-2">
+          {tasks.map((task) => (
+            <li key={task.id}>
+              <Card>
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-sm font-medium">{task.template_key.replace(/_/g, ' ')}</span>
+                  <Badge tone={task.state === 'ready' ? 'primary' : 'muted'}>{task.state}</Badge>
+                </div>
+                {Object.entries(task.slots).length ? (
+                  <dl className="mt-2 space-y-1 text-sm text-muted-foreground">
+                    {Object.entries(task.slots).map(([k, v]) => (
+                      <div key={k} className="flex min-w-0 gap-2">
+                        <dt className="shrink-0">{k.replace(/_/g, ' ')}:</dt>
+                        <dd className="min-w-0 break-words">{String(v)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : null}
+              </Card>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

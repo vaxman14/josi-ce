@@ -23,6 +23,7 @@ try {
 const app = createApp(db, {
   cookieSecure: (process.env.COOKIE_SECURE ?? 'true') === 'true',
   appUrl: (process.env.APP_URL ?? '').replace(/\/$/, '') || 'http://localhost:8080',
+  webDir: process.env.WEB_DIR,
 });
 
 const server = app.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));

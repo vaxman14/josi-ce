@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
+import { CONTENT_SECURITY_POLICY } from '../src/http/staticApp.js';
 
 const root = join(import.meta.dirname, '../../..');
 const compose = parse(readFileSync(join(root, 'docker-compose.yml'), 'utf8')) as any;
@@ -266,6 +267,65 @@ describe('the image can actually be built', () => {
       // one's manifest has to be present before the install.
       expect(beforeInstall, `${ws}/package.json is not COPYed before npm ci`)
         .toContain(`${ws}/package.json`);
+    }
+  });
+});
+
+describe('the web app ships with the image', () => {
+  it('builds the bundle in the image rather than trusting a committed one', () => {
+    // A committed dist is a build nobody can reproduce and a place for stale
+    // code to hide. It is built from the source in this image or not at all.
+    expect(dockerfile).toMatch(/npm run build --workspace @josi-ce\/web/);
+    expect(dockerfile).toMatch(/apps\/web\/dist \.\/web/);
+  });
+
+  it('points the API at the bundle', () => {
+    expect(compose.services.web.environment.WEB_DIR).toBe('/app/web');
+  });
+
+  it('loads nothing from a third-party origin', () => {
+    // The whole point of the CSP. The engine's page pulls fonts from Google;
+    // a self-hosted product doing that tells a third party the IP of everyone
+    // who opens it, and breaks air-gapped. This asserts the source, so a CDN
+    // link added later fails here rather than in someone's firewall log.
+    const html = readFileSync(join(root, 'apps/web/index.html'), 'utf8');
+    expect(html).not.toMatch(/https?:\/\//);
+    const css = readFileSync(join(root, 'apps/web/src/index.css'), 'utf8');
+    expect(css).not.toMatch(/@import\s+url\(|https?:\/\//);
+  });
+
+  it('sets a content security policy that forbids external origins', () => {
+    // Asserted against the real header value, not the source text: a directive
+    // is only worth what the browser receives.
+    const directives = new Map(
+      CONTENT_SECURITY_POLICY.split(';').map((d) => {
+        const [name, ...rest] = d.trim().split(/\s+/);
+        return [name, rest.join(' ')];
+      }),
+    );
+    expect(directives.get('default-src')).toBe("'self'");
+    expect(directives.get('script-src')).toBe("'self'");
+    expect(directives.get('connect-src')).toBe("'self'");
+    expect(directives.get('font-src')).toBe("'self'");
+    expect(directives.get('frame-ancestors')).toBe("'none'");
+    expect(directives.get('object-src')).toBe("'none'");
+    // No wildcard anywhere, and no inline-script exemption. `style-src` does
+    // carry 'unsafe-inline' — React sets a style attribute for the visual
+    // viewport height — but that still forbids an external stylesheet, which is
+    // the property this policy exists for.
+    expect(CONTENT_SECURITY_POLICY).not.toContain('*');
+    expect(directives.get('script-src')).not.toContain('unsafe-inline');
+    expect(directives.get('style-src')).toBe("'self' 'unsafe-inline'");
+  });
+
+  it('keeps the official brand assets byte-for-byte', () => {
+    // The identity was approved once and preserved as a master; CE must not
+    // regenerate or substitute it, and self-hosters may not replace it.
+    for (const asset of ['josi-mark.png', 'josi-wordmark.png']) {
+      const bytes = readFileSync(join(root, 'apps/web/public/brand', asset));
+      expect(bytes.length, asset).toBeGreaterThan(1000);
+      // PNG magic. A swapped-in placeholder of another format fails here.
+      expect(bytes.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
     }
   });
 });
