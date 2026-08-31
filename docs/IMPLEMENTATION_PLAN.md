@@ -431,6 +431,73 @@ explicitly accepted with a reason.
 
 ---
 
+## Phase 12 — Identity, memory, and constrained behaviour
+
+**Product doctrine:** *OpenClaw's soul, Apple's product discipline.* Josi CE
+must feel personal, continuous, and owned by the person using it without
+becoming an open-ended agent framework. The compiled CE core remains the final
+authority for security, privacy, ownership, approvals, tool permissions,
+auditing, and supported capabilities. No administrator setting, user setting,
+Markdown file, memory, or current request may weaken those invariants, create a
+new capability, or grant access.
+
+- Per-user `SOUL.md`: assistant name, identity, relationship, tone, humour,
+  communication style, and personal boundaries. Supply useful presets and a
+  live response preview, but allow a fully custom personality (map new).
+- Per-user `USER.md`: the person's self-description, preferences, names,
+  locale, working style, and other user-maintained context (map new).
+- Two constrained `AGENTS.md` layers: an installation policy controlled by the
+  administrator and a per-user workflow profile. These may tune only choices
+  the core explicitly exposes (proactivity, formatting, research behaviour,
+  escalation preferences, and supported-tool workflow); they are not raw
+  system-prompt extensions (map new).
+- Per-user `MEMORY.md`: curated durable facts, separate from conversation
+  history and from document/email recall. Users can view, add, edit, pin,
+  confirm, and truly delete memories (map new).
+- Optional automatic memory *suggestions* from conversations. The user chooses
+  manual approval or an explicitly enabled automatic mode. Never retain raw
+  passwords, tokens, payment data, or connected-source content by default.
+- Every memory records provenance, creation time, last confirmation, and
+  confidence. Revoking or deleting a source purges every derived memory while
+  leaving unrelated conversation history intact (map new; extends map 71).
+- Import/export all four portable Markdown files. The database is canonical so
+  container replacement and upgrades cannot erase them. Round trips preserve
+  content and versions (map new).
+- Imported Markdown is untrusted data parsed into bounded configuration, never
+  concatenated into an unrestricted privileged prompt. Reject unsupported
+  fields, enforce size limits, and make ignored instructions visible to the
+  user rather than silently pretending they applied (map new).
+- Prompt assembly order:
+  `immutable CE core → admin policy → user workflow policy → Soul/User context
+  → relevant retrieved memory → current request`. Only relevant memories enter
+  a turn; the whole memory file is not repeatedly stuffed into context.
+- Settings surfaces for Soul, About me, Working style, and Memory, including
+  version history, reset, import, export, and a precise explanation of what each
+  layer can and cannot change.
+- First-run personalization is optional and skippable. Defaults preserve the
+  current brief/direct personality and the assistant works before any profile
+  is created.
+- Backup, restore, export, retention, deletion, audit, and ownership isolation
+  cover all four profile types.
+
+**Acceptance:** two users on one installation receive demonstrably different
+personalities, workflow preferences, and memories without cross-user leakage;
+import/export is an exact round trip; restart, backup/restore, and upgrade retain
+all profiles; reset changes no conversations or unrelated memory; deleted memory
+cannot be recalled; a hostile profile attempting to disable approvals, expose a
+secret, access another user, invent a tool, or alter core policy has no effect
+and the invariant tests prove it.
+
+**Risk:** reproducing OpenClaw's unrestricted instruction-file semantics would
+turn personalization into privilege escalation. CE deliberately reproduces the
+personal *experience*, not the authority model.
+
+**Release position:** first post-0.1 product phase. Phase 11 closes and hardens
+the current 0.1 scope; Phase 12 then adds personalization as a separately tested
+feature rather than expanding the release boundary during hardening.
+
+---
+
 ## Resequenced 2026-08-30: "smallest secure runnable install" first
 
 Roman resequenced delivery to reach a working product sooner **without weakening
