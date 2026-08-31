@@ -371,6 +371,28 @@ leaves the file byte-identical.
 **Risk:** the highest-risk phase — extraction, OCR and watching all touch
 untrusted bytes. Each gets an explicit threat-model entry and a hostile fixture.
 
+**Status: security spine done; the machinery that touches real bytes is not.**
+730 tests, 97 mutations. Evidence: `docs/PHASE_9_EVIDENCE.md`.
+
+Built in four cycles, and the first was entirely about the GRANT rather than the
+parser — because a bad parser crashes and a bad grant quietly works. Containment
+is normalise → structural check → resolve symlinks → check again, tested against
+real symlinks including the sibling-prefix case (`docs-private` vs `docs`) where
+the common `startsWith` answer fails. The dual gate is asymmetric: there is no
+admin route into `createMapping`, so an administrator cannot map a folder for
+somebody else and then read it out of the index they also run.
+
+**Not built: parsers, OCR, a deployed ClamAV, cloud sync, filesystem watching,
+embeddings, recovery-copy writing, and the storage screens in the web UI.** The
+controls are in place and proven before anything is wired to them, which is the
+right order for this phase — but an installation running this code can map a
+folder and search nothing, because nothing fills the index. **No runtime
+verification on claw has been done for Phase 9.**
+
+Phase 1's append-only trigger refused the M73 retention sweep — the guard working
+as designed. Rather than a bypass flag, the trigger now permits deleting only
+rows already past the configured window.
+
 ---
 
 ## Phase 10 — Backup, export, updates, diagnostics
