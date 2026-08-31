@@ -23,6 +23,9 @@
       "path": "packages/storage"
     },
     {
+      "path": "packages/ops"
+    },
+    {
       "path": "apps/api"
     },
     {

@@ -15,6 +15,7 @@ import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
 import { storageRoutes } from './http/storageRoutes.js';
+import { opsRoutes } from './http/opsRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { setupGate } from './http/setupGate.js';
@@ -40,6 +41,14 @@ export interface AppConfig {
   mailTransport?: import('@josi-ce/mail').SmtpTransport;
   /** Directory holding the built web bundle. Absent = API only. */
   webDir?: string;
+  /** How backups are written. Absent = backups unavailable, which is honest on
+   * an installation with no volume for them rather than failing at write time. */
+  backupWriter?: import('@josi-ce/ops').BackupWriter;
+  /** Telemetry transport. Absent = nothing can be sent, whatever the setting. */
+  telemetrySender?: import('@josi-ce/ops').TelemetrySender;
+  /** M115: unset by default. CE ships no gateway URL and no credential. */
+  supportGatewayUrl?: string | null;
+  fetchLatestVersion?: () => Promise<string | null>;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -96,6 +105,13 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
   api.use('/storage', storageRoutes({ db }));
+  api.use('/ops', opsRoutes({
+    db,
+    backupWriter: cfg.backupWriter,
+    telemetrySender: cfg.telemetrySender,
+    supportGatewayUrl: cfg.supportGatewayUrl ?? null,
+    fetchLatestVersion: cfg.fetchLatestVersion,
+  }));
 
   api.use((_req, res) => res.status(404).json({ error: 'no such endpoint' }));
 
