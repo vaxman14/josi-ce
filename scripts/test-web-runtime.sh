@@ -223,7 +223,13 @@ step "running the browser suite (WebKit, touch emulation)"
 if ! command -v npx >/dev/null 2>&1; then
   bad "node/npx is not available on this host"
 else
-  npx --yes playwright@1.49.1 install webkit >/tmp/pw-install.log 2>&1 \
+  # `npx playwright install` downloads the BROWSER; it does not make the
+  # `playwright` package importable. The script needs both, so the workspace is
+  # installed first — playwright is a pinned devDependency, and `npm prune
+  # --omit=dev` in the Dockerfile keeps it out of the shipped image.
+  npm ci --no-audit --no-fund >/tmp/npm-ci.log 2>&1 \
+    && ok "workspace installed" || bad "npm ci failed: $(tail -3 /tmp/npm-ci.log)"
+  npx playwright install webkit >/tmp/pw-install.log 2>&1 \
     && ok "WebKit downloaded" || bad "could not install WebKit: $(tail -2 /tmp/pw-install.log)"
   if E2E_BASE="http://127.0.0.1:${JOSI_HTTP_PORT}" \
      E2E_ADMIN=owner E2E_ADMIN_PW="$ADMIN_PW" \

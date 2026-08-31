@@ -2,7 +2,7 @@
   "name": "josi-ce",
   "private": true,
   "version": "0.1.0",
-  "description": "Josi CE — self-hosted Community Edition. Created and published by SOCAL RECEPTIONIST LLC.",
+  "description": "Josi CE \u2014 self-hosted Community Edition. Created and published by SOCAL RECEPTIONIST LLC.",
   "license": "AGPL-3.0-or-later",
   "workspaces": [
     "packages/*",
@@ -12,7 +12,8 @@
     "build": "tsc -b",
     "test": "vitest run",
     "scan": "bash scripts/scan-secrets.sh",
-    "migrate": "node packages/db/migrate.mjs"
+    "migrate": "node packages/db/migrate.mjs",
+    "e2e": "node scripts/e2e-web.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.16",
@@ -20,7 +21,8 @@
     "@types/node": "^22.20.1",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.0",
+    "playwright": "1.49.1"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.0.2",
