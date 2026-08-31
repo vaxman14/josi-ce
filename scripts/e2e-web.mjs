@@ -48,7 +48,17 @@ const overflow = (page) =>
  * caught crash looks like a page that simply rendered nothing. */
 function watch(page) {
   const problems = [];
-  page.on('pageerror', (err) => problems.push(`uncaught: ${String(err).split('\n')[0].slice(0, 200)}`));
+  page.on('pageerror', (err) => {
+    const text = String(err).split('\n')[0];
+    // WebKit words a request cancelled by navigation as "cannot load … due to
+    // access control checks", which reads like a policy refusal and is not one.
+    // This suite walks ten pages back to back, so in-flight fetches are
+    // cancelled constantly. Ignoring it would be hand-waving on its own, so
+    // `testFetchesWork` below proves positively that same-origin fetches
+    // succeed and that the data they return is rendered.
+    if (/Fetch API cannot load .* due to access control checks/i.test(text)) return;
+    problems.push(`uncaught: ${text.slice(0, 200)}`);
+  });
   page.on('console', (msg) => {
     if (msg.type() !== 'error') return;
     const text = msg.text();
@@ -160,6 +170,56 @@ async function testWidths(browser) {
     } finally {
       await ctx.close();
     }
+  }
+}
+
+// --------------------------------------------------- the app's own fetches
+/** Proves the page can call its own API and render what comes back.
+ *
+ * This exists because the only evidence otherwise was the ABSENCE of an error,
+ * and WebKit's cancellation message made that evidence ambiguous. A created
+ * task appearing on the home page is unambiguous: the fetch was allowed by the
+ * CSP, it was authenticated by the cookie, and the result reached the DOM. */
+async function testFetchesWork(browser) {
+  step('The app can call its own API and show the result');
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  try {
+    await signIn(page, MEMBER);
+
+    // Created through the page's own origin, with its own cookie and CSRF
+    // pair — the same path the UI uses.
+    const created = await page.evaluate(async () => {
+      const csrf = /(?:^|;\s*)josi_csrf=([^;]+)/.exec(document.cookie);
+      const res = await fetch('/api/assistant/tasks', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrf ? { 'x-josi-csrf': decodeURIComponent(csrf[1]) } : {}),
+        },
+        body: JSON.stringify({
+          templateKey: 'follow_up',
+          slots: { what: 'e2e-fetch-proof', when: 'today' },
+        }),
+      });
+      return res.status;
+    });
+    record('a same-origin API call from the page succeeds', created === 201, `status ${created}`);
+
+    await page.goto(`${BASE}/app/tasks`, { waitUntil: 'networkidle' });
+    const shown = await page.getByText('e2e-fetch-proof').first().waitFor({ timeout: 15000 })
+      .then(() => true).catch(() => false);
+    record('what it created is fetched back and rendered', shown);
+
+    await page.goto(`${BASE}/app`, { waitUntil: 'networkidle' });
+    const onHome = await page.getByText(/follow up/i).first().waitFor({ timeout: 15000 })
+      .then(() => true).catch(() => false);
+    record('the home page renders data it fetched', onHome);
+  } catch (err) {
+    record('app fetches', false, String(err).split('\n')[0]);
+  } finally {
+    await ctx.close();
   }
 }
 
@@ -400,6 +460,7 @@ const browser = await webkit.launch();
 try {
   await testTouchSend(browser);
   await testWidths(browser);
+  await testFetchesWork(browser);
   await testTapTargets(browser);
   await testKeyboard(browser);
   await testNoExternalAndNoPlaceholders(browser);
