@@ -316,7 +316,11 @@ MAPPING=$(body | sed -n 's/.*"mapping":{"id":"\([0-9a-f-]*\)".*/\1/p')
 step "and starts read-only, unindexed, non-recursive — M47"
 row=$(sql "select may_create||','||may_edit||','||may_move||','||may_delete||','||indexing_enabled||','||recursive
            from folder_mappings where id = '$MAPPING'")
-[[ "$row" == "f,f,f,f,f,f" ]] && ok "every permission starts off ($row)" || bad "started as $row"
+# `boolean || text` renders as false/true, not the f/t psql shows for a bare
+# boolean column. The first version of this compared against f,f,f,f,f,f and
+# failed on a mapping that was in fact correct.
+[[ "$row" == "false,false,false,false,false,false" ]] \
+  && ok "every permission starts off ($row)" || bad "started as '$row'"
 
 step "the consent sentence says what recursive really means — M50"
 code=$(api POST /api/storage/consent-preview \
@@ -491,20 +495,34 @@ code=$(api PUT /api/storage/admin/policy '{"historyMode":"two","historyKind":"re
 if body | grep -q 'NOT encrypted by Josi'; then ok "and says so plainly"; else bad "no encryption statement: $(body)"; fi
 
 step "a recovery copy cannot be stored outside Josi's own volume — M60"
-if sqlerr "insert into document_versions (document_id, owner_user_id, ordinal, content_hash, kind, stored_path)
-           values ('$DOC2', '$ALICE_ID', 1, 'h', 'recovery_copy', '/data/roots/docs/leak.bin')" | grep -qi 'violates'; then
-  ok "the database refuses it"
-else bad "a recovery copy was accepted into a mapped folder"; fi
+n=$(sql "select count(*) from documents where id = '$DOC2'")
+[[ "$n" == "1" ]] && ok "a document exists to attach a version to" \
+  || bad "no document to test with (DOC2='$DOC2')"
+
+out=$(sqlerr "insert into document_versions (document_id, owner_user_id, ordinal, content_hash, kind, stored_path)
+              values ('$DOC2', '$ALICE_ID', 1, 'h', 'recovery_copy', '/data/roots/docs/leak.bin')")
+if echo "$out" | grep -qi 'version_stored_inside_josi'; then
+  ok "the database refuses it, by name"
+else bad "a recovery copy was accepted into a mapped folder: '$(echo "$out" | head -2)'"; fi
 
 step "audit retention deletes only past the window — M73"
-sql "insert into events (actor, kind, payload, created_at)
-     values ('system','runtime.old','{}', now() - interval '400 days'),
-            ('system','runtime.new','{}', now())" >/dev/null
-if sqlerr "delete from events where kind = 'runtime.new'" | grep -qi 'append-only'; then
+sqlerr "insert into events (actor, kind, payload, created_at)
+        values ('system','runtime.old','{}'::jsonb, now() - interval '400 days'),
+               ('system','runtime.new','{}'::jsonb, now())" >/tmp/ev.log 2>&1
+n=$(sql "select count(*) from events where kind like 'runtime.%'")
+# A delete that matches nothing raises nothing, so both assertions below would
+# pass for the wrong reason if the rows were missing. Establish they exist.
+[[ "$n" == "2" ]] && ok "two audit entries exist to test with" \
+  || bad "expected 2 audit rows, found '$n': $(head -3 /tmp/ev.log)"
+
+out=$(sqlerr "delete from events where kind = 'runtime.new'")
+if echo "$out" | grep -qi 'append-only'; then
   ok "a recent entry cannot be deleted"
-else bad "a recent audit entry was deletable"; fi
-if sqlerr "delete from events where kind = 'runtime.old'" | grep -qi 'append-only'; then
-  bad "retention could not remove an aged entry"
+else bad "a recent audit entry was deletable: '$(echo "$out" | head -2)'"; fi
+
+out=$(sqlerr "delete from events where kind = 'runtime.old'")
+if echo "$out" | grep -qi 'append-only'; then
+  bad "retention could not remove an aged entry: '$(echo "$out" | head -2)'"
 else ok "an aged entry can be removed"; fi
 
 step "unmapping purges everything derived — M54"
