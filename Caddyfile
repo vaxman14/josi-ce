@@ -5,8 +5,9 @@
 # Let's Encrypt cannot issue for a name it cannot resolve — an install that
 # tried would sit in a retry loop instead of coming up.
 #
-# Operators terminating TLS elsewhere should run with COMPOSE_PROFILES=noproxy
-# and point their own proxy at the `web` service on port 8080.
+# Operators terminating TLS elsewhere use the override file instead:
+#   docker compose -f docker-compose.yml -f docker-compose.noproxy.yml \
+#     up -d --scale caddy=0
 
 {
 	admin 127.0.0.1:2019

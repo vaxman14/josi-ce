@@ -37,6 +37,23 @@ describe('optional components are inert unless asked for', () => {
     expect(service('clamav').profiles).toEqual(['clamav']);
   });
 
+  it('does not put a required service behind a profile', () => {
+    // Compose treats the active profile set as a whole: naming any profile
+    // deactivates the empty one. Caddy previously carried profiles ["",
+    // "default"], so `docker compose --profile ocr up -d` — the documented way
+    // to enable OCR — silently dropped the reverse proxy and took HTTPS
+    // offline. A required service must have no `profiles` key at all.
+    for (const name of ['web', 'worker', 'db', 'caddy', 'migrate']) {
+      expect(service(name).profiles, `${name} must not be profile-gated`).toBeUndefined();
+    }
+  });
+
+  it('offers bring-your-own-proxy as an override rather than a profile', () => {
+    const override = parse(readFileSync(join(root, 'docker-compose.noproxy.yml'), 'utf8')) as any;
+    // The override publishes web directly, since Caddy is scaled to zero.
+    expect(override.services.web.ports).toBeDefined();
+  });
+
   it('does not list them as dependencies of anything that starts by default', () => {
     for (const name of ['web', 'worker', 'db', 'caddy', 'migrate']) {
       const deps = Object.keys(service(name).depends_on ?? {});

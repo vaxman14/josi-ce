@@ -3,7 +3,8 @@
 #   docker compose up -d                      web/API, worker, PostgreSQL, Caddy
 #   docker compose --profile ocr up -d        ...plus OCR
 #   docker compose --profile clamav up -d     ...plus ClamAV
-#   COMPOSE_PROFILES=noproxy docker compose up -d   bring your own reverse proxy
+#   docker compose -f docker-compose.yml -f docker-compose.noproxy.yml up -d --scale caddy=0
+#                                             bring your own reverse proxy
 #
 # OCR and ClamAV are behind profiles rather than a config flag because a profile
 # that is not selected is not created at all: no container, no image pull, no
@@ -147,12 +148,22 @@ services:
       - /tmp:size=64m,mode=1777
 
   # --------------------------------------------------------------------- Caddy
-  # Automatic HTTPS for a real domain. Operators who terminate TLS themselves
-  # run with COMPOSE_PROFILES=noproxy and publish `web` directly.
+  # Automatic HTTPS for a real domain.
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    profiles: ["", "default"]
+    # NO `profiles:` here, deliberately.
+    #
+    # It previously carried profiles: ["", "default"] to allow a bring-your-own
+    # -proxy mode. That worked for `COMPOSE_PROFILES=noproxy`, but Compose
+    # treats the active profile set as a whole: naming ANY profile deactivates
+    # the empty one. So `docker compose --profile ocr up -d` — the exact command
+    # in the docs for enabling OCR — silently dropped Caddy and took HTTPS
+    # offline. Enabling a background worker must not remove the reverse proxy.
+    #
+    # Caddy now always starts. BYO-proxy operators use the override file:
+    #   docker compose -f docker-compose.yml -f docker-compose.noproxy.yml \
+    #     up -d --scale caddy=0
     ports:
       - "${JOSI_HTTP_PORT:-80}:80"
       - "${JOSI_HTTPS_PORT:-443}:443"
