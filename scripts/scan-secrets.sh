@@ -43,7 +43,11 @@ FORBIDDEN_REGEX=(
   'github_pat_[A-Za-z0-9_]{50,}'
   'BEGIN [A-Z ]*PRIVATE KEY'                    # PEM
   'eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}' # JWT (cloudflared tokens etc.)
-  'postgres(ql)?://[^ "'"'"'`]*:[^ "'"'"'`]*@'  # DSN with an inline password
+  # A DSN carrying an inline password. The username part is restricted to plain
+  # identifier characters so that shell interpolation — postgresql://${PGUSER:-josi}@db,
+  # whose ":-" default syntax looks like a user:password pair — is not a match.
+  # A real credential still is: postgresql://user:hunter2@host.
+  'postgres(ql)?://[A-Za-z0-9._%+-]+:[^@/ "'"'"'`]{3,}@'
   '[0-9a-f]{32}-us[0-9]{1,2}'                   # Mailchimp-style
 )
 

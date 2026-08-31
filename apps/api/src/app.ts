@@ -6,7 +6,7 @@
 // user) but before any handler, so no state-changing code path can be reached
 // without a matching token.
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
-import type { Db } from '@josi-ce/core';
+import { checkReadiness, type Db, type LoadOptions } from '@josi-ce/core';
 import { attachUser } from './http/authz.js';
 import { requireCsrf } from './http/cookies.js';
 import { authRoutes } from './http/authRoutes.js';
@@ -18,6 +18,9 @@ export interface AppConfig {
   cookieSecure: boolean;
   /** Public origin, used for invite/reset links. */
   appUrl: string;
+  /** Master-key options for the readiness probe, or `false` to skip the check
+   * (tests, and the migration container which runs before a key exists). */
+  masterKeyCheck?: LoadOptions | false;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -28,21 +31,21 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   app.use(express.json({ limit: '1mb' }));
   app.disable('x-powered-by');
 
-  // Liveness: is the process up. Deliberately no database call — a health check
-  // that fails when the database blips causes restarts that make it worse.
+  // Liveness: is this process up. Deliberately consults nothing — a health
+  // check that fails when the database blips gets a healthy process restarted,
+  // which makes the outage worse.
   app.get('/health', (_req, res) => {
+    res.set('Cache-Control', 'no-store');
     res.json({ ok: true, service: 'josi-ce' });
   });
 
-  // Readiness: may this instance serve traffic. Database reachable and migrated.
+  // Readiness: may this instance take traffic. Names coarse subsystems and
+  // nothing else — no hostnames, ports, versions, paths or database error text.
   app.get('/ready', (_req, res) => {
     void (async () => {
-      try {
-        await db.query(`select 1 from workspace limit 1`);
-        res.json({ ready: true });
-      } catch {
-        res.status(503).json({ ready: false, reason: 'database not ready or not migrated' });
-      }
+      const result = await checkReadiness(db, { masterKey: cfg.masterKeyCheck });
+      res.set('Cache-Control', 'no-store');
+      res.status(result.ready ? 200 : 503).json(result);
     })();
   });
 

@@ -1,0 +1,35 @@
+# Josi CE reverse proxy.
+#
+# With a real domain in JOSI_DOMAIN, Caddy obtains and renews a certificate
+# automatically. With the default `localhost` it serves plain HTTP, because
+# Let's Encrypt cannot issue for a name it cannot resolve — an install that
+# tried would sit in a retry loop instead of coming up.
+#
+# Operators terminating TLS elsewhere should run with COMPOSE_PROFILES=noproxy
+# and point their own proxy at the `web` service on port 8080.
+
+{
+	# An email enables certificate expiry notices. Left unset, Caddy still
+	# issues; it just cannot warn anyone.
+	email {$JOSI_ACME_EMAIL}
+	admin 127.0.0.1:2019
+}
+
+{$JOSI_DOMAIN} {
+	encode zstd gzip
+
+	# Josi is a private workspace tool; there is nothing here for a crawler.
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Robots-Tag "noindex, nofollow"
+	}
+
+	# Health and readiness stay reachable so an external monitor can see them.
+	reverse_proxy web:8080 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
