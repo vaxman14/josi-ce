@@ -107,7 +107,7 @@ recognisable headers would still get 5 replies per 10-minute window.
 **Retention has not been observed over real time.** `runRetention` is tested by
 back-dating rows, not by waiting 30 days.
 
-## Two defects worth recording
+## Four defects worth recording
 
 **The double-hash.** The route passed a message *fingerprint* as an approval
 payload, and `requestApproval` hashes whatever it is given — so the stored hash
