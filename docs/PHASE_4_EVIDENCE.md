@@ -159,13 +159,139 @@ interrupted run restores its sources instead of leaving them mutated.
 
 ## Runtime verification
 
-RUNTIME_PLACEHOLDER
+```
+$ JOSI_HTTP_PORT=8392 JOSI_HTTPS_PORT=8555 PROJECT=josi-ce-phase4 \
+    bash scripts/test-llm-runtime.sh          # on claw, at 94963a5
+```
+
+A disposable stub container on the app's own Docker network plays a self-hosted
+runtime — reachable as `fakemodel`, exactly as an `ollama` service would be. No
+hosted provider was contacted.
+
+```
+== bringing the stack up                     PASS  compose up
+== waiting for readiness                     PASS  /health responds
+== starting a stub self-hosted runtime       PASS  stub started
+== driving the wizard                        PASS  all steps accepted; setup completed
+== signing in as the owner                   PASS
+
+== a model is not usable until it has been probed
+  PASS  the configured provider is inactive
+  PASS  activated_at is null in PostgreSQL
+  PASS  members are told Josi is not ready
+  PASS  every feature is disabled with an honest reason
+
+== probing against the stub runtime
+  PASS  probe ran (200)
+  PASS  chat / tool calling / structured output observed
+  PASS  no feature is disabled
+  PASS  capabilities persisted to PostgreSQL
+  PASS  members are now told Josi is ready
+
+== the probe recorded usage, and no prompt or reply with it
+  PASS  usage recorded for each probe step (4 rows)
+  PASS  self-hosted calls carry no provider charge
+  PASS  recorded cost is 0
+  PASS  llm_usage has nowhere to put a prompt or a reply
+
+== cloud metadata is refused as an endpoint, in the real container
+  PASS  metadata endpoint refused (400)
+  PASS  IPv6 metadata endpoint refused (400)
+
+== a self-hosted endpoint on the container network is allowed
+  PASS  the stub runtime is accepted (200)
+  PASS  reconfiguring cleared the previous probe
+
+== Local-only mode refuses a hosted provider server-side
+  PASS  Local-only turned on; recorded in PostgreSQL
+  PASS  a hosted provider is refused (409)
+  PASS  nothing hosted was written
+  PASS  the refused key was not stored
+  PASS  the self-hosted model can still be probed
+
+== turning Local-only off, then storing a hosted key
+  PASS  hosted fallback accepted once Local-only is off
+  PASS  the key is sealed ciphertext in PostgreSQL
+  PASS  the plaintext key is absent from the column
+  PASS  the config endpoint returns neither key nor ciphertext
+  PASS  a hosted provider without acknowledgment is refused (400)
+
+== caps stop work at 100%, in the real database
+  PASS  the cap reports blocked once the probe's own tokens exceeded it
+  PASS  the probe itself is exempt from the cap
+  PASS  a zero cap is refused rather than read as unlimited
+
+== subscription options                      PASS  none available; reason stated honestly
+== a member cannot administer the model      PASS  403; status names neither provider nor model
+== no secret in any container log            PASS
+== no hosted provider was contacted          PASS
+
+47 passed, 0 failed
+```
+
+Host left as found: 25 containers before and after, zero `josi-ce-phase4`
+containers, volumes or networks remaining.
+
+### The first attempt failed, and that mattered twice
+
+Run 1 died at `docker build` — `cannot find module @josi-ce/llm`. The new
+workspace was never added to the Dockerfile's dependency layer, and npm creates
+a workspace's `node_modules` symlink only when its `package.json` exists at
+`npm ci` time.
+
+**`npm run build` had passed locally the entire time**, against a tree where
+`npm install` had already made that symlink. An incremental local build is not a
+clean build. `apps/api/test/packaging.test.ts` now derives the workspace list
+from `package.json` and asserts each is copied before `npm ci` — and immediately
+found a second instance, `apps/worker`, which had not broken anything only
+because nothing imports it.
+
+The second lesson was about the harness. Run 1 reported **"6 passed, 47 failed"**
+— and all 6 passes were worthless: *"no secret appears in any container log"* is
+trivially true when there are no logs, and *"no hosted provider was contacted"*
+is trivially true when nothing ran. The script now aborts at `compose up` and at
+the health check. Same failure mode as Phase 2's Caddy test, in a new place.
 
 ---
 
 ## Proven / unproven
 
-PROVEN_PLACEHOLDER
+### Proven
+
+| Requirement | Where |
+|---|---|
+| M84 — self-hosted via an OpenAI-compatible endpoint | Runtime: a stub runtime on the container network was configured, probed and used |
+| M85 — primary + optional explicit fallback | Unit: not used when absent, not activated, or when the failure was a bad key; used on a retryable failure |
+| M86 — probe chat, structured output, tool calling, context | Unit: 4 ordered steps, chat fatal; structured output judged by parsing the reply; **runtime**: capabilities persisted to PostgreSQL |
+| M86 — unsupported capability disables dependent features | Unit: missing tool calling disables exactly calendar/email/document, each with a reason; **runtime**: `disabledFeatures: []` only after a passing probe |
+| M87 — installation-wide + per-user caps, 50/80/100% | Unit: each threshold; worst-of-both governs; **runtime**: blocked in real PostgreSQL |
+| M87 — hard stop at 100% | Unit: the call is refused before the provider is contacted (`calls === 0`) |
+| M88 — reported vs labelled estimates | Unit: three sources never blended; no `totalCostUsd` field; DB constraint |
+| M88 — self-hosted `$0 provider charge`, hardware excluded | Unit + **runtime**: `cost_source = none`, cost 0, note names the exclusion |
+| M89 — external acknowledgment required | Unit: refused at save and at call time; **runtime**: 400 |
+| M90 — Local-only enforced at the API layer | Unit: refused in `buildProvider`, including via the fallback path; **runtime**: 409, nothing written, key not stored |
+| M83 — subscription options disabled with an honest reason | Unit + **runtime**: every option `available: false`; naming one as a provider is 400 |
+| SSRF — metadata blocked, self-hosted allowed | Unit: 4 metadata cases incl. v4-mapped v6, 6 loopback/private allowed; **runtime**: 400 for v4 and v6 metadata, 200 for the container endpoint |
+| SSRF — no redirects, request-time re-validation | Unit: `redirect: 'manual'` asserted, 3xx refused, DNS that changes after save is caught |
+| Keys sealed, never returned | Unit + **runtime**: `v1.` ciphertext in PostgreSQL, plaintext absent, neither key nor ciphertext in any response |
+| No prompt or reply is stored | Unit + **runtime**: `llm_usage` has no column that could hold one |
+| A member sees capability, not configuration | Unit + **runtime**: 403 on admin routes; status names neither provider nor model; own usage only |
+| No secret in logs | **Runtime**: all container logs grepped |
+| Phase 1–3 tests unmodified and green | 223/223 |
+
+### Unproven — deliberately out of Phase 4
+
+| Claim | Why |
+|---|---|
+| Any hosted provider actually works | **No hosted provider was contacted, by design.** The adapters are asserted against recorded response shapes, not against OpenAI, Anthropic or xAI. First real contact is an operator's own key. |
+| Real context-window sizes | The probe asks whether ~8000 tokens survives a round trip — a "will Josi function" check, not a measurement. `contextTokens` is that floor, not a discovered maximum. |
+| Price accuracy | `llm_prices` ships empty and is operator-maintained. This is exactly why estimates are labelled and the note says the invoice is the real figure. |
+| Fallback under genuine provider failure | Proven against stubbed 503/401, not against a real provider outage. |
+| Cap behaviour across a month boundary | Unit-tested by back-dating rows; no clock was advanced in a running installation. |
+| Assistant features that consume these capabilities | Phase 5. Phase 4 delivers the provider layer and the gates; nothing calls a model in anger yet. |
+| The admin UI for any of this | Phase 6. Phase 4 is API only. |
+
+Nothing above is claimed as tested.
 
 ---
 

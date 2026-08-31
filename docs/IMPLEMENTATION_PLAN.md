@@ -151,6 +151,17 @@ subscription option renders disabled with an honest explanation.
 **Risk:** SSRF via the self-hosted base URL → allowlist scheme/port, block
 link-local/loopback/metadata ranges, no redirects.
 
+**Status: done.** 65 tests, 21/21 mutations caught, 47/47 runtime checks on a
+real stack. See `PHASE_4_EVIDENCE.md`.
+
+**Amended during the phase — SSRF.** "Block loopback" and M84's "cover Ollama,
+vLLM, LM Studio" cannot both hold: those runtimes live on loopback and private
+addresses. Only the super admin can set this value, and they already administer
+the host, so the classic SSRF threat is absent. Cloud metadata is blocked on
+every resolved address, redirects are never followed, and addresses are
+re-validated at request time; loopback and LAN are allowed. Both directions are
+tested.
+
 ---
 
 ## Phase 5 — Assistant core
