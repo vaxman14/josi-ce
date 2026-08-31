@@ -322,6 +322,33 @@ done
 api GET /api/mail/threads >/dev/null
 if has "$SUBJECT"; then bad "her subject appears in his list"; else ok "his list is clean"; fi
 
+step "alice shares the thread with bob — M37"
+SESSION="$ALICE_SESSION"
+BOB_ID=$(sql "select id from users where username = 'bob'")
+code=$(api POST "/api/mail/threads/$THREAD/share" "{\"userId\":\"$BOB_ID\"}")
+[[ "$code" == "200" ]] && ok "share accepted ($code)" || bad "share returned $code: $(body)"
+
+SESSION="$BOB_SESSION"
+code=$(api GET "/api/mail/threads/$THREAD")
+[[ "$code" == "200" ]] && ok "bob can now read it" || bad "read returned $code"
+code=$(api POST "/api/mail/threads/$THREAD/send" \
+  "{\"to\":[\"client@example.test\"],\"subject\":\"$SUBJECT\",\"body\":\"from bob\"}")
+[[ "$code" == "404" ]] && ok "but a read-only share cannot send ($code)" || bad "send returned $code"
+
+step "and bob cannot pass that access on"
+code=$(api POST "/api/mail/threads/$THREAD/share" '{"workspace":true}')
+[[ "$code" == "404" ]] && ok "sharing onward is refused ($code)" || bad "returned $code"
+n=$(sql "select count(*) from resource_shares where resource_id = '$THREAD' and shared_with_workspace = true")
+[[ "$n" == "0" ]] && ok "and no workspace share exists" || bad "a workspace share was created"
+
+step "alice takes it back"
+SESSION="$ALICE_SESSION"
+code=$(api DELETE "/api/mail/threads/$THREAD/share" "{\"userId\":\"$BOB_ID\"}")
+[[ "$code" == "200" ]] && ok "unshared ($code)" || bad "returned $code"
+SESSION="$BOB_SESSION"
+code=$(api GET "/api/mail/threads/$THREAD")
+[[ "$code" == "404" ]] && ok "bob is back to 404" || bad "returned $code"
+
 step "the SUPER ADMIN sees delivery metadata and no content — M38"
 SESSION="$ADMIN_SESSION"
 code=$(api GET "/api/mail/threads/$THREAD")

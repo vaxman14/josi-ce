@@ -11,6 +11,7 @@
 import { Router, type Request, type Response } from 'express';
 import {
   appendEvent, canWrite, decideApproval, loadMasterKey, requestApproval, resolveAccess,
+  shareResource, unshareResource,
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
@@ -131,6 +132,93 @@ export function mailRoutes(ctx: MailRoutesCtx): Router {
         [threadId],
       );
       return res.json({ thread, messages, participants });
+    }),
+  );
+
+  /** M37: a colleague sees a thread only after its owner says so.
+   *
+   * Enforcement alone was not enough. The ownership spine has honoured shares
+   * since Phase 1 and every mail route already asks it, but nothing reachable
+   * over HTTP could ever CREATE one — so "visible only to the owner unless
+   * shared" was true in the sense that sharing was impossible. This is the
+   * other half.
+   *
+   * Read-only by default. `canWrite` is opt-in because writing on a thread
+   * means sending mail under the OWNER's name, which is a different thing to
+   * agree to than letting someone read along.
+   */
+  r.post(
+    '/threads/:id/share',
+    requireOwnership({ db }, { type: 'email_thread', need: 'owner' }),
+    handle(async (req, res) => {
+      const threadId = param(req, 'id');
+      const withUserId = str(req.body?.userId, 64);
+      const withWorkspace = req.body?.workspace === true;
+      if (!withUserId && !withWorkspace) {
+        throw new RouteError(400, 'name a colleague to share with, or share with the workspace');
+      }
+      if (withUserId && withUserId === req.user!.id) {
+        throw new RouteError(400, 'that thread is already yours');
+      }
+      if (withUserId) {
+        const [target] = await db.query<{ id: string }>(
+          `select id from users where id = $1 and status = 'active'`,
+          [withUserId],
+        );
+        if (!target) throw new RouteError(404, 'no such colleague');
+      }
+
+      const canWriteShare = req.body?.canWrite === true;
+      await shareResource(db, {
+        type: 'email_thread',
+        resourceId: threadId,
+        ownerUserId: req.user!.id,
+        withUserId: withUserId || null,
+        withWorkspace,
+        canWrite: canWriteShare,
+      });
+      await appendEvent(db, {
+        actorUserId: req.user!.id,
+        actor: 'user',
+        kind: 'mail.thread_shared',
+        subjectType: 'email_thread',
+        subjectId: threadId,
+        // Who it went to and how much. Never the subject.
+        payload: { workspace: withWorkspace, canWrite: canWriteShare },
+      });
+      // Said plainly, because the two are very different promises and the
+      // workspace case is the one people misjudge.
+      const who = withWorkspace ? 'Everyone in this workspace' : 'They';
+      return res.json({
+        shared: true,
+        canWrite: canWriteShare,
+        notice: canWriteShare
+          ? `${who} can read this thread and send on it under your name.`
+          : `${who} can read this thread. ${withWorkspace ? 'They' : 'They'} cannot send on it.`,
+      });
+    }),
+  );
+
+  r.delete(
+    '/threads/:id/share',
+    requireOwnership({ db }, { type: 'email_thread', need: 'owner' }),
+    handle(async (req, res) => {
+      const threadId = param(req, 'id');
+      await unshareResource(db, {
+        type: 'email_thread',
+        resourceId: threadId,
+        withUserId: str(req.body?.userId, 64) || null,
+        withWorkspace: req.body?.workspace === true,
+      });
+      await appendEvent(db, {
+        actorUserId: req.user!.id,
+        actor: 'user',
+        kind: 'mail.thread_unshared',
+        subjectType: 'email_thread',
+        subjectId: threadId,
+        payload: { workspace: req.body?.workspace === true },
+      });
+      return res.json({ shared: false });
     }),
   );
 

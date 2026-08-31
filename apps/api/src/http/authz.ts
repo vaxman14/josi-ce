@@ -2,7 +2,7 @@
 // nothing here trusts the client for anything except the session cookie.
 import type { NextFunction, Request, Response } from 'express';
 import {
-  canRead, canWrite, resolveAccess,
+  canRead, canShare, canWrite, resolveAccess,
   type Accessor, type Db, type ResourceType,
 } from '@josi-ce/core';
 import { resolveSession, type SessionUser } from '@josi-ce/auth';
@@ -80,8 +80,11 @@ export interface OwnershipOptions {
   type: ResourceType;
   /** Route param holding the resource id. */
   param?: string;
-  /** Minimum access required. Reads accept a share; writes need write or owner. */
-  need?: 'read' | 'write';
+  /** Minimum access required. Reads accept a share; writes need write or owner;
+   * `owner` accepts nothing less, and is for decisions only the owner may make
+   * — chiefly handing access to somebody else. A colleague with write access
+   * must not be able to widen that access further. */
+  need?: 'read' | 'write' | 'owner';
 }
 
 /** Guards a private resource.
@@ -105,7 +108,9 @@ export function requireOwnership(ctx: HttpCtx, opts: OwnershipOptions) {
       accessor: accessorOf(req.user),
     });
 
-    const permitted = need === 'write' ? canWrite(decision.level) : canRead(decision.level);
+    const permitted = need === 'owner' ? canShare(decision.level)
+      : need === 'write' ? canWrite(decision.level)
+      : canRead(decision.level);
     if (!permitted) {
       res.status(404).json({ error: 'not found' });
       return;

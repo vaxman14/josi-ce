@@ -116,6 +116,7 @@ afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); 
 
 beforeEach(async () => {
   sent = [];
+  await db.query(`delete from resource_shares`);
   await db.query(`delete from approvals`);
   await db.query(`delete from email_quarantine`);
   await db.query(`delete from email_threads`);
@@ -322,13 +323,18 @@ describe('threads belong to the person who started them — M37', () => {
     expect(res.body.threads).toHaveLength(0);
   });
 
+  // Through the ROUTE, not a hand-written row. The earlier version of this test
+  // inserted into `resource_shares` directly, which is the same shortcut that
+  // let the approval double-hash ship: it proved the guard reads shares, and
+  // proved nothing about whether a share could ever be created.
+  const share = (id: string, who: 'alice' | 'bob' | 'admin', body: Record<string, unknown>) =>
+    call(`/api/mail/threads/${id}/share`, { method: 'POST', jar: cookies[who], body });
+
   it('become readable after an explicit share, but still not sendable-as', async () => {
     const t = await newThread('alice');
-    await db.query(
-      `insert into resource_shares (resource_type, resource_id, owner_user_id, shared_with_user_id, can_write)
-       values ('email_thread', $1, $2, $3, true)`,
-      [t.id, ids.alice, ids.bob],
-    );
+    const res = await share(t.id, 'alice', { userId: ids.bob, canWrite: true });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
     const read = await call(`/api/mail/threads/${t.id}`, { jar: cookies.bob });
     expect(read.status).toBe(200);
 
@@ -336,6 +342,79 @@ describe('threads belong to the person who started them — M37', () => {
     // Alice, because it is her thread and her name on it.
     await call(`/api/mail/threads/${t.id}/send`, { method: 'POST', jar: cookies.bob, body: sendBody() });
     expect(sent[0].from).toBe('Alice Smith via Josi <josi@example.test>');
+  });
+
+  it('a read-only share cannot send', async () => {
+    const t = await newThread('alice');
+    await share(t.id, 'alice', { userId: ids.bob });
+
+    expect((await call(`/api/mail/threads/${t.id}`, { jar: cookies.bob })).status).toBe(200);
+    const send = await call(`/api/mail/threads/${t.id}/send`, {
+      method: 'POST', jar: cookies.bob, body: sendBody(),
+    });
+    expect(send.status).toBe(404);
+    expect(sent).toHaveLength(0);
+  });
+
+  // The one that matters: access does not compound. Someone Alice trusted to
+  // help cannot decide who else gets to read her mail.
+  it('a colleague with write access cannot share it onward', async () => {
+    const t = await newThread('alice');
+    await share(t.id, 'alice', { userId: ids.bob, canWrite: true });
+
+    const onward = await share(t.id, 'bob', { workspace: true });
+    expect(onward.status).toBe(404);
+
+    const rows = await db.query(
+      `select count(*)::int as n from resource_shares
+       where resource_id = $1 and shared_with_workspace = true`,
+      [t.id],
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
+  it('the administrator cannot share someone else\'s thread', async () => {
+    const t = await newThread('alice');
+    const res = await share(t.id, 'admin', { userId: ids.bob });
+    expect(res.status).toBe(404);
+    expect((await call(`/api/mail/threads/${t.id}`, { jar: cookies.bob })).status).toBe(404);
+  });
+
+  it('unsharing takes the access back', async () => {
+    const t = await newThread('alice');
+    await share(t.id, 'alice', { userId: ids.bob });
+    expect((await call(`/api/mail/threads/${t.id}`, { jar: cookies.bob })).status).toBe(200);
+
+    const res = await call(`/api/mail/threads/${t.id}/share`, {
+      method: 'DELETE', jar: cookies.alice, body: { userId: ids.bob },
+    });
+    expect(res.status).toBe(200);
+    expect((await call(`/api/mail/threads/${t.id}`, { jar: cookies.bob })).status).toBe(404);
+  });
+
+  it('refuses a share with nobody, with a stranger, or with yourself', async () => {
+    const t = await newThread('alice');
+    expect((await share(t.id, 'alice', {})).status).toBe(400);
+    expect((await share(t.id, 'alice', { userId: ids.alice })).status).toBe(400);
+    expect(
+      (await share(t.id, 'alice', { userId: '00000000-0000-4000-8000-000000000000' })).status,
+    ).toBe(404);
+  });
+
+  it('says plainly what a workspace share means, and does not leak the subject', async () => {
+    const t = await newThread('alice');
+    const res = await share(t.id, 'alice', { workspace: true });
+    expect(res.body.notice).toContain('Everyone in this workspace');
+    expect(res.body.notice).toContain('cannot send on it');
+    expect((await call(`/api/mail/threads/${t.id}`, { jar: cookies.bob })).status).toBe(200);
+
+    const events = await db.query(
+      `select payload::text as p from events
+       where kind = 'mail.thread_shared' and subject_id = $1`,
+      [t.id],
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].p).not.toContain(SUBJECT);
   });
 });
 

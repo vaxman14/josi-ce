@@ -275,6 +275,39 @@ open(p,'w').write(s)
 PY
 assert_mutated && run; restore; fi
 
+if should_run; then mut "a colleague with write access can share the thread onward — M37"
+python3 - <<'MUT'
+p='apps/api/src/http/mailRoutes.ts'; s=open(p).read()
+s=s.replace("    '/threads/:id/share',\n    requireOwnership({ db }, { type: 'email_thread', need: 'owner' }),",
+            "    '/threads/:id/share',\n    requireOwnership({ db }, { type: 'email_thread', need: 'write' }),",1)
+open(p,'w').write(s)
+MUT
+assert_mutated && run; restore; fi
+
+if should_run; then mut "every share grants write, so a reader can send under the owner's name"
+python3 - <<'MUT'
+p='apps/api/src/http/mailRoutes.ts'; s=open(p).read()
+s=s.replace("      const canWriteShare = req.body?.canWrite === true;","      const canWriteShare = true;",1)
+open(p,'w').write(s)
+MUT
+assert_mutated && run; restore; fi
+
+if should_run; then mut "unsharing does not actually revoke"
+python3 - <<'MUT'
+p='apps/api/src/http/mailRoutes.ts'; s=open(p).read()
+s=s.replace("      await unshareResource(db, {","      if (false) await unshareResource(db, {",1)
+open(p,'w').write(s)
+MUT
+assert_mutated && run; restore; fi
+
+if should_run; then mut "a share may name a user who does not exist"
+python3 - <<'MUT'
+p='apps/api/src/http/mailRoutes.ts'; s=open(p).read()
+s=s.replace("        if (!target) throw new RouteError(404, 'no such colleague');","        if (!target) { /* mutated */ }",1)
+open(p,'w').write(s)
+MUT
+assert_mutated && run; restore; fi
+
 if [[ "$M_TO" -ge 99 ]]; then
   echo; echo "=== RESTORED — full suite must be green ==="; run
 fi
