@@ -39,10 +39,18 @@ export function Home() {
           {approvals.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nothing needs your approval.</p>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-1">
               {approvals.slice(0, 4).map((a) => (
-                <li key={a.id} className="text-sm">
-                  <Link className="underline underline-offset-2" to="/app/approvals">{a.summary}</Link>
+                <li key={a.id}>
+                  {/* A block link with a real height, not a phrase in a
+                      sentence. The suite measures every link on the page and an
+                      underlined run of 16px text is a target nobody can hit. */}
+                  <Link
+                    className="flex min-h-11 items-center rounded-md px-2 text-sm underline underline-offset-2 hover:bg-secondary"
+                    to="/app/approvals"
+                  >
+                    <span className="min-w-0 truncate">{a.summary}</span>
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -68,7 +76,13 @@ export function Home() {
 
       {tasks.length === 0 && approvals.length === 0 ? (
         <Empty title="Nothing is waiting">
-          Start by telling Josi what you need on the <Link className="underline" to="/app/talk">Talk</Link> page.
+          <span className="block">Start by telling Josi what you need.</span>
+          <Link
+            to="/app/talk"
+            className="mt-3 inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+          >
+            Talk to Josi
+          </Link>
         </Empty>
       ) : null}
     </div>

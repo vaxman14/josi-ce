@@ -63,28 +63,29 @@ async function testTouchSend(browser) {
       box ? `${Math.round(box.width)}x${Math.round(box.height)}` : 'no box',
     );
 
+    // NOTE: no page.waitForFunction anywhere in this file. It evaluates a
+    // string in the page, which needs 'unsafe-eval' — and this app's CSP
+    // refuses it. That refusal is the policy working, so the suite works within
+    // it using locator waits, which go through Playwright's own protocol.
     const mine = `tap test ${Date.now()}`;
     await composer.fill(mine);
     // A TAP, not a click. This is the whole reason WebKit + hasTouch is here.
     await send.tap();
-    await page.waitForFunction(
-      (text) => document.body.innerText.includes(text), mine, { timeout: 30000 },
-    );
+    await page.getByText(mine, { exact: false }).first().waitFor({ timeout: 30000 });
     record('a TAP delivers the message', true);
 
-    // And a reply came back, so the tap reached the network rather than just
-    // painting the optimistic bubble.
-    await page.waitForFunction(
-      () => document.querySelectorAll('section [class*="rounded-bl-md"]').length > 0,
-      null, { timeout: 30000 },
-    ).then(() => record('Josi answered the tapped message', true))
-     .catch(() => record('Josi answered the tapped message', false, 'no reply bubble'));
+    // And a reply came back, so the tap reached the network rather than only
+    // painting the optimistic bubble. The stub model always answers "Noted."
+    const reply = page.locator('section div.rounded-bl-md');
+    await reply.first().waitFor({ timeout: 30000 })
+      .then(() => record('Josi answered the tapped message', true))
+      .catch(() => record('Josi answered the tapped message', false, 'no reply bubble'));
 
     // Enter must still send, for anyone on a keyboard.
     const second = `enter test ${Date.now()}`;
     await composer.fill(second);
     await composer.press('Enter');
-    await page.waitForFunction((t) => document.body.innerText.includes(t), second, { timeout: 30000 });
+    await page.getByText(second, { exact: false }).first().waitFor({ timeout: 30000 });
     record('Enter still sends', true);
 
     // The composer is above the fold, not under the home indicator.
@@ -305,11 +306,21 @@ async function testRoles(browser) {
     }
     record('no horizontal scroll on any admin page at 390px', bad.length === 0, bad.join(', '));
 
-    // The model page must not offer a subscription option as available.
+    // The model page must not offer a subscription option as available. The
+    // page fetches before it can render them, so wait for the card rather than
+    // counting whatever happened to be painted.
     await adminPage.goto(`${BASE}/admin/model`, { waitUntil: 'networkidle' });
+    const card = adminPage.getByText(/Using a Claude or ChatGPT subscription/i);
+    const appeared = await card.first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+    if (!appeared) {
+      const shown = (await adminPage.locator('main').innerText().catch(() => '')).slice(0, 160);
+      record('the model page rendered', false, `main was: ${shown.replace(/\n+/g, ' / ')}`);
+    } else {
+      record('the model page rendered', true);
+    }
     const unavailable = await adminPage.getByText(/unavailable/i).count();
     const subscribeButton = await adminPage.getByRole('button', { name: /subscription|connect claude|connect chatgpt/i }).count();
-    record('subscription options are shown as unavailable', unavailable > 0);
+    record('subscription options are shown as unavailable', unavailable > 0, `${unavailable} marked`);
     record('and there is nothing to press', subscribeButton === 0);
     await adminCtx.close();
   } catch (err) {

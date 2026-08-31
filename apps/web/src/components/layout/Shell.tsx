@@ -56,7 +56,7 @@ export function Shell() {
   return (
     <div className="flex min-h-full w-full max-w-full flex-col overflow-x-hidden">
       <header className="sticky top-0 z-30 flex min-w-0 items-center gap-3 border-b border-border bg-card px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
-        <Link to="/app" className="flex min-w-0 shrink items-center gap-2" aria-label="Josi home">
+        <Link to="/app" className="flex min-h-11 min-w-0 shrink items-center gap-2" aria-label="Josi home">
           <img src="/brand/josi-mark.png" alt="" width={32} height={32} className="h-8 w-8 shrink-0 rounded-lg" />
           <span className="truncate text-base font-semibold tracking-tight">Josi</span>
         </Link>
