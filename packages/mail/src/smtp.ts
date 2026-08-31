@@ -83,8 +83,18 @@ export function classifySmtpError(err: unknown): SendErrorCategory {
   return 'unknown';
 }
 
-export function smtpTransport(profile: SmtpProfile): SmtpTransport {
-  const transporter = createTransport({
+/** The one call this module makes into nodemailer. */
+export interface Transporter {
+  sendMail(options: Record<string, unknown>): Promise<{ messageId?: string }>;
+}
+
+/** `transporter` is injected in tests, matching how `fetchImpl` is injected in
+ * the connector and LLM packages. Mocking the module instead would test the
+ * mock; this exercises the real function, which is what mutation M14 showed was
+ * missing — nothing called `smtpTransport` at all, so its error sanitising was
+ * unprotected. */
+export function smtpTransport(profile: SmtpProfile, transporter?: Transporter): SmtpTransport {
+  const mailer: Transporter = transporter ?? createTransport({
     host: profile.host,
     port: profile.port,
     secure: profile.security === 'tls',
@@ -95,7 +105,7 @@ export function smtpTransport(profile: SmtpProfile): SmtpTransport {
   return {
     async send(message) {
       try {
-        const info = await transporter.sendMail({
+        const info = await mailer.sendMail({
           from: message.from,
           replyTo: message.replyTo,
           to: message.to,
