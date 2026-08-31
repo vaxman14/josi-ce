@@ -252,6 +252,19 @@ describe('a mapping is private — M68', () => {
       method: 'PUT', jar: cookies.bob, body: { delete: true },
     });
     expect(perms.status).toBe(404);
+
+    // Access does not compound, and this needs a colleague with WRITE access to
+    // prove. The sharing tests below give Bob read-only, so they are satisfied
+    // whether the route requires `write` or `owner` — mutation testing found
+    // that: downgrading the guard to `write` broke nothing.
+    const onward = await call(`/api/storage/mappings/${mappingId}/share`, {
+      method: 'POST', jar: cookies.bob, body: { workspace: true },
+    });
+    expect(onward.status).toBe(404);
+    expect(await db.query(
+      `select 1 from resource_shares where resource_id = $1 and shared_with_workspace = true`,
+      [mappingId],
+    )).toHaveLength(0);
   });
 });
 
@@ -625,10 +638,22 @@ describe('the policy screen says what the settings do — M61, M62, M73', () => 
     });
   });
 
-  it('refuses a value outside the allowed set rather than storing it', async () => {
-    await call('/api/storage/admin/policy', {
+  // A 400 naming the bad fields, not a 500 from the database and not a silent
+  // shrug. The first version of this test only checked that the value was not
+  // stored — which the CHECK constraint guaranteed on its own, so the route's
+  // own validation was never exercised. Mutation testing found it.
+  //
+  // Saying which field was rejected is the same principle Phase 12 states for
+  // profile imports: an ignored instruction must be visible, not silently
+  // pretended to have applied.
+  it('names a value outside the allowed set rather than storing or crashing on it', async () => {
+    const res = await call('/api/storage/admin/policy', {
       method: 'PUT', jar: cookies.admin, body: { historyMode: 'everything', auditRetention: 'never' },
     });
+    expect(res.status).toBe(400);
+    expect(res.body.rejected).toContain('historyMode');
+    expect(res.body.rejected).toContain('auditRetention');
+
     const [row] = await db.query<{ history_mode: string; audit_retention: string }>(
       `select history_mode, audit_retention from storage_policy where id = true`,
     );

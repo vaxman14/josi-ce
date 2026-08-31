@@ -618,15 +618,43 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
     requireSuperAdmin,
     handle(async (req, res) => {
       const b = req.body ?? {};
-      const oneOf = (v: unknown, allowed: string[]): string | null =>
-        typeof v === 'string' && allowed.includes(v) ? v : null;
 
-      const historyMode = oneOf(b.historyMode, ['disabled', 'one', 'two']);
-      const historyKind = oneOf(b.historyKind, ['snapshot', 'recovery_copy']);
-      const auditRetention = oneOf(b.auditRetention, ['30d', '90d', 'one_year', 'forever']);
-      const scanMode = oneOf(b.clamavScanMode, ['on_index', 'on_change']);
-      const recycleDays = [7, 30, 90].includes(b.recycleBinDays) ? b.recycleBinDays : null;
-      const syncMinutes = [5, 15, 30, 60].includes(b.cloudSyncMinutes) ? b.cloudSyncMinutes : null;
+      // A value outside the vocabulary is NAMED, not silently dropped and not
+      // passed to the database to fail there.
+      //
+      // Letting it through produced a 500 from the CHECK constraint, which is
+      // why the earlier test could not tell the two apart: it only asserted the
+      // value was not stored, and the constraint guaranteed that on its own.
+      // Saying which field was rejected is also the honest behaviour — an
+      // ignored setting the operator believes they changed is worse than an
+      // error.
+      const rejected: string[] = [];
+      const oneOf = (field: string, v: unknown, allowed: readonly string[]): string | null => {
+        if (v === undefined || v === null) return null;
+        if (typeof v === 'string' && allowed.includes(v)) return v;
+        rejected.push(field);
+        return null;
+      };
+      const oneOfNumber = (field: string, v: unknown, allowed: readonly number[]): number | null => {
+        if (v === undefined || v === null) return null;
+        if (typeof v === 'number' && allowed.includes(v)) return v;
+        rejected.push(field);
+        return null;
+      };
+
+      const historyMode = oneOf('historyMode', b.historyMode, ['disabled', 'one', 'two']);
+      const historyKind = oneOf('historyKind', b.historyKind, ['snapshot', 'recovery_copy']);
+      const auditRetention = oneOf('auditRetention', b.auditRetention, ['30d', '90d', 'one_year', 'forever']);
+      const scanMode = oneOf('clamavScanMode', b.clamavScanMode, ['on_index', 'on_change']);
+      const recycleDays = oneOfNumber('recycleBinDays', b.recycleBinDays, [7, 30, 90]);
+      const syncMinutes = oneOfNumber('cloudSyncMinutes', b.cloudSyncMinutes, [5, 15, 30, 60]);
+
+      if (rejected.length) {
+        return res.status(400).json({
+          error: 'those settings are not values Josi recognises, so nothing was changed',
+          rejected,
+        });
+      }
 
       const [policy] = await db.query<StoragePolicyRow>(
         `update storage_policy set

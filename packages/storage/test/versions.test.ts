@@ -76,15 +76,42 @@ const addVersion = (p: HistoryPolicy, hash: string, storedPath?: string) =>
   });
 
 describe('history is off by default — M60', () => {
-  it('the schema default keeps nothing', async () => {
-    const [row] = await db.query<{ history_mode: string; history_kind: string }>(
-      `select history_mode, history_kind from storage_policy where id = true`,
+  // Read from the SCHEMA, not from the row.
+  //
+  // The first version of this test selected from `storage_policy` — which
+  // `beforeEach` had just reset to those exact values. It asserted its own
+  // fixture and would have passed whatever the migration said. Mutation testing
+  // found it: flipping both defaults in 0007 broke nothing.
+  //
+  // It matters concretely. These two defaults are the difference between an
+  // installation that keeps nothing and one that silently begins storing
+  // downloadable copies of every user's documents the moment history is turned
+  // on.
+  it('the schema itself defaults to keeping nothing', async () => {
+    const cols = await db.query<{ column_name: string; column_default: string | null }>(
+      `select column_name, column_default from information_schema.columns
+       where table_name = 'storage_policy'
+         and column_name in ('history_mode', 'history_kind', 'recycle_bin_days',
+                             'processing_paused', 'semantic_enabled', 'ocr_enabled',
+                             'clamav_enabled', 'archives_enabled', 'audit_retention')`,
     );
-    expect(row.history_mode).toBe('disabled');
+    const defaults = Object.fromEntries(cols.map((c) => [c.column_name, c.column_default ?? '']));
+
+    expect(defaults.history_mode, 'history must default to disabled').toContain("'disabled'");
     // Even the KIND defaults to the one that stores no bytes, so an
     // administrator who turns history on without reading the wording gets
     // snapshots rather than copies of everyone's files.
-    expect(row.history_kind).toBe('snapshot');
+    expect(defaults.history_kind, 'history must default to snapshots').toContain("'snapshot'");
+
+    // The rest of the deny-by-default surface, asserted from the same place for
+    // the same reason.
+    expect(defaults.semantic_enabled).toContain('false');
+    expect(defaults.ocr_enabled).toContain('false');
+    expect(defaults.clamav_enabled).toContain('false');
+    expect(defaults.archives_enabled).toContain('false');
+    expect(defaults.processing_paused).toContain('false');
+    expect(defaults.audit_retention).toContain("'one_year'");
+    expect(defaults.recycle_bin_days).toContain('30');
   });
 
   it('records nothing while disabled', async () => {

@@ -16,6 +16,20 @@ const installer = readFileSync(join(root, 'scripts/install.sh'), 'utf8');
 
 const service = (name: string) => compose.services[name];
 
+/** Every workspace that actually exists on disk, derived rather than listed.
+ *
+ * A hardcoded list is how both of the packaging defects below got in: the list
+ * was written when the workspaces were what they were, and the next package
+ * nobody remembered to add was invisible to the check. */
+const workspaces: string[] = (
+  JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { workspaces: string[] }
+).workspaces.flatMap((pattern) => {
+  const dir = pattern.replace(/\/\*$/, '');
+  return readdirSync(join(root, dir), { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(root, dir, e.name, 'package.json')))
+    .map((e) => `${dir}/${e.name}`);
+});
+
 describe('the stack has the four required services', () => {
   it('defines web, worker, db and caddy', () => {
     for (const name of ['web', 'worker', 'db', 'caddy']) {
@@ -252,14 +266,6 @@ describe('the image can actually be built', () => {
    * npm creates a workspace's node_modules symlink only if its package.json
    * exists at `npm ci` time, so every workspace must be COPYed before it. */
   it('copies every workspace package.json before npm ci', () => {
-    const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { workspaces: string[] };
-    const workspaces = rootPkg.workspaces.flatMap((pattern) => {
-      const dir = pattern.replace(/\/\*$/, '');
-      return readdirSync(join(root, dir), { withFileTypes: true })
-        .filter((e) => e.isDirectory() && existsSync(join(root, dir, e.name, 'package.json')))
-        .map((e) => `${dir}/${e.name}`);
-    });
-
     expect(workspaces.length).toBeGreaterThan(2);
     const beforeInstall = dockerfile.split('RUN npm ci')[0];
     for (const ws of workspaces) {
@@ -267,6 +273,39 @@ describe('the image can actually be built', () => {
       // one's manifest has to be present before the install.
       expect(beforeInstall, `${ws}/package.json is not COPYed before npm ci`)
         .toContain(`${ws}/package.json`);
+    }
+  });
+
+  /** Found the hard way AGAIN in Phase 9, and it is worth naming why the test
+   * above did not catch it.
+   *
+   * `packages/storage` was added to the workspaces and to the Dockerfile, so the
+   * COPY assertion passed. But `package-lock.json` had never been regenerated,
+   * and `npm ci` — unlike `npm install` — refuses to proceed when the lockfile
+   * and the manifests disagree. The build died on a clean host while every local
+   * check was green, because local `node_modules` already had the workspace
+   * symlink.
+   *
+   * Two independent things must both be true for a clean build, and the earlier
+   * test only asserted one of them. */
+  it('lists every workspace in the lockfile, so npm ci does not refuse', () => {
+    const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8')) as {
+      packages: Record<string, { name?: string; link?: boolean; resolved?: string }>;
+    };
+
+    for (const ws of workspaces) {
+      expect(lock.packages, `${ws} is missing from package-lock.json — run npm install`)
+        .toHaveProperty(ws);
+    }
+
+    // And the node_modules link that makes `@josi-ce/x` resolvable at all.
+    for (const ws of workspaces) {
+      const pkgName = (
+        JSON.parse(readFileSync(join(root, ws, 'package.json'), 'utf8')) as { name: string }
+      ).name;
+      const linkKey = `node_modules/${pkgName}`;
+      expect(lock.packages, `${linkKey} is missing from package-lock.json`).toHaveProperty(linkKey);
+      expect(lock.packages[linkKey].link, `${linkKey} should be a workspace link`).toBe(true);
     }
   });
 });
@@ -345,7 +384,10 @@ describe('jsonb is never hand-serialised', () => {
    * is what this does: no source file may pair a hand-serialised value with a
    * jsonb cast, because `json()` is the thing that exists for it. */
   it('no route pairs JSON.stringify with a ::jsonb cast', () => {
-    const roots = ['apps/api/src', 'apps/worker/src', 'packages/core/src', 'packages/llm/src', 'packages/agent/src'];
+    // Derived from the workspaces, not listed. The hardcoded version of this
+    // line covered five directories and silently skipped every package added
+    // after it was written — including the three that Phases 7, 8 and 9 added.
+    const roots = workspaces.map((ws) => `${ws}/src`);
     const offenders: string[] = [];
 
     const walk = (dir: string): string[] => {
