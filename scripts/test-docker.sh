@@ -36,6 +36,23 @@ trap cleanup EXIT
 command -v docker >/dev/null 2>&1 || { echo "docker is not installed"; exit 2; }
 docker info >/dev/null 2>&1 || { echo "docker daemon is not reachable"; exit 2; }
 
+# Caddy binds the host's HTTP/HTTPS ports. On a dedicated CE host those are 80
+# and 443; on a shared machine something else may already own them, and Docker's
+# failure for that is an opaque "port is already allocated" buried in the up
+# log. Check first and say something useful.
+export JOSI_HTTP_PORT="${JOSI_HTTP_PORT:-80}"
+export JOSI_HTTPS_PORT="${JOSI_HTTPS_PORT:-443}"
+for p in "$JOSI_HTTP_PORT" "$JOSI_HTTPS_PORT"; do
+  if ss -ltnH "sport = :$p" 2>/dev/null | grep -q LISTEN \
+     || netstat -an 2>/dev/null | grep -qE "[.:]$p .*LISTEN"; then
+    echo "port $p is already in use on this host."
+    echo "re-run with free ports, e.g.:"
+    echo "  JOSI_HTTP_PORT=8380 JOSI_HTTPS_PORT=8543 $0 ${*:-}"
+    exit 2
+  fi
+done
+echo "using host ports ${JOSI_HTTP_PORT}/${JOSI_HTTPS_PORT}"
+
 # ---------------------------------------------------------------- empty state
 step "starting from an empty Docker state for this project"
 "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -95,12 +112,19 @@ if docker image inspect clamav/clamav:stable >/dev/null 2>&1; then
 else
   ok "clamav image was never pulled"
 fi
-running=$("${COMPOSE[@]}" ps --services --filter status=running | sort | tr '\n' ' ')
-ok "running services: ${running}"
+running=$("${COMPOSE[@]}" ps --services --filter status=running | sort | tr '\n' ' ' | sed 's/ $//')
+printf '  INFO  running services: %s\n' "$running"
 case "$running" in
   *ocr*|*clamav*) bad "an optional service is running without its profile" ;;
   *) ok "no optional service is running" ;;
 esac
+# The four required services must ALL be up. Previously this only looked for
+# what should be absent, so a caddy that failed to start went unnoticed and the
+# isolation check below then "passed" because exec'ing into a dead container
+# fails for the wrong reason.
+[[ "$running" == "caddy db web worker" ]] \
+  && ok "all four required services are running" \
+  || bad "expected 'caddy db web worker', got '$running'"
 
 # --------------------------------------------------------------- master key
 step "master key handling"
@@ -158,10 +182,28 @@ else
   ok "the database publishes no host port"
 fi
 # Caddy is on `edge` only, so the database must be unreachable from it.
-if "${COMPOSE[@]}" exec -T caddy sh -c 'nc -z -w2 db 5432' >/dev/null 2>&1; then
-  bad "caddy can reach the database"
+#
+# The container has to be RUNNING for this to mean anything. `docker compose
+# exec` into a stopped container also fails, and reading that as "cannot reach
+# the database" is a test that passes when the service is broken — which is
+# exactly what happened on the first run against a host where port 80 was taken.
+caddy_id=$("${COMPOSE[@]}" ps -q caddy 2>/dev/null || true)
+caddy_running=$([[ -n "$caddy_id" ]] && docker inspect -f '{{.State.Running}}' "$caddy_id" 2>/dev/null || echo false)
+if [[ "$caddy_running" != "true" ]]; then
+  bad "caddy is not running, so its network isolation cannot be asserted"
 else
-  ok "caddy cannot reach the database"
+  # Prove the probe itself works before trusting a negative from it: caddy must
+  # be able to reach `web`, which shares the edge network with it.
+  if "${COMPOSE[@]}" exec -T caddy sh -c 'nc -z -w2 web 8080' >/dev/null 2>&1; then
+    ok "the reachability probe works (caddy can reach web on the edge network)"
+    if "${COMPOSE[@]}" exec -T caddy sh -c 'nc -z -w2 db 5432' >/dev/null 2>&1; then
+      bad "caddy can reach the database"
+    else
+      ok "caddy cannot reach the database"
+    fi
+  else
+    bad "the probe is broken: caddy cannot reach web either, so a negative proves nothing"
+  fi
 fi
 if "${COMPOSE[@]}" exec -T web sh -c 'curl -fsS -o /dev/null http://127.0.0.1:8080/health'; then
   ok "web serves on its own port"
