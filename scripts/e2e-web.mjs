@@ -294,17 +294,28 @@ async function testRoles(browser) {
     step('An administrator has both, and the admin pages behave');
     const adminCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
     const adminPage = await adminCtx.newPage();
+    // A blank page is indistinguishable from a loading one unless the
+    // exception is captured. Found the hard way: `main` was empty and the
+    // suite could only report the emptiness, not the cause.
+    const pageErrors = [];
+    adminPage.on('pageerror', (err) => pageErrors.push(String(err).split('\n')[0].slice(0, 160)));
     await signIn(adminPage, ADMIN);
     record('the admin header offers the admin section',
       (await adminPage.locator('header a[href="/admin"]').count()) > 0);
 
     const bad = [];
+    const blank = [];
     for (const path of ADMIN_PAGES) {
       await adminPage.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
       const px = await overflow(adminPage);
       if (px > 0) bad.push(`${path} +${px}px`);
+      // A blank page has no overflow either, so the layout check above passes
+      // vacuously unless something asserts the page rendered at all.
+      const heading = await adminPage.locator('main h1').count();
+      if (heading === 0) blank.push(path);
     }
     record('no horizontal scroll on any admin page at 390px', bad.length === 0, bad.join(', '));
+    record('every admin page rendered its heading', blank.length === 0, blank.join(', '));
 
     // The model page must not offer a subscription option as available. The
     // page fetches before it can render them, so wait for the card rather than
@@ -314,10 +325,14 @@ async function testRoles(browser) {
     const appeared = await card.first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
     if (!appeared) {
       const shown = (await adminPage.locator('main').innerText().catch(() => '')).slice(0, 160);
-      record('the model page rendered', false, `main was: ${shown.replace(/\n+/g, ' / ')}`);
+      record(
+        'the model page rendered', false,
+        `url=${adminPage.url()} main="${shown.replace(/\n+/g, ' / ')}" errors=[${pageErrors.join(' | ')}]`,
+      );
     } else {
       record('the model page rendered', true);
     }
+    record('no uncaught exception on any admin page', pageErrors.length === 0, pageErrors.join(' | '));
     const unavailable = await adminPage.getByText(/unavailable/i).count();
     const subscribeButton = await adminPage.getByRole('button', { name: /subscription|connect claude|connect chatgpt/i }).count();
     record('subscription options are shown as unavailable', unavailable > 0, `${unavailable} marked`);

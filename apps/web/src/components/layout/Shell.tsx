@@ -14,6 +14,7 @@ import { useAuth } from '@/lib/auth';
 import { api, type LlmStatus } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 const MEMBER_NAV = [
   { to: '/app', label: 'Home', end: true },
@@ -119,7 +120,11 @@ export function Shell() {
         {/* min-w-0 is what stops a long word or a wide table from pushing the
             whole page sideways. Without it flex children refuse to shrink. */}
         <main className="min-h-0 w-full min-w-0 flex-1 p-3 pb-24 sm:p-5 lg:pb-5">
-          <Outlet />
+          {/* Keyed on the path so a failure on one page does not wedge every
+              page behind it. */}
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
 
