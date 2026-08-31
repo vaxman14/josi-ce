@@ -255,18 +255,56 @@ HTTPServer(("0.0.0.0", 8080), H).serve_forever()
 ' >/dev/null 2>&1 && ok "stub provider started" || bad "stub failed to start"
 sleep 3
 
-step "completing the handshake against the stub"
-# The app talks to Google's real hostnames, so the stub is wired in by pointing
-# those names at it inside the web container's DNS.
-"${COMPOSE[@]}" exec -T -u root web sh -c \
-  "getent hosts fakeoauth | awk '{print \$1\" oauth2.googleapis.com openidconnect.googleapis.com\"}' >> /etc/hosts" 2>/dev/null \
-  && ok "provider hostnames pointed at the stub" || bad "could not redirect provider hostnames"
+step "pointing the provider hostnames at the stub"
+# The app talks to Google's real hostnames. Editing /etc/hosts inside the web
+# container does not work — Phase 2 gave it a READ-ONLY root filesystem, which
+# is the hardening doing its job. So the mapping goes in through Docker itself,
+# in a test-only compose override. The product compose is not touched.
+STUB_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${PROJECT}-fakeoauth" 2>/dev/null)
+[[ -n "$STUB_IP" ]] && ok "stub address $STUB_IP" || bad "could not read the stub address"
 
+cat > /tmp/josi-e2e-oauth.yml <<YML
+services:
+  web:
+    extra_hosts:
+      - "oauth2.googleapis.com:${STUB_IP}"
+      - "openidconnect.googleapis.com:${STUB_IP}"
+YML
+if docker compose -p "$PROJECT" -f docker-compose.yml -f /tmp/josi-e2e-oauth.yml up -d web >/tmp/p7-hosts.log 2>&1; then
+  ok "web recreated with the stub mapped"
+else
+  bad "could not remap: $(tail -2 /tmp/p7-hosts.log)"
+fi
+for _ in $(seq 1 30); do [[ "$(api GET /health)" == "200" ]] && break; sleep 2; done
+mapped=$("${COMPOSE[@]}" exec -T web sh -c "getent hosts oauth2.googleapis.com | head -1" 2>/dev/null | tr -d '\r')
+echo "$mapped" | grep -q "$STUB_IP" && ok "oauth2.googleapis.com resolves to the stub" || bad "resolves to: $mapped"
+
+# The session cookies survive: sessions live in PostgreSQL, not in the process.
+step "completing the handshake against the stub"
 code=$(api GET "/api/connections/google/callback?state=${STATE}&code=stub-code")
-[[ "$code" == "302" ]] && ok "callback accepted ($code)" || bad "callback returned $code: $(body)"
+loc=$("${COMPOSE[@]}" exec -T web sh -c "grep -i '^location:' /tmp/r.hdr" 2>/dev/null | tr -d '\r')
+# A 302 alone proves nothing: the failure path also redirects, to ?error=… .
+# Asserting only the status is how a test passes while the thing it tests is
+# broken, which is exactly what happened on the first run of this script.
+if [[ "$code" == "302" ]] && ! echo "$loc" | grep -q "error="; then
+  ok "callback completed the connection ($code)"
+else
+  bad "callback returned $code and redirected to: $loc"
+fi
 
 owner=$(sql "select count(*) from connections where owner_user_id = (select id from users where username='alice')")
 [[ "$owner" == "1" ]] && ok "the connection belongs to alice" || bad "$owner connections for alice"
+
+# Everything below needs a connection to exist. Without this guard a single
+# broken prerequisite produced thirteen failures on the first run, only one of
+# which was real — a wall of noise that makes the actual cause harder to see,
+# not easier.
+if [[ "$owner" != "1" ]]; then
+  echo
+  echo "  FATAL  no connection was created, so nothing below would mean anything"
+  printf '\n%d passed, %d failed\n' "$pass" "$fail"
+  exit 1
+fi
 
 step "the tokens are sealed in real PostgreSQL"
 enc=$(sql "select secrets_enc from connections limit 1")
