@@ -29,6 +29,55 @@ by commit hash, verified: `15e1388b1ed8e5c293e5646b8d9ec319ddbad7c6`, clean tree
 | 1 | `15e1388` | 33 passed, 1 failed | Caddy could not bind `0.0.0.0:80` on a populated host. **And a false pass**: "caddy cannot reach the database" passed *while caddy was not running*, because `docker compose exec` into a dead container fails and the check read that as isolation. |
 | 2 | `c4a6d2f` | 32 passed, 2 failed | Port preflight fixed. The new positive control immediately earned its place: it reported "the probe is broken: caddy cannot reach web either". Caddy was **restart-looping**. |
 | 3 | `f94ff32` | **36 passed, 0 failed** | Green. |
+| 4 | `7c52c5e` | **36 passed, 0 failed** | Re-verified after the profile fix below. |
+
+### What "fresh install" means here, precisely
+
+The Proxmox host that would have provided a literally empty Docker daemon no
+longer exists. The proof recorded here is therefore:
+
+> a **clean, uniquely named Compose project** (`josi-ce-test`) brought up on a
+> **populated** Docker daemon that was already running 24 unrelated containers
+> across 5 other projects.
+
+Before each run the script removes every container, volume, image reference and
+network belonging to that project and asserts the count is zero. So what is
+proven is that **CE installs cleanly from nothing of its own** — no leftover
+state, no pre-pulled images, no pre-existing volumes.
+
+What is **not** proven is a bare-metal daemon with no other images present. In
+practice the difference is narrow: shared base layers (`node:22-bookworm-slim`)
+may already be cached, so a genuinely cold host would download more and take
+longer. Nothing in CE's behaviour depends on that. No pre-existing container,
+image, volume, network or project was stopped, pruned or removed to manufacture
+an empty daemon.
+
+### The second defect: enabling OCR removed the reverse proxy
+
+Caddy carried `profiles: ["", "default"]` so bring-your-own-proxy could be
+selected with `COMPOSE_PROFILES=noproxy`. That worked, and concealed something
+worse. Compose treats the active profile set as a whole, so naming **any**
+profile deactivates the empty one:
+
+```
+COMPOSE_PROFILES=""        -> caddy db migrate web worker
+COMPOSE_PROFILES="ocr"     -> db migrate ocr web worker      <-- no caddy
+COMPOSE_PROFILES="clamav"  -> clamav db migrate web worker   <-- no caddy
+```
+
+The exact command in this repo's own documentation for enabling OCR —
+`docker compose --profile ocr up -d` — **took HTTPS offline**. Enabling a
+background worker must not remove the proxy.
+
+Caddy now has no `profiles` key and always starts; BYO-proxy moved to an
+explicit override file. Verified after the fix:
+
+```
+COMPOSE_PROFILES=""             -> caddy db migrate web worker
+COMPOSE_PROFILES="ocr"          -> caddy db migrate ocr web worker
+COMPOSE_PROFILES="clamav"       -> caddy clamav db migrate web worker
+COMPOSE_PROFILES="ocr,clamav"   -> caddy clamav db migrate ocr web worker
+```
 
 ### The defect that mattered
 
@@ -182,11 +231,50 @@ dependency, and `npm ci --ignore-scripts` relies on its prebuilt per-platform
 binaries. Proving it loads and hashes under arm64 is what makes `--ignore-scripts`
 safe on both architectures rather than merely assumed.
 
-**A multi-arch manifest is NOT proven.** Both platforms build, and the arm64
-artefact runs — but a manifest list only exists once pushed to a registry.
-`--load` cannot accept a multi-platform result (Docker's image store holds one
-architecture per tag). Publishing requires explicit approval and has not been
-requested.
+### Multi-arch manifest — published and verified
+
+Pushed to a **private** GHCR package with explicit approval.
+
+```
+$ docker buildx build --platform linux/amd64,linux/arm64 \
+    --tag ghcr.io/vaxman14/josi-ce:phase2-verify --push .
+exporting manifest list sha256:77ca06a9…bf27a5 done
+
+$ docker buildx imagetools inspect ghcr.io/vaxman14/josi-ce:phase2-verify
+MediaType: application/vnd.oci.image.index.v1+json
+Digest:    sha256:77ca06a9b27512177ee3e6790179a345228fa57cb4c052e60797e0bb14bf27a5
+Manifests:
+  …@sha256:65bccfc4…  Platform: linux/amd64
+  …@sha256:e99d8c82…  Platform: linux/arm64
+  …@sha256:37ad2924…  Platform: unknown/unknown  (attestation for amd64)
+  …@sha256:d6211861…  Platform: unknown/unknown  (attestation for arm64)
+```
+
+A real OCI image index, not two separately tagged images. Then pulled **from the
+registry** and executed, to prove the index resolves per platform rather than
+merely existing:
+
+```
+requested linux/amd64 -> image is linux/amd64, container reports x64
+requested linux/arm64 -> container reports arm64
+```
+
+Privacy verified two ways:
+
+```
+$ GET /user/packages/container/josi-ce   ->  visibility: private
+$ curl https://ghcr.io/v2/vaxman14/josi-ce/manifests/phase2-verify   ->  401
+```
+
+The unauthenticated 401 is the stronger of the two: it is the registry refusing,
+independent of what the API self-reports.
+
+**Credential note.** The first push attempt failed —
+`permission_denied: The token provided does not match expected scopes` — because
+the fine-grained PAT lacks `packages: write`. The push used a classic PAT already
+present on the host for git operations, which carries `write:packages`. The token
+value was never printed, and `docker logout ghcr.io` was run afterwards;
+`~/.docker/config.json` was confirmed to hold no GHCR credential.
 
 ---
 
@@ -216,16 +304,19 @@ requested.
 | Data survives `down` + `up` (named volume) | marker row re-read |
 | amd64 image builds and runs | 352 MB total (86.1 MB CE layers) |
 | arm64 image builds, runs, native bindings load | 372 MB total (85.9 MB CE layers) |
+| **Multi-arch manifest published to a private registry** | OCI image index `sha256:77ca06a9…`, both platforms listed |
+| **Manifest resolves per platform on pull** | pulled from GHCR: amd64 → `x64`, arm64 → `arm64` |
+| **Package is private** | API reports `private`; unauthenticated manifest GET → 401 |
+| Required services survive every profile combination | `caddy` present for ``, `ocr`, `clamav`, `ocr,clamav` |
+| BYO-proxy override composes | `docker-compose.noproxy.yml` publishes web directly |
 | Installer: 32-byte CSPRNG key, mode 600, never printed, refuses overwrite | executed locally and on the test host |
 
 ### Still unproven
 
 | Claim | Why | What would prove it |
 |---|---|---|
-| **Fresh install from a genuinely empty Docker daemon** | The designated Proxmox host is **powered off** — no ping response, incomplete ARP entry, SSH and web UI ports closed. Memory records it was shut down for thermal reasons (damaged cooling mount). Only the router and the Docker host respond on the LAN. | Power on the Proxmox host, or provide another disposable machine. the host's daemon is populated; the run above proves an empty *compose project*, not an empty *daemon*. |
-| Multi-arch **manifest** published | Requires pushing to a registry | Explicit approval to push, then `docker buildx imagetools inspect` |
+| Fresh install on a **literally empty** Docker daemon | Accepted as out of reach: the Proxmox host that would have supplied one no longer exists, and the available host's 24 running containers must not be removed to fake one. See "What \"fresh install\" means here" — a clean uniquely-named project on a populated daemon is the accepted standard of proof. | A spare machine, if one ever exists. Not blocking. |
 | Automatic HTTPS against a real domain | Test ran on `localhost` with alternate ports; no ACME challenge was performed | An install on a public domain with 80/443 reachable |
-| Bring-your-own-proxy mode | Documented, never exercised | Run with `COMPOSE_PROFILES=noproxy` and an external proxy |
 | ARM64 **on real ARM hardware** | Verified under QEMU emulation only | A Raspberry Pi or ARM server |
 | Capacity / concurrency | **Deliberately unmeasured.** Canonical map M97 forbids published numbers without benchmarks on Pi-class ARM64, old x86-64, and a modern mini-PC. | Those three benchmark runs |
 

@@ -68,11 +68,33 @@ colleagues. Mitigated by one helper + a test per private resource type.
 - Bring-your-own-proxy mode documented, Caddy disabled by a profile.
 - Non-root containers, read-only rootfs where possible, dropped capabilities.
 
-**Acceptance:** clean `up` on amd64 and arm64; `/ready` red before migrations,
-green after; OCR/ClamAV containers absent from `docker ps` when disabled; image
-sizes recorded (no capacity claims — map 97).
-**Risk:** ARM64 image bloat on low-end hosts → measure and record sizes; heavy
-services stay opt-in.
+**Acceptance (met — see `PHASE_2_EVIDENCE.md`):**
+- Clean `up` from a **clean, uniquely named Compose project** on a Docker
+  daemon. *Not* a literally empty daemon: the host that could have provided one
+  no longer exists, and emptying the available host would mean removing 24
+  unrelated running containers. The project is torn down to zero
+  containers/volumes/networks and asserted before each run, so what is proven is
+  that CE installs with nothing of its own pre-existing.
+- `/ready` green after migrations, and each blocker (`database`, `migrations`,
+  `master_key`) proven independently. The red-before-migrations case is asserted
+  against a stub database in the unit suite rather than by racing the migrator
+  at runtime.
+- OCR/ClamAV absent from `docker ps` when disabled, **and** the ClamAV image
+  never pulled.
+- Multi-arch manifest published to a private registry and proven to resolve per
+  platform on pull.
+- Image sizes recorded as **total** footprint, not the unique-layer figure
+  `docker image inspect` prints. No capacity claims (map 97).
+
+**Risk:** ARM64 image bloat on low-end hosts → measured: 372 MB total, of which
+~286 MB is the Node base. Heavy services stay opt-in. A future phase should
+evaluate an Alpine base, which would cut roughly 200 MB but requires musl
+prebuilds for `@node-rs/argon2`.
+
+**Risk realised:** profile coupling. Caddy was profile-gated so BYO-proxy could
+be selected, which meant naming *any* profile dropped it — so the documented
+command for enabling OCR took HTTPS offline. Required services now carry no
+`profiles` key, asserted by test.
 
 ---
 
