@@ -179,6 +179,28 @@ CE's schema; approval gates behave identically.
 **Risk:** silent behaviour drift while removing `tenant_id` → port the engine's
 tests alongside the code.
 
+**Status: done.** 109 tests, 26/26 mutations caught, 50/50 runtime checks on a
+real stack. Migration is `0004_assistant.sql` (0002 and 0003 were taken by the
+wizard and the LLM layer). See `PHASE_5_EVIDENCE.md`.
+
+**Amended during the phase — two departures, both argued rather than applied
+quietly.**
+
+1. **Isolation.** `EXTRACTION_MAP.md` had `contacts`, `tasks` and `threads`
+   workspace-shared, carried over from the engine. They are **owner-scoped**
+   instead: a CE workspace is several people sharing an installation, not one
+   business speaking with one voice, and the canonical map makes content private
+   unless its owner shares it. The risk line above was right — this is exactly
+   where drift would have hidden.
+2. **Second factor.** The engine's PIN word answers caller-ID spoofing, which CE
+   does not have. What ships is step-up **re-authentication** against a held
+   session, named accurately. A genuine second factor (TOTP) is not built.
+
+The engine's `authority.ts` inbound-routing tests could **not** port: they
+resolve a caller by phone number to decide owner-vs-receptionist, and CE has no
+voice channel. The second-factor gate's discipline ported in full; its factor did
+not.
+
 ---
 
 ## Phase 6 — Web app
