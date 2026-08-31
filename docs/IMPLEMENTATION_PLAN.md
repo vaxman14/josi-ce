@@ -144,6 +144,16 @@ tests alongside the code.
 - Dashboard, Talk, Tasks, Approvals, Conversations, Contacts, Business profile,
   Connections, Usage; admin section for policy.
 - Companion apps page: **Coming soon**, no fake download actions (map 101).
+- The future native-app bootstrap is email-first: the super admin allowlists an
+  email under **Approved app users**; CE publishes only an opaque routing record
+  to the Josi directory; the app discovers the CE endpoint by email and submits
+  the user's password directly to that verified HTTPS endpoint. The directory
+  never receives passwords, sessions, messages, connector data, or tenant
+  content. CE returns a device-specific revocable session. Paired devices cache
+  the verified endpoint and continue operating directly during directory
+  outages. Local usernames are not discovery keys because they can collide
+  across installations. Manual URL entry is an Advanced fallback. Removing an
+  approval and revoking already paired devices are separate explicit controls.
 - Branding mandatory and not replaceable (map 81).
 
 **Acceptance:** Playwright at 320/375/390/430 — no horizontal overflow, controls
