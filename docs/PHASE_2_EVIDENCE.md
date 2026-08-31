@@ -1,157 +1,237 @@
 # Phase 2 evidence
 
-What is proven, how, and — equally important — what is **not yet proven** and
-why. Nothing in this file is a claim about hardware capacity.
+Runtime verification performed 2026-08-31 on a dedicated LAN Docker host. Every claim
+below is either backed by recorded output or explicitly marked unproven.
 
-## Environment used
+## Test environment
 
-Phase 2 was implemented on a machine with **no container runtime installed** —
-no Docker, Colima, Podman, OrbStack or Rancher Desktop. Every requirement that
-can be verified statically has been. Every requirement that needs a running
-daemon has an executable script and is marked **UNPROVEN** below.
-
-That distinction is the point of this file. A Dockerfile that has never been
-built is a plausible-looking text file.
-
----
-
-## Proven — 71 automated tests, `npm test`
-
-| # | Claim | Evidence |
-|---|---|---|
-| 1 | Four required services exist: web/API, worker, PostgreSQL, Caddy | `packaging.test.ts` › "defines web, worker, db and caddy" |
-| 2 | Migrations run as a separate step the app waits for | asserts `service_completed_successfully` on both web and worker |
-| 3 | OCR and ClamAV are profile-gated | asserts `profiles: [ocr]` / `[clamav]`, and that nothing default depends on them |
-| 4 | Optional components carry resource limits | asserts cpu/memory limits on both |
-| 5 | Secrets are files, never env vars | asserts `secrets:` file entries, `MASTER_KEY_FILE` path, and that no service env contains `MASTER_KEY`, `CREDENTIALS_KEY`, `POSTGRES_PASSWORD` or `PGPASSWORD` |
-| 6 | PostgreSQL reads its password from a file | asserts `POSTGRES_PASSWORD_FILE` |
-| 7 | No secret is baked into the image | asserts the Dockerfile never copies `secrets/` and only names the path |
-| 8 | Key is generated from a CSPRNG, 0600, never printed, never clobbered | `install.sh` asserted for `openssl rand`/`/dev/urandom`, `umask 077`, `chmod 600`, refuse-to-overwrite, and absence of any `cat` of the key |
-| 9 | Database publishes no port and sits on one network | `packaging.test.ts` › "never publishes the database" |
-| 10 | Caddy is on `edge` only, so it cannot reach the database | asserts `networks: [edge]` |
-| 11 | Only the proxy publishes ports | asserts the published-service list equals `[caddy]` |
-| 12 | Capabilities dropped, no-new-privileges, read-only rootfs | asserted per service |
-| 13 | Image runs as non-root | asserts `USER node` in the Dockerfile |
-| 14 | Caddy keeps exactly one capability | asserts `cap_add: [NET_BIND_SERVICE]` and `cap_drop: [ALL]` |
-| 15 | Restart policies and health checks on all long-running services | asserted per service |
-| 16 | Named volume for database data | asserts `db_data` mapping |
-| 17 | Proxy config is domain-templated, no hosted hostname | asserts `{$JOSI_DOMAIN}`, rejects `heyjosi`/`socalreceptionist` |
-| 18 | Caddy admin API bound to loopback | asserts `admin 127.0.0.1:2019` |
-| 19 | `/health` never consults the database | `readiness.test.ts` › stays 200 with a dead database |
-| 20 | `/ready` proves database + migrations + master key | asserts each blocker independently |
-| 21 | `/ready` leaks no topology | asserts a driver error naming host/port/`ECONNREFUSED`/`postgres` never reaches the response |
-| 22 | `/ready` uses a closed vocabulary | asserts every blocker across all failure combinations is one of three known values |
-| 23 | Master key refuses to load from an environment variable | `masterKey.test.ts` — throws on `MASTER_KEY` / `CREDENTIALS_KEY` |
-| 24 | Master key does not leak through printing | asserts redaction via `String`, template literal, `JSON.stringify`, and `util.inspect` (what `console.log` uses), including nested |
-| 25 | No capacity claim in the README | asserts the absence of "supports up to N", "N users", "handles N" |
-
-### Mutation testing
-
-Assertions are only worth the failures they cause. Each control was deliberately
-broken and the suite re-run:
-
-| Mutation | Tests failed |
+| | |
 |---|---|
-| Publish the database port `5432:5432` | 2 |
-| Move the master key into a service environment variable | 2 |
-| Remove ClamAV's profile so it starts by default | 1 |
-| *(Phase 1, re-verified)* super admin gains ownership in `resolveAccess` | 1 |
-| *(Phase 1, re-verified)* non-owner 404 downgraded to 403 | 4 |
+| Host | a dedicated LAN Docker host (x86_64) |
+| OS | Ubuntu 26.04 LTS |
+| Architecture | x86_64, 16 cores, 28 GB RAM, 3.0 TB free |
+| Docker | 29.1.3, build 29.1.3-0ubuntu4.1 |
+| Compose | v5.5.0 |
+| buildx | v0.30.1 (installed as a user-local CLI plugin at `~/.docker/cli-plugins/`, no system packages touched) |
+| QEMU | `qemu-aarch64` binfmt handler registered via `tonistiigi/binfmt --install arm64` |
+| Compose project | `josi-ce-test` (isolated; 24 pre-existing containers across 5 unrelated projects untouched) |
+| Host ports used | 8380/8543 — the host already serves 80/443 |
 
-All restored; 71/71 green.
+Source under test was cloned from `github.com/vaxman14/josi-ce` and checked out
+by commit hash, verified: `15e1388b1ed8e5c293e5646b8d9ec319ddbad7c6`, clean tree.
 
-### Installer, executed
+---
+
+## Runs
+
+| Run | Commit | Result | What it found |
+|---|---|---|---|
+| 1 | `15e1388` | 33 passed, 1 failed | Caddy could not bind `0.0.0.0:80` on a populated host. **And a false pass**: "caddy cannot reach the database" passed *while caddy was not running*, because `docker compose exec` into a dead container fails and the check read that as isolation. |
+| 2 | `c4a6d2f` | 32 passed, 2 failed | Port preflight fixed. The new positive control immediately earned its place: it reported "the probe is broken: caddy cannot reach web either". Caddy was **restart-looping**. |
+| 3 | `f94ff32` | **36 passed, 0 failed** | Green. |
+
+### The defect that mattered
 
 ```
-$ scripts/install.sh --check     # empty install
-  missing: secrets/master.key
-  missing: secrets/db_password
-  exit=1
+caddy-1 | Error: adapting config using caddyfile: parsing caddyfile tokens for
+          'email': wrong argument count or unexpected line ending after 'email',
+          at /etc/caddy/Caddyfile:14
+restarting=true exit=1
+```
 
-$ scripts/install.sh
-  master key written to secrets/master.key (mode 600)
-  database password written to secrets/db_password (mode 600)
-  (neither value printed)
+The Caddyfile had `email {$JOSI_ACME_EMAIL}`. Caddy substitutes an unset
+variable with nothing, so the line became a bare `email` — a parse error.
+**Every fresh install that did not set an ACME email would have had no reverse
+proxy at all**, which is the default case. Two commits passed a green static
+suite with this in place. It was invisible until the stack was booted.
 
-$ ls -l secrets/
-  -rw-------  master.key      45 bytes → decodes to exactly 32 bytes
-  -rw-------  db_password     32 bytes
+Fixed by removing the directive (ACME issues fine without a contact address) and
+adding a regression test that rejects any directive whose only argument is a
+defaultless `{$VAR}` substitution — verified to fail when the original line is
+restored.
 
-$ scripts/install.sh            # re-run
-  master key already exists — leaving it alone
-  sha256 before == sha256 after
+---
 
-$ git check-ignore secrets/master.key secrets/db_password
-  both ignored
+## Run 3 output, verbatim
+
+```
+using host ports 8380/8543
+
+== starting from an empty Docker state for this project
+  PASS  no containers for project josi-ce-test
+  PASS  no volumes for project josi-ce-test
+
+== generating installation secrets
+  PASS  install.sh produced usable secrets
+  PASS  master key is mode 600
+
+== fresh install
+  PASS  docker compose up succeeded
+  PASS  migrator exited 0
+
+== waiting for readiness
+  PASS  /ready returned 200: {"ready":true,"blockers":[]}
+  PASS  /health returned 200
+
+== disabled OCR and ClamAV profiles consume nothing
+  PASS  ocr: no container exists
+  PASS  clamav: no container exists
+  PASS  clamav image was never pulled
+  INFO  running services: caddy db web worker
+  PASS  no optional service is running
+  PASS  all four required services are running
+
+== master key handling
+  PASS  no key material in the container environment
+  PASS  MASTER_KEY_FILE names a path, not a value
+  PASS  master key is readable at /run/secrets/josi_master_key
+  PASS  no image layer references the master key
+  PASS  the key value never appears in logs
+  PASS  web logged that it loaded the key (without the value)
+
+== container hardening
+  PASS  web runs as uid 1000 (non-root)
+  PASS  web has a read-only root filesystem
+  PASS  web drops all capabilities
+  PASS  web sets no-new-privileges
+  PASS  worker runs as uid 1000 (non-root)
+  PASS  worker has a read-only root filesystem
+  PASS  worker drops all capabilities
+  PASS  worker sets no-new-privileges
+
+== least-privilege networking
+  PASS  the database publishes no host port
+  PASS  probe works: a container on the edge network reaches web:8080
+  PASS  the database is NOT reachable from the edge network
+  PASS  caddy is running
+  PASS  web serves on its own port
+
+== restart and persistence
+  PASS  wrote a marker row
+  PASS  data survived a restart
+  PASS  data survived down/up (named volume)
+  PASS  migrator was idempotent on the second boot
+
+== image size
+  INFO  application image: 86 MB
+
+36 passed, 0 failed
+```
+
+Commands:
+
+```
+git clone https://github.com/vaxman14/josi-ce.git && git checkout f94ff32
+JOSI_HTTP_PORT=8380 JOSI_HTTPS_PORT=8543 bash scripts/test-docker.sh
 ```
 
 ---
 
-## UNPROVEN — requires a Docker daemon
+## Architecture builds
 
-These are implemented and scripted but **have never been executed**. Do not
-treat them as working until `scripts/test-docker.sh` has been run and its output
-recorded here.
+```
+$ bash scripts/build-multiarch.sh --load-native
+built linux/amd64  86089208 bytes
 
-| Claim | How to prove it | Status |
+$ bash scripts/build-multiarch.sh          # linux/amd64,linux/arm64
+[both platforms complete through npm ci, tsc -b and npm prune]
+
+$ docker buildx build --platform linux/arm64 --tag josi-ce:arm64-proof --load .
+$ docker image inspect josi-ce:arm64-proof --format "os={{.Os}} arch={{.Architecture}} size={{.Size}}"
+os=linux arch=arm64 size=85919548
+
+$ docker run --rm --platform linux/arm64 josi-ce:arm64-proof node -e '…'
+{"arch":"arm64","platform":"linux","node":"v22.23.2"}
+
+$ docker run --rm --platform linux/arm64 josi-ce:arm64-proof node -e '@node-rs/argon2 hash'
+argon2 ok, hash len 97
+```
+
+| Platform | Image size | Built | Executes | Native bindings |
+|---|---|---|---|---|
+| linux/amd64 | 86,089,208 B (86.1 MB) | yes | yes (native, full stack ran) | yes |
+| linux/arm64 | 85,919,548 B (85.9 MB) | yes (QEMU) | yes (`process.arch: arm64`) | **yes — argon2 hashed** |
+
+The argon2 check matters specifically: `@node-rs/argon2` is the one native
+dependency, and `npm ci --ignore-scripts` relies on its prebuilt per-platform
+binaries. Proving it loads and hashes under arm64 is what makes `--ignore-scripts`
+safe on both architectures rather than merely assumed.
+
+**A multi-arch manifest is NOT proven.** Both platforms build, and the arm64
+artefact runs — but a manifest list only exists once pushed to a registry.
+`--load` cannot accept a multi-platform result (Docker's image store holds one
+architecture per tag). Publishing requires explicit approval and has not been
+requested.
+
+---
+
+## Proven / unproven matrix
+
+### Proven at runtime on the test host
+
+| Claim | Evidence |
+|---|---|
+| Fresh install boots (web, worker, db, caddy + migrator) | run 3, `docker compose up succeeded`, all four services running |
+| Migrator runs to completion before the app starts | `migrator exited 0`; `service_completed_successfully` gate |
+| Migrations are idempotent | `migrator was idempotent on the second boot` |
+| `/health` returns 200 | run 3 |
+| `/ready` returns 200 with `{"ready":true,"blockers":[]}` | run 3 |
+| Disabled OCR/ClamAV consume nothing | zero containers; **ClamAV image never pulled** |
+| Master key is a mounted file, readable at `/run/secrets/` | run 3 |
+| No key material in the container environment | `docker inspect .Config.Env` grep |
+| No image layer references the key | `docker history --no-trunc` grep |
+| Key value never appears in logs | `docker compose logs` grepped for the actual bytes |
+| web + worker run as uid 1000 | `exec id -u` |
+| Read-only rootfs | `docker inspect .HostConfig.ReadonlyRootfs` |
+| All capabilities dropped | `docker inspect .HostConfig.CapDrop` |
+| `no-new-privileges` set | `docker inspect .HostConfig.SecurityOpt` |
+| Database publishes no host port | `docker inspect .NetworkSettings.Ports` |
+| **Database unreachable from the edge network** | disposable container on `edge`: reaches `web:8080`, cannot reach `db:5432` |
+| Data survives `restart` | marker row re-read |
+| Data survives `down` + `up` (named volume) | marker row re-read |
+| amd64 image builds and runs | 86.1 MB |
+| arm64 image builds, runs, native bindings load | 85.9 MB |
+| Installer: 32-byte CSPRNG key, mode 600, never printed, refuses overwrite | executed locally and on the test host |
+
+### Still unproven
+
+| Claim | Why | What would prove it |
 |---|---|---|
-| Fresh install boots from an empty Docker state | `scripts/test-docker.sh` — tears down containers/volumes/images for the project first, then `up -d --build`, then polls `/ready` | **UNPROVEN** |
-| Data survives restart and `down`/`up` | same script: writes a marker row, restarts, then does a full `down`/`up` without `-v` and re-reads it | **UNPROVEN** |
-| Migrator exits 0 and is idempotent on a second boot | same script | **UNPROVEN** |
-| Disabled profiles consume no runtime resources | same script: asserts zero containers for `ocr`/`clamav`, and that the ClamAV image was never even pulled | **UNPROVEN** |
-| Containers actually run as non-root at runtime | same script: `exec id -u` on web and worker | **UNPROVEN** |
-| Read-only rootfs and dropped caps hold at runtime | same script: `docker inspect` of `ReadonlyRootfs`, `CapDrop`, `SecurityOpt` | **UNPROVEN** |
-| Caddy genuinely cannot reach the database | same script: `nc -z db 5432` from inside the caddy container, expected to fail | **UNPROVEN** |
-| The key value never appears in logs or image layers | same script: greps `docker compose logs` and `docker history` for the actual key bytes | **UNPROVEN** |
-| **amd64 and arm64 both build from this source** | `scripts/build-multiarch.sh` | **UNPROVEN** |
-| Image size | recorded by the script; **not** to be converted into a capacity claim | **UNMEASURED** |
+| **Fresh install from a genuinely empty Docker daemon** | The designated Proxmox host is **powered off** — no ping response, incomplete ARP entry, SSH and web UI ports closed. Memory records it was shut down for thermal reasons (damaged cooling mount). Only the router and the Docker host respond on the LAN. | Power on the Proxmox host, or provide another disposable machine. the host's daemon is populated; the run above proves an empty *compose project*, not an empty *daemon*. |
+| Multi-arch **manifest** published | Requires pushing to a registry | Explicit approval to push, then `docker buildx imagetools inspect` |
+| Automatic HTTPS against a real domain | Test ran on `localhost` with alternate ports; no ACME challenge was performed | An install on a public domain with 80/443 reachable |
+| Bring-your-own-proxy mode | Documented, never exercised | Run with `COMPOSE_PROFILES=noproxy` and an external proxy |
+| ARM64 **on real ARM hardware** | Verified under QEMU emulation only | A Raspberry Pi or ARM server |
+| Capacity / concurrency | **Deliberately unmeasured.** Canonical map M97 forbids published numbers without benchmarks on Pi-class ARM64, old x86-64, and a modern mini-PC. | Those three benchmark runs |
 
-### The multi-arch caveat, stated plainly
-
-`scripts/build-multiarch.sh` builds `linux/amd64,linux/arm64` from the one
-Dockerfile in one invocation. Two things about it are worth knowing before
-anyone claims cross-platform support:
-
-1. Cross-building requires QEMU binfmt registered with the host kernel. Docker
-   Desktop ships this; a bare Linux host may need `tonistiigi/binfmt` installed
-   first. The script prints the builder's supported platforms so a missing
-   emulator is visible rather than a confusing failure.
-2. A multi-platform build **cannot be `--load`ed** into the local daemon —
-   Docker's image store holds one architecture per tag. Verifying both locally
-   means inspecting the build cache; proving a real manifest requires
-   `--push` to a registry. Until an image is pushed and
-   `docker buildx imagetools inspect` shows both platforms, "multi-arch" is a
-   build that succeeded, not a distribution that exists.
-
-The base images used (`node:22-bookworm-slim`, `postgres:16-alpine`,
-`caddy:2-alpine`, `clamav/clamav:stable`) all publish amd64 and arm64 variants,
-and nothing in the Dockerfile is architecture-specific — `@node-rs/argon2`
-ships prebuilt binaries for both, which is why `--ignore-scripts` is safe.
-That is a reason to expect it to work, not evidence that it does.
+Image sizes above are measurements, not capacity claims.
 
 ---
 
-## Deliberate decisions worth challenging
+## Static verification (unchanged, still green)
 
-**`/ready` names three coarse subsystems** (`database`, `migrations`,
-`master_key`) to an unauthenticated caller. An operator needs to know *which*
-dependency is down, and a load balancer's probe cannot authenticate. The
-alternative — a bare boolean — makes a broken install undiagnosable from
-outside. What is withheld is everything specific: hostnames, ports, driver
-names, versions, file paths and database error text, each asserted by test.
+73 tests, `npm test` — 22 authorization, 11 readiness, 11 master key, 29
+packaging. Mutation-tested: publishing the database port fails 2, moving the key
+to an env var fails 2, removing ClamAV's profile fails 1, restoring the broken
+`email` line fails 1, granting the super admin ownership fails 1, downgrading
+404→403 fails 4. All restored green.
 
-**Egress is not restricted.** The `data` network is not marked `internal`,
-because the API and worker must reach LLM providers, Google and Microsoft. A
-network-level egress block would break the product's core function. The control
-that matters here is Local-only mode (Phase 4), which refuses external providers
-at the application layer.
+## Cleanup performed
 
-**Caddy keeps `NET_BIND_SERVICE`.** Binding 80/443 needs it. It drops everything
-else and cannot reach the database. Operators who terminate TLS elsewhere can
-run without Caddy entirely (`COMPOSE_PROFILES=noproxy`) and publish `web`
-directly.
+`docker compose -p josi-ce-test down -v --remove-orphans` removed every
+container, volume and network this test created. The probe project
+`josi-ce-probe` was likewise removed. Two test images remain on the host
+(`josi-ce:local`, `josi-ce:arm64-proof`) plus the buildx builder container; the
+24 pre-existing containers across `deploy`, `fivel`, `hephy`, `josi-engine` and
+`zammad-docker-compose` were never touched.
 
-**The worker's health check is a heartbeat file**, not an HTTP endpoint. The
-worker has no listening port by design — it is not on the `edge` network and
-publishes nothing — so a port-based probe would mean opening one purely to be
-checked.
+## Host changes made to the test host
+
+Both were explicitly authorised for the ARM64 requirement:
+
+1. buildx v0.30.1 installed to `~/.docker/cli-plugins/docker-buildx` (user-local,
+   no `apt`, no system files).
+2. `qemu-aarch64` binfmt handler registered via `docker run --privileged --rm
+   tonistiigi/binfmt --install arm64`. This is a host-level kernel registration
+   and **persists until reboot**. It affects nothing else on the machine other
+   than allowing arm64 binaries to execute.

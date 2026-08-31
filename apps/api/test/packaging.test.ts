@@ -81,9 +81,19 @@ describe('secrets are files, never environment variables', () => {
 
   it('never bakes a secret into the image', () => {
     expect(dockerfile).not.toMatch(/master\.key/);
-    // The Dockerfile may name the PATH, which is not the value.
-    expect(dockerfile).toMatch(/MASTER_KEY_FILE=\/run\/secrets\//);
     expect(dockerfile).not.toMatch(/COPY\s+secrets/);
+    // No ENV at all whose name looks like a credential. The path default lives
+    // in code instead, so BuildKit's SecretsUsedInArgOrEnv check stays useful
+    // rather than being suppressed file-wide.
+    const envNames = [...dockerfile.matchAll(/^ENV\s+([A-Z0-9_]+)=/gm)].map((m) => m[1]);
+    for (const name of envNames) {
+      expect(name, `ENV ${name}`).not.toMatch(/KEY|SECRET|PASSWORD|TOKEN|CREDENTIAL/i);
+    }
+  });
+
+  it('keeps the master-key path default in code, not in the image', () => {
+    const masterKeySrc = readFileSync(join(root, 'packages/core/src/masterKey.ts'), 'utf8');
+    expect(masterKeySrc).toMatch(/DEFAULT_MASTER_KEY_PATH = '\/run\/secrets\/josi_master_key'/);
   });
 
   it('generates the key from a CSPRNG and never prints it', () => {

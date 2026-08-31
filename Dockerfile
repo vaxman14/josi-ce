@@ -50,9 +50,16 @@ COPY --from=build --chown=root:root /app/package.json ./package.json
 
 USER node
 
-# The master key is NOT baked in, NOT an env var, and NOT in any layer. It is
-# mounted at runtime as a Docker secret; this only names the path.
-ENV MASTER_KEY_FILE=/run/secrets/josi_master_key
+# No MASTER_KEY_FILE ENV here on purpose.
+#
+# It would only ever hold a PATH, never key material — but BuildKit's
+# SecretsUsedInArgOrEnv check flags any ENV whose name looks secret-ish, and the
+# honest fix is to remove the line rather than suppress the check. Suppressing
+# it file-wide would also hide a genuine secret-in-ENV mistake later.
+#
+# Nothing is lost: the default lives in code (core/masterKey.ts,
+# DEFAULT_MASTER_KEY_PATH) and compose sets the variable explicitly for the
+# services that need it.
 
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--"]
