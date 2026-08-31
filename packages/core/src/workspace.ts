@@ -81,15 +81,25 @@ export async function getInstallId(db: Db): Promise<string> {
 export interface SetupState {
   completed: boolean;
   current_step: string;
+  /** Steps the server has accepted. The state machine reads this, not
+   * `current_step`, so a resume lands on the first genuinely incomplete step
+   * rather than wherever a browser last was. */
+  completed_steps: string[];
   progress: Record<string, unknown>;
   completed_at: string | null;
+  install_id: string | null;
 }
 
 export async function getSetupState(db: Db): Promise<SetupState> {
   const rows = await db.query<SetupState>(
-    `select completed, current_step, progress, completed_at from setup_state where id = true`,
+    `select completed, current_step, coalesce(completed_steps, '{}') as completed_steps,
+            progress, completed_at, install_id
+     from setup_state where id = true`,
   );
-  return rows[0] ?? { completed: false, current_step: 'welcome', progress: {}, completed_at: null };
+  return rows[0] ?? {
+    completed: false, current_step: 'welcome', completed_steps: [],
+    progress: {}, completed_at: null, install_id: null,
+  };
 }
 
 export async function saveSetupProgress(

@@ -12,6 +12,8 @@ import { requireCsrf } from './http/cookies.js';
 import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
+import { setupGate } from './http/setupGate.js';
+import { setupRoutes } from './setup/setupRoutes.js';
 
 export interface AppConfig {
   /** https in production; false lets cookies work over plain http locally. */
@@ -52,7 +54,11 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   const api = express.Router();
   api.use(attachUser({ db }));
   api.use(requireCsrf);
+  // Before the routes, after CSRF: an unconfigured installation refuses
+  // everything except the wizard, and a configured one refuses the wizard.
+  api.use(setupGate(db));
 
+  api.use('/setup', setupRoutes({ db, masterKey: cfg.masterKeyCheck }));
   api.use('/auth', authRoutes({ db, cookieSecure: cfg.cookieSecure }));
   api.use('/connections', connectionRoutes({ db }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
