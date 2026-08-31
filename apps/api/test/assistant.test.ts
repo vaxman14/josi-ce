@@ -435,8 +435,8 @@ describe('approvals over the wire', () => {
       [ids.alice],
     );
     const [approval] = await db.query<{ id: string }>(
-      `insert into approvals (task_id, owner_user_id, action_class, action, summary, payload_hash)
-       values ($1, $2, 'email_send', 'send_email', 'SEND-SUMMARY-PRIVATE', 'h') returning id`,
+      `insert into approvals (subject_type, subject_id, owner_user_id, action_class, action, summary, payload_hash)
+       values ('task', $1, $2, 'email_send', 'send_email', 'SEND-SUMMARY-PRIVATE', 'h') returning id`,
       [task.id, ids.alice],
     );
 

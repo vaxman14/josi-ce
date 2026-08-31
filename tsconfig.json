@@ -20,6 +20,9 @@
       "path": "packages/mail"
     },
     {
+      "path": "packages/storage"
+    },
+    {
       "path": "apps/api"
     },
     {

@@ -14,6 +14,7 @@ import { adminRoutes } from './http/adminRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
+import { storageRoutes } from './http/storageRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { setupGate } from './http/setupGate.js';
@@ -94,6 +95,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
   }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
+  api.use('/storage', storageRoutes({ db }));
 
   api.use((_req, res) => res.status(404).json({ error: 'no such endpoint' }));
 

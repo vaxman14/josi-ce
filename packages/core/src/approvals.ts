@@ -153,13 +153,20 @@ function stableStringify(value: unknown): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(',')}}`;
 }
 
+/** What an approval can be about.
+ *
+ * Phase 5 keyed on a task; Phase 8 added threads as a second nullable column
+ * with a two-way XOR; Phase 9 needs document deletes. Three nullable columns and
+ * a three-way XOR is a shape that gets worse every time it is extended, so the
+ * subject is polymorphic. The MECHANISM is untouched — the payload hash still
+ * pins an approval to one exact action, and there is still one live request per
+ * subject and action. */
+export type ApprovalSubject = 'task' | 'email_thread' | 'folder_mapping' | 'document';
+
 export interface Approval {
   id: string;
-  /** Exactly one of these is set. A task approval and a mail approval are the
-   * same mechanism applied to different subjects, which is why they share this
-   * table rather than growing two sets of subtly different rules. */
-  task_id: string | null;
-  thread_id: string | null;
+  subject_type: ApprovalSubject;
+  subject_id: string;
   owner_user_id: string;
   action_class: string;
   action: string;
@@ -173,9 +180,13 @@ export interface Approval {
 export async function requestApproval(
   db: Db,
   args: {
-    /** A task approval (Phase 5) or a mail approval (Phase 8). Exactly one. */
+    /** Exactly one subject. The named forms are kept because callers read
+     * better for it, and because changing every call site would have been a
+     * larger change than the schema itself. */
     taskId?: string | null;
     threadId?: string | null;
+    mappingId?: string | null;
+    documentId?: string | null;
     ownerUserId: string;
     actionClass: string;
     action: string;
@@ -186,34 +197,36 @@ export async function requestApproval(
   },
 ): Promise<Approval> {
   const hash = approvalHash(args.payload);
-  if ((args.taskId ? 1 : 0) + (args.threadId ? 1 : 0) !== 1) {
-    throw new ApprovalError('an approval belongs to exactly one task or one thread');
+  const subjects: Array<[ApprovalSubject, string | null | undefined]> = [
+    ['task', args.taskId],
+    ['email_thread', args.threadId],
+    ['folder_mapping', args.mappingId],
+    ['document', args.documentId],
+  ];
+  const given = subjects.filter(([, id]) => id);
+  if (given.length !== 1) {
+    throw new ApprovalError('an approval belongs to exactly one subject');
   }
-  // Two partial unique indexes, one per subject, so `on conflict` has to name
-  // the right one. Splitting the statement is clearer than a constraint name.
-  const rows = args.taskId
-    ? await db.query<Approval>(
-        `insert into approvals (task_id, owner_user_id, action_class, action, summary, payload_hash, expires_at)
-         values ($1, $2, $3, $4, $5, $6, case when $7::int is null then null else now() + make_interval(secs => $7::int) end)
-         on conflict (task_id, action, payload_hash) where status = 'pending'
-           do update set summary = excluded.summary
-         returning *`,
-        [args.taskId, args.ownerUserId, args.actionClass, args.action, args.summary, hash, args.ttlSeconds ?? null],
-      )
-    : await db.query<Approval>(
-        `insert into approvals (thread_id, owner_user_id, action_class, action, summary, payload_hash, expires_at)
-         values ($1, $2, $3, $4, $5, $6, case when $7::int is null then null else now() + make_interval(secs => $7::int) end)
-         on conflict (thread_id, action, payload_hash) where status = 'pending' and thread_id is not null
-           do update set summary = excluded.summary
-         returning *`,
-        [args.threadId, args.ownerUserId, args.actionClass, args.action, args.summary, hash, args.ttlSeconds ?? null],
-      );
+  const [subjectType, subjectId] = given[0] as [ApprovalSubject, string];
+
+  const rows = await db.query<Approval>(
+    `insert into approvals
+       (subject_type, subject_id, owner_user_id, action_class, action, summary, payload_hash, expires_at)
+     values ($1, $2, $3, $4, $5, $6, $7, case when $8::int is null then null else now() + make_interval(secs => $8::int) end)
+     on conflict (subject_type, subject_id, action, payload_hash) where status = 'pending'
+       do update set summary = excluded.summary
+     returning *`,
+    [
+      subjectType, subjectId, args.ownerUserId, args.actionClass, args.action,
+      args.summary, hash, args.ttlSeconds ?? null,
+    ],
+  );
   await appendEvent(db, {
     actorUserId: args.ownerUserId,
     actor: 'agent',
     kind: 'approval.requested',
-    subjectType: args.taskId ? 'task' : 'email_thread',
-    subjectId: args.taskId ?? args.threadId ?? null,
+    subjectType,
+    subjectId,
     // The summary is what the action WOULD say. It stays out of the log.
     payload: { action: args.action, actionClass: args.actionClass, approvalId: rows[0].id },
   });
@@ -247,8 +260,8 @@ export async function decideApproval(
     actorUserId: args.decidedBy,
     actor: 'user',
     kind: args.approve ? 'approval.granted' : 'approval.denied',
-    subjectType: existing.task_id ? 'task' : 'email_thread',
-    subjectId: existing.task_id ?? existing.thread_id,
+    subjectType: existing.subject_type,
+    subjectId: existing.subject_id,
     payload: { action: existing.action, approvalId: existing.id },
   });
   return rows[0];
@@ -276,8 +289,8 @@ export async function consumeApproval(
       actorUserId: row.owner_user_id,
       actor: 'system',
       kind: 'approval.payload_mismatch',
-      subjectType: row.task_id ? 'task' : 'email_thread',
-      subjectId: row.task_id ?? row.thread_id,
+      subjectType: row.subject_type,
+      subjectId: row.subject_id,
       payload: { approvalId: row.id, action: row.action },
     });
     return { ok: false, reason: 'payload_changed' };
