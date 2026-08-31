@@ -17,6 +17,9 @@
       "path": "packages/connectors"
     },
     {
+      "path": "packages/mail"
+    },
+    {
       "path": "apps/api"
     },
     {

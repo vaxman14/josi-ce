@@ -17,6 +17,7 @@ export default defineConfig({
       '@josi-ce/llm': new URL('./packages/llm/src/index.ts', import.meta.url).pathname,
       '@josi-ce/agent': new URL('./packages/agent/src/index.ts', import.meta.url).pathname,
       '@josi-ce/connectors': new URL('./packages/connectors/src/index.ts', import.meta.url).pathname,
+      '@josi-ce/mail': new URL('./packages/mail/src/index.ts', import.meta.url).pathname,
     },
   },
 });

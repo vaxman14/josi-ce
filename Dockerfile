@@ -23,6 +23,7 @@ COPY packages/auth/package.json packages/auth/
 COPY packages/llm/package.json packages/llm/
 COPY packages/agent/package.json packages/agent/
 COPY packages/connectors/package.json packages/connectors/
+COPY packages/mail/package.json packages/mail/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
 COPY apps/web/package.json apps/web/

@@ -2,5 +2,5 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "outDir": "dist", "rootDir": "src" },
   "include": ["src"],
-  "references": [{ "path": "../../packages/core" }, { "path": "../../packages/auth" }, { "path": "../../packages/llm" }, { "path": "../../packages/agent" }, { "path": "../../packages/connectors" }]
+  "references": [{ "path": "../../packages/core" }, { "path": "../../packages/auth" }, { "path": "../../packages/llm" }, { "path": "../../packages/agent" }, { "path": "../../packages/connectors" }, { "path": "../../packages/mail" }]
 }

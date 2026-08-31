@@ -13,6 +13,7 @@ import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
+import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { setupGate } from './http/setupGate.js';
@@ -34,6 +35,8 @@ export interface AppConfig {
   /** Provider HTTP for connectors, injected by the tests so no suite ever
    * contacts Google or Microsoft. */
   connectorFetch?: typeof fetch;
+  /** SMTP, injected by the tests so no suite ever contacts a mail server. */
+  mailTransport?: import('@josi-ce/mail').SmtpTransport;
   /** Directory holding the built web bundle. Absent = API only. */
   webDir?: string;
 }
@@ -85,6 +88,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
+  api.use('/mail', mailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));
+  api.use('/admin/mail', adminMailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));
   api.use('/admin/connectors', adminConnectorRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
   }));
