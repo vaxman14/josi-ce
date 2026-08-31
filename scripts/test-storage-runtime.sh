@@ -30,8 +30,12 @@ step() { printf '\n== %s\n' "$*"; }
 cleanup() {
   step "tearing down (only this project)"
   docker rm -f "$STUB" >/dev/null 2>&1 || true
-  rm -f "/tmp/${PROJECT}-roots.yml" 2>/dev/null || true
+  # The override file must outlive the teardown: COMPOSE names it with -f, so
+  # removing it first makes `compose down` fail on a missing file and leave the
+  # whole stack running. That is exactly what happened, and it left containers
+  # behind on a host that must be returned as it was found.
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  rm -f "/tmp/${PROJECT}-roots.yml" 2>/dev/null || true
 }
 trap cleanup EXIT
 
