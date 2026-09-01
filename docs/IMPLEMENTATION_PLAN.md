@@ -517,9 +517,14 @@ and the invariant tests prove it.
 turn personalization into privilege escalation. CE deliberately reproduces the
 personal *experience*, not the authority model.
 
-**Status: the boundary is built and proven; the experience is not yet wired.**
-1038 tests, **30 of 30 mutations caught**, **50 runtime checks on claw with 0
-failures**. Evidence: `docs/PHASE_12_EVIDENCE.md`.
+**Status: done.** Every item in the phase text above is implemented and verified.
+1088 tests, **56 of 56 mutations caught** across three scripts, and **133 runtime
+checks on claw** in two suites — 68 for personalization and 65 for backup and
+restore — with 0 failures. Evidence: `docs/PHASE_12_EVIDENCE.md`.
+
+The one thing still unmeasured is upgrade retention, for the same reason as
+Phase 10: nothing downloads a release, so "upgrade retains all profiles" follows
+from the database being canonical rather than from a measurement.
 
 A profile never becomes instructions: Markdown is parsed into a bounded
 configuration of named fields with enumerated values, and `AGENTS.md` has no
