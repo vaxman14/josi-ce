@@ -68,7 +68,30 @@ function v4ToInt(ip: string): number | null {
   return n >>> 0;
 }
 
+/** The IPv4 address inside a v4-mapped or v4-compatible IPv6 literal, in either
+ * spelling, or null.
+ *
+ * Both `::ffff:169.254.169.254` and `::ffff:a9fe:a9fe` denote the same address,
+ * and a checker that understands only one of them understands neither.
+ */
+function embeddedV4(address: string): string | null {
+  const dotted = /^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/.exec(address);
+  if (dotted) return dotted[1];
+
+  // `::ffff:a9fe:a9fe` and the v4-compatible `::a9fe:a9fe`.
+  const hex = /^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(address);
+  if (!hex) return null;
+  const high = Number.parseInt(hex[1], 16);
+  const low = Number.parseInt(hex[2], 16);
+  if (!Number.isFinite(high) || !Number.isFinite(low)) return null;
+  // `::1` is loopback, not 0.0.0.1 — a single trailing group is not an
+  // embedded address and must not be reinterpreted as one.
+  if (address === '::1') return null;
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join('.');
+}
+
 /** Why this address is refused, or null when it is acceptable. */
+
 export function blockedReason(address: string): string | null {
   const family = isIP(address);
 
@@ -85,9 +108,18 @@ export function blockedReason(address: string): string | null {
 
   if (family === 6) {
     const normalised = address.toLowerCase().replace(/^\[|\]$/g, '');
-    // ::ffff:169.254.169.254 reaches metadata through a v6 literal.
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(normalised);
-    if (mapped) return blockedReason(mapped[1]);
+
+    // An IPv4 address embedded in a v6 literal, in EITHER spelling.
+    //
+    // `::ffff:169.254.169.254` is the one people write, and the one an earlier
+    // version of this checked for. But `new URL()` canonicalises it to
+    // `::ffff:a9fe:a9fe` — the same address in hex — and that spelling sailed
+    // straight past the dotted-form regex. A runtime check on a real server
+    // found it: the metadata endpoint was reachable through the mapped literal
+    // while every unit test passed.
+    const embedded = embeddedV4(normalised);
+    if (embedded) return blockedReason(embedded);
+
     for (const { prefix, why } of BLOCKED_V6_PREFIXES) {
       if (normalised.startsWith(prefix)) return why;
     }

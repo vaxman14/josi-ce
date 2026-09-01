@@ -15,6 +15,23 @@ describe('address classification', () => {
     expect(blockedReason('169.254.0.1')).toMatch(/metadata/);
     // Reached through a v4-mapped v6 literal.
     expect(blockedReason('::ffff:169.254.169.254')).toMatch(/metadata/);
+
+    // The SAME address in the spelling `new URL()` actually produces. This test
+    // existed in the dotted form only, and a runtime check on a real server
+    // found the hex form reaching metadata: the URL parser canonicalises
+    // [::ffff:169.254.169.254] to [::ffff:a9fe:a9fe], which the dotted-form
+    // regex did not match. A checker that understands one spelling of an
+    // address understands neither.
+    expect(new URL('http://[::ffff:169.254.169.254]/').hostname).toBe('[::ffff:a9fe:a9fe]');
+    expect(blockedReason('::ffff:a9fe:a9fe')).toMatch(/metadata/);
+    // The v4-compatible form too.
+    expect(blockedReason('::a9fe:a9fe')).toMatch(/metadata/);
+
+    // And the addresses that merely LOOK like embedded v4 must be unaffected:
+    // ::1 is loopback, not 0.0.0.1.
+    expect(blockedReason('::1')).toBeNull();
+    expect(blockedReason('::ffff:8.8.8.8')).toBeNull();
+    expect(blockedReason('::ffff:0808:0808')).toBeNull();
     expect(blockedReason('fd00:ec2::254')).toMatch(/metadata/);
   });
 
