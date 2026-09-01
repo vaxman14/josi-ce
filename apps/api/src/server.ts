@@ -35,9 +35,19 @@ const pgConn = {
     : process.env.PGPASSWORD,
 };
 
+const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '') || 'http://localhost:8080';
+const cookieSecure = process.env.COOKIE_SECURE === 'true'
+  ? true
+  : process.env.COOKIE_SECURE === 'false'
+    ? false
+    : new URL(appUrl).protocol === 'https:';
+
 const app = createApp(db, {
-  cookieSecure: (process.env.COOKIE_SECURE ?? 'true') === 'true',
-  appUrl: (process.env.APP_URL ?? '').replace(/\/$/, '') || 'http://localhost:8080',
+  // Empty/unset follows APP_URL. This keeps first-run LAN HTTP usable without
+  // weakening cookies on a public HTTPS installation. An explicit value is an
+  // advanced override, not something the normal installer should require.
+  cookieSecure,
+  appUrl,
   webDir: process.env.WEB_DIR,
   backupWriter: pgBackupWriter(pgConn),
   restoreReader: pgRestoreReader(pgConn),

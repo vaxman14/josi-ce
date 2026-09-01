@@ -209,7 +209,7 @@ Public HTTPS example:
 ```dotenv
 JOSI_DOMAIN=josi.example.com
 JOSI_APP_URL=https://josi.example.com
-JOSI_COOKIE_SECURE=true
+JOSI_COOKIE_SECURE=
 JOSI_HTTP_PORT=80
 JOSI_HTTPS_PORT=443
 ```
@@ -221,20 +221,22 @@ or a trailing slash.
 trailing slash. OAuth redirect URLs and security checks depend on this value
 being the actual external URL.
 
-`JOSI_COOKIE_SECURE=true` is required for HTTPS. A browser refuses to send a
-Secure cookie over plain HTTP.
+Leave `JOSI_COOKIE_SECURE` empty for the normal path. Josi infers secure cookies
+from the `https://` scheme in `JOSI_APP_URL`. An explicit `true` or `false` is
+an advanced override. A browser refuses to send a Secure cookie over plain
+HTTP, so the URL scheme must be accurate.
 
 Local HTTP evaluation example:
 
 ```dotenv
 JOSI_DOMAIN=localhost
 JOSI_APP_URL=http://localhost
-JOSI_COOKIE_SECURE=false
+JOSI_COOKIE_SECURE=
 JOSI_HTTP_PORT=80
 JOSI_HTTPS_PORT=443
 ```
 
-Do not use `JOSI_COOKIE_SECURE=false` on a public deployment.
+Do not explicitly set `JOSI_COOKIE_SECURE=false` on a public deployment.
 
 ### 6.2 Host ports
 
@@ -819,13 +821,15 @@ reported dependency instead of masking the check.
 Confirm:
 
 - `JOSI_APP_URL` exactly matches the browser's HTTPS origin.
-- `JOSI_COOKIE_SECURE=true` for HTTPS.
+- `JOSI_APP_URL` starts with `https://`; with the normal empty
+  `JOSI_COOKIE_SECURE`, Josi derives the correct cookie setting from it.
 - The proxy sends `X-Forwarded-Proto: https`.
 - The browser is not being redirected between different hostnames.
 - System time is correct.
 
-For plain HTTP evaluation only, set `JOSI_COOKIE_SECURE=false`, recreate the web
-container, and clear cookies for the host.
+For plain HTTP evaluation, use an `http://` `JOSI_APP_URL` and leave
+`JOSI_COOKIE_SECURE` empty. If an explicit override was previously set, remove
+it, recreate the web container, and clear cookies for the host.
 
 ### 17.6 Caddy restarts or cannot issue a certificate
 
@@ -1195,4 +1199,3 @@ permanent removal, take a `full` backup, copy it off the host, verify it by
 restoring it somewhere else, and separately preserve the master key — a backup
 you have never restored is not a backup you know you have. This manual
 deliberately does not provide a one-line destructive wipe command.
-
