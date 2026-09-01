@@ -187,15 +187,18 @@ function StepForm({
           }))}
           className="space-y-3"
         >
-          <Field id="domain" label="Address" placeholder="josi.example.com" required autoCapitalize="none" />
+          <Field id="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" />
           <div>
             <label className="mb-1 block text-sm" htmlFor="tlsMode">HTTPS</label>
             <select id="tlsMode" name="tlsMode" defaultValue="bundled_caddy"
                     className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm">
-              <option value="bundled_caddy">Let Josi handle certificates (bundled Caddy)</option>
+              <option value="bundled_caddy">Bundled Caddy (HTTPS for a public domain, HTTP on LAN)</option>
               <option value="external_proxy">I run my own reverse proxy</option>
             </select>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Public certificates require a domain pointing to this server. A LAN IP works over HTTP and needs no certificate email.
+          </p>
           <Field id="acmeEmail" label="Email for certificate notices" type="email" />
           <Button type="submit" disabled={busy}>Continue</Button>
         </form>

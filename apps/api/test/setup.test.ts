@@ -246,6 +246,18 @@ describe('the state machine cannot be driven by the client', () => {
     // No ACME challenge happened, so nothing may claim one did.
     expect(rows[0].certificate_verified_at).toBeNull();
   });
+
+  it('accepts a literal LAN IP as an installation address', async () => {
+    await runWizard('domain');
+    const res = await call('/api/setup/steps/domain', {
+      method: 'POST', body: { domain: '10.10.1.5', tlsMode: 'bundled_caddy' },
+    });
+    expect(res.status).toBe(200);
+    const [deployment] = await db.query<{ domain: string; certificate_verified_at: string | null }>(
+      `select domain, certificate_verified_at from deployment_config where id = true`,
+    );
+    expect(deployment).toEqual({ domain: '10.10.1.5', certificate_verified_at: null });
+  });
 });
 
 // -------------------------------------------------------------------- 4

@@ -13,6 +13,7 @@
 //
 // Nothing here ever reads a role, a user id, a completion flag or an install
 // identity from the request body.
+import { isIP } from 'node:net';
 import { Router } from 'express';
 import {
   appendEvent, asSecret, getInstallId, getSetupState, loadMasterKey, seal,
@@ -302,9 +303,11 @@ async function applyStep(
       const acmeEmail = str(body.acmeEmail, 320);
 
       if (!domain) throw new SetupError(400, 'an address is required');
-      // Hostname or localhost. Not a URL, not a path, no scheme.
-      if (!/^(localhost|(?=.{1,253}$)([a-z0-9](-*[a-z0-9])*\.)+[a-z]{2,})$/.test(domain)) {
-        throw new SetupError(400, 'that does not look like a hostname');
+      // Hostname, localhost, or a literal LAN address. Not a URL, path, or
+      // scheme. Public ACME certificates need a hostname, but LAN-only Josi is
+      // a supported install and must not lie that its address is invalid.
+      if (isIP(domain) === 0 && !/^(localhost|(?=.{1,253}$)([a-z0-9](-*[a-z0-9])*\.)+[a-z]{2,})$/.test(domain)) {
+        throw new SetupError(400, 'that does not look like a hostname or IP address');
       }
       if (acmeEmail && !acmeEmail.includes('@')) throw new SetupError(400, 'that does not look like an email address');
 
