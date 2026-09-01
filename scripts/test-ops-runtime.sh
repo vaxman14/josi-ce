@@ -350,8 +350,11 @@ ADMIN_SESSION=$(login owner "$ADMIN_PW")
   || bad "sign-in failed after the restore"
 
 SESSION="$ADMIN_SESSION"
-code=$(api GET /api/admin/llm/providers)
-[[ "$code" == "200" ]] && ok "the app reads its restored tables ($code)" || bad "returned $code"
+# The admin LLM index, which reads llm_providers — a table that was dropped and
+# came back. `/providers` is not a route; using it made this assert nothing but
+# the 404 handler.
+code=$(api GET /api/admin/llm/)
+[[ "$code" == "200" ]] && ok "the app reads its restored tables ($code)" || bad "returned $code: $(body | head -2)"
 
 # THE acceptance criterion, first half: with the key, the credential decrypts.
 step "with the key, the credential is usable — M100"
