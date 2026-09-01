@@ -517,6 +517,27 @@ and the invariant tests prove it.
 turn personalization into privilege escalation. CE deliberately reproduces the
 personal *experience*, not the authority model.
 
+**Status: the boundary is built and proven; the experience is not yet wired.**
+1038 tests, **30 of 30 mutations caught**, **50 runtime checks on claw with 0
+failures**. Evidence: `docs/PHASE_12_EVIDENCE.md`.
+
+A profile never becomes instructions: Markdown is parsed into a bounded
+configuration of named fields with enumerated values, and `AGENTS.md` has no
+free-text field at all. The load-bearing part is not the prompt — approvals,
+ownership and tool permission are enforced by routes reading database rows,
+outside the assembled string entirely, so a model persuaded by a hostile
+personality still cannot act.
+
+**Not wired:** nothing consumes the assembled prompt — the agent still builds its
+own context, so personalization is proven as configuration and not as a
+personality anybody has experienced. Nothing calls `suggestMemory`, so no memory
+is ever proposed automatically. There is no first-run flow, no presets, no live
+response preview, and version history is retained but not surfaced.
+
+The runtime run found the Phase 6 jsonb defect recurring in a package written six
+phases later, which the static guard added after Phase 6 could not see because it
+knew only one of the bug's two shapes.
+
 **Release position:** first post-0.1 product phase. Phase 11 closes and hardens
 the current 0.1 scope; Phase 12 then adds personalization as a separately tested
 feature rather than expanding the release boundary during hardening.
