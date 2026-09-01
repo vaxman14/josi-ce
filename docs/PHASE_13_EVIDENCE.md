@@ -226,12 +226,17 @@ The tests evaluate the shipped `public/sw.js` in a sandbox and call its
 
 Stated plainly rather than rounded up.
 
-1. **No runtime or clean-install run.** There is **no `docker` binary in this
-   session's shell** (`command -v docker` finds nothing, there is no Docker
-   context, no `DOCKER_HOST`, and no `~/.docker`), and `claw` does not resolve
-   from here. The acceptance script and the runtime harnesses are written and
-   syntax-checked; none has been executed. `docs/ACCEPTANCE.md` records every
-   profile as **never run**.
+1. **No runtime or clean-install run.** The acceptance script and the runtime
+   harnesses are written and syntax-checked; none has been executed.
+   `docs/ACCEPTANCE.md` records every profile as **never run**.
+
+   To be precise about whose limitation this is: `claw` is a working Docker host
+   (Roman confirmed 29.1.3 / Compose 5.5.0 on 2026-09-01), and the plan says so.
+   It is simply not reachable *from the shell this phase was built in* — that
+   shell has no `docker` binary at all (`command -v docker` finds nothing, no
+   Docker context, no `DOCKER_HOST`, no `~/.docker`) and cannot resolve the
+   name. So this is "not run here", not "cannot be run"; on `claw` these
+   scripts are one command each.
 
 2. **No browser checks.** `scripts/e2e-web.mjs` gained `testPwaAssets` and
    `testServiceWorker`, `/app/telegram` and `/admin/telegram` joined the
