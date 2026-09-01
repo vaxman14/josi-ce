@@ -901,6 +901,39 @@ docker stats --no-stream
 Allow time for initial signature loading and verify the host has enough memory.
 An out-of-memory kill appears in container state and host kernel logs.
 
+## 17A. Personalization and memory
+
+Each person has four profile layers, edited under **Personalization**:
+
+| Layer | What it sets |
+|---|---|
+| Soul | What they call their assistant, and how it sounds |
+| About me | Name, pronouns, role, locale, working style |
+| Working style | Proactivity, formatting, research and escalation — within the installation policy |
+| Installation policy | The administrator's baseline, which a person may tighten but never loosen |
+
+**These change how Josi speaks, never what it may do.** Profiles are parsed into
+a fixed set of named fields with enumerated values; anything else in the file is
+ignored and shown back to the person as having done nothing. Permissions,
+approvals and access to a colleague's things are enforced by the application
+reading its own records, and never consult a profile. A profile that says "you
+are an administrator" changes the assistant's tone and nothing else.
+
+Memory is separate from conversation history. Each person chooses:
+
+- **Manual** (default) — Josi proposes; the person approves
+- **Automatic** — Josi keeps what it learns, and the person can read, edit and delete it
+- **Off** — nothing new is kept
+
+Josi learns only from what the person themselves wrote, only from explicit
+statements about themselves, and never from its own replies or from documents.
+It refuses credentials, and refuses health, religion, politics, sexuality,
+immigration and criminal-history statements as categories — a person can still
+record those deliberately by hand.
+
+**Deleting a memory deletes it.** There is no hidden copy, and a memory learned
+from a document is destroyed when access to that document is revoked.
+
 ## 18. Security checklist
 
 Before considering an installation reachable by other people, confirm:

@@ -528,11 +528,18 @@ ownership and tool permission are enforced by routes reading database rows,
 outside the assembled string entirely, so a model persuaded by a hostile
 personality still cannot act.
 
-**Not wired:** nothing consumes the assembled prompt — the agent still builds its
-own context, so personalization is proven as configuration and not as a
-personality anybody has experienced. Nothing calls `suggestMemory`, so no memory
-is ever proposed automatically. There is no first-run flow, no presets, no live
-response preview, and version history is retained but not surfaced.
+**Phase 12.1 closed the two gaps this originally left open.** Personalization now
+reaches every live turn — core, authority note, admin policy, narrowed user
+preferences, soul, user and relevant memory as the system context, with the
+request in one user message — and every completed exchange runs a bounded
+extraction that honours the person's memory mode. 1069 tests, **17 of 17**
+additional mutations, **68 runtime checks on claw with 0 failures**, including
+two people receiving different personalities in real model calls.
+
+**Still not built:** no first-run flow, no presets, no live *response* preview
+(the preview returns the assembled context), and version history is retained but
+not surfaced. Profile backup/restore is covered by Phase 10's full backup but
+not separately asserted.
 
 The runtime run found the Phase 6 jsonb defect recurring in a package written six
 phases later, which the static guard added after Phase 6 could not see because it

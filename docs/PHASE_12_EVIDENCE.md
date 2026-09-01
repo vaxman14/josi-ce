@@ -10,10 +10,10 @@ The plan states the risk in one sentence, and everything below follows from it:
 
 | | |
 |---|---|
-| Tests | **1038 passed** across 32 files |
-| Mutation testing | **30 of 30 caught** (`scripts/mutate-phase12.sh`) |
-| Runtime on claw | **50 checks, 0 failed** — two real sessions, one database |
-| Secret scan | clean, 253 files |
+| Tests | **1069 passed** across 33 files |
+| Mutation testing | **30 of 30** (`mutate-phase12.sh`) and **17 of 17** (`mutate-phase12-1.sh`) |
+| Runtime on claw | **68 checks, 0 failed** — two real sessions, one database, live model turns |
+| Secret scan | clean, 258 files |
 | Host impact | 25 containers before, 25 after, no leftovers |
 
 ## How the boundary is actually held
@@ -82,19 +82,31 @@ there is no field to set.
 | The settings screen explains what each layer cannot do | Returned with every read | wire, mutation M29, runtime |
 | Reset does not clear memories | Asserted alongside | unit, mutation M30 |
 
+## Phase 12.1 — the two gaps, closed
+
+The first version of this document recorded two honest gaps: nothing consumed
+the assembled prompt, and nothing ever called `suggestMemory`. Both are now
+wired, tested and verified on real containers.
+
+**Every live turn is personalized.** The agent assembles the system context as
+immutable core → authority note → admin policy → narrowed user preferences →
+soul → user → relevant memory, and the request stays in one user message.
+Verified on claw: two people get different personalities in real model calls,
+neither leaks into the other, the core and the authority note are present, and
+`USERTURNS<<1>>` proves the request is not duplicated.
+
+**Every completed exchange is learned from, narrowly.** Extraction reads only
+the person's own message — never the reply, never tool output — matches explicit
+first-person statements, refuses questions, transient requests, secrets and
+sensitive categories, and caps at two per turn. All three memory modes verified
+through real HTTP: manual raised one suggestion and stored nothing, off stored
+nothing at all, automatic saved and still refused a credential.
+
+**Authority is unchanged.** A hostile profile reaches the model as words in a
+live turn while inventing no field and no tool, and its author is still not an
+administrator.
+
 ## Not proven
-
-**Nothing consumes the assembled prompt.** `assemblePrompt` is exercised
-directly and through `/api/persona/preview`, but **the assistant does not yet
-use it** — the agent still builds its own context. Personalization is therefore
-proven as a bounded configuration with a correct assembly function, and *not*
-as a personality anybody has actually experienced. This is the largest gap in
-the phase.
-
-**No memory is ever suggested automatically.** `suggestMemory` is complete and
-tested, including the automatic path, but **nothing calls it** — no conversation
-produces a suggestion, because the agent is not wired to. Manual memory works
-end to end.
 
 **Backup and restore of profiles is not separately exercised.** Profiles live in
 ordinary tables, so a Phase 10 `full` backup includes them, and the Phase 10
@@ -118,7 +130,7 @@ than a fake reply but is not what was asked for. **No presets ship.**
 version work and are tested; the settings page shows the current version number
 and offers no history list.
 
-## Two defects worth recording
+## Defects worth recording
 
 **The Phase 6 jsonb defect, in a package written six phases later.** Profile data
 was written to a jsonb column with `JSON.stringify`; postgres.js serialises the
@@ -133,6 +145,29 @@ Phase 10's test asserted the value was "truthy" — which a string scalar
 satisfies. Both fixed with the `json()` helper; the guard now flags a
 hand-serialised value anywhere in a query's parameter list, and it was verified
 by reintroducing the defect rather than assuming.
+
+**Phase 12.1: the mutation harness measured stale compiled output.** A consumer
+importing `@josi-ce/persona` resolves to the package's built `dist`; the harness
+edited source and never rebuilt. Nine mutations were recorded as "survived" when
+they had never been applied to the code under test. Confirmed by applying one by
+hand and rebuilding. `run()` now rebuilds first and `restore()` rebuilds after,
+fixed across all ten mutation scripts. **Per-package mutations were sound —
+those tests import `../src` directly — but cross-package mutations in earlier
+phases were measured the same way, and that caveat belongs on the record.**
+
+**Phase 12.1: two extractor defects, both letting through what the design
+forbids.** `"She always works mornings"` was extracted, because the bare
+`always`/`never` patterns had no first-person requirement — an observation about
+a third party would have become a durable fact about the user. And transient
+verbs matched bare stems only, so `booked` escaped `book`, then `reminders`
+escaped `remind` and `sent` escaped `send`: three attempts at enumerating
+English before switching to stem-plus-any-suffix. Over-matching refuses to learn
+something; under-matching turns a request with a deadline into a permanent fact.
+
+**Phase 12.1: memory retrieval ANDed every word of the request.** `"where should
+I go sailing?"` became `go & sail` and matched nothing. Memory would have been
+silently useless in production — retrieved by unit tests passing bare keywords,
+and never by a real sentence.
 
 **Three claims that lived only in comments.** Mutation testing found that "the
 behaviour layer has no free-text field", "manual memory is the default", and
