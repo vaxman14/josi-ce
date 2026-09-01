@@ -99,3 +99,62 @@ Acceptance:
   API, background job or client-side tampering.
 - Bias, accessibility, retention, privacy and employment-law reviews are
   completed and recorded before release.
+
+## V2.3 — Job-posting and requisition worker
+
+Add a narrowly scoped worker that turns an approved hiring need into accurate
+job listings, publishes them through employer-approved channels and maintains
+one authoritative register of every live, paused, expired and closed posting.
+It manages the posting lifecycle; it does not choose candidates or invent the
+role.
+
+Required behavior:
+
+- Build a structured requisition from the employer's approved title, duties,
+  location, schedule, compensation, benefits, required qualifications,
+  preferred qualifications and application process.
+- Draft accessible, plain-language listings from that requisition without
+  inflating compensation, inventing benefits or quietly turning preferences
+  into requirements.
+- Flag potentially exclusionary language, missing pay-transparency information,
+  unrealistic requirements and jurisdiction-specific compliance questions for
+  human review.
+- Require explicit approval of the canonical requisition and listing before the
+  first publication. Material changes to title, duties, location, compensation,
+  qualifications or legal disclosures require renewed approval.
+- Publish only to job boards, career pages and social channels the employer has
+  explicitly connected and authorized. Never create accounts, accept paid
+  promotion, purchase listings or raise a posting budget without approval.
+- Adapt formatting to each channel while preserving the approved facts and a
+  traceable link to the canonical listing version.
+- Maintain a central posting register containing channel, external posting ID,
+  URL, version, owner, status, publication and expiry dates, cost, applicant
+  destination, last verification and any errors.
+- Verify that listings actually became public, detect channel rejection or
+  drift, surface stale and duplicate listings, and retry only within explicit
+  limits.
+- Support approved edits, renewals, pauses and closures across every channel,
+  with a reconciliation report when a channel cannot be updated automatically.
+- Preserve a complete audit trail of drafts, approvals, publications, edits,
+  spend and closures. Never claim a posting succeeded without external proof.
+- Hand incoming applications to the applicant-tracking and hiring-review flow
+  without making ranking, rejection or employment decisions itself.
+- Enforce workspace and user isolation, least-privilege connector access,
+  retention rules and per-channel rate limits.
+- Treat CAPTCHA, identity verification, legal attestations and terms acceptance
+  as human gates. Do not bypass them or attest on the employer's behalf.
+
+Acceptance:
+
+- Every public listing can be reconciled to one approved requisition and exact
+  content version.
+- The posting register accurately distinguishes draft, awaiting approval,
+  publishing, live, failed, expired, paused and closed states.
+- A failed or blocked publication never appears as live, and the employer sees
+  the exact channel response and required next action.
+- Closing a role produces verified closure results for every channel and an
+  explicit exception list for anything requiring manual action.
+- Unauthorized users cannot publish, edit, renew, spend money on or close a job
+  through UI, API, background jobs or client-side tampering.
+- Employment-law, accessibility, privacy, connector-security and paid-spend
+  controls are reviewed and recorded before release.
