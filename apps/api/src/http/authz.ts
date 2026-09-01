@@ -2,8 +2,8 @@
 // nothing here trusts the client for anything except the session cookie.
 import type { NextFunction, Request, Response } from 'express';
 import {
-  canRead, canShare, canWrite, resolveAccess,
-  type Accessor, type Db, type ResourceType,
+  canRead, canShare, canWrite, hasCapability, resolveAccess,
+  type Accessor, type Capability, type Db, type EditionProfile, type ResourceType,
 } from '@josi-ce/core';
 import { resolveSession, type SessionUser } from '@josi-ce/auth';
 import { readSessionToken } from './cookies.js';
@@ -74,6 +74,27 @@ export function scopeWorkspace(req: Request, res: Response, next: NextFunction):
     return;
   }
   next();
+}
+
+/** Refuses a route that this build's edition does not have.
+ *
+ * **404, not 403**, and for the same reason `requireOwnership` gives one: 403
+ * would confirm the endpoint exists. On a hosted build the subscription
+ * endpoints should be indistinguishable from endpoints that were never written,
+ * because "this feature exists but you may not have it" is an invitation to go
+ * looking for the bypass.
+ *
+ * This is the outermost of four layers. It is the cheapest and the least
+ * trustworthy — a route added later that forgets it gets no protection here at
+ * all, which is exactly why the factory and the call path check again. */
+export function requireCapability(capability: Capability, profile?: EditionProfile) {
+  return (_req: Request, res: Response, next: NextFunction): void => {
+    if (!hasCapability(capability, profile)) {
+      res.status(404).json({ error: 'no such endpoint' });
+      return;
+    }
+    next();
+  };
 }
 
 export interface OwnershipOptions {

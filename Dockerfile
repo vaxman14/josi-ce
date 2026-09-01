@@ -35,6 +35,22 @@ RUN npm ci --ignore-scripts
 COPY tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
 COPY apps ./apps
+COPY scripts ./scripts
+
+# The edition capability boundary, stamped BEFORE the compile so it becomes a
+# constant in the bundle rather than something read from the environment at
+# start. See packages/core/src/edition.ts for why that distinction is the whole
+# control. Defaults to `ce`; a hosted or white-label build passes
+# --build-arg JOSI_EDITION=hosted and gets an artefact that structurally cannot
+# enable CE-only capabilities.
+ARG JOSI_EDITION=ce
+ARG JOSI_BUILD_ID=source
+ARG JOSI_RELEASE_KEY=none
+RUN node scripts/stamp-edition.mjs \
+      --edition "$JOSI_EDITION" \
+      --build-id "$JOSI_BUILD_ID" \
+      --release-key "$JOSI_RELEASE_KEY"
+
 RUN npx tsc -b
 
 # The web bundle. Built here rather than committed, so what ships is always

@@ -1,5 +1,9 @@
 export * from './db.js';
 export * from './connect.js';
+// Phase 13 — the edition capability boundary. First in the list because it is
+// the thing everything capability-gated has to consult.
+export * from './edition.js';
+export { BUILD_EDITION, BUILD_ID, BUILD_RELEASE_PUBLIC_KEY } from './buildStamp.js';
 export * from './events.js';
 export * from './masterKey.js';
 export * from './readiness.js';
