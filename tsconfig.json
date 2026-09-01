@@ -26,6 +26,9 @@
       "path": "packages/ops"
     },
     {
+      "path": "packages/persona"
+    },
+    {
       "path": "apps/api"
     },
     {
