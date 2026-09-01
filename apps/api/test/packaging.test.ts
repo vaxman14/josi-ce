@@ -230,6 +230,18 @@ describe('storage mounts — M45, M60', () => {
     expect(compose.volumes).toHaveProperty('josi_versions');
   });
 
+  it('creates its writable directories in the image, owned by the runtime user', () => {
+    // A named volume inherits ownership from the image path it covers. Without
+    // this the daemon creates them root-owned and every backup fails on a real
+    // installation — found by a runtime run, invisible to every unit test.
+    expect(dockerfile).toMatch(/mkdir -p \/data\/backups/);
+    expect(dockerfile).toMatch(/chown -R node:node \/data/);
+    const mkdirAt = dockerfile.indexOf('mkdir -p /data/backups');
+    const userAt = dockerfile.lastIndexOf('USER node');
+    expect(mkdirAt, 'directories must be created before dropping to USER node')
+      .toBeLessThan(userAt);
+  });
+
   it('mounts no shared folder by default', () => {
     // M45 is deny-by-default at the mount layer too. An installation that ships
     // with somebody's documents already mounted has made the decision for them.

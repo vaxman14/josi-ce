@@ -60,6 +60,16 @@ RUN apt-get update \
 ENV NODE_ENV=production
 WORKDIR /app
 
+# Josi's own writable areas, created in the IMAGE and owned by the runtime user.
+#
+# Docker seeds a fresh named volume from the image path it is mounted over,
+# ownership included. Without these, the volume directories are created by the
+# daemon as root:root 0755, the application runs as `node`, and every backup
+# fails with a permission error on a real installation — which is exactly what
+# the first runtime run found while every unit test passed.
+RUN mkdir -p /data/backups /data/diagnostics /data/versions \
+ && chown -R node:node /data
+
 # The `node` user (uid 1000) ships with the base image. Everything below runs as
 # it: the application never needs to write to its own code, so the whole tree is
 # owned by root and readable — not writable — by the runtime user.

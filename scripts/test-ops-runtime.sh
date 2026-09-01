@@ -235,16 +235,18 @@ ALICE_ID=$(sql "select id from users where username = 'alice'")
 
 # Sealed by the application itself through a route that stores a secret, so the
 # ciphertext is genuine rather than something this script constructed.
-code=$(api PUT /api/admin/llm/providers/openai \
-  "{\"apiKey\":\"$PROOF\",\"enabled\":true}")
-SEALED_BEFORE=$(sql "select coalesce(api_key_enc,'') from llm_providers where provider = 'openai'")
+# The primary slot already exists from the wizard; this puts a real key in it
+# through the real route, so the ciphertext is the application's own.
+code=$(api PUT /api/admin/llm/providers/primary \
+  "{\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"$PROOF\",\"externalAcknowledged\":true}")
+SEALED_BEFORE=$(sql "select coalesce(api_key_enc,'') from llm_providers where role = 'primary'")
 if [[ "$SEALED_BEFORE" == v1.* ]]; then
   ok "a real sealed credential exists"
 else
-  # Fall back to any sealed column the installation has.
-  SEALED_BEFORE=$(sql "select coalesce(secrets_enc,'') from connections limit 1")
-  [[ "$SEALED_BEFORE" == v1.* ]] && ok "a real sealed credential exists" \
-    || bad "no sealed credential to prove anything with (got '${SEALED_BEFORE:0:12}')"
+  bad "no sealed credential to prove anything with (route said $code: $(body | head -2))"
+  # Everything after this compares against it, and comparing two empty strings
+  # passes while proving nothing. Stop rather than report false green.
+  printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
 fi
 
 USERS_BEFORE=$(sql "select count(*) from users")
@@ -262,8 +264,14 @@ if body | grep -q 'does NOT contain the installation master key'; then
 else bad "no master-key statement: $(body)"; fi
 
 BYTES=$(sql "select byte_size from backups where id = '$BACKUP_ID'")
-[[ "${BYTES:-0}" -gt 1000 ]] && ok "the archive is $BYTES bytes, so something was written" \
-  || bad "the archive is suspiciously small: '$BYTES'"
+if [[ "${BYTES:-0}" -gt 1000 ]]; then
+  ok "the archive is $BYTES bytes, so something was written"
+else
+  bad "the archive is suspiciously small: '$BYTES'"
+  # Without an archive every check below reads an empty string and several of
+  # them PASS on it. That is worse than failing.
+  printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
+fi
 
 state=$(sql "select state from backups where id = '$BACKUP_ID'")
 [[ "$state" == "complete" ]] && ok "recorded complete" || bad "state is '$state'"
@@ -274,10 +282,17 @@ PATH_IN=$(sql "select stored_path from backups where id = '$BACKUP_ID'")
   && ok "it is a PostgreSQL dump" || bad "the archive is not a dump"
 
 # THE property: a stolen backup is useless. The plaintext key must not be in it.
-if "${COMPOSE[@]}" exec -T web sh -c "gzip -dc '$PATH_IN' | grep -qF '$PROOF'"; then
-  bad "the PLAINTEXT credential is inside the backup"
+# Only meaningful if the archive can actually be read. An unreadable archive
+# also "does not contain the plaintext", which is not the same thing.
+if "${COMPOSE[@]}" exec -T web sh -c "gzip -dc '$PATH_IN' >/dev/null 2>&1"; then
+  ok "the archive is readable"
+  if "${COMPOSE[@]}" exec -T web sh -c "gzip -dc '$PATH_IN' | grep -qF '$PROOF'"; then
+    bad "the PLAINTEXT credential is inside the backup"
+  else
+    ok "the plaintext credential is NOT in the backup"
+  fi
 else
-  ok "the plaintext credential is NOT in the backup"
+  bad "the archive could not be read, so nothing below it proves anything"
 fi
 if "${COMPOSE[@]}" exec -T web sh -c "gzip -dc '$PATH_IN' | grep -q 'v1\.'"; then
   ok "the sealed ciphertext IS in the backup"
@@ -315,10 +330,14 @@ USERS_AFTER=$(sql "select count(*) from users")
 [[ "$USERS_AFTER" == "$USERS_BEFORE" ]] && ok "all $USERS_AFTER users came back" \
   || bad "expected $USERS_BEFORE users, found $USERS_AFTER"
 
-SEALED_AFTER=$(sql "select coalesce(api_key_enc,'') from llm_providers where provider = 'openai'")
-[[ -z "$SEALED_AFTER" ]] && SEALED_AFTER=$(sql "select coalesce(secrets_enc,'') from connections limit 1")
-[[ "$SEALED_AFTER" == "$SEALED_BEFORE" ]] && ok "the sealed credential came back byte-identical" \
-  || bad "the ciphertext changed across the round trip"
+SEALED_AFTER=$(sql "select coalesce(api_key_enc,'') from llm_providers where role = 'primary'")
+# Non-empty AND equal. Two empty strings are equal, and that is how this
+# assertion passed on a run where no backup had been taken at all.
+if [[ "$SEALED_AFTER" == v1.* && "$SEALED_AFTER" == "$SEALED_BEFORE" ]]; then
+  ok "the sealed credential came back byte-identical"
+else
+  bad "ciphertext did not survive: before='${SEALED_BEFORE:0:8}' after='${SEALED_AFTER:0:8}'"
+fi
 
 step "and the restored installation actually works"
 "${COMPOSE[@]}" restart web >/dev/null 2>&1 || true
@@ -336,7 +355,7 @@ code=$(api GET /api/admin/llm/providers)
 
 # THE acceptance criterion, first half: with the key, the credential decrypts.
 step "with the key, the credential is usable — M100"
-code=$(api POST /api/admin/llm/providers/openai/probe '{}')
+code=$(api POST /api/admin/llm/providers/primary/probe '{}')
 if body | grep -qi 'could not be decrypted\|master key'; then
   bad "the credential did not decrypt with the key present: $(body | head -2)"
 else
@@ -362,14 +381,16 @@ MOUNTED=$("${COMPOSE[@]}" exec -T web sh -c 'cat /run/secrets/josi_master_key' 2
 [[ "$MOUNTED" != "$KEY_B64" ]] && ok "the installation now has a different master key" \
   || bad "the key did not change — the rest would prove nothing"
 
-SEALED_STILL=$(sql "select coalesce(api_key_enc,'') from llm_providers where provider = 'openai'")
-[[ -z "$SEALED_STILL" ]] && SEALED_STILL=$(sql "select coalesce(secrets_enc,'') from connections limit 1")
-[[ "$SEALED_STILL" == "$SEALED_BEFORE" ]] && ok "the ciphertext is still there, untouched" \
-  || bad "the ciphertext changed"
+SEALED_STILL=$(sql "select coalesce(api_key_enc,'') from llm_providers where role = 'primary'")
+if [[ "$SEALED_STILL" == v1.* && "$SEALED_STILL" == "$SEALED_BEFORE" ]]; then
+  ok "the ciphertext is still there, untouched"
+else
+  bad "ciphertext missing or changed: '${SEALED_STILL:0:8}'"
+fi
 
 ADMIN_SESSION=$(login owner "$ADMIN_PW")
 SESSION="$ADMIN_SESSION"
-code=$(api POST /api/admin/llm/providers/openai/probe '{}')
+code=$(api POST /api/admin/llm/providers/primary/probe '{}')
 if body | grep -qi 'could not be decrypted\|master key\|decrypt'; then
   ok "the credential DEMONSTRABLY does not decrypt without the key"
 elif [[ "$code" == "500" ]] || [[ "$code" == "409" ]] || [[ "$code" == "400" ]]; then
@@ -387,11 +408,14 @@ for _ in $(seq 1 30); do
 done
 ADMIN_SESSION=$(login owner "$ADMIN_PW")
 SESSION="$ADMIN_SESSION"
-code=$(api POST /api/admin/llm/providers/openai/probe '{}')
-if body | grep -qi 'could not be decrypted\|decrypt'; then
+code=$(api POST /api/admin/llm/providers/primary/probe '{}')
+# A 503 "not set up" is not evidence the credential works.
+if [[ "$code" == "503" ]]; then
+  bad "the installation was not usable after the key came back ($code)"
+elif body | grep -qi 'could not be decrypted\|decrypt'; then
   bad "the credential stayed broken after the key came back"
 else
-  ok "putting the key back makes the credential usable again"
+  ok "putting the key back makes the credential usable again ($code)"
 fi
 
 # ---------------------------------------------------------------------------
