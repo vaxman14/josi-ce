@@ -33,7 +33,7 @@ export function Login() {
         <div className="mb-6 flex flex-col items-center text-center">
           <img src="/brand/josi-wordmark.png" alt="Josi" width={200} height={97}
                className="mb-2 h-auto w-40 max-w-full" />
-          <p className="text-sm text-muted-foreground">Fetching what's next.</p>
+          <p className="text-sm text-muted-foreground">Your assistant, on your own server.</p>
         </div>
         <Card>
           <form onSubmit={submit} className="space-y-3">

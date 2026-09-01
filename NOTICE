@@ -15,15 +15,20 @@ PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
 --------------------------------------------------------------------------------
 TRADEMARKS AND BRANDING
 
-The AGPL covers the code. It does not cover the Josi name, the Josi shepherd
-logo, the Josi wordmark, or the Josi product identity, which remain the property
-of SOCAL RECEPTIONIST LLC.
+The AGPL covers the code. It does not cover the Josi name, the Josi mark (the
+white J on navy), the Josi wordmark, or the Josi product identity, which remain
+the property of SOCAL RECEPTIONIST LLC.
 
-Official Josi branding is a required part of this distribution and may not be
-removed or replaced by self-hosters. White-labelling and multi-tenant operation
-require a separate written licence.
+Copyright and trademark are different rights and this distribution keeps them
+apart. The AGPL grants you the right to modify and redistribute this software,
+and that includes its branding assets; nothing here restricts that. What the
+trademark covers is narrower: do not use the Josi name or marks in a way that
+tells people a modified version came from us.
 
-See TRADEMARK.md for the full terms.
+Redistributing Josi CE unmodified, with its branding intact, needs no
+permission. A modified version should carry your identity rather than ours.
+
+See TRADEMARK.md for the full policy.
 
   *** TRADEMARK.md IS A DRAFT AND HAS NOT BEEN REVIEWED BY A LAWYER. ***
 

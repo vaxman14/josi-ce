@@ -393,6 +393,13 @@ describe('approval levels over the wire', () => {
   });
 
   it('reports the EFFECTIVE level, not the wish, when the admin is stricter', async () => {
+    // Migration 0016 seeds `always_ask` for every class, so the ceiling has to
+    // be opened deliberately before a member's `automatic` is visible at all.
+    // That is LB10.1's fail-closed default; this test is about what the endpoint
+    // reports once an administrator tightens again.
+    await call('/api/admin/assistant/approval-policy/email_send', {
+      method: 'PUT', jar: cookies.admin, body: { maxLevel: 'automatic', confirmRelaxation: true },
+    });
     await call('/api/assistant/approval-levels/email_send', {
       method: 'PUT', jar: cookies.alice, body: { level: 'automatic' },
     });
@@ -414,7 +421,9 @@ describe('approval levels over the wire', () => {
       method: 'PUT', jar: cookies.alice, body: { level: 'always_ask' },
     });
     await call('/api/admin/assistant/approval-policy/email_send', {
-      method: 'PUT', jar: cookies.admin, body: { maxLevel: 'automatic' },
+      // Loosening is refused without this; the assertion below is about the
+      // member's choice surviving even when the ceiling is fully open.
+      method: 'PUT', jar: cookies.admin, body: { maxLevel: 'automatic', confirmRelaxation: true },
     });
     expect((await call('/api/assistant/approval-levels/email_send', { jar: cookies.alice })).body.level)
       .toBe('always_ask');

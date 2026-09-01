@@ -400,13 +400,66 @@ export function adminAssistantRoutes(ctx: AssistantRoutesCtx): Router {
       if (!['always_ask', 'risky_only', 'automatic'].includes(maxLevel)) {
         return res.status(400).json({ error: 'choose always_ask, risky_only or automatic' });
       }
-      const { setAdminApprovalCeiling } = await import('@josi-ce/core');
-      await setAdminApprovalCeiling(db, {
-        actorUserId: req.user!.id,
-        actionClass: param(req, 'actionClass'),
-        maxLevel: maxLevel as ApprovalLevel,
+      const { setAdminApprovalCeiling, ApprovalError } = await import('@josi-ce/core');
+      try {
+        const result = await setAdminApprovalCeiling(db, {
+          actorUserId: req.user!.id,
+          actionClass: param(req, 'actionClass'),
+          maxLevel: maxLevel as ApprovalLevel,
+          // Loosening is refused unless the client says it means to. The client
+          // cannot set this by accident: the admin page asks, and a direct API
+          // caller has to state it.
+          confirmRelaxation: req.body?.confirmRelaxation === true,
+        });
+        return res.json({
+          actionClass: param(req, 'actionClass'),
+          maxLevel,
+          previousMaxLevel: result.previous,
+          relaxed: result.relaxed,
+        });
+      } catch (err) {
+        if (err instanceof ApprovalError) return res.status(409).json({ error: err.message });
+        throw err;
+      }
+    }),
+  );
+
+  /** The classes an administrator can set a ceiling for, with what each one is
+   * currently set to and what a fresh installation would use.
+   *
+   * Served rather than hardcoded in the client so a class added to the server
+   * appears in the admin page without a matching front-end change — the failure
+   * mode being a class that exists, is enforced, and is invisible to configure. */
+  r.get(
+    '/approval-policy',
+    asyncRoute(async (_req, res) => {
+      const { ACTION_CLASSES, DEFAULT_ADMIN_CEILING, pendingPolicyMigration } = await import('@josi-ce/core');
+      const rows = await db.query<{ action_class: string; max_level: ApprovalLevel }>(
+        `select action_class, max_level from admin_approval_policy`,
+      );
+      const set = new Map(rows.map((row) => [row.action_class, row.max_level]));
+      return res.json({
+        defaultCeiling: DEFAULT_ADMIN_CEILING,
+        classes: ACTION_CLASSES.map((c) => ({
+          key: c.key,
+          label: c.label,
+          description: c.description,
+          impact: c.impact,
+          factoryCeiling: c.factoryCeiling,
+          maxLevel: set.get(c.key) ?? DEFAULT_ADMIN_CEILING,
+          explicit: set.has(c.key),
+        })),
+        // What migration 0016 changed and nobody has acknowledged yet.
+        migration: await pendingPolicyMigration(db),
       });
-      return res.json({ actionClass: param(req, 'actionClass'), maxLevel });
+    }),
+  );
+
+  r.post(
+    '/approval-policy/acknowledge-migration',
+    asyncRoute(async (req, res) => {
+      const { acknowledgePolicyMigration } = await import('@josi-ce/core');
+      return res.json({ acknowledged: await acknowledgePolicyMigration(db, req.user!.id) });
     }),
   );
 

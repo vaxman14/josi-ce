@@ -175,6 +175,13 @@ Docker network. **43 passed, 0 failed.**
 43 passed, 0 failed
 ```
 
+> **Historical record.** The output above is the run as it happened in Phase 6
+> and is not edited. At that time the identity was the orange/gold shepherd on
+> navy and the check was named for it. The shepherd concept was retired at
+> launch (LB11): the mark is now the white `J` on navy, cut from the approved
+> wordmark, and the check is named "the J mark is in the header". Nothing here
+> is a current branding claim.
+
 ### It took five runs, and each failure was worth having
 
 | Run | Failed on | What it was |
@@ -239,6 +246,12 @@ $ JOSI_HTTP_PORT=8396 JOSI_HTTPS_PORT=8559 PROJECT=josi-ce-phase6 \
 
 28 passed, 0 failed
 ```
+
+> **Historical record**, unedited. `josi-mark.png` was the shepherd when this
+> ran and its hash was pinned to that file. Since LB11 the wordmark is the only
+> pinned master and the mark is derived from it by `scripts/build-brand.sh`, so
+> the current harness pins two different hashes and names neither of them
+> "shepherd".
 
 Host left as found: 25 containers before and after; zero `josi-ce-phase6`
 containers, volumes or networks remaining.

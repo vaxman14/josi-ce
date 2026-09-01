@@ -208,14 +208,25 @@ done
 echo "$hdrs" | grep -qi "default-src 'self'" && ok "CSP default-src is 'self'" || bad "CSP not restrictive"
 if echo "$hdrs" | grep -qi "content-security-policy.*\*"; then bad "CSP contains a wildcard"; else ok "CSP has no wildcard"; fi
 
-step "the brand assets are served and are the approved masters"
+step "the brand assets are served and are the approved identity"
 for asset in josi-mark.png josi-wordmark.png; do
   code=$("${COMPOSE[@]}" exec -T web curl -sS -o /tmp/a.png -w '%{http_code}' "http://127.0.0.1:8080/brand/$asset" 2>/dev/null)
   [[ "$code" == "200" ]] && ok "$asset is served" || bad "$asset returned $code"
 done
+
+# The WORDMARK is the master and is never regenerated, so its hash is pinned.
+word_sha=$("${COMPOSE[@]}" exec -T web sh -c "sha256sum /app/web/brand/josi-wordmark.png 2>/dev/null | cut -d' ' -f1" 2>/dev/null | tr -d '\r')
+[[ "$word_sha" == "6778fd3584f6ed4d9ed7281752aa09276fd7a871d3e3cfbe2e3a607c509c9e45" ]] \
+  && ok "the wordmark is byte-identical to the approved master" \
+  || bad "wordmark hash is $word_sha"
+
+# The MARK is cut from the wordmark by scripts/build-brand.sh rather than being
+# a second master, so its hash is pinned to what that script produces. The
+# retired identity's artwork was a different file entirely; this is the check
+# that fails if it ever comes back.
 mark_sha=$("${COMPOSE[@]}" exec -T web sh -c "sha256sum /app/web/brand/josi-mark.png 2>/dev/null | cut -d' ' -f1" 2>/dev/null | tr -d '\r')
-[[ "$mark_sha" == "ea802a9a3b20e7b9a7d54063d7b6524fec7e7cf30d4f69778dc2bafcba153d7b" ]] \
-  && ok "the shepherd mark is byte-identical to the approved master" \
+[[ "$mark_sha" == "0c4591ea252f6f3e57a3dc488ce79cc7fbed76ab04ea261f7bd4f1ad0a089517" ]] \
+  && ok "the J mark matches what build-brand.sh derives from the wordmark" \
   || bad "mark hash is $mark_sha"
 
 # ---------------------------------------------------------------------------

@@ -605,12 +605,12 @@ async function testBranding(browser) {
     record('the wordmark is on the sign-in screen', (await wordmark.count()) > 0);
     const loaded = await wordmark.first().evaluate((img) => img.naturalWidth > 0).catch(() => false);
     record('and it actually loaded', loaded === true);
-    record('the product line is shown', (await page.getByText(/Fetching what/i).count()) > 0);
+    record('the product line is shown', (await page.getByText(/on your own server/i).count()) > 0);
     record('the publisher is named', (await page.getByText(/SOCAL RECEPTIONIST LLC/i).count()) > 0);
 
     await signIn(page, MEMBER);
     const mark = page.locator('header img[src="/brand/josi-mark.png"]');
-    record('the shepherd mark is in the header', (await mark.count()) > 0);
+    record('the J mark is in the header', (await mark.count()) > 0);
   } catch (err) {
     record('branding', false, String(err).split('\n')[0]);
   } finally {

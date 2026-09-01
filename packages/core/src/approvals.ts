@@ -31,7 +31,128 @@ const STRICTNESS: Record<ApprovalLevel, number> = {
  * installation nobody configured is one where Josi acts unasked. */
 export const DEFAULT_APPROVAL_LEVEL: ApprovalLevel = 'always_ask';
 
+/** The ceiling that applies when the administrator has set none.
+ *
+ * This was `automatic` — "no policy set = no ceiling" — and that was a
+ * fail-OPEN default hiding behind a fail-closed one. The user default is
+ * `always_ask`, so an unconfigured installation looked safe; but the ceiling is
+ * the only thing standing between a user who selects `automatic` for themselves
+ * and Josi sending mail on their behalf with nobody having decided that was
+ * allowed. A fresh installation must refuse, not defer.
+ *
+ * Migration 0016 also seeds an explicit row per action class, so this constant
+ * is the second line rather than the only one. */
+export const DEFAULT_ADMIN_CEILING: ApprovalLevel = 'always_ask';
+
 export class ApprovalError extends Error {}
+
+// ------------------------------------------------------------ action classes
+
+/** How much damage the class of action can do outside this installation. */
+export type ActionImpact = 'routine' | 'high';
+
+export interface ActionClassSpec {
+  key: string;
+  /** What the administrator is deciding, in their words. */
+  label: string;
+  description: string;
+  impact: ActionImpact;
+  /** The loosest level a FRESH installation permits for this class. */
+  factoryCeiling: ApprovalLevel;
+}
+
+/** Every class of action an approval level can be set for.
+ *
+ * The list is here rather than in the admin page because a class the server
+ * does not know about is a class with no factory ceiling, and a class with no
+ * factory ceiling falls back to `DEFAULT_ADMIN_CEILING` — safe, but invisible
+ * to the operator, who then cannot see that it exists to configure.
+ *
+ * Every factory ceiling is `always_ask`. That is the point of the row: a fresh
+ * installation asks about everything, and loosening any of it is a decision
+ * somebody has to make on purpose and is recorded making. */
+export const ACTION_CLASSES: readonly ActionClassSpec[] = Object.freeze([
+  {
+    key: 'email_send',
+    label: 'Sending email',
+    description: 'Sending a message to somebody on your behalf.',
+    impact: 'routine',
+    factoryCeiling: 'always_ask',
+  },
+  {
+    key: 'calendar_write',
+    label: 'Creating and changing calendar events',
+    description: 'Adding, moving or editing an event, including ones other people attend.',
+    impact: 'routine',
+    factoryCeiling: 'always_ask',
+  },
+  {
+    key: 'task_management',
+    label: 'Creating and changing tasks',
+    description: 'Work Josi tracks for you. Nothing leaves this installation.',
+    impact: 'routine',
+    factoryCeiling: 'always_ask',
+  },
+  {
+    key: 'delete_data',
+    label: 'Deleting anything',
+    description: 'Removing a message, event, document or record. The one a mistake cannot be talked back from.',
+    impact: 'high',
+    factoryCeiling: 'always_ask',
+  },
+  {
+    key: 'cancel_commitment',
+    label: 'Cancelling a commitment',
+    description: 'Calling off a meeting, booking or arrangement other people are relying on.',
+    impact: 'high',
+    factoryCeiling: 'always_ask',
+  },
+  {
+    key: 'invite_external',
+    label: 'Involving people outside the organisation',
+    description: 'Adding an outside address to a thread, meeting or shared item.',
+    impact: 'high',
+    factoryCeiling: 'always_ask',
+  },
+  {
+    key: 'publish_public',
+    label: 'Publishing anything publicly',
+    description: 'Making something visible outside this installation.',
+    impact: 'high',
+    factoryCeiling: 'always_ask',
+  },
+  {
+    key: 'spend_money',
+    label: 'Spending money',
+    description: 'Any action that incurs a charge.',
+    impact: 'high',
+    factoryCeiling: 'always_ask',
+  },
+  {
+    key: 'sign_agreement',
+    label: 'Signing or accepting terms',
+    description: 'Agreeing to anything on your behalf.',
+    impact: 'high',
+    factoryCeiling: 'always_ask',
+  },
+  {
+    key: 'change_access',
+    label: 'Changing who can see or do what',
+    description: 'Sharing, permissions, connected accounts and account access.',
+    impact: 'high',
+    factoryCeiling: 'always_ask',
+  },
+]);
+
+const BY_KEY = new Map(ACTION_CLASSES.map((c) => [c.key, c]));
+
+export function actionClassSpec(key: string): ActionClassSpec | null {
+  return BY_KEY.get(key) ?? null;
+}
+
+export function isHighImpactClass(key: string): boolean {
+  return BY_KEY.get(key)?.impact === 'high';
+}
 
 /** The stricter of what the user consented to and what the admin permits.
  *
@@ -48,8 +169,18 @@ export function effectiveApprovalLevel(
   adminCeiling: ApprovalLevel | null | undefined,
 ): ApprovalLevel {
   const user = userChoice ?? DEFAULT_APPROVAL_LEVEL;
-  const admin = adminCeiling ?? 'automatic'; // no policy set = no ceiling
+  // No policy set is NOT "no ceiling". See DEFAULT_ADMIN_CEILING: an
+  // installation nobody has configured refuses rather than defers.
+  const admin = adminCeiling ?? DEFAULT_ADMIN_CEILING;
   return STRICTNESS[user] <= STRICTNESS[admin] ? user : admin;
+}
+
+/** Is `next` looser than `current`? The question every relaxation guard asks. */
+export function isRelaxation(
+  current: ApprovalLevel | null | undefined,
+  next: ApprovalLevel,
+): boolean {
+  return STRICTNESS[next] > STRICTNESS[current ?? DEFAULT_ADMIN_CEILING];
 }
 
 export async function getApprovalLevel(
@@ -65,7 +196,7 @@ export async function getApprovalLevel(
     [args.actionClass],
   );
   const userChoice = pref?.level ?? DEFAULT_APPROVAL_LEVEL;
-  const adminCeiling = policy?.max_level ?? 'automatic';
+  const adminCeiling = policy?.max_level ?? DEFAULT_ADMIN_CEILING;
   return { level: effectiveApprovalLevel(userChoice, adminCeiling), userChoice, adminCeiling };
 }
 
@@ -86,10 +217,45 @@ export async function setUserApprovalLevel(
   });
 }
 
+/** Set the loosest level anybody on this installation may choose.
+ *
+ * Tightening is an ordinary administrative act. **Loosening is not**, and the
+ * asymmetry is deliberate: relaxing a ceiling is the change that lets Josi act
+ * on somebody's behalf without asking, and it is the change nobody remembers
+ * making. So a relaxation must say so — `confirmRelaxation` — and the event
+ * records what it was before, what it became, and who did it.
+ *
+ * The guard is here rather than in the route because the route is not the only
+ * caller, and a second caller added later would otherwise bypass it silently. */
 export async function setAdminApprovalCeiling(
   db: Db,
-  args: { actorUserId: string; actionClass: string; maxLevel: ApprovalLevel },
-): Promise<void> {
+  args: {
+    actorUserId: string;
+    actionClass: string;
+    maxLevel: ApprovalLevel;
+    /** Required when the new ceiling is looser than the current one. */
+    confirmRelaxation?: boolean;
+  },
+): Promise<{ previous: ApprovalLevel | null; relaxed: boolean }> {
+  if (!BY_KEY.has(args.actionClass)) {
+    // An unknown class would store a row nothing reads and no screen shows.
+    throw new ApprovalError(`there is no action class called "${args.actionClass}"`);
+  }
+
+  const [existing] = await db.query<{ max_level: ApprovalLevel }>(
+    `select max_level from admin_approval_policy where action_class = $1`,
+    [args.actionClass],
+  );
+  const previous = existing?.max_level ?? null;
+  const relaxed = isRelaxation(previous, args.maxLevel);
+
+  if (relaxed && args.confirmRelaxation !== true) {
+    throw new ApprovalError(
+      'loosening an approval ceiling has to be confirmed explicitly, because it lets Josi '
+      + 'act without asking first',
+    );
+  }
+
   await db.query(
     `insert into admin_approval_policy (action_class, max_level) values ($1, $2)
      on conflict (action_class) do update set max_level = excluded.max_level`,
@@ -98,9 +264,55 @@ export async function setAdminApprovalCeiling(
   await appendEvent(db, {
     actorUserId: args.actorUserId,
     actor: 'super_admin',
-    kind: 'approval.ceiling_set',
-    payload: { actionClass: args.actionClass, maxLevel: args.maxLevel },
+    // A relaxation is its own event kind so it can be found in an audit without
+    // reading the payload of every ceiling change ever made.
+    kind: relaxed ? 'approval.ceiling_relaxed' : 'approval.ceiling_set',
+    payload: {
+      actionClass: args.actionClass,
+      maxLevel: args.maxLevel,
+      previousMaxLevel: previous,
+      impact: BY_KEY.get(args.actionClass)?.impact ?? 'routine',
+    },
   });
+  return { previous, relaxed };
+}
+
+/** What migration 0016 changed, and whether the administrator has seen it.
+ *
+ * M-LB10.7: an existing installation must not be silently broadened OR silently
+ * narrowed. The migration seeds a fail-closed ceiling for every class that had
+ * none, which IS a narrowing, so it records each one and the admin is shown the
+ * list rather than discovering it when Josi stops doing something. */
+export interface PolicyMigrationRow {
+  action_class: string;
+  previous_max_level: ApprovalLevel | null;
+  new_max_level: ApprovalLevel;
+  reason: string;
+  migrated_at: string;
+  acknowledged_at: string | null;
+}
+
+export async function pendingPolicyMigration(db: Db): Promise<PolicyMigrationRow[]> {
+  return db.query<PolicyMigrationRow>(
+    `select action_class, previous_max_level, new_max_level, reason, migrated_at, acknowledged_at
+     from approval_policy_migration where acknowledged_at is null order by action_class`,
+  );
+}
+
+export async function acknowledgePolicyMigration(db: Db, actorUserId: string): Promise<number> {
+  const rows = await db.query<{ action_class: string }>(
+    `update approval_policy_migration set acknowledged_at = now()
+     where acknowledged_at is null returning action_class`,
+  );
+  if (rows.length) {
+    await appendEvent(db, {
+      actorUserId,
+      actor: 'super_admin',
+      kind: 'approval.migration_acknowledged',
+      payload: { classes: rows.length },
+    });
+  }
+  return rows.length;
 }
 
 // --------------------------------------------------------------- decisions
@@ -116,18 +328,32 @@ export const ALWAYS_RISKY = [
   'send_attachment',
   'delete_data',
   'spend_money',
+  // The rest of the high-impact set. Each one changes something outside this
+  // installation that an apology does not undo, so `risky_only` still asks.
+  'cancel_commitment',
+  'invite_external',
+  'publish_public',
+  'sign_agreement',
+  'change_access',
 ] as const;
 
 export function isRiskyAction(action: string): boolean {
   return (ALWAYS_RISKY as readonly string[]).includes(action);
 }
 
-/** Does this specific action need the owner to agree before it happens? */
+/** Does this specific action need the owner to agree before it happens?
+ *
+ * Two independent floors, and both matter. The action list catches a named
+ * action inside an otherwise routine class — adding a recipient to an email.
+ * The class impact catches an action nobody thought to name: a new verb added
+ * to `change_access` next year is asked about by default rather than by
+ * somebody remembering to extend a list. */
 export async function needsApproval(
   db: Db,
   args: { userId: string; actionClass: string; action: string },
 ): Promise<boolean> {
   if (isRiskyAction(args.action)) return true;
+  if (isHighImpactClass(args.actionClass)) return true;
   const { level } = await getApprovalLevel(db, { userId: args.userId, actionClass: args.actionClass });
   return level !== 'automatic';
 }

@@ -1,6 +1,6 @@
 # Josi CE 0.1 — Community Preview
 
-**Josi. Fetching what's next.**
+**Your assistant, on your own server.**
 
 A self-hosted AI executive assistant. One workspace, your people, your server,
 your credentials.
@@ -55,7 +55,10 @@ as working before it is.
 ## What Josi CE is not
 
 - Not multi-tenant. Running Josi as a service for third parties needs a licence.
-- Not white-labellable. Official Josi branding is required — see `TRADEMARK.md`.
+- Not a white-label product. You may fork it and put your own identity on it —
+  the AGPL grants that and the trademark policy expects it. What is not on offer
+  is *us* standing behind a rebranded build; that is a commercial arrangement.
+  See `TRADEMARK.md`.
 - Not an enterprise product. The initial market is SMB.
 - No voice or SMS receptionist in 0.1.
 - No audio/video transcription or media indexing in 0.1.
@@ -217,9 +220,15 @@ Submitting a support ticket never grants remote access to your installation.
 
 Code: **GNU AGPL v3** — see [`LICENSE`](LICENSE).
 
-Branding: the Josi name, shepherd logo, wordmark and product identity are **not**
-covered by the AGPL and remain the property of SOCAL RECEPTIONIST LLC. See
-[`TRADEMARK.md`](TRADEMARK.md).
+Branding: the Josi name, the mark (the white `J` on navy), the wordmark and the
+product identity are **not** covered by the AGPL and remain the property of
+SOCAL RECEPTIONIST LLC.
+
+This does not restrict what the AGPL grants. You may modify Josi CE and you may
+remove its branding — for a fork, removing it is the right thing to do. What the
+trademark asks is only that a modified version not present itself as the
+official Josi product. Unmodified redistribution may keep the branding, because
+it is accurate. See [`TRADEMARK.md`](TRADEMARK.md).
 
 > `TRADEMARK.md` and `NOTICE` are **drafts pending legal review**. They are not
 > approved legal wording.

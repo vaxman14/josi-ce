@@ -189,6 +189,13 @@ describe('approval levels', () => {
   });
 
   it('lets an admin tighten a user who chose automatic', async () => {
+    // Start from an open ceiling on purpose. Migration 0016 seeds `always_ask`,
+    // so a user's `automatic` has no visible effect until the administrator has
+    // deliberately allowed it — which is the hardened default, and is what
+    // LB10.1 asserts. What this test is about is what happens NEXT.
+    await setAdminApprovalCeiling(db, {
+      actorUserId: alice, actionClass: 'email_send', maxLevel: 'automatic', confirmRelaxation: true,
+    });
     await setUserApprovalLevel(db, { userId: bob, actionClass: 'email_send', level: 'automatic' });
     expect((await getApprovalLevel(db, { userId: bob, actionClass: 'email_send' })).level).toBe('automatic');
 
@@ -202,11 +209,22 @@ describe('approval levels', () => {
 
   it('does NOT let an admin loosen a user who chose always ask', async () => {
     await setUserApprovalLevel(db, { userId: bob, actionClass: 'email_send', level: 'always_ask' });
-    await setAdminApprovalCeiling(db, { actorUserId: alice, actionClass: 'email_send', maxLevel: 'automatic' });
+    // Loosening now needs saying so out loud. The point of the test is
+    // unchanged: even with the ceiling wide open, the user's own always_ask wins.
+    await setAdminApprovalCeiling(db, {
+      actorUserId: alice, actionClass: 'email_send', maxLevel: 'automatic', confirmRelaxation: true,
+    });
     expect((await getApprovalLevel(db, { userId: bob, actionClass: 'email_send' })).level).toBe('always_ask');
   });
 
   it('asks about a risky action even when the user allowed routine work', async () => {
+    // The ceiling is seeded `always_ask` by migration 0016, so it has to be
+    // opened deliberately before a user's `automatic` can take effect at all.
+    // That is the hardened default doing its job; this test is about the
+    // separate floor underneath it.
+    await setAdminApprovalCeiling(db, {
+      actorUserId: alice, actionClass: 'email_send', maxLevel: 'automatic', confirmRelaxation: true,
+    });
     await setUserApprovalLevel(db, { userId: bob, actionClass: 'email_send', level: 'automatic' });
     expect(await needsApproval(db, { userId: bob, actionClass: 'email_send', action: 'send_email' })).toBe(false);
     // The map names these two outright: adding a recipient, and attachments.
