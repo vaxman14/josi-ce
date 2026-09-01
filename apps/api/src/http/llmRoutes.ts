@@ -19,9 +19,10 @@ import {
 } from '@josi-ce/core';
 import {
   UnsafeEndpointError, buildProvider, capabilitiesOf, checkCaps, disabledFeatures,
-  isExternalProvider, isLocalOnly, loadStoredProvider, meteredProvider, probeProvider, usageSummary,
-  validateEndpoint, LlmError,
+  isExternalProvider, isLocalOnly, isSubscriptionProvider, loadStoredProvider, meteredProvider,
+  probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CODEX_COMMAND,
 } from '@josi-ce/llm';
+import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
 import { assertMetadataOnly, requireAuth, requireSuperAdmin } from './authz.js';
 
@@ -31,6 +32,8 @@ export interface LlmRoutesCtx {
   /** Injected in tests so no provider is ever contacted by the suite. */
   fetchImpl?: typeof fetch;
   resolve?: (hostname: string) => Promise<string[]>;
+  /** Injected in tests so no suite ever executes the Codex binary. */
+  codexRunner?: import('@josi-ce/llm').SpawnRunner;
 }
 
 class RouteError extends Error {
@@ -56,6 +59,22 @@ function asArray(value: unknown): unknown[] {
 }
 const KNOWN_PROVIDERS = ['openai', 'anthropic', 'xai', 'openai_compatible'];
 
+/** Providers that exist only on a build whose edition permits them.
+ *
+ * Kept out of `KNOWN_PROVIDERS` so a hosted build's provider list does not even
+ * mention them — and so `savableProviders()` below is the ONE place the two
+ * lists are joined. */
+const CAPABILITY_PROVIDERS: Array<{ provider: string; capability: 'subscription_auth' }> = [
+  { provider: 'openai_subscription', capability: 'subscription_auth' },
+];
+
+function savableProviders(): string[] {
+  return [
+    ...KNOWN_PROVIDERS,
+    ...CAPABILITY_PROVIDERS.filter((p) => hasCapability(p.capability)).map((p) => p.provider),
+  ];
+}
+
 function requireMasterKey(ctx: LlmRoutesCtx): MasterKey {
   if (ctx.masterKey === false) throw new RouteError(503, 'this installation cannot store secrets right now');
   try {
@@ -70,24 +89,61 @@ function requireMasterKey(ctx: LlmRoutesCtx): MasterKey {
   }
 }
 
-/** M83. These exist in the product conversation, so they are named rather than
- * hidden — but every one of them is unavailable, with the actual reason.
+/**
+ * M83, revisited in Phase 13.3 after re-reading both providers' current terms.
  *
- * Reusing a Claude Pro, ChatGPT Plus or Copilot subscription from a server
- * means driving a session that was issued to a person, in a browser, under
- * terms that do not permit it. There is no compliant path, so there is no
- * enabled button. Saying "coming soon" here would be a lie with a date on it. */
-const SUBSCRIPTION_OPTIONS = [
-  { id: 'claude_subscription', label: 'Use my Claude subscription' },
-  { id: 'chatgpt_subscription', label: 'Use my ChatGPT subscription' },
-  { id: 'copilot_subscription', label: 'Use my GitHub Copilot subscription' },
-].map((o) => ({
-  ...o,
-  available: false,
-  reason:
-    'Consumer subscriptions are licensed for one person using an app, not for a server answering on their behalf. '
-    + 'Josi will not drive one from here, so this needs an API key from the same provider instead.',
-}));
+ * The August 2026 answer was "no compliant path exists" for all three, and half
+ * of that has changed. So the list is no longer a blanket refusal: each entry
+ * carries what is actually true of that provider today, with the reason and the
+ * date, and only the one with a real supported path is offered.
+ *
+ * Sources are recorded in `docs/SUBSCRIPTION_AUTH.md` rather than in a code
+ * comment nobody re-checks.
+ */
+function subscriptionOptions(): Array<{
+  id: string; label: string; available: boolean; provider: string | null; reason: string;
+}> {
+  const ceOnly = hasCapability('subscription_auth');
+  return [
+    {
+      id: 'chatgpt_subscription',
+      label: 'Use my ChatGPT plan through the Codex CLI',
+      provider: 'openai_subscription',
+      available: ceOnly,
+      reason: ceOnly
+        ? 'Josi runs OpenAI\'s own Codex CLI on this machine, signed in as you. Josi never sees, '
+          + 'stores or forwards your login. It is per installation rather than per person, it '
+          + 'shares your own Codex usage limits, it reports no token counts or cost, and it '
+          + 'cannot call tools — so Josi can talk but cannot act on this path.'
+        // The honest sentence for a build that is not CE. It names the reason
+        // as a licence boundary rather than implying a missing feature.
+        : 'OpenAI permits a personal ChatGPT plan to be used for individual productivity and not '
+          + 'to power a commercial service. This build is not a Community Edition installation, '
+          + 'so it cannot offer it.',
+    },
+    {
+      id: 'claude_subscription',
+      label: 'Use my Claude subscription',
+      provider: null,
+      available: false,
+      // NOT "coming soon". There is a policy, it is current, and it says no.
+      reason:
+        'Anthropic\'s authentication and credential-use policy restricts Claude Free, Pro and Max '
+        + 'sign-in to Claude Code and Claude.ai, and states that using those credentials in any '
+        + 'other product, tool or service — including the Agent SDK — is not permitted. It was '
+        + 'enforced against third-party tools on 4 April 2026. Use an Anthropic API key instead.',
+    },
+    {
+      id: 'copilot_subscription',
+      label: 'Use my GitHub Copilot subscription',
+      provider: null,
+      available: false,
+      reason:
+        'Copilot is licensed for use inside GitHub\'s own editor integrations, not for a server '
+        + 'answering on somebody\'s behalf. There is no supported path, so Josi does not offer one.',
+    },
+  ];
+}
 
 interface ProviderDto {
   role: 'primary' | 'fallback';
@@ -167,7 +223,10 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         // What CE will and will not do right now, with the reason attached.
         disabledFeatures: disabledFeatures(primary?.capabilities ?? null),
         caps,
-        subscriptionOptions: SUBSCRIPTION_OPTIONS,
+        subscriptionOptions: subscriptionOptions(),
+        // What this build is, so the screen can explain a refusal rather than
+        // showing a control that silently does nothing.
+        edition: describeEdition(),
       });
     }),
   );
@@ -191,8 +250,29 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       const apiKey = asSecret(body.apiKey);
       const acknowledged = body.externalAcknowledged === true;
 
-      if (!KNOWN_PROVIDERS.includes(provider)) throw new RouteError(400, 'choose a model provider');
+      // The capability boundary, at the save path. A hosted build's list does
+      // not contain `openai_subscription`, so this is the refusal that a
+      // hand-crafted request gets — and it is deliberately the same "choose a
+      // model provider" as an unknown name, because a hosted build should not
+      // confirm that the option exists somewhere.
+      if (!savableProviders().includes(provider)) {
+        throw new RouteError(400, 'choose a model provider');
+      }
       if (!model) throw new RouteError(400, 'a model name is required');
+
+      const subscription = isSubscriptionProvider(provider);
+      if (subscription) {
+        // L3.4. Accepting a key here — even to ignore it — would leave a route
+        // that takes a credential under the word "subscription". The database
+        // refuses the shape too; this refuses the request.
+        if (!apiKey.isEmpty) {
+          throw new RouteError(
+            400,
+            'this option uses your own Codex sign-in on this machine, so there is no API key to '
+            + 'give. If you want to use an API key, choose OpenAI instead — it is billed per call.',
+          );
+        }
+      }
 
       const external = isExternalProvider(provider);
       if (external && (await isLocalOnly(db))) {
@@ -210,7 +290,11 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
           + "and is processed under that provider's terms",
         );
       }
-      if (external && apiKey.isEmpty) throw new RouteError(400, 'an API key is required for this provider');
+      // A subscription provider is external and has no key, which is the one
+      // combination the original rule could not express.
+      if (external && !subscription && apiKey.isEmpty) {
+        throw new RouteError(400, 'an API key is required for this provider');
+      }
 
       if (provider === 'openai_compatible') {
         if (!baseUrl) throw new RouteError(400, 'a base URL is required for a self-hosted endpoint');
@@ -220,18 +304,31 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       }
 
       const existing = await loadStoredProvider(db, role);
-      // An empty key field on an update means "leave it alone", not "delete it".
-      const sealedKey = apiKey.isEmpty
-        ? existing?.api_key_enc ?? null
-        // `seal` unwraps the Secret itself; nothing here ever calls reveal().
-        : seal(requireMasterKey(ctx), { apiKey });
+      // An empty key field on an update means "leave it alone", not "delete it"
+      // — EXCEPT for a subscription provider, where the answer is always null.
+      // Switching a slot from OpenAI to the subscription path must not silently
+      // carry the old key across; the database constraint would refuse the row,
+      // and an operator would get a constraint error instead of the right
+      // behaviour.
+      const sealedKey = subscription ? null
+        : apiKey.isEmpty
+          ? existing?.api_key_enc ?? null
+          // `seal` unwraps the Secret itself; nothing here ever calls reveal().
+          : seal(requireMasterKey(ctx), { apiKey });
+
+      // Which binary to run. Bounded and recorded so the admin screen can show
+      // what will actually be executed rather than an assumption.
+      const command = subscription
+        ? (str(body.subscriptionCommand, 200) || DEFAULT_CODEX_COMMAND)
+        : null;
 
       await db.query(
         `insert into llm_providers
            (role, provider, model, base_url, api_key_enc, external_acknowledged, external_acknowledged_at,
             activated_at, probed_at, probe_steps,
-            cap_chat, cap_structured_output, cap_tool_calling, cap_context_tokens)
-         values ($1, $2, $3, $4, $5, $6, $7, null, null, '[]', null, null, null, null)
+            cap_chat, cap_structured_output, cap_tool_calling, cap_context_tokens,
+            subscription_command)
+         values ($1, $2, $3, $4, $5, $6, $7, null, null, '[]', null, null, null, null, $8)
          on conflict (role) do update set
            provider = excluded.provider, model = excluded.model, base_url = excluded.base_url,
            api_key_enc = excluded.api_key_enc,
@@ -239,13 +336,15 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
            external_acknowledged_at = excluded.external_acknowledged_at,
            activated_at = null, probed_at = null, probe_steps = '[]',
            cap_chat = null, cap_structured_output = null, cap_tool_calling = null,
-           cap_context_tokens = null`,
+           cap_context_tokens = null,
+           subscription_command = excluded.subscription_command`,
         [
           role, provider, model,
           provider === 'openai_compatible' ? baseUrl : null,
           sealedKey,
           external ? true : acknowledged,
           external ? new Date().toISOString() : null,
+          command,
         ],
       );
 
@@ -290,7 +389,13 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       let result;
       try {
         const provider = await buildProvider(
-          { db, masterKey: ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {}), fetchImpl: ctx.fetchImpl, resolve: ctx.resolve },
+          {
+            db,
+            masterKey: ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {}),
+            fetchImpl: ctx.fetchImpl,
+            resolve: ctx.resolve,
+            codexRunner: ctx.codexRunner,
+          },
           stored,
         );
         // Metered. Probing a hosted provider is four real requests on a real

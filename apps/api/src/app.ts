@@ -41,6 +41,9 @@ export interface AppConfig {
   connectorFetch?: typeof fetch;
   /** SMTP, injected by the tests so no suite ever contacts a mail server. */
   mailTransport?: import('@josi-ce/mail').SmtpTransport;
+  /** How a subscription provider's local binary is run, injected by the tests
+   * so no suite ever executes a program. Unset in production. */
+  codexRunner?: import('@josi-ce/llm').SpawnRunner;
   /** Telegram Bot API HTTP, injected by the tests so no suite ever contacts
    * api.telegram.org. Unset in production. */
   telegramFetch?: typeof fetch;
@@ -121,12 +124,18 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/connections', connectorRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
   }));
-  api.use('/llm', llmRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  api.use('/llm', llmRoutes({ db, masterKey: cfg.masterKeyCheck, codexRunner: cfg.codexRunner }));
   // Mounted before /admin so the more specific prefix wins; both are behind
   // requireSuperAdmin either way.
-  api.use('/assistant', assistantRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve }));
+  api.use('/assistant', assistantRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
+    codexRunner: cfg.codexRunner,
+  }));
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
-  api.use('/admin/llm', adminLlmRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve }));
+  api.use('/admin/llm', adminLlmRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
+    codexRunner: cfg.codexRunner,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   api.use('/mail', mailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));
   api.use('/admin/mail', adminMailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));

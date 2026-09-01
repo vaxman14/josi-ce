@@ -474,15 +474,40 @@ describe('what a member is told', () => {
 });
 
 describe('subscription options', () => {
-  it('are listed, disabled, with the actual reason', async () => {
+  // AMENDED IN PHASE 13.3, deliberately and not quietly.
+  //
+  // Phase 4 asserted that all three were unavailable, and in August 2026 that
+  // was correct. It stopped being correct for one of them: OpenAI documents
+  // `codex exec` as a non-interactive mode of its own CLI, and delegating to
+  // the operator's own signed-in binary is a supported path. So the invariant
+  // is no longer "everything is refused" — it is "nothing is offered without a
+  // real path, and nothing is refused with a vague excuse".
+  //
+  // The detail of the OpenAI path lives in apps/api/test/subscription.test.ts.
+  it('never says "coming soon" — every entry gives a real reason', async () => {
     const res = await call('/api/admin/llm', { jar: cookies.admin });
     expect(res.body.subscriptionOptions.length).toBeGreaterThan(0);
     for (const option of res.body.subscriptionOptions) {
-      expect(option.available).toBe(false);
-      // Not "coming soon". The reason has to say why it will not happen.
-      expect(option.reason).not.toMatch(/coming soon|not yet|future release/i);
-      expect(option.reason).toMatch(/licensed for one person|API key/i);
+      expect(option.reason, option.id).not.toMatch(/coming soon|not yet|future release/i);
+      expect(option.reason.length, option.id).toBeGreaterThan(60);
     }
+  });
+
+  it('offers a provider only when there is one to offer', async () => {
+    const res = await call('/api/admin/llm', { jar: cookies.admin });
+    for (const option of res.body.subscriptionOptions) {
+      // An "available" entry with no provider id would be a control that
+      // cannot do anything, which is the placeholder-as-working failure.
+      if (option.available) expect(option.provider, option.id).toBeTruthy();
+      else expect(option.provider, option.id).toBeNull();
+    }
+  });
+
+  it('still refuses the ones with no supported path', async () => {
+    const res = await call('/api/admin/llm', { jar: cookies.admin });
+    const byId = Object.fromEntries(res.body.subscriptionOptions.map((o: any) => [o.id, o]));
+    expect(byId.claude_subscription.available).toBe(false);
+    expect(byId.copilot_subscription.available).toBe(false);
   });
 
   it('cannot be configured by naming one as a provider', async () => {

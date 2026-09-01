@@ -35,6 +35,13 @@ export const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
   "base-uri 'none'",
   "object-src 'none'",
+  // Phase 13.2. `default-src 'self'` already covers both of these in a
+  // compliant browser, but naming them means the policy does not silently
+  // depend on a fallback — and `worker-src` is the one directive that decides
+  // whether a service worker, which outlives the page and the session, may be
+  // registered at all.
+  "manifest-src 'self'",
+  "worker-src 'self'",
 ].join('; ');
 
 export interface StaticAppOptions {
@@ -61,12 +68,43 @@ export function mountWebApp(app: Express, opts: StaticAppOptions = {}): boolean 
     next();
   });
 
+  // The service worker, before the general static handler so its headers are
+  // not the generic ones.
+  //
+  // `no-store` is the load-bearing part. `sw.js` is not content-hashed — it is
+  // always fetched from the same URL — so a cached copy is a pinned copy, and a
+  // pinned service worker keeps ITS caching rules forever. Tightening a rule
+  // after a mistake would then reach only people who happened to miss the
+  // cache. Browsers cap service-worker caching at 24 hours on their own; that
+  // is 24 hours too long for a control.
+  //
+  // `Service-Worker-Allowed: /` lets a worker served from the root take the
+  // root scope explicitly rather than by inference.
+  app.get('/sw.js', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Service-Worker-Allowed', '/');
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.sendFile(join(dir, 'sw.js'));
+  });
+
   // Hashed assets are immutable; index.html must never be, or an upgrade leaves
   // people running last version's bundle against this version's API.
   app.use('/assets', express.static(join(dir, 'assets'), {
     immutable: true, maxAge: '1y', fallthrough: true,
   }));
-  app.use(express.static(dir, { index: false, maxAge: '1h' }));
+  app.use(express.static(dir, {
+    index: false,
+    maxAge: '1h',
+    setHeaders(res, path) {
+      // The manifest is small, changes with a release, and is read once per
+      // install. An hour of staleness here would show the old app name on a
+      // freshly installed icon.
+      if (path.endsWith('manifest.webmanifest')) {
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+      }
+    },
+  }));
 
   // Client-side routing: anything that is not an API call and not a file gets
   // the shell. `/api` is excluded so a mistyped endpoint still returns the

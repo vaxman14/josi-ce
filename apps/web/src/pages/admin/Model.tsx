@@ -3,6 +3,13 @@
 // Two things this page must never do: claim a model works before it has been
 // tested, and offer a subscription option that has no compliant path. Both are
 // server-enforced; this reflects them.
+//
+// Phase 13.3 changed the second one from a blanket refusal to a per-provider
+// answer, because half of it stopped being true. The screen no longer decides
+// which options are available — the server does, from the edition stamped into
+// the build — and each one carries the actual current reason. An option that IS
+// available gets a real control; one that is not gets no control at all, and
+// never a disabled button that looks pressable.
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, ErrorNote } from '@/components/ui';
@@ -21,7 +28,10 @@ interface AdminLlm {
   fallback: Provider | null;
   localOnly: boolean;
   disabledFeatures: Array<{ feature: string; reason: string }>;
-  subscriptionOptions: Array<{ id: string; label: string; available: boolean; reason: string }>;
+  subscriptionOptions: Array<{
+    id: string; label: string; available: boolean; provider: string | null; reason: string;
+  }>;
+  edition: { edition: string; capabilities: string[] };
 }
 
 export function AdminModel() {
@@ -31,6 +41,30 @@ export function AdminModel() {
 
   const load = () => api.get<AdminLlm>('/admin/llm').then(setData).catch(() => undefined);
   useEffect(() => { void load(); }, []);
+
+  /** Switches the primary slot to a subscription provider.
+   *
+   * Deliberately does NOT auto-probe afterwards. The probe runs the operator's
+   * own Codex binary, which may not be installed or signed in, and a save that
+   * silently fails a probe would read as "saving broke". They press Test next,
+   * and get the real reason if it is not ready. */
+  async function useSubscription(provider: string) {
+    setBusy(true);
+    setError('');
+    try {
+      await api.put('/admin/llm/providers/primary', {
+        provider,
+        // The CLI decides what it supports; this is the model it is asked for.
+        model: 'gpt-5-codex',
+        externalAcknowledged: true,
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not switch to that');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function probe() {
     setBusy(true);
@@ -109,16 +143,35 @@ export function AdminModel() {
 
       <Card>
         <CardTitle>Using a Claude or ChatGPT subscription</CardTitle>
-        <ul className="space-y-3">
+        <p className="mb-3 text-sm text-muted-foreground">
+          What each provider currently permits, and nothing more optimistic than that.
+          This is a <span className="font-medium text-foreground">{data.edition.edition}</span> build.
+        </p>
+        <ul className="space-y-4">
           {data.subscriptionOptions.map((o) => (
             <li key={o.id}>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-muted-foreground">{o.label}</span>
-                <Badge>unavailable</Badge>
+                <span className={o.available ? 'text-sm font-medium' : 'text-sm font-medium text-muted-foreground'}>
+                  {o.label}
+                </span>
+                <Badge tone={o.available ? 'ok' : 'muted'}>
+                  {o.available ? 'available' : 'unavailable'}
+                </Badge>
               </div>
-              {/* Not a disabled button. There is nothing to press, and the
-                  reason is the real one rather than "coming soon". */}
+              {/* For an unavailable option: not a disabled button. There is
+                  nothing to press, and the reason is the real one rather than
+                  "coming soon". */}
               <p className="mt-1 text-sm text-muted-foreground">{o.reason}</p>
+              {o.available && o.provider ? (
+                <Button
+                  className="mt-2"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => void useSubscription(o.provider!)}
+                >
+                  Use this for the primary model
+                </Button>
+              ) : null}
             </li>
           ))}
         </ul>

@@ -5,3 +5,4 @@ export * from './metering.js';
 export * from './registry.js';
 export * from './providers/openaiCompatible.js';
 export * from './providers/anthropic.js';
+export * from './providers/codexCli.js';

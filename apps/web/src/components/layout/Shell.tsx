@@ -13,6 +13,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import { useAuth } from '@/lib/auth';
 import { api, type LlmStatus } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { PwaPrompts } from '@/lib/pwa';
 import { Button } from '@/components/ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
@@ -153,6 +154,11 @@ export function Shell() {
           </NavLink>
         ))}
       </nav>
+
+      {/* Install and update prompts. Inside the signed-in shell on purpose:
+          nothing offers to install an app to somebody looking at a login form,
+          and an update prompt is only meaningful to somebody using the app. */}
+      <PwaPrompts />
     </div>
   );
 }

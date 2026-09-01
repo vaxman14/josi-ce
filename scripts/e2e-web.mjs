@@ -8,7 +8,7 @@
 // back into pointer handlers.
 //
 //   E2E_BASE=http://127.0.0.1:8396 node scripts/e2e-web.mjs
-import { webkit } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 const BASE = process.env.E2E_BASE ?? 'http://127.0.0.1:8080';
 const ADMIN = { id: process.env.E2E_ADMIN ?? 'owner', pw: process.env.E2E_ADMIN_PW ?? '' };
@@ -18,10 +18,12 @@ const MEMBER = { id: process.env.E2E_MEMBER ?? 'alice', pw: process.env.E2E_MEMB
 const WIDTHS = [320, 375, 390, 430];
 const MEMBER_PAGES = [
   '/app', '/app/talk', '/app/tasks', '/app/approvals', '/app/conversations',
-  '/app/contacts', '/app/connections', '/app/usage', '/app/settings', '/app/apps',
+  '/app/contacts', '/app/connections', '/app/usage', '/app/settings', '/app/telegram',
+  '/app/apps',
 ];
 const ADMIN_PAGES = [
-  '/admin', '/admin/people', '/admin/model', '/admin/policy', '/admin/connectors', '/admin/workspace',
+  '/admin', '/admin/people', '/admin/model', '/admin/policy', '/admin/connectors',
+  '/admin/telegram', '/admin/workspace',
 ];
 
 let pass = 0;
@@ -427,13 +429,168 @@ async function testRoles(browser) {
       record('the model page rendered', true);
     }
     record('nothing on an admin page reported an error', pageErrors.length === 0, pageErrors.join(' | '));
+    // Phase 13.3: this is no longer "all three are unavailable". On a CE build
+    // exactly one has a supported path and gets a real control; the other two
+    // have none and get NO control at all — not a disabled button that looks
+    // pressable. Both halves are asserted, because either one alone would pass
+    // while the other was wrong.
     const unavailable = await adminPage.getByText(/unavailable/i).count();
-    const subscribeButton = await adminPage.getByRole('button', { name: /subscription|connect claude|connect chatgpt/i }).count();
-    record('subscription options are shown as unavailable', unavailable > 0, `${unavailable} marked`);
-    record('and there is nothing to press', subscribeButton === 0);
+    record('the options with no supported path are marked unavailable', unavailable >= 2,
+      `${unavailable} marked`);
+    record('the Anthropic entry cites the policy rather than promising a date',
+      (await adminPage.getByText(/Claude Code and Claude\.ai/i).count()) > 0
+      && (await adminPage.getByText(/coming soon/i).count()) === 0);
+    const available = await adminPage.getByText(/\bavailable\b/).count();
+    record('the ChatGPT/Codex entry is offered on a CE build', available > 0);
+    record('and it says what it costs, in the product',
+      (await adminPage.getByText(/per installation rather than per person/i).count()) > 0);
+    record('and it says Josi never sees the login',
+      (await adminPage.getByText(/never sees, stores or forwards your login/i).count()) > 0);
+    const deadButtons = await adminPage.locator('button:disabled', { hasText: /subscription|claude|copilot/i }).count();
+    record('an unavailable option has no control at all', deadButtons === 0);
     await adminCtx.close();
   } catch (err) {
     record('roles', false, String(err).split('\n')[0]);
+  }
+}
+
+
+// ---------------------------------------------------------------------- PWA
+//
+// Split across two engines on purpose. The responsive and layout checks stay in
+// WebKit, because Safari on an iPhone is where a self-hosted assistant actually
+// gets installed. Service-worker REGISTRATION is checked in Chromium: WebKit's
+// headless worker support in Playwright is unreliable enough that a failure
+// there would say more about the harness than about the product, and a check
+// that cannot distinguish those is worse than no check.
+async function testPwaAssets(browser) {
+  step('The PWA is installable');
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  try {
+    await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
+
+    const manifestHref = await page.locator('link[rel=manifest]').getAttribute('href');
+    record('the shell links a manifest', manifestHref === '/manifest.webmanifest', String(manifestHref));
+    record('and declares a theme colour',
+      (await page.locator('meta[name=theme-color]').getAttribute('content')) === '#0b111e');
+    record('and an apple-touch-icon, which is the only icon iOS reads',
+      (await page.locator('link[rel=apple-touch-icon]').getAttribute('content').catch(() => null)) === null
+        && (await page.locator('link[rel=apple-touch-icon]').getAttribute('href')) === '/icons/icon-192.png');
+
+    const manifestRes = await page.request.get(`${BASE}/manifest.webmanifest`);
+    record('the manifest is served', manifestRes.status() === 200, String(manifestRes.status()));
+    record('with the manifest content type',
+      (manifestRes.headers()['content-type'] ?? '').includes('application/manifest+json'),
+      manifestRes.headers()['content-type'] ?? '');
+    const manifest = await manifestRes.json().catch(() => null);
+    record('and it parses as JSON with a start_url inside its scope',
+      !!manifest && manifest.start_url === '/app' && manifest.scope === '/');
+
+    let iconsOk = true;
+    for (const icon of manifest?.icons ?? []) {
+      const res = await page.request.get(`${BASE}${icon.src}`);
+      if (res.status() !== 200) iconsOk = false;
+    }
+    record('every declared icon is served', iconsOk);
+    record('one of them is maskable, or Android crops the mark',
+      (manifest?.icons ?? []).some((i) => String(i.purpose).includes('maskable')));
+
+    const sw = await page.request.get(`${BASE}/sw.js`);
+    record('the service worker is served', sw.status() === 200);
+    // A cached sw.js is a PINNED sw.js, and a pinned worker keeps its caching
+    // rules forever — including a rule that turned out to be wrong.
+    record('with no-store, so its rules can never be pinned',
+      sw.headers()['cache-control'] === 'no-store', sw.headers()['cache-control'] ?? '');
+    record('and Service-Worker-Allowed for the root scope',
+      sw.headers()['service-worker-allowed'] === '/');
+
+    const offline = await page.request.get(`${BASE}/offline.html`);
+    const offlineText = await offline.text();
+    record('the offline shell is served', offline.status() === 200);
+    record('and it runs no script', !/<script/i.test(offlineText));
+  } catch (err) {
+    record('pwa assets', false, String(err).split('\n')[0]);
+  } finally {
+    await ctx.close();
+  }
+}
+
+async function testServiceWorker() {
+  step('The service worker caches assets and never the API');
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  try {
+    await signIn(page, MEMBER);
+
+    const controlled = await page.evaluate(async () => {
+      if (!('serviceWorker' in navigator)) return 'unsupported';
+      const reg = await navigator.serviceWorker.ready.catch(() => null);
+      return reg ? 'ready' : 'failed';
+    });
+    record('it registers and becomes ready', controlled === 'ready', controlled);
+
+    // Give the worker a navigation to actually control, then confirm it does.
+    await page.reload({ waitUntil: 'networkidle' });
+    const hasController = await page.evaluate(() => !!navigator.serviceWorker.controller);
+    record('and takes control of the page', hasController === true);
+
+    const cachedBefore = await page.evaluate(async () => {
+      const names = await caches.keys();
+      const out = [];
+      for (const name of names) {
+        const keys = await (await caches.open(name)).keys();
+        out.push(...keys.map((r) => new URL(r.url).pathname));
+      }
+      return out;
+    });
+    record('the offline shell is precached', cachedBefore.includes('/offline.html'), cachedBefore.join(' '));
+
+    // THE ASSERTION THIS WHOLE FEATURE RESTS ON.
+    await page.goto(`${BASE}/app/conversations`, { waitUntil: 'networkidle' });
+    const cachedAfter = await page.evaluate(async () => {
+      const names = await caches.keys();
+      const out = [];
+      for (const name of names) {
+        const keys = await (await caches.open(name)).keys();
+        out.push(...keys.map((r) => new URL(r.url).pathname));
+      }
+      return out;
+    });
+    const apiCached = cachedAfter.filter((p) => p.startsWith('/api'));
+    record('NOTHING under /api was cached, after real signed-in navigation',
+      apiCached.length === 0, apiCached.join(' '));
+    record('the hashed bundle was cached', cachedAfter.some((p) => p.startsWith('/assets/')));
+
+    // Offline: the shell, and no private data from a cache.
+    await ctx.setOffline(true);
+    await page.goto(`${BASE}/app/conversations`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+    const text = await page.locator('body').innerText().catch(() => '');
+    record('offline shows the offline shell', /Josi is offline/i.test(text), text.slice(0, 120));
+    record('and it shows nothing about the signed-in person',
+      !/alice/i.test(text) && !/conversation/i.test(text.replace(/Josi is offline/i, '')),
+      text.slice(0, 120));
+
+    const apiOffline = await page.evaluate(async () => {
+      try {
+        const res = await fetch('/api/auth/me');
+        return `answered ${res.status}`;
+      } catch {
+        return 'failed';
+      }
+    });
+    // If this ever says "answered 200" while offline, the worker is serving a
+    // cached copy of somebody's account.
+    record('an API call while offline FAILS rather than being answered from a cache',
+      apiOffline === 'failed', apiOffline);
+
+    await ctx.setOffline(false);
+  } catch (err) {
+    record('service worker', false, String(err).split('\n')[0]);
+  } finally {
+    await ctx.close();
+    await browser.close();
   }
 }
 
@@ -471,9 +628,14 @@ try {
   await testNoExternalAndNoPlaceholders(browser);
   await testRoles(browser);
   await testBranding(browser);
+  await testPwaAssets(browser);
 } finally {
   await browser.close();
 }
+
+// Chromium, in its own browser, for the one thing WebKit headless cannot be
+// trusted to report.
+await testServiceWorker();
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

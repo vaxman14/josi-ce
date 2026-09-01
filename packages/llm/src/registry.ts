@@ -11,6 +11,7 @@
 //   * Caps are checked before the call, not after.
 import { openSealed, type Db, type MasterKey } from '@josi-ce/core';
 import { anthropicProvider } from './providers/anthropic.js';
+import { codexCliProvider, isSubscriptionProvider, type SpawnRunner } from './providers/codexCli.js';
 import { openAiCompatibleProvider } from './providers/openaiCompatible.js';
 import { checkCaps, priceCall, recordUsage, type CapVerdict } from './metering.js';
 import {
@@ -31,6 +32,9 @@ export interface StoredProvider {
   cap_structured_output: boolean | null;
   cap_tool_calling: boolean | null;
   cap_context_tokens: number | null;
+  /** Phase 13.3. Which local binary to run, for a subscription provider. Null
+   * for every other kind, and never a credential. */
+  subscription_command?: string | null;
 }
 
 export class LocalOnlyViolation extends LlmError {}
@@ -41,6 +45,10 @@ export interface RegistryOptions {
   fetchImpl?: typeof fetch;
   resolve?: (hostname: string) => Promise<string[]>;
   timeoutMs?: number;
+  /** How a subscription provider's local binary is run. Injected by the tests
+   * so no suite ever executes a program; unset in production, where the real
+   * `spawn` is used. */
+  codexRunner?: SpawnRunner;
 }
 
 export async function isLocalOnly(db: Db): Promise<boolean> {
@@ -56,7 +64,8 @@ export async function loadStoredProvider(
 ): Promise<StoredProvider | null> {
   const rows = await db.query<StoredProvider>(
     `select role, provider, model, base_url, api_key_enc, external_acknowledged, activated_at,
-            probed_at, cap_chat, cap_structured_output, cap_tool_calling, cap_context_tokens
+            probed_at, cap_chat, cap_structured_output, cap_tool_calling, cap_context_tokens,
+            subscription_command
      from llm_providers where role = $1`,
     [role],
   );
@@ -98,6 +107,30 @@ export async function buildProvider(
       'this provider sends data off the server and has not been acknowledged',
       { needsReconfiguration: true },
     );
+  }
+
+  // The subscription path. Checked BEFORE the key is opened, because there is
+  // no key: the credential lives in the operator's own Codex login and never
+  // enters this process. `codexCliProvider` asserts the edition capability
+  // again on its way in — this is the third of four layers, and it is the one
+  // that catches a row somebody inserted with psql on a hosted build.
+  if (isSubscriptionProvider(stored.provider)) {
+    if (stored.api_key_enc) {
+      // A database constraint refuses this shape too. Both, because a
+      // constraint added in a migration is a promise about new rows and this
+      // is a promise about every call.
+      throw new LlmError(
+        'a subscription provider must not have an API key stored — that would bill an API '
+        + 'account while calling itself a subscription',
+        { needsReconfiguration: true },
+      );
+    }
+    return codexCliProvider({
+      model: stored.model,
+      command: stored.subscription_command ?? null,
+      timeoutMs: opts.timeoutMs,
+      runner: opts.codexRunner,
+    });
   }
 
   let apiKey: string | null = null;

@@ -8,7 +8,17 @@
     <meta name="color-scheme" content="dark light" />
     <meta name="robots" content="noindex, nofollow" />
     <link rel="icon" type="image/png" href="/brand/josi-mark.png" />
-    <link rel="apple-touch-icon" href="/brand/josi-mark.png" />
+    <!-- iOS ignores the manifest's icons and reads this one. 192px rather than
+         the 1024px master, so a home-screen install does not pull a 3 MB PNG
+         over a phone connection. -->
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Matches the manifest's background_color, so the status bar and the
+         splash screen do not flash white on a dark app. -->
+    <meta name="theme-color" content="#0b111e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Josi" />
     <title>Josi</title>
     <!-- NO external stylesheet, font or script. The commercial engine loads
          Fira Sans from fonts.googleapis.com on every page; a self-hosted

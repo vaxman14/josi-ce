@@ -4,12 +4,27 @@
 // assistant — talks to LlmProvider. Only the adapters know what an OpenAI or
 // Anthropic payload looks like, and neither shape is allowed past here.
 
-export type ProviderKind = 'openai' | 'anthropic' | 'xai' | 'openai_compatible';
+export type ProviderKind =
+  | 'openai' | 'anthropic' | 'xai' | 'openai_compatible'
+  // Phase 13.3. Not "OpenAI with a different credential" — a different
+  // TRANSPORT: no HTTP request is made by CE on this path at all, the
+  // operator's own first-party Codex CLI is run as a subprocess. It is a
+  // separate kind so that nothing which branches on provider can confuse the
+  // two, and so the edition boundary has something concrete to refuse.
+  | 'openai_subscription';
 
 /** Providers that send request content off this server. `openai_compatible`
  * is absent on purpose: it points at whatever the operator runs, which is the
  * self-hosted path. */
-export const EXTERNAL_PROVIDERS: readonly ProviderKind[] = ['openai', 'anthropic', 'xai'];
+// `openai_subscription` IS here. The bytes reach OpenAI — by way of OpenAI's
+// own binary rather than our fetch, which changes who holds the credential and
+// changes nothing at all about where the conversation goes. So Local-only
+// refuses it and the external acknowledgement is required, exactly as for a
+// key-based provider. Leaving it out would have made "nothing leaves this
+// server" false while the badge still said otherwise.
+export const EXTERNAL_PROVIDERS: readonly ProviderKind[] = [
+  'openai', 'anthropic', 'xai', 'openai_subscription',
+];
 
 export function isExternalProvider(kind: string): boolean {
   return (EXTERNAL_PROVIDERS as readonly string[]).includes(kind);

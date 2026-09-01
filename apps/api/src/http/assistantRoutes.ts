@@ -29,6 +29,8 @@ export interface AssistantRoutesCtx {
   masterKey?: LoadOptions | false;
   fetchImpl?: typeof fetch;
   resolve?: (hostname: string) => Promise<string[]>;
+  /** Injected in tests so no suite ever executes the Codex binary. */
+  codexRunner?: import('@josi-ce/llm').SpawnRunner;
   recall?: RecallLookup;
 }
 
@@ -50,7 +52,10 @@ function registryOptions(ctx: AssistantRoutesCtx) {
     // a message that says so.
     masterKey = null;
   }
-  return { db: ctx.db, masterKey, fetchImpl: ctx.fetchImpl, resolve: ctx.resolve };
+  return {
+    db: ctx.db, masterKey, fetchImpl: ctx.fetchImpl, resolve: ctx.resolve,
+    codexRunner: ctx.codexRunner,
+  };
 }
 
 export function assistantRoutes(ctx: AssistantRoutesCtx): Router {

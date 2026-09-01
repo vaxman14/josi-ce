@@ -11,8 +11,9 @@
 //     limit is discovered by exceeding it.
 import type { Db } from '@josi-ce/core';
 import type { ProviderKind, Usage } from './types.js';
+import { isSubscriptionProvider } from './providers/codexCli.js';
 
-export type CostSource = 'reported' | 'estimated' | 'none';
+export type CostSource = 'reported' | 'estimated' | 'none' | 'subscription';
 
 export interface CostBreakdown {
   costUsd: number;
@@ -27,6 +28,13 @@ const ESTIMATE_NOTE =
 const SELF_HOSTED_NOTE =
   'No provider charge. Hardware and electricity are not counted here.';
 const REPORTED_NOTE = 'Reported by the provider.';
+// A subscription IS a provider charge — just not a per-call one. Filing these
+// under the self-hosted note would make "no provider charge" quietly false, and
+// filing them under `estimated` would put a fabricated number next to a flat
+// monthly fee.
+const SUBSCRIPTION_NOTE =
+  'Covered by your own ChatGPT plan. There is no per-call charge to show, and no token count — '
+  + 'the Codex CLI reports neither. Your plan\'s own usage limits still apply.';
 
 /** What a call cost. `reportedCostUsd` wins when a provider supplies one;
  * almost none do, which is why the estimate path is the common one. */
@@ -40,6 +48,12 @@ export async function priceCall(
     external: boolean;
   },
 ): Promise<CostBreakdown> {
+  // Before the external check, because a subscription provider IS external and
+  // would otherwise fall through to the price table and be "estimated" at a
+  // made-up figure.
+  if (isSubscriptionProvider(args.provider)) {
+    return { costUsd: 0, source: 'subscription', note: SUBSCRIPTION_NOTE };
+  }
   if (!args.external) {
     return { costUsd: 0, source: 'none', note: SELF_HOSTED_NOTE };
   }
@@ -92,7 +106,7 @@ export async function recordUsage(
       args.role,
       args.usage.inputTokens,
       args.usage.outputTokens,
-      args.cost.source === 'none' ? 0 : args.cost.costUsd,
+      args.cost.source === 'none' || args.cost.source === 'subscription' ? 0 : args.cost.costUsd,
       args.cost.source,
       args.latencyMs ?? null,
       args.purpose ?? null,
@@ -228,6 +242,9 @@ export interface UsageSummary {
   reportedCostUsd: number;
   estimatedCostUsd: number;
   selfHostedCalls: number;
+  /** Calls covered by the operator's own subscription. Counted separately so a
+   * usage report never implies they were free OR that they were billed. */
+  subscriptionCalls: number;
   calls: number;
   notes: string[];
 }
@@ -253,6 +270,7 @@ export async function usageSummary(db: Db, userId?: string | null): Promise<Usag
     reportedCostUsd: 0,
     estimatedCostUsd: 0,
     selfHostedCalls: 0,
+    subscriptionCalls: 0,
     calls: 0,
     notes: [],
   };
@@ -262,8 +280,10 @@ export async function usageSummary(db: Db, userId?: string | null): Promise<Usag
     if (row.cost_source === 'reported') summary.reportedCostUsd += Number(row.cost ?? 0);
     if (row.cost_source === 'estimated') summary.estimatedCostUsd += Number(row.cost ?? 0);
     if (row.cost_source === 'none') summary.selfHostedCalls += Number(row.calls);
+    if (row.cost_source === 'subscription') summary.subscriptionCalls += Number(row.calls);
   }
   if (summary.estimatedCostUsd > 0) summary.notes.push(ESTIMATE_NOTE);
   if (summary.selfHostedCalls > 0) summary.notes.push(SELF_HOSTED_NOTE);
+  if (summary.subscriptionCalls > 0) summary.notes.push(SUBSCRIPTION_NOTE);
   return summary;
 }
