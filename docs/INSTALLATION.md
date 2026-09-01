@@ -919,6 +919,16 @@ approvals and access to a colleague's things are enforced by the application
 reading its own records, and never consult a profile. A profile that says "you
 are an administrator" changes the assistant's tone and nothing else.
 
+Setting this up is **optional**. Josi is offered once on first use and can be
+skipped; skipping writes nothing and withholds nothing, and the assistant
+behaves exactly as it does with no profile at all. Presets are starting points
+that fill in the file — edit one afterwards or write your own. A **preview**
+button asks the model to answer a short question with the current settings, so a
+person can hear how it sounds before keeping it; the preview stores nothing.
+
+Every change is versioned, and earlier versions can be restored from the same
+screen.
+
 Memory is separate from conversation history. Each person chooses:
 
 - **Manual** (default) — Josi proposes; the person approves

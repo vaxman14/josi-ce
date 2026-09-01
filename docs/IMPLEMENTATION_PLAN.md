@@ -536,10 +536,17 @@ extraction that honours the person's memory mode. 1069 tests, **17 of 17**
 additional mutations, **68 runtime checks on claw with 0 failures**, including
 two people receiving different personalities in real model calls.
 
-**Still not built:** no first-run flow, no presets, no live *response* preview
-(the preview returns the assembled context), and version history is retained but
-not surfaced. Profile backup/restore is covered by Phase 10's full backup but
-not separately asserted.
+**Phase 12.2 built the rest of the phase text:** optional and skippable first-run
+personalization, five presets, a live response preview that really calls the
+model and stores nothing, version history surfaced in Settings with per-version
+restore, and profile backup/restore measured on a real `pg_dump` → wipe →
+restore rather than inferred. 1088 tests, **9 of 9** further mutations, **65
+additional runtime checks on claw**.
+
+**Every item in the Phase 12 text is now implemented.** The one thing still
+unmeasured is upgrade retention, for the same reason as Phase 10: no update has
+ever been applied, so "upgrade retains all profiles" follows from the database
+being canonical rather than from a measurement.
 
 The runtime run found the Phase 6 jsonb defect recurring in a package written six
 phases later, which the static guard added after Phase 6 could not see because it

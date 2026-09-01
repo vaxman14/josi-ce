@@ -10,10 +10,10 @@ The plan states the risk in one sentence, and everything below follows from it:
 
 | | |
 |---|---|
-| Tests | **1069 passed** across 33 files |
-| Mutation testing | **30 of 30** (`mutate-phase12.sh`) and **17 of 17** (`mutate-phase12-1.sh`) |
-| Runtime on claw | **68 checks, 0 failed** — two real sessions, one database, live model turns |
-| Secret scan | clean, 258 files |
+| Tests | **1088 passed** across 33 files |
+| Mutation testing | **30/30** (`mutate-phase12.sh`), **17/17** (`mutate-phase12-1.sh`), **9/9** (`mutate-phase12-2.sh`) |
+| Runtime on claw | **68 checks** (persona) and **65 checks** (backup/restore), 0 failed |
+| Secret scan | clean, 261 files |
 | Host impact | 25 containers before, 25 after, no leftovers |
 
 ## How the boundary is actually held
@@ -168,6 +168,23 @@ something; under-matching turns a request with a deadline into a permanent fact.
 I go sailing?"` became `go & sail` and matched nothing. Memory would have been
 silently useless in production — retrieved by unit tests passing bare keywords,
 and never by a real sentence.
+
+**Phase 12.2: four assertions that could not observe their own mutations.** A
+preset setting a forbidden field changed nothing, because `renderProfile` only
+emits fields in the spec — real defence in depth, but it meant preset values
+were never checked. The preview taking an owner from the request body was
+invisible because no test sent one. A mutation labelled "omits the authority
+note" actually removed the preview core, since the note is added regardless of
+what core is passed. And version history could be read for another person by
+naming them in the query string, while the test only checked that a colleague
+with no history saw nothing — which passes either way.
+
+**Phase 12.2: an assertion that passed on its own failed setup.** The profile
+restore check compared the count before against after; a partial unique index
+made the seed insert nothing, both counts were zero, and `all 0 personalization
+profiles came back` passed. Written minutes after describing that exact pattern
+elsewhere. It now requires a non-zero count and the seed step exits the run
+rather than letting everything downstream compare zero to zero.
 
 **Three claims that lived only in comments.** Mutation testing found that "the
 behaviour layer has no free-text field", "manual memory is the default", and
