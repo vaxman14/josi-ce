@@ -1,0 +1,227 @@
+You are working in the Josi CE repository. Fix every launch blocker below. This is an implementation task, not a planning exercise.
+
+CONTEXT AND PRODUCT STANDARD
+
+Josi CE is a self-hosted, closed-product-experience executive assistant for small businesses. The product should feel curated and guided even though it is self-hosted. Operators should not need to understand internal plumbing to install or configure it. Safe defaults, tenant/user isolation, honest status, and real end-to-end tests are non-negotiable.
+
+The current repository contains misleading completion claims. Do not trust phase labels, evidence prose, existing unit-test counts, or UI labels as proof that a feature works. Inspect the implementation and verify behavior from a clean installation.
+
+HARD RULES
+
+1. Read AGENTS.md and all relevant implementation, security, threat-model, installation, licensing, trademark, and evidence documents before editing.
+2. Inspect each full connected code path before changing it: UI, API, database, worker, Docker image, volumes, permissions, docs, tests, and upgrade impact.
+3. Preserve all unrelated user changes. Never overwrite or discard work blindly.
+4. Never print, log, commit, expose, or place secrets in fixtures.
+5. Do not weaken security controls or tests to make a test pass.
+6. Do not mark a feature complete because its UI exists or because fields save. Completion requires a real end-to-end result.
+7. Do not use mocks as the only proof for provider, OAuth, SMTP, installation, or subscription-auth behavior. Unit tests may mock boundaries, but each integration must also have an honest runtime harness that reports PASS, FAIL, or SKIPPED. SKIPPED is never PASS.
+8. Do not claim support for anything that was not tested. Update UI, docs, roadmap, acceptance matrix, and evidence to match reality.
+9. Use secure, fail-closed defaults. Any relaxation of permissions must be deliberate and auditable.
+10. Keep CE-only capabilities structurally unavailable in hosted/white-label builds. A hidden UI control is not an edition boundary.
+11. Run proportional tests after each connected block, then the complete suite, clean Docker acceptance, security/mutation tests, and lint/typecheck/build before completion.
+12. Commit and push completed work to the correct GitHub repository. Do not declare completion with an unpushed tree.
+
+IMPLEMENT ALL OF THE FOLLOWING
+
+1. APPLIANCE-SIMPLE DOCKER INSTALLATION
+
+- Provide a published, ready-to-copy Docker Compose installation path comparable in simplicity to Nginx Proxy Manager.
+- A normal installer must not need a GitHub SSH key, repository checkout, source build, Node installation, or knowledge of internal package structure.
+- Minimize required configuration. Document every value an operator may change and supply safe generated defaults where possible.
+- Add a preflight that checks architecture, supported OS, Docker Engine, Compose v2, daemon access, ports, disk, memory, filesystem permissions, and conflicting Snap/package installations.
+- Detect the Ubuntu Snap-Docker failure where /var/run/docker.sock is root:root and no docker group exists. Explain the exact supported repair instead of failing later.
+- Fix permission/mode checks so they report a simple numeric mode, not filesystem-stat output.
+- Fix disk-space checks so a healthy large disk never produces a false warning.
+- Preserve a download-then-inspect installation option. Do not require curl-pipe-shell.
+- Evaluate a separate one-line native installer, but do not advertise it as supported unless it matches Docker isolation, rollback, upgrade, uninstall, and test coverage. It may remain experimental.
+- Update the installation website and INSTALLATION.md with a novice path and an advanced/reference path.
+
+Acceptance:
+- On a clean supported amd64 Ubuntu host with Docker installed, an operator can install from published artifacts using a short documented command sequence without repository access.
+- Preflight gives exact remediation for every tested failure.
+- Clean install, restart, container replacement, backup, update, rollback, and uninstall behavior are documented and tested.
+
+2. WORKING CHATGPT SUBSCRIPTION AUTH IN CLEAN DOCKER CE
+
+- Offer ChatGPT subscription authentication directly in the setup wizard for CE builds.
+- Include a pinned official Codex CLI in the published CE application image.
+- Use the official device-login/authentication flow. Josi must not scrape, parse, copy, or expose Codex auth files, browser sessions, cookies, or keychains.
+- Persist Codex login across container replacement in a dedicated per-installation volume with restrictive permissions.
+- Probe the CLI and require a real model response before accepting this provider as configured.
+- Do not require an OpenAI API key on this path.
+- Keep Claude subscription authentication unavailable and clearly explain the current Anthropic policy reason.
+- Enforce the CE-only capability at build stamp, route, provider factory, database/config, and runtime levels. Hosted/white-label builds must be unable to enable it through environment variables, direct SQL, hidden routes, or modified client requests.
+- Ensure errors are actionable and never expose credentials.
+
+Acceptance:
+- A clean Docker CE installation completes device login and returns a real model response without an API key.
+- Login survives container recreation.
+- Hosted build bypass/mutation tests prove the feature cannot be enabled.
+
+3. REAL, ACCOUNT-AWARE MODEL SELECTION
+
+- Remove free-text model-name entry from ordinary setup/admin flows.
+- Remove invalid or speculative hard-coded model IDs.
+- After authenticating a provider, retrieve or otherwise derive the models genuinely available to that connected account using the provider's supported interface.
+- Present human-readable curated labels plus exact technical IDs in an advanced/detail view.
+- Refresh availability when credentials, subscription login, organization, project, or provider access changes.
+- A model cannot become Primary or Fallback until it passes a real minimal request.
+- Failed/unavailable models remain inactive.
+- Surface useful categorized errors: authentication, authorization, unavailable model, rate limit, billing/quota, network, malformed request, and provider outage. Preserve safe provider detail without leaking secrets.
+- Support self-hosted/OpenAI-compatible endpoints with an explicit discovered-model path and a clearly marked manual advanced override only when discovery is impossible.
+
+Acceptance:
+- The selector never offers gpt-5.6-sol or any other unverified fantasy ID.
+- A chosen model produces a real reply during setup before activation.
+- Revoked access makes the model unavailable and prevents silent continued use.
+
+4. SETUP MUST TEST EVERYTHING IT CONFIGURES
+
+- Model/provider configuration performs a real minimal request.
+- SMTP configuration sends a real test message to an address chosen by the admin, or is explicitly skipped.
+- Google and Microsoft OAuth application configuration performs a real save-and-handshake validation.
+- Required failures block completion. Optional items may be skipped, but remain visibly incomplete.
+- Tests must have progress, timeout, retry where safe, exact failure, and a rerun control.
+- Never equate field validation or database persistence with a successful connection.
+
+5. COMPLETE GOOGLE AND MICROSOFT ONBOARDING
+
+- Make organization OAuth application setup available in the admin onboarding path instead of claiming it is unavailable in the release.
+- Clearly separate organization application registration from each user's account connection.
+- Add guided Google Cloud and Microsoft Entra registration instructions, exact scopes, exact callback, validation, and safe secret storage.
+- Generate callbacks from the configured HTTPS application URL. Do not present a private HTTP address as production OAuth-ready.
+- Handle LAN-only installations honestly: explain the domain/HTTPS requirement and supported alternatives instead of generating an unusable callback.
+- Add user-facing Connect Google and Connect Microsoft flows, connection status, scope display, re-consent, revoke, disconnect, and failure recovery.
+- Default to least privilege. Write scopes require explicit explanation and consent.
+
+Acceptance:
+- From a clean setup, an admin can register and test each application, then two different users can connect accounts without cross-user token or data exposure.
+
+6. BUILD A REAL FINAL REVIEW SCREEN
+
+- Replace the fake completion screen with a complete summary of every setup choice.
+- Each item must be marked CONFIGURED AND TESTED, CONFIGURED BUT FAILED, SKIPPED, UNAVAILABLE, or REQUIRED.
+- Show safe metadata only. Never reveal secrets.
+- Provide direct actions to test, edit, or return to each step.
+- Block completion when a required item failed.
+- Never display contradictory claims such as "Everything is configured" and "Nothing has been tested."
+
+7. CORRECT POST-SETUP ADMIN FLOW
+
+- The first account created by installation is the super admin.
+- After setup, route that person to an Admin Launch Checklist, not the ordinary user dashboard.
+- The checklist must cover model/provider, connectors, SMTP, users/invitations, approval policy, backups/master-key backup verification, security, diagnostics, updates, and every skipped/failed setup item.
+- Display progress and allow deliberate dismissal of optional work, with persistent reminders for material risks.
+- Offer Go to user dashboard only after the admin sees the checklist.
+- After first-run handling, ordinary role-aware login routing may take members to the normal dashboard.
+
+8. GOOGLE AND MICROSOFT CONTACT SYNCHRONIZATION
+
+- Add Google People/Contacts and Microsoft Graph/Outlook Contacts support to the existing connectors.
+- Support explicit import-only and two-way synchronization modes.
+- Use stable provider IDs plus normalized email and phone matching.
+- Implement deterministic deduplication, merge preview, conflict policy, tombstones/deletion safety, pagination, incremental sync tokens/deltas, retry/backoff, rate-limit handling, and reconnect recovery.
+- Show source account, source provider, sync mode, last sync, current status, and conflict state on contacts.
+- Enforce per-user isolation. Contacts become organization-shared only through an explicit sharing action and policy.
+- Disconnecting/revoking an account must stop sync without silently deleting local or provider contacts.
+- Add least-privilege scopes and re-consent only when write sync is selected.
+
+Acceptance:
+- Two users can sync separate Google/Microsoft contact sets without leakage.
+- Create, update, conflict, duplicate, delete, revoke, and reconnect cases are tested.
+
+9. NATIVE IOS AND ANDROID CONTACT SYNCHRONIZATION
+
+- Add native phone-contact integration to the mobile apps.
+- Request OS contact permission only after a clear user action and explanation.
+- Support selective import and optional two-way sync.
+- Deduplicate across device, Google, Microsoft, and Josi sources without collapsing unrelated people.
+- Preserve per-user isolation and require an explicit separate choice before sharing with the organization directory.
+- Handle limited contact access, denied permission, revoked permission, background restrictions, app reinstall, and account sign-out.
+- Revoking permission stops future sync and does not randomly delete either side.
+
+Acceptance:
+- Real-device iOS and Android tests cover grant, limited grant where supported, denial, revoke, import, update, conflict, and sign-out.
+
+10. HARDEN APPROVAL POLICY BY DEFAULT
+
+- Replace "No ceiling - each person decides" as the factory default.
+- Fresh installations fail closed.
+- Sending email, creating/changing calendar events, and creating/changing tasks require approval by default.
+- Deleting, canceling, inviting external people, publishing, spending money, signing/accepting terms, changing access, and other high-impact external actions receive the strictest defaults.
+- The admin defines the maximum permitted autonomy. Users may choose stricter behavior but cannot exceed the admin ceiling.
+- Relaxing policy requires explicit confirmation, records who changed what and when, and is audit-logged.
+- Explain the defaults during setup and on the policy page.
+- Existing installations must migrate safely. Do not silently broaden or unexpectedly narrow policy without showing the admin the migration result.
+
+Acceptance:
+- A new install cannot send or mutate external state without approval.
+- Client-side tampering, direct API calls, and worker/job paths cannot bypass the server-side ceiling.
+
+11. FIX WORKSPACE AND BRANDING
+
+- The approved launch identity is Josi / Josi CE with the white J on navy. The shepherd concept is retired.
+- Remove stale shepherd names, assets, copy, checksum tests, evidence claims, README statements, trademark references, PWA references, and UI references unless retained only in an accurately labeled historical record.
+- Apply the approved J identity consistently to the web UI, PWA icons, docs site, installation UI, metadata, favicon, and distributable assets.
+- Replace the statement that the identity "is not replaceable" with a legally coherent separation of AGPL copyright/license rights and trademark rights.
+- Draft a clear trademark policy that allows compliant unmodified distribution, requires forks/modified products to avoid confusion, and does not falsely restrict rights granted by AGPL. Flag it for legal review; do not present generated prose as legal advice.
+- Fix the Workspace page's endless Loading state. It must render loaded data, an honest empty state, or an actionable error with retry.
+- Audit all product surfaces for stale or contradictory branding.
+
+Acceptance:
+- Repository-wide search finds no live shepherd branding claims.
+- UI and docs agree on identity and licensing.
+- Workspace loading success, empty, timeout, API failure, and unauthorized states are tested.
+
+12. HIDE PLUMBING WITHOUT HIDING TRUTH
+
+- Normal setup should present goals, guided choices, tests, and outcomes.
+- Do not expose client IDs, callback URLs, scopes, model IDs, container names, database concepts, or secret-handling jargon unless the admin must act on them.
+- When advanced information is required, place it behind a clearly labeled advanced/detail section with copy controls and exact instructions.
+- Keep the full technical explanation in the installation/admin documentation.
+- Never simplify by removing necessary warnings, consent, security choices, or failure detail.
+
+13. BANANA
+
+- Preserve "banana" in the tracked launch-audit document as an explicit test that user-requested checklist items are not silently dropped. It has no runtime product behavior.
+
+REQUIRED CROSS-CUTTING WORK
+
+- Update database migrations safely and make them idempotent.
+- Update API schemas, generated clients, RBAC, audit events, threat model, CSP/network policy, rate limits, retention, deletion/export behavior, privacy disclosures, and backup/restore coverage for all new data and credentials.
+- Ensure every token/secret is encrypted with the installation master key and is never returned after storage.
+- Ensure workers and background jobs preserve workspace and user boundaries.
+- Add hostile tests for CSRF, SSRF, OAuth state replay, token substitution, callback confusion, privilege escalation, IDOR, cross-user contact leakage, webhook replay, malicious provider errors, and log/audit secret leakage.
+- Ensure the N150/16 GB profile works without optional heavy services. Keep Raspberry Pi 4/8 GB support honest until tested.
+- Repair all documentation and evidence that currently overclaims completion.
+
+EXECUTION ORDER
+
+1. Convert this prompt into tracked acceptance rows in the implementation plan. Preserve the Banana row.
+2. Map every item to existing code, missing code, tests, docs, migrations, and security impact.
+3. Fix installation/preflight defects that prevent clean testing.
+4. Fix setup truthfulness, provider testing, subscription auth, model discovery, review, and admin routing.
+5. Fix connector onboarding and contact synchronization.
+6. Harden approval defaults.
+7. Fix branding/licensing/workspace state.
+8. Implement mobile contact sync in the correct app repositories if they are separate. Do not dump mobile work into the CE server repository; create linked tracked issues/acceptance evidence if repository access is not present.
+9. Run clean amd64/N150 installation acceptance from zero state.
+10. Run full unit, integration, runtime, mutation, security, typecheck, lint, build, backup/restore, update/rollback, and documentation validation.
+11. Reconcile every acceptance row with measured evidence.
+12. Commit and push.
+
+COMPLETION REPORT FORMAT
+
+Do not provide progress theater. At completion, report:
+
+- Commit(s) and pushed branch
+- Each numbered blocker: DONE, BLOCKED, or NOT DONE
+- Exact test/harness proving each DONE item
+- Exact external dependency or missing authority for each BLOCKED item
+- Every SKIPPED real-provider/device test
+- Clean-install environment and measured result
+- Remaining launch blockers
+- Any legal text requiring counsel review
+- Confirmation that no secrets were committed
+
+The task is not complete while any item is merely represented by a screen, saved configuration, mock-only test, prose claim, or unpushed local change.
