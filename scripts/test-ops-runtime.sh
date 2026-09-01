@@ -249,6 +249,20 @@ else
   printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
 fi
 
+# Phase 12 profiles and memories, so the restore proves they come back rather
+# than that being inferred from "profiles live in ordinary tables".
+step "seeding a profile and a memory to restore later"
+sql "insert into persona_profiles (owner_user_id, kind, content, parsed)
+     values ('$ALICE_ID', 'soul', 'assistant_name: Ada', '{\"assistant_name\":\"Ada\"}'::jsonb)
+     on conflict (owner_user_id, kind) do update set content = excluded.content" >/dev/null
+sql "insert into memories (owner_user_id, content)
+     values ('$ALICE_ID', 'RESTORE-MEMORY-marker')" >/dev/null
+PROFILES_BEFORE=$(sql "select count(*) from persona_profiles")
+MEMORIES_BEFORE=$(sql "select count(*) from memories")
+[[ "$PROFILES_BEFORE" -ge 1 && "$MEMORIES_BEFORE" -ge 1 ]] \
+  && ok "seeded $PROFILES_BEFORE profile(s) and $MEMORIES_BEFORE memory" \
+  || bad "could not seed persona data"
+
 USERS_BEFORE=$(sql "select count(*) from users")
 [[ "$USERS_BEFORE" -ge 3 ]] && ok "$USERS_BEFORE users exist before the backup" || bad "too few users"
 
@@ -329,6 +343,20 @@ done
 USERS_AFTER=$(sql "select count(*) from users")
 [[ "$USERS_AFTER" == "$USERS_BEFORE" ]] && ok "all $USERS_AFTER users came back" \
   || bad "expected $USERS_BEFORE users, found $USERS_AFTER"
+
+PROFILES_AFTER=$(sql "select count(*) from persona_profiles")
+[[ "$PROFILES_AFTER" == "$PROFILES_BEFORE" ]] \
+  && ok "all $PROFILES_AFTER personalization profiles came back" \
+  || bad "expected $PROFILES_BEFORE profiles, found $PROFILES_AFTER"
+
+n=$(sql "select count(*) from memories where content = 'RESTORE-MEMORY-marker'")
+[[ "$n" == "1" ]] && ok "and the memory with them" || bad "the memory did not come back"
+
+name=$(sql "select parsed->>'assistant_name' from persona_profiles where kind = 'soul' limit 1")
+# Not just the row — the parsed jsonb must still be an object, which is the
+# defect Phase 12 found the hard way.
+[[ "$name" == "Ada" ]] && ok "and the parsed profile is still readable jsonb" \
+  || bad "parsed profile came back unusable: '$name'"
 
 SEALED_AFTER=$(sql "select coalesce(api_key_enc,'') from llm_providers where role = 'primary'")
 # Non-empty AND equal. Two empty strings are equal, and that is how this

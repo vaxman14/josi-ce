@@ -110,7 +110,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
   api.use('/storage', storageRoutes({ db }));
-  api.use('/persona', personaRoutes({ db }));
+  api.use('/persona', personaRoutes({
+    db,
+    masterKey: cfg.masterKeyCheck,
+    fetchImpl: cfg.llmFetch,
+    resolve: cfg.llmResolve,
+  }));
   api.use('/ops', opsRoutes({
     db,
     backupWriter: cfg.backupWriter,

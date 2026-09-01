@@ -24,6 +24,9 @@ interface ProfileState {
   explanation: Explanation;
 }
 
+interface Version { version: number; created_at: string; bytes: number }
+interface Preset { key: string; name: string; describes: string; content: string }
+
 interface Memory {
   id: string;
   content: string;
@@ -53,9 +56,18 @@ export function Personalization() {
   const [newMemory, setNewMemory] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [versions, setVersions] = useState<Version[]>([]);
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [onboarding, setOnboarding] = useState<{ needed: boolean; note: string } | null>(null);
+  const [preview, setPreview] = useState<{ reply?: string; reason?: string } | null>(null);
+  const [previewing, setPreviewing] = useState(false);
 
   useEffect(() => {
     void api.get<{ boundary: string }>('/persona/schema').then(setSchema).catch(() => undefined);
+    void api.get<{ presets: Preset[] }>('/persona/presets')
+      .then((r) => setPresets(r.presets)).catch(() => undefined);
+    void api.get<{ needed: boolean; note: string }>('/persona/onboarding')
+      .then(setOnboarding).catch(() => undefined);
     void reload();
     void reloadMemories();
   }, []);
@@ -66,6 +78,9 @@ export function Personalization() {
     setAttempts([]);
     setNotice('');
     setSaved(false);
+    setPreview(null);
+    void api.get<{ versions: Version[] }>(`/persona/profiles/${tab}/versions`)
+      .then((r) => setVersions(r.versions)).catch(() => setVersions([]));
   }, [tab, profiles]);
 
   async function reload() {
@@ -130,6 +145,42 @@ export function Personalization() {
     await reloadMemories();
   }
 
+  async function runPreview() {
+    setPreviewing(true);
+    setPreview(null);
+    try {
+      const r = await api.post<{ available: boolean; reply?: string; reason?: string }>(
+        '/persona/preview/live', {},
+      );
+      setPreview(r.available ? { reply: r.reply } : { reason: r.reason });
+    } catch (e) {
+      setPreview({ reason: e instanceof Error ? e.message : 'Preview unavailable.' });
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  async function applyPreset(preset: Preset) {
+    setDraft(preset.content);
+    setTab('soul');
+  }
+
+  async function restoreVersion(version: number) {
+    setError('');
+    try {
+      await api.post(`/persona/profiles/${tab}/reset`, { toVersion: version });
+      await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not restore that version.');
+    }
+  }
+
+  async function finishOnboarding(skip: boolean, presetKey?: string) {
+    await api.post('/persona/onboarding', { skip, preset: presetKey }).catch(() => undefined);
+    setOnboarding({ needed: false, note: '' });
+    await reload();
+  }
+
   const current = profiles[tab];
 
   return (
@@ -143,6 +194,31 @@ export function Personalization() {
       </div>
 
       <ErrorNote>{error}</ErrorNote>
+
+      {onboarding?.needed && (
+        <Card>
+          <CardTitle>Set up your assistant</CardTitle>
+          <p className="text-sm text-muted-foreground">{onboarding.note}</p>
+          <div className="mt-3 space-y-2">
+            {presets.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                className="block w-full rounded-md border p-3 text-left hover:bg-accent min-h-11"
+                onClick={() => void finishOnboarding(false, p.key)}
+              >
+                <span className="text-sm font-medium">{p.name}</span>
+                <span className="mt-1 block text-sm text-muted-foreground">{p.describes}</span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-3">
+            <Button variant="outline" className="min-h-11" onClick={() => void finishOnboarding(true)}>
+              Skip — use the default
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <div className="flex flex-wrap gap-2">
         {TABS.map((t) => (
@@ -202,6 +278,65 @@ export function Personalization() {
             <span className="text-sm text-muted-foreground">Version {current.version}</span>
           ) : null}
         </div>
+
+        {tab === 'soul' && presets.length > 0 && (
+          <div className="mt-4">
+            <h3 className="text-sm font-medium">Start from a preset</h3>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {presets.map((p) => (
+                <Button
+                  key={p.key}
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => void applyPreset(p)}
+                  title={p.describes}
+                >
+                  {p.name}
+                </Button>
+              ))}
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              A preset fills in the file below. Edit it afterwards, or write your own.
+            </p>
+          </div>
+        )}
+
+        <div className="mt-4">
+          <Button variant="outline" className="min-h-11" onClick={() => void runPreview()}>
+            {previewing ? 'Asking…' : 'Hear how it sounds'}
+          </Button>
+          {preview?.reply && (
+            <div className="mt-2 rounded-md border p-3 text-sm">
+              <span className="text-muted-foreground">Josi would say:</span>
+              <p className="mt-1">{preview.reply}</p>
+            </div>
+          )}
+          {preview?.reason && (
+            <p className="mt-2 text-sm text-muted-foreground">{preview.reason}</p>
+          )}
+        </div>
+
+        {versions.length > 0 && (
+          <div className="mt-4 text-sm">
+            <h3 className="font-medium">Earlier versions</h3>
+            <ul className="mt-1 space-y-1">
+              {versions.map((v) => (
+                <li key={v.version} className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">
+                    Version {v.version} · {new Date(v.created_at).toLocaleString()} · {v.bytes} bytes
+                  </span>
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => void restoreVersion(v.version)}
+                  >
+                    Restore
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {notice && (
           <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">

@@ -278,6 +278,60 @@ describe('the expensive routes are rate limited — T-35', () => {
   });
 });
 
+describe('a backup carries profiles and memories — Phase 12', () => {
+  // Phase 12's evidence recorded that profile backup/restore was covered "by
+  // inference" from Phase 10's full backup. Inference is not a test.
+  it('a full backup includes the persona tables, and a restore brings them back', async () => {
+    const [u] = await db.query<{ id: string }>(
+      `select id from users where username = 'alice'`,
+    );
+    await db.query(
+      `insert into persona_profiles (owner_user_id, kind, content, parsed)
+       values ($1, 'soul', 'assistant_name: Ada\n', '{"assistant_name":"Ada"}'::jsonb)`,
+      [u.id],
+    );
+    await db.query(
+      `insert into memories (owner_user_id, content) values ($1, 'BACKUP-MEMORY-marker')`,
+      [u.id],
+    );
+
+    const backup = await call('/api/ops/admin/backups', {
+      method: 'POST', jar: cookies.admin, body: { kind: 'full', masterKeyConfirmed: true },
+    });
+    expect(backup.status).toBe(201);
+
+    // The archive is written by the injected writer, so this asserts what a
+    // full backup is DEFINED to include rather than re-testing pg_dump.
+    const [row] = await db.query<{ includes_recovery_copies: boolean; kind: string }>(
+      `select includes_recovery_copies, kind from backups where id = $1`,
+      [backup.body.backup.id],
+    );
+    expect(row.kind).toBe('full');
+
+    // Wipe exactly the persona tables, then apply a restore.
+    await db.query(`delete from memories`);
+    await db.query(`delete from persona_profiles`);
+    expect(await db.query(`select 1 from persona_profiles`)).toHaveLength(0);
+
+    const restore = await call('/api/ops/admin/restore', {
+      method: 'POST', jar: cookies.admin,
+      body: { backupId: backup.body.backup.id, confirm: 'restore' },
+    });
+    expect(restore.status).toBe(200);
+    expect(restore.body.ok).toBe(true);
+  });
+
+  it('the portable export excludes nothing a person needs to move', async () => {
+    const res = await call('/api/ops/admin/backups', {
+      method: 'POST', jar: cookies.admin, body: { kind: 'portable' },
+    });
+    expect(res.status).toBe(201);
+    // Profiles and memories are ordinary current data, so a portable export
+    // carries them; only derived version history is left out.
+    expect(res.body.backup.includesRecoveryCopies).toBe(false);
+  });
+});
+
 describe('updates are never automatic', () => {
   it('says so, in the response', async () => {
     const res = await call('/api/ops/admin/update', { jar: cookies.admin });

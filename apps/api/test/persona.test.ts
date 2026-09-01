@@ -73,6 +73,8 @@ async function signIn(identifier: string, password: string): Promise<string> {
   return mergeJar(jar, res.headers.getSetCookie?.() ?? []);
 }
 
+let lastPreviewSystem = '';
+
 const PW = { admin: 'admin-password-123', alice: 'alice-password-123', bob: 'bob-password-123' };
 
 beforeAll(async () => {
@@ -82,11 +84,30 @@ beforeAll(async () => {
   ids.alice = (await createUser(db, { email: 'alice@ce.test', username: 'alice', role: 'member', password: PW.alice })).id;
   ids.bob = (await createUser(db, { email: 'bob@ce.test', username: 'bob', role: 'member', password: PW.bob })).id;
 
+  // A stub model that echoes the system context, so a live preview can be
+  // asserted on what actually reached the provider.
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000', masterKeyCheck: { path: keyPath },
+    llmFetch: (async (_u: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const sys = (body.messages ?? []).find((m: { role: string }) => m.role === 'system');
+      lastPreviewSystem = sys?.content ?? body.system ?? '';
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: `PREVIEW_REPLY<<${lastPreviewSystem.slice(0, 400)}>>` } }],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch,
+    llmResolve: async () => ['203.0.113.10'],
   });
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  await db.query(
+    `insert into llm_providers
+       (role, provider, model, api_key_enc, external_acknowledged, activated_at, probed_at,
+        cap_chat, cap_structured_output, cap_tool_calling, cap_context_tokens)
+     values ('primary', 'openai', 'gpt-test', null, true, now(), now(), true, true, false, 8000)`,
+  );
 
   cookies.admin = await signIn('admin', PW.admin);
   cookies.alice = await signIn('alice', PW.alice);
@@ -96,6 +117,7 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); });
 
 beforeEach(async () => {
+  lastPreviewSystem = '';
   await db.query(`delete from persona_versions`);
   await db.query(`delete from persona_profiles`);
   await db.query(`delete from memory_suggestions`);
@@ -265,6 +287,155 @@ describe('a hostile profile has no effect over the wire', () => {
   it('the behaviour layer takes none of it', async () => {
     const res = await save(cookies.alice, 'agents_user', HOSTILE);
     expect(Object.keys(res.body.parsed)).toHaveLength(0);
+  });
+});
+
+describe('first-run personalization is optional and skippable', () => {
+  it('is offered when nothing has been set up', async () => {
+    const res = await call('/api/persona/onboarding', { jar: cookies.alice });
+    expect(res.body.needed).toBe(true);
+    expect(res.body.note).toContain('optional');
+    expect(res.body.presets.length).toBeGreaterThan(2);
+  });
+
+  it('skipping is a real choice, and the assistant still works', async () => {
+    const res = await call('/api/persona/onboarding', {
+      method: 'POST', jar: cookies.alice, body: { skip: true },
+    });
+    expect(res.body.skipped).toBe(true);
+    expect(res.body.note).toContain('brief, direct');
+
+    // Not asked again, and no profile was created behind their back.
+    const after = await call('/api/persona/onboarding', { jar: cookies.alice });
+    expect(after.body.needed).toBe(false);
+    const profiles = await call('/api/persona/profiles', { jar: cookies.alice });
+    expect(profiles.body.profiles.soul.content).toBe('');
+  });
+
+  it('choosing a preset writes exactly that preset', async () => {
+    const presets = await call('/api/persona/presets', { jar: cookies.alice });
+    const dry = presets.body.presets.find((p: any) => p.key === 'dry');
+
+    await call('/api/persona/onboarding', {
+      method: 'POST', jar: cookies.alice, body: { preset: 'dry' },
+    });
+    const profiles = await call('/api/persona/profiles', { jar: cookies.alice });
+    expect(profiles.body.profiles.soul.content).toBe(dry.content);
+    expect(profiles.body.profiles.soul.parsed.humour).toBe('dry');
+  });
+
+  it('refuses a preset that does not exist', async () => {
+    const res = await call('/api/persona/onboarding', {
+      method: 'POST', jar: cookies.alice, body: { preset: 'unlimited_admin' },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('is not needed once a profile exists', async () => {
+    await save(cookies.alice, 'soul', 'tone: brief\n');
+    const res = await call('/api/persona/onboarding', { jar: cookies.alice });
+    expect(res.body.needed).toBe(false);
+  });
+});
+
+describe('presets are starting points, not a fixed menu', () => {
+  it('each returns the exact Markdown it would write', async () => {
+    const res = await call('/api/persona/presets', { jar: cookies.alice });
+    expect(res.body.note).toContain('write your own');
+    for (const preset of res.body.presets) {
+      expect(preset.content.length).toBeGreaterThan(10);
+      // Applying a preset and typing the same thing are the same act.
+      const applied = await save(cookies.alice, 'soul', preset.content);
+      expect(applied.status, preset.key).toBe(200);
+      expect(applied.body.ignored, preset.key).toEqual([]);
+    }
+  });
+
+  it('no preset can set a field the schema does not have', async () => {
+    const res = await call('/api/persona/presets', { jar: cookies.alice });
+    for (const preset of res.body.presets) {
+      const applied = await save(cookies.alice, 'soul', preset.content);
+      // A preset that introduced a field would show up as ignored, because the
+      // parser is the same one everything else goes through.
+      expect(applied.body.ignored, preset.key).toEqual([]);
+      expect(applied.body.authorityAttempts, preset.key).toEqual([]);
+    }
+  });
+});
+
+describe('the live preview really calls a model', () => {
+  it('returns a reply built from this person\'s own context', async () => {
+    await save(cookies.alice, 'soul', 'assistant_name: Ada\ncustom_personality: PREVIEW-ALICE-VOICE\n');
+    const res = await call('/api/persona/preview/live', {
+      method: 'POST', jar: cookies.alice, body: { request: 'say hello' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.available).toBe(true);
+    // A real model call, not a rendering of the context.
+    expect(res.body.reply).toContain('PREVIEW_REPLY<<');
+    expect(lastPreviewSystem).toContain('PREVIEW-ALICE-VOICE');
+    expect(lastPreviewSystem).toContain('preferences, not permissions');
+  });
+
+  it('never uses somebody else\'s profile', async () => {
+    await save(cookies.alice, 'soul', 'custom_personality: PREVIEW-ALICE-VOICE\n');
+    await save(cookies.bob, 'soul', 'custom_personality: PREVIEW-BOB-VOICE\n');
+    await call('/api/persona/preview/live', {
+      method: 'POST', jar: cookies.bob, body: { request: 'say hello' },
+    });
+    expect(lastPreviewSystem).toContain('PREVIEW-BOB-VOICE');
+    expect(lastPreviewSystem).not.toContain('PREVIEW-ALICE-VOICE');
+  });
+
+  it('stores nothing — a preview is a question about a setting', async () => {
+    const threadsBefore = await db.query(`select count(*)::int as n from threads`);
+    const messagesBefore = await db.query(`select count(*)::int as n from messages`);
+    await call('/api/persona/preview/live', {
+      method: 'POST', jar: cookies.alice, body: { request: 'I always work mornings' },
+    });
+    expect(await db.query(`select count(*)::int as n from threads`)).toEqual(threadsBefore);
+    expect(await db.query(`select count(*)::int as n from messages`)).toEqual(messagesBefore);
+    // And it learns nothing, even from a sentence that would be learned in a turn.
+    expect(await db.query(`select 1 from memory_suggestions`)).toHaveLength(0);
+  });
+
+  it('says so honestly when there is no usable model', async () => {
+    await db.query(`update llm_providers set activated_at = null where role = 'primary'`);
+    const res = await call('/api/persona/preview/live', {
+      method: 'POST', jar: cookies.alice, body: {} });
+    expect(res.status).toBe(503);
+    expect(res.body.available).toBe(false);
+    expect(res.body.reason).toContain('No model is configured');
+    await db.query(`update llm_providers set activated_at = now() where role = 'primary'`);
+  });
+});
+
+describe('version history is available to the person', () => {
+  it('lists earlier versions and restores one', async () => {
+    await save(cookies.alice, 'soul', 'tone: brief\n');
+    await save(cookies.alice, 'soul', 'tone: formal\n');
+    await save(cookies.alice, 'soul', 'tone: detailed\n');
+
+    const list = await call('/api/persona/profiles/soul/versions', { jar: cookies.alice });
+    expect(list.body.versions.length).toBeGreaterThanOrEqual(2);
+    for (const v of list.body.versions) {
+      expect(v).toHaveProperty('created_at');
+      expect(v.bytes).toBeGreaterThan(0);
+    }
+
+    const oldest = list.body.versions[list.body.versions.length - 1];
+    await call('/api/persona/profiles/soul/reset', {
+      method: 'POST', jar: cookies.alice, body: { toVersion: oldest.version },
+    });
+    const after = await call('/api/persona/profiles', { jar: cookies.alice });
+    expect(after.body.profiles.soul.parsed.tone).toBe('brief');
+  });
+
+  it('is not somebody else\'s history to read', async () => {
+    await save(cookies.alice, 'soul', 'tone: brief\n');
+    await save(cookies.alice, 'soul', 'tone: formal\n');
+    const bob = await call('/api/persona/profiles/soul/versions', { jar: cookies.bob });
+    expect(bob.body.versions).toHaveLength(0);
   });
 });
 

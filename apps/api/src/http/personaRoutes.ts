@@ -13,19 +13,26 @@
 // assistant may do something is decided elsewhere, by code that reads approval
 // and ownership rows, and none of it consults a profile.
 import { Router, type Request, type Response } from 'express';
-import { type Db } from '@josi-ce/core';
+import { loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
+import { capabilitiesOf, chat, featureAvailable, loadStoredProvider } from '@josi-ce/llm';
 import {
-  CAUTION_ORDER, FIELDS, MemoryError, ProfileError, ProfileTooLarge,
+  CAUTION_ORDER, FIELDS, assembleSystemContext, MemoryError, ProfileError, ProfileTooLarge,
   addMemory, assemblePrompt, confirmMemory, decideSuggestion, deleteMemory,
   exportProfiles, getProfile, importProfiles, listMemories, listVersions,
-  loadAll, narrowPolicy, parseProfile, relevantMemories, resetProfile,
-  saveProfile, updateMemory, type Layer,
+  SOUL_PRESETS, loadAll, narrowPolicy, parseProfile, presetContent,
+  relevantMemories, resetProfile, saveProfile, updateMemory,
+  type Layer,
 } from '@josi-ce/persona';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
 export interface PersonaRoutesCtx {
   db: Db;
+  /** Provider access for the live preview. Absent = preview is unavailable and
+   * says so, rather than returning a fabricated reply. */
+  masterKey?: LoadOptions | false;
+  fetchImpl?: typeof fetch;
+  resolve?: (hostname: string) => Promise<string[]>;
   /** The compiled core. A constant in the build; there is no route that sets
    * it and no table that stores it. */
   core?: string;
@@ -36,6 +43,18 @@ class RouteError extends Error {
 }
 
 const PERSONAL: Layer[] = ['soul', 'user', 'agents_user'];
+
+/** The core used for a preview.
+ *
+ * Short on purpose: a preview is about the PERSONALITY, and reproducing the
+ * whole operational core would spend tokens describing tools that are not being
+ * offered in a preview anyway. The safety line stays, because a preview that
+ * invents facts is a preview of something Josi does not do. */
+const PREVIEW_CORE = [
+  'You are Josi, an assistant working for one person.',
+  'This is a short preview so they can hear how you sound. Answer in one or two sentences.',
+  'Never invent a name, number, address or time.',
+].join(' ');
 const str = (v: unknown, max = 20000): string => (typeof v === 'string' ? v.slice(0, max) : '');
 
 function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
@@ -240,6 +259,161 @@ export function personaRoutes(ctx: PersonaRoutesCtx): Router {
         version: profile.version,
         notice: 'Your conversations and memories were not touched.',
       });
+    }),
+  );
+
+  /** M-new: "Supply useful presets".
+   *
+   * Each returns the exact Markdown it would write, so choosing one and typing
+   * the same thing by hand are the same act — a preset is a starting point, not
+   * a mode the person is then locked into. */
+  r.get(
+    '/presets',
+    handle(async (_req, res) => res.json({
+      presets: SOUL_PRESETS.map((p) => ({
+        key: p.key, name: p.name, describes: p.describes,
+        content: presetContent(p.key),
+      })),
+      note: 'A preset just fills in the file for you. Edit it afterwards, or write '
+        + 'your own from scratch — nothing here is a fixed menu.',
+    })),
+  );
+
+  /** M-new: first-run personalization, optional and skippable.
+   *
+   * `skipped` and `completed` are both terminal, and the assistant works
+   * identically either way — the plan requires that skipping is a real choice
+   * rather than a deferred obligation, so nothing nags and nothing is withheld. */
+  r.get(
+    '/onboarding',
+    handle(async (req, res) => {
+      const [settings] = await db.query<{
+        onboarding_skipped: boolean; onboarding_completed_at: string | null;
+      }>(
+        `select onboarding_skipped, onboarding_completed_at
+         from persona_settings where user_id = $1`,
+        [req.user!.id],
+      );
+      const hasProfile = await getProfile(db, { kind: 'soul', userId: req.user!.id });
+      return res.json({
+        needed: !settings?.onboarding_skipped
+          && !settings?.onboarding_completed_at
+          && !hasProfile?.content,
+        skipped: settings?.onboarding_skipped ?? false,
+        completedAt: settings?.onboarding_completed_at ?? null,
+        // Said plainly on the first screen somebody sees.
+        note: 'This is optional. Josi works the same without it, and you can change '
+          + 'any of it later.',
+        presets: SOUL_PRESETS.map((p) => ({ key: p.key, name: p.name, describes: p.describes })),
+      });
+    }),
+  );
+
+  r.post(
+    '/onboarding',
+    handle(async (req, res) => {
+      const skip = req.body?.skip === true;
+      const presetKey = str(req.body?.preset, 40);
+
+      if (!skip && presetKey) {
+        const content = presetContent(presetKey);
+        if (!content) throw new RouteError(400, 'no such preset');
+        await saveProfile(db, {
+          kind: 'soul', userId: req.user!.id, content, actorUserId: req.user!.id,
+        });
+      }
+
+      await db.query(
+        `insert into persona_settings (user_id, onboarding_skipped, onboarding_completed_at)
+         values ($1, $2, $3)
+         on conflict (user_id) do update set
+           onboarding_skipped = excluded.onboarding_skipped,
+           onboarding_completed_at = excluded.onboarding_completed_at`,
+        [req.user!.id, skip, skip ? null : new Date().toISOString()],
+      );
+      return res.json({
+        done: true,
+        skipped: skip,
+        note: skip
+          ? 'Skipped. Josi will use its usual brief, direct manner, and you can set this up any time.'
+          : 'Saved. You can edit or reset it whenever you like.',
+      });
+    }),
+  );
+
+  /** M-new: a LIVE response preview.
+   *
+   * A real model call with this person's real assembled context, so what they
+   * see is what the personality actually produces rather than a description of
+   * it. Nothing is stored: no thread, no message, no memory — a preview is a
+   * question about a setting, not a conversation.
+   *
+   * It refuses honestly when there is no usable model, rather than inventing a
+   * reply that would misrepresent the setting being previewed. */
+  r.post(
+    '/preview/live',
+    handle(async (req, res) => {
+      const request = str(req.body?.request, 500) || 'Give me a one-line summary of my day.';
+
+      const stored = await loadStoredProvider(db, 'primary');
+      if (!stored || !stored.activated_at) {
+        return res.status(503).json({
+          available: false,
+          reason: 'No model is configured yet, so there is nothing to preview with.',
+        });
+      }
+      const capabilities = capabilitiesOf(stored);
+      if (!capabilities || !featureAvailable('assistant_chat', capabilities)) {
+        return res.status(503).json({
+          available: false,
+          reason: 'The configured model has not passed its test, so Josi will not use it.',
+        });
+      }
+
+      const layers = await loadAll(db, req.user!.id);
+      const { effective } = narrowPolicy(layers.agents_admin, layers.agents_user, CAUTION_ORDER);
+      const memories = await relevantMemories(db, { ownerUserId: req.user!.id, request });
+
+      const context = assembleSystemContext({
+        core: PREVIEW_CORE,
+        adminPolicy: layers.agents_admin,
+        userPolicy: effective,
+        soul: layers.soul,
+        user: layers.user,
+        memories: memories.map((m) => ({ content: m.content, provenance: m.provenance })),
+      });
+
+      let masterKey = null;
+      try {
+        masterKey = ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {});
+      } catch { masterKey = null; }
+
+      try {
+        const outcome = await chat(
+          {
+            db, masterKey,
+            fetchImpl: ctx.fetchImpl,
+            resolve: ctx.resolve,
+          } as never,
+          { messages: [{ role: 'user', content: request }], system: context.text, maxTokens: 300 },
+          { userId: req.user!.id, purpose: 'assistant_chat' },
+        );
+        return res.json({
+          available: true,
+          request,
+          reply: outcome.response.text,
+          // Shown alongside, so somebody can see WHY it answered that way.
+          memoriesUsed: memories.map((m) => ({ id: m.id, content: m.content })),
+          sections: context.sections,
+        });
+      } catch (err) {
+        // Caps, Local-only, a dead provider. Relayed, never dressed up as a
+        // reply the personality produced.
+        return res.status(503).json({
+          available: false,
+          reason: (err as Error).message,
+        });
+      }
     }),
   );
 
