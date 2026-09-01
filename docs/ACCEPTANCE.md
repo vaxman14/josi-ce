@@ -71,9 +71,12 @@ No table is read. A bundle that could carry a row is a bundle nobody can send.
 
 ## Results
 
-**Nothing below has been run yet.** The development host for Phase 13 has no
-Docker daemon, and the host earlier phases used is not reachable from it. The
-script is written and syntax-checked; that is all that is currently true.
+**Nothing below has been run yet.** The script is written and syntax-checked;
+that is all that is currently true. The earlier wording gave the reason as a
+missing Docker daemon and an unreachable host, and that is no longer accurate:
+`claw` is reachable and runs Docker 29.1.3 with Compose 5.5.0. The script simply
+has not been run, and no hardware profile is claimed until it is on the hardware
+named in the row.
 
 | Profile | Arch | Host | Date | Result | Image MB | Build s | Boot→ready s | Idle MiB | Bundle |
 |---|---|---|---|---|---|---|---|---|---|

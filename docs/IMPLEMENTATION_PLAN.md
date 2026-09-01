@@ -730,7 +730,7 @@ and the blocker is named.
 | **L1.10** | Audit logs | Test: configure, probe, link, unlink, revoke and refusal all append events, and no event payload carries message text (`assertMetadataOnly` proves it). | Done |
 | **L1.11** | Threat-model controls | `THREAT_MODEL.md` entries for webhook forgery, chat-id spoofing, link-code theft, attachment abuse, token exfiltration, group-chat capture, replay — each with a control and a test. The Phase 11 build check enforces the link. | Done |
 | **L1.12** | Webhook authenticity | Test: a request with a wrong or missing `X-Telegram-Bot-Api-Secret-Token` is refused before the body is parsed for meaning; the secret is compared in constant time; a replayed `update_id` is dropped idempotently. | Done |
-| **L1.13** | Unit/integration/runtime tests | Unit + over-the-wire suites; `scripts/test-telegram-runtime.sh` against a real stack with a fake Bot API on the project network. | Written, unrun |
+| **L1.13** | Unit/integration/runtime tests | Unit + over-the-wire suites: **done and passing** — 159 tests across 6 files (`packages/channels/test/{linking,inbound,format,api,attachments}.test.ts`, `apps/api/test/telegram.test.ts`). The runtime harness `scripts/test-telegram-runtime.sh` **does not exist**; it was listed here as written when no such file had been created. | Unit/wire done; runtime harness **not written** |
 | **L1.14** | Mutation tests | `scripts/mutate-phase13-telegram.sh`, all mutations caught. | Written, unrun |
 | **L1.15** | Docs | `docs/TELEGRAM.md` + INSTALLATION.md §17B.1 and §17.12–17.13: setup, linking, revoking, limits, troubleshooting. Webhook only — CE does not implement polling and does not claim to. | Done |
 | **L2.1** | Manifest | `manifest.webmanifest` with name, short_name, start_url, scope, display standalone, theme/background colour, and icons. Test: served, correct content type, referenced from the shell, fields present. | Done |
@@ -807,10 +807,14 @@ gated by a boundary that a hosted build cannot cross.
 
 **Known blockers in this environment, stated rather than worked around:**
 
-1. **No Docker daemon on the development host.** Every runtime, clean-container
-   and clean-install script in this phase is written and syntax-checked but
-   cannot be executed here. Earlier phases ran theirs on `claw`; that host is
-   not reachable from this session. Nothing in this phase claims a runtime pass.
+1. **No runtime pass is claimed for this phase.** The runtime, clean-container
+   and clean-install scripts are written and syntax-checked, and none of them
+   has been executed against a running stack. The reason is no longer that a
+   Docker host is unavailable: `claw` **is** reachable and runs Docker 29.1.3
+   with Compose 5.5.0 (checked 2026-09-01). What is missing is different for
+   each row — L1.13's Telegram runtime harness has not been written at all, and
+   L9.1's clean-install script has not been run. Neither gap is a missing
+   daemon, and this entry previously said it was.
 2. **No provider credentials.** L8's harnesses cannot be run against Google,
    Microsoft, a hosted LLM, or a real SMTP relay from here, and they are
    recorded as never run.
