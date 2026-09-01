@@ -239,7 +239,13 @@ function StepForm({
           <p className="text-xs text-muted-foreground">
             Encrypted with this installation's master key before it is stored. Nothing is sent to test it yet.
           </p>
-          <Button type="submit" disabled={busy}>Continue</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={busy}>Continue</Button>
+            <Button type="button" variant="secondary" disabled={busy}
+                    onClick={() => void onSubmit('smtp', { skip: true })}>
+              Skip for now
+            </Button>
+          </div>
         </form>
       );
 

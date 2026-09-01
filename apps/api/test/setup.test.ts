@@ -522,6 +522,15 @@ describe('external LLM acknowledgment', () => {
 
 // ------------------------------------------------------------------- 11
 describe('the two SMTP profiles', () => {
+  it('is optional and writes no placeholder configuration when skipped', async () => {
+    await runWizard('smtp');
+    const res = await call('/api/setup/steps/smtp', { method: 'POST', body: { skip: true } });
+    expect(res.status).toBe(200);
+    expect(await db.query(`select * from smtp_profiles`)).toHaveLength(0);
+    const state = await call('/api/setup/state');
+    expect(state.body.nextStep).toBe('connectors');
+  });
+
   it('creates two distinct profiles without duplicating the password', async () => {
     await runWizard();
     const rows = await db.query<{ kind: string; copy_from_system: boolean; password_enc: string | null; from_address: string; host: string | null }>(

@@ -108,7 +108,7 @@ export const STEP_DESCRIPTORS: Record<SetupStep, StepDescriptor> = {
     id: 'smtp',
     title: 'Email sending',
     summary: 'Two senders: system mail for invites and resets, and the address Josi writes from.',
-    skippable: false,
+    skippable: true,
   },
   connectors: {
     id: 'connectors',

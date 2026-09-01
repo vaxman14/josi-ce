@@ -383,6 +383,11 @@ async function applyStep(
 
     // ------------------------------------------------------------------ SMTP
     case 'smtp': {
+      // A local or single-user installation can become useful before it has a
+      // mail relay. Skipping stores no placeholder profiles; the admin can add
+      // them later, and features that require mail remain honestly unavailable.
+      if (bool(body.skip)) return;
+
       const system = (body.system ?? {}) as Record<string, unknown>;
       const comms = (body.communications ?? {}) as Record<string, unknown>;
 
