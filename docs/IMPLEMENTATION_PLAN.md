@@ -563,6 +563,246 @@ feature rather than expanding the release boundary during hardening.
 
 ---
 
+## Phase 13 — Launch gaps
+
+**Why this phase exists.** Phases 0–12 built a product that installs, isolates,
+assists and personalises. What they did not build is everything a person needs
+in order to *reach* it from a phone, everything an operator needs in order to
+*keep* it, and the parts of Phase 9 and Phase 10 that were honestly recorded as
+unbuilt. This phase closes those, and it closes them with the same rule the
+earlier phases used: a claim is not made until a test or a measurement supports
+it, and a shortfall is named rather than rounded up.
+
+Requirements are numbered **L1–L9** and each is decomposed into testable items
+in the traceability matrix below. The matrix is the acceptance criteria; this
+prose is the reasoning.
+
+### 13.0 — Edition capability boundary (L4, built first)
+
+Nothing else in this phase is safe to build until this exists, because L3 is a
+capability that **must not be reachable** in a hosted or white-label build. A
+feature flag read from the environment is not that: an environment variable is
+whatever the process that started the container says it is.
+
+So the edition is **stamped into the build**. `packages/core/src/editionBuild.ts`
+holds a single generated constant, written by `scripts/stamp-edition.mjs` from a
+Docker build argument, and it is the only source of the edition. The environment
+may **narrow** the capability set and may never widen it, so a hosted image with
+`JOSI_EDITION=ce` in its environment is still hosted. The capability set is
+deep-frozen at module load.
+
+Enforcement is server-side and layered, because a boundary with one check is a
+boundary with one bug: the route is not mounted, the route guard refuses, the
+provider factory refuses, and the registry refuses again at call time. A row
+inserted directly into the database by someone with psql cannot make the feature
+work.
+
+### 13.1 — Telegram as a first-class channel (L1)
+
+CE's answer to "I want Josi on my phone" has been *Coming soon* since Phase 6.
+Telegram is the shortest honest path to a real one: no app-store review, no
+push-notification infrastructure, no companion binary, and the operator's own
+bot token means no Josi-operated relay ever sees a message.
+
+The security shape is the interesting part, and it is the reverse of the usual
+bot tutorial. A Telegram `chat_id` is an **unauthenticated claim**. Anybody who
+finds the bot can send it a message. So the default for an unknown chat is
+refusal, linking is a deliberate act by an already-signed-in user, and the link
+code is single-use, short-lived, high-entropy and stored only as a hash — the
+same discipline Phase 1 applied to session tokens, for the same reason.
+
+Routing is per-user and per-conversation: a linked chat resolves to exactly one
+CE user and that user's own conversation, so the ownership spine from Phase 1
+governs Telegram exactly as it governs the web app. Group chats are refused
+outright, because a group has no single owner and an unowned inbox is the
+failure mode Phase 8 named.
+
+### 13.2 — A real installable PWA (L2)
+
+The caching rules are the security work here, not the manifest. A service
+worker is a persistent, origin-scoped cache that survives sign-out, so a
+mistake in it is a data leak that outlives the session. CE's rule is absolute
+and enforced by a single tested predicate: **the service worker caches build
+assets and the app shell, and nothing else**. No `/api` response is ever
+cached, read from cache, or served from cache — not even a 200, not even a
+GET, not even while offline. Offline shows a shell that states it is offline
+and can display nothing.
+
+### 13.3 — Noncommercial subscription authentication (L3)
+
+Phase 4 shipped this as "hidden and disabled because no compliant path exists".
+That was correct in August 2026 and it is now half-correct, so half of it is
+removed and the other half is kept with a citation rather than a shrug.
+
+**Anthropic: still no supported path, and now explicitly prohibited.** Anthropic's
+authentication and credential-use policy restricts Claude Free/Pro/Max OAuth to
+Claude Code and Claude.ai, states that using those tokens in any other product,
+tool or service — *including the Agent SDK* — is not permitted, and was enforced
+against third-party harnesses on 4 April 2026. CE therefore keeps Anthropic
+subscription authentication structurally unavailable, and the UI says why and
+cites the policy instead of saying "coming soon".
+
+**OpenAI: a supported path exists, and it is delegation, not impersonation.**
+OpenAI documents `codex exec`, a non-interactive mode of the first-party Codex
+CLI, and documents that the CLI may be signed in with a ChatGPT plan. CE does
+not implement "Sign in with ChatGPT", does not touch `~/.codex/auth.json`, does
+not parse, copy, store, forward or refresh any token, and does not speak to any
+OpenAI endpoint on this path. It runs the operator's own unmodified Codex binary
+as a subprocess under the operator's own login — which is what the operator
+would otherwise type into their own terminal.
+
+The limits are stated in the product, not only in the docs: it is
+per-installation rather than per-user, it draws on the same rolling quota as the
+operator's interactive Codex sessions, no provider cost is reported so every
+figure is labelled an estimate, and OpenAI's terms confine it to individual
+productivity rather than powering a commercial service. That last clause is
+precisely why L4 exists and why this capability lives only in CE.
+
+### 13.4 — Administrator-approved release updates (L6)
+
+Phase 10 built the state machine and proved rollback as logic. What was missing
+was everything that makes it safe against a *hostile* update rather than a
+broken one: nothing verified that a release was authentic, nothing verified that
+it was newer, and nothing measured whether the data survived.
+
+Releases are now described by a signed manifest — Ed25519 over a canonical
+serialisation, verified against a public key stamped into the build alongside
+the edition, so the trust root is in the image rather than in the database an
+attacker just reached. Downgrade is refused. The pre-update backup was already
+mandatory and stays mandatory. The health gate now includes a **retention
+measurement**: row counts for profiles, memories, conversations and documents
+are taken before the update and compared after, and a drop rolls the update back
+even though the container is healthy and the migration succeeded.
+
+Applying is honest about where it happens. The app has no Docker socket, by
+design and by Phase 10's threat model, so it cannot replace its own container.
+It records an approved, verified update request; `scripts/josi-update.sh` on the
+host performs the pull-by-digest, the replacement, the health poll and the
+rollback. Nothing polls for updates and nothing applies one without an
+administrator pressing a button.
+
+### 13.5 — Completing the document pipeline (L7)
+
+Phase 9 said it plainly: "an installation running this code can map a folder and
+search nothing, because nothing fills the index." This builds the part that
+fills it, and it deliberately supports a small set of formats completely rather
+than a long list badly. Anything outside the set is `unsupported_type` with the
+reason shown to the owner — the vocabulary Phase 9 already built for exactly
+this.
+
+### 13.6 — Real-integration harnesses (L8)
+
+Every provider in CE is stubbed in tests, which is correct and which is also why
+nobody has ever seen CE talk to Google. These harnesses do, when credentials are
+supplied. When credentials are not supplied they exit `3` and print `SKIPPED`,
+and `SKIPPED` is not `PASS` in any summary, any document, or any exit code.
+
+### 13.7 — Clean-install acceptance (L9)
+
+Scripts and operator checklists for amd64 and arm64 including the two low-resource
+profiles. **Not yet run.** No hardware result is claimed in this repository until
+the hardware has run it, per M97.
+
+---
+
+### Phase 13 traceability matrix
+
+Status values are the same as `DECISION_TRACEABILITY.md`. `Blocked` means the
+work is built but its evidence needs something this environment does not have,
+and the blocker is named.
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **L4.1** | Edition immutable at build | `editionBuild.ts` is generated from a build arg; `scripts/stamp-edition.mjs` writes it; the Dockerfile passes `JOSI_EDITION`. Test: default build is `ce`; a stamped `hosted` build reports `hosted`. | Planned |
+| **L4.2** | Environment cannot widen | Test: with a `hosted` build stamp, `JOSI_EDITION=ce`, `JOSI_CAPABILITIES=subscription_auth` and every spelling variant leave `subscription_auth` absent. | Planned |
+| **L4.3** | Enforced server-side, not hidden | Test: on a `hosted` build the subscription routes are absent (404) **and** the provider factory throws **and** `buildProvider` throws for a row inserted directly by SQL. | Planned |
+| **L4.4** | Capability set immutable at runtime | Test: the exported capability set is deep-frozen; assignment and `delete` do not change it. | Planned |
+| **L4.5** | Bypass + mutation tests | `scripts/mutate-phase13-edition.sh`: every mutation that widens the boundary is caught. | Planned |
+| **L1.1** | Admin bot-token setup + probe | Super admin sets a token; CE calls `getMe`; the bot username and id are stored; a bad token gives a clear refusal and stores nothing. Token is sealed with the master key; ciphertext never leaves the server. | Planned |
+| **L1.2** | Secure one-time linking | A signed-in user mints a code: ≥128 bits, hashed at rest, single-use, 15-minute TTL, bound to that user. Test: replay refused, expiry refused, another user's code refused, an unlinked chat is refused and told how to link. | Planned |
+| **L1.3** | Per-user/per-conversation routing | Test: two linked users messaging the same bot reach two different conversations; neither can see the other's; an update whose `chat_id` is not linked creates nothing. | Planned |
+| **L1.4** | Outbound replies | Test: a reply is sent to the originating chat only, with the AI disclosure Phase 8 mandates. | Planned |
+| **L1.5** | Formatting | Test: MarkdownV2 escaping is exact for every reserved character; a 10 000-character reply is split at ≤4096 without splitting an escape sequence. | Planned |
+| **L1.6** | Attachments with safe limits | Test: an over-size attachment is refused before download; a disallowed MIME/extension is refused; the download is byte-capped and a lying `Content-Length` cannot exceed it; a path-traversal filename cannot escape. | Planned |
+| **L1.7** | Retries and error handling | Test: 429 honours `retry_after` and retries; 5xx retries with backoff; 400/403 do not retry; the bot token never appears in an error, a log line or an audit payload. | Planned |
+| **L1.8** | Unlink and revoke | Test: a user unlinks their own chat; a super admin revokes any link; after either, messages from that chat are refused. Codes are invalidated too. | Planned |
+| **L1.9** | RBAC | Test: a member cannot reach any `/api/admin/telegram/*`; a member cannot unlink another member; the admin surface returns no message content (`assertMetadataOnly`). | Planned |
+| **L1.10** | Audit logs | Test: configure, probe, link, unlink, revoke and refusal all append events, and no event payload carries message text (`assertMetadataOnly` proves it). | Planned |
+| **L1.11** | Threat-model controls | `THREAT_MODEL.md` entries for webhook forgery, chat-id spoofing, link-code theft, attachment abuse, token exfiltration, group-chat capture, replay — each with a control and a test. The Phase 11 build check enforces the link. | Planned |
+| **L1.12** | Webhook authenticity | Test: a request with a wrong or missing `X-Telegram-Bot-Api-Secret-Token` is refused before the body is parsed for meaning; the secret is compared in constant time; a replayed `update_id` is dropped idempotently. | Planned |
+| **L1.13** | Unit/integration/runtime tests | Unit + over-the-wire suites; `scripts/test-telegram-runtime.sh` against a real stack with a fake Bot API on the project network. | Planned |
+| **L1.14** | Mutation tests | `scripts/mutate-phase13-telegram.sh`, all mutations caught. | Planned |
+| **L1.15** | Docs | `docs/TELEGRAM.md` + INSTALLATION.md section: setup, webhook vs polling, linking, revoking, limits, troubleshooting. | Planned |
+| **L2.1** | Manifest | `manifest.webmanifest` with name, short_name, start_url, scope, display standalone, theme/background colour, and icons. Test: served, correct content type, referenced from the shell, fields present. | Planned |
+| **L2.2** | Icons | 192/512 any + 512 maskable, generated from the approved brand mark, no regeneration of the artwork (M7–M10). Test: files exist, are PNG, are the declared sizes. | Planned |
+| **L2.3** | Service worker | Registered, scoped to `/`, served `no-store` so an update is never pinned. Test: registration succeeds in WebKit and Chromium. | Planned |
+| **L2.4** | Secure caching rules | One exported predicate decides what may be cached. Test: `/api/*` never cacheable in either direction, any request carrying a cookie or `Authorization` never cacheable, only same-origin GET build assets and the shell are. | Planned |
+| **L2.5** | Install UX | An install prompt that appears only when the browser offers one, is dismissible, and stays dismissed. Test: no fake button when `beforeinstallprompt` never fires. | Planned |
+| **L2.6** | Update UX | A waiting worker surfaces "A new version is ready"; the user chooses; `skipWaiting` runs only then. Test: no silent reload. | Planned |
+| **L2.7** | Offline shell/status | Offline renders the shell with an explicit offline state and no private data. Test: with the network cut, no API payload is rendered from cache. | Planned |
+| **L2.8** | CSP still holds | `manifest-src 'self'`, `worker-src 'self'` added; nothing external. Test: the existing CSP assertions still pass and the page loads with zero console errors. | Planned |
+| **L2.9** | Mobile/responsive verification | Playwright at 320/375/390/430 with the PWA surfaces present: no horizontal overflow, controls ≥44px. | Planned |
+| **L2.10** | Docs | `docs/PWA.md` + INSTALLATION.md: installing on iOS/Android/desktop, what is cached, what is not, how to force an update. | Planned |
+| **L3.1** | Research recorded, not assumed | `docs/SUBSCRIPTION_AUTH.md` cites the provider documents and dates for both providers. | Planned |
+| **L3.2** | OpenAI path is real and supported | Provider `openai_subscription` runs `codex exec` as a subprocess. Test: the command line is exactly the documented non-interactive form; the process environment carries no API key; no HTTP request is made by CE on this path. | Planned |
+| **L3.3** | Never scrape credentials | Test: no code path reads `~/.codex/auth.json`, any keychain, any browser profile or any cookie jar — asserted by a source-level guard test over the whole repository, not only the new file. | Planned |
+| **L3.4** | Never misrepresent a key as a subscription | Test: configuring `openai_subscription` refuses an `apiKey` field; the usage ledger records `subscription` as the charge basis and every currency figure on that path is labelled an estimate. | Planned |
+| **L3.5** | Anthropic honestly disabled | Test: `anthropic_subscription` is refused at the API with a message naming the policy; the UI renders it disabled with the citation; no code path attempts it. | Planned |
+| **L3.6** | CE-only, structurally | See L4.3. Additionally: test that the hosted build's OpenAPI-visible route table contains no subscription route. | Planned |
+| **L3.7** | Blanket rejection removed only where earned | Test: the Phase 4 "no compliant path" refusal still fires for Anthropic and no longer fires for OpenAI on a CE build. | Planned |
+| **L6.1** | Signed release manifest | Ed25519 over canonical JSON, key stamped into the build. Test: a valid manifest verifies; a tampered field, a wrong key, a truncated signature and a missing signature all fail closed. | Planned |
+| **L6.2** | Versioned, no downgrade | Test: a manifest whose version is not strictly newer is refused, including equal versions and non-semver junk. | Planned |
+| **L6.3** | Mandatory backup | Already built; test retained and extended: an update cannot start if the backup step fails or if no backup writer is configured. | Planned |
+| **L6.4** | Health gate | Already built; retained. | Planned |
+| **L6.5** | Measured retention | Test: profiles/memories/conversations/documents counted before and after; a post-update drop rolls back even when the health check passes. | Planned |
+| **L6.6** | Rollback | Already built; extended so a rollback also restores the recorded release digest. | Planned |
+| **L6.7** | No automatic updates | Test: no setting, column or scheduler can trigger an update; the check is a read; the worker has no update job. | Planned |
+| **L6.8** | Host-side apply | `scripts/josi-update.sh`: pull by digest, verify digest, replace, poll health, roll back. Documented as host-side and why. | Planned |
+| **L6.9** | Docs | `docs/UPDATES.md` + INSTALLATION.md §16 rewritten against the real mechanism. | Planned |
+| **L7.1** | Scan | ClamAV wiring reaches a real scanner via the optional profile; with the profile off, `scanRequired` is false and nothing pretends otherwise. Test retained from Phase 9 plus a real-clamd path in the runtime script. | Planned |
+| **L7.2** | Parse | Supported: `txt`, `md`, `csv`, `tsv`, `json`, `html`, `docx`, `xlsx`, `pptx`. Test: a real file of each type yields text and a precise locator; every other extension yields `unsupported_type`. | Planned |
+| **L7.3** | Bounded archive extraction | `zip` only, when enabled: bounded by entry count, total bytes, compression ratio and depth. Test: a zip bomb is stopped, traversal entries are refused, symlink entries are refused. | Planned |
+| **L7.4** | OCR where applicable | The OCR service processes `pdf`, `png`, `jpg`, `tif` when the profile is enabled and the admin has turned it on, within the hour restriction and throttle Phase 9 built. Test: queued, throttled, hour-gated, and `from_ocr` recorded. **PDF text is obtained via OCR only** — CE ships no PDF text-layer parser and does not claim one. | Planned |
+| **L7.5** | Sync/index | Local folders are walked on a schedule and on demand; cloud mappings sync at 5/15/30/60m; the FTS index is filled and kept current; deletions remove rows. Test: end-to-end map → ingest → parse → index → search finds it; delete → search does not. | Planned |
+| **L7.6** | Purge | Phase 9's purge extended to cover the new artefacts. Test: unmap removes text, segments, FTS rows, embeddings, OCR output and version copies. | Planned |
+| **L7.7** | No unsupported claims | Test: the format list in the code, the UI and the docs is one list, and a format absent from it is refused. | Planned |
+| **L8.1** | Hosted LLM harness | `scripts/integration/llm.sh` against a real provider with a real key; `SKIPPED` (exit 3) without one. | Planned |
+| **L8.2** | Google OAuth harness | `scripts/integration/google-oauth.sh`; manual browser step documented; `SKIPPED` without client credentials. | Planned |
+| **L8.3** | Microsoft OAuth harness | `scripts/integration/microsoft-oauth.sh`; same shape. | Planned |
+| **L8.4** | SMTP/reply ingestion harness | `scripts/integration/smtp.sh` sends through a real relay and ingests a real reply; `SKIPPED` without credentials. | Planned |
+| **L8.5** | Never fake a pass | Test: the harness runner's summary reports `SKIPPED` distinctly, exits non-zero-but-not-1 for skips, and `docs/INTEGRATION_CHECKLISTS.md` records the last real run per harness as *never* until one happens. | Planned |
+| **L9.1** | amd64 clean install | `scripts/acceptance/clean-install.sh` — clean daemon assertion, build, up, migrate, wizard, sign-in, teardown, measurements. | Planned |
+| **L9.2** | arm64 clean install | Same script, `--platform linux/arm64`. | Planned |
+| **L9.3** | N150 / 16 GB profile | Resource-constrained variant: memory ceiling, no OCR/ClamAV, timings recorded. | Planned |
+| **L9.4** | Raspberry Pi 4 / 8 GB profile | Same, with the swap and I/O caveats stated. | Planned |
+| **L9.5** | No unearned hardware claims | `docs/ACCEPTANCE.md` records every profile as **not yet run** until it is. | Planned |
+| **L5.1** | INSTALLATION.md is true | The Phase 11/12 checklist line is corrected; every section reflects shipped behaviour. | Planned |
+| **L5.2** | New sections | Telegram, PWA, subscription auth, edition boundary, upgrade, architecture, security, troubleshooting, exact validation steps. | Planned |
+| **L5.3** | Architecture doc | `docs/ARCHITECTURE.md`: packages, request path, trust boundaries, data flows. | Planned |
+| **L5.4** | Validation steps | `docs/VALIDATION.md`: the exact commands an operator runs to prove an installation is correct, with expected output. | Planned |
+
+**Acceptance for Phase 13 as a whole:** every row above is `Done` with a named
+test, or `Blocked` with the exact blocker written down. No row may be marked
+`Done` on the strength of an argument.
+
+**Risk:** this phase adds two inbound network surfaces (a Telegram webhook and a
+service worker) and one subprocess execution path, which is three new ways in.
+Each gets a threat-model entry and a hostile test, and the subprocess path is
+gated by a boundary that a hosted build cannot cross.
+
+**Known blockers in this environment, stated rather than worked around:**
+
+1. **No Docker daemon on the development host.** Every runtime, clean-container
+   and clean-install script in this phase is written and syntax-checked but
+   cannot be executed here. Earlier phases ran theirs on `claw`; that host is
+   not reachable from this session. Nothing in this phase claims a runtime pass.
+2. **No provider credentials.** L8's harnesses cannot be run against Google,
+   Microsoft, a hosted LLM, or a real SMTP relay from here, and they are
+   recorded as never run.
+3. **No target hardware.** L9's N150 and Pi 4 profiles are unmeasured.
+
+---
+
 ## Resequenced 2026-08-30: "smallest secure runnable install" first
 
 Roman resequenced delivery to reach a working product sooner **without weakening
