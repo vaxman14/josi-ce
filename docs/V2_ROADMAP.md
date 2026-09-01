@@ -12,6 +12,8 @@ Initial target languages:
 
 - English
 - Spanish
+- French
+- German
 - Hebrew
 - Russian
 
@@ -44,10 +46,9 @@ Acceptance:
 
 - A user can switch languages without signing out or changing another user's
   language.
-- English, Spanish, Hebrew and Russian cover every required web surface with no
-  hard-coded English leakage.
+- English, Spanish, French, German, Hebrew and Russian cover every required web
+  surface with no hard-coded English leakage.
 - Hebrew passes real RTL visual and interaction tests at supported breakpoints.
 - Mobile apps use the same canonical terminology and coverage rules.
 - Missing or malformed translations fail CI and never render raw translation
   keys to users.
-
