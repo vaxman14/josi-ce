@@ -303,7 +303,11 @@ else
     || bad "install.sh could not generate the secrets"
 fi
 [[ -f secrets/master.key ]] && ok "master.key exists" || bad "master.key missing"
-perms=$(stat -f '%Lp' secrets/master.key 2>/dev/null || stat -c '%a' secrets/master.key 2>/dev/null)
+# GNU first: on GNU coreutils `stat -f` is "file system status" and SUCCEEDS, so
+# a BSD-first chain returns filesystem diagnostics instead of a mode and this
+# check compared `?p` against "600" on every Linux host it has ever run on.
+perms=$(stat -c '%a' secrets/master.key 2>/dev/null || stat -f '%Lp' secrets/master.key 2>/dev/null)
+case "$perms" in '' | *[!0-7]*) perms="unknown" ;; esac
 [[ "$perms" == "600" || "$perms" == "400" ]] && ok "master.key is not world-readable ($perms)" \
   || bad "master.key permissions are $perms"
 

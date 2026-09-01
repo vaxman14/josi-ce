@@ -6,19 +6,161 @@ server unless a section says otherwise.
 
 > **Release warning**
 >
-> Josi CE 0.1 is still under construction. Phases 1–10 are implemented and
-> verified, including backup, restore, diagnostics and telemetry; Phases 11 and
-> 12 are not implemented at the time this paragraph was written.
+> Josi CE 0.1 is a Community Preview and is still under construction. Phases
+> 1–12 are implemented, each with an evidence document recording what was
+> actually proven. Phase 13 is partially built and thirteen launch blockers are
+> open against the release; `LAUNCH_AUDIT.md` is the authoritative record of
+> which are closed and what closed them.
 >
-> Two things remain genuinely absent rather than merely rough. **No update has
-> ever been applied** — the rollback path is verified against a real database,
-> but nothing downloads an image, so there is no in-product upgrade. And **the
-> document pipeline does not process files**: mapping, permissions and purge
-> are complete and proven, but no parser, OCR, scanner or cloud sync runs, so a
-> mapped folder is never indexed.
+> Things that are genuinely absent rather than merely rough, as of this
+> paragraph:
+>
+> - **No update has ever been applied.** The rollback path is verified against
+>   a real database, but no release has been downloaded and installed by the
+>   product, so the in-product upgrade is logic rather than a measurement.
+> - **The document pipeline does not process files.** Mapping, permissions and
+>   purge are complete and proven; no parser, OCR, scanner or cloud sync runs,
+>   so a mapped folder is never indexed.
+> - **The published images referenced in §0 are not published yet.** §0 is the
+>   installation Josi is built to support and its files are in this repository,
+>   but until a release is pushed to a registry those URLs resolve to nothing.
+>   Until then, install from source using §4 onward.
+> - **No clean-install acceptance run has been recorded on any hardware.** See
+>   `docs/ACCEPTANCE.md`; a profile with no row has not been tested.
 >
 > Do not treat this preview as production-ready merely because the containers
-> start. Each phase's evidence document records exactly what was proven.
+> start.
+
+## 0. Install Josi — the short path
+
+This is the normal installation. It needs a Linux server with Docker on it and
+nothing else: no repository access, no Node.js, no build tools, and no knowledge
+of how this project is laid out. Everything after this section is the reference
+manual, and you do not have to read it to install.
+
+You need one thing before you start: **a domain name pointing at this server**,
+with ports 80 and 443 reachable. That is what lets Josi obtain an HTTPS
+certificate automatically. If you do not have one, read §0.4 first.
+
+### 0.1 Check the machine
+
+```bash
+mkdir -p /opt/josi && cd /opt/josi
+curl -fsSLo preflight.sh https://josi.example/releases/0.1.0/preflight.sh
+less preflight.sh          # optional: it is short, and it changes nothing
+bash preflight.sh
+```
+
+Preflight reads the machine and tells you, in advance, anything that would make
+the installation fail: a 32-bit OS, a missing or unreachable Docker daemon,
+Compose v1, a busy port 80, not enough disk or memory, a filesystem that cannot
+hold permissions, and the Ubuntu Snap Docker package — which is the one that
+looks installed and then refuses every command. Each failure prints the exact
+repair. Fix everything it marks `FAIL` and run it again.
+
+Nothing is downloaded into Docker and nothing on the host is modified until you
+reach §0.3.
+
+### 0.2 Download the installation
+
+```bash
+curl -fsSLo docker-compose.yml https://josi.example/releases/0.1.0/docker-compose.release.yml
+curl -fsSLo Caddyfile          https://josi.example/releases/0.1.0/Caddyfile
+curl -fsSLo install.sh         https://josi.example/releases/0.1.0/install.sh
+```
+
+Three files, each on disk before anything runs them. Read them if you want to;
+that is why they are not piped into a shell.
+
+### 0.3 Generate the secrets and start
+
+```bash
+bash install.sh
+echo 'JOSI_DOMAIN=josi.yourcompany.com' > .env
+docker compose up -d
+```
+
+`install.sh` creates `secrets/master.key` and `secrets/db_password`, both mode
+600, and prints neither.
+
+> **Back up `secrets/master.key` now, somewhere other than this server.**
+> Every credential Josi stores — provider keys, OAuth secrets, SMTP passwords —
+> is encrypted with it. A database backup alone cannot restore them. This is
+> deliberate: it is what makes a stolen database dump useless. See §15.1.
+
+Watch it come up:
+
+```bash
+docker compose ps
+curl -fsS https://josi.yourcompany.com/health
+```
+
+Then open `https://josi.yourcompany.com` in a browser and complete the setup
+wizard. The wizard creates the first account, which becomes the super admin, and
+tests each thing it configures rather than only saving it.
+
+### 0.4 If you do not have a domain
+
+Josi still installs, but two things change and both are worth understanding
+before you choose this.
+
+- **No automatic HTTPS.** Caddy cannot obtain a certificate for an IP address or
+  for a name that only resolves on your LAN. Traffic between browsers and Josi
+  on your network is unencrypted.
+- **Google and Microsoft cannot be connected.** Both require an HTTPS redirect
+  URI on a real domain. Josi will tell you this on the connector screen rather
+  than generating a callback that cannot work. See §12A.
+
+To install anyway, on a trusted LAN only:
+
+```bash
+echo 'JOSI_APP_URL=http://192.168.1.50:8080' > .env      # this server's LAN address
+curl -fsSLo docker-compose.noproxy.yml https://josi.example/releases/0.1.0/docker-compose.noproxy.yml
+docker compose -f docker-compose.yml -f docker-compose.noproxy.yml up -d --scale caddy=0
+```
+
+Cookies are marked non-secure automatically when `JOSI_APP_URL` is `http://`,
+because a secure cookie is never sent over plain HTTP and sign-in would fail
+with no visible reason.
+
+Adding a domain later is supported: set `JOSI_DOMAIN`, remove the override file
+from the command, and restart. Nothing needs to be reinstalled.
+
+### 0.5 What to change, and what not to
+
+Almost every installation sets exactly one value. The rest have working
+defaults, and `.env.example` documents each of them.
+
+| Value | When you set it |
+|---|---|
+| `JOSI_DOMAIN` | Always, unless you are on the LAN-only path above. |
+| `JOSI_APP_URL` | Only when Josi is not reached at `https://$JOSI_DOMAIN` — a different port, a path prefix, or the LAN-only path. |
+| `JOSI_HTTP_PORT`, `JOSI_HTTPS_PORT` | Only when something else already uses 80/443. |
+| `JOSI_TAG` | To pin or move between releases. Defaults to the version this file shipped with; it never floats. |
+| `POSTGRES_DB`, `POSTGRES_USER` | Almost never. Cosmetic. |
+| `JOSI_OCR_*`, `JOSI_CLAMAV_*` | Only if you enable those optional profiles (§11). |
+
+### 0.6 Everyday commands
+
+```bash
+docker compose ps                     # what is running
+docker compose logs -f web            # follow the application log
+docker compose restart web            # restart after a config change
+docker compose pull && docker compose up -d   # move to a newer JOSI_TAG
+docker compose down                   # stop everything, keep all data
+```
+
+`docker compose down` keeps your data. Only `docker compose down -v` destroys
+it, and it destroys all of it. Uninstalling is §14.2.
+
+### 0.7 When the short path is not enough
+
+Everything below this section is the reference manual. Go there for: building
+from source, an external PostgreSQL, running behind an existing reverse proxy,
+custom networks, firewall rules, backup and restore procedures, upgrades and
+rollback, and the full troubleshooting index.
+
+---
 
 ## 1. What the standard installation creates
 
@@ -134,7 +276,12 @@ If an incorrect `AAAA` record exists, some clients and certificate validation
 requests may use broken IPv6 even while IPv4 works. Remove the record or fix
 IPv6 routing.
 
-## 4. Obtain the source
+## 4. Obtain the source — advanced only
+
+> **Most installations do not need this section.** The normal path is §0: three
+> downloaded files and `docker compose up -d`, with no repository access and no
+> build. Come here only if you are modifying Josi, building an image for a
+> platform that is not published, or auditing the source you are running.
 
 Choose a permanent directory. Do not run a long-lived installation from a
 Downloads folder.
@@ -662,6 +809,60 @@ step.** It deletes the PostgreSQL data volume and other named volumes.
 
 Do not delete `secrets/master.key`. Do not regenerate it to fix a startup
 problem. A replacement key cannot decrypt existing credentials.
+
+### 14.2 Uninstall
+
+Uninstalling has three levels, and the difference between them is what happens
+to your data. They are written out separately because "uninstall" and "delete
+everything I ever put into this" are different intentions, and a single command
+that does both is how people lose a database.
+
+**Level 1 — stop Josi, keep everything.** Reversible with `docker compose up -d`.
+
+```bash
+cd /opt/josi
+docker compose down
+```
+
+Containers and networks are removed. Named volumes — the database, backups,
+recovery copies, the Codex login — are untouched.
+
+**Level 2 — remove Josi's images too.** Still keeps your data.
+
+```bash
+docker compose down --rmi all
+```
+
+**Level 3 — destroy the installation and all of its data. Irreversible.**
+
+Take a backup first if there is any chance you want the data (§15), and copy the
+backup and `secrets/master.key` off this machine before you continue — the
+backup is useless without the key.
+
+```bash
+cd /opt/josi
+docker compose down --volumes --rmi all
+cd .. && rm -rf /opt/josi
+```
+
+That removes the containers, the networks, the images, every named volume
+(`db_data`, `josi_versions`, `josi_backups`, `josi_diagnostics`, `josi_codex`,
+`caddy_data`, `caddy_config`) and the installation directory including
+`secrets/master.key`.
+
+Confirm nothing is left:
+
+```bash
+docker ps -a  --filter 'label=com.docker.compose.project=josi-ce'
+docker volume ls --filter 'label=com.docker.compose.project=josi-ce'
+```
+
+Both should print only their header row.
+
+Josi installs nothing outside its own Compose project and its own directory. It
+adds no systemd unit, no user account, no file under `/etc`, and no cron entry,
+so there is nothing else to undo. Any folder you mounted into `/data/roots`
+belongs to you and is not touched by any of the above.
 
 ## 15. Backup and restore
 

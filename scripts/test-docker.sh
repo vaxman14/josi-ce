@@ -66,7 +66,11 @@ step "generating installation secrets"
 rm -rf secrets
 bash scripts/install.sh >/dev/null
 bash scripts/install.sh --check >/dev/null && ok "install.sh produced usable secrets" || bad "install.sh --check failed"
-mode=$(stat -c '%a' secrets/master.key 2>/dev/null || stat -f '%Lp' secrets/master.key)
+# GNU first — see the note in scripts/preflight.sh. The result is validated as
+# octal so a filesystem that reports no permissions says so rather than being
+# compared as junk.
+mode=$(stat -c '%a' secrets/master.key 2>/dev/null || stat -f '%Lp' secrets/master.key 2>/dev/null)
+case "$mode" in '' | *[!0-7]*) mode="unknown" ;; esac
 [[ "$mode" == "600" ]] && ok "master key is mode 600" || bad "master key is mode $mode"
 
 # --------------------------------------------------------------- fresh install

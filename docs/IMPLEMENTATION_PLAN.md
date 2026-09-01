@@ -1000,3 +1000,180 @@ Voice/SMS receptionist (Twilio optional and unwired), audio/video transcription
 (map 66), plugin sideloading/marketplace, paid support packaging (map 92),
 enterprise/white-label/fleet/hosted billing, Box/Dropbox connectors (Coming soon
 only), companion app binaries (Coming soon only).
+
+---
+
+## Launch blockers LB1–LB13 — the release gate
+
+Thirteen blockers were raised against the product as it stood after Phase 13.
+They are **not** a new feature phase: they are the gate the 0.1 release does not
+pass without. The prose that raised them is preserved verbatim in
+`LAUNCH_BLOCKER_FIX_PROMPT.txt`; the closure record lives in `LAUNCH_AUDIT.md`.
+
+The rule from the earlier phases still applies and matters more here, because
+these blockers exist precisely because it was broken: **a claim is not made
+until a test or a measurement supports it.** A screen, a persisted setting, a
+mock-only test or a sentence in a document does not close a row.
+
+Statuses in the matrix below mirror `LAUNCH_AUDIT.md`. `Blocked` means the code
+path is built and the remaining evidence needs a named external dependency.
+
+### LB1 — Appliance-simple Docker installation
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB1.1** | Install without repository access | A published Compose file pulls versioned images. Test: the production Compose file contains no `build:` key for any required service, and every image reference is a pinned tag or digest. | Pending |
+| **LB1.2** | Short copyable happy path | INSTALLATION.md and the docs site both carry a novice block of ≤5 commands that assumes no Node, no checkout, no SSH key. Test: the documented block is extracted by a script and every command it names exists. | Pending |
+| **LB1.3** | Preflight exists and gates | `scripts/preflight.sh` checks architecture, OS, Docker Engine, Compose v2, daemon access, port conflicts, disk, memory, filesystem permissions and Snap/package conflicts, and refuses before anything is pulled. | Pending |
+| **LB1.4** | Snap-Docker failure named exactly | Test: given a socket that is `root:root` with no `docker` group, preflight identifies the Snap case and prints the exact supported repair rather than a generic permission error. | Pending |
+| **LB1.5** | Mode is a number | Test: the permission check returns `600`-shaped numeric output on GNU coreutils and BSD `stat`, and never filesystem-`stat` diagnostics. Regression: the GNU `stat -f` success path that produced `?p`. | Pending |
+| **LB1.6** | Disk check does not cry wolf | Test: a healthy large disk (≥ the threshold, including TB-scale and non-integer `df` output) produces no warning; a genuinely small one does. | Pending |
+| **LB1.7** | Download-then-inspect preserved | The documented path downloads the Compose file and the preflight script to disk for reading before execution. No step requires `curl … \| sh`. | Pending |
+| **LB1.8** | Native installer not overclaimed | Any native/one-line installer is labelled experimental and is absent from the supported-installation documentation until it matches container isolation, rollback, upgrade, uninstall and test coverage. | Pending |
+| **LB1.9** | Lifecycle documented and tested | Clean install, restart, container replacement, backup, update, rollback and uninstall each have a documented procedure and a check in the acceptance script. | Pending |
+| **LB1.10** | Measured on clean amd64 | `scripts/acceptance/clean-install.sh --profile n150` run from published artifacts on a clean Ubuntu amd64 host, with the result recorded in `docs/ACCEPTANCE.md`. | Blocked — needs the N150 host and a Docker daemon |
+
+### LB2 — Working ChatGPT subscription auth in clean Docker CE
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB2.1** | Offered in the wizard on CE | Test: on a `ce` build the setup wizard's provider step offers ChatGPT subscription authentication; on a `hosted` build it is absent from the payload, not merely hidden by the client. | Pending |
+| **LB2.2** | Pinned official CLI in the image | The Dockerfile installs a pinned version of the official Codex CLI. Test: the pin is an exact version, and the build fails rather than floating if it cannot be resolved. | Pending |
+| **LB2.3** | Official device-login flow only | Test: the login path invokes the official CLI's device-login command and renders what the CLI reports. A repository-wide source guard proves no code reads any auth file, browser profile, cookie jar or keychain. | Pending |
+| **LB2.4** | Login survives container replacement | The CLI home is a dedicated per-installation named volume with restrictive permissions. Test: recreate the container and the provider still answers without a second login. | Blocked — needs a Docker daemon |
+| **LB2.5** | Probed with a real response | Test: the provider is not accepted as configured until a real minimal request returns a real model response. A CLI that is present but not signed in is refused with an actionable reason. | Pending |
+| **LB2.6** | No API key on this path | Test: configuring the subscription provider refuses an API-key field, and the subprocess environment carries no API key. | Done (L3.4) — re-asserted |
+| **LB2.7** | Claude unavailable, honestly | Test: Anthropic subscription auth is refused with the policy citation and no code path attempts it. | Done (L3.5) — re-asserted |
+| **LB2.8** | CE-only at four layers | Test: on a `hosted` build the route is unmounted, the guard refuses, the provider factory refuses and the registry refuses at call time — including for a row inserted by direct SQL and for a modified client request. | Done (L4.3) — extended |
+| **LB2.9** | Errors actionable, never leaking | Test: every failure mode maps to a categorized, actionable message; no credential, token or environment value appears in a message, log line or audit payload. | Pending |
+| **LB2.10** | Proven on a clean install | A clean Docker CE installation completes device login and returns a real model response without an API key. | Blocked — needs a Docker daemon and ChatGPT credentials |
+
+### LB3 — Real, account-aware model selection
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB3.1** | No free-text model entry | Test: ordinary setup and admin flows expose no free-text model-name input. The only exception is the explicitly-marked advanced override for self-hosted endpoints where discovery is impossible. | Pending |
+| **LB3.2** | No speculative IDs | Test: the shipped catalog contains no unverified identifier. Regression: `gpt-5.6-sol` and any other ID not returned by a provider's own listing interface. | Pending |
+| **LB3.3** | Discovered from the connected account | After authentication, models are retrieved through the provider's supported listing interface for that account. Test: the offered set is the discovered set, not a constant. | Pending |
+| **LB3.4** | Curated labels + exact IDs | Test: the ordinary view shows human-readable labels; the exact technical ID is present in an advanced/detail view with a copy control. | Pending |
+| **LB3.5** | Refreshed on change | Test: changing credentials, subscription login, organization, project or provider access re-runs discovery and the stale set is not served. | Pending |
+| **LB3.6** | Activation requires a real request | Test: a model cannot become Primary or Fallback until a real minimal request succeeds. A failed or unavailable model remains inactive. | Pending |
+| **LB3.7** | Categorized errors | Test: authentication, authorization, unavailable model, rate limit, billing/quota, network, malformed request and provider outage are distinguished, with safe provider detail preserved and no secret leaked. | Pending |
+| **LB3.8** | Revocation takes effect | Test: revoked access makes the model unavailable and prevents silent continued use. | Pending |
+| **LB3.9** | Self-hosted discovery path | Test: an OpenAI-compatible endpoint is discovered where it supports listing; the manual override is reachable only when discovery is impossible and is labelled as unverified. | Pending |
+
+### LB4 — Setup must test everything it configures
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB4.1** | Model config makes a real request | Test: the provider step performs a real minimal request and records the outcome; persistence alone never marks it tested. | Pending |
+| **LB4.2** | SMTP sends a real message | Test: SMTP configuration sends a real test message to an admin-chosen address, or is explicitly skipped and shown incomplete. | Pending |
+| **LB4.3** | OAuth apps handshake | Test: Google and Microsoft application configuration performs a real save-and-handshake validation, not a field check. | Pending |
+| **LB4.4** | Required failures block | Test: a failed required item prevents completion; an optional item may be skipped and remains visibly incomplete. | Pending |
+| **LB4.5** | Test UX is real | Test: progress, timeout, retry where safe, exact failure text and a rerun control exist for each test. | Pending |
+| **LB4.6** | Persistence is not connection | Test: no step reports success on the basis of validation or a database write. | Pending |
+
+### LB5 — Complete Google and Microsoft onboarding
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB5.1** | Org app setup in admin onboarding | Test: the admin onboarding path offers organization OAuth application setup and does not claim it is unavailable in this release. | Pending |
+| **LB5.2** | Two levels kept distinct | Test: organization application registration and per-user account connection are separate surfaces with separate copy and separate state. | Pending |
+| **LB5.3** | Guided registration | Google Cloud and Microsoft Entra instructions with exact scopes, the exact callback, validation and safe secret storage. Test: the rendered callback equals the one the server will accept. | Pending |
+| **LB5.4** | Callbacks from the HTTPS app URL | Test: the callback is generated from the configured HTTPS application URL; a private HTTP address is never presented as production OAuth-ready. | Pending |
+| **LB5.5** | LAN-only handled honestly | Test: a LAN-only installation is told the domain/HTTPS requirement and the supported alternatives instead of being given an unusable callback. | Pending |
+| **LB5.6** | User connection lifecycle | Test: Connect, status, scope display, re-consent, revoke, disconnect and failure recovery each exist and are exercised. | Pending |
+| **LB5.7** | Least privilege | Test: default scopes are read-only; write scopes require explicit explanation and consent. | Pending |
+| **LB5.8** | Two users, no leakage | From a clean setup an admin registers and tests each application, then two different users connect accounts with no cross-user token or data exposure. | Blocked — needs a Google Cloud project and an Entra tenant |
+
+### LB6 — A real final review screen
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB6.1** | Complete summary | Test: every setup choice appears on the review screen. | Pending |
+| **LB6.2** | Five honest states | Test: each item is exactly one of CONFIGURED AND TESTED, CONFIGURED BUT FAILED, SKIPPED, UNAVAILABLE, REQUIRED. | Pending |
+| **LB6.3** | Safe metadata only | Test: no secret, token or credential appears in the review payload. | Pending |
+| **LB6.4** | Direct actions | Test: each item offers test, edit or return-to-step. | Pending |
+| **LB6.5** | Required failure blocks | Test: completion is refused server-side while a required item has failed. | Pending |
+| **LB6.6** | No contradictions | Test: the screen cannot render "everything is configured" alongside "nothing has been tested". | Pending |
+
+### LB7 — Correct post-setup admin flow
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB7.1** | First account is super admin | Already enforced by Phase 1; re-asserted. | Done — re-asserted |
+| **LB7.2** | Routed to the checklist | Test: after setup the super admin lands on an Admin Launch Checklist, not the ordinary dashboard. | Pending |
+| **LB7.3** | Checklist coverage | Test: it covers model/provider, connectors, SMTP, users/invitations, approval policy, backups and master-key backup verification, security, diagnostics, updates, and every skipped or failed setup item. | Pending |
+| **LB7.4** | Progress and dismissal | Test: progress is shown; optional work can be deliberately dismissed; material risks keep reminding. | Pending |
+| **LB7.5** | Dashboard offered after | Test: "Go to user dashboard" appears only after the checklist has been seen. | Pending |
+| **LB7.6** | Ordinary routing afterwards | Test: after first-run handling, role-aware login routing takes members to the normal dashboard. | Pending |
+
+### LB8 — Google and Microsoft contact synchronization
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB8.1** | Both providers | Google People and Microsoft Graph contacts are supported by the existing connector spine. | Pending |
+| **LB8.2** | Two modes | Test: import-only and two-way modes behave differently and are chosen explicitly. | Pending |
+| **LB8.3** | Matching | Test: stable provider IDs plus normalized email and phone matching; normalization is tested against international formats. | Pending |
+| **LB8.4** | Deterministic dedup and merge | Test: deduplication is deterministic, a merge preview is produced before writing, and the conflict policy is applied consistently. | Pending |
+| **LB8.5** | Deletion safety | Test: tombstones prevent resurrection; no path deletes a provider contact implicitly. | Pending |
+| **LB8.6** | Scale and resilience | Test: pagination, incremental sync tokens/deltas, retry with backoff, rate-limit handling and reconnect recovery. | Pending |
+| **LB8.7** | Visible provenance | Test: source account, source provider, sync mode, last sync, status and conflict state are shown on contacts. | Pending |
+| **LB8.8** | Per-user isolation | Test: contacts are private to the syncing user; organization sharing requires an explicit action and policy. | Pending |
+| **LB8.9** | Disconnect is not deletion | Test: disconnecting or revoking stops sync without silently deleting local or provider contacts. | Pending |
+| **LB8.10** | Scope discipline | Test: least-privilege scopes by default; write sync forces re-consent. | Pending |
+| **LB8.11** | Two users, real providers | Two users sync separate Google/Microsoft contact sets with no leakage; create, update, conflict, duplicate, delete, revoke and reconnect are exercised against real providers. | Blocked — needs a Google Cloud project and an Entra tenant |
+
+### LB9 — Native iOS and Android contact synchronization
+
+Per the instruction governing this work, **no mobile application is created in
+this repository.** LB9 delivers the server contract and a precise handoff; the
+device work belongs to the separate Josi mobile repository.
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB9.1** | Server contract exists | Device contact sync endpoints, authentication, dedup semantics, permission-state reporting and conflict rules are specified and implemented server-side. | Pending |
+| **LB9.2** | Cross-source dedup | Test: device, Google, Microsoft and Josi-native records deduplicate without collapsing unrelated people. | Pending |
+| **LB9.3** | Per-user isolation preserved | Test: device-sourced contacts are private to the user; organization sharing needs a separate explicit choice. | Pending |
+| **LB9.4** | Permission states modelled | Test: granted, limited, denied, revoked and signed-out states are representable and a revoked state stops future sync without deleting either side. | Pending |
+| **LB9.5** | Handoff document | A precise implementation handoff for the mobile repository: endpoints, payloads, OS permission sequencing, selective import, limited-access handling, reinstall and sign-out behaviour. | Pending |
+| **LB9.6** | Real-device tests | Grant, limited grant, denial, revoke, import, update, conflict and sign-out on real iOS and Android devices. | Blocked — no mobile repository access and no physical device |
+
+### LB10 — Harden approval policy by default
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB10.1** | No-ceiling default removed | Test: "no ceiling" is not the factory default, and an installation with no policy rows fails closed rather than open. | Pending |
+| **LB10.2** | Ordinary actions gated | Test: sending email and creating or changing calendar events and tasks require approval on a fresh installation. | Pending |
+| **LB10.3** | High-impact actions strictest | Test: deleting, cancelling, inviting external people, publishing, spending money, signing or accepting terms and changing access receive the strictest defaults. | Pending |
+| **LB10.4** | Ceiling direction preserved | Test: users may only tighten; no user or client path exceeds the admin ceiling. | Done (M33) — re-asserted under new defaults |
+| **LB10.5** | Relaxation is deliberate | Test: relaxing policy requires explicit confirmation and records who changed what and when, in the audit log. | Pending |
+| **LB10.6** | Explained where it applies | Test: the defaults are explained during setup and on the policy page. | Pending |
+| **LB10.7** | Safe migration | Test: an existing installation migrates without silently broadening or unexpectedly narrowing policy, and the admin is shown the migration result. | Pending |
+| **LB10.8** | Server-side ceiling is the ceiling | Test: client-side tampering, direct API calls and worker/job paths cannot bypass it. | Pending |
+
+### LB11 — Fix workspace and branding
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB11.1** | Shepherd retired | Test: a repository-wide search finds no live shepherd branding claim. Historical records may retain it only where they are labelled as history. | Pending |
+| **LB11.2** | J identity applied | The approved white `J` on navy is applied to the web UI, PWA icons, docs site, installation UI, metadata, favicon and distributable assets. | Pending |
+| **LB11.3** | Licensing stated coherently | The "not replaceable" claim is replaced by a correct separation of AGPL copyright/licence rights from trademark rights. | Pending |
+| **LB11.4** | Trademark policy drafted | A policy permitting compliant unmodified distribution, requiring forks to avoid confusion, and not purporting to restrict AGPL rights. Marked DRAFT and flagged for legal review. | Pending |
+| **LB11.5** | Workspace page renders | Test: loaded, empty, timeout, API failure and unauthorized states each render something honest, with retry on failure. No endless Loading. | Pending |
+| **LB11.6** | Surfaces agree | Test: UI and documentation agree on identity and licensing. | Pending |
+
+### LB12 — Hide plumbing without hiding truth
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB12.1** | Goals, not internals | Test: ordinary setup presents goals, guided choices, tests and outcomes. | Pending |
+| **LB12.2** | Plumbing behind advanced | Test: client IDs, callback URLs, scopes, model IDs, container names, database concepts and secret-handling jargon appear only in a labelled advanced section, with copy controls, unless the admin must act on them. | Pending |
+| **LB12.3** | Documentation keeps the detail | The full technical explanation remains in the installation and administration documentation. | Pending |
+| **LB12.4** | Nothing necessary removed | Test: warnings, consent, security choices and failure detail survive the simplification. | Pending |
+
+### LB13 — Banana
+
+| ID | Promise | Acceptance criterion (testable) | Status |
+|---|---|---|---|
+| **LB13.1** | Banana preserved | The word `banana` is preserved in the tracked launch-audit document as an explicit test that user-requested checklist items are not silently dropped. It has no runtime product behaviour. | Done — `LAUNCH_AUDIT.md` |

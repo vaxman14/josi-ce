@@ -15,7 +15,27 @@
 # it is what makes a stolen dump useless.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+# Where the installation lives.
+#
+# Two shapes are supported and they must not be confused, because guessing wrong
+# writes an installation's secrets into the wrong directory.
+#
+#   Repository checkout — this script is `scripts/install.sh` and the
+#   installation is the repository root one level up.
+#
+#   Downloaded on its own — the supported way to install without cloning
+#   anything. The script sits beside the compose file in the directory the
+#   operator created for Josi, and THAT directory is the installation. A blind
+#   `cd ..` here would put the secrets in its parent.
+#
+# The repository case is detected by both of its properties, not one: the script
+# is in a directory called `scripts`, and a compose file is its sibling's child.
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+if [[ "$(basename "$script_dir")" == "scripts" && -f "${script_dir}/../docker-compose.yml" ]]; then
+  cd "${script_dir}/.."
+else
+  cd "$script_dir"
+fi
 
 SECRETS_DIR="secrets"
 MASTER_KEY="${SECRETS_DIR}/master.key"
@@ -55,6 +75,28 @@ generate_password() {
   fi
 }
 
+# A file's permission mode as plain octal digits, or a non-zero return if this
+# filesystem or this `stat` cannot report one portably.
+#
+# GNU coreutils is tried FIRST and the order is load-bearing. On GNU, `stat -f`
+# means "display file system status" and SUCCEEDS, so a BSD-first chain never
+# reaches its GNU fallback: it returns filesystem diagnostics — `?p`, because
+# `%Lp` is not a filesystem format — and the caller then prints that to an
+# operator as though it were a permission mode. This function previously did
+# exactly that, which is why the result is now also validated to be octal
+# before it is returned. Junk is reported as "unknown", never as a mode.
+file_mode() {
+  local f="$1" m=''
+  m=$(stat -c '%a' "$f" 2>/dev/null) || m=''
+  if [[ -z "$m" ]]; then
+    m=$(stat -f '%Lp' "$f" 2>/dev/null) || m=''
+  fi
+  case "$m" in
+    '' | *[!0-7]*) return 1 ;;
+  esac
+  printf '%s' "$m"
+}
+
 verify_key_file() {
   local file="$1" label="$2" min_bytes="$3"
   [[ -f "$file" ]] || { say "  missing: $file"; return 1; }
@@ -63,9 +105,12 @@ verify_key_file() {
   [[ "$bytes" -ge "$min_bytes" ]] || { say "  too short: $file ($bytes bytes)"; return 1; }
   # Mode check is advisory on filesystems that do not carry POSIX permissions.
   local mode
-  mode=$(stat -f '%Lp' "$file" 2>/dev/null || stat -c '%a' "$file" 2>/dev/null || echo '')
-  if [[ -n "$mode" && "$mode" != "600" ]]; then
-    say "  warning: $label is mode $mode; expected 600"
+  if mode=$(file_mode "$file"); then
+    if [[ "$mode" != "600" && "$mode" != "400" ]]; then
+      say "  warning: $label is mode $mode; expected 600"
+    fi
+  else
+    say "  note: this filesystem does not report POSIX permissions for $label"
   fi
   say "  ok: $label"
   return 0
