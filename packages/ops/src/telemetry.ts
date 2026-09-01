@@ -14,6 +14,7 @@
 // derived from hardware, and it exists for support correlation and rate
 // limiting, not for identifying a business.
 import { appendEvent, type Db } from '@josi-ce/core';
+import { UnsafeEndpointError, validateEndpoint } from '@josi-ce/llm';
 
 export class TelemetryError extends Error {}
 
@@ -104,10 +105,37 @@ export const TELEMETRY_DISCLOSURE =
   + 'prompts, credentials, or anything identifying you or your business. It is off unless '
   + 'you turn it on, and you can turn it off again at any time.';
 
+/** An outbound URL an administrator typed.
+ *
+ * Phase 4 built this guard for model providers and Phase 10 introduced two more
+ * URLs the server fetches — the telemetry endpoint and the support gateway —
+ * without routing either through it. That is the gap this closes.
+ *
+ * The reasoning from `packages/llm/src/ssrf.ts` applies unchanged: the person
+ * setting this already administers the host, so the classic SSRF threat is
+ * absent, but cloud metadata still is not. An operator who pastes
+ * 169.254.169.254 should not hand their cloud role's credentials to whatever
+ * answers.
+ */
+export async function assertOutboundUrlSafe(
+  url: string,
+  resolveImpl?: (hostname: string) => Promise<string[]>,
+): Promise<void> {
+  await validateEndpoint(url, { resolve: resolveImpl });
+}
+
 export async function setTelemetry(
   db: Db,
-  args: { enabled: boolean; endpoint?: string | null; byUserId: string },
+  args: {
+    enabled: boolean; endpoint?: string | null; byUserId: string;
+    resolveImpl?: (hostname: string) => Promise<string[]>;
+  },
 ): Promise<void> {
+  // Checked when it is SET, so a bad endpoint is refused while somebody is
+  // looking at the screen rather than failing later in a background send.
+  if (args.enabled && args.endpoint) {
+    await assertOutboundUrlSafe(args.endpoint, args.resolveImpl);
+  }
   // Phase 3's constraint is `enabled = false or opted_in_at is not null`, so
   // enabling without recording when somebody agreed is impossible — the
   // database refuses it. Setting the timestamp here is honouring that rule, not
@@ -144,13 +172,33 @@ export interface TelemetrySender {
  */
 export async function sendTelemetry(
   db: Db,
-  args: { facts: Partial<TelemetryFacts> & { installationId: string }; sender: TelemetrySender },
+  args: {
+    facts: Partial<TelemetryFacts> & { installationId: string };
+    sender: TelemetrySender;
+    resolveImpl?: (hostname: string) => Promise<string[]>;
+  },
 ): Promise<{ sent: boolean; reason?: string; payload?: Record<string, unknown> }> {
   const [state] = await db.query<{ enabled: boolean; endpoint: string | null }>(
     `select enabled, endpoint from telemetry_state where id = true`,
   );
   if (!state?.enabled) return { sent: false, reason: 'telemetry is off' };
   if (!state.endpoint) return { sent: false, reason: 'no endpoint is configured' };
+
+  // And again at SEND time. A hostname that resolved to something benign when
+  // it was saved can resolve to metadata now — checking only at save time is
+  // checking the wrong moment.
+  try {
+    await assertOutboundUrlSafe(state.endpoint, args.resolveImpl);
+  } catch (err) {
+    if (err instanceof UnsafeEndpointError) {
+      await db.query(
+        `update telemetry_state set last_status = 'failed',
+           consecutive_failures = consecutive_failures + 1 where id = true`,
+      );
+      return { sent: false, reason: 'that endpoint is not a safe destination' };
+    }
+    throw err;
+  }
 
   const payload = buildPayload(args.facts);
   try {
@@ -235,6 +283,7 @@ export async function submitTicket(
     userId: string;
     /** The gateway, or null. Null means nothing is transmitted. */
     gatewayUrl: string | null;
+    resolveImpl?: (hostname: string) => Promise<string[]>;
   },
 ): Promise<{ submitted: boolean; reason?: string }> {
   const [ticket] = await db.query<{
@@ -272,6 +321,16 @@ export async function submitTicket(
 
   if (!args.gatewayUrl) {
     return { submitted: false, reason: 'no support gateway is configured, so nothing was sent' };
+  }
+  // A bundle is about to leave the installation. Where it goes gets the same
+  // check as any other outbound URL.
+  try {
+    await assertOutboundUrlSafe(args.gatewayUrl, args.resolveImpl);
+  } catch (err) {
+    if (err instanceof UnsafeEndpointError) {
+      return { submitted: false, reason: 'the configured support gateway is not a safe destination' };
+    }
+    throw err;
   }
 
   await db.query(

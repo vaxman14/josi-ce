@@ -12,7 +12,7 @@
 // Second: the owner is always `req.user!.id`. It is never read from the request
 // body, in any route, for any reason.
 import { Router, type Request, type Response } from 'express';
-import { appendEvent, type Db } from '@josi-ce/core';
+import { LIMITS, appendEvent, consume, type Db } from '@josi-ce/core';
 import {
   MappingError, PathEscape, SemanticForbidden, SemanticNotConsented, SharingDisabled,
   SEMANTIC_DISCLOSURE, assertSemanticAllowed, assertSharingAllowed, auditRetentionNotice,
@@ -273,6 +273,15 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
   r.get(
     '/search',
     handle(async (req, res) => {
+      // Full-text search across somebody's documents. Generous, because it is a
+      // normal thing to do repeatedly, but not unbounded.
+      const verdict = await consume(db, {
+        limit: LIMITS.search, subject: `search:${req.user!.id}`,
+      });
+      if (!verdict.ok) {
+        res.set('Retry-After', String(verdict.retryAfterSeconds));
+        return res.status(429).json({ error: 'too many searches just now' });
+      }
       const q = str(req.query?.q, 500);
       const hits = await searchDocuments(db, {
         ownerUserId: req.user!.id,

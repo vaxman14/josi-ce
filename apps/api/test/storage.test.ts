@@ -115,6 +115,9 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); });
 
 beforeEach(async () => {
+  // The limiter is per user and persists across requests, so a suite that takes
+  // several backups in one run would otherwise exhaust a real allowance.
+  await db.query(`delete from rate_limits`);
   await db.query(`delete from folder_mappings`);
   await db.query(`delete from storage_roots`);
   await db.query(`delete from storage_capabilities`);

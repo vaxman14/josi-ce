@@ -17,7 +17,7 @@ export {
 } from './update.js';
 export {
   ALLOWED_FIELDS, SupportError, TELEMETRY_DISCLOSURE, TelemetryError,
-  acknowledgementFor, buildPayload, diagnosticsRequired, gatewayStatus,
+  acknowledgementFor, assertOutboundUrlSafe, buildPayload, diagnosticsRequired, gatewayStatus,
   sendTelemetry, setTelemetry, submitTicket,
   type AllowedField, type TelemetryFacts, type TelemetrySender, type TicketCategory,
 } from './telemetry.js';

@@ -51,6 +51,11 @@ beforeEach(async () => {
   await db.query(`update update_state set current_version = '0.1.0', available_version = null`);
 });
 
+// No suite resolves a real hostname. Every outbound URL in these tests points
+// at a .test domain that does not exist, so the SSRF guard would fail on DNS
+// rather than on anything the test is about.
+const resolveImpl = async () => ['203.0.113.10'];
+
 const okWriter = (bytes = 1024): BackupWriter => ({
   async write() { return { byteSize: bytes, sha256: sha256Of(Buffer.alloc(bytes)) }; },
   async read() { return Buffer.alloc(bytes); },
@@ -644,7 +649,7 @@ describe('support tickets — M104, M105, M107, M115', () => {
 
   it('refuses a bug report with no bundle', async () => {
     const id = await makeTicket();
-    await expect(submitTicket(db, { ticketId: id, userId: ids.alice, gatewayUrl: 'https://x.test' }))
+    await expect(submitTicket(db, { ticketId: id, userId: ids.alice, gatewayUrl: 'https://x.test', resolveImpl }))
       .rejects.toThrow(/needs a diagnostics bundle/);
   });
 
@@ -655,7 +660,7 @@ describe('support tickets — M104, M105, M107, M115', () => {
   it('refuses submission without the acknowledgement, and says which', async () => {
     const id = await makeTicket({ acknowledged: false, bundleId: await readyBundle() });
     const err = await submitTicket(db, {
-      ticketId: id, userId: ids.alice, gatewayUrl: 'https://x.test',
+      ticketId: id, userId: ids.alice, gatewayUrl: 'https://x.test', resolveImpl,
     }).then(() => null, (e: Error) => e);
 
     expect(err).toBeInstanceOf(SupportError);
@@ -676,13 +681,13 @@ describe('support tickets — M104, M105, M107, M115', () => {
       createdBy: ids.alice, window: '24h', filename: 'j.zip', built,
     });
     const ticketId = await makeTicket({ bundleId });
-    await expect(submitTicket(db, { ticketId, userId: ids.alice, gatewayUrl: 'https://x.test' }))
+    await expect(submitTicket(db, { ticketId, userId: ids.alice, gatewayUrl: 'https://x.test', resolveImpl }))
       .rejects.toThrow(/read, approved and scanned/);
   });
 
   it('is not somebody else\'s to submit', async () => {
     const id = await makeTicket({ bundleId: await readyBundle() });
-    await expect(submitTicket(db, { ticketId: id, userId: ids.admin, gatewayUrl: 'https://x.test' }))
+    await expect(submitTicket(db, { ticketId: id, userId: ids.admin, gatewayUrl: 'https://x.test', resolveImpl }))
       .rejects.toThrow(SupportError);
   });
 
@@ -707,7 +712,7 @@ describe('support tickets — M104, M105, M107, M115', () => {
 
   it('never records the description in the audit log', async () => {
     const id = await makeTicket({ bundleId: await readyBundle() });
-    await submitTicket(db, { ticketId: id, userId: ids.alice, gatewayUrl: 'https://x.test' });
+    await submitTicket(db, { ticketId: id, userId: ids.alice, gatewayUrl: 'https://x.test', resolveImpl });
     const rows = await db.query<{ p: string }>(
       `select payload::text as p from events where kind = 'support.submitted'`,
     );
@@ -744,7 +749,7 @@ describe('telemetry is opt-in and carries no content — M98', () => {
   it('sends nothing while off, however it is called', async () => {
     let called = false;
     const out = await sendTelemetry(db, {
-      facts, sender: { async send() { called = true; } },
+      facts, sender: { async send() { called = true; } }, resolveImpl,
     });
     expect(out.sent).toBe(false);
     expect(called).toBe(false);
@@ -760,7 +765,7 @@ describe('telemetry is opt-in and carries no content — M98', () => {
     );
     let called = false;
     const out = await sendTelemetry(db, {
-      facts, sender: { async send() { called = true; } },
+      facts, sender: { async send() { called = true; } }, resolveImpl,
     });
     expect(out.sent).toBe(false);
     expect(out.reason).toBe('telemetry is off');
@@ -768,10 +773,10 @@ describe('telemetry is opt-in and carries no content — M98', () => {
   });
 
   it('sends only after it is affirmatively enabled', async () => {
-    await setTelemetry(db, { enabled: true, endpoint: 'https://t.test', byUserId: ids.admin });
+    await setTelemetry(db, { enabled: true, endpoint: 'https://t.test', byUserId: ids.admin, resolveImpl });
     let received: Record<string, unknown> | null = null;
     const out = await sendTelemetry(db, {
-      facts, sender: { async send(_e, p) { received = p; } },
+      facts, sender: { async send(_e, p) { received = p; } }, resolveImpl,
     });
     expect(out.sent).toBe(true);
     expect(received).toBeTruthy();
@@ -815,8 +820,8 @@ describe('telemetry is opt-in and carries no content — M98', () => {
   });
 
   it('stores exactly what was sent, so an operator can read it', async () => {
-    await setTelemetry(db, { enabled: true, endpoint: 'https://t.test', byUserId: ids.admin });
-    await sendTelemetry(db, { facts, sender: { async send() {} } });
+    await setTelemetry(db, { enabled: true, endpoint: 'https://t.test', byUserId: ids.admin, resolveImpl });
+    await sendTelemetry(db, { facts, sender: { async send() {} }, resolveImpl });
 
     const [row] = await db.query<{ last_payload: unknown }>(
       `select last_payload from telemetry_state where id = true`,
@@ -827,16 +832,49 @@ describe('telemetry is opt-in and carries no content — M98', () => {
   });
 
   it('turning it off clears the endpoint too', async () => {
-    await setTelemetry(db, { enabled: true, endpoint: 'https://t.test', byUserId: ids.admin });
+    await setTelemetry(db, { enabled: true, endpoint: 'https://t.test', byUserId: ids.admin, resolveImpl });
     // The endpoint is passed again on the way OFF. Omitting it made the
     // assertion pass for the wrong reason: `undefined ?? null` is null whatever
     // the code does with it.
-    await setTelemetry(db, { enabled: false, endpoint: 'https://t.test', byUserId: ids.admin });
+    await setTelemetry(db, { enabled: false, endpoint: 'https://t.test', byUserId: ids.admin, resolveImpl });
     const [row] = await db.query<{ enabled: boolean; endpoint: string | null }>(
       `select enabled, endpoint from telemetry_state where id = true`,
     );
     expect(row.enabled).toBe(false);
     expect(row.endpoint).toBeNull();
+  });
+
+  // Phase 10 added two outbound URLs an administrator types — this endpoint and
+  // the support gateway — and neither went through the SSRF guard Phase 4 built
+  // for model providers. An operator who pastes a metadata address should not
+  // hand their cloud role's credentials to whatever answers.
+  it('refuses a cloud-metadata endpoint', async () => {
+    await expect(setTelemetry(db, {
+      enabled: true, endpoint: 'http://169.254.169.254/latest/meta-data/',
+      byUserId: ids.admin, resolveImpl: async () => ['169.254.169.254'],
+    })).rejects.toThrow();
+
+    const [row] = await db.query<{ enabled: boolean; endpoint: string | null }>(
+      `select enabled, endpoint from telemetry_state where id = true`,
+    );
+    expect(row.enabled).toBe(false);
+    expect(row.endpoint).toBeNull();
+  });
+
+  it('refuses one that only resolves to metadata at send time', async () => {
+    // Benign when saved, metadata when used. Checking only at save time is
+    // checking the wrong moment.
+    await setTelemetry(db, {
+      enabled: true, endpoint: 'https://t.test', byUserId: ids.admin, resolveImpl,
+    });
+    let called = false;
+    const out = await sendTelemetry(db, {
+      facts, sender: { async send() { called = true; } },
+      resolveImpl: async () => ['169.254.169.254'],
+    });
+    expect(out.sent).toBe(false);
+    expect(out.reason).toContain('not a safe destination');
+    expect(called).toBe(false);
   });
 
   it('the disclosure names everything the payload can contain', () => {

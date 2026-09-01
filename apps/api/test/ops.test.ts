@@ -101,6 +101,8 @@ beforeAll(async () => {
     // M115: no gateway by default, which is the shipped state.
     supportGatewayUrl: null,
     fetchLatestVersion: async () => '0.2.0',
+    // No suite resolves a real hostname.
+    outboundResolve: async () => ['203.0.113.10'],
   });
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -113,6 +115,9 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); });
 
 beforeEach(async () => {
+  // The limiter is per user and persists across requests, so a suite that takes
+  // several backups in one run would otherwise exhaust a real allowance.
+  await db.query(`delete from rate_limits`);
   sentTelemetry = [];
   restoresApplied = 0;
   await db.query(`delete from support_tickets`);

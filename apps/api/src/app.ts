@@ -51,6 +51,8 @@ export interface AppConfig {
   /** M115: unset by default. CE ships no gateway URL and no credential. */
   supportGatewayUrl?: string | null;
   fetchLatestVersion?: () => Promise<string | null>;
+  /** DNS for outbound admin-supplied URLs, injected by the tests. */
+  outboundResolve?: (hostname: string) => Promise<string[]>;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -114,6 +116,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     telemetrySender: cfg.telemetrySender,
     supportGatewayUrl: cfg.supportGatewayUrl ?? null,
     fetchLatestVersion: cfg.fetchLatestVersion,
+    outboundResolve: cfg.outboundResolve,
   }));
 
   api.use((_req, res) => res.status(404).json({ error: 'no such endpoint' }));

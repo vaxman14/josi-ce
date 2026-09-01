@@ -14,3 +14,6 @@ export * from './stepUp.js';
 export * from './locks.js';
 export * from './queue.js';
 export * from './metrics.js';
+export {
+  LIMITS, consume, peek, pruneRateLimits, type Limit, type LimitVerdict,
+} from './ratelimit.js';

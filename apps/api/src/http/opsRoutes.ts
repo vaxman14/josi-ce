@@ -6,7 +6,7 @@
 // approve their own bundle — but a bundle contains no content by construction
 // (M113), so this is not a privacy hole, it is the consent flow working.
 import { Router, type Request, type Response } from 'express';
-import { type Db } from '@josi-ce/core';
+import { LIMITS, consume, type Db, type Limit } from '@josi-ce/core';
 import {
   BackupError, DiagnosticsError, MASTER_KEY_DOC, RestoreError, SupportError, restoreBackup,
   TELEMETRY_DISCLOSURE, TelemetryError, acknowledgementFor, approveBundle,
@@ -15,6 +15,7 @@ import {
   scanForSecrets, sendTelemetry, setTelemetry, submitTicket,
   type BackupWriter, type LogWindow, type TelemetrySender, type TicketCategory,
 } from '@josi-ce/ops';
+import { UnsafeEndpointError } from '@josi-ce/llm';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { existsSync } from 'node:fs';
 import { asyncRoute, param } from './async.js';
@@ -28,6 +29,8 @@ export interface OpsRoutesCtx {
   /** M115: unset by default. Nothing is transmitted without it. */
   supportGatewayUrl?: string | null;
   fetchLatestVersion?: () => Promise<string | null>;
+  /** Injected by the tests so no suite resolves a hostname. */
+  outboundResolve?: (hostname: string) => Promise<string[]>;
 }
 
 class RouteError extends Error {
@@ -49,6 +52,10 @@ function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
         res.status(409).json({ error: err.message });
         return;
       }
+      if (err instanceof UnsafeEndpointError) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
       if (err instanceof TelemetryError) {
         res.status(400).json({ error: err.message });
         return;
@@ -68,6 +75,24 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
   const { db } = ctx;
   const r = Router();
   r.use(requireAuth);
+
+  /** Spend one from this person's allowance, or refuse with a Retry-After.
+   *
+   * Per user, never global: a shared counter on a small server means one person
+   * looping denies the feature to everybody, which is the outage the limit
+   * exists to prevent. */
+  const limited = async (req: Request, res: Response, limit: Limit): Promise<boolean> => {
+    const verdict = await consume(db, { limit, subject: `${limit.bucket}:${req.user!.id}` });
+    if (!verdict.ok) {
+      res.set('Retry-After', String(verdict.retryAfterSeconds));
+      res.status(429).json({
+        error: 'that has been done too many times recently',
+        retryAfterSeconds: verdict.retryAfterSeconds,
+      });
+      return false;
+    }
+    return true;
+  };
 
   // -------------------------------------------------------------------------
   // Diagnostics and support: the person raising them owns them.
@@ -99,6 +124,9 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
   r.post(
     '/diagnostics',
     handle(async (req, res) => {
+      // Building one reads config, counts rows and compresses. Cheap once,
+      // expensive in a loop.
+      if (!(await limited(req, res, LIMITS.diagnostics))) return undefined;
       const window = (['1h', '24h', '7d'].includes(str(req.body?.window, 8))
         ? req.body.window : '24h') as LogWindow;
 
@@ -217,10 +245,13 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
   r.post(
     '/support/tickets/:id/submit',
     handle(async (req, res) => {
+      // This one leaves the installation, if a gateway is configured.
+      if (!(await limited(req, res, LIMITS.support_submit))) return undefined;
       const out = await submitTicket(db, {
         ticketId: param(req, 'id'),
         userId: req.user!.id,
         gatewayUrl: ctx.supportGatewayUrl ?? null,
+        resolveImpl: ctx.outboundResolve,
       });
       return res.json(out);
     }),
@@ -248,6 +279,8 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     '/admin/backups',
     requireSuperAdmin,
     handle(async (req, res) => {
+      // pg_dump against the whole database.
+      if (!(await limited(req, res, LIMITS.backup))) return undefined;
       if (!ctx.backupWriter) throw new RouteError(503, 'backups are not available on this installation');
       const kind = req.body?.kind === 'portable' ? 'portable' : 'full';
       const { backup, description } = await createBackup(db, {
@@ -379,6 +412,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         enabled,
         endpoint: str(req.body?.endpoint, 500) || null,
         byUserId: req.user!.id,
+        resolveImpl: ctx.outboundResolve,
       });
       return res.json({ enabled, disclosure: TELEMETRY_DISCLOSURE });
     }),
@@ -395,6 +429,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const out = await sendTelemetry(db, {
         facts: { installationId: id, version: process.env.JOSI_VERSION ?? '0.1.0' },
         sender: ctx.telemetrySender,
+        resolveImpl: ctx.outboundResolve,
       });
       return res.json(out);
     }),
