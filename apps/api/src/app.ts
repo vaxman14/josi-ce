@@ -16,6 +16,7 @@ import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
 import { storageRoutes } from './http/storageRoutes.js';
 import { opsRoutes } from './http/opsRoutes.js';
+import { personaRoutes } from './http/personaRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { setupGate } from './http/setupGate.js';
@@ -109,6 +110,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
   api.use('/storage', storageRoutes({ db }));
+  api.use('/persona', personaRoutes({ db }));
   api.use('/ops', opsRoutes({
     db,
     backupWriter: cfg.backupWriter,

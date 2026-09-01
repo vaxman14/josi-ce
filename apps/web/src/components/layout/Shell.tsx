@@ -25,6 +25,7 @@ const MEMBER_NAV = [
   { to: '/app/contacts', label: 'Contacts' },
   { to: '/app/connections', label: 'Connections' },
   { to: '/app/usage', label: 'Usage' },
+  { to: '/app/personalization', label: 'Personalization' },
   { to: '/app/settings', label: 'Settings' },
   { to: '/app/apps', label: 'Apps' },
 ];

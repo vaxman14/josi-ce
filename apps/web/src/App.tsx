@@ -12,6 +12,7 @@ import { Conversations } from '@/pages/Conversations';
 import { Contacts } from '@/pages/Contacts';
 import { Connections } from '@/pages/Connections';
 import { Usage } from '@/pages/Usage';
+import { Personalization } from '@/pages/Personalization';
 import { Settings } from '@/pages/Settings';
 import { Apps } from '@/pages/Apps';
 import { AdminOverview } from '@/pages/admin/Overview';
@@ -73,6 +74,7 @@ export function App() {
         <Route path="contacts" element={<Contacts />} />
         <Route path="connections" element={<Connections />} />
         <Route path="usage" element={<Usage />} />
+        <Route path="personalization" element={<Personalization />} />
         <Route path="settings" element={<Settings />} />
         <Route path="apps" element={<Apps />} />
       </Route>
