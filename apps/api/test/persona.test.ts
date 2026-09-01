@@ -387,6 +387,30 @@ describe('the live preview really calls a model', () => {
     expect(lastPreviewSystem).not.toContain('PREVIEW-ALICE-VOICE');
   });
 
+  it('cannot be pointed at another person by naming them', async () => {
+    await save(cookies.alice, 'soul', 'custom_personality: PREVIEW-ALICE-VOICE\n');
+    await save(cookies.bob, 'soul', 'custom_personality: PREVIEW-BOB-VOICE\n');
+    await call('/api/persona/preview/live', {
+      method: 'POST', jar: cookies.bob,
+      body: { request: 'hello', asUser: ids.alice, userId: ids.alice, ownerUserId: ids.alice },
+    });
+    expect(lastPreviewSystem).toContain('PREVIEW-BOB-VOICE');
+    expect(lastPreviewSystem).not.toContain('PREVIEW-ALICE-VOICE');
+  });
+
+  it('carries the core safety line as well as the authority note', async () => {
+    await save(cookies.alice, 'soul', 'tone: brief\n');
+    await call('/api/persona/preview/live', {
+      method: 'POST', jar: cookies.alice, body: { request: 'hello' },
+    });
+    // Both, and in that order. A preview that drops the safety line is a
+    // preview of something Josi does not do.
+    expect(lastPreviewSystem).toContain('You are Josi');
+    expect(lastPreviewSystem).toContain('Never invent a name, number, address or time');
+    expect(lastPreviewSystem.indexOf('You are Josi'))
+      .toBeLessThan(lastPreviewSystem.indexOf('preferences, not permissions'));
+  });
+
   it('stores nothing — a preview is a question about a setting', async () => {
     const threadsBefore = await db.query(`select count(*)::int as n from threads`);
     const messagesBefore = await db.query(`select count(*)::int as n from messages`);
@@ -431,11 +455,18 @@ describe('version history is available to the person', () => {
     expect(after.body.profiles.soul.parsed.tone).toBe('brief');
   });
 
-  it('is not somebody else\'s history to read', async () => {
+  it('is not somebody else\'s history to read, even when named', async () => {
     await save(cookies.alice, 'soul', 'tone: brief\n');
     await save(cookies.alice, 'soul', 'tone: formal\n');
+
     const bob = await call('/api/persona/profiles/soul/versions', { jar: cookies.bob });
     expect(bob.body.versions).toHaveLength(0);
+
+    // And naming her explicitly changes nothing — the owner is the session.
+    const named = await call(
+      `/api/persona/profiles/soul/versions?userId=${ids.alice}`, { jar: cookies.bob },
+    );
+    expect(named.body.versions).toHaveLength(0);
   });
 });
 

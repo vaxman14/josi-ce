@@ -665,6 +665,32 @@ describe('automatic memory is opt-in', () => {
   });
 });
 
+describe('presets cannot widen anything', () => {
+  it('every preset sets only fields the soul schema already has', async () => {
+    const { SOUL_PRESETS } = await import('../src/presets.js');
+    const { SOUL_FIELDS } = await import('../src/schema.js');
+    const allowed = new Set(Object.keys(SOUL_FIELDS));
+
+    for (const preset of SOUL_PRESETS) {
+      for (const key of Object.keys(preset.values)) {
+        expect(
+          allowed.has(key),
+          `preset "${preset.key}" sets "${key}", which is not a soul field`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('every preset round-trips through the parser with nothing ignored', async () => {
+    const { SOUL_PRESETS, presetContent } = await import('../src/presets.js');
+    for (const preset of SOUL_PRESETS) {
+      const parsed = parseProfile('soul', presetContent(preset.key)!);
+      expect(parsed.ignored, preset.key).toEqual([]);
+      expect(parsed.authorityAttempts, preset.key).toEqual([]);
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The extractor's own contract.
 //
