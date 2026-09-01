@@ -818,6 +818,57 @@ gated by a boundary that a hosted build cannot cross.
 
 ---
 
+## Phase 14 — Delegated specialist task workers (v2 roadmap)
+
+**Product intent.** Josi remains the single assistant the user speaks to. For a
+bounded, multi-step job such as arranging an appointment, Josi may delegate the
+work to a narrow specialist worker. This is not a user-created agent, plugin,
+general-purpose sub-agent or second personality. It is a compiled workflow with
+a fixed purpose, fixed tools, explicit authority, persistent state and a hard
+completion boundary.
+
+The first specialist is `schedule_appointment`. Josi turns the user's request
+into a structured job containing the contact, date/time constraints, location
+and travel-time policy, permitted channels, deadline, escalation rules and the
+exact actions already approved. The worker receives only the minimum context
+needed for that job and only scheduling capabilities. It may inspect the
+requester's relevant free/busy data, contact the named party, negotiate within
+the recorded constraints, place an approved hold or event, wait for replies and
+report the outcome. It cannot read unrelated memory or conversations, browse
+documents, alter configuration, install software, create capabilities or widen
+its own authority.
+
+**Delivery order:** email + calendar first, Slack/Teams adapters second, and
+telephone last. Telephone is a separate risk tier because realtime calling,
+voicemail, disclosure/consent, interruption, retries and exactly-once booking
+must all survive partial failure.
+
+**Cost intent.** Delegation is expected to reduce model usage by using a short
+fixed prompt, a compact structured state summary, a small tool catalogue and a
+lower-cost capable model where policy permits. Waiting consumes no model
+tokens. No saving is claimed until measured against the same scheduling task
+performed by the owner agent; copying the owner's full prompt, history, memory
+or tool catalogue into the worker is explicitly prohibited.
+
+### Phase 14 acceptance boundary
+
+| ID | Promise | Acceptance criterion |
+|---|---|---|
+| **D1** | Bounded delegation | Only compiled specialist kinds can be created; arbitrary prompts, tools and user-authored agents are refused. |
+| **D2** | Least authority | A scheduling job receives only the named user's scheduling data and explicitly enabled channel tools; hostile attempts to access every other capability fail server-side. |
+| **D3** | Durable execution | A job survives restart and may wait hours or days without an open model session; each transition records correlation and causation IDs. |
+| **D4** | Safe side effects | Contact attempts and bookings are idempotent; retries cannot send duplicate messages, place duplicate calls or create duplicate events. |
+| **D5** | Approval and escalation | The worker acts only inside recorded constraints. New recipients, material time/location changes, charges and other policy-defined actions return to the user for approval. |
+| **D6** | Privacy | The worker receives a task-specific projection, not the owner's full conversation, profile or memory. Its temporary working context has a documented retention and purge rule. |
+| **D7** | Observable control | The user can view status, cancel future actions, answer an escalation and see a plain-language final report. Cancellation cannot undo an external action already completed. |
+| **D8** | Channel progression | Email/calendar ships first; Slack/Teams and phone cannot be marked supported until their real-provider harnesses pass. |
+| **D9** | Measured economics | A repeatable benchmark reports owner-agent versus specialist-worker input/output tokens, model cost, turns and completion quality. No cheaper claim ships without it. |
+
+**Release position:** post-launch v2. Phase 14 must not expand the current public
+release gate or delay Phase 13 clean-install acceptance.
+
+---
+
 ## Resequenced 2026-08-30: "smallest secure runnable install" first
 
 Roman resequenced delivery to reach a working product sooner **without weakening
