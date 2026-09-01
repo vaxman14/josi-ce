@@ -703,6 +703,48 @@ Scripts and operator checklists for amd64 and arm64 including the two low-resour
 profiles. **Not yet run.** No hardware result is claimed in this repository until
 the hardware has run it, per M97.
 
+### 13.8 — Installer productisation (L10)
+
+The current install is technically workable but exposes too much plumbing. The
+normal path must resemble Nginx Proxy Manager: copy one ready Compose YAML (or
+download it verbatim), change only the few values the operator actually owns,
+and run `docker compose up -d`. The first-run web wizard handles application
+configuration. Operators must not need to understand the repository layout,
+build local images, manually create Docker networks or volumes, or assemble
+secrets by hand.
+
+- Publish versioned multi-architecture images so the normal install pulls a
+  release rather than cloning source and building it locally.
+- Provide one production Compose file with safe defaults, named volumes,
+  health checks, migration ordering, Caddy, and generated installation secrets.
+- Keep required edits minimal and explicit: public domain when HTTPS is wanted;
+  documented LAN-only behaviour otherwise. Optional settings belong in an
+  example environment file and are not prerequisites for first boot.
+- Make the happy path short enough to copy as one block. Put source builds,
+  custom networks, external PostgreSQL, reverse-proxy replacement, and other
+  topology choices in an Advanced section.
+- Detect incompatible Docker installations and permissions before pulling or
+  building anything, including the Ubuntu Snap Docker/socket-group failure
+  found during the N150 install.
+- Fix installer/check output so permission modes are parsed portably and never
+  print filesystem `stat` diagnostics as the mode.
+- Measure the published-image path on clean amd64/N150 and arm64/Raspberry Pi 4
+  hosts, including first boot, migrations, health/readiness, wizard access,
+  restart persistence, and uninstall instructions that distinguish containers
+  from user data.
+
+A **dockerless/native installer** is a separate optional track, not a replacement
+for Compose and not a launch claim until supported. Investigate a one-line
+`curl ... | sh` bootstrap that installs a pinned release, PostgreSQL, a systemd
+web service, worker service, reverse proxy/TLS, dedicated service account,
+directories, permissions, upgrades, rollback, backup, and complete uninstall.
+The bootstrap must download a versioned script, verify its checksum/signature,
+support a download-then-inspect workflow, and fail before mutation on an
+unsupported distribution. It may not silently curl and execute an unpinned
+moving target. If the native path cannot match the container path's isolation,
+upgrade safety, and test coverage, it remains experimental rather than becoming
+a second half-supported installation architecture.
+
 ---
 
 ### Phase 13 traceability matrix
