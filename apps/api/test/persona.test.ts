@@ -233,6 +233,35 @@ describe('a hostile profile has no effect over the wire', () => {
     expect((await call('/api/admin/users', { jar: cookies.alice })).status).toBe(403);
   });
 
+  // The owner comes from the session. Mutation testing found nothing asserted
+  // it: no test ever put a userId in the body, so a route that honoured one
+  // would have passed.
+  it('cannot write into somebody else\'s profile by naming them', async () => {
+    const res = await call('/api/persona/profiles/soul', {
+      method: 'PUT', jar: cookies.alice,
+      body: {
+        content: 'assistant_name: Intruder\n',
+        userId: ids.bob, owner_user_id: ids.bob, ownerUserId: ids.bob,
+      },
+    });
+    expect(res.status).toBe(200);
+
+    // It went to Alice, not Bob.
+    const bob = await call('/api/persona/profiles', { jar: cookies.bob });
+    expect(bob.body.profiles.soul.parsed.assistant_name).not.toBe('Intruder');
+    const alice = await call('/api/persona/profiles', { jar: cookies.alice });
+    expect(alice.body.profiles.soul.parsed.assistant_name).toBe('Intruder');
+  });
+
+  it('cannot add a memory to somebody else by naming them', async () => {
+    await call('/api/persona/memories', {
+      method: 'POST', jar: cookies.alice,
+      body: { content: 'PLANTED-MEMORY', ownerUserId: ids.bob, owner_user_id: ids.bob },
+    });
+    const bob = await call('/api/persona/memories', { jar: cookies.bob });
+    expect(JSON.stringify(bob.body)).not.toContain('PLANTED-MEMORY');
+  });
+
   it('the behaviour layer takes none of it', async () => {
     const res = await save(cookies.alice, 'agents_user', HOSTILE);
     expect(Object.keys(res.body.parsed)).toHaveLength(0);

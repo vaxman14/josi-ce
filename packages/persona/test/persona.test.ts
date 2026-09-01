@@ -140,6 +140,26 @@ owner_user_id: 00000000-0000-4000-8000-000000000000
     expect(phrases).toContain('ignore all previous instructions');
   });
 
+  // The claim is structural: behaviour is where a sentence would do the most
+  // damage, so that layer has NO free-text field. Mutation testing found the
+  // claim was made in a comment and nowhere else — adding one broke nothing.
+  it('the behaviour layer has no free-text field at all, by construction', async () => {
+    const { AGENTS_FIELDS } = await import('../src/schema.js');
+    const freeText = Object.entries(AGENTS_FIELDS)
+      .filter(([, spec]) => (spec as { kind: string }).kind === 'text')
+      .map(([name]) => name);
+    expect(
+      freeText,
+      `behaviour must stay enumerable: ${freeText.join(', ')} accepts prose`,
+    ).toEqual([]);
+
+    // Every field is an enum with a closed set of values.
+    for (const [name, spec] of Object.entries(AGENTS_FIELDS)) {
+      expect((spec as { kind: string }).kind, name).toBe('enum');
+      expect((spec as { values?: string[] }).values?.length, name).toBeGreaterThan(1);
+    }
+  });
+
   it('the same file on the behaviour layer sets nothing at all', () => {
     // AGENTS.md has no free-text field by design: behaviour is where a sentence
     // would do the most damage.
@@ -560,6 +580,18 @@ describe('automatic memory is opt-in', () => {
        on conflict (user_id) do update set memory_mode = excluded.memory_mode`,
       [ids.alice, mode],
     );
+
+  // The CODE default is manual, which is what the next test exercises. This
+  // asserts the SCHEMA default, because a row inserted by anything other than
+  // that code path takes the column's word for it — and mutation testing found
+  // flipping the column to 'automatic' broke nothing.
+  it('the column itself defaults to waiting for a human', async () => {
+    const [col] = await db.query<{ column_default: string | null }>(
+      `select column_default from information_schema.columns
+       where table_name = 'persona_settings' and column_name = 'memory_mode'`,
+    );
+    expect(col.column_default ?? '').toContain("'manual'");
+  });
 
   it('defaults to waiting for a human', async () => {
     const out = await suggestMemory(db, {
