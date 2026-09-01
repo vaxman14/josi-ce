@@ -186,6 +186,30 @@ describe('identity — nothing in the payload chooses an account', () => {
     expect(bodies.join(' ')).not.toContain('bob here');
   });
 
+  it('an unlinked chat is refused EVEN WHEN other people are linked', async () => {
+    // Found by mutation testing, and it is the worst bug this channel could
+    // have. The original test used a database with no links at all, so a
+    // mutation that resolved an unknown chat to "whichever link happens to be
+    // first" passed every assertion — a stranger messaging the bot would have
+    // been answered as somebody else, with their memory, their conversation and
+    // their name on it.
+    await link(alice, 601);
+    await link(bob, 602);
+
+    const outcome = await handleUpdate(deps(), message({
+      chat: { id: 999, type: 'private' },
+      from: { id: 999, is_bot: false, username: 'stranger' },
+      text: 'who am I talking to?',
+    }));
+
+    expect(outcome).toBe('unlinked');
+    expect(turns).toHaveLength(0);
+    expect(sent[0].text).toContain('not linked');
+    // And nothing was written into anybody's conversation.
+    const messages = await db.query(`select id from messages`);
+    expect(messages).toHaveLength(0);
+  });
+
   it('a revoked link stops working on the very next message', async () => {
     await link(bob, 500);
     await handleUpdate(deps(), message());

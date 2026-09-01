@@ -12,7 +12,9 @@ import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { MasterKey, openSealed, seal } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
+import express from 'express';
 import { createApp } from '../src/app.js';
+import { adminTelegramRoutes } from '../src/http/telegramRoutes.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'josi-ce-telegram-'));
 const keyPath = join(dir, 'master.key');
@@ -242,6 +244,36 @@ describe('RBAC — the admin surface is administrators only (L1.9)', () => {
   it('a member may reach their own linking surface', async () => {
     expect((await call('/api/telegram', { jar: cookies.alice })).status).toBe(200);
   });
+
+  it('the admin router carries its OWN guard, not the one on the /admin prefix', async () => {
+    // Found by mutation testing. With `/admin/telegram` mounted after
+    // `/admin`, a member's request was refused by adminRoutes' guard and never
+    // reached this router — so removing this router's own `requireSuperAdmin`
+    // changed nothing observable, and the sweep above passed for the wrong
+    // reason. The mount order is fixed; this asserts the guard directly, so it
+    // stays proven whatever the mounting does next.
+    const solo = express();
+    solo.use(express.json());
+    solo.use((req, _res, next) => {
+      // A member, attached the way `attachUser` would.
+      (req as unknown as { user: unknown }).user = {
+        id: ids.alice, role: 'member', username: 'alice', session_id: 's',
+      };
+      next();
+    });
+    solo.use('/admin/telegram', adminTelegramRoutes({
+      db, masterKey: { path: keyPath }, fetchImpl: telegramFetch, appUrl: 'https://josi.example',
+    }));
+    const server2 = solo.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server2.once('listening', () => r()));
+    const port = (server2.address() as AddressInfo).port;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/admin/telegram`);
+      expect(res.status).toBe(403);
+    } finally {
+      await new Promise<void>((r) => server2.close(() => r()));
+    }
+  });
 });
 
 describe('setting up the bot (L1.1)', () => {
@@ -315,6 +347,32 @@ describe('setting up the bot (L1.1)', () => {
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('bot token');
+  });
+
+  it('refuses to turn the channel on when a STORED token has failed its test', async () => {
+    // Found by mutation testing. The existing test enabled with no token at
+    // all, so the earlier "set a bot token first" branch answered and the probe
+    // check was never reached — a mutation that dropped it survived.
+    //
+    // The state is reachable: a token that worked is later revoked in
+    // BotFather, the admin presses Test, and the row keeps its token with
+    // probe_ok = false. Enabling then would put a dead bot live.
+    await call('/api/admin/telegram/token', {
+      method: 'POST', jar: cookies.admin, body: { token: TOKEN },
+    });
+    botBehaviour = () => ({ status: 401, body: { ok: false, description: 'Unauthorized' } });
+    const probe = await call('/api/admin/telegram/probe', { method: 'POST', jar: cookies.admin });
+    expect(probe.body.ok).toBe(false);
+
+    const res = await call('/api/admin/telegram/enabled', {
+      method: 'POST', jar: cookies.admin, body: { enabled: true },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('has not passed a test');
+    const [row] = await db.query<{ enabled: boolean }>(
+      `select enabled from telegram_config where id = true`,
+    );
+    expect(row.enabled).toBe(false);
   });
 
   it('mints a fresh webhook secret when the token is replaced', async () => {

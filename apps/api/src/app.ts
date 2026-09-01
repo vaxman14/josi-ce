@@ -136,6 +136,17 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
     codexRunner: cfg.codexRunner,
   }));
+  // BEFORE `/admin`, with the other specific prefixes.
+  //
+  // Mount order was wrong here and a mutation found it: with `/admin/telegram`
+  // registered after `/admin`, a member's request was refused by adminRoutes'
+  // own `requireSuperAdmin` and never reached this router at all. The RBAC test
+  // passed — for the wrong reason — and removing THIS router's guard changed
+  // nothing observable. The protection was real but it was mount order, and
+  // mount order is not where an access-control decision should live.
+  api.use('/admin/telegram', adminTelegramRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   api.use('/mail', mailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));
   api.use('/admin/mail', adminMailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));
@@ -145,9 +156,6 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/connections', adminConnectionRoutes({ db }));
   api.use('/storage', storageRoutes({ db }));
   api.use('/telegram', telegramRoutes({
-    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
-  }));
-  api.use('/admin/telegram', adminTelegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
   }));
   api.use('/persona', personaRoutes({

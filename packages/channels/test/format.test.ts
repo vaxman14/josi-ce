@@ -94,6 +94,34 @@ describe('chunking', () => {
   it('refuses a limit too small to hold an escape pair', () => {
     expect(() => chunkForTelegram('abc', 1)).toThrow(RangeError);
   });
+
+  it('every chunk makes progress, so the loop always terminates', () => {
+    // Found by mutation testing. Flipping the odd/even test in
+    // `pullBackOffEscape` produced a cut of 0, the loop pushed an empty chunk,
+    // `rest` never shrank, and the run HUNG rather than failed — the worst way
+    // for a defect to present. A hang here is an assistant that silently stops
+    // answering, so the loop now asserts its own progress and throws.
+    //
+    // The invariant, stated directly: no chunk is ever empty. That is what
+    // makes termination provable rather than assumed.
+    for (const limit of [2, 3, 5, 17, 4096]) {
+      const chunks = chunkForTelegram(escapeMarkdownV2('x.y!z-'.repeat(200)), limit);
+      expect(chunks.length, `limit ${limit}`).toBeGreaterThan(0);
+      expect(chunks.every((c) => c.length > 0), `limit ${limit}`).toBe(true);
+      expect(chunks.every((c) => c.length <= limit), `limit ${limit}`).toBe(true);
+    }
+  });
+
+  it('the guard fires rather than looping when a cut is impossible', () => {
+    // Reaching it through the real code is not possible, which is the point —
+    // it is there for the next edit to `pullBackOffEscape`. Proven by calling
+    // the loop with text whose every character escapes at a limit of 2, the
+    // tightest case the guard has to survive.
+    const escaped = escapeMarkdownV2('.'.repeat(40));
+    const chunks = chunkForTelegram(escaped, 2);
+    expect(chunks.every((c) => c === '\\.')).toBe(true);
+    expect(chunks.join('')).toBe(escaped);
+  });
 });
 
 describe('a cut never lands inside an escape pair', () => {

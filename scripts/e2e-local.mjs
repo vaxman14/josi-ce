@@ -101,6 +101,9 @@ const result = spawnSync(process.execPath, [join(root, 'scripts/e2e-web.mjs')], 
     E2E_BASE: 'http://127.0.0.1:8199',
     E2E_ADMIN: 'owner', E2E_ADMIN_PW: ADMIN_PW,
     E2E_MEMBER: 'alice', E2E_MEMBER_PW: MEMBER_PW,
+    // Passed through so a caller can run one browser group. See E2E_ONLY in
+    // scripts/e2e-web.mjs.
+    ...(process.env.E2E_ONLY ? { E2E_ONLY: process.env.E2E_ONLY } : {}),
   },
 });
 

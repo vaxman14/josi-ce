@@ -86,6 +86,27 @@ export function chunkForTelegram(
       if (at > limit * 0.5) { cut = at + sep.length; break; }
     }
     cut = pullBackOffEscape(rest, cut);
+
+    // PROGRESS OR THROW.
+    //
+    // Found by mutation testing: flipping the odd/even test in
+    // `pullBackOffEscape` makes it return a cut of 0 (or -1), the loop pushes
+    // an empty chunk, `rest` never shrinks, and the whole thing spins forever.
+    // That hung the test run rather than failing it, which is the worst way for
+    // a defect to present — but the reason it matters is not the harness. This
+    // loop runs on every outbound reply, and a hang here is an assistant that
+    // stops answering with no error anywhere.
+    //
+    // A cut that makes no progress is a bug in the code above, so this throws
+    // rather than papering over it with `Math.max(1, cut)`: a silently
+    // mis-chunked message would be rejected by Telegram anyway, and a caller
+    // that sees an exception can say so.
+    if (cut <= 0 || cut > rest.length) {
+      throw new RangeError(
+        `chunking made no progress (cut=${cut}, remaining=${rest.length}) — this is a bug`,
+      );
+    }
+
     chunks.push(rest.slice(0, cut));
     rest = rest.slice(cut);
   }

@@ -618,6 +618,18 @@ async function testBranding(browser) {
   }
 }
 
+// E2E_ONLY lets one group be run on its own.
+//
+// Added because WebKit's Playwright build would not finish installing in one
+// environment while Chromium's was already present, and the service-worker
+// checks — the most important thing Phase 13.2 has to prove — run in Chromium
+// by design. Half a browser suite that actually ran beats a whole one that did
+// not, PROVIDED the half that did not run is reported as not run rather than
+// omitted. `ONLY` is echoed in the summary for exactly that reason.
+const ONLY = process.env.E2E_ONLY ?? '';
+const wants = (name) => !ONLY || ONLY.split(',').includes(name);
+
+if (wants('webkit')) {
 const browser = await webkit.launch();
 try {
   await testTouchSend(browser);
@@ -632,10 +644,18 @@ try {
 } finally {
   await browser.close();
 }
+} else {
+  console.log('\n(skipping the WebKit group: E2E_ONLY=' + ONLY + ')');
+}
 
 // Chromium, in its own browser, for the one thing WebKit headless cannot be
 // trusted to report.
-await testServiceWorker();
+if (wants('serviceworker')) {
+  await testServiceWorker();
+} else {
+  console.log('\n(skipping the service-worker group: E2E_ONLY=' + ONLY + ')');
+}
 
+if (ONLY) console.log(`\nRAN ONLY: ${ONLY} — the other groups did NOT run.`);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
