@@ -252,16 +252,25 @@ fi
 # Phase 12 profiles and memories, so the restore proves they come back rather
 # than that being inferred from "profiles live in ordinary tables".
 step "seeding a profile and a memory to restore later"
-sql "insert into persona_profiles (owner_user_id, kind, content, parsed)
-     values ('$ALICE_ID', 'soul', 'assistant_name: Ada', '{\"assistant_name\":\"Ada\"}'::jsonb)
-     on conflict (owner_user_id, kind) do update set content = excluded.content" >/dev/null
+# A plain insert. `persona_one_per_user` is a PARTIAL unique index, so
+# `on conflict (owner_user_id, kind)` cannot infer it without repeating the
+# WHERE clause — and the failed inference is why the first version of this
+# seeded nothing.
+sqlerr "delete from persona_profiles where owner_user_id = '$ALICE_ID' and kind = 'soul'" >/dev/null
+seed_out=$(sqlerr "insert into persona_profiles (owner_user_id, kind, content, parsed)
+     values ('$ALICE_ID', 'soul', 'assistant_name: Ada', '{\"assistant_name\":\"Ada\"}'::jsonb)")
 sql "insert into memories (owner_user_id, content)
      values ('$ALICE_ID', 'RESTORE-MEMORY-marker')" >/dev/null
 PROFILES_BEFORE=$(sql "select count(*) from persona_profiles")
 MEMORIES_BEFORE=$(sql "select count(*) from memories")
-[[ "$PROFILES_BEFORE" -ge 1 && "$MEMORIES_BEFORE" -ge 1 ]] \
-  && ok "seeded $PROFILES_BEFORE profile(s) and $MEMORIES_BEFORE memory" \
-  || bad "could not seed persona data"
+if [[ "${PROFILES_BEFORE:-0}" -ge 1 && "${MEMORIES_BEFORE:-0}" -ge 1 ]]; then
+  ok "seeded $PROFILES_BEFORE profile(s) and $MEMORIES_BEFORE memory"
+else
+  bad "could not seed persona data: $(echo "$seed_out" | head -2)"
+  # Everything below compares before against after, and 0 == 0 passes while
+  # proving nothing. Stop rather than report false green.
+  printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
+fi
 
 USERS_BEFORE=$(sql "select count(*) from users")
 [[ "$USERS_BEFORE" -ge 3 ]] && ok "$USERS_BEFORE users exist before the backup" || bad "too few users"
@@ -345,9 +354,14 @@ USERS_AFTER=$(sql "select count(*) from users")
   || bad "expected $USERS_BEFORE users, found $USERS_AFTER"
 
 PROFILES_AFTER=$(sql "select count(*) from persona_profiles")
-[[ "$PROFILES_AFTER" == "$PROFILES_BEFORE" ]] \
-  && ok "all $PROFILES_AFTER personalization profiles came back" \
-  || bad "expected $PROFILES_BEFORE profiles, found $PROFILES_AFTER"
+# Non-zero AND equal. The first version compared the two counts alone, and
+# passed on a run where the seed had failed and both were zero — the same
+# false-green as comparing two empty strings.
+if [[ "${PROFILES_AFTER:-0}" -ge 1 && "$PROFILES_AFTER" == "$PROFILES_BEFORE" ]]; then
+  ok "all $PROFILES_AFTER personalization profiles came back"
+else
+  bad "expected $PROFILES_BEFORE profiles, found $PROFILES_AFTER"
+fi
 
 n=$(sql "select count(*) from memories where content = 'RESTORE-MEMORY-marker'")
 [[ "$n" == "1" ]] && ok "and the memory with them" || bad "the memory did not come back"
