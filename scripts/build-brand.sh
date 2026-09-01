@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Derive every Josi mark from the one approved master.
 #
-# THE IDENTITY: a white J on navy. The shepherd concept it replaced is retired.
+# THE IDENTITY: a white J on navy. The animal mark it replaced is retired; see
+# docs/DECISION_TRACEABILITY.md M7-M10 for that history.
 #
 # The J is not drawn here. It is the J from `josi-wordmark.png`, which is the
 # approved artwork — same letterform, same warm white, same navy field. Cutting

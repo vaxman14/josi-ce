@@ -23,7 +23,16 @@ describe('LB11.1 — the shepherd is retired', () => {
   function shepherdHits(): Array<{ file: string; line: number; text: string }> {
     const out = execFileSync(
       'git',
-      ['grep', '-n', '-i', 'shepherd', '--', '.', ':!LAUNCH_BLOCKER_FIX_PROMPT.txt'],
+      [
+        'grep', '-n', '-i', 'shepherd', '--', '.',
+        // The brief that raised the blocker, preserved verbatim.
+        ':!LAUNCH_BLOCKER_FIX_PROMPT.txt',
+        // This file. A test that forbids a word has to be able to write it,
+        // and exempting itself is the only alternative to never running.
+        ':!apps/api/test/branding.test.ts',
+        // The closure record, which explains what was retired and why.
+        ':!LAUNCH_AUDIT.md',
+      ],
       { cwd: root, encoding: 'utf8' },
     ).trim();
     if (!out) return [];

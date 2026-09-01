@@ -3,7 +3,8 @@
 // format is the same and pretending otherwise would mean three copies of the
 // same bugs.
 import {
-  LlmError, type ChatRequest, type ChatResponse, type LlmProvider, type ProviderKind, type ToolCall,
+  LlmError, categorizeFailure, explainCategory,
+  type ChatRequest, type ChatResponse, type LlmErrorCategory, type LlmProvider, type ProviderKind, type ToolCall,
 } from '../types.js';
 import { safeFetch, UnsafeEndpointError, type SafeFetchOptions } from '../ssrf.js';
 
@@ -107,18 +108,27 @@ export function openAiCompatibleProvider(opts: OpenAiCompatibleOptions): LlmProv
           throw new LlmError(err.message, { needsReconfiguration: true });
         }
         // Abort or socket failure.
-        throw new LlmError('the model endpoint did not respond', { retryable: true });
+        throw new LlmError(explainCategory('network'), { retryable: true, category: 'network' });
       }
       const latencyMs = Date.now() - started;
 
       const text = await res.text().catch(() => '');
       if (!res.ok) {
-        // The provider's own words go nowhere near the caller: they routinely
-        // echo back parts of the request, and this one contains the prompt.
-        throw new LlmError(describeFailure(res.status), {
+        // The provider's own PROSE goes nowhere near the caller: it routinely
+        // echoes back parts of the request, and this one contains the prompt.
+        // Its short `code`/`type` is an enum member rather than prose, and it
+        // is the only thing that distinguishes "slow down" from "out of
+        // credit" — both of which arrive as 429.
+        const providerCode = safeErrorCode(text);
+        const category = categorizeFailure(res.status, providerCode);
+        throw new LlmError(describeFailure(res.status, category), {
           status: res.status,
-          needsReconfiguration: res.status === 401 || res.status === 403,
-          retryable: res.status === 429 || res.status >= 500,
+          category,
+          providerCode,
+          needsReconfiguration: res.status === 401 || res.status === 403 || category === 'billing',
+          // A quota failure is not worth retrying and not worth failing over
+          // to a second provider that bills the same account.
+          retryable: (res.status === 429 || res.status >= 500) && category !== 'billing',
         });
       }
 
@@ -156,11 +166,31 @@ export function openAiCompatibleProvider(opts: OpenAiCompatibleOptions): LlmProv
 }
 
 /** Status codes turned into something an operator can act on, with nothing of
- * the provider's own text. */
-export function describeFailure(status: number): string {
-  if (status === 401 || status === 403) return 'the model provider rejected the API key';
-  if (status === 404) return 'the model or endpoint was not found';
-  if (status === 429) return 'the model provider is rate limiting this installation';
-  if (status >= 500) return 'the model provider had a server error';
-  return 'the model provider refused the request';
+ * the provider's own prose. */
+export function describeFailure(status: number, category?: LlmErrorCategory): string {
+  const cat = category ?? categorizeFailure(status);
+  if (cat === 'unknown') return 'the model provider refused the request';
+  return explainCategory(cat);
+}
+
+/** The provider's short error code, if it gave one that is safe to repeat.
+ *
+ * Safe means: an identifier, not a sentence. A code like `insufficient_quota`
+ * carries no request content; a `message` very often quotes the prompt straight
+ * back. So this reads `code` and `type`, refuses anything with whitespace, and
+ * caps the length — a provider that puts prose in a code field gets ignored
+ * rather than trusted. */
+export function safeErrorCode(body: string): string | undefined {
+  let parsed: { error?: { code?: unknown; type?: unknown } };
+  try {
+    parsed = JSON.parse(body) as typeof parsed;
+  } catch {
+    return undefined;
+  }
+  for (const candidate of [parsed.error?.code, parsed.error?.type]) {
+    if (typeof candidate !== 'string') continue;
+    if (!/^[a-z0-9_.:-]{1,64}$/i.test(candidate)) continue;
+    return candidate;
+  }
+  return undefined;
 }

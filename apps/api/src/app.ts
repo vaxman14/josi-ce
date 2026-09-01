@@ -117,7 +117,16 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // everything except the wizard, and a configured one refuses the wizard.
   api.use(setupGate(db));
 
-  api.use('/setup', setupRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  api.use('/setup', setupRoutes({
+    db,
+    masterKey: cfg.masterKeyCheck,
+    // The wizard now contacts what it configures, so it needs the same seams
+    // every other subsystem already had.
+    llmFetch: cfg.llmFetch,
+    llmResolve: cfg.llmResolve,
+    connectorFetch: cfg.connectorFetch,
+    mailTransport: cfg.mailTransport,
+  }));
   api.use('/auth', authRoutes({ db, cookieSecure: cfg.cookieSecure }));
   // Phase 7 owns /connections now: the Phase 1 router proved the ownership
   // shape against a real table; this one actually connects accounts.

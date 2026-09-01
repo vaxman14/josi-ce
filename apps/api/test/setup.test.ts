@@ -75,6 +75,18 @@ const SMTP_BODY = {
     fromName: 'Josi', fromAddress: 'noreply@example.test',
   },
   communications: { copyFromSystem: true, fromName: 'Josi', fromAddress: 'josi@example.test' },
+  // LB4.2: configuring mail means sending one, to an address the administrator
+  // names. The only alternative is `skip`.
+  testTo: 'owner@example.test',
+};
+
+/** Every message this suite "sends". Nothing leaves the process. */
+const sentMail: Array<{ to: string[]; subject: string; text: string }> = [];
+const mailTransport = {
+  async send(message: { to: string[]; subject: string; text: string }) {
+    sentMail.push({ to: message.to, subject: message.subject, text: message.text });
+    return { messageId: `test-${sentMail.length}` };
+  },
 };
 
 /** Drives the wizard up to (not including) `stopBefore`. */
@@ -94,11 +106,60 @@ async function runWizard(stopBefore?: string): Promise<void> {
     if (step === stopBefore) return;
     const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
     expect(res.status, `${step}: ${JSON.stringify(res.body)}`).toBe(200);
+
+    // The model is the one REQUIRED thing that has to be shown to work, so
+    // completion is refused until it has been. Tests that only want a finished
+    // wizard get that here; the gate itself is asserted separately below.
+    if (step === 'llm') {
+      const verified = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+      expect(verified.status, `verify/llm: ${JSON.stringify(verified.body)}`).toBe(200);
+      expect(verified.body.status, JSON.stringify(verified.body)).toBe('passed');
+    }
   }
 }
 
+/** The wizard now asks providers what models an account may use, and tests what
+ * it configured. Neither may reach the internet from a unit suite, so both
+ * seams are stubbed here — the same way every other subsystem's are.
+ *
+ * The model list deliberately contains exactly the identifiers these tests
+ * submit. A test that stores `gpt-4o-mini` is asserting the step's behaviour,
+ * not OpenAI's catalogue. */
+const STUB_MODELS = ['gpt-4o-mini', 'claude', 'llama3'];
+
+const llmFetch: typeof fetch = async (url, init) => {
+  const target = String(url);
+  if (target.endsWith('/models')) {
+    return new Response(JSON.stringify({ data: STUB_MODELS.map((id) => ({ id })) }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  // A chat completion, for the verify step.
+  void init;
+  return new Response(JSON.stringify({
+    choices: [{ message: { content: 'ready' } }],
+    usage: { prompt_tokens: 6, completion_tokens: 1 },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+};
+
+/** Every hostname resolves to one public address, so the SSRF layer permits the
+ * request and the stub above answers it. */
+const llmResolve = async () => ['93.184.216.34'];
+
+/** Google's and Microsoft's token endpoints.
+ *
+ * `invalid_grant` is the PASSING answer: the client credential was accepted and
+ * the deliberately-bogus authorization code was not. See verifyOAuthClient. */
+const connectorFetch: typeof fetch = async () =>
+  new Response(JSON.stringify({ error: 'invalid_grant' }), {
+    status: 400, headers: { 'Content-Type': 'application/json' },
+  });
+
 async function startServer(masterKey: { path: string } | false = { path: keyPath }): Promise<void> {
-  const app = createApp(db, { cookieSecure: false, appUrl: 'http://localhost', masterKeyCheck: masterKey });
+  const app = createApp(db, {
+    cookieSecure: false, appUrl: 'http://localhost', masterKeyCheck: masterKey,
+    llmFetch, llmResolve, mailTransport, connectorFetch,
+  });
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
@@ -454,13 +515,30 @@ describe('secrets', () => {
     expect(review.body.summary.smtp.find((p: any) => p.kind === 'system').passwordSet).toBe(true);
   });
 
-  it('are honest that nothing has been activated yet', async () => {
+  it('says what was tested and what was not, and never both about one thing', async () => {
+    // This replaces an assertion on two status strings that were the defect:
+    // `llm.status` read "configured — activated when model support ships" and
+    // the connector line read "accounts are connected once connector support
+    // ships", long after both had shipped. Neither reflected anything that had
+    // been checked.
     await runWizard();
-    const { summary } = (await call('/api/setup/review')).body;
-    expect(summary.llm.status).toMatch(/configured/);
-    expect(summary.smtp[0].status).toMatch(/no message has been sent/);
-    expect(summary.deployment.certificateVerified).toBe(false);
-    expect(summary.reminders.join(' ')).toMatch(/master key/i);
+    const body = (await call('/api/setup/review')).body;
+
+    const byKey = new Map<string, any>(body.items.map((i: any) => [i.key, i]));
+    // Verified during the wizard, by a real request.
+    expect(byKey.get('llm').status).toBe('configured_and_tested');
+    // Configured AND sent to, because the SMTP step now sends.
+    expect(byKey.get('smtp').status).toBe('configured_and_tested');
+    // Skipped by runWizard, and named as skipped rather than as unfinished.
+    expect(byKey.get('connector_google').status).toBe('skipped');
+
+    // The headline is computed from those items, so it cannot disagree with
+    // them the way a hardcoded reassurance could.
+    expect(body.canComplete).toBe(true);
+    expect(body.headline).toMatch(/skipped/);
+
+    expect(body.summary.deployment.certificateVerified).toBe(false);
+    expect(body.summary.reminders.join(' ')).toMatch(/master key/i);
   });
 });
 
@@ -510,12 +588,35 @@ describe('external LLM acknowledgment', () => {
     }
   });
 
-  it('offers no subscription or session-reuse path', async () => {
-    const source = await import('node:fs').then((fs) =>
-      fs.readFileSync(new URL('../src/setup/setupRoutes.ts', import.meta.url), 'utf8'),
-    );
-    for (const forbidden of ['subscription', 'claude code', 'codex', 'session_key', 'sessionKey']) {
-      expect(source.toLowerCase(), forbidden).not.toContain(forbidden);
+  it('reuses nobody’s session and reads nobody’s credential store', async () => {
+    // This replaces a Phase 4 assertion that the wizard mentioned
+    // "subscription" nowhere at all. That was the right test when no compliant
+    // subscription path existed; Phase 13.3 built one — the operator's own
+    // first-party Codex CLI, run as a subprocess under their own login — and
+    // LB2 requires the wizard to offer it. So the blanket ban is gone.
+    //
+    // What has NOT changed, and is what the old test was really protecting, is
+    // that Josi never helps itself to a credential somebody else stored. That
+    // is asserted here directly, over the whole setup surface, rather than by
+    // banning a word.
+    const fs = await import('node:fs');
+    const sources = ['setupRoutes.ts', 'verifySteps.ts', 'steps.ts', 'hostChecks.ts']
+      .map((f) => fs.readFileSync(new URL(`../src/setup/${f}`, import.meta.url), 'utf8'))
+      .join('\n');
+
+    for (const forbidden of [
+      'auth.json',        // the Codex CLI's own credential file
+      '.codex/',
+      'session_key',
+      'sessionKey',
+      'keychain',
+      'security find-generic-password',
+      'cookies.sqlite',
+      'Cookies',
+      'Login Data',
+      'localStorage',
+    ]) {
+      expect(sources, `setup must never read ${forbidden}`).not.toContain(forbidden);
     }
   });
 });
@@ -562,6 +663,7 @@ describe('the two SMTP profiles', () => {
           username: 'josi@example.test', password: 'a-different-password',
           fromName: 'Josi', fromAddress: 'josi@example.test',
         },
+        testTo: 'owner@example.test',
       },
     });
     expect(res.status).toBe(200);
@@ -574,35 +676,107 @@ describe('the two SMTP profiles', () => {
     expect(comms.password_enc).not.toBe(system.password_enc);
   });
 
-  it('sends nothing during setup', async () => {
+  it('sends exactly one test message, to the address the administrator named', async () => {
+    // The inverse of what this test used to assert. It checked that setup sent
+    // nothing — which was true, and was the defect: mail was reported as
+    // configured without anybody having established that it worked.
+    sentMail.length = 0;
     await runWizard();
-    const rows = await db.query<{ verified_at: string | null }>(`select verified_at from smtp_profiles`);
-    expect(rows.every((r) => r.verified_at === null)).toBe(true);
+
+    expect(sentMail).toHaveLength(1);
+    expect(sentMail[0].to).toEqual(['owner@example.test']);
+    expect(sentMail[0].subject).toBe('Josi test message');
+    // Nothing about the installation travels in it.
+    expect(sentMail[0].text).not.toMatch(/password|secret|key|token/i);
+
+    const verification = await db.query<{ status: string; target: string }>(
+      `select status, target from setup_verifications where item = 'smtp'`,
+    );
+    expect(verification[0].status).toBe('passed');
+    expect(verification[0].target).toBe('owner@example.test');
+  });
+
+  it('refuses to store mail configuration without sending or skipping', async () => {
+    await runWizard('smtp');
+    const { testTo, ...withoutAddress } = SMTP_BODY;
+    void testTo;
+    const res = await call('/api/setup/steps/smtp', { method: 'POST', body: withoutAddress });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/without sending one/i);
+    expect(await db.query(`select * from smtp_profiles`)).toHaveLength(0);
+  });
+
+  it('keeps the credentials when the send fails, and records the failure', async () => {
+    // Failing to deliver is not a reason to make somebody retype an SMTP
+    // password. Mail is optional, so the failure does not block completion —
+    // it is recorded, and the review screen shows it as failed rather than
+    // silently as skipped.
+    await runWizard('smtp');
+    const failing = {
+      async send() { throw Object.assign(new Error('nope'), { category: 'auth' }); },
+    };
+    await stopServer();
+    const app = createApp(db, {
+      cookieSecure: false, appUrl: 'http://localhost', masterKeyCheck: { path: keyPath },
+      llmFetch, llmResolve, connectorFetch, mailTransport: failing,
+    });
+    await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const res = await call('/api/setup/steps/smtp', { method: 'POST', body: SMTP_BODY });
+    expect(res.status).toBe(200);
+    expect(res.body.verification.status).toBe('failed');
+    expect(res.body.verification.category).toBe('auth');
+    expect(await db.query(`select * from smtp_profiles`)).toHaveLength(2);
+
+    const review = (await call('/api/setup/review')).body;
+    const smtp = review.items.find((i: any) => i.key === 'smtp');
+    expect(smtp.status).toBe('configured_but_failed');
+    // Optional, so it does not stop the installation being finished.
+    expect(smtp.blocking).toBe(false);
   });
 });
 
 // ------------------------------------------------------------------- 12
 describe('connectors are optional', () => {
+  // These previously asserted against `connector_configs`, which is the table
+  // the wizard wrote to and NOTHING ELSE IN THE PRODUCT EVER READ. The
+  // connector system has used `oauth_clients` since Phase 7, so an operator who
+  // registered their applications here was told they were configured and then
+  // found the Connect button reporting that none was. The tests passed the
+  // whole time because they checked the same wrong table the wizard wrote.
+  //
+  // They now assert against the live table. See migration 0018.
+
   it('writes nothing when skipped', async () => {
     await runWizard();
-    expect(await db.query(`select * from connector_configs`)).toHaveLength(0);
+    expect(await db.query(`select * from oauth_clients`)).toHaveLength(0);
+    // And the decision is recorded, so the review screen can distinguish
+    // "skipped" from "not reached".
+    const rows = await db.query<{ item: string; status: string }>(
+      `select item, status from setup_verifications where item like 'connector_%'`,
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.status === 'skipped')).toBe(true);
   });
 
-  it('stores an operator-supplied client secret encrypted when provided', async () => {
+  it('stores an operator-supplied client secret encrypted, where the product reads it', async () => {
     await runWizard('connectors');
     const res = await call('/api/setup/steps/connectors', {
       method: 'POST',
       body: { google: { clientId: 'operator-own-client-id', clientSecret: 'operator-own-secret-value' } },
     });
     expect(res.status).toBe(200);
-    const rows = await db.query<{ provider: string; client_secret_enc: string; self_serve: boolean }>(
-      `select provider, client_secret_enc, self_serve from connector_configs`,
+    const rows = await db.query<{ provider: string; client_secret_enc: string; redirect_uri: string }>(
+      `select provider, client_secret_enc, redirect_uri from oauth_clients`,
     );
     expect(rows).toHaveLength(1);
     expect(looksSealed(rows[0].client_secret_enc)).toBe(true);
     expect(rows[0].client_secret_enc).not.toContain('operator-own-secret-value');
-    // Self-serve stays off until the operator registers the redirect URI.
-    expect(rows[0].self_serve).toBe(false);
+    // Generated from the domain the wizard was given, never accepted from the
+    // client: the URI the operator registers and the URI the server honours
+    // have to be the same string.
+    expect(rows[0].redirect_uri).toBe('https://josi.example.test/api/connections/google/callback');
   });
 
   it('refuses a half-supplied credential rather than storing a broken one', async () => {
@@ -611,7 +785,31 @@ describe('connectors are optional', () => {
       method: 'POST', body: { google: { clientId: 'only-an-id' } },
     });
     expect(res.status).toBe(400);
-    expect(await db.query(`select * from connector_configs`)).toHaveLength(0);
+    expect(await db.query(`select * from oauth_clients`)).toHaveLength(0);
+  });
+
+  it('refuses to invent a callback a provider would never accept', async () => {
+    // LB5.5. On a LAN-only installation there is no public HTTPS address, so
+    // there is no redirect URI to register. Saying so beats handing the
+    // operator `https://192.168.1.50/...` and letting Google reject it.
+    await runWizard('domain');
+    await call('/api/setup/steps/domain', {
+      method: 'POST', body: { domain: '192.168.1.50', tlsMode: 'external_proxy' },
+    });
+    await call('/api/setup/steps/llm', {
+      method: 'POST',
+      body: { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-llm-key-DO-NOT-USE-0009', externalAcknowledged: true },
+    });
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    await call('/api/setup/steps/smtp', { method: 'POST', body: { skip: true } });
+
+    const res = await call('/api/setup/steps/connectors', {
+      method: 'POST',
+      body: { google: { clientId: 'id', clientSecret: 'secret' } },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/real domain name/i);
+    expect(await db.query(`select * from oauth_clients`)).toHaveLength(0);
   });
 });
 
@@ -656,13 +854,45 @@ describe('telemetry is off unless affirmatively enabled', () => {
     ).rejects.toThrow();
   });
 
-  it('transmits nothing during setup', async () => {
-    // Phase 3 has no telemetry client at all; asserting the absence of a
-    // transmitter is stronger than asserting it stayed quiet.
-    const source = await import('node:fs').then((fs) =>
-      fs.readFileSync(new URL('../src/setup/setupRoutes.ts', import.meta.url), 'utf8'),
-    );
-    expect(source).not.toMatch(/fetch\(|https?:\/\/(?!localhost)/);
+  it('transmits no telemetry during setup, whatever else it contacts', async () => {
+    // This used to assert that setupRoutes.ts contained no `fetch(` and no
+    // external URL at all. That was a fair proxy when the wizard contacted
+    // nothing — and it stopped being one when LB4 made the wizard test what it
+    // configures, because now it deliberately calls model providers, mail
+    // servers and OAuth token endpoints.
+    //
+    // So the assertion is narrowed to what it was actually protecting: no
+    // telemetry leaves during setup. The endpoints the wizard MAY reach are
+    // enumerated, and anything else is a failure.
+    const fs = await import('node:fs');
+    const sources = ['setupRoutes.ts', 'verifySteps.ts', 'steps.ts', 'hostChecks.ts']
+      .map((f) => fs.readFileSync(new URL(`../src/setup/${f}`, import.meta.url), 'utf8'))
+      .join('\n');
+
+    // No telemetry client, no analytics, no phone-home of any shape.
+    for (const forbidden of [/telemetry.*(post|send|fetch)/i, /analytics/i, /josi\.(com|io|dev)/i]) {
+      expect(sources, String(forbidden)).not.toMatch(forbidden);
+    }
+
+    // Every absolute URL the setup surface names, checked against a list.
+    // Comments are stripped first: they discuss endpoints in order to explain
+    // why the code does not call them, and an example of what NOT to build is
+    // not a call.
+    const code = sources
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//'))
+      .join('\n');
+    const urls = [...code.matchAll(/https?:\/\/[a-z0-9.-]+/gi)].map((m) => m[0].toLowerCase());
+    const allowed = ['https://api.openai.com', 'https://api.x.ai', 'https://api.anthropic.com'];
+    for (const url of urls) {
+      expect(allowed.some((a) => url.startsWith(a)), `setup names an unexpected endpoint: ${url}`).toBe(true);
+    }
+
+    // And the telemetry row itself stays off through a whole wizard run.
+    await runWizard();
+    const rows = await db.query<{ enabled: boolean }>(`select enabled from telemetry_state where id = true`);
+    expect(rows[0].enabled).toBe(false);
   });
 });
 

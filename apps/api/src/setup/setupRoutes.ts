@@ -16,18 +16,42 @@
 import { isIP } from 'node:net';
 import { Router } from 'express';
 import {
-  appendEvent, asSecret, getInstallId, getSetupState, loadMasterKey, seal,
-  type Db, type LoadOptions, type MasterKey,
+  appendEvent, asSecret, getInstallId, getSetupState, getVerifications, loadMasterKey,
+  recordVerification, seal, summarizeReview,
+  type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
+import { discoverModels } from '@josi-ce/llm';
+import { saveClient } from '@josi-ce/connectors';
 import { UserError, createUser } from '@josi-ce/auth';
 import { asyncRoute, param } from '../http/async.js';
 import { blockingFailures, runHostChecks } from './hostChecks.js';
 import { STEP_DESCRIPTORS, SETUP_STEPS, canSubmit, nextStep, type SetupStep } from './steps.js';
+import { assertModelIsOffered, verifyLlm, verifyOAuthClient, verifySmtp } from './verifySteps.js';
 
 export interface SetupRoutesCtx {
   db: Db;
   masterKey?: LoadOptions | false;
+  /** Model-provider HTTP, injected by the suites so no test reaches a real
+   * provider. Unset in production, where the global fetch is used. */
+  llmFetch?: typeof fetch;
+  /** DNS for the SSRF layer that guards model-provider requests. */
+  llmResolve?: (hostname: string) => Promise<string[]>;
+  /** Google/Microsoft HTTP. Separate from `llmFetch` because a suite routinely
+   * stubs one and not the other, and a single seam makes that impossible. */
+  connectorFetch?: typeof fetch;
+  /** SMTP. The runtime harness supplies a real server on the project network
+   * rather than a stub, which is how Phase 8 found three defects the unit
+   * suite could not. */
+  mailTransport?: Parameters<typeof verifySmtp>[0]['transport'];
 }
+
+/** Everything setup is allowed to claim it checked.
+ *
+ * A step and a verification are not the same thing: `domain` is a step with
+ * nothing to contact, `llm` is a step whose whole point is that something
+ * answered. Only the latter appear here. */
+export const VERIFIABLE_ITEMS = ['llm', 'smtp', 'connector_google', 'connector_microsoft'] as const;
+export type VerifiableItem = (typeof VERIFIABLE_ITEMS)[number];
 
 /** Loads the master key, or refuses the request.
  *
@@ -116,8 +140,9 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         });
       }
 
+      let result: StepResult | void;
       try {
-        await applyStep(ctx, step as SetupStep, (req.body ?? {}) as Record<string, unknown>);
+        result = await applyStep(ctx, step as SetupStep, (req.body ?? {}) as Record<string, unknown>);
       } catch (err) {
         if (err instanceof SetupError) {
           return res.status(err.status).json({ error: err.message });
@@ -140,7 +165,86 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         ok: true,
         completedSteps: after.completed_steps ?? [],
         nextStep: nextStep(after.completed_steps ?? []),
+        // Present for steps that contacted something. A step can succeed — the
+        // configuration was stored — while what it configured did not work, and
+        // the client has to be able to tell those apart.
+        ...(result && 'verification' in result ? { verification: result.verification } : {}),
       });
+    }),
+  );
+
+  /** The models this credential may actually use.
+   *
+   * Asked of the provider rather than served from a list in this repository.
+   * The list that used to be shipped offered identifiers that no account had
+   * been granted and some that did not exist. */
+  r.post(
+    '/models',
+    asyncRoute(async (req, res) => {
+      const state = await getSetupState(db);
+      if (state.completed) return res.status(404).json({ error: 'not found' });
+
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const provider = str(body.provider, 32);
+      if (!['openai', 'anthropic', 'xai', 'openai_compatible', 'openai_subscription'].includes(provider)) {
+        return res.status(400).json({ error: 'choose a model provider' });
+      }
+
+      const apiKey = asSecret(body.apiKey);
+      const result = await discoverModels({
+        provider: provider as never,
+        // Discovery happens BEFORE the step is submitted, so the key comes from
+        // the request rather than from storage. It is never written here and
+        // never echoed back — only the model list is returned.
+        apiKey: apiKey.isEmpty ? null : apiKey.reveal(),
+        baseUrl: str(body.baseUrl, 500) || null,
+        fetchImpl: ctx.llmFetch,
+        resolve: ctx.llmResolve,
+      });
+
+      return res.json({
+        ok: result.ok,
+        unsupported: !!result.unsupported,
+        models: result.models,
+        category: result.category ?? null,
+        message: result.message ?? null,
+        providerCode: result.providerCode ?? null,
+      });
+    }),
+  );
+
+  /** Test one configured thing, for real, and record what happened.
+   *
+   * Separate from the step that saved it so it can be re-run without
+   * re-submitting credentials — LB4.5's rerun control — and so a failure is a
+   * recorded outcome rather than a step that refused to complete. */
+  r.post(
+    '/verify/:item',
+    asyncRoute(async (req, res) => {
+      const state = await getSetupState(db);
+      if (state.completed) return res.status(404).json({ error: 'not found' });
+
+      const item = param(req, 'item');
+      if (!(VERIFIABLE_ITEMS as readonly string[]).includes(item)) {
+        return res.status(404).json({ error: 'there is nothing by that name to test' });
+      }
+
+      let outcome;
+      try {
+        outcome = await runVerification(ctx, item as VerifiableItem, (req.body ?? {}) as Record<string, unknown>);
+      } catch (err) {
+        if (err instanceof SetupError) return res.status(err.status).json({ error: err.message });
+        throw err;
+      }
+
+      await recordVerification(db, {
+        item,
+        status: outcome.status,
+        category: outcome.category ?? null,
+        detail: outcome.detail,
+        target: outcome.target ?? null,
+      });
+      return res.json(outcome);
     }),
   );
 
@@ -149,7 +253,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
    * encryption. */
   r.get(
     '/review',
-    asyncRoute(async (_req, res) => res.json({ summary: await buildReview(db) })),
+    asyncRoute(async (_req, res) => res.json(await buildReview(ctx))),
   );
 
   /** The point of no return.
@@ -182,6 +286,20 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         // Should be impossible — the owner step precedes this — but completing
         // without an administrator would lock the installation permanently.
         return res.status(409).json({ error: 'setup cannot finish without an administrator account' });
+      }
+
+      // LB4.4 / LB6.5. A required thing that failed, or that was never tested,
+      // stops this here. Checked server-side and checked again at the moment of
+      // completion rather than trusted from the review screen, because the
+      // review screen is a client.
+      const review = await buildReview(ctx);
+      if (!review.canComplete) {
+        return res.status(409).json({
+          error: 'something that has to work does not work yet',
+          blocking: review.blocking.map((b) => ({
+            key: b.key, label: b.label, status: b.status, detail: b.verification?.detail ?? null,
+          })),
+        });
       }
 
       const installId = await getInstallId(db);
@@ -235,11 +353,20 @@ export async function sealSetupOnce(
 
 // ---------------------------------------------------------------- step logic
 
+/** A step's own result.
+ *
+ * Steps that contact something return what happened, so the client can show it
+ * immediately rather than making a second request to find out whether the thing
+ * it just configured works. */
+interface StepResult {
+  verification?: unknown;
+}
+
 async function applyStep(
   ctx: SetupRoutesCtx,
   step: SetupStep,
   body: Record<string, unknown>,
-): Promise<void> {
+): Promise<StepResult | void> {
   const { db } = ctx;
 
   switch (step) {
@@ -355,6 +482,23 @@ async function applyStep(
         }
       }
 
+      // Before anything is stored: is this model even on offer to this account?
+      //
+      // It used to be free text, and the web app offered a hardcoded list of
+      // identifiers nobody had checked — so an operator could store
+      // `gpt-5.6-luna`, be told they were configured, and discover at the first
+      // real request that no such model had ever existed. Discovery answers
+      // that question with the credential they just supplied.
+      const offered = await assertModelIsOffered({
+        provider,
+        model,
+        apiKey: apiKey.isEmpty ? null : apiKey.reveal(),
+        baseUrl: provider === 'openai_compatible' ? baseUrl : null,
+        fetchImpl: ctx.llmFetch,
+        resolve: ctx.llmResolve,
+      });
+      if (!offered.ok) throw new SetupError(400, offered.detail);
+
       // Sealed before it goes anywhere near the database, and only if a key is
       // available. No key means the step fails and nothing is written.
       const key = apiKey.isEmpty ? null : requireMasterKey(ctx);
@@ -386,7 +530,18 @@ async function applyStep(
       // A local or single-user installation can become useful before it has a
       // mail relay. Skipping stores no placeholder profiles; the admin can add
       // them later, and features that require mail remain honestly unavailable.
-      if (bool(body.skip)) return;
+      //
+      // The skip is RECORDED. An unrecorded skip is indistinguishable from a
+      // step nobody reached, and the review screen has to tell those apart:
+      // one is a decision, the other is unfinished work.
+      if (bool(body.skip)) {
+        await recordVerification(db, {
+          item: 'smtp',
+          status: 'skipped',
+          detail: 'Skipped during setup. Josi cannot send invitations, password resets or mail until this is configured.',
+        });
+        return;
+      }
 
       const system = (body.system ?? {}) as Record<string, unknown>;
       const comms = (body.communications ?? {}) as Record<string, unknown>;
@@ -398,6 +553,21 @@ async function applyStep(
       const sysPassword = asSecret(system.password);
       const sysFromName = str(system.fromName, 120);
       const sysFromAddress = str(system.fromAddress, 320);
+
+      // LB4.2. Configuring mail means proving mail can be sent, to an address
+      // the administrator names so the result is checkable by going and
+      // looking. The only alternative is `skip`, handled above.
+      //
+      // Validated here, with the other field checks and BEFORE anything is
+      // written: a refusal has to leave the database exactly as it found it.
+      const testTo = str(body.testTo, 320);
+      if (!testTo) {
+        throw new SetupError(
+          400,
+          'Enter an address to send a test message to, or choose to skip email for now. '
+          + 'Josi does not report mail as working without sending one.',
+        );
+      }
 
       if (!sysHost) throw new SetupError(400, 'a mail server is required for system mail');
       if (!Number.isInteger(sysPort) || sysPort < 1 || sysPort > 65535) {
@@ -419,6 +589,11 @@ async function applyStep(
         [sysHost, sysPort, sysSecurity, sysUser || null, sysPasswordEnc, sysFromName || null, sysFromAddress],
       );
 
+      // The credentials are saved first and stay saved even when the send
+      // fails, so a retry does not mean typing an SMTP password again. Mail is
+      // optional, so a failure does not block completion — it is recorded, and
+      // the review screen shows it as "Configured but failed" rather than
+      // quietly as "Skipped".
       const copy = bool(comms.copyFromSystem);
       const commsFromName = str(comms.fromName, 120);
       const commsFromAddress = str(comms.fromAddress, 320);
@@ -460,19 +635,59 @@ async function applyStep(
            commsFromName || null, commsFromAddress],
         );
       }
-      // No message is sent. Delivery — and therefore any claim that these
-      // credentials work — belongs to Phase 8.
-      return;
+      // The message goes out now, with the credentials that were just stored.
+      const outcome = await verifySmtp({
+        db, masterKey: requireMasterKey(ctx), to: testTo, transport: ctx.mailTransport,
+      });
+      await recordVerification(db, {
+        item: 'smtp',
+        status: outcome.status,
+        category: outcome.category ?? null,
+        detail: outcome.detail,
+        target: outcome.target ?? null,
+      });
+      return { verification: outcome };
     }
 
     // ------------------------------------------------------------ connectors
     case 'connectors': {
-      // Skipping writes nothing at all: no row, no empty credential, no
-      // half-configured provider for a later phase to trip over.
-      if (bool(body.skip)) return;
+      // Skipping writes no configuration at all: no row, no empty credential,
+      // no half-configured provider for a later phase to trip over. It does
+      // record the decision, so the review screen can say "skipped" rather than
+      // leaving two items looking unfinished.
+      if (bool(body.skip)) {
+        for (const item of ['connector_google', 'connector_microsoft'] as const) {
+          await recordVerification(db, {
+            item,
+            status: 'skipped',
+            detail: 'Skipped during setup. Nobody can connect an account for this provider until an application is registered.',
+          });
+        }
+        return;
+      }
+
+      // LB5.4/LB5.5. The callback is DERIVED from the address this
+      // installation is actually served on, never accepted from the client.
+      // A redirect URI the operator typed and a redirect URI the server will
+      // honour have to be the same string, and the only way to guarantee that
+      // is to generate it.
+      const callbackBase = await publicHttpsBase(db);
+      if (!callbackBase) {
+        throw new SetupError(
+          400,
+          'Google and Microsoft only accept an HTTPS redirect on a real domain name, so an '
+          + 'application cannot be registered from this address. Skip this step for now; set a '
+          + 'domain later and register the applications from Settings. Everything else about this '
+          + 'installation works without it.',
+        );
+      }
 
       const providers = ['google', 'microsoft'] as const;
-      let configured = 0;
+      const touched = new Set<string>();
+      const [owner] = await db.query<{ id: string }>(
+        `select id from users where role = 'super_admin' limit 1`,
+      );
+
       for (const provider of providers) {
         const entry = (body[provider] ?? null) as Record<string, unknown> | null;
         if (!entry) continue;
@@ -482,28 +697,59 @@ async function applyStep(
         if (!clientId || clientSecret.isEmpty) {
           throw new SetupError(400, `${provider} needs both a client ID and a client secret`);
         }
-        const key = requireMasterKey(ctx);
-        await db.query(
-          `insert into connector_configs (provider, client_id, client_secret_enc, ms_tenant, redirect_uri, self_serve)
-           values ($1, $2, $3, $4, $5, false)
-           on conflict (provider) do update set
-             client_id = excluded.client_id, client_secret_enc = excluded.client_secret_enc,
-             ms_tenant = excluded.ms_tenant, redirect_uri = excluded.redirect_uri`,
-          [
-            provider,
-            clientId,
-            seal(key, { clientSecret }),
-            provider === 'microsoft' ? (str(entry.tenant, 64) || 'common') : null,
-            str(entry.redirectUri, 500) || null,
-          ],
-        );
-        configured++;
+
+        // `oauth_clients`, which is the table the connector system reads.
+        //
+        // This step previously wrote `connector_configs` — a table created in
+        // migration 0002 and read by nothing that connects an account. Phase 7
+        // introduced `oauth_clients` and every connector route uses it, so an
+        // operator who registered their applications during setup was told they
+        // were configured and then found the Connect button reporting no
+        // application at all. Setup wrote to one table and the product read
+        // from another.
+        await saveClient(db, requireMasterKey(ctx), {
+          provider,
+          clientId,
+          clientSecret: clientSecret.reveal(),
+          redirectUri: `${callbackBase}/api/connections/${provider}/callback`,
+          actorUserId: owner.id,
+        });
+        touched.add(provider);
       }
-      if (configured === 0 && !bool(body.skip)) {
+      if (touched.size === 0) {
         throw new SetupError(400, 'add a provider, or choose to skip this step');
       }
-      // No OAuth flow is started and no account is connected. That is Phase 7.
-      return;
+
+      // LB4.3. Each application just registered is handshaked against the
+      // provider's real token endpoint, which is the only thing that can tell
+      // a correct client secret from a plausible one. See verifyOAuthClient for
+      // why `invalid_grant` is the passing answer.
+      const outcomes: Record<string, unknown> = {};
+      for (const provider of providers) {
+        const item = provider === 'google' ? 'connector_google' : 'connector_microsoft';
+        if (!touched.has(provider)) {
+          await recordVerification(db, {
+            item,
+            status: 'skipped',
+            detail: 'No application was registered for this provider.',
+          });
+          continue;
+        }
+        const outcome = await verifyOAuthClient({
+          db, masterKey: requireMasterKey(ctx), provider, fetchImpl: ctx.connectorFetch,
+        });
+        await recordVerification(db, {
+          item,
+          status: outcome.status,
+          category: outcome.category ?? null,
+          detail: outcome.detail,
+          target: outcome.target ?? null,
+        });
+        outcomes[provider] = outcome;
+      }
+      // No account is connected here: that is each user's own consent, and it
+      // belongs to them rather than to the administrator running setup.
+      return { verification: outcomes };
     }
 
     // -------------------------------------------------------------- security
@@ -559,12 +805,137 @@ async function applyStep(
 
 // ------------------------------------------------------------------- review
 
+/** The public HTTPS origin this installation is reachable at, or null.
+ *
+ * Null is the honest answer for a LAN-only installation, and callers are
+ * expected to say so rather than to synthesise `https://192.168.1.50` — which
+ * no provider will accept as a redirect URI and which would send an operator
+ * round a loop of provider error pages looking for their own mistake. */
+export async function publicHttpsBase(db: Db): Promise<string | null> {
+  const [deployment] = await db.query<{ domain: string | null }>(
+    `select domain from deployment_config where id = true`,
+  );
+  const domain = deployment?.domain?.trim().toLowerCase();
+  if (!domain) return null;
+  // A bare IP address cannot hold a publicly trusted certificate, and
+  // `localhost` is not reachable from a provider's servers.
+  if (domain === 'localhost' || isIP(domain) !== 0) return null;
+  return `https://${domain}`;
+}
+
+// ---------------------------------------------------------- running the tests
+
+async function runVerification(
+  ctx: SetupRoutesCtx,
+  item: VerifiableItem,
+  body: Record<string, unknown>,
+): Promise<{ status: 'passed' | 'failed'; category?: string; detail: string; target?: string }> {
+  const { db } = ctx;
+
+  if (item === 'llm') {
+    let masterKey: MasterKey | null = null;
+    try {
+      masterKey = requireMasterKey(ctx);
+    } catch {
+      // A self-hosted endpoint with no key needs none; a hosted one has a
+      // sealed key that cannot be opened without it, and buildProvider says so.
+      masterKey = null;
+    }
+    return verifyLlm({ db, masterKey, fetchImpl: ctx.llmFetch });
+  }
+
+  if (item === 'smtp') {
+    return verifySmtp({
+      db,
+      masterKey: requireMasterKey(ctx),
+      to: str(body.to, 320),
+      transport: ctx.mailTransport,
+    });
+  }
+
+  const provider = item === 'connector_google' ? 'google' : 'microsoft';
+  return verifyOAuthClient({
+    db, masterKey: requireMasterKey(ctx), provider, fetchImpl: ctx.connectorFetch,
+  });
+}
+
+// ------------------------------------------------------------------- review
+
+/** What the review screen is allowed to say about each thing.
+ *
+ * The old version derived every status from "does a row exist", so a credential
+ * that had never been used and one that worked read identically — and the
+ * connector line said "accounts are connected once connector support ships"
+ * long after connector support had shipped.
+ *
+ * Status now comes from `summarizeReview`, which can only say "tested" when a
+ * verification passed. */
+async function reviewItems(ctx: SetupRoutesCtx): Promise<ReviewItemInput[]> {
+  const { db } = ctx;
+  const verifications = await getVerifications(db);
+
+  const [llm] = await db.query<{ provider: string; model: string }>(
+    `select provider, model from llm_providers where role = 'primary'`,
+  );
+  const [systemMail] = await db.query<{ host: string | null }>(
+    `select host from smtp_profiles where kind = 'system'`,
+  );
+  const clients = await db.query<{ provider: string }>(`select provider from oauth_clients`);
+  const configuredClients = new Set(clients.map((c) => c.provider));
+
+  // A connector needs a public HTTPS callback. On a LAN-only installation the
+  // provider will not accept one, so the item is UNAVAILABLE with the reason
+  // rather than REQUIRED — see LB5.5. Reporting it as outstanding work would
+  // make setup impossible to finish on a perfectly valid installation.
+  const lanReason = (await publicHttpsBase(db))
+    ? null
+    : 'Google and Microsoft require a public HTTPS address. This installation is reachable only on your network, so no application can be registered yet. Setting a domain later makes this available without reinstalling anything.';
+
+  return [
+    {
+      key: 'llm',
+      label: 'Language model',
+      required: true,
+      configured: !!llm,
+      verification: verifications.get('llm') ?? null,
+    },
+    {
+      key: 'smtp',
+      label: 'Email sending',
+      required: false,
+      configured: !!systemMail,
+      verification: verifications.get('smtp') ?? null,
+    },
+    {
+      key: 'connector_google',
+      label: 'Google application',
+      required: false,
+      configured: configuredClients.has('google'),
+      verification: verifications.get('connector_google') ?? null,
+      unavailableReason: lanReason,
+    },
+    {
+      key: 'connector_microsoft',
+      label: 'Microsoft application',
+      required: false,
+      configured: configuredClients.has('microsoft'),
+      verification: verifications.get('connector_microsoft') ?? null,
+      unavailableReason: lanReason,
+    },
+  ];
+}
+
+async function buildReview(ctx: SetupRoutesCtx) {
+  const summary = summarizeReview(await reviewItems(ctx));
+  return { ...summary, summary: await buildReviewDetail(ctx.db) };
+}
+
 /** Everything captured, with nothing sensitive in it.
  *
  * The rule applied throughout: say THAT a secret is set, never any part of it.
  * No ciphertext either — an operator confirming their choices has no use for it
  * and it is one copy-paste away from a support ticket. */
-async function buildReview(db: Db): Promise<Record<string, unknown>> {
+async function buildReviewDetail(db: Db): Promise<Record<string, unknown>> {
   const [deployment] = await db.query<{ domain: string | null; tls_mode: string; acme_email: string | null; certificate_verified_at: string | null }>(
     `select domain, tls_mode, acme_email, certificate_verified_at from deployment_config where id = true`,
   );
@@ -574,8 +945,12 @@ async function buildReview(db: Db): Promise<Record<string, unknown>> {
   const smtp = await db.query<{ kind: string; copy_from_system: boolean; host: string | null; port: number | null; security: string | null; password_enc: string | null; from_name: string | null; from_address: string | null; verified_at: string | null }>(
     `select kind, copy_from_system, host, port, security, password_enc, from_name, from_address, verified_at from smtp_profiles order by kind`,
   );
-  const connectors = await db.query<{ provider: string; client_id: string; self_serve: boolean }>(
-    `select provider, client_id, self_serve from connector_configs order by provider`,
+  // `oauth_clients`, not `connector_configs` — see migration 0018. Selected
+  // column by column rather than with `*`, so widening the query cannot start
+  // serving the sealed secret; that is the same mistake Phase 4's M18 and
+  // Phase 7's M19 both made.
+  const connectors = await db.query<{ provider: string; client_id: string; redirect_uri: string }>(
+    `select provider, client_id, redirect_uri from oauth_clients order by provider`,
   );
   const [policy] = await db.query<Record<string, unknown>>(`select * from security_policy where id = true`);
   const [telemetry] = await db.query<{ enabled: boolean }>(`select enabled from telemetry_state where id = true`);
@@ -601,7 +976,6 @@ async function buildReview(db: Db): Promise<Record<string, unknown>> {
           baseUrl: llm.base_url,
           apiKeySet: !!llm.api_key_enc,
           externalAcknowledged: llm.external_acknowledged,
-          status: llm.activated_at ? 'active' : 'configured — activated when model support ships',
         }
       : null,
     smtp: smtp.map((p) => ({
@@ -613,15 +987,16 @@ async function buildReview(db: Db): Promise<Record<string, unknown>> {
       passwordSet: p.copy_from_system ? null : !!p.password_enc,
       fromName: p.from_name,
       fromAddress: p.from_address,
-      status: p.verified_at ? 'verified' : 'configured — no message has been sent yet',
     })),
     connectors: connectors.map((c) => ({
       provider: c.provider,
       // A client ID is not a secret — it appears in the consent URL the user
       // sees — but it is still an identifier, so only its presence is shown.
       clientIdSet: !!c.client_id,
-      selfServe: c.self_serve,
-      status: 'configured — accounts are connected once connector support ships',
+      // Shown in full: an operator has to compare it character for character
+      // against what they registered with the provider, and a mismatch here is
+      // the single most common connector failure.
+      redirectUri: c.redirect_uri,
     })),
     security: policy
       ? {

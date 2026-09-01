@@ -91,6 +91,28 @@ export interface ChatResponse {
   reportedCostUsd?: number;
 }
 
+/** What kind of failure this is.
+ *
+ * The point of the enum is that the answers are genuinely different: an
+ * operator whose key was revoked needs to paste a new one, one who hit a quota
+ * needs to pay someone, and one whose provider is down needs to wait. A single
+ * "the model provider refused the request" tells all three of them nothing.
+ *
+ * `authentication` and `authorization` are separate for the same reason: a 401
+ * means the credential is wrong, a 403 means it is right and this account may
+ * not do this — usually a project or organization that does not have access to
+ * the model. Those have different fixes and different people who can apply them. */
+export type LlmErrorCategory =
+  | 'authentication'
+  | 'authorization'
+  | 'model_unavailable'
+  | 'rate_limit'
+  | 'billing'
+  | 'network'
+  | 'malformed_request'
+  | 'provider_outage'
+  | 'unknown';
+
 export class LlmError extends Error {
   /** The credential is wrong or revoked — reconnecting fixes it, retrying does
    * not. */
@@ -98,10 +120,65 @@ export class LlmError extends Error {
   /** Rate limited or a transient server error. A fallback may be tried. */
   retryable = false;
   status?: number;
+  category: LlmErrorCategory = 'unknown';
+  /** The provider's own short code — `insufficient_quota`, `model_not_found`.
+   *
+   * Codes only. The provider's `message` field is never carried: they routinely
+   * quote the request back, and the request contains the prompt. A code is an
+   * enum member, so it is safe to show and worth showing. */
+  providerCode?: string;
 
-  constructor(message: string, init: Partial<Pick<LlmError, 'needsReconfiguration' | 'retryable' | 'status'>> = {}) {
+  constructor(
+    message: string,
+    init: Partial<Pick<LlmError, 'needsReconfiguration' | 'retryable' | 'status' | 'category' | 'providerCode'>> = {},
+  ) {
     super(message);
     Object.assign(this, init);
+  }
+}
+
+/** HTTP status plus the provider's own code, turned into one category.
+ *
+ * The code is consulted first where it disambiguates something the status
+ * cannot: OpenAI answers 429 for both "you are going too fast" and "you have
+ * run out of credit", and those are not the same problem. */
+export function categorizeFailure(status: number, providerCode?: string): LlmErrorCategory {
+  const code = (providerCode ?? '').toLowerCase();
+  if (code.includes('insufficient_quota') || code.includes('billing') || code.includes('credit')) {
+    return 'billing';
+  }
+  if (code.includes('model_not_found') || code.includes('unknown_model')) return 'model_unavailable';
+  if (status === 401) return 'authentication';
+  if (status === 402) return 'billing';
+  if (status === 403) return 'authorization';
+  if (status === 404) return 'model_unavailable';
+  if (status === 429) return 'rate_limit';
+  if (status === 400 || status === 422) return 'malformed_request';
+  if (status >= 500) return 'provider_outage';
+  return 'unknown';
+}
+
+/** What to tell the operator, and what they can do about it. */
+export function explainCategory(category: LlmErrorCategory): string {
+  switch (category) {
+    case 'authentication':
+      return 'The provider rejected the credential. It is wrong, expired, or has been revoked — a new one is needed.';
+    case 'authorization':
+      return 'The credential is valid but this account may not use this model. Check the organization or project it belongs to, and whether that project has been granted access.';
+    case 'model_unavailable':
+      return 'The provider does not offer this model to this account. It may have been retired, or never been available on this plan.';
+    case 'rate_limit':
+      return 'The provider is rate limiting this installation. Waiting and trying again usually works.';
+    case 'billing':
+      return 'The account has no credit or its billing is not in order. This is fixed with the provider, not here.';
+    case 'network':
+      return 'The provider could not be reached from this server. Check outbound network access and DNS.';
+    case 'malformed_request':
+      return 'The provider rejected the shape of the request. This is a defect in Josi rather than in your configuration — please report it.';
+    case 'provider_outage':
+      return 'The provider had a server error. Nothing is wrong with this installation; try again shortly.';
+    default:
+      return 'The provider refused the request and did not say why in a way Josi could interpret.';
   }
 }
 

@@ -1,0 +1,367 @@
+// LB4 + LB6 over the wire — setup tests what it configures, and cannot finish
+// while something required does not work.
+//
+// The wizard used to say so itself, in its own comments: "No message is sent",
+// "No OAuth flow is started and no account is connected". It then reported
+// every one of those steps as configured, and `/complete` accepted the
+// installation. The only thing that had been established was that the fields
+// parsed.
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { createApp } from '../src/app.js';
+
+const dir = mkdtempSync(join(tmpdir(), 'josi-ce-verify-'));
+const keyPath = join(dir, 'master.key');
+writeFileSync(keyPath, Buffer.alloc(32, 7).toString('base64'));
+
+let server: Server;
+let base: string;
+let db: TestDb;
+let jar = '';
+
+async function call(path: string, opts: { method?: string; body?: unknown } = {}) {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (jar) headers.cookie = jar;
+  const token = /josi_csrf=([^;]+)/.exec(jar)?.[1];
+  if (token) headers['x-josi-csrf'] = decodeURIComponent(token);
+  const method = opts.method ?? 'GET';
+  const res = await fetch(`${base}${path}`, {
+    method,
+    headers,
+    body: method !== 'GET' && opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+// ---------------------------------------------------------------- the stubs
+//
+// Each is a knob the tests turn, so a suite can make the model answer, refuse
+// with a specific category, or fail to be reached at all.
+
+let llmBehaviour: 'ok' | 'unauthorized' | 'quota' | 'empty' | 'unreachable' = 'ok';
+const llmFetch: typeof fetch = async (url) => {
+  if (String(url).endsWith('/models')) {
+    return new Response(JSON.stringify({ data: [{ id: 'gpt-4o-mini' }] }), { status: 200 });
+  }
+  if (llmBehaviour === 'unreachable') throw new Error('ECONNREFUSED');
+  if (llmBehaviour === 'unauthorized') {
+    return new Response(JSON.stringify({ error: { code: 'invalid_api_key' } }), { status: 401 });
+  }
+  if (llmBehaviour === 'quota') {
+    return new Response(JSON.stringify({ error: { code: 'insufficient_quota' } }), { status: 429 });
+  }
+  return new Response(JSON.stringify({
+    choices: [{ message: { content: llmBehaviour === 'empty' ? '' : 'ready' } }],
+    usage: { prompt_tokens: 5, completion_tokens: 1 },
+  }), { status: 200 });
+};
+const llmResolve = async () => ['93.184.216.34'];
+
+let connectorBehaviour: 'ok' | 'bad_client' = 'ok';
+const connectorFetch: typeof fetch = async () =>
+  new Response(
+    JSON.stringify({ error: connectorBehaviour === 'ok' ? 'invalid_grant' : 'invalid_client' }),
+    { status: connectorBehaviour === 'ok' ? 400 : 401 },
+  );
+
+let mailFails = false;
+const sent: Array<{ to: string[] }> = [];
+const mailTransport = {
+  async send(m: { to: string[] }) {
+    if (mailFails) throw Object.assign(new Error('refused'), { category: 'auth' });
+    sent.push({ to: m.to });
+    return { messageId: 'x' };
+  },
+};
+
+const OWNER = { email: 'o@ce.test', username: 'owner', password: 'a-long-enough-password' };
+
+/** Drives the wizard to a named step without going past it. */
+async function wizardTo(stopBefore: string) {
+  const steps: Array<[string, unknown]> = [
+    ['host_checks', {}],
+    ['owner', OWNER],
+    ['domain', { domain: 'josi.example.test', tlsMode: 'bundled_caddy' }],
+    ['llm', { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-key-0001', externalAcknowledged: true }],
+    ['smtp', { skip: true }],
+    ['connectors', { skip: true }],
+    ['security', {}],
+    ['telemetry', {}],
+    ['review', {}],
+  ];
+  for (const [step, body] of steps) {
+    if (step === stopBefore) return;
+    const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
+    expect(res.status, `${step}: ${JSON.stringify(res.body)}`).toBe(200);
+  }
+}
+
+beforeEach(async () => {
+  db = await testDb();
+  llmBehaviour = 'ok';
+  connectorBehaviour = 'ok';
+  mailFails = false;
+  sent.length = 0;
+  jar = 'josi_csrf=test-token';
+  await db.query(`update setup_state set csrf_seed = null where id = true`).catch(() => undefined);
+  const app = createApp(db, {
+    cookieSecure: false, appUrl: 'http://localhost', masterKeyCheck: { path: keyPath },
+    llmFetch, llmResolve, connectorFetch, mailTransport,
+  });
+  await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+});
+
+afterEach(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+describe('LB4.1 — the model step makes a real request', () => {
+  it('passes only when a model actually answers', async () => {
+    await wizardTo('smtp');
+    const res = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('passed');
+    // The model that answered is recorded, so "tested" is checkable.
+    expect(res.body.target).toBe('gpt-4o-mini');
+  });
+
+  it('fails, and says which kind of failure it was', async () => {
+    await wizardTo('smtp');
+    llmBehaviour = 'unauthorized';
+    const res = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect(res.body.status).toBe('failed');
+    expect(res.body.category).toBe('authentication');
+    expect(res.body.detail).toMatch(/rejected the credential/i);
+    // The provider's short code is repeated; its prose never is.
+    expect(res.body.detail).toContain('invalid_api_key');
+  });
+
+  it('distinguishes a spent account from a rate limit', async () => {
+    await wizardTo('smtp');
+    llmBehaviour = 'quota';
+    const res = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect(res.body.category).toBe('billing');
+  });
+
+  it('refuses a model that answers with nothing', async () => {
+    // A 200 is not an answer. A misconfigured proxy returns a well-formed
+    // response with no content, and accepting that means accepting a model
+    // that says nothing to anybody.
+    await wizardTo('smtp');
+    llmBehaviour = 'empty';
+    const res = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect(res.body.status).toBe('failed');
+    expect(res.body.detail).toMatch(/nothing in it/i);
+  });
+
+  it('reports an unreachable provider as a network failure', async () => {
+    await wizardTo('smtp');
+    llmBehaviour = 'unreachable';
+    const res = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect(res.body.category).toBe('network');
+  });
+});
+
+describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
+  it('refuses to finish while the model has never been tested', async () => {
+    await wizardTo('__none__');   // the whole wizard, no verification
+    const res = await call('/api/setup/complete', { method: 'POST', body: {} });
+    expect(res.status).toBe(409);
+    expect(res.body.blocking.map((b: any) => b.key)).toContain('llm');
+    // And setup is still open, not half-closed.
+    expect((await call('/api/setup/state')).body.completed).toBe(false);
+  });
+
+  it('refuses to finish while the model test is failing', async () => {
+    await wizardTo('__none__');
+    llmBehaviour = 'unauthorized';
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    const res = await call('/api/setup/complete', { method: 'POST', body: {} });
+    expect(res.status).toBe(409);
+    expect(res.body.blocking[0].status).toBe('configured_but_failed');
+  });
+
+  it('finishes once it passes — the same installation, one test later', async () => {
+    await wizardTo('__none__');
+    llmBehaviour = 'unauthorized';
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect((await call('/api/setup/complete', { method: 'POST', body: {} })).status).toBe(409);
+
+    // LB4.5's rerun control: the same endpoint, no credentials re-entered.
+    llmBehaviour = 'ok';
+    const retried = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect(retried.body.status).toBe('passed');
+
+    expect((await call('/api/setup/complete', { method: 'POST', body: {} })).status).toBe(200);
+  });
+
+  it('does not let an optional failure block anything', async () => {
+    await wizardTo('smtp');
+    mailFails = true;
+    const smtp = await call('/api/setup/steps/smtp', {
+      method: 'POST',
+      body: {
+        system: {
+          host: 'smtp.example.test', port: 587, security: 'starttls',
+          username: 'u', password: 'p', fromName: 'Josi', fromAddress: 'no@example.test',
+        },
+        communications: { copyFromSystem: true, fromName: 'Josi', fromAddress: 'j@example.test' },
+        testTo: 'admin@example.test',
+      },
+    });
+    expect(smtp.status).toBe(200);
+    expect(smtp.body.verification.status).toBe('failed');
+
+    await call('/api/setup/steps/connectors', { method: 'POST', body: { skip: true } });
+    await call('/api/setup/steps/security', { method: 'POST', body: {} });
+    await call('/api/setup/steps/telemetry', { method: 'POST', body: {} });
+    await call('/api/setup/steps/review', { method: 'POST', body: {} });
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+
+    expect((await call('/api/setup/complete', { method: 'POST', body: {} })).status).toBe(200);
+  });
+});
+
+describe('LB4.3 — the OAuth applications are handshaked', () => {
+  it('accepts a client the provider recognises', async () => {
+    await wizardTo('connectors');
+    const res = await call('/api/setup/steps/connectors', {
+      method: 'POST', body: { google: { clientId: 'id', clientSecret: 'secret' } },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.verification.google.status).toBe('passed');
+    // The check is honest about what it did and did not establish.
+    expect(res.body.verification.google.detail).toMatch(/redirect URI is checked the first time/i);
+  });
+
+  it('fails a client the provider does not recognise, and stores it anyway for a retry', async () => {
+    await wizardTo('connectors');
+    connectorBehaviour = 'bad_client';
+    const res = await call('/api/setup/steps/connectors', {
+      method: 'POST', body: { google: { clientId: 'id', clientSecret: 'wrong' } },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.verification.google.status).toBe('failed');
+    expect(res.body.verification.google.category).toBe('authentication');
+    // Kept, so fixing it does not mean re-entering both values.
+    expect(await db.query(`select provider from oauth_clients`)).toHaveLength(1);
+
+    const review = (await call('/api/setup/review')).body;
+    expect(review.items.find((i: any) => i.key === 'connector_google').status)
+      .toBe('configured_but_failed');
+  });
+
+  it('re-runs on demand without re-submitting the secret', async () => {
+    await wizardTo('connectors');
+    connectorBehaviour = 'bad_client';
+    await call('/api/setup/steps/connectors', {
+      method: 'POST', body: { google: { clientId: 'id', clientSecret: 'secret' } },
+    });
+    connectorBehaviour = 'ok';
+    const res = await call('/api/setup/verify/connector_google', { method: 'POST', body: {} });
+    expect(res.body.status).toBe('passed');
+  });
+});
+
+describe('LB6.3 — the review carries no secret', () => {
+  it('returns no credential, ciphertext or password in any form', async () => {
+    await wizardTo('smtp');
+    mailFails = false;
+    await call('/api/setup/steps/smtp', {
+      method: 'POST',
+      body: {
+        system: {
+          host: 'smtp.example.test', port: 587, security: 'starttls',
+          username: 'u', password: 'the-smtp-password-value',
+          fromName: 'Josi', fromAddress: 'no@example.test',
+        },
+        communications: { copyFromSystem: true, fromName: 'Josi', fromAddress: 'j@example.test' },
+        testTo: 'admin@example.test',
+      },
+    });
+    await call('/api/setup/steps/connectors', {
+      method: 'POST', body: { google: { clientId: 'the-client-id', clientSecret: 'the-client-secret-value' } },
+    });
+
+    const body = JSON.stringify((await call('/api/setup/review')).body);
+    for (const secret of ['fake-key-0001', 'the-smtp-password-value', 'the-client-secret-value']) {
+      expect(body, secret).not.toContain(secret);
+    }
+    // And no sealed blob either — an operator confirming their choices has no
+    // use for ciphertext and it is one paste away from a support ticket.
+    expect(body).not.toMatch(/"v1\./);
+  });
+
+  it('names an item exactly one status, from the fixed set', async () => {
+    await wizardTo('__none__');
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    const body = (await call('/api/setup/review')).body;
+    const allowed = [
+      'configured_and_tested', 'configured_but_failed', 'skipped', 'unavailable', 'required',
+    ];
+    for (const item of body.items) {
+      expect(allowed, `${item.key} -> ${item.status}`).toContain(item.status);
+      expect(item.statusLabel).toBeTruthy();
+    }
+  });
+});
+
+describe('the verify endpoint is not a way around the wizard', () => {
+  it('404s a name that is not something setup configured', async () => {
+    await wizardTo('smtp');
+    for (const item of ['owner', 'security', '../../etc/passwd', 'telemetry']) {
+      const res = await call(`/api/setup/verify/${encodeURIComponent(item)}`, { method: 'POST', body: {} });
+      expect(res.status, item).toBe(404);
+    }
+  });
+
+  it('is gone once setup is finished', async () => {
+    await wizardTo('__none__');
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect((await call('/api/setup/complete', { method: 'POST', body: {} })).status).toBe(200);
+    expect((await call('/api/setup/verify/llm', { method: 'POST', body: {} })).status).toBe(404);
+    expect((await call('/api/setup/models', { method: 'POST', body: { provider: 'openai' } })).status).toBe(404);
+  });
+});
+
+describe('LB3 over the wire — the model list comes from the account', () => {
+  it('serves what the provider returned, and no catalogue of its own', async () => {
+    await wizardTo('llm');
+    const res = await call('/api/setup/models', {
+      method: 'POST', body: { provider: 'openai', apiKey: 'fake-key-0002' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.models.map((m: any) => m.id)).toEqual(['gpt-4o-mini']);
+    for (const invented of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+      expect(JSON.stringify(res.body)).not.toContain(invented);
+    }
+  });
+
+  it('never echoes the key it was given', async () => {
+    await wizardTo('llm');
+    const res = await call('/api/setup/models', {
+      method: 'POST', body: { provider: 'openai', apiKey: 'super-secret-key-value' },
+    });
+    expect(JSON.stringify(res.body)).not.toContain('super-secret-key-value');
+  });
+
+  it('refuses a model the account was not offered', async () => {
+    await wizardTo('llm');
+    const res = await call('/api/setup/steps/llm', {
+      method: 'POST',
+      body: {
+        provider: 'openai', model: 'gpt-5.6-sol',
+        apiKey: 'fake-key-0003', externalAcknowledged: true,
+      },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/does not offer/i);
+    expect(await db.query(`select * from llm_providers`)).toHaveLength(0);
+  });
+});
