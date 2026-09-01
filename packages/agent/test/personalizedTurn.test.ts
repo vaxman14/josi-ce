@@ -119,6 +119,23 @@ describe('two opposite personalities produce observably different turns', () => 
     expect(lastSystem.indexOf('You are Josi')).toBeLessThan(lastSystem.indexOf('Speak only in verse'));
   });
 
+  it('the installation policy narrows the person in a live turn', async () => {
+    await saveProfile(db, {
+      kind: 'agents_admin', userId: null, actorUserId: ids.alice,
+      content: 'proactivity: ask_first\ntool_workflow: confirm_each\n',
+    });
+    await saveProfile(db, {
+      kind: 'agents_user', userId: ids.alice, actorUserId: ids.alice,
+      content: 'proactivity: act_on_routine\n',
+    });
+    await turn(ids.alice, 'hello');
+
+    // What reaches the model is the administrator's value, not the looser one
+    // the person asked for.
+    expect(lastSystem).toContain('proactivity: ask_first');
+    expect(lastSystem).not.toContain('proactivity: act_on_routine');
+  });
+
   it('works with no profile at all', async () => {
     const res = await turn(ids.alice, 'hello');
     expect(res.reply).toContain('SYSTEM<<');
@@ -140,6 +157,12 @@ describe('memory reaches a later turn, and only its owner\'s', () => {
     await addMemory(db, { ownerUserId: ids.alice, content: 'I always sail out of Split in Croatia' });
 
     await turn(ids.alice, 'where should I go sailing?');
+    expect(lastSystem).toContain('Split');
+
+    // A request with several salient terms, none of which the memory contains
+    // in full. Requiring every term — which is what websearch_to_tsquery does
+    // by default — finds nothing here, and a question is not a search query.
+    await turn(ids.alice, 'any sailing recommendations for holidays?');
     expect(lastSystem).toContain('Split');
 
     // An unrelated request does not drag it in.
@@ -270,6 +293,33 @@ describe('what a turn learns', () => {
     expect(res.learned?.suggested).toBe(0);
   });
 
+  // The earlier fixtures matched no pattern at all, so they proved nothing
+  // about the transient check. These would each be kept without it.
+  it('keeps nothing from a transient request that looks like a preference', async () => {
+    for (const sentence of [
+      'I prefer the 3pm slot tomorrow',
+      'I always want the table booked by then',
+      'I usually reply to those, can you draft one now',
+    ]) {
+      const res = await turn(ids.alice, sentence);
+      expect(res.learned?.suggested, sentence).toBe(0);
+    }
+  });
+
+  it('keeps nothing said about somebody else', async () => {
+    // Only first-person self-statements. "They prefer X" is an observation,
+    // and an assistant recording observations about third parties is building
+    // a profile nobody consented to.
+    for (const sentence of [
+      'They prefer bullet points',
+      'The user prefers short answers',
+      'She always works mornings',
+    ]) {
+      const res = await turn(ids.alice, sentence);
+      expect(res.learned?.suggested, sentence).toBe(0);
+    }
+  });
+
   it('never keeps a secret', async () => {
     await setMode(ids.alice, 'automatic');
     const res = await turn(ids.alice, 'I always use the pass' + 'word hunter2spooky for that');
@@ -306,8 +356,12 @@ describe('what a turn learns', () => {
     await setMode(ids.alice, 'automatic');
     await turn(
       ids.alice,
-      'I prefer bullet points. I always work mornings. I usually skip lunch. I never take calls.',
+      'I prefer bullet points. I always work mornings. I usually skip lunch. '
+      + 'I never take calls. I prefer email. I always read in the evening.',
     );
-    expect((await listMemories(db, ids.alice)).length).toBeLessThanOrEqual(2);
+    const kept = await listMemories(db, ids.alice);
+    expect(kept.length).toBeLessThanOrEqual(2);
+    // And it really is the cap doing it: six statements went in.
+    expect(kept.length).toBeGreaterThan(0);
   });
 });

@@ -21,11 +21,25 @@ FILES=(
 
 BACKUP=$(mktemp -d)
 for f in "${FILES[@]}"; do mkdir -p "$BACKUP/$(dirname "$f")"; cp "$f" "$BACKUP/$f"; done
-restore() { for f in "${FILES[@]}"; do cp "$BACKUP/$f" "$f"; done; }
+restore() {
+  for f in "${FILES[@]}"; do cp "$BACKUP/$f" "$f"; done
+  # Rebuild too, so a mutated dist never outlives its source.
+  npx tsc -b >/dev/null 2>&1 || true
+}
 trap 'restore; rm -rf "$BACKUP"; echo; echo "(interrupted — sources restored)"; exit 130' INT TERM
 trap 'restore; rm -rf "$BACKUP"' EXIT
 
-run() { npx vitest run 2>&1 | grep -E "^ +Tests +" | tail -1; }
+# Rebuild before running.
+#
+# A consumer that imports `@josi-ce/persona` resolves to the package's BUILT
+# dist, not its source. Without this, a mutation to persona/src is invisible to
+# every test in another package — which is exactly what happened: seven
+# mutations were measured against stale compiled output and recorded as
+# "survived" when they had never been applied to the code under test.
+run() {
+  npx tsc -b >/dev/null 2>&1
+  npx vitest run 2>&1 | grep -E "^ +Tests +" | tail -1
+}
 
 M_FROM="${M_FROM:-1}"; M_TO="${M_TO:-99}"; N=0
 should_run() { N=$((N+1)); [[ $N -ge $M_FROM && $N -le $M_TO ]]; }

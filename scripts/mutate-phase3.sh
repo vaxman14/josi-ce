@@ -12,7 +12,17 @@ for f in apps/api/src/http/setupGate.ts apps/api/src/setup/setupRoutes.ts apps/a
 done
 restore() { for f in apps/api/src/http/setupGate.ts apps/api/src/setup/setupRoutes.ts apps/api/src/setup/steps.ts packages/db/migrations/0002_setup.sql; do cp "$BACKUP/$f" "$f"; done; }
 
-run() { npx vitest run 2>&1 | grep -E "^ +Tests +" | tail -1; }
+# Rebuild before running.
+#
+# A consumer that imports `@josi-ce/persona` resolves to the package's BUILT
+# dist, not its source. Without this, a mutation to persona/src is invisible to
+# every test in another package — which is exactly what happened: seven
+# mutations were measured against stale compiled output and recorded as
+# "survived" when they had never been applied to the code under test.
+run() {
+  npx tsc -b >/dev/null 2>&1
+  npx vitest run 2>&1 | grep -E "^ +Tests +" | tail -1
+}
 
 # A mutation that silently fails to apply reports "not caught" and looks like a
 # missing test. Every mutation must demonstrably change the tree first.

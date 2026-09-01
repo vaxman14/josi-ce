@@ -54,8 +54,12 @@ const PATTERNS: Array<{ re: RegExp; kind: Candidate['kind']; confidence: number 
   // Durable preferences.
   { re: /\bi (?:prefer|always want|would rather) ([^.!?\n]{3,120})/i, kind: 'preference', confidence: 0.7 },
   { re: /\bi (?:hate|dislike|never want|don'?t want) ([^.!?\n]{3,120})/i, kind: 'preference', confidence: 0.7 },
-  { re: /\b(?:please )?always ([^.!?\n]{3,120})/i, kind: 'preference', confidence: 0.55 },
-  { re: /\b(?:please )?never ([^.!?\n]{3,120})/i, kind: 'preference', confidence: 0.55 },
+  // First person, or an instruction addressed to Josi. NOT a bare "always",
+  // which matched "She always works mornings" — an observation about somebody
+  // else, and an assistant recording those is building a profile nobody
+  // consented to. Found by a test written to exercise the third-person case.
+  { re: /\bi (?:always|never) ([^.!?\n]{3,120})/i, kind: 'preference', confidence: 0.55 },
+  { re: /^\s*please (?:always|never) ([^.!?\n]{3,120})/i, kind: 'preference', confidence: 0.6 },
 
   // Standing constraints.
   { re: /\bi(?:'m| am) allergic to ([^.!?\n]{2,60})/i, kind: 'constraint', confidence: 0.8 },
@@ -82,7 +86,12 @@ const SENSITIVE = [
 /** Requests, which are not facts. */
 const TRANSIENT = [
   /\b(today|tonight|tomorrow|this (morning|afternoon|evening|week)|right now|asap)\b/i,
-  /\b(book|send|schedule|cancel|remind|draft|forward|reply)\b/i,
+  // Stem plus ANY suffix, and the irregular past. A hand-written suffix list
+  // missed "booked", then missed "reminders" and "sent" — three attempts at
+  // enumerating English. Over-matching here refuses to learn something, which
+  // is the safe direction; under-matching turns a request with a deadline into
+  // a permanent fact about somebody.
+  /\b(book|send|sent|schedul|cancel|remind|draft|forward|repl|arrang|organis|organiz)\w*/i,
   /\?\s*$/,
 ];
 

@@ -23,6 +23,7 @@ import {
   exportProfiles, getProfile, importProfiles, listVersions, loadAll,
   resetProfile, saveProfile,
 } from '../src/profiles.js';
+import { extractDurableFacts } from '../src/extract.js';
 
 let db: TestDb;
 const ids: Record<string, string> = {};
@@ -661,5 +662,75 @@ describe('automatic memory is opt-in', () => {
     const [s] = await db.query<{ id: string }>(`select id from memory_suggestions`);
     await expect(decideSuggestion(db, { id: s.id, ownerUserId: ids.bob, accept: true }))
       .rejects.toThrow(/not found/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The extractor's own contract.
+//
+// Added because mutation testing showed its guards were only ever observed
+// through the agent — so removing one and relying on `suggestMemory` to refuse
+// the same thing downstream looked identical from outside. A unit with its own
+// rules deserves its own tests.
+describe('what may be learned from a message', () => {
+  it('takes an explicit first-person preference', () => {
+    const out = extractDurableFacts('I prefer short answers with no preamble');
+    expect(out).toHaveLength(1);
+    expect(out[0].kind).toBe('preference');
+  });
+
+  it('refuses a credential outright', () => {
+    for (const sentence of [
+      'I always use the pass' + 'word hunter2spooky for that',
+      'I prefer the key sk-' + 'abcdefghijklmnopqrstuv',
+    ]) {
+      expect(extractDurableFacts(sentence), sentence).toEqual([]);
+    }
+  });
+
+  it('refuses sensitive categories even when stated plainly', () => {
+    for (const sentence of [
+      'I always take my medication at 8am',
+      'I never miss church on Sunday',
+      'I always vote the same way',
+    ]) {
+      expect(extractDurableFacts(sentence), sentence).toEqual([]);
+    }
+  });
+
+  it('refuses a transient request, however it is phrased', () => {
+    for (const sentence of [
+      'I prefer the 3pm slot tomorrow',
+      'I always want the table booked by then',
+      'I never want reminders sent on a Friday',
+    ]) {
+      expect(extractDurableFacts(sentence), sentence).toEqual([]);
+    }
+  });
+
+  it('takes nothing said about a third party', () => {
+    for (const sentence of [
+      'They prefer bullet points',
+      'She always works mornings',
+      'The user prefers short answers',
+    ]) {
+      expect(extractDurableFacts(sentence), sentence).toEqual([]);
+    }
+  });
+
+  it('keeps at most two from one message', () => {
+    const out = extractDurableFacts(
+      'I prefer bullet points. I always work mornings. I usually skip lunch. '
+      + 'I never take calls. I prefer email.',
+    );
+    expect(out.length).toBeLessThanOrEqual(2);
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  it('keeps the whole sentence, so a person can read back what was learned', () => {
+    const [fact] = extractDurableFacts('I prefer short answers with no preamble');
+    // Not the capture group alone: "short answers" without "I prefer" is not a
+    // fact anybody can check.
+    expect(fact.content).toBe('I prefer short answers with no preamble');
   });
 });
