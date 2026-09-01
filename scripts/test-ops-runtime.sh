@@ -443,6 +443,101 @@ code=$(api GET "/api/ops/diagnostics/$BUNDLE")
 code=$(api POST "/api/ops/diagnostics/$BUNDLE/approve" '{"text":"version: 0.1.0"}')
 [[ "$code" == "200" ]] && ok "and then it can be approved" || bad "returned $code"
 
+# ---------------------------------------------------------------------------
+# Rollback, against the real database rather than injected fakes.
+#
+# There is no HTTP route that applies an update — by design, since nothing in
+# CE downloads an image yet. So this drives runUpdate inside the container with
+# failing steps, which exercises the real state machine, the real constraints,
+# and the real update_state row.
+step "a failed update rolls back and keeps the old version"
+sql "update update_state set current_version = '0.1.0' where id = true" >/dev/null
+
+ROLLBACK_OUT=$("${COMPOSE[@]}" exec -T web node --input-type=module -e '
+const { connectFromEnv } = await import("/app/packages/core/dist/index.js");
+const { runUpdate } = await import("/app/packages/ops/dist/index.js");
+const { db, close } = await connectFromEnv();
+const [admin] = await db.query("select id from users where role = $1", ["super_admin"]);
+let backupsTaken = 0, applied = false;
+const steps = {
+  download: async () => {},
+  backup: async () => {
+    backupsTaken += 1;
+    const [r] = await db.query(
+      "insert into backups (kind, stored_path, state) values ($1,$2,$3) returning id",
+      ["full", "/data/backups/rollback-probe.zip", "complete"]);
+    return r.id;
+  },
+  apply: async () => { applied = true; },
+  healthCheck: async () => false,
+  rollback: async () => {},
+};
+const out = await runUpdate(db, { toVersion: "9.9.9", approvedBy: admin.id, steps });
+const [v] = await db.query("select current_version from update_state where id = true");
+console.log(JSON.stringify({ state: out.state, failure: out.failure, backupsTaken, applied, version: v.current_version }));
+await close();
+' 2>/dev/null | tr -d '\r')
+
+echo "$ROLLBACK_OUT" | grep -q '"state":"rolled_back"' \
+  && ok "the update rolled back" || bad "state was not rolled_back: $ROLLBACK_OUT"
+echo "$ROLLBACK_OUT" | grep -q '"failure":"health_check_failed"' \
+  && ok "because the health check failed" || bad "wrong failure category: $ROLLBACK_OUT"
+echo "$ROLLBACK_OUT" | grep -q '"backupsTaken":1' \
+  && ok "and a backup was taken first" || bad "no pre-update backup: $ROLLBACK_OUT"
+echo "$ROLLBACK_OUT" | grep -q '"version":"0.1.0"' \
+  && ok "the recorded version is still the old one" || bad "the version moved: $ROLLBACK_OUT"
+
+n=$(sql "select count(*) from update_runs where state = 'rolled_back'")
+[[ "$n" -ge 1 ]] && ok "the run is recorded as rolled back" || bad "no rolled_back run recorded"
+
+step "an update that cannot back up does not start at all"
+NOBACKUP_OUT=$("${COMPOSE[@]}" exec -T web node --input-type=module -e '
+const { connectFromEnv } = await import("/app/packages/core/dist/index.js");
+const { runUpdate } = await import("/app/packages/ops/dist/index.js");
+const { db, close } = await connectFromEnv();
+const [admin] = await db.query("select id from users where role = $1", ["super_admin"]);
+let applied = false;
+const out = await runUpdate(db, { toVersion: "9.9.9", approvedBy: admin.id, steps: {
+  download: async () => {},
+  backup: async () => { throw new Error("disk full"); },
+  apply: async () => { applied = true; },
+  healthCheck: async () => true,
+  rollback: async () => {},
+}});
+console.log(JSON.stringify({ state: out.state, failure: out.failure, applied }));
+await close();
+' 2>/dev/null | tr -d '\r')
+
+echo "$NOBACKUP_OUT" | grep -q '"failure":"backup_failed"' \
+  && ok "refused with backup_failed" || bad "wrong outcome: $NOBACKUP_OUT"
+echo "$NOBACKUP_OUT" | grep -q '"applied":false' \
+  && ok "and nothing was applied" || bad "it applied anyway: $NOBACKUP_OUT"
+
+# ---------------------------------------------------------------------------
+step "a diagnostics bundle carries no message or document content — M113"
+THREAD_ID=$(sql "insert into threads (owner_user_id, title) values ('$ALICE_ID', 'DIAG-THREAD-TITLE-PRIVATE') returning id")
+sql "insert into messages (thread_id, direction, body)
+     values ('$THREAD_ID', 'in', 'DIAG-MESSAGE-BODY-PRIVATE')" >/dev/null
+[[ -n "$THREAD_ID" ]] && ok "seeded a thread and a message to look for" || bad "could not seed content"
+
+SESSION="$ALICE_SESSION"
+code=$(api POST /api/ops/diagnostics '{"window":"24h"}')
+[[ "$code" == "201" ]] && ok "a bundle was built ($code)" || bad "returned $code: $(body)"
+BUNDLE2=$(body | sed -n 's/.*"id":"\([0-9a-f-]*\)".*/\1/p' | head -1)
+
+for secret in 'DIAG-THREAD-TITLE-PRIVATE' 'DIAG-MESSAGE-BODY-PRIVATE'; do
+  if has "$secret"; then bad "the bundle response carries $secret"; else ok "no '$secret' in the bundle"; fi
+done
+
+code=$(api GET "/api/ops/diagnostics/$BUNDLE2")
+for secret in 'DIAG-THREAD-TITLE-PRIVATE' 'DIAG-MESSAGE-BODY-PRIVATE'; do
+  if has "$secret"; then bad "reading the bundle exposes $secret"; else ok "reading it exposes no '$secret'"; fi
+done
+
+n=$(sql "select count(*) from diagnostic_bundles where id = '$BUNDLE2' and byte_size > 0")
+[[ "$n" == "1" ]] && ok "the bundle is non-empty, so the absence means something" \
+  || bad "the bundle is empty — proving nothing is absent from nothing"
+
 step "telemetry is off and sends nothing — M98"
 SESSION="$ADMIN_SESSION"
 enabled=$(sql "select enabled from telemetry_state where id = true")
