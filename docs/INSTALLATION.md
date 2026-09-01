@@ -901,6 +901,67 @@ docker stats --no-stream
 Allow time for initial signature loading and verify the host has enough memory.
 An out-of-memory kill appears in container state and host kernel logs.
 
+### 17.12 The Telegram bot receives messages but Josi never answers
+
+**Admin → Telegram → Delivery health** groups the last seven days by category.
+A run of `unauthorized` means the token was revoked in BotFather. A run of
+`blocked_by_user` means that person blocked the bot — Josi revokes the link
+rather than retrying forever, and they see it as unlinked.
+
+If nothing appears at all, the webhook is not registered or points at an address
+that no longer resolves. Register it again. Josi answers 404 to any delivery
+without the correct secret header, so a stale registration produces silence
+rather than an error.
+
+### 17.13 "That link code cannot be used"
+
+Every reason gives the same sentence on purpose: used, expired, invalidated and
+never-existed are indistinguishable to whoever holds the code, because telling
+them which one it was confirms the code was real. Create a new one. The real
+reason is in the audit log.
+
+### 17.14 The installed app shows an old version
+
+`sw.js` must be served `no-store`. Josi does; a reverse proxy in front of Josi
+may be adding its own caching headers. Check with:
+
+```bash
+curl -sI https://your.domain/sw.js | grep -i cache-control
+# expect: cache-control: no-store
+```
+
+If that is right and it still happens, close every Josi window and reopen it.
+Last resort: uninstall from the home screen and reinstall. Nothing is lost —
+Josi keeps everything on the server.
+
+### 17.15 Offline shows the browser's error page instead of Josi's
+
+The service worker was not registered, almost always because the page was opened
+over plain HTTP. Service workers require HTTPS, or `localhost`.
+
+### 17.16 "The Codex CLI on this machine is not signed in"
+
+Run `codex login` **as the account Josi runs as**, not as your own user. A login
+in your own shell is not a login for the service account. In Docker, the
+container has neither the binary nor your login unless you put them there — see
+`docs/SUBSCRIPTION_AUTH.md`.
+
+### 17.17 A provider key was accepted and then every model call failed with 401
+
+If your installation was created before **1 September 2026**, this is a known
+defect and the fix is to re-enter the credential.
+
+`seal()` intended to unwrap the in-memory `Secret` wrapper before encrypting,
+and never did: `JSON.stringify` calls `toJSON()` before it calls a replacer, so
+the wrapper had already turned itself into the string `[secret redacted]` — and
+that string is what was encrypted. Every credential entered through the wizard
+or the admin screens was stored as the redaction marker and handed to the
+provider as if it were the key.
+
+Re-save the affected credentials — LLM provider keys, OAuth client secrets, SMTP
+passwords — and they will be stored correctly. There is nothing to recover: the
+original values never reached the database.
+
 ## 17A. Personalization and memory
 
 Each person has four profile layers, edited under **Personalization**:
@@ -944,6 +1005,93 @@ record those deliberately by hand.
 **Deleting a memory deletes it.** There is no hidden copy, and a memory learned
 from a document is destroyed when access to that document is revoked.
 
+## 17B. Telegram, the installable app, and subscription sign-in
+
+Three things Phase 13 added. Each has a manual of its own; this section is the
+short version and the pointer.
+
+### 17B.1 Telegram — `docs/TELEGRAM.md`
+
+Josi can be reached from Telegram using **your own bot**, created in BotFather.
+No Josi-operated relay exists and there is nowhere to configure one.
+
+1. `/newbot` in [@BotFather](https://t.me/BotFather); also set `/setprivacy`
+   **Enable** and `/setjoingroups` **Disable**.
+2. **Admin → Telegram → Save and test.** The token is proven against `getMe`
+   before it is stored; a token that fails is not saved.
+3. **Register the webhook.** Needs a public HTTPS address that resolves.
+4. **Turn on.**
+
+Each person then links their own account from **Settings → Telegram**. The link
+code works once, expires in fifteen minutes, and is shown once.
+
+An administrator can see that a link exists and revoke it. They cannot read
+anything sent over it: the admin surface returns no message text and not even
+the chat identifier.
+
+Files over Telegram are **off by default** and, as of this release, are recorded
+and acknowledged rather than indexed — the document pipeline that would read
+them is later work. Leave the setting off unless you want the acknowledgement.
+
+### 17B.2 The installable app (PWA) — `docs/PWA.md`
+
+Josi installs to a home screen or a dock. On iOS use Safari → Share → **Add to
+Home Screen**; on Android and desktop Chrome, Josi offers an install prompt when
+the browser does.
+
+**What is stored on the device:** the JavaScript bundle, the icons, and a static
+"Josi is offline" page. **Nothing else, ever** — no API response, no
+conversation, no name. A service-worker cache outlives signing out, so anything
+in it would be readable by whoever picks the device up next. Offline therefore
+shows a page that says it is offline and displays nothing.
+
+Updates never apply themselves. A bar appears saying a new version is ready and
+the person presses Reload.
+
+> **If you run your own reverse proxy:** it must not add caching headers to
+> `/sw.js`. Josi serves it `no-store` because it is not content-hashed — a
+> cached service worker is a pinned service worker, and it keeps its caching
+> rules indefinitely. The bundled Caddy config is correct; a hand-written nginx
+> config often is not.
+
+### 17B.3 Subscription sign-in — `docs/SUBSCRIPTION_AUTH.md`
+
+**ChatGPT plan: supported.** Josi runs OpenAI's own `codex exec` on this machine,
+signed in as you. Install the CLI, run `codex login` **as the account Josi runs
+as**, then **Admin → Model → Use this for the primary model** and press Test.
+
+It is per installation rather than per person, shares your own Codex usage
+limits, reports no token counts or cost, and **cannot call tools** — so Josi can
+talk but cannot book, send or search on that path. Those limits are shown on the
+Model screen, not just here.
+
+**Claude subscription: not available, and not "coming soon".** Anthropic's
+policy restricts Claude Free/Pro/Max sign-in to Claude Code and Claude.ai and
+does not permit those credentials in any other product, including the Agent SDK;
+it was enforced on 4 April 2026. Use an Anthropic API key.
+
+Josi never implements "Sign in with ChatGPT", never reads a credential file, a
+keychain or a browser profile, and never stores or forwards a token. A test
+walks every source file in the repository and fails the build on any reference
+to a credential store.
+
+### 17B.4 Editions
+
+This is a **Community Edition** build. The edition is stamped into the image at
+build time and is shown on **Admin → Model**.
+
+Subscription sign-in exists only in CE, because OpenAI's terms permit a personal
+plan for individual productivity and exclude using one to power a commercial
+service. The boundary is not a setting: the environment can only narrow the
+capability set, an unrecognised stamp falls to the least capable edition, and
+four independent layers refuse — including for a row inserted directly with
+`psql`.
+
+```bash
+# A build that structurally cannot enable CE-only capabilities:
+docker build --build-arg JOSI_EDITION=hosted -t josi:hosted .
+```
+
 ## 18. Security checklist
 
 Before considering an installation reachable by other people, confirm:
@@ -968,7 +1116,23 @@ Before considering an installation reachable by other people, confirm:
       stored separately from it.
 - [ ] You have read section 15.1 and accept that a restore without the key
       returns your data but not your credentials.
-- [ ] Phase 11 threat-model and release gates have passed before public launch.
+- [ ] The threat model (`docs/THREAT_MODEL.md`) has no entry without a control
+      and a test. This is checked by the build — `apps/api/test/threatModel.test.ts`
+      parses the document and fails the suite on a missing link — so the box is
+      ticked by running the suite, not by reading.
+- [ ] `npm run typecheck && npm test` pass on the checkout being deployed.
+- [ ] If Telegram is enabled: the bot's `/setprivacy` is **Enable** and
+      `/setjoingroups` is **Disable** in BotFather, and the webhook is
+      registered to the current public address. See `docs/TELEGRAM.md`.
+- [ ] If the PWA matters to you: `/sw.js` is served `no-store` through your
+      proxy, not just by Josi. A proxy that adds its own caching headers pins
+      the service worker and its caching rules. See `docs/PWA.md`.
+- [ ] The edition reported on **Admin → Model** is the one you meant to build.
+      A hosted or white-label build must NOT report `ce`. See
+      `docs/SUBSCRIPTION_AUTH.md`.
+- [ ] `bash scripts/acceptance/clean-install.sh --profile <yours>` has been run
+      on hardware of the class you are deploying to, and its measurements
+      recorded in `docs/ACCEPTANCE.md`.
 
 ## 19. Collecting useful support information
 

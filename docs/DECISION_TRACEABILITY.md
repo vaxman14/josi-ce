@@ -168,7 +168,16 @@ Status accuracy matters more than a full column of ticks. A row that says
    explicitly not approved wording (M81).
 2. **Benchmarks before any capacity claim** (M97). No numbers ship until a Pi,
    an old x86-64 box and a modern mini-PC have been measured.
-3. **Provider terms re-check** for M83 before ever enabling a subscription
-   option.
+3. ~~**Provider terms re-check** for M83 before ever enabling a subscription
+   option.~~ **Done, 1 September 2026 (Phase 13.3).** OpenAI documents
+   `codex exec` as a non-interactive mode of its own CLI signed in with a
+   ChatGPT plan, so delegating to the operator's own binary is a supported path
+   and is now offered — CE only, behind a build-stamped capability, because the
+   terms exclude powering a commercial service. Anthropic's policy restricts
+   Claude Free/Pro/Max sign-in to Claude Code and Claude.ai, excludes every
+   other product including the Agent SDK, and was enforced on 4 April 2026, so
+   that path stays closed and the UI cites it. Sources and dates in
+   `docs/SUBSCRIPTION_AUTH.md`. **Re-check before any release that changes this
+   feature** — both positions are somebody else's policy and can move.
 4. **Support gateway** is a separate SoCal-side project (M103, M106, M108, M110,
    M114, M115); CE ships only the client contract.

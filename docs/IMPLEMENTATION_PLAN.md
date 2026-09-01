@@ -713,77 +713,92 @@ and the blocker is named.
 
 | ID | Promise | Acceptance criterion (testable) | Status |
 |---|---|---|---|
-| **L4.1** | Edition immutable at build | `editionBuild.ts` is generated from a build arg; `scripts/stamp-edition.mjs` writes it; the Dockerfile passes `JOSI_EDITION`. Test: default build is `ce`; a stamped `hosted` build reports `hosted`. | Planned |
-| **L4.2** | Environment cannot widen | Test: with a `hosted` build stamp, `JOSI_EDITION=ce`, `JOSI_CAPABILITIES=subscription_auth` and every spelling variant leave `subscription_auth` absent. | Planned |
-| **L4.3** | Enforced server-side, not hidden | Test: on a `hosted` build the subscription routes are absent (404) **and** the provider factory throws **and** `buildProvider` throws for a row inserted directly by SQL. | Planned |
-| **L4.4** | Capability set immutable at runtime | Test: the exported capability set is deep-frozen; assignment and `delete` do not change it. | Planned |
-| **L4.5** | Bypass + mutation tests | `scripts/mutate-phase13-edition.sh`: every mutation that widens the boundary is caught. | Planned |
-| **L1.1** | Admin bot-token setup + probe | Super admin sets a token; CE calls `getMe`; the bot username and id are stored; a bad token gives a clear refusal and stores nothing. Token is sealed with the master key; ciphertext never leaves the server. | Planned |
-| **L1.2** | Secure one-time linking | A signed-in user mints a code: ≥128 bits, hashed at rest, single-use, 15-minute TTL, bound to that user. Test: replay refused, expiry refused, another user's code refused, an unlinked chat is refused and told how to link. | Planned |
-| **L1.3** | Per-user/per-conversation routing | Test: two linked users messaging the same bot reach two different conversations; neither can see the other's; an update whose `chat_id` is not linked creates nothing. | Planned |
-| **L1.4** | Outbound replies | Test: a reply is sent to the originating chat only, with the AI disclosure Phase 8 mandates. | Planned |
-| **L1.5** | Formatting | Test: MarkdownV2 escaping is exact for every reserved character; a 10 000-character reply is split at ≤4096 without splitting an escape sequence. | Planned |
-| **L1.6** | Attachments with safe limits | Test: an over-size attachment is refused before download; a disallowed MIME/extension is refused; the download is byte-capped and a lying `Content-Length` cannot exceed it; a path-traversal filename cannot escape. | Planned |
-| **L1.7** | Retries and error handling | Test: 429 honours `retry_after` and retries; 5xx retries with backoff; 400/403 do not retry; the bot token never appears in an error, a log line or an audit payload. | Planned |
-| **L1.8** | Unlink and revoke | Test: a user unlinks their own chat; a super admin revokes any link; after either, messages from that chat are refused. Codes are invalidated too. | Planned |
-| **L1.9** | RBAC | Test: a member cannot reach any `/api/admin/telegram/*`; a member cannot unlink another member; the admin surface returns no message content (`assertMetadataOnly`). | Planned |
-| **L1.10** | Audit logs | Test: configure, probe, link, unlink, revoke and refusal all append events, and no event payload carries message text (`assertMetadataOnly` proves it). | Planned |
-| **L1.11** | Threat-model controls | `THREAT_MODEL.md` entries for webhook forgery, chat-id spoofing, link-code theft, attachment abuse, token exfiltration, group-chat capture, replay — each with a control and a test. The Phase 11 build check enforces the link. | Planned |
-| **L1.12** | Webhook authenticity | Test: a request with a wrong or missing `X-Telegram-Bot-Api-Secret-Token` is refused before the body is parsed for meaning; the secret is compared in constant time; a replayed `update_id` is dropped idempotently. | Planned |
-| **L1.13** | Unit/integration/runtime tests | Unit + over-the-wire suites; `scripts/test-telegram-runtime.sh` against a real stack with a fake Bot API on the project network. | Planned |
-| **L1.14** | Mutation tests | `scripts/mutate-phase13-telegram.sh`, all mutations caught. | Planned |
-| **L1.15** | Docs | `docs/TELEGRAM.md` + INSTALLATION.md section: setup, webhook vs polling, linking, revoking, limits, troubleshooting. | Planned |
-| **L2.1** | Manifest | `manifest.webmanifest` with name, short_name, start_url, scope, display standalone, theme/background colour, and icons. Test: served, correct content type, referenced from the shell, fields present. | Planned |
-| **L2.2** | Icons | 192/512 any + 512 maskable, generated from the approved brand mark, no regeneration of the artwork (M7–M10). Test: files exist, are PNG, are the declared sizes. | Planned |
-| **L2.3** | Service worker | Registered, scoped to `/`, served `no-store` so an update is never pinned. Test: registration succeeds in WebKit and Chromium. | Planned |
-| **L2.4** | Secure caching rules | One exported predicate decides what may be cached. Test: `/api/*` never cacheable in either direction, any request carrying a cookie or `Authorization` never cacheable, only same-origin GET build assets and the shell are. | Planned |
-| **L2.5** | Install UX | An install prompt that appears only when the browser offers one, is dismissible, and stays dismissed. Test: no fake button when `beforeinstallprompt` never fires. | Planned |
-| **L2.6** | Update UX | A waiting worker surfaces "A new version is ready"; the user chooses; `skipWaiting` runs only then. Test: no silent reload. | Planned |
-| **L2.7** | Offline shell/status | Offline renders the shell with an explicit offline state and no private data. Test: with the network cut, no API payload is rendered from cache. | Planned |
-| **L2.8** | CSP still holds | `manifest-src 'self'`, `worker-src 'self'` added; nothing external. Test: the existing CSP assertions still pass and the page loads with zero console errors. | Planned |
-| **L2.9** | Mobile/responsive verification | Playwright at 320/375/390/430 with the PWA surfaces present: no horizontal overflow, controls ≥44px. | Planned |
-| **L2.10** | Docs | `docs/PWA.md` + INSTALLATION.md: installing on iOS/Android/desktop, what is cached, what is not, how to force an update. | Planned |
-| **L3.1** | Research recorded, not assumed | `docs/SUBSCRIPTION_AUTH.md` cites the provider documents and dates for both providers. | Planned |
-| **L3.2** | OpenAI path is real and supported | Provider `openai_subscription` runs `codex exec` as a subprocess. Test: the command line is exactly the documented non-interactive form; the process environment carries no API key; no HTTP request is made by CE on this path. | Planned |
-| **L3.3** | Never scrape credentials | Test: no code path reads `~/.codex/auth.json`, any keychain, any browser profile or any cookie jar — asserted by a source-level guard test over the whole repository, not only the new file. | Planned |
-| **L3.4** | Never misrepresent a key as a subscription | Test: configuring `openai_subscription` refuses an `apiKey` field; the usage ledger records `subscription` as the charge basis and every currency figure on that path is labelled an estimate. | Planned |
-| **L3.5** | Anthropic honestly disabled | Test: `anthropic_subscription` is refused at the API with a message naming the policy; the UI renders it disabled with the citation; no code path attempts it. | Planned |
-| **L3.6** | CE-only, structurally | See L4.3. Additionally: test that the hosted build's OpenAPI-visible route table contains no subscription route. | Planned |
-| **L3.7** | Blanket rejection removed only where earned | Test: the Phase 4 "no compliant path" refusal still fires for Anthropic and no longer fires for OpenAI on a CE build. | Planned |
-| **L6.1** | Signed release manifest | Ed25519 over canonical JSON, key stamped into the build. Test: a valid manifest verifies; a tampered field, a wrong key, a truncated signature and a missing signature all fail closed. | Planned |
-| **L6.2** | Versioned, no downgrade | Test: a manifest whose version is not strictly newer is refused, including equal versions and non-semver junk. | Planned |
-| **L6.3** | Mandatory backup | Already built; test retained and extended: an update cannot start if the backup step fails or if no backup writer is configured. | Planned |
-| **L6.4** | Health gate | Already built; retained. | Planned |
-| **L6.5** | Measured retention | Test: profiles/memories/conversations/documents counted before and after; a post-update drop rolls back even when the health check passes. | Planned |
-| **L6.6** | Rollback | Already built; extended so a rollback also restores the recorded release digest. | Planned |
-| **L6.7** | No automatic updates | Test: no setting, column or scheduler can trigger an update; the check is a read; the worker has no update job. | Planned |
-| **L6.8** | Host-side apply | `scripts/josi-update.sh`: pull by digest, verify digest, replace, poll health, roll back. Documented as host-side and why. | Planned |
-| **L6.9** | Docs | `docs/UPDATES.md` + INSTALLATION.md §16 rewritten against the real mechanism. | Planned |
-| **L7.1** | Scan | ClamAV wiring reaches a real scanner via the optional profile; with the profile off, `scanRequired` is false and nothing pretends otherwise. Test retained from Phase 9 plus a real-clamd path in the runtime script. | Planned |
-| **L7.2** | Parse | Supported: `txt`, `md`, `csv`, `tsv`, `json`, `html`, `docx`, `xlsx`, `pptx`. Test: a real file of each type yields text and a precise locator; every other extension yields `unsupported_type`. | Planned |
-| **L7.3** | Bounded archive extraction | `zip` only, when enabled: bounded by entry count, total bytes, compression ratio and depth. Test: a zip bomb is stopped, traversal entries are refused, symlink entries are refused. | Planned |
-| **L7.4** | OCR where applicable | The OCR service processes `pdf`, `png`, `jpg`, `tif` when the profile is enabled and the admin has turned it on, within the hour restriction and throttle Phase 9 built. Test: queued, throttled, hour-gated, and `from_ocr` recorded. **PDF text is obtained via OCR only** — CE ships no PDF text-layer parser and does not claim one. | Planned |
-| **L7.5** | Sync/index | Local folders are walked on a schedule and on demand; cloud mappings sync at 5/15/30/60m; the FTS index is filled and kept current; deletions remove rows. Test: end-to-end map → ingest → parse → index → search finds it; delete → search does not. | Planned |
-| **L7.6** | Purge | Phase 9's purge extended to cover the new artefacts. Test: unmap removes text, segments, FTS rows, embeddings, OCR output and version copies. | Planned |
-| **L7.7** | No unsupported claims | Test: the format list in the code, the UI and the docs is one list, and a format absent from it is refused. | Planned |
-| **L8.1** | Hosted LLM harness | `scripts/integration/llm.sh` against a real provider with a real key; `SKIPPED` (exit 3) without one. | Planned |
-| **L8.2** | Google OAuth harness | `scripts/integration/google-oauth.sh`; manual browser step documented; `SKIPPED` without client credentials. | Planned |
-| **L8.3** | Microsoft OAuth harness | `scripts/integration/microsoft-oauth.sh`; same shape. | Planned |
-| **L8.4** | SMTP/reply ingestion harness | `scripts/integration/smtp.sh` sends through a real relay and ingests a real reply; `SKIPPED` without credentials. | Planned |
-| **L8.5** | Never fake a pass | Test: the harness runner's summary reports `SKIPPED` distinctly, exits non-zero-but-not-1 for skips, and `docs/INTEGRATION_CHECKLISTS.md` records the last real run per harness as *never* until one happens. | Planned |
-| **L9.1** | amd64 clean install | `scripts/acceptance/clean-install.sh` — clean daemon assertion, build, up, migrate, wizard, sign-in, teardown, measurements. | Planned |
-| **L9.2** | arm64 clean install | Same script, `--platform linux/arm64`. | Planned |
-| **L9.3** | N150 / 16 GB profile | Resource-constrained variant: memory ceiling, no OCR/ClamAV, timings recorded. | Planned |
-| **L9.4** | Raspberry Pi 4 / 8 GB profile | Same, with the swap and I/O caveats stated. | Planned |
-| **L9.5** | No unearned hardware claims | `docs/ACCEPTANCE.md` records every profile as **not yet run** until it is. | Planned |
-| **L5.1** | INSTALLATION.md is true | The Phase 11/12 checklist line is corrected; every section reflects shipped behaviour. | Planned |
-| **L5.2** | New sections | Telegram, PWA, subscription auth, edition boundary, upgrade, architecture, security, troubleshooting, exact validation steps. | Planned |
-| **L5.3** | Architecture doc | `docs/ARCHITECTURE.md`: packages, request path, trust boundaries, data flows. | Planned |
-| **L5.4** | Validation steps | `docs/VALIDATION.md`: the exact commands an operator runs to prove an installation is correct, with expected output. | Planned |
+| **L4.1** | Edition immutable at build | `editionBuild.ts` is generated from a build arg; `scripts/stamp-edition.mjs` writes it; the Dockerfile passes `JOSI_EDITION`. Test: default build is `ce`; a stamped `hosted` build reports `hosted`. | Done |
+| **L4.2** | Environment cannot widen | Test: with a `hosted` build stamp, `JOSI_EDITION=ce`, `JOSI_CAPABILITIES=subscription_auth` and every spelling variant leave `subscription_auth` absent. | Done |
+| **L4.3** | Enforced server-side, not hidden | Test: on a `hosted` build the subscription routes are absent (404) **and** the provider factory throws **and** `buildProvider` throws for a row inserted directly by SQL. | Done |
+| **L4.4** | Capability set immutable at runtime | Test: the exported capability set is deep-frozen; assignment and `delete` do not change it. | Done |
+| **L4.5** | Bypass + mutation tests | `scripts/mutate-phase13-edition.sh`: every mutation that widens the boundary is caught. | Written, unrun |
+| **L1.1** | Admin bot-token setup + probe | Super admin sets a token; CE calls `getMe`; the bot username and id are stored; a bad token gives a clear refusal and stores nothing. Token is sealed with the master key; ciphertext never leaves the server. | Done |
+| **L1.2** | Secure one-time linking | A signed-in user mints a code: ≥128 bits, hashed at rest, single-use, 15-minute TTL, bound to that user. Test: replay refused, expiry refused, another user's code refused, an unlinked chat is refused and told how to link. | Done |
+| **L1.3** | Per-user/per-conversation routing | Test: two linked users messaging the same bot reach two different conversations; neither can see the other's; an update whose `chat_id` is not linked creates nothing. | Done |
+| **L1.4** | Outbound replies | Test: a reply is sent to the originating chat only, with the AI disclosure Phase 8 mandates. | Done |
+| **L1.5** | Formatting | Test: MarkdownV2 escaping is exact for every reserved character; a 10 000-character reply is split at ≤4096 without splitting an escape sequence. | Done |
+| **L1.6** | Attachments with safe limits | Test: an over-size attachment is refused before download; a disallowed MIME/extension is refused; the download is byte-capped and a lying `Content-Length` cannot exceed it; a path-traversal filename cannot escape. | Done |
+| **L1.7** | Retries and error handling | Test: 429 honours `retry_after` and retries; 5xx retries with backoff; 400/403 do not retry; the bot token never appears in an error, a log line or an audit payload. | Done |
+| **L1.8** | Unlink and revoke | Test: a user unlinks their own chat; a super admin revokes any link; after either, messages from that chat are refused. Codes are invalidated too. | Done |
+| **L1.9** | RBAC | Test: a member cannot reach any `/api/admin/telegram/*`; a member cannot unlink another member; the admin surface returns no message content (`assertMetadataOnly`). | Done |
+| **L1.10** | Audit logs | Test: configure, probe, link, unlink, revoke and refusal all append events, and no event payload carries message text (`assertMetadataOnly` proves it). | Done |
+| **L1.11** | Threat-model controls | `THREAT_MODEL.md` entries for webhook forgery, chat-id spoofing, link-code theft, attachment abuse, token exfiltration, group-chat capture, replay — each with a control and a test. The Phase 11 build check enforces the link. | Done |
+| **L1.12** | Webhook authenticity | Test: a request with a wrong or missing `X-Telegram-Bot-Api-Secret-Token` is refused before the body is parsed for meaning; the secret is compared in constant time; a replayed `update_id` is dropped idempotently. | Done |
+| **L1.13** | Unit/integration/runtime tests | Unit + over-the-wire suites; `scripts/test-telegram-runtime.sh` against a real stack with a fake Bot API on the project network. | Written, unrun |
+| **L1.14** | Mutation tests | `scripts/mutate-phase13-telegram.sh`, all mutations caught. | Written, unrun |
+| **L1.15** | Docs | `docs/TELEGRAM.md` + INSTALLATION.md §17B.1 and §17.12–17.13: setup, linking, revoking, limits, troubleshooting. Webhook only — CE does not implement polling and does not claim to. | Done |
+| **L2.1** | Manifest | `manifest.webmanifest` with name, short_name, start_url, scope, display standalone, theme/background colour, and icons. Test: served, correct content type, referenced from the shell, fields present. | Done |
+| **L2.2** | Icons | 192/512 any + 512 maskable, generated from the approved brand mark, no regeneration of the artwork (M7–M10). Test: files exist, are PNG, are the declared sizes. | Done |
+| **L2.3** | Service worker | Registered, scoped to `/`, served `no-store` so an update is never pinned. Test: registration succeeds in WebKit and Chromium. | Written, unrun |
+| **L2.4** | Secure caching rules | One exported predicate decides what may be cached. Test: `/api/*` never cacheable in either direction, any request carrying a cookie or `Authorization` never cacheable, only same-origin GET build assets and the shell are. | Done |
+| **L2.5** | Install UX | An install prompt that appears only when the browser offers one, is dismissible, and stays dismissed. Test: no fake button when `beforeinstallprompt` never fires. | Done |
+| **L2.6** | Update UX | A waiting worker surfaces "A new version is ready"; the user chooses; `skipWaiting` runs only then. Test: no silent reload. | Done |
+| **L2.7** | Offline shell/status | Offline renders the shell with an explicit offline state and no private data. Test: with the network cut, no API payload is rendered from cache. | Done |
+| **L2.8** | CSP still holds | `manifest-src 'self'`, `worker-src 'self'` added; nothing external. Test: the existing CSP assertions still pass and the page loads with zero console errors. | Done |
+| **L2.9** | Mobile/responsive verification | Playwright at 320/375/390/430 with the PWA surfaces present: no horizontal overflow, controls ≥44px. | Written, unrun |
+| **L2.10** | Docs | `docs/PWA.md` + INSTALLATION.md: installing on iOS/Android/desktop, what is cached, what is not, how to force an update. | Done |
+| **L3.1** | Research recorded, not assumed | `docs/SUBSCRIPTION_AUTH.md` cites the provider documents and dates for both providers. | Done |
+| **L3.2** | OpenAI path is real and supported | Provider `openai_subscription` runs `codex exec` as a subprocess. Test: the command line is exactly the documented non-interactive form; the process environment carries no API key; no HTTP request is made by CE on this path. | Done |
+| **L3.3** | Never scrape credentials | Test: no code path reads `~/.codex/auth.json`, any keychain, any browser profile or any cookie jar — asserted by a source-level guard test over the whole repository, not only the new file. | Done |
+| **L3.4** | Never misrepresent a key as a subscription | Test: configuring `openai_subscription` refuses an `apiKey` field; the usage ledger records `subscription` as the charge basis and every currency figure on that path is labelled an estimate. | Done |
+| **L3.5** | Anthropic honestly disabled | Test: `anthropic_subscription` is refused at the API with a message naming the policy; the UI renders it disabled with the citation; no code path attempts it. | Done |
+| **L3.6** | CE-only, structurally | See L4.3. Additionally: test that the hosted build's OpenAPI-visible route table contains no subscription route. | Done |
+| **L3.7** | Blanket rejection removed only where earned | Test: the Phase 4 "no compliant path" refusal still fires for Anthropic and no longer fires for OpenAI on a CE build. | Done |
+| **L6.1** | Signed release manifest | Ed25519 over canonical JSON, key stamped into the build. Test: a valid manifest verifies; a tampered field, a wrong key, a truncated signature and a missing signature all fail closed. | Deferred (13.4+) |
+| **L6.2** | Versioned, no downgrade | Test: a manifest whose version is not strictly newer is refused, including equal versions and non-semver junk. | Deferred (13.4+) |
+| **L6.3** | Mandatory backup | Already built; test retained and extended: an update cannot start if the backup step fails or if no backup writer is configured. | Deferred (13.4+) |
+| **L6.4** | Health gate | Already built; retained. | Deferred (13.4+) |
+| **L6.5** | Measured retention | Test: profiles/memories/conversations/documents counted before and after; a post-update drop rolls back even when the health check passes. | Deferred (13.4+) |
+| **L6.6** | Rollback | Already built; extended so a rollback also restores the recorded release digest. | Deferred (13.4+) |
+| **L6.7** | No automatic updates | Test: no setting, column or scheduler can trigger an update; the check is a read; the worker has no update job. | Deferred (13.4+) |
+| **L6.8** | Host-side apply | `scripts/josi-update.sh`: pull by digest, verify digest, replace, poll health, roll back. Documented as host-side and why. | Deferred (13.4+) |
+| **L6.9** | Docs | `docs/UPDATES.md` + INSTALLATION.md §16 rewritten against the real mechanism. | Deferred (13.4+) |
+| **L7.1** | Scan | ClamAV wiring reaches a real scanner via the optional profile; with the profile off, `scanRequired` is false and nothing pretends otherwise. Test retained from Phase 9 plus a real-clamd path in the runtime script. | Deferred (13.4+) |
+| **L7.2** | Parse | Supported: `txt`, `md`, `csv`, `tsv`, `json`, `html`, `docx`, `xlsx`, `pptx`. Test: a real file of each type yields text and a precise locator; every other extension yields `unsupported_type`. | Deferred (13.4+) |
+| **L7.3** | Bounded archive extraction | `zip` only, when enabled: bounded by entry count, total bytes, compression ratio and depth. Test: a zip bomb is stopped, traversal entries are refused, symlink entries are refused. | Deferred (13.4+) |
+| **L7.4** | OCR where applicable | The OCR service processes `pdf`, `png`, `jpg`, `tif` when the profile is enabled and the admin has turned it on, within the hour restriction and throttle Phase 9 built. Test: queued, throttled, hour-gated, and `from_ocr` recorded. **PDF text is obtained via OCR only** — CE ships no PDF text-layer parser and does not claim one. | Deferred (13.4+) |
+| **L7.5** | Sync/index | Local folders are walked on a schedule and on demand; cloud mappings sync at 5/15/30/60m; the FTS index is filled and kept current; deletions remove rows. Test: end-to-end map → ingest → parse → index → search finds it; delete → search does not. | Deferred (13.4+) |
+| **L7.6** | Purge | Phase 9's purge extended to cover the new artefacts. Test: unmap removes text, segments, FTS rows, embeddings, OCR output and version copies. | Deferred (13.4+) |
+| **L7.7** | No unsupported claims | Test: the format list in the code, the UI and the docs is one list, and a format absent from it is refused. | Deferred (13.4+) |
+| **L8.1** | Hosted LLM harness | `scripts/integration/llm.sh` against a real provider with a real key; `SKIPPED` (exit 3) without one. | Deferred (13.4+) |
+| **L8.2** | Google OAuth harness | `scripts/integration/google-oauth.sh`; manual browser step documented; `SKIPPED` without client credentials. | Deferred (13.4+) |
+| **L8.3** | Microsoft OAuth harness | `scripts/integration/microsoft-oauth.sh`; same shape. | Deferred (13.4+) |
+| **L8.4** | SMTP/reply ingestion harness | `scripts/integration/smtp.sh` sends through a real relay and ingests a real reply; `SKIPPED` without credentials. | Deferred (13.4+) |
+| **L8.5** | Never fake a pass | Test: the harness runner's summary reports `SKIPPED` distinctly, exits non-zero-but-not-1 for skips, and `docs/INTEGRATION_CHECKLISTS.md` records the last real run per harness as *never* until one happens. | Deferred (13.4+) |
+| **L9.1** | amd64 clean install | `scripts/acceptance/clean-install.sh` — clean daemon assertion, build, up, migrate, wizard, sign-in, teardown, measurements. | Written, unrun |
+| **L9.2** | arm64 clean install | Same script, `--platform linux/arm64`. | Deferred (13.4+) |
+| **L9.3** | N150 / 16 GB profile | Resource-constrained variant: memory ceiling, no OCR/ClamAV, timings recorded. | Written, unrun |
+| **L9.4** | Raspberry Pi 4 / 8 GB profile | Same, with the swap and I/O caveats stated. | Deferred (13.4+) |
+| **L9.5** | No unearned hardware claims | `docs/ACCEPTANCE.md` records every profile as **not yet run** until it is. | Done |
+| **L5.1** | INSTALLATION.md is true | The Phase 11/12 checklist line is corrected; every section reflects shipped behaviour. | Done |
+| **L5.2** | New sections | Telegram, PWA, subscription auth, edition boundary, upgrade, architecture, security, troubleshooting, exact validation steps. | Done |
+| **L5.3** | Architecture doc | `docs/ARCHITECTURE.md`: packages, request path, trust boundaries, data flows. | Deferred (13.4+) |
+| **L5.4** | Validation steps | `docs/VALIDATION.md`: the exact commands an operator runs to prove an installation is correct, with expected output. | Deferred (13.4+) |
+
+**Resequenced 2026-09-01 by Roman.** The first testable launch milestone comes
+before the rest of the phase: **13.0 → 13.1 → 13.2 → 13.3 → doc repair → the
+amd64 N150 acceptance script and its failure bundle**, then stop. L6 (updates),
+L7 (document pipeline), L8 (real-provider harnesses) and the arm64/Pi profiles
+stay in this matrix as subsequent work and must not delay the first N150 build.
+No acceptance criterion for the five immediate deliverables was weakened to
+achieve that — the rows above are unchanged and their statuses are measured.
+
+**Status vocabulary in the matrix.** `Done` means implemented with a named test
+that passes. `Written, unrun` means the code and the harness exist and are
+syntax-checked, but the evidence needs something this environment does not have
+— a Docker daemon, a browser download, or target hardware — and the blocker is
+listed below. `Deferred (13.4+)` is scheduled work that has deliberately not
+started.
 
 **Acceptance for Phase 13 as a whole:** every row above is `Done` with a named
-test, or `Blocked` with the exact blocker written down. No row may be marked
-`Done` on the strength of an argument.
+test, or carries the exact blocker written down. No row may be marked `Done` on
+the strength of an argument.
 
 **Risk:** this phase adds two inbound network surfaces (a Telegram webhook and a
 service worker) and one subprocess execution path, which is three new ways in.
