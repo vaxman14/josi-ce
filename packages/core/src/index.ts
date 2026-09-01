@@ -11,6 +11,7 @@ export * from './sealing.js';
 export * from './workspace.js';
 export * from './setupVerification.js';
 export * from './launchChecklist.js';
+export * from './contactIdentity.js';
 export * from './ownership.js';
 // Phase 5 — the assistant's domain logic.
 export * from './tasks.js';

@@ -1015,6 +1015,15 @@ these blockers exist precisely because it was broken: **a claim is not made
 until a test or a measurement supports it.** A screen, a persisted setting, a
 mock-only test or a sentence in a document does not close a row.
 
+> **`LAUNCH_AUDIT.md` is the authoritative status record, not this matrix.**
+>
+> The rows below state what each promise MEANS and how it would be tested.
+> Whether it has been met is recorded in one place, in `LAUNCH_AUDIT.md`, with
+> the evidence named. Two places to look up a status is how one of them goes
+> stale, and a stale status in a plan is the exact failure this whole set of
+> blockers exists to correct — so the individual `Pending` markers below are
+> the state at the time the rows were written and are not maintained.
+
 Statuses in the matrix below mirror `LAUNCH_AUDIT.md`. `Blocked` means the code
 path is built and the remaining evidence needs a named external dependency.
 
