@@ -871,6 +871,16 @@ dispatches a narrow read-only analytics job, then returns only the minimum
 answer needed by the Meta job. Every hop is attributable and auditable. No
 worker inherits another worker's tools, prompt, credentials or raw context.
 
+**Workers are owned by one user, never pooled by a department or workspace.**
+If a marketing department has five employees, it has five separately owned
+worker sets. A worker job, state snapshot, temporary context, credential handle,
+result, approval and audit subject are all bound to the initiating user. Even
+where two employees can legitimately access the same Meta business account,
+that shared provider permission does not create shared agent memory, working
+state or conversation access. Collaboration occurs only through an explicit
+business object or a user-authorised handoff, never because two people have the
+same title, department, workspace or integration.
+
 **Delivery order:** email + calendar first, Slack/Teams adapters second, and
 telephone last. Telephone is a separate risk tier because realtime calling,
 voicemail, disclosure/consent, interruption, retries and exactly-once booking
@@ -899,6 +909,7 @@ or tool catalogue into the worker is explicitly prohibited.
 | **D10** | Curated catalogue | Specialist kinds and versions are compiled and signed by Josi; administrators may enable, disable and configure supported workers but cannot author arbitrary prompts, tools or capabilities. |
 | **D11** | Granular domains | Meta, Google Ads, Yelp, analytics, HR and general-admin workers receive separate schemas, tools, credentials and retention policies; sharing a department label never implies shared context. |
 | **D12** | Mediated cooperation | One specialist can request a typed result from another only through Josi. Tests prove no direct worker-to-worker context, credential or tool access and prove that only the minimum result crosses the boundary. |
+| **D13** | Per-user worker isolation | Every worker instance, job, state, context, result, approval and credential handle is owned by one user. Tests with five users in one department and a shared provider account prove that no user can discover, claim, resume, inspect or receive another user's worker data. |
 
 **Release position:** post-launch v2. Phase 14 must not expand the current public
 release gate or delay Phase 13 clean-install acceptance.
