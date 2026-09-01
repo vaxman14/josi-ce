@@ -419,6 +419,26 @@ contain no message/document rows.
 **Risk:** a backup that cannot actually be restored → the restore test is the
 acceptance criterion, not the backup test.
 
+**Status: done, with named shortfalls.** 827 tests, **49 of 49 mutations
+caught**, **47 runtime checks on claw with 0 failures** — a real `pg_dump`, a
+real schema drop, a real restore. Evidence: `docs/PHASE_10_EVIDENCE.md`.
+
+The stated risk was exactly right. **819 unit tests passed against a backup
+feature that was non-functional on a real installation for three independent
+reasons**: production had no writer at all, the backup volume was root-owned
+while the app runs as `node`, and `pg_dump` 15 refuses to dump a `postgres:16`
+server. Each alone was fatal; none was visible to a unit test.
+
+The mutation harness's own `assert_mutated` had never fired across Phases 7–10 —
+it compared partial trees, so it always reported "mutated". Fixed, and it caught
+a non-applying mutation within minutes.
+
+**Not built:** no update has ever been applied (rollback is proven as logic, not
+as a deployment); the portable export is a `pg_dump`, not the human-readable
+export M63 describes; diagnostics collect no logs or container health because
+the app has no Docker socket; restore does not verify an archive belongs to this
+installation; and there is no backup retention or scheduling.
+
 ---
 
 ## Phase 11 — Hardening, threat model, release
