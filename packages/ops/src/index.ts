@@ -21,3 +21,6 @@ export {
   sendTelemetry, setTelemetry, submitTicket,
   type AllowedField, type TelemetryFacts, type TelemetrySender, type TicketCategory,
 } from './telemetry.js';
+export {
+  pgBackupWriter, pgRestoreReader, pgToolsAvailable, type PgConnection,
+} from './pgWriter.js';

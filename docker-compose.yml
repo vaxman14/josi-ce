@@ -109,6 +109,10 @@ services:
       # replaced, and so `docker compose down` does not silently destroy the
       # only copy of a file somebody deleted.
       - josi_versions:/data/versions
+      # Backups and diagnostics bundles. Named volumes so `docker compose down`
+      # does not take the only copy with it.
+      - josi_backups:/data/backups
+      - josi_diagnostics:/data/diagnostics
       # Shared folders (M45). Deny-by-default: nothing is mounted here unless an
       # operator writes it, and mounting alone grants nothing — a root must also
       # be registered before Josi will touch it.
@@ -164,6 +168,10 @@ services:
       # replaced, and so `docker compose down` does not silently destroy the
       # only copy of a file somebody deleted.
       - josi_versions:/data/versions
+      # Backups and diagnostics bundles. Named volumes so `docker compose down`
+      # does not take the only copy with it.
+      - josi_backups:/data/backups
+      - josi_diagnostics:/data/diagnostics
       # Shared folders (M45). Deny-by-default: nothing is mounted here unless an
       # operator writes it, and mounting alone grants nothing — a root must also
       # be registered before Josi will touch it.
@@ -296,6 +304,8 @@ secrets:
 volumes:
   db_data:
   josi_versions:
+  josi_backups:
+  josi_diagnostics:
   caddy_data:
   caddy_config:
   clamav_data:

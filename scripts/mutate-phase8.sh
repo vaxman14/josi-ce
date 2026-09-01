@@ -31,7 +31,11 @@ M_FROM="${M_FROM:-1}"; M_TO="${M_TO:-99}"; N=0
 should_run() { N=$((N+1)); [[ $N -ge $M_FROM && $N -le $M_TO ]]; }
 
 assert_mutated() {
-  if diff -rq "$BACKUP/apps" apps >/dev/null 2>&1 && diff -rq "$BACKUP/packages" packages >/dev/null 2>&1; then
+  local changed=0
+  for f in "${FILES[@]}"; do
+    cmp -s "$BACKUP/$f" "$f" || changed=1
+  done
+  if [[ $changed -eq 0 ]]; then
     echo "  !! MUTATION DID NOT APPLY — result below is meaningless"; return 1
   fi
   return 0

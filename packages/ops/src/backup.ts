@@ -199,8 +199,17 @@ export async function createBackup(
 }
 
 function sanitiseFilename(name: string): string {
-  const cleaned = name.replace(/[^A-Za-z0-9._-]/g, '');
+  // Strip everything that is not a plain filename character, THEN collapse runs
+  // of dots. Stripping alone is not enough: "nightly/../../etc/passwd.zip"
+  // becomes "nightly....etcpasswd.zip", which still carries a "..", trips the
+  // database's traversal constraint, and turns a bad filename into a database
+  // error instead of a clean result. Found by a test written to exercise the
+  // stripping rather than the leading-dot check.
+  const cleaned = name.replace(/[^A-Za-z0-9._-]/g, '').replace(/\.{2,}/g, '.');
   if (!cleaned || cleaned.startsWith('.')) throw new BackupError('that is not a usable filename');
+  if (cleaned.includes('..') || cleaned.includes('/')) {
+    throw new BackupError('that is not a usable filename');
+  }
   return cleaned;
 }
 

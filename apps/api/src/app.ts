@@ -44,6 +44,8 @@ export interface AppConfig {
   /** How backups are written. Absent = backups unavailable, which is honest on
    * an installation with no volume for them rather than failing at write time. */
   backupWriter?: import('@josi-ce/ops').BackupWriter;
+  /** How a backup is applied. */
+  restoreReader?: import('@josi-ce/ops').RestoreReader;
   /** Telemetry transport. Absent = nothing can be sent, whatever the setting. */
   telemetrySender?: import('@josi-ce/ops').TelemetrySender;
   /** M115: unset by default. CE ships no gateway URL and no credential. */
@@ -108,6 +110,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/ops', opsRoutes({
     db,
     backupWriter: cfg.backupWriter,
+    restoreReader: cfg.restoreReader,
     telemetrySender: cfg.telemetrySender,
     supportGatewayUrl: cfg.supportGatewayUrl ?? null,
     fetchLatestVersion: cfg.fetchLatestVersion,

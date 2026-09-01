@@ -206,6 +206,22 @@ describe('what a backup contains — M63', () => {
     }
   });
 
+  // Every fixture above starts with a dot or is empty, so the leading-dot check
+  // answers all three and the character stripping is never exercised — mutation
+  // testing found that removing it broke nothing. A name with separators and no
+  // leading dot is the case that actually needs the stripping.
+  it('strips path separators out of a filename rather than following them', async () => {
+    const { backup } = await createBackup(db, {
+      kind: 'full', createdBy: ids.admin, writer: okWriter(),
+      filename: 'nightly/../../etc/passwd.zip',
+    });
+    expect(backup.stored_path.startsWith('/data/backups/')).toBe(true);
+    expect(backup.stored_path).not.toContain('..');
+    // Nothing after the directory may be a separator, or the archive lands
+    // somewhere the constraint happens not to notice.
+    expect(backup.stored_path.slice('/data/backups/'.length)).not.toContain('/');
+  });
+
   it('records a failure with its category', async () => {
     const failing: BackupWriter = {
       async write() { throw new BackupError('no space', 'disk_full'); },
@@ -632,10 +648,23 @@ describe('support tickets — M104, M105, M107, M115', () => {
       .rejects.toThrow(/needs a diagnostics bundle/);
   });
 
-  it('refuses submission without the acknowledgement', async () => {
+  // The message matters, not just the rejection. Without the code check the
+  // database's own constraint still refuses the update — so asserting only
+  // "it threw" passes either way, and the person is told something unhelpful
+  // about a constraint instead of what they need to do.
+  it('refuses submission without the acknowledgement, and says which', async () => {
     const id = await makeTicket({ acknowledged: false, bundleId: await readyBundle() });
-    await expect(submitTicket(db, { ticketId: id, userId: ids.alice, gatewayUrl: 'https://x.test' }))
-      .rejects.toThrow(/acknowledgement/);
+    const err = await submitTicket(db, {
+      ticketId: id, userId: ids.alice, gatewayUrl: 'https://x.test',
+    }).then(() => null, (e: Error) => e);
+
+    expect(err).toBeInstanceOf(SupportError);
+    expect(err!.message).toBe('the acknowledgement has not been accepted');
+
+    const [row] = await db.query<{ state: string }>(
+      `select state from support_tickets where id = $1`, [id],
+    );
+    expect(row.state).toBe('draft');
   });
 
   it('refuses a bundle that was not read, approved and scanned', async () => {
@@ -721,6 +750,23 @@ describe('telemetry is opt-in and carries no content — M98', () => {
     expect(called).toBe(false);
   });
 
+  // With no endpoint stored, "off" and "unconfigured" both stop a send, so the
+  // enabled check is never the reason — mutation testing found that removing it
+  // broke nothing. This leaves an endpoint in place and switches only `enabled`
+  // off, so the enabled check is the only thing that can refuse.
+  it('sends nothing while off EVEN with an endpoint configured', async () => {
+    await db.query(
+      `update telemetry_state set enabled = false, endpoint = 'https://t.test' where id = true`,
+    );
+    let called = false;
+    const out = await sendTelemetry(db, {
+      facts, sender: { async send() { called = true; } },
+    });
+    expect(out.sent).toBe(false);
+    expect(out.reason).toBe('telemetry is off');
+    expect(called).toBe(false);
+  });
+
   it('sends only after it is affirmatively enabled', async () => {
     await setTelemetry(db, { enabled: true, endpoint: 'https://t.test', byUserId: ids.admin });
     let received: Record<string, unknown> | null = null;
@@ -782,7 +828,10 @@ describe('telemetry is opt-in and carries no content — M98', () => {
 
   it('turning it off clears the endpoint too', async () => {
     await setTelemetry(db, { enabled: true, endpoint: 'https://t.test', byUserId: ids.admin });
-    await setTelemetry(db, { enabled: false, byUserId: ids.admin });
+    // The endpoint is passed again on the way OFF. Omitting it made the
+    // assertion pass for the wrong reason: `undefined ?? null` is null whatever
+    // the code does with it.
+    await setTelemetry(db, { enabled: false, endpoint: 'https://t.test', byUserId: ids.admin });
     const [row] = await db.query<{ enabled: boolean; endpoint: string | null }>(
       `select enabled, endpoint from telemetry_state where id = true`,
     );

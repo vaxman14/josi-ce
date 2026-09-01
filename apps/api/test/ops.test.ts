@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { MasterKey, seal } from '@josi-ce/core';
-import { sha256Of, type BackupWriter, type TelemetrySender } from '@josi-ce/ops';
+import { sha256Of, type BackupWriter, type RestoreReader, type TelemetrySender } from '@josi-ce/ops';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -31,6 +31,11 @@ const backupWriter: BackupWriter = {
   async write() { return { byteSize: 2048, sha256: sha256Of(Buffer.alloc(2048)) }; },
   async read() { return Buffer.alloc(2048); },
   async remove() {},
+};
+
+let restoresApplied = 0;
+const restoreReader: RestoreReader = {
+  async apply() { restoresApplied += 1; return { rowsRestored: 7 }; },
 };
 
 interface Res { status: number; body: any }
@@ -92,7 +97,7 @@ beforeAll(async () => {
 
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000', masterKeyCheck: { path: keyPath },
-    backupWriter, telemetrySender,
+    backupWriter, restoreReader, telemetrySender,
     // M115: no gateway by default, which is the shipped state.
     supportGatewayUrl: null,
     fetchLatestVersion: async () => '0.2.0',
@@ -109,6 +114,7 @@ afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); 
 
 beforeEach(async () => {
   sentTelemetry = [];
+  restoresApplied = 0;
   await db.query(`delete from support_tickets`);
   await db.query(`delete from diagnostic_bundles`);
   await db.query(`delete from backups`);
@@ -150,6 +156,61 @@ describe('backups are administrator-only and say what they omit — M100', () =>
     });
     expect(res.body.backup.includesRecoveryCopies).toBe(false);
     expect(res.body.description).toContain('not intended for restoring');
+  });
+});
+
+describe('restoring is destructive, so it is confirmed — M100', () => {
+  const takeBackup = async () => {
+    const res = await call('/api/ops/admin/backups', {
+      method: 'POST', jar: cookies.admin, body: { kind: 'full' },
+    });
+    return res.body.backup.id as string;
+  };
+
+  // A restore replaces the database. A bare POST — from a stale tab, a retried
+  // request, a mis-click — must not be enough.
+  it('does nothing without an explicit confirmation', async () => {
+    const id = await takeBackup();
+    const res = await call('/api/ops/admin/restore', {
+      method: 'POST', jar: cookies.admin, body: { backupId: id },
+    });
+    expect(res.status).toBe(400);
+    expect(restoresApplied).toBe(0);
+    expect(await db.query(`select 1 from restore_attempts`)).toHaveLength(0);
+  });
+
+  it('runs with one, and reports what came back', async () => {
+    const id = await takeBackup();
+    const res = await call('/api/ops/admin/restore', {
+      method: 'POST', jar: cookies.admin, body: { backupId: id, confirm: 'restore' },
+    });
+    expect(res.status).toBe(200);
+    expect(restoresApplied).toBe(1);
+    expect(res.body.rowsRestored).toBe(7);
+    // Two separate facts, reported separately.
+    expect(res.body).toHaveProperty('credentialsRecovered');
+    expect(res.body).toHaveProperty('masterKeyPresent');
+  });
+
+  it('refuses a backup that never completed', async () => {
+    const [row] = await db.query<{ id: string }>(
+      `insert into backups (kind, stored_path, state) values ('full', '/data/backups/x.zip', 'failed')
+       returning id`,
+    );
+    const res = await call('/api/ops/admin/restore', {
+      method: 'POST', jar: cookies.admin, body: { backupId: row.id, confirm: 'restore' },
+    });
+    expect(res.status).toBe(404);
+    expect(restoresApplied).toBe(0);
+  });
+
+  it('is administrator-only', async () => {
+    const id = await takeBackup();
+    const res = await call('/api/ops/admin/restore', {
+      method: 'POST', jar: cookies.alice, body: { backupId: id, confirm: 'restore' },
+    });
+    expect(res.status).toBe(403);
+    expect(restoresApplied).toBe(0);
   });
 });
 

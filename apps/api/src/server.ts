@@ -1,4 +1,6 @@
 // Josi CE API entrypoint.
+import { readFileSync } from 'node:fs';
+import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import { createApp } from './app.js';
 
@@ -20,10 +22,27 @@ try {
   process.exit(1);
 }
 
+// The real backup path. `pgBackupWriter` shells out to pg_dump, which ships in
+// the runtime image; the password is read from its file here and handed to the
+// child through the environment only, never logged and never stored.
+const pgConn = {
+  host: process.env.PGHOST ?? 'db',
+  port: Number(process.env.PGPORT ?? 5432),
+  user: process.env.POSTGRES_USER ?? 'josi',
+  database: process.env.POSTGRES_DB ?? 'josi',
+  password: process.env.PGPASSWORD_FILE
+    ? readFileSync(process.env.PGPASSWORD_FILE, 'utf8').trim()
+    : process.env.PGPASSWORD,
+};
+
 const app = createApp(db, {
   cookieSecure: (process.env.COOKIE_SECURE ?? 'true') === 'true',
   appUrl: (process.env.APP_URL ?? '').replace(/\/$/, '') || 'http://localhost:8080',
   webDir: process.env.WEB_DIR,
+  backupWriter: pgBackupWriter(pgConn),
+  restoreReader: pgRestoreReader(pgConn),
+  // M115: no gateway ships. An operator who wants one sets it.
+  supportGatewayUrl: process.env.JOSI_SUPPORT_GATEWAY || null,
 });
 
 const server = app.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));

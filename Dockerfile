@@ -50,9 +50,11 @@ FROM node:22-bookworm-slim AS runtime
 
 # tini reaps zombies and forwards signals, so `docker stop` is a clean shutdown
 # rather than a ten-second wait for SIGKILL. curl is here for the container
-# healthcheck and nothing else.
+# healthcheck. postgresql-client is here for backup and restore — without it the
+# backup feature could only return "not available", which is a worse answer than
+# a slightly larger image.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tini curl \
+ && apt-get install -y --no-install-recommends tini curl postgresql-client \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production

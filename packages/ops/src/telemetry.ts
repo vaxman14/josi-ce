@@ -115,10 +115,13 @@ export async function setTelemetry(
   await db.query(
     `update telemetry_state set
        enabled = $1,
-       endpoint = $2,
+       -- Cleared whenever telemetry is off, whatever the caller passed. A
+       -- stored endpoint on a disabled installation is a loaded gun: the next
+       -- thing that flips the enabled flag starts transmitting immediately.
+       endpoint = case when $1 then $2 else null end,
        opted_in_at = case when $1 then coalesce(opted_in_at, now()) else opted_in_at end
      where id = true`,
-    [args.enabled, args.enabled ? (args.endpoint ?? null) : null],
+    [args.enabled, args.endpoint ?? null],
   );
   await appendEvent(db, {
     actorUserId: args.byUserId,

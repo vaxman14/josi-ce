@@ -8,7 +8,7 @@
 import { Router, type Request, type Response } from 'express';
 import { type Db } from '@josi-ce/core';
 import {
-  BackupError, DiagnosticsError, MASTER_KEY_DOC, RestoreError, SupportError,
+  BackupError, DiagnosticsError, MASTER_KEY_DOC, RestoreError, SupportError, restoreBackup,
   TELEMETRY_DISCLOSURE, TelemetryError, acknowledgementFor, approveBundle,
   buildBundle, checkForUpdate, createBackup, describeBackup, diagnosticsRequired,
   gatewayStatus, isNewer, markInspected, passSecretScan, recordBundle,
@@ -16,12 +16,14 @@ import {
   type BackupWriter, type LogWindow, type TelemetrySender, type TicketCategory,
 } from '@josi-ce/ops';
 import { requireAuth, requireSuperAdmin } from './authz.js';
+import { existsSync } from 'node:fs';
 import { asyncRoute, param } from './async.js';
 
 export interface OpsRoutesCtx {
   db: Db;
   /** Injected. No test writes a real archive or contacts a real endpoint. */
   backupWriter?: BackupWriter;
+  restoreReader?: import('@josi-ce/ops').RestoreReader;
   telemetrySender?: TelemetrySender;
   /** M115: unset by default. Nothing is transmitted without it. */
   supportGatewayUrl?: string | null;
@@ -274,6 +276,45 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       guidance: MASTER_KEY_DOC,
       warning: describeBackup('full', false),
     })),
+  );
+
+  /** The acceptance criterion, reachable.
+   *
+   * A restore is destructive and irreversible, so it takes an explicit
+   * confirmation rather than a bare POST — and it reports what came back
+   * SEPARATELY from whether it succeeded, because "restored" and "your
+   * credentials work" are different facts and conflating them is how an
+   * operator discovers the difference weeks later.
+   */
+  r.post(
+    '/admin/restore',
+    requireSuperAdmin,
+    handle(async (req, res) => {
+      if (!ctx.restoreReader || !ctx.backupWriter) {
+        throw new RouteError(503, 'restore is not available on this installation');
+      }
+      if (req.body?.confirm !== 'restore') {
+        throw new RouteError(400, 'confirm the restore — this replaces the current database');
+      }
+
+      const backupId = str(req.body?.backupId, 64) || null;
+      if (!backupId) throw new RouteError(400, 'name the backup to restore');
+      const [row] = await db.query<{ stored_path: string; state: string }>(
+        `select stored_path, state from backups where id = $1`, [backupId],
+      );
+      if (!row || row.state !== 'complete') throw new RouteError(404, 'no such completed backup');
+
+      const archive = await ctx.backupWriter.read(row.stored_path);
+      // Whether the key is mounted is a property of the deployment, read here
+      // rather than assumed, so the answer reflects this container.
+      const masterKeyPresent = !!process.env.MASTER_KEY_FILE
+        && existsSync(process.env.MASTER_KEY_FILE);
+
+      const out = await restoreBackup(db, {
+        backupId, archive, masterKeyPresent, reader: ctx.restoreReader,
+      });
+      return res.json(out);
+    }),
   );
 
   r.get(
