@@ -48,6 +48,11 @@ export interface Memory {
  * be recalled and repeated. */
 const FORBIDDEN: Array<{ name: string; re: RegExp }> = [
   { name: 'a password', re: /\b(pass(word|wd)|passphrase)\s*[:=]\s*\S+/i },
+  // The same thing said in a sentence. "I always use the password hunter2" has
+  // no delimiter, and the pattern above missed it entirely — found by the
+  // live-turn test, where a person says such a thing in conversation rather
+  // than pasting a config line.
+  { name: 'a password', re: /\b(pass(word|wd)|passphrase|api key|secret key|access key)\b[\s:=]+\S{6,}/i },
   { name: 'an API key', re: /\b(sk|pk|api[_-]?key|token)[-_:=]\s*[A-Za-z0-9_-]{16,}/i },
   { name: 'a bearer token', re: /\bBearer\s+[A-Za-z0-9._~+/-]{16,}/i },
   { name: 'a card number', re: /\b(?:\d[ -]?){13,19}\b/ },
@@ -111,6 +116,17 @@ export async function addMemory(
   return row;
 }
 
+/** Words too common to say anything about relevance. Deliberately short: a
+ * long stop list starts discarding terms that matter in somebody's own
+ * vocabulary. */
+const STOP_WORDS = new Set([
+  'the', 'and', 'for', 'you', 'your', 'are', 'was', 'were', 'what', 'when',
+  'where', 'which', 'who', 'why', 'how', 'can', 'should', 'would', 'could',
+  'this', 'that', 'these', 'those', 'with', 'from', 'about', 'into', 'have',
+  'has', 'had', 'not', 'but', 'any', 'all', 'get', 'got', 'let', 'now',
+  'please', 'thanks', 'tell', 'give', 'want', 'need', 'make', 'does', 'did',
+]);
+
 export async function listMemories(db: Db, ownerUserId: string): Promise<Memory[]> {
   return db.query<Memory>(
     `select * from memories where owner_user_id = $1
@@ -139,6 +155,22 @@ export async function relevantMemories(
   );
   if (!query || pinned.length >= limit) return pinned.slice(0, limit);
 
+  // ANY salient term, ranked — not every term.
+  //
+  // `websearch_to_tsquery` ANDs what it is given, so the natural request "where
+  // should I go sailing?" becomes `go & sail` and fails to match a memory about
+  // sailing that does not also mention going. A question is not a search query,
+  // and requiring every word of one is why the first version of this retrieved
+  // nothing in a live turn.
+  const terms = query
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w))
+    .slice(0, 8);
+  if (!terms.length) return pinned.slice(0, limit);
+
+  const anyOf = terms.join(' or ');
   const matched = await db.query<Memory>(
     `select * from memories
      where owner_user_id = $1
@@ -148,7 +180,7 @@ export async function relevantMemories(
                       websearch_to_tsquery('english', $2)) desc,
               created_at desc
      limit $3`,
-    [args.ownerUserId, query, limit - pinned.length],
+    [args.ownerUserId, anyOf, limit - pinned.length],
   ).catch(() => [] as Memory[]);
 
   return [...pinned, ...matched];

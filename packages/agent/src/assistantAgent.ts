@@ -31,6 +31,10 @@ import {
   capabilitiesOf, chat, featureAvailable, loadStoredProvider,
   type ChatMessage, type Capabilities, type RegistryOptions, type ToolResult,
 } from '@josi-ce/llm';
+import {
+  CAUTION_ORDER, assembleSystemContext, extractDurableFacts, loadAll,
+  narrowPolicy, relevantMemories, suggestMemory, type Memory,
+} from '@josi-ce/persona';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
 
 /** Recall over the user's own history, injected by the caller. A function
@@ -42,6 +46,11 @@ export type RecallLookup = (query: string) => Promise<string>;
 export interface AgentTurnResult {
   reply: string;
   actions: Array<{ tool: string; result: unknown }>;
+  /** Which memories shaped this turn, so a person can see why it said what it
+   * did rather than being quietly profiled. */
+  memoriesUsed?: Array<{ id: string; content: string }>;
+  /** What the turn proposed to remember, and what became of it. */
+  learned?: LearnOutcome;
   /** Set when the turn could not run at all. The caller shows this instead of a
    * reply — it is never dressed up as something Josi said. */
   refusal?: {
@@ -53,7 +62,8 @@ export interface AgentTurnResult {
 export interface TurnArgs {
   db: Db;
   registry: RegistryOptions;
-  /** Whose turn this is. Everything the agent creates belongs to them. */
+  /** Whose turn this is. Everything the agent creates belongs to them, and
+   * whose personalization is loaded. Never a value from a request body. */
   userId: string;
   threadId: string;
   history: ChatMessage[];
@@ -146,13 +156,42 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     }
   }
 
-  const system = systemPrompt({
+  // The immutable core. Built exactly as before — capabilities, tools, recall
+  // and the hard-coded safety lines are unchanged, and personalization is
+  // appended to it rather than replacing any of it.
+  const core = systemPrompt({
     capabilities,
     templateNames: templates.map((t) => t.key),
     hasRecall: !!args.recall && !!recalled,
     unavailable,
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '');
 
+  // The person's own layers, in the order the plan fixes. A failure here costs
+  // personality, never the turn: an assistant that refuses to answer because a
+  // profile could not be read is worse than one that answers plainly.
+  let system = core;
+  let memoriesUsed: Array<{ id: string; content: string }> = [];
+  try {
+    const layers = await loadAll(db, userId);
+    const { effective } = narrowPolicy(layers.agents_admin, layers.agents_user, CAUTION_ORDER);
+    const memories = await relevantMemories(db, { ownerUserId: userId, request: args.inbound });
+    memoriesUsed = memories.map((m: Memory) => ({ id: m.id, content: m.content }));
+
+    system = assembleSystemContext({
+      core,
+      adminPolicy: layers.agents_admin,
+      userPolicy: effective,
+      soul: layers.soul,
+      user: layers.user,
+      memories: memories.map((m: Memory) => ({ content: m.content, provenance: m.provenance })),
+    }).text;
+  } catch (err) {
+    console.error('personalization unavailable for this turn', (err as Error).message);
+  }
+
+  // The request stays where it belongs: one user message, not repeated in the
+  // system context. Duplicating it makes a model weight it twice and makes the
+  // transcript a lie about what was asked.
   const messages: ChatMessage[] = [...args.history, { role: 'user', content: args.inbound }];
 
   for (let hop = 0; hop < (args.maxHops ?? HOP_LIMIT); hop++) {
@@ -176,7 +215,12 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     }
 
     const res = outcome.response;
-    if (!res.toolCalls.length) return { reply: res.text, actions };
+    if (!res.toolCalls.length) {
+      // A completed exchange, so there is something to learn from — and only
+      // ever from what the PERSON wrote. Never the reply, never tool output.
+      const learned = await learnFromTurn(db, { userId, inbound: args.inbound });
+      return { reply: res.text, actions, memoriesUsed, learned };
+    }
 
     const toolResults: ToolResult[] = [];
     for (const call of res.toolCalls) {
@@ -209,6 +253,60 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     subjectId: args.threadId,
   });
   return { reply: 'I went round in circles on that one and stopped. Try telling me in a different way.', actions };
+}
+
+export interface LearnOutcome {
+  suggested: number;
+  saved: number;
+  /** Named so the caller can say "nothing was kept" honestly. */
+  mode: 'off' | 'manual' | 'automatic';
+}
+
+/**
+ * Bounded, structured extraction from the person's own message.
+ *
+ * Everything about this is deliberately narrow, and the narrowness IS the
+ * feature. It reads one message the person wrote, matches explicit
+ * self-statements, refuses secrets and sensitive categories, and hands at most
+ * two candidates to `suggestMemory` — which then honours the person's mode:
+ * off stores nothing, manual raises a pending suggestion, automatic saves.
+ *
+ * It never reads the model's reply. A model claim stored as a durable fact
+ * about its owner is a fabrication with a long life.
+ */
+async function learnFromTurn(
+  db: Db,
+  args: { userId: string; inbound: string },
+): Promise<LearnOutcome> {
+  const [settings] = await db.query<{ memory_mode: 'off' | 'manual' | 'automatic' }>(
+    `select memory_mode from persona_settings where user_id = $1`,
+    [args.userId],
+  ).catch(() => [] as Array<{ memory_mode: 'off' | 'manual' | 'automatic' }>);
+  const mode = settings?.memory_mode ?? 'manual';
+  if (mode === 'off') return { suggested: 0, saved: 0, mode };
+
+  const candidates = extractDurableFacts(args.inbound);
+  if (!candidates.length) return { suggested: 0, saved: 0, mode };
+
+  let suggested = 0;
+  let saved = 0;
+  for (const candidate of candidates) {
+    try {
+      const out = await suggestMemory(db, {
+        ownerUserId: args.userId,
+        content: candidate.content,
+        sourceKind: 'conversation',
+        confidence: candidate.confidence,
+      });
+      if (out.suggested) {
+        suggested += 1;
+        if (out.auto) saved += 1;
+      }
+    } catch {
+      // Learning is a bonus, never the point of the turn.
+    }
+  }
+  return { suggested, saved, mode };
 }
 
 async function execTool(

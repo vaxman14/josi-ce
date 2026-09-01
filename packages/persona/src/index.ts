@@ -8,7 +8,7 @@ export {
   type IgnoredItem, type ParsedProfile,
 } from './parse.js';
 export {
-  CORE_AUTHORITY_NOTE, assemblePrompt, narrowPolicy,
+  CORE_AUTHORITY_NOTE, assemblePrompt, assembleSystemContext, narrowPolicy,
   type AssembledPrompt, type AssemblyInput,
 } from './assemble.js';
 export {
@@ -20,3 +20,7 @@ export {
   ProfileError, exportProfiles, getProfile, importProfiles, listVersions,
   loadAll, resetProfile, saveProfile, type ExportBundle, type Profile,
 } from './profiles.js';
+export {
+  MAX_CANDIDATES_PER_TURN, MAX_CANDIDATE_LENGTH, extractDurableFacts,
+  provenanceFor, type Candidate,
+} from './extract.js';

@@ -79,11 +79,20 @@ function renderValues(values: Record<string, string | string[]>): string {
   return lines.join('\n');
 }
 
-export function assemblePrompt(input: AssemblyInput): AssembledPrompt {
+/** Everything except the current request.
+ *
+ * A live turn puts the request in a user message, where it belongs; repeating
+ * it in the system context makes a model weight it twice and makes the
+ * transcript a lie about what was asked. `assemblePrompt` is this plus the
+ * request, kept for previews and for the test that asserts the whole order.
+ */
+export function assembleSystemContext(
+  input: Omit<AssemblyInput, 'request'>,
+): AssembledPrompt {
   const sections: string[] = [];
   const parts: string[] = [];
 
-  // 1. The core. First, and never omitted — there is no branch that skips it.
+  // The core. First, and never omitted — there is no branch that skips it.
   parts.push(input.core);
   sections.push('core');
 
@@ -92,7 +101,6 @@ export function assemblePrompt(input: AssemblyInput): AssembledPrompt {
 
   const add = (key: Layer | 'memory', body: string): void => {
     if (!body.trim()) return;
-    // Delimited, so where a section starts and ends is unambiguous.
     parts.push(`--- ${LABELS[key]} ---\n${body}\n--- end ---`);
     sections.push(key);
   };
@@ -106,10 +114,16 @@ export function assemblePrompt(input: AssemblyInput): AssembledPrompt {
     add('memory', input.memories.map((m) => `- ${m.content}  (${m.provenance})`).join('\n'));
   }
 
-  parts.push(`--- ${LABELS.request} ---\n${input.request}`);
-  sections.push('request');
-
   return { text: parts.join('\n\n'), sections };
+}
+
+export function assemblePrompt(input: AssemblyInput): AssembledPrompt {
+  // Delegates, so the live path and the preview can never drift apart.
+  const context = assembleSystemContext(input);
+  return {
+    text: `${context.text}\n\n--- ${LABELS.request} ---\n${input.request}`,
+    sections: [...context.sections, 'request'],
+  };
 }
 
 /**
