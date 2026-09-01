@@ -18,8 +18,11 @@ Created and published by **SOCAL RECEPTIONIST LLC**.
 ## Status
 
 **This repository is under active initial construction.** The documents below
-are complete and binding; the implementation is being built in reviewable
-phases and is not yet functional.
+are complete and binding, and the implementation is being built in reviewable
+phases. Phases 1–10 are implemented and verified: setup, isolation, the
+assistant, the web app, connectors, mail, documents and storage, and backup and
+restore. Each phase carries an evidence document recording what is proven and
+what is not.
 
 | Document | What it is |
 |---|---|
@@ -76,9 +79,9 @@ The complete operator guide is in
 [`docs/INSTALLATION.md`](docs/INSTALLATION.md). It covers prerequisites, DNS,
 every supplied environment setting, secret generation, bundled Caddy, an
 existing reverse proxy, optional OCR and ClamAV profiles, verification,
-operations, security, and troubleshooting. It also labels unfinished Phase 10
-backup/update workflows explicitly instead of inventing commands for features
-that do not exist yet.
+operations, security, and troubleshooting. Where a workflow is not implemented
+it says so explicitly rather than inventing commands for features that do not
+exist yet.
 
 For a local evaluation after reading the guide:
 
@@ -96,8 +99,17 @@ database**, as a Docker secret.
 
 **A database backup alone cannot restore your credentials.** Back up the master
 key separately and keep it somewhere you would still have it if the server were
-gone. Josi CE's own backup tooling handles this deliberately; the details are in
-Phase 10.
+gone.
+
+This is deliberate, and it has been measured rather than assumed. Josi's backup
+tooling never puts the key in an archive, so a stolen backup is useless — and
+the acceptance test drops the database, restores it, and proves the credentials
+decrypt with the key and are unusable without it. The cost of that property is
+the warning above: restore your data without the key and your saved provider
+keys, connected accounts and mail passwords do not come back.
+
+See [`docs/PHASE_10_EVIDENCE.md`](docs/PHASE_10_EVIDENCE.md) for what was
+proven and what was not.
 
 ## Privacy
 

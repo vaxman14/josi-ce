@@ -6,11 +6,19 @@ server unless a section says otherwise.
 
 > **Release warning**
 >
-> Josi CE 0.1 is still under construction. Phase 9 is incomplete and Phases
-> 10 through 12 are not implemented at the time this paragraph was written.
-> In particular, the product does not yet provide its promised backup,
-> restore, update, rollback, diagnostics, or identity/memory workflows. Do not
-> treat this preview as production-ready merely because the containers start.
+> Josi CE 0.1 is still under construction. Phases 1–10 are implemented and
+> verified, including backup, restore, diagnostics and telemetry; Phases 11 and
+> 12 are not implemented at the time this paragraph was written.
+>
+> Two things remain genuinely absent rather than merely rough. **No update has
+> ever been applied** — the rollback path is verified against a real database,
+> but nothing downloads an image, so there is no in-product upgrade. And **the
+> document pipeline does not process files**: mapping, permissions and purge
+> are complete and proven, but no parser, OCR, scanner or cloud sync runs, so a
+> mapped folder is never indexed.
+>
+> Do not treat this preview as production-ready merely because the containers
+> start. Each phase's evidence document records exactly what was proven.
 
 ## 1. What the standard installation creates
 
@@ -500,10 +508,11 @@ Use `clamav` in place of `ocr` for the malware scanner. Removing the ClamAV
 container does not remove the named signature volume unless you deliberately
 remove volumes.
 
-> **Current implementation limitation:** Phase 9 does not yet wire the real
-> OCR, ClamAV, parser, filesystem-watcher, or cloud-sync machinery into a
-> complete document pipeline. Enabling a container does not make the unfinished
-> feature production-ready.
+> **Current implementation limitation:** the real OCR, ClamAV, parser,
+> filesystem-watcher and cloud-sync machinery is not wired into a complete
+> document pipeline. The controls around it — the allowlist, containment, the
+> gate chain, quotas, archive bounds and purge — are implemented and verified,
+> but nothing fills the index. Enabling a container does not change that.
 
 ## 12. Use an existing reverse proxy
 
@@ -652,40 +661,103 @@ step.** It deletes the PostgreSQL data volume and other named volumes.
 Do not delete `secrets/master.key`. Do not regenerate it to fix a startup
 problem. A replacement key cannot decrypt existing credentials.
 
-## 15. Backup and restore status
+## 15. Backup and restore
 
-Josi's required encrypted, restorable backup workflow belongs to Phase 10 and
-is not yet implemented. Therefore this preview cannot honestly provide the
-promised supported backup and restore commands.
+Backup and restore are implemented and have passed a destructive acceptance
+test: on a real host, a credential is sealed through the application, a real
+`pg_dump` is taken, **the database schema is dropped**, the archive is restored,
+and the credential is proven to decrypt with the master key and to be unusable
+without it.
 
-Before storing important data, wait for Phase 10 and its destructive
-backup-wipe-restore acceptance test to pass. A manual PostgreSQL dump is not a
-substitute for that complete workflow because it may omit application files,
-history copies, configuration, and the separately held master key.
+Take a backup from **Settings → Administration → Backups**, or:
 
-At minimum, any future complete backup set must preserve:
+```bash
+curl -fsS -X POST https://josi.example.com/api/ops/admin/backups \
+  -H 'content-type: application/json' \
+  -b "$COOKIES" -H "x-josi-csrf: $CSRF" \
+  -d '{"kind":"full","masterKeyConfirmed":true}'
+```
 
-- PostgreSQL data
-- The exact `secrets/master.key`
-- Application configuration
-- Uploads and recovery/history data when those features exist
-- A record of the Josi release being restored
+Two kinds exist:
 
-The master key must be protected separately from the database backup. Restore
-must fail safely when the wrong key is supplied.
+| Kind | Contains | Use |
+|---|---|---|
+| `full` | Every table, configuration, uploads, retained recovery copies | Restoring this installation |
+| `portable` | Current data and files; **no** recovery copies or version history | Taking your data elsewhere |
 
-## 16. Upgrade and rollback status
+Archives are written to the `josi_backups` named volume, at `/data/backups`
+inside the container, with mode `0600`. Copy them off the host.
 
-The required one-click update, pre-update backup, health check, and automatic
-rollback belong to Phase 10 and are not yet implemented.
+### 15.1 The master key is not in the backup
 
-Do not improvise an in-place production upgrade of this preview. Pulling new
-source and running `docker compose up -d --build` can apply irreversible
-database migrations. Without a verified pre-update backup and rollback path,
-that is not an acceptable production procedure.
+This is deliberate. A stolen archive is useless to anyone who does not also have
+the key — and the cost of that property is that **a backup restored without the
+key brings back your data but not your credentials.** Saved provider keys,
+connected accounts and mail passwords stay encrypted and unreadable.
 
-A supported release procedure will be documented here only after the automated
-backup/restore and failed-update rollback tests exist and pass.
+Back up `secrets/master.key` separately, and store it somewhere other than your
+database backups. A backup and a key kept in the same place protect against disk
+failure but not against theft.
+
+A complete backup set is therefore:
+
+- The Josi archive (`full`)
+- The exact `secrets/master.key`, held separately
+- A note of the Josi release the archive came from
+
+### 15.2 Restoring
+
+Restoring **replaces the current database** and requires an explicit
+confirmation:
+
+```bash
+curl -fsS -X POST https://josi.example.com/api/ops/admin/restore \
+  -H 'content-type: application/json' \
+  -b "$COOKIES" -H "x-josi-csrf: $CSRF" \
+  -d '{"backupId":"<id>","confirm":"restore"}'
+```
+
+The response reports two separate facts, and they are not the same thing:
+
+- `rowsRestored` — your data came back
+- `credentialsRecovered` — whether the master key was present to decrypt it
+
+If `credentialsRecovered` is `false`, the restore still succeeded. Put the
+original key back and the credentials work again; without it they must be
+entered afresh.
+
+Restoring is applied in a single transaction, so a restore that fails leaves the
+database as it was rather than half-replaced.
+
+> **Not yet checked:** a restore does not verify that an archive came from *this*
+> installation. Restoring another installation's backup will apply it.
+
+## 16. Upgrade and rollback
+
+**Josi never updates itself.** There is no setting that enables automatic
+updating — not one defaulting to off, because a setting that exists can be
+flipped. Nothing changes until an administrator approves it.
+
+The update sequence is fixed, and each step gates the next:
+
+1. **Back up first.** An update that cannot take a backup does not start.
+2. Download and apply.
+3. **Health check.** Without it, "the container started" would count as success,
+   which is exactly what a broken migration leaves behind.
+4. **Roll back on failure**, keeping the recorded version at the old one.
+
+That sequence, including rollback and the refusal to proceed without a backup,
+is verified against a real database.
+
+> **Not implemented:** nothing downloads a release. `POST
+> /api/ops/admin/update/check` reports the current version and finds nothing,
+> because no update channel is configured. **There is no in-product upgrade
+> yet.**
+
+Until there is, do not improvise an in-place production upgrade. Pulling new
+source and running `docker compose up -d --build` applies database migrations
+that are not reversible. Take a `full` backup first, confirm you hold the master
+key separately, and be prepared to restore.
 
 ## 17. Troubleshooting
 
@@ -849,14 +921,32 @@ Before considering an installation reachable by other people, confirm:
 - [ ] External LLM processing is disclosed to users.
 - [ ] Telemetry was explicitly chosen rather than assumed.
 - [ ] `/health` and `/ready` are monitored.
-- [ ] Phase 10 backup and restore acceptance has passed before important data is
-      entrusted to the system.
+- [ ] A `full` backup has been taken, copied off the host, and the master key
+      stored separately from it.
+- [ ] You have read section 15.1 and accept that a restore without the key
+      returns your data but not your credentials.
 - [ ] Phase 11 threat-model and release gates have passed before public launch.
 
 ## 19. Collecting useful support information
 
-The redacted diagnostics bundle is a Phase 10 feature and does not yet exist.
-Until it does, inspect logs locally and redact them before sharing. Never send:
+Josi builds a redacted diagnostics bundle for you. Create one from **Settings →
+Support**, or `POST /api/ops/diagnostics`. You are shown the whole bundle before
+anything leaves, and it cannot be submitted until you have opened it, approved
+it, and it has passed a final secret scan.
+
+A bundle carries the Josi version, a resource summary, which settings are
+configured — never their values — and counts of users, conversations and
+documents. It **never** carries messages, emails, documents, prompts, database
+rows, or credentials. That is structural rather than filtered: the builder can
+only produce a fixed list of sections, so a table added later cannot leak
+through a redactor nobody updated. Verified on a real installation by seeding a
+conversation and confirming its text is absent.
+
+> **Not yet collected:** container health and log lines. The bundle builder
+> handles both, with redaction and trimming, but the application has no Docker
+> socket by design, so those sections are currently empty.
+
+If you share logs yourself instead, redact them first. Never send:
 
 - `secrets/master.key`
 - `secrets/db_password`
@@ -894,7 +984,8 @@ docker compose down
 ```
 
 Deleting named volumes or the installation directory destroys data. Before any
-permanent removal, create and verify a complete backup when Phase 10 tooling is
-available, and separately preserve the master key. This manual deliberately
-does not provide a one-line destructive wipe command.
+permanent removal, take a `full` backup, copy it off the host, verify it by
+restoring it somewhere else, and separately preserve the master key — a backup
+you have never restored is not a backup you know you have. This manual
+deliberately does not provide a one-line destructive wipe command.
 

@@ -17,13 +17,21 @@ all three.
 |---|---|
 | Tests | **827 passed** across 28 files |
 | Mutation testing | **49 of 49 caught** (`scripts/mutate-phase10.sh`) |
-| Runtime on claw | **47 checks, 0 failed** — real `pg_dump`, real wipe, real restore |
+| Runtime on claw | **61 checks, 0 failed** — real `pg_dump`, real wipe, real restore |
 | Secret scan | clean, 232 files |
 | Host impact | 25 containers before, 25 after, no leftovers |
 
 ## The acceptance criterion, measured
 
 The runtime test does the real thing against real PostgreSQL:
+
+It also drives `runUpdate` inside the container against the real database, so
+rollback is verified against real constraints rather than injected fakes:
+rolled back, `health_check_failed`, one backup taken **first**, the recorded
+version still the old one — and an update whose backup fails does not apply
+anything at all.
+
+The restore sequence:
 
 1. Seals a credential **through the application's own route**, so the ciphertext
    is genuine rather than something the test constructed.
@@ -115,12 +123,15 @@ In Phase 9 the same situation occurred with M97 and had to be diagnosed by hand.
 
 ## Not proven
 
-**No update has ever been applied.** `runUpdate` is fully tested against injected
-steps — ordering, health check, rollback, failed rollback — but **nothing has
-downloaded an image, run a migration, or replaced a container.** The acceptance
-criterion "a failed update rolls back automatically" is proven as *logic*, not as
-a deployment. There is no update channel and `fetchLatestVersion` is unset in
-production, so `checkForUpdate` returns null.
+**No update has ever been applied.** The rollback path is now verified against a
+real database rather than only against injected fakes — the runtime test drives
+`runUpdate` inside the container and confirms the state machine, the recorded
+version, and the refusal to proceed without a backup. But **nothing has
+downloaded an image, run a migration, or replaced a container.** There is no
+update channel and `fetchLatestVersion` is unset in production, so
+`checkForUpdate` finds nothing. "A failed update rolls back automatically" is
+proven for every failure the code models; it is not proven against a real
+release, because there is no release to try.
 
 **The portable export is not human-readable.** M63 calls for a "portable
 human-readable export"; what exists is a `pg_dump` with derived tables excluded.
@@ -132,6 +143,11 @@ both — with redaction, trimming and the size cap tested — but the route pass
 empty arrays, because reading container state needs a Docker socket the app
 deliberately does not have. The bundle currently carries version, resource
 summary, config status and counts.
+
+The *absence of content* is verified rather than assumed: the runtime test seeds
+a conversation with distinctive text, builds a bundle, and confirms the text is
+absent **and that the bundle is non-empty** — an empty bundle would satisfy the
+first check while proving nothing.
 
 **The support gateway is a contract with nothing behind it.** M115 by design: no
 URL ships, no credential exists, and with none configured nothing is
