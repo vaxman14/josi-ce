@@ -19,6 +19,7 @@ import { opsRoutes } from './http/opsRoutes.js';
 import { personaRoutes } from './http/personaRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
+import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './http/telegramRoutes.js';
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
@@ -40,6 +41,12 @@ export interface AppConfig {
   connectorFetch?: typeof fetch;
   /** SMTP, injected by the tests so no suite ever contacts a mail server. */
   mailTransport?: import('@josi-ce/mail').SmtpTransport;
+  /** Telegram Bot API HTTP, injected by the tests so no suite ever contacts
+   * api.telegram.org. Unset in production. */
+  telegramFetch?: typeof fetch;
+  /** Retry timing for outbound Telegram sends. Tests shorten it so a backoff
+   * assertion does not spend thirty seconds asleep. */
+  telegramRetry?: import('@josi-ce/channels').RetryOptions;
   /** Directory holding the built web bundle. Absent = API only. */
   webDir?: string;
   /** How backups are written. Absent = backups unavailable, which is honest on
@@ -82,6 +89,24 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     })();
   });
 
+  // The Telegram webhook, mounted on the ROOT and before `/api`.
+  //
+  // Outside the API router on purpose: `requireCsrf` and the setup gate both
+  // live there, and neither can apply to a caller that has no session and is
+  // not a browser. Putting it here means it needs no exemption from either —
+  // and an exemption is a hole a later route copies by accident. It
+  // authenticates on Telegram's secret-token header instead, in constant time,
+  // and answers 404 to everything that fails.
+  mountTelegramWebhook(app, {
+    db,
+    masterKey: cfg.masterKeyCheck,
+    fetchImpl: cfg.telegramFetch,
+    appUrl: cfg.appUrl,
+    llmFetch: cfg.llmFetch,
+    llmResolve: cfg.llmResolve,
+    retry: cfg.telegramRetry,
+  });
+
   const api = express.Router();
   api.use(attachUser({ db }));
   api.use(requireCsrf);
@@ -110,6 +135,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
   api.use('/storage', storageRoutes({ db }));
+  api.use('/telegram', telegramRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
+  }));
+  api.use('/admin/telegram', adminTelegramRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
+  }));
   api.use('/persona', personaRoutes({
     db,
     masterKey: cfg.masterKeyCheck,

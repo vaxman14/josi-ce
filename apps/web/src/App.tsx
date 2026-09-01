@@ -14,6 +14,7 @@ import { Connections } from '@/pages/Connections';
 import { Usage } from '@/pages/Usage';
 import { Personalization } from '@/pages/Personalization';
 import { Settings } from '@/pages/Settings';
+import { Telegram } from '@/pages/Telegram';
 import { Apps } from '@/pages/Apps';
 import { AdminOverview } from '@/pages/admin/Overview';
 import { AdminPeople } from '@/pages/admin/People';
@@ -21,6 +22,7 @@ import { AdminModel } from '@/pages/admin/Model';
 import { AdminPolicy } from '@/pages/admin/Policy';
 import { AdminConnectors } from '@/pages/admin/Connectors';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
+import { AdminTelegram } from '@/pages/admin/Telegram';
 
 /** Routing is convenience, not security.
  *
@@ -76,6 +78,7 @@ export function App() {
         <Route path="usage" element={<Usage />} />
         <Route path="personalization" element={<Personalization />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="telegram" element={<Telegram />} />
         <Route path="apps" element={<Apps />} />
       </Route>
 
@@ -86,6 +89,7 @@ export function App() {
         <Route path="policy" element={<AdminPolicy />} />
         <Route path="connectors" element={<AdminConnectors />} />
         <Route path="workspace" element={<AdminWorkspace />} />
+        <Route path="telegram" element={<AdminTelegram />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/app" replace />} />

@@ -61,6 +61,45 @@ export function asSecret(value: unknown): Secret {
   return new Secret(typeof value === 'string' ? value : '');
 }
 
+/**
+ * Unwraps every `Secret` in a structure, returning a plain value.
+ *
+ * THIS EXISTS BECAUSE A REPLACER FUNCTION CANNOT DO IT.
+ *
+ * `seal` used to pass `(_k, v) => v instanceof Secret ? v.reveal() : v` to
+ * `JSON.stringify`, and that never once ran on a `Secret`. `JSON.stringify`
+ * calls `toJSON()` on a value BEFORE handing it to the replacer, so by the time
+ * the replacer saw it, `Secret.toJSON()` had already turned it into the string
+ * `[secret redacted]` — and that string is what got encrypted.
+ *
+ * The consequence was not subtle: every credential configured through a route
+ * that wraps input in `asSecret` — LLM API keys from the wizard and from the
+ * admin screen, OAuth client secrets, SMTP passwords — was stored as the
+ * redaction marker. Opening it returned `[secret redacted]`, which was then
+ * handed to the provider as the API key. Every one of those would have failed
+ * with a 401 on a real installation, and no test caught it because the suites
+ * seal and open plain strings.
+ *
+ * So the unwrapping happens BEFORE serialisation, where `toJSON` cannot
+ * intercept it. Exported so the test can assert the walk directly.
+ */
+export function unwrapSecrets(value: unknown): unknown {
+  if (value instanceof Secret) return value.reveal();
+  if (Array.isArray(value)) return value.map(unwrapSecrets);
+  if (value && typeof value === 'object') {
+    // Plain objects only. A Date, a Buffer or anything else with its own
+    // `toJSON` keeps its behaviour, because rewriting those would change what
+    // callers have been storing since Phase 1.
+    const proto = Object.getPrototypeOf(value);
+    if (proto === Object.prototype || proto === null) {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value)) out[k] = unwrapSecrets(v);
+      return out;
+    }
+  }
+  return value;
+}
+
 /** Seals a JSON payload. Format: `v1.<iv>.<tag>.<ciphertext>`, all base64.
  *
  * Any `Secret` inside the payload is unwrapped here — this is the one place
@@ -68,7 +107,7 @@ export function asSecret(value: unknown): Secret {
 export function seal(key: MasterKey, payload: unknown): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key.reveal(), iv);
-  const plaintext = JSON.stringify(payload, (_k, v) => (v instanceof Secret ? v.reveal() : v));
+  const plaintext = JSON.stringify(unwrapSecrets(payload));
   const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   return [VERSION, iv.toString('base64'), cipher.getAuthTag().toString('base64'), ct.toString('base64')].join('.');
 }

@@ -27,6 +27,7 @@ COPY packages/mail/package.json packages/mail/
 COPY packages/storage/package.json packages/storage/
 COPY packages/ops/package.json packages/ops/
 COPY packages/persona/package.json packages/persona/
+COPY packages/channels/package.json packages/channels/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
 COPY apps/web/package.json apps/web/

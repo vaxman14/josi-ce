@@ -32,6 +32,20 @@ export const LIMITS = {
   provider_probe: { bucket: 'provider_probe', max: 20, windowSeconds: 3600 },
   /** Full-text search across somebody's documents. */
   search: { bucket: 'search', max: 120, windowSeconds: 60 },
+  /** Inbound Telegram messages from one chat.
+   *
+   * The subject is the CHAT, not the user, and that is the whole point: an
+   * unlinked chat has no user to attribute work to, and it is precisely the
+   * unlinked chat that is anonymous internet traffic. Every turn costs a model
+   * call against the installation's cap, so a chat holding down send is
+   * spending somebody else's money.
+   *
+   * 20/minute is far above human conversation and far below a script. */
+  telegram_inbound: { bucket: 'telegram_inbound', max: 20, windowSeconds: 60 },
+  /** Link-code redemption attempts from one chat. Tight, because this one is a
+   * guessing surface: a 160-bit code is not brute-forcible, but a limit means
+   * the attempt is visible in the audit log as a burst rather than a trickle. */
+  telegram_link: { bucket: 'telegram_link', max: 5, windowSeconds: 600 },
 } as const satisfies Record<string, Limit>;
 
 export interface LimitVerdict {

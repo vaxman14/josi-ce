@@ -29,6 +29,9 @@
       "path": "packages/persona"
     },
     {
+      "path": "packages/channels"
+    },
+    {
       "path": "apps/api"
     },
     {

@@ -213,7 +213,7 @@ export function Personalization() {
             ))}
           </div>
           <div className="mt-3">
-            <Button variant="outline" className="min-h-11" onClick={() => void finishOnboarding(true)}>
+            <Button variant="secondary" className="min-h-11" onClick={() => void finishOnboarding(true)}>
               Skip — use the default
             </Button>
           </div>
@@ -224,7 +224,7 @@ export function Personalization() {
         {TABS.map((t) => (
           <Button
             key={t.key}
-            variant={tab === t.key ? 'default' : 'outline'}
+            variant={tab === t.key ? 'primary' : 'secondary'}
             className="min-h-11"
             onClick={() => setTab(t.key)}
           >
@@ -286,7 +286,7 @@ export function Personalization() {
               {presets.map((p) => (
                 <Button
                   key={p.key}
-                  variant="outline"
+                  variant="secondary"
                   className="min-h-11"
                   onClick={() => void applyPreset(p)}
                   title={p.describes}
@@ -302,7 +302,7 @@ export function Personalization() {
         )}
 
         <div className="mt-4">
-          <Button variant="outline" className="min-h-11" onClick={() => void runPreview()}>
+          <Button variant="secondary" className="min-h-11" onClick={() => void runPreview()}>
             {previewing ? 'Asking…' : 'Hear how it sounds'}
           </Button>
           {preview?.reply && (
@@ -326,7 +326,7 @@ export function Personalization() {
                     Version {v.version} · {new Date(v.created_at).toLocaleString()} · {v.bytes} bytes
                   </span>
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     className="min-h-11"
                     onClick={() => void restoreVersion(v.version)}
                   >
@@ -417,10 +417,10 @@ export function Personalization() {
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">
-                <Button variant="outline" className="min-h-11" onClick={() => void togglePin(m)}>
+                <Button variant="secondary" className="min-h-11" onClick={() => void togglePin(m)}>
                   {m.pinned ? 'Unpin' : 'Pin'}
                 </Button>
-                <Button variant="outline" className="min-h-11" onClick={() => void removeMemory(m.id)}>
+                <Button variant="secondary" className="min-h-11" onClick={() => void removeMemory(m.id)}>
                   Delete
                 </Button>
               </div>

@@ -331,6 +331,114 @@ fixed vocabularies of categories; no library message reaches a caller.
 
 ---
 
+## Telegram channel
+
+Every entry in this section rests on one fact: **an inbound Telegram update is
+an unauthenticated claim.** The chat id, the sender id and the username are all
+chosen by whoever sent the message, and CE has no way to challenge any of them.
+So the channel's whole trust story is `telegram_links` — a row a signed-in user
+created deliberately — and these entries are the ways somebody might try to get
+around it.
+
+### T-42 Anyone POSTs to the webhook URL
+**Attacker:** anyone on the internet who guesses or discovers
+`https://<host>/telegram/webhook`, which is a fixed, public path.
+**Impact:** they inject messages that CE treats as coming from Telegram —
+spending model budget, and, if a chat id could be spoofed into a linked one,
+speaking into somebody's private conversation.
+**Control:** `apps/api/src/http/telegramRoutes.ts` — the handler compares
+Telegram's `X-Telegram-Bot-Api-Secret-Token` against a 32-byte generated secret
+in constant time BEFORE the body is read for meaning, and answers 404 (not 403)
+on any mismatch, so a disabled or unconfigured installation is
+indistinguishable from one that never had Telegram.
+**Test:** refuses a wrong secret, and records the probe
+
+### T-43 A stranger messages the bot and gets somebody's assistant
+**Attacker:** anyone who finds the operator's bot in Telegram search.
+**Impact:** free use of the installation's model budget at minimum; reading or
+writing into a colleague's conversation at worst.
+**Control:** `packages/channels/src/telegram/inbound.ts` — an unknown chat is
+refused and told how to link; the only thing an unlinked chat may do is redeem
+a code. Nothing in the payload selects an account: the user id comes from
+`resolveChat`, which filters on `status = 'active'` in the WHERE clause.
+**Test:** a linked chat reaches ITS OWN owner, whatever the payload claims
+
+### T-44 A link code is stolen, replayed, or guessed
+**Attacker:** someone who sees a code over a shoulder, in a screenshot, in a
+support ticket, or in a database dump.
+**Impact:** their Telegram account becomes attached to somebody else's Josi.
+**Control:** `packages/channels/src/telegram/linking.ts` — 160 bits from a
+CSPRNG, stored only as a SHA-256 hash, single-use via a conditional UPDATE
+rather than a read-then-write, 15-minute TTL, invalidated on unlink and on
+minting a replacement, and every failure returns one indistinguishable sentence
+so the reason is not an oracle.
+**Test:** is SINGLE USE — a replay is refused
+
+### T-45 A group chat becomes an unowned shared inbox
+**Attacker:** any member of a Telegram group the bot is added to.
+**Impact:** everyone in the group talks as whichever single person the group
+resolved to — the unowned-inbox failure Phase 8 named for mail.
+**Control:** `packages/channels/src/telegram/inbound.ts` — anything whose
+`chat.type` is not `private` is refused before the link lookup. There is no
+group mode to configure, which is the strongest form of the rule.
+**Test:** refuses a group chat outright
+
+### T-46 An attachment is a zip bomb, an executable, or a path
+**Attacker:** anybody with access to a linked person's phone, or anybody who
+forwarded them a file.
+**Impact:** memory exhaustion, an executable on the server, or a write outside
+the intended directory.
+**Control:** `packages/channels/src/telegram/attachments.ts` — attachments are
+off until an administrator turns them on; four gates run cheapest-first; the
+filename is never kept, only a sanitised extension against an allowlist with a
+separate executable deny list; and `api.ts` caps the download on the bytes as
+they ARRIVE, so a lying `Content-Length` cannot exceed the ceiling.
+**Test:** refuses a LYING Content-Length by counting the bytes as they arrive
+
+### T-47 The bot token leaks through an error, a log, or an admin screen
+**Attacker:** anyone who can read an error response, a log line, an audit
+payload, or the admin UI.
+**Impact:** they can send as the operator's assistant to every person who ever
+linked, and read everything sent to the bot.
+**Control:** `packages/channels/src/telegram/api.ts` — the token is in the URL,
+so no provider description, cause or URL is ever passed outward; every failure
+becomes one of a fixed set of categories. The token is sealed with the master
+key and `describeConfig` reports `tokenSet: true` rather than the ciphertext.
+**Test:** NEVER passes Telegram's description through to the message
+
+### T-48 Telegram redelivers an update and the turn runs twice
+**Attacker:** not an attacker — Telegram's own retry, triggered by exactly the
+slow model call that costs the most.
+**Impact:** duplicate answers, duplicate charges against the installation cap,
+and duplicate side effects from any tool the turn ran.
+**Control:** `packages/channels/src/telegram/inbound.ts` — `update_id` is
+claimed with `insert … on conflict do nothing` before anything expensive, and a
+zero-row result means acknowledge and stop. The handler always answers 200 once
+the secret matched, so a deterministic failure cannot become a retry loop.
+**Test:** a redelivered update_id is dropped
+
+### T-49 One chat floods the installation
+**Attacker:** anyone who can message the bot, linked or not.
+**Impact:** the installation's model cap is spent by one person, denying the
+feature to everybody else.
+**Control:** `packages/core/src/ratelimit.ts` — a `telegram_inbound` bucket
+keyed on the CHAT rather than the user, because an unlinked chat has no user to
+charge, and spent before the link lookup. A refused flood is answered with
+silence, since replying to a flood participates in it.
+**Test:** the allowance is per chat, so one person cannot mute another
+
+### T-50 An administrator uses the bot token to reach a colleague's phone
+**Attacker:** the super admin, who holds the bot token by definition.
+**Impact:** messaging a colleague's private Telegram as Josi, or correlating
+their chat id with their identity.
+**Control:** `apps/api/src/http/telegramRoutes.ts` — the admin link view returns
+owner, status and timestamps and deliberately omits `chat_id`; every DTO passes
+`assertMetadataOnly`. This narrows T-38 rather than closing it: an
+administrator who edits the database directly still holds both halves.
+**Test:** the link list has no chat id and no message text
+
+---
+
 ## Accepted risks
 
 These have no control, deliberately.
