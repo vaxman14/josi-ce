@@ -12,6 +12,7 @@
 // PostgreSQL. Nothing is kept in component state after the step is submitted.
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, primeCsrf } from '@/lib/api';
+import { SETUP_MODELS } from '@/lib/modelCatalog';
 import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
 
 interface StepDescriptor {
@@ -308,6 +309,9 @@ function LlmStep({
 }: { busy: boolean; onSubmit: (step: string, body: Record<string, unknown>) => Promise<void> }) {
   const [provider, setProvider] = useState('openai_compatible');
   const external = provider !== 'openai_compatible';
+  const choices = provider === 'openai' || provider === 'anthropic' || provider === 'xai'
+    ? SETUP_MODELS[provider]
+    : null;
 
   return (
     <form
@@ -334,7 +338,19 @@ function LlmStep({
         </select>
       </div>
 
-      <Field id="model" label="Model name" required autoCapitalize="none" />
+      {choices ? (
+        <div>
+          <label className="mb-1 block text-sm" htmlFor="model">Model</label>
+          <select id="model" name="model" defaultValue={choices[0].id} key={provider}
+                  className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm">
+            {choices.map((choice) => (
+              <option key={choice.id} value={choice.id}>{choice.label} — {choice.note}</option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        <Field id="model" label="Model name on your self-hosted server" required autoCapitalize="none" />
+      )}
       {!external ? (
         <Field id="baseUrl" label="Base URL" placeholder="http://ollama:11434/v1" required autoCapitalize="none" />
       ) : null}
