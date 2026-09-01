@@ -827,16 +827,49 @@ general-purpose sub-agent or second personality. It is a compiled workflow with
 a fixed purpose, fixed tools, explicit authority, persistent state and a hard
 completion boundary.
 
-The first specialist is `schedule_appointment`. Josi turns the user's request
-into a structured job containing the contact, date/time constraints, location
-and travel-time policy, permitted channels, deadline, escalation rules and the
-exact actions already approved. The worker receives only the minimum context
-needed for that job and only scheduling capabilities. It may inspect the
-requester's relevant free/busy data, contact the named party, negotiate within
-the recorded constraints, place an approved hold or event, wait for replies and
-report the outcome. It cannot read unrelated memory or conversations, browse
-documents, alter configuration, install software, create capabilities or widen
-its own authority.
+Phase 14 establishes a **curated specialist catalogue**, not one scheduling
+worker and not an open agent builder. Initial specialist families are:
+
+- **Appointments:** schedule, reschedule, confirm and cancel appointments;
+  inspect only relevant free/busy data; account for location and travel time;
+  contact the named party through approved channels.
+- **Meta marketing:** Meta-specific campaign, audience, creative and reporting
+  tools and context only.
+- **Google Ads:** Google Ads-specific campaign, keyword, conversion and
+  reporting tools and context only.
+- **Yelp:** Yelp profile, lead, campaign and reporting tools and context only.
+- **Analytics:** read-only cross-channel measurement, attribution, audience
+  behaviour, preference and trend analysis. It cannot change a campaign.
+- **HR:** curated employee/onboarding/policy workflows with a deliberately
+  narrow data boundary and additional sensitivity controls.
+- **General administration:** bounded recurring office workflows that do not
+  belong to a more privileged specialist. This must not become a synonym for
+  unrestricted agent.
+
+Each catalogue entry is decomposed further where authority or context differs.
+For example, Meta campaign mutation and Meta reporting need not be the same
+worker merely because both use Meta. The smallest useful capability boundary is
+preferred over a department-shaped agent carrying every tool in that
+department.
+
+For an appointment job, Josi turns the user's request into a structured job
+containing the contact, date/time constraints, location and travel-time policy,
+permitted channels, deadline, escalation rules and the exact actions already
+approved. The worker receives only the minimum context needed for that job and
+only scheduling capabilities. It may inspect the requester's relevant
+free/busy data, contact the named party, negotiate within the recorded
+constraints, place an approved hold or event, wait for replies and report the
+outcome. It cannot read unrelated memory or conversations, browse documents,
+alter configuration, install software, create capabilities or widen its own
+authority.
+
+**Specialist cooperation is mediated, never lateral.** A Meta worker may need
+current audience behaviour from the Analytics worker, but it cannot open that
+worker's context or call it directly. It returns a typed information request to
+the owner Josi/orchestrator. Josi checks the user's authority and purpose,
+dispatches a narrow read-only analytics job, then returns only the minimum
+answer needed by the Meta job. Every hop is attributable and auditable. No
+worker inherits another worker's tools, prompt, credentials or raw context.
 
 **Delivery order:** email + calendar first, Slack/Teams adapters second, and
 telephone last. Telephone is a separate risk tier because realtime calling,
@@ -863,6 +896,9 @@ or tool catalogue into the worker is explicitly prohibited.
 | **D7** | Observable control | The user can view status, cancel future actions, answer an escalation and see a plain-language final report. Cancellation cannot undo an external action already completed. |
 | **D8** | Channel progression | Email/calendar ships first; Slack/Teams and phone cannot be marked supported until their real-provider harnesses pass. |
 | **D9** | Measured economics | A repeatable benchmark reports owner-agent versus specialist-worker input/output tokens, model cost, turns and completion quality. No cheaper claim ships without it. |
+| **D10** | Curated catalogue | Specialist kinds and versions are compiled and signed by Josi; administrators may enable, disable and configure supported workers but cannot author arbitrary prompts, tools or capabilities. |
+| **D11** | Granular domains | Meta, Google Ads, Yelp, analytics, HR and general-admin workers receive separate schemas, tools, credentials and retention policies; sharing a department label never implies shared context. |
+| **D12** | Mediated cooperation | One specialist can request a typed result from another only through Josi. Tests prove no direct worker-to-worker context, credential or tool access and prove that only the minimum result crosses the boundary. |
 
 **Release position:** post-launch v2. Phase 14 must not expand the current public
 release gate or delay Phase 13 clean-install acceptance.
