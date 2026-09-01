@@ -49,16 +49,39 @@ export type TransitionVerdict =
   | { ok: true }
   | { ok: false; reason: TransitionRefusal; expected: SetupStep | null };
 
+/** Steps an operator may submit again while setup is still open.
+ *
+ * LB6.4 wants a review screen with a working "change this" action, and the
+ * only alternative to re-submitting a step is reinstalling — which is what an
+ * operator who typed one character of an SMTP host wrong was previously left
+ * with.
+ *
+ * The list is short on purpose, and what it EXCLUDES is the point. `owner`
+ * creates the single super admin; `domain`, `security` and `telemetry` record
+ * decisions rather than credentials, and `telemetry` in particular must not be
+ * re-openable, because a step that can be submitted twice is a consent that can
+ * be flipped by a replayed request. Only the three steps that hold
+ * configuration for an external service are revisable, and each of them
+ * re-tests what it configures on the way through. */
+export const REVISABLE_STEPS: readonly SetupStep[] = ['llm', 'smtp', 'connectors'];
+
+export function isRevisable(step: string): boolean {
+  return (REVISABLE_STEPS as readonly string[]).includes(step);
+}
+
 /** May this submission be accepted right now?
  *
  * Rejecting a step that is already done is deliberate rather than idempotent:
  * a back-button resubmission of the owner step must not be treated as a fresh
- * attempt to create a super admin. */
+ * attempt to create a super admin. The exception is `REVISABLE_STEPS`, and it
+ * is an exception rather than a relaxation — see the note there. */
 export function canSubmit(step: string, completed: readonly string[]): TransitionVerdict {
   const expected = nextStep(completed);
   if (!isSetupStep(step)) return { ok: false, reason: 'unknown_step', expected };
+  if (completed.includes(step)) {
+    return isRevisable(step) ? { ok: true } : { ok: false, reason: 'already_completed', expected };
+  }
   if (expected === null) return { ok: false, reason: 'setup_finished', expected: null };
-  if (completed.includes(step)) return { ok: false, reason: 'already_completed', expected };
   if (step !== expected) return { ok: false, reason: 'out_of_order', expected };
   return { ok: true };
 }

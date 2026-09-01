@@ -312,6 +312,71 @@ describe('LB6.3 — the review carries no secret', () => {
   });
 });
 
+describe('LB6.4 — a step holding configuration can be corrected', () => {
+  it('lets the three configuration steps be submitted again while setup is open', async () => {
+    await wizardTo('__none__');
+    for (const [step, body] of [
+      ['llm', { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-key-0002', externalAcknowledged: true }],
+      ['smtp', { skip: true }],
+      ['connectors', { skip: true }],
+    ] as const) {
+      const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
+      expect(res.status, step).toBe(200);
+    }
+  });
+
+  it('re-tests on the way through, so a correction is proven rather than assumed', async () => {
+    await wizardTo('__none__');
+    llmBehaviour = 'unauthorized';
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect((await call('/api/setup/review')).body.canComplete).toBe(false);
+
+    // A corrected key, submitted through the same step.
+    llmBehaviour = 'ok';
+    await call('/api/setup/steps/llm', {
+      method: 'POST',
+      body: { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'a-working-key', externalAcknowledged: true },
+    });
+    // The step stores; the verification is what clears the block.
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect((await call('/api/setup/review')).body.canComplete).toBe(true);
+  });
+
+  it('still refuses to replay the steps that are not configuration', async () => {
+    // The reason `already_completed` exists. `owner` creates the single super
+    // admin, and `telemetry` records a consent — a step that can be submitted
+    // twice is a consent that can be flipped by a replayed request.
+    await wizardTo('__none__');
+    for (const [step, body] of [
+      ['owner', { ...OWNER, email: 'attacker@ce.test', username: 'attacker' }],
+      ['domain', { domain: 'evil.example.test', tlsMode: 'bundled_caddy' }],
+      ['security', {}],
+      ['telemetry', { enabled: true }],
+    ] as const) {
+      const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
+      expect(res.status, step).toBe(409);
+      expect(res.body.error, step).toMatch(/already done/i);
+    }
+
+    // And none of it took effect.
+    const users = await db.query<{ email: string }>(`select email from users`);
+    expect(users).toHaveLength(1);
+    expect(users[0].email).toBe('o@ce.test');
+    const telemetry = await db.query<{ enabled: boolean }>(`select enabled from telemetry_state where id = true`);
+    expect(telemetry[0].enabled).toBe(false);
+  });
+
+  it('refuses everything once setup is finished, revisable or not', async () => {
+    await wizardTo('__none__');
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect((await call('/api/setup/complete', { method: 'POST', body: {} })).status).toBe(200);
+    for (const step of ['llm', 'smtp', 'connectors', 'owner']) {
+      const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body: { skip: true } });
+      expect(res.status, step).toBe(404);
+    }
+  });
+});
+
 describe('the verify endpoint is not a way around the wizard', () => {
   it('404s a name that is not something setup configured', async () => {
     await wizardTo('smtp');

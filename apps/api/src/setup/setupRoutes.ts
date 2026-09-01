@@ -21,7 +21,17 @@ import {
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
 import { discoverModels } from '@josi-ce/llm';
-import { saveClient } from '@josi-ce/connectors';
+import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
+
+/** The read-only capabilities each provider is asked for at connect time.
+ *
+ * Derived from the capability table rather than listed, so a read capability
+ * added later is covered and a write capability can never drift into the set an
+ * application is registered for. Write access is a separate consent (M32). */
+const READ_ONLY_CAPABILITIES: Record<'google' | 'microsoft', string[]> = {
+  google: CAPABILITIES.filter((c) => c.provider === 'google' && c.kind === 'read').map((c) => c.key),
+  microsoft: CAPABILITIES.filter((c) => c.provider === 'microsoft' && c.kind === 'read').map((c) => c.key),
+};
 import { UserError, createUser } from '@josi-ce/auth';
 import { asyncRoute, param } from '../http/async.js';
 import { blockingFailures, runHostChecks } from './hostChecks.js';
@@ -209,6 +219,54 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         category: result.category ?? null,
         message: result.message ?? null,
         providerCode: result.providerCode ?? null,
+      });
+    }),
+  );
+
+  /** Everything an administrator needs in order to register the two OAuth
+   * applications, computed rather than written down.
+   *
+   * LB5.3/LB5.4. The callback URI here is the exact string the server will
+   * accept, generated from the configured address — not an example an operator
+   * adapts, and not something they type. A redirect-URI mismatch produces the
+   * provider's own error page rather than ours, which is the single most
+   * common connector failure and the hardest to diagnose from the outside.
+   *
+   * On a LAN-only installation this says so, with the reason, instead of
+   * offering a callback no provider would ever accept. */
+  r.get(
+    '/connector-guidance',
+    asyncRoute(async (_req, res) => {
+      const state = await getSetupState(db);
+      if (state.completed) return res.status(404).json({ error: 'not found' });
+
+      const httpsBase = await publicHttpsBase(db);
+      if (!httpsBase) {
+        return res.json({
+          available: false,
+          reason:
+            'Google and Microsoft only accept an HTTPS redirect on a real domain name. This '
+            + 'installation is reachable only on your network, so there is nothing to register yet. '
+            + 'Everything else works without it, and setting a domain later makes this available '
+            + 'without reinstalling anything.',
+          providers: [],
+        });
+      }
+
+      return res.json({
+        available: true,
+        reason: null,
+        providers: (['google', 'microsoft'] as const).map((provider) => ({
+          provider,
+          callbackUri: `${httpsBase}/api/connections/${provider}/callback`,
+          // Least privilege: what an account is asked for at CONNECT time is
+          // read-only. Write access is a separate, later, explicit consent —
+          // so the application registered here does not need it either.
+          scopes: scopesFor(provider, READ_ONLY_CAPABILITIES[provider]).split(' '),
+          console: provider === 'google'
+            ? { name: 'Google Cloud console', url: 'https://console.cloud.google.com/apis/credentials' }
+            : { name: 'Microsoft Entra admin centre', url: 'https://entra.microsoft.com/' },
+        })),
       });
     }),
   );

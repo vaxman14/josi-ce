@@ -884,7 +884,13 @@ describe('telemetry is off unless affirmatively enabled', () => {
       .filter((l) => !l.trim().startsWith('//'))
       .join('\n');
     const urls = [...code.matchAll(/https?:\/\/[a-z0-9.-]+/gi)].map((m) => m[0].toLowerCase());
-    const allowed = ['https://api.openai.com', 'https://api.x.ai', 'https://api.anthropic.com'];
+    const allowed = [
+      // Endpoints the server calls.
+      'https://api.openai.com', 'https://api.x.ai', 'https://api.anthropic.com',
+      // Links the browser is offered so an administrator can open the console
+      // they need. The server never requests these; they are hrefs.
+      'https://console.cloud.google.com', 'https://entra.microsoft.com',
+    ];
     for (const url of urls) {
       expect(allowed.some((a) => url.startsWith(a)), `setup names an unexpected endpoint: ${url}`).toBe(true);
     }
