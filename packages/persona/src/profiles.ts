@@ -4,7 +4,7 @@
 // cannot erase them"). The Markdown is what the person reads and exports; the
 // parsed configuration is what the system uses. Both are stored, and the parse
 // is redone on every save so the two can never disagree.
-import { appendEvent, type Db } from '@josi-ce/core';
+import { appendEvent, json, type Db } from '@josi-ce/core';
 import { parseProfile, renderProfile, type ParsedProfile } from './parse.js';
 import { AGENTS_FIELDS, CAUTION_ORDER, FIELDS, type Layer } from './schema.js';
 
@@ -57,7 +57,7 @@ export async function saveProfile(
       `insert into persona_versions (profile_id, version, content, parsed)
        values ($1, $2, $3, $4)
        on conflict (profile_id, version) do nothing`,
-      [existing.id, existing.version, existing.content, JSON.stringify(existing.parsed ?? {})],
+      [existing.id, existing.version, existing.content, json(existing.parsed ?? {})],
     );
   }
 
@@ -67,7 +67,7 @@ export async function saveProfile(
     ? await db.query<Profile>(
         `update persona_profiles set content = $1, parsed = $2, ignored = $3,
            version = version + 1 where kind = 'agents_admin' returning *`,
-        [args.content, JSON.stringify(parsed.values), JSON.stringify(parsed.ignored)],
+        [args.content, json(parsed.values), json(parsed.ignored)],
       )
     : await db.query<Profile>(
         `insert into persona_profiles (owner_user_id, kind, content, parsed, ignored, version)
@@ -79,7 +79,7 @@ export async function saveProfile(
          returning *`,
         [
           owner, args.kind, args.content,
-          JSON.stringify(parsed.values), JSON.stringify(parsed.ignored),
+          json(parsed.values), json(parsed.ignored),
         ],
       );
   const row = rows[0];

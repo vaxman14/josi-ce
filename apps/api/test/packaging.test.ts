@@ -466,8 +466,26 @@ describe('jsonb is never hand-serialised', () => {
         const src = readFileSync(join(root, file), 'utf8');
         // db.ts documents the trap and is allowed to name it.
         if (file.endsWith('core/src/db.ts')) continue;
+        // Two shapes, because the first version of this check only knew one.
+        //
+        //   1. `JSON.stringify(x)` next to an explicit `::jsonb` cast.
+        //   2. `JSON.stringify(x)` inside a query's parameter array at all.
+        //
+        // The second is what actually bit twice: writing a jsonb COLUMN needs
+        // no cast in the SQL, so a hand-serialised parameter sailed past a
+        // check looking for `::jsonb`. postgres.js serialises the value itself,
+        // so passing an already-stringified string stores a jsonb string
+        // scalar — invisible under pglite, permanent in production. Found in
+        // Phase 6, and again in Phase 12 in a different package.
         if (/::jsonb/.test(src) && /JSON\.stringify\(/.test(src)) {
           offenders.push(file);
+          continue;
+        }
+        for (const call of src.matchAll(/db\.query[\s\S]{0,4000}?\n\s*\[([\s\S]{0,600}?)\][,)]/g)) {
+          if (/JSON\.stringify\(/.test(call[1])) {
+            offenders.push(`${file} (hand-serialised query parameter)`);
+            break;
+          }
         }
       }
     }

@@ -13,7 +13,7 @@
 // M111: the installation id is a locally generated random UUID. It is not
 // derived from hardware, and it exists for support correlation and rate
 // limiting, not for identifying a business.
-import { appendEvent, type Db } from '@josi-ce/core';
+import { appendEvent, json, type Db } from '@josi-ce/core';
 import { UnsafeEndpointError, validateEndpoint } from '@josi-ce/llm';
 
 export class TelemetryError extends Error {}
@@ -216,7 +216,7 @@ export async function sendTelemetry(
   await db.query(
     `update telemetry_state set last_sent_at = now(), last_status = 'ok',
        consecutive_failures = 0, last_payload = $1 where id = true`,
-    [JSON.stringify(payload)],
+    [json(payload)],
   );
   return { sent: true, payload };
 }
