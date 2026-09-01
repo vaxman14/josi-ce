@@ -219,6 +219,65 @@ describe('restoring is destructive, so it is confirmed — M100', () => {
   });
 });
 
+describe('the expensive routes are rate limited — T-35', () => {
+  // Mutation testing found these missing: removing the limiter from a route
+  // broke nothing, because nothing over the wire ever spent an allowance.
+  const spend = async (n: number, fn: () => Promise<Res>): Promise<number[]> => {
+    const codes: number[] = [];
+    for (let i = 0; i < n; i += 1) codes.push((await fn()).status);
+    return codes;
+  };
+
+  it('refuses a backup once the allowance is spent, with Retry-After', async () => {
+    const codes = await spend(6, () => call('/api/ops/admin/backups', {
+      method: 'POST', jar: cookies.admin, body: { kind: 'full' },
+    }));
+    expect(codes, JSON.stringify(codes)).toContain(429);
+
+    const res = await fetch(`${base}/api/ops/admin/backups`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json', cookie: cookies.admin,
+        'x-josi-csrf': decodeURIComponent(/josi_csrf=([^;]+)/.exec(cookies.admin)?.[1] ?? ''),
+      },
+      body: JSON.stringify({ kind: 'full' }),
+    });
+    expect(res.status).toBe(429);
+    // A client cannot behave without being told how long to wait.
+    expect(res.headers.get('retry-after')).toBeTruthy();
+  });
+
+  it('refuses a diagnostics bundle once the allowance is spent', async () => {
+    const codes = await spend(7, () => call('/api/ops/diagnostics', {
+      method: 'POST', jar: cookies.alice, body: { window: '24h' },
+    }));
+    expect(codes, JSON.stringify(codes)).toContain(429);
+  });
+
+  // The property that makes a rate limit safe to have at all. A global counter
+  // means one person looping denies the feature to everybody, which is the
+  // outage the limit exists to prevent.
+  it('one person exhausting an allowance does not affect anybody else', async () => {
+    await spend(7, () => call('/api/ops/diagnostics', {
+      method: 'POST', jar: cookies.alice, body: { window: '24h' },
+    }));
+    const bob = await call('/api/ops/diagnostics', {
+      method: 'POST', jar: cookies.bob, body: { window: '24h' },
+    });
+    expect(bob.status).toBe(201);
+  });
+
+  it('the buckets are separate, so spending one does not spend another', async () => {
+    await spend(6, () => call('/api/ops/admin/backups', {
+      method: 'POST', jar: cookies.admin, body: { kind: 'full' },
+    }));
+    const diag = await call('/api/ops/diagnostics', {
+      method: 'POST', jar: cookies.admin, body: { window: '24h' },
+    });
+    expect(diag.status).toBe(201);
+  });
+});
+
 describe('updates are never automatic', () => {
   it('says so, in the response', async () => {
     const res = await call('/api/ops/admin/update', { jar: cookies.admin });
@@ -420,6 +479,22 @@ describe('telemetry is off and stays off unless enabled — M98', () => {
     await call('/api/ops/admin/telemetry/send', { method: 'POST', jar: cookies.admin });
     const res = await call('/api/ops/admin/telemetry', { jar: cookies.admin });
     expect(res.body.lastPayload).toBeTruthy();
+  });
+
+  // Phase 10 added this outbound URL without routing it through the SSRF guard
+  // Phase 4 built. Over the wire it must be a 400 the operator can act on.
+  it('refuses a cloud-metadata endpoint over the wire — T-11', async () => {
+    const res = await call('/api/ops/admin/telemetry', {
+      method: 'PUT', jar: cookies.admin,
+      body: { enabled: true, endpoint: 'http://169.254.169.254/latest/meta-data/' },
+    });
+    expect(res.status).toBe(400);
+
+    const [row] = await db.query<{ enabled: boolean; endpoint: string | null }>(
+      `select enabled, endpoint from telemetry_state where id = true`,
+    );
+    expect(row.enabled).toBe(false);
+    expect(row.endpoint).toBeNull();
   });
 
   it('a member cannot read or change it', async () => {

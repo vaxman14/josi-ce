@@ -704,6 +704,25 @@ describe('support tickets — M104, M105, M107, M115', () => {
     expect(row.state).toBe('draft');
   });
 
+  // A bundle is about to leave the installation, so where it goes gets the same
+  // check as any other outbound URL. Mutation testing found this branch had no
+  // test at all.
+  it('refuses to send a bundle to an unsafe gateway — T-11', async () => {
+    const id = await makeTicket({ bundleId: await readyBundle() });
+    const out = await submitTicket(db, {
+      ticketId: id, userId: ids.alice,
+      gatewayUrl: 'http://169.254.169.254/tickets',
+      resolveImpl: async () => ['169.254.169.254'],
+    });
+    expect(out.submitted).toBe(false);
+    expect(out.reason).toContain('not a safe destination');
+
+    const [row] = await db.query<{ state: string }>(
+      `select state from support_tickets where id = $1`, [id],
+    );
+    expect(row.state).toBe('draft');
+  });
+
   it('explains the unconfigured case rather than failing silently', () => {
     expect(gatewayStatus(null).configured).toBe(false);
     expect(gatewayStatus(null).message).toContain('nothing is sent anywhere');

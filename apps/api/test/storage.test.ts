@@ -482,6 +482,33 @@ describe('search is owner-scoped over the wire — M68', () => {
   });
 });
 
+describe('search is rate limited — T-35', () => {
+  beforeEach(() => enable('alice'));
+
+  // The allowance is 120 a minute, which is right for a thing people do
+  // repeatedly and wrong to spend literally in a test. Pre-filling the bucket
+  // asserts the same property in one request.
+  it('refuses once the allowance is spent', async () => {
+    await db.query(
+      `insert into rate_limits (bucket, subject, window_started_at, count)
+       values ('search', $1, now(), 120)`,
+      [`search:${ids.alice}`],
+    );
+    const res = await call('/api/storage/search?q=anything', { jar: cookies.alice });
+    expect(res.status).toBe(429);
+  });
+
+  it('and a colleague is unaffected', async () => {
+    await db.query(
+      `insert into rate_limits (bucket, subject, window_started_at, count)
+       values ('search', $1, now(), 120)`,
+      [`search:${ids.alice}`],
+    );
+    const res = await call('/api/storage/search?q=anything', { jar: cookies.bob });
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('semantic search over the wire — M51', () => {
   beforeEach(() => enable('alice'));
 

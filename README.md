@@ -111,6 +111,57 @@ keys, connected accounts and mail passwords do not come back.
 See [`docs/PHASE_10_EVIDENCE.md`](docs/PHASE_10_EVIDENCE.md) for what was
 proven and what was not.
 
+## Running it
+
+Full detail is in [`docs/INSTALLATION.md`](docs/INSTALLATION.md). These are the
+four things an operator actually does.
+
+### Fresh install
+
+```bash
+git clone https://github.com/vaxman14/josi-ce.git && cd josi-ce
+cp .env.example .env          # set JOSI_DOMAIN and JOSI_APP_URL
+./scripts/install.sh          # generates the master key and database password
+docker compose up -d
+```
+
+Then open the domain and complete the setup wizard. The first person through it
+becomes the super admin, and setup cannot be run twice.
+
+### Back up
+
+```bash
+# Settings → Administration → Backups, or:
+POST /api/ops/admin/backups   {"kind":"full","masterKeyConfirmed":true}
+```
+
+**Copy the archive off the host, and back up `secrets/master.key` separately.**
+The key is never inside a backup — that is what makes a stolen archive useless,
+and it is also why an archive restored without the key returns your data but not
+your credentials.
+
+### Restore
+
+```bash
+POST /api/ops/admin/restore   {"backupId":"<id>","confirm":"restore"}
+```
+
+The reply reports `rowsRestored` and `credentialsRecovered` separately, because
+they are different facts. If the second is `false`, put the original key back
+and the credentials work again.
+
+### Upgrade and roll back
+
+**Josi never updates itself.** There is no setting that enables automatic
+updating. When an update is applied it backs up first and refuses to proceed if
+that fails, health-checks afterwards, and rolls back on failure keeping the
+recorded version at the old one.
+
+> **Not implemented yet:** nothing downloads a release, so there is no
+> in-product upgrade. Until there is, take a `full` backup, confirm you hold the
+> master key separately, then pull and rebuild — and be prepared to restore,
+> because migrations are not reversible.
+
 ## Privacy
 
 - Telemetry is **off** unless you affirmatively switch it on during setup. It
