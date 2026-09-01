@@ -230,6 +230,17 @@ describe('storage mounts — M45, M60', () => {
     expect(compose.volumes).toHaveProperty('josi_versions');
   });
 
+  it('installs a pg client whose major version matches the database', () => {
+    // pg_dump refuses to dump a server newer than itself. Debian bookworm ships
+    // client 15 against postgres:16, so every backup failed with a generic
+    // error on a real host while every unit test passed.
+    const image: string = service('db').image;
+    const serverMajor = /postgres:(\d+)/.exec(image)?.[1];
+    expect(serverMajor, `could not read the postgres major from ${image}`).toBeTruthy();
+    expect(dockerfile, `the image must install postgresql-client-${serverMajor}`)
+      .toContain(`postgresql-client-${serverMajor}`);
+  });
+
   it('creates its writable directories in the image, owned by the runtime user', () => {
     // A named volume inherits ownership from the image path it covers. Without
     // this the daemon creates them root-owned and every backup fails on a real

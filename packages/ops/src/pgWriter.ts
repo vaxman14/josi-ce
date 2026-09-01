@@ -79,6 +79,10 @@ function classify(stderr: string): 'disk_full' | 'permission_denied' | 'database
   if (s.includes('no space left')) return 'disk_full';
   if (s.includes('permission denied') || s.includes('authentication failed')) return 'permission_denied';
   if (s.includes('could not connect') || s.includes('connection refused')) return 'database_unavailable';
+  // pg_dump refuses to dump a server newer than itself. It presents as a
+  // generic failure, which sent a real run looking in the wrong place; the
+  // database is reachable and the tool is simply too old to read it.
+  if (s.includes('server version') && s.includes('aborting')) return 'database_unavailable';
   return 'unknown';
 }
 
