@@ -25,6 +25,11 @@ import { getSetupState, type Db } from '@josi-ce/core';
  * exception is written down somewhere a reviewer will look. */
 export const SETUP_EXEMPT_PREFIXES = ['/setup'] as const;
 
+/** Safe bootstrap endpoints needed by the setup client before an account
+ * exists. Keep this exact rather than prefix-based: widening `/auth` would
+ * expose login and recovery routes during setup. */
+const ALWAYS_AVAILABLE_PATHS = new Set(['/auth/csrf']);
+
 function isSetupPath(path: string): boolean {
   return SETUP_EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 }
@@ -43,6 +48,11 @@ export function setupGate(db: Db) {
     }
 
     const setupPath = isSetupPath(req.path);
+
+    if (ALWAYS_AVAILABLE_PATHS.has(req.path)) {
+      next();
+      return;
+    }
 
     if (!completed) {
       if (setupPath) {

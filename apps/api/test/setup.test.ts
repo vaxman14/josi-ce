@@ -55,8 +55,8 @@ async function call(path: string, opts: { method?: string; body?: unknown; csrf?
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-/** CSRF tokens are issued by /api/auth/csrf, which the gate blocks during
- * setup. Seed the pair directly so the wizard can be driven. */
+/** Most state-machine tests seed a stable pair directly; the browser bootstrap
+ * endpoint itself is covered separately below. */
 function seedCsrf(): void {
   jar = 'josi_csrf=setup-test-token';
 }
@@ -126,13 +126,20 @@ describe('an unconfigured installation exposes only the wizard', () => {
 
   it('refuses every non-setup API route', async () => {
     for (const path of [
-      '/api/auth/me', '/api/auth/csrf', '/api/connections',
+      '/api/auth/me', '/api/connections',
       '/api/admin/users', '/api/admin/workspace', '/api/admin/events', '/api/admin/connections',
     ]) {
       const res = await call(path);
       expect(res.status, path).toBe(503);
       expect(res.body.setupRequired, path).toBe(true);
     }
+  });
+
+  it('issues the CSRF pair the browser needs to submit the first setup step', async () => {
+    const res = await call('/api/auth/csrf');
+    expect(res.status).toBe(200);
+    expect(res.body.csrfToken).toEqual(expect.any(String));
+    expect(jar).toContain('josi_csrf=');
   });
 
   it('refuses non-setup writes too, not just reads', async () => {
