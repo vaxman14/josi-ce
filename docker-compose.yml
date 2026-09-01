@@ -88,6 +88,7 @@ services:
       # Where the built web bundle lives inside the image. The API serves it
       # from its own origin; unset, the API runs headless.
       WEB_DIR: /app/web
+      CODEX_HOME: /data/codex
     secrets:
       - josi_master_key
       - josi_db_password
@@ -115,6 +116,10 @@ services:
       # does not take the only copy with it.
       - josi_backups:/data/backups
       - josi_diagnostics:/data/diagnostics
+      # The Codex CLI's home on the ChatGPT subscription path. Its own volume
+      # so replacing a container does not sign the operator out, and so
+      # removing it is a deliberate act separate from removing the database.
+      - josi_codex:/data/codex
       # Shared folders (M45). Deny-by-default: nothing is mounted here unless an
       # operator writes it, and mounting alone grants nothing — a root must also
       # be registered before Josi will touch it.
@@ -147,6 +152,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-josi}@db:5432/${POSTGRES_DB:-josi}
       PGPASSWORD_FILE: /run/secrets/josi_db_password
       MASTER_KEY_FILE: /run/secrets/josi_master_key
+      CODEX_HOME: /data/codex
     secrets:
       - josi_master_key
       - josi_db_password
@@ -174,6 +180,10 @@ services:
       # does not take the only copy with it.
       - josi_backups:/data/backups
       - josi_diagnostics:/data/diagnostics
+      # The Codex CLI's home on the ChatGPT subscription path. Its own volume
+      # so replacing a container does not sign the operator out, and so
+      # removing it is a deliberate act separate from removing the database.
+      - josi_codex:/data/codex
       # Shared folders (M45). Deny-by-default: nothing is mounted here unless an
       # operator writes it, and mounting alone grants nothing — a root must also
       # be registered before Josi will touch it.
@@ -308,6 +318,7 @@ volumes:
   josi_versions:
   josi_backups:
   josi_diagnostics:
+  josi_codex:
   caddy_data:
   caddy_config:
   clamav_data:

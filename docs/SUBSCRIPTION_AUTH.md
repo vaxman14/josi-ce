@@ -138,21 +138,49 @@ honest rather than a limitation being hidden.
 
 ## Setting it up
 
-1. **Install and sign in the Codex CLI**, as the account Josi runs as:
+### On a Docker installation — the normal case
 
-   ```bash
-   codex login          # opens a browser; sign in with your ChatGPT plan
-   codex exec --json --sandbox read-only -  <<< 'say hello'
-   ```
+The published image already contains the Codex CLI, pinned to an exact version.
+You do not install anything and you do not need a shell into the container.
 
-   The second command is the exact shape Josi uses. If it works by hand, it
-   will work from Josi.
+1. In the setup wizard, at **Language model**, choose **My ChatGPT plan (no API
+   key)**. It appears only on a Community Edition build.
+2. Press **Sign in with ChatGPT**. Josi runs the CLI's own
+   `codex login --device-auth` and shows you the link and one-time code it
+   prints.
+3. Open the link in your own browser, enter the code, approve it.
+4. Continue. Josi sends one real message before treating the model as working.
 
-2. **Admin → Model → Using a Claude or ChatGPT subscription → Use this for the
-   primary model.**
+The same flow is at **Admin → Model** after setup.
 
-3. **Press Test.** The probe runs the binary. If it is not installed or not
-   signed in, you get the real reason and nothing is activated.
+> **Why the wizard drives this rather than telling you to run a command.**
+> The binary that matters is inside the container and you are outside it. A
+> `codex login` on the host signs in a CLI that Josi will never run — which is
+> exactly the failure a real installation on an Intel N150 hit, and the reason
+> this section was rewritten.
+
+The login is stored by the CLI in its own home directory, which is a dedicated
+Docker volume (`josi_codex`, mounted at `/data/codex`). It survives the
+container being replaced, so an update does not sign you out. `docker compose
+down -v` destroys it along with everything else.
+
+**Josi never sees your login.** No credential is read, parsed, copied, stored or
+forwarded, and the one-time code is a pairing code rather than a secret — it is
+meant to be read aloud, it grants nothing without you completing the flow with
+your own ChatGPT account, and it expires in fifteen minutes.
+
+### Running Josi outside Docker
+
+Install and sign in the CLI as the account Josi runs as:
+
+```bash
+codex login          # opens a browser; sign in with your ChatGPT plan
+codex login status   # should say you are signed in
+codex exec --json --sandbox read-only -  <<< 'say hello'
+```
+
+The last command is the exact shape Josi uses. If it works by hand, it will work
+from Josi.
 
 ### In Docker
 
@@ -203,9 +231,16 @@ docker build --build-arg JOSI_EDITION=hosted -t josi:hosted .
 **"The Codex CLI was not found."** The binary is not on the `PATH` of the
 account Josi runs as. Set an explicit path when configuring the provider.
 
-**"The Codex CLI on this machine is not signed in."** Run `codex login` **as the
-account Josi runs as** — not as your own user. A login in your shell is not a
-login for the service account.
+**"The Codex CLI on this machine is not signed in."** On Docker, use the
+**Sign in with ChatGPT** button — it runs the device flow inside the container,
+which is where the CLI Josi actually runs lives. Signing in on the host does not
+sign in the container. Outside Docker, run `codex login` **as the account Josi
+runs as**, not as your own user.
+
+**"The Codex CLI is not present in this installation."** A published image
+contains it. A source build only has it if the build supplied
+`--build-arg JOSI_CODEX_VERSION=<version>`; one built with an empty value
+deliberately ships without it and says so rather than pretending.
 
 **"Your ChatGPT plan has hit its usage limit."** Shared with your own Codex
 sessions, by design and by OpenAI's documentation. Wait, or switch the primary

@@ -99,8 +99,33 @@ WORKDIR /app
 # daemon as root:root 0755, the application runs as `node`, and every backup
 # fails with a permission error on a real installation — which is exactly what
 # the first runtime run found while every unit test passed.
-RUN mkdir -p /data/backups /data/diagnostics /data/versions \
+RUN mkdir -p /data/backups /data/diagnostics /data/versions /data/codex \
  && chown -R node:node /data
+
+# ------------------------------------------------- the ChatGPT subscription path
+#
+# OpenAI's own CLI, pinned to an exact version. It is what makes subscription
+# sign-in possible on a Docker installation at all: the binary that matters is
+# inside this container, and an operator has no shell into it, so the wizard
+# drives `codex login --device-auth` here rather than telling somebody to run a
+# command they cannot reach.
+#
+# PINNED, NEVER FLOATING. `@openai/codex@latest` would mean the CLI's interface
+# changing under a running installation — and the wizard reads what that CLI
+# prints, so a reworded prompt is a broken sign-in. The default below is a real
+# published version; `--build-arg JOSI_CODEX_VERSION=` skips the install
+# entirely, and an image built that way reports the path as unavailable rather
+# than pretending.
+#
+# The exact version is asserted by the packaging test, so moving it is a
+# deliberate edit in two places rather than a drifting tag.
+ARG JOSI_CODEX_VERSION=0.152.0
+RUN if [ -n "$JOSI_CODEX_VERSION" ]; then \
+      npm install -g --ignore-scripts "@openai/codex@${JOSI_CODEX_VERSION}" \
+      && codex --version; \
+    else \
+      echo "JOSI_CODEX_VERSION empty — building without the Codex CLI"; \
+    fi
 
 # The `node` user (uid 1000) ships with the base image. Everything below runs as
 # it: the application never needs to write to its own code, so the whole tree is

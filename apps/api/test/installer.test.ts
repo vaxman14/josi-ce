@@ -143,6 +143,68 @@ describe('LB1.1 — the published install keeps the development stack’s securi
   });
 });
 
+describe('LB2.2 — the published image carries a pinned Codex CLI', () => {
+  const dockerfile = read('Dockerfile');
+
+  it('installs OpenAI’s own CLI', () => {
+    expect(dockerfile).toMatch(/npm install -g[^\n]*@openai\/codex@/);
+  });
+
+  it('pins an exact version rather than a moving tag', () => {
+    // The wizard reads what this CLI PRINTS in order to show a sign-in code.
+    // `@latest` would mean the interface changing under a running
+    // installation, and a reworded prompt is a broken sign-in.
+    const pin = /ARG JOSI_CODEX_VERSION=([^\s]*)/.exec(dockerfile)?.[1];
+    expect(pin, 'the version must be a concrete default').toMatch(/^\d+\.\d+\.\d+$/);
+    // Comments stripped: explaining why `@latest` is wrong requires writing it.
+    const instructions = dockerfile.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
+    expect(instructions).not.toMatch(/@openai\/codex@latest/);
+    expect(instructions).not.toMatch(/@openai\/codex["\s]/);
+  });
+
+  it('is the version the login parser was written against', () => {
+    // The device-login test fixture is a byte-for-byte capture from this
+    // version. Moving one without the other is how the parser silently stops
+    // matching, so both name it and this is what fails.
+    const pin = /ARG JOSI_CODEX_VERSION=([^\s]*)/.exec(dockerfile)?.[1];
+    const fixture = read('packages/llm/test/codexLogin.test.ts');
+    expect(fixture, `the login fixture must be captured from ${pin}`).toContain(pin!);
+  });
+
+  it('fails the build rather than continuing without it', () => {
+    // `npm install -g` exits non-zero on an unresolvable version, and `codex
+    // --version` right after proves the binary is actually runnable rather
+    // than merely downloaded.
+    expect(dockerfile).toMatch(/&& codex --version/);
+  });
+
+  it('gives the CLI a durable home, owned by the runtime user', () => {
+    // A named volume inherits ownership from the image path it covers. Without
+    // this the daemon creates it root-owned, the app runs as `node`, and the
+    // login fails to write — the same defect that broke backups in Phase 10.
+    expect(dockerfile).toMatch(/mkdir -p [^\n]*\/data\/codex/);
+    expect(dockerfile).toMatch(/chown -R node:node \/data/);
+  });
+
+  it('mounts that home in both compose files, so a login survives an update', () => {
+    for (const [name, compose] of [['development', dev], ['release', release]] as const) {
+      for (const service of ['web', 'worker']) {
+        expect(compose.services[service].volumes, `${name}/${service}`)
+          .toContain('josi_codex:/data/codex');
+        expect(compose.services[service].environment.CODEX_HOME, `${name}/${service}`)
+          .toBe('/data/codex');
+      }
+      expect(compose.volumes, name).toHaveProperty('josi_codex');
+    }
+  });
+
+  it('keeps the login out of the database volume, so removing one is not removing the other', () => {
+    expect(release.services.web.volumes).not.toContain('db_data:/data/codex');
+    expect(Object.keys(release.volumes)).toContain('josi_codex');
+    expect(Object.keys(release.volumes)).toContain('db_data');
+  });
+});
+
 describe('LB1.5 — a permission mode is a number, never a filesystem-stat dump', () => {
   it('asks GNU coreutils before BSD in every script that reads a mode', () => {
     // The ordering is the whole defect. On GNU, `stat -f` means "display file

@@ -377,6 +377,98 @@ describe('LB6.4 — a step holding configuration can be corrected', () => {
   });
 });
 
+describe('LB2 — the ChatGPT subscription path is offered in the wizard', () => {
+  it('offers it on a CE build, with the honest reason for each option that is not on offer', async () => {
+    await wizardTo('llm');
+    const res = await call('/api/setup/subscription');
+    expect(res.status).toBe(200);
+
+    const chatgpt = res.body.options.find((o: any) => o.provider === 'openai_subscription');
+    expect(chatgpt.available).toBe(true);
+    expect(chatgpt.reason).toMatch(/never sees, stores or forwards your login/i);
+
+    // Not "coming soon". There is a policy, it is current, and it says no.
+    const claude = res.body.options.find((o: any) => o.id === 'claude_subscription');
+    expect(claude.available).toBe(false);
+    expect(claude.reason).toMatch(/not permitted/i);
+    expect(claude.reason).toMatch(/Claude Code/);
+    for (const option of res.body.options) {
+      expect(option.reason, option.id).not.toMatch(/coming soon/i);
+    }
+  });
+
+  it('reports the CLI honestly when it is not in this environment', async () => {
+    // The unit suite has no Codex binary, which is the same answer an image
+    // built without one gives. Reporting it as available would be the lie.
+    await wizardTo('llm');
+    const res = await call('/api/setup/subscription');
+    expect(res.body.cli.installed).toBe(false);
+    expect(res.body.cli.detail).toMatch(/not present|could not be run/i);
+  });
+
+  it('refuses an API key on the subscription path', async () => {
+    // A key here would bill an API account while the product called it a
+    // subscription. Refused at the route as well as by a database constraint.
+    await wizardTo('llm');
+    const res = await call('/api/setup/steps/llm', {
+      method: 'POST',
+      body: {
+        provider: 'openai_subscription', model: 'gpt-5-codex',
+        // Deliberately not key-shaped: the pre-commit scanner rejects anything
+        // that looks like a real credential, including in a fixture, and it is
+        // right to. What matters here is that a key is present at all.
+        apiKey: 'not-a-real-key-and-must-be-refused', externalAcknowledged: true,
+      },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/must not be given an API key/i);
+    expect(await db.query(`select * from llm_providers`)).toHaveLength(0);
+  });
+
+  it('refuses to store the provider while the CLI is not signed in', async () => {
+    // Saving a provider that cannot answer is exactly the "configured but
+    // never checked" shape this whole blocker is about.
+    await wizardTo('llm');
+    const res = await call('/api/setup/steps/llm', {
+      method: 'POST',
+      body: { provider: 'openai_subscription', model: 'gpt-5-codex', externalAcknowledged: true },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/sign in first/i);
+    expect(await db.query(`select * from llm_providers`)).toHaveLength(0);
+  });
+
+  it('mounts the sign-in routes behind the edition capability, not behind a guard', async () => {
+    // LB2.8's outermost layer. A hosted build's route table must not contain
+    // them at all — "absent" rather than "refused", so a hosted artefact does
+    // not confirm the capability exists to be asked for.
+    const fs = await import('node:fs');
+    const source = fs.readFileSync(new URL('../src/setup/setupRoutes.ts', import.meta.url), 'utf8');
+    const mounted = source.indexOf("hasCapability('subscription_auth')");
+    const routes = source.indexOf("'/subscription/login'");
+    expect(mounted, 'the routes must be inside a capability check').toBeGreaterThan(0);
+    expect(routes).toBeGreaterThan(mounted);
+    // And the provider list the step validates against is the shared one whose
+    // hosted behaviour is already proven in the subscription suite.
+    expect(source).toContain('savableProviders()');
+  });
+
+  it('never reads a credential store to find a login', async () => {
+    const fs = await import('node:fs');
+    const sources = [
+      '../src/setup/setupRoutes.ts',
+      '../../../packages/llm/src/providers/codexLogin.ts',
+      '../../../packages/llm/src/providers/codexCli.ts',
+    ].map((f) => fs.readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
+
+    // Comments name these in order to say they are never touched.
+    const code = sources.split('\n').filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//')).join('\n');
+    for (const forbidden of ['auth.json', 'keychain', 'cookies', 'Login Data', 'readFile']) {
+      expect(code.toLowerCase(), forbidden).not.toContain(forbidden.toLowerCase());
+    }
+  });
+});
+
 describe('the verify endpoint is not a way around the wizard', () => {
   it('404s a name that is not something setup configured', async () => {
     await wizardTo('smtp');

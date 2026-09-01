@@ -7,3 +7,4 @@ export * from './discovery.js';
 export * from './providers/openaiCompatible.js';
 export * from './providers/anthropic.js';
 export * from './providers/codexCli.js';
+export * from './providers/codexLogin.js';

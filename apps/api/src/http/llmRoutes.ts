@@ -64,11 +64,11 @@ const KNOWN_PROVIDERS = ['openai', 'anthropic', 'xai', 'openai_compatible'];
  * Kept out of `KNOWN_PROVIDERS` so a hosted build's provider list does not even
  * mention them — and so `savableProviders()` below is the ONE place the two
  * lists are joined. */
-const CAPABILITY_PROVIDERS: Array<{ provider: string; capability: 'subscription_auth' }> = [
+export const CAPABILITY_PROVIDERS: Array<{ provider: string; capability: 'subscription_auth' }> = [
   { provider: 'openai_subscription', capability: 'subscription_auth' },
 ];
 
-function savableProviders(): string[] {
+export function savableProviders(): string[] {
   return [
     ...KNOWN_PROVIDERS,
     ...CAPABILITY_PROVIDERS.filter((p) => hasCapability(p.capability)).map((p) => p.provider),
@@ -100,7 +100,7 @@ function requireMasterKey(ctx: LlmRoutesCtx): MasterKey {
  * Sources are recorded in `docs/SUBSCRIPTION_AUTH.md` rather than in a code
  * comment nobody re-checks.
  */
-function subscriptionOptions(): Array<{
+export function subscriptionOptions(): Array<{
   id: string; label: string; available: boolean; provider: string | null; reason: string;
 }> {
   const ceOnly = hasCapability('subscription_auth');

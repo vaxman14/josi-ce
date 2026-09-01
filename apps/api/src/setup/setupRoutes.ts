@@ -22,6 +22,20 @@ import {
 } from '@josi-ce/core';
 import { discoverModels } from '@josi-ce/llm';
 import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
+import { DeviceLogin, codexLoginStatus, codexLogout } from '@josi-ce/llm';
+import { hasCapability } from '@josi-ce/core';
+import { savableProviders, subscriptionOptions } from '../http/llmRoutes.js';
+
+/** One login attempt at a time, for one installation.
+ *
+ * In memory rather than in the database because it IS a running child process:
+ * a row describing a process that died with the container would be a row that
+ * lies. A restart mid-login costs the operator one click. */
+let deviceLogin: DeviceLogin | null = null;
+
+function codexEnv() {
+  return { codexHome: process.env.CODEX_HOME ?? null };
+}
 
 /** The read-only capabilities each provider is asked for at connect time.
  *
@@ -222,6 +236,94 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
       });
     }),
   );
+
+  // ------------------------------------------- ChatGPT subscription sign-in
+  //
+  // LB2. Phase 13.3 built the provider and told the operator to run
+  // `codex login` in their own terminal. On a Docker installation that cannot
+  // be done: the binary is inside the container, the operator is outside it,
+  // and a login on the host signs in a CLI the application never runs.
+  //
+  // These routes are MOUNTED ONLY on a build whose edition permits the
+  // capability. Not guarded — absent. A hosted build's route table does not
+  // contain them, which is the outermost of the four layers; the guard, the
+  // provider factory and the registry are the other three.
+  if (hasCapability('subscription_auth')) {
+    /** What is on offer, and the honest reason for each thing that is not. */
+    r.get(
+      '/subscription',
+      asyncRoute(async (_req, res) => {
+        const state = await getSetupState(db);
+        if (state.completed) return res.status(404).json({ error: 'not found' });
+        return res.json({
+          options: subscriptionOptions(),
+          cli: await codexLoginStatus(codexEnv()),
+        });
+      }),
+    );
+
+    /** Start the CLI's own device-code sign-in and return what it printed.
+     *
+     * The code is a pairing code, not a credential: it is meant to be read
+     * aloud, it grants nothing without somebody completing the flow with their
+     * own ChatGPT account, and it expires. Josi never sees what the CLI stores
+     * afterwards. */
+    r.post(
+      '/subscription/login',
+      asyncRoute(async (_req, res) => {
+        const state = await getSetupState(db);
+        if (state.completed) return res.status(404).json({ error: 'not found' });
+
+        // A second attempt supersedes the first rather than running two device
+        // flows against one CLI home.
+        if (deviceLogin?.running) deviceLogin.cancel();
+        deviceLogin = new DeviceLogin(codexEnv());
+        return res.json(await deviceLogin.start());
+      }),
+    );
+
+    r.get(
+      '/subscription/login',
+      asyncRoute(async (_req, res) => {
+        const state = await getSetupState(db);
+        if (state.completed) return res.status(404).json({ error: 'not found' });
+        if (!deviceLogin) {
+          return res.json({ state: 'idle', challenge: null, expiresAt: null, message: null });
+        }
+        // The CLI exiting zero is what "signed in" means, and it is confirmed
+        // against the CLI rather than inferred from an exit code alone.
+        const snapshot = deviceLogin.status;
+        if (snapshot.state === 'signed_in') {
+          const status = await codexLoginStatus(codexEnv());
+          if (!status.signedIn) {
+            return res.json({
+              state: 'failed', challenge: null, expiresAt: null,
+              message: 'The sign-in reported success but the CLI is still not signed in. Try again.',
+            });
+          }
+        }
+        return res.json(snapshot);
+      }),
+    );
+
+    r.post(
+      '/subscription/login/cancel',
+      asyncRoute(async (_req, res) => {
+        deviceLogin?.cancel();
+        return res.json({ ok: true });
+      }),
+    );
+
+    /** Undo it. The CLI owns the stored login; this asks it to delete it. */
+    r.post(
+      '/subscription/logout',
+      asyncRoute(async (_req, res) => {
+        const state = await getSetupState(db);
+        if (state.completed) return res.status(404).json({ error: 'not found' });
+        return res.json(await codexLogout(codexEnv()));
+      }),
+    );
+  }
 
   /** Everything an administrator needs in order to register the two OAuth
    * applications, computed rather than written down.
@@ -513,9 +615,32 @@ async function applyStep(
       const apiKey = asSecret(body.apiKey);
       const acknowledged = bool(body.externalAcknowledged);
 
-      const known = ['openai', 'anthropic', 'xai', 'openai_compatible'];
-      if (!known.includes(provider)) throw new SetupError(400, 'choose a model provider');
+      // `openai_subscription` is in this list only on a build whose edition
+      // permits it. On a hosted build it is absent, so the step refuses it with
+      // "choose a model provider" — the same answer as any other unknown
+      // string, which is deliberate: a hosted build should not confirm that
+      // the capability exists to be asked for.
+      if (!savableProviders().includes(provider)) throw new SetupError(400, 'choose a model provider');
       if (!model) throw new SetupError(400, 'a model name is required');
+
+      // The subscription path carries no API key at all — the credential lives
+      // in the operator's own Codex login and never enters this process — so
+      // the "a key is required" rule below must not apply to it. It IS still
+      // external: the bytes reach OpenAI, by way of OpenAI's own binary.
+      const isSubscription = provider === 'openai_subscription';
+      if (isSubscription) {
+        if (!apiKey.isEmpty) {
+          throw new SetupError(
+            400,
+            'a subscription provider must not be given an API key — that would bill an API account '
+            + 'while calling itself a subscription',
+          );
+        }
+        const status = await codexLoginStatus({ codexHome: process.env.CODEX_HOME ?? null });
+        if (!status.signedIn) {
+          throw new SetupError(400, `${status.detail} Sign in first, then continue.`);
+        }
+      }
 
       const isExternal = provider !== 'openai_compatible';
       if (isExternal && !acknowledged) {
@@ -526,7 +651,9 @@ async function applyStep(
           'to use a hosted model provider you must acknowledge that the data needed for each request leaves this server and is processed under that provider\'s terms',
         );
       }
-      if (isExternal && apiKey.isEmpty) throw new SetupError(400, 'an API key is required for this provider');
+      if (isExternal && !isSubscription && apiKey.isEmpty) {
+        throw new SetupError(400, 'an API key is required for this provider');
+      }
       if (provider === 'openai_compatible') {
         if (!baseUrl) throw new SetupError(400, 'a base URL is required for a self-hosted endpoint');
         let parsed: URL;
