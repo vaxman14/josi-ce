@@ -134,6 +134,7 @@ describe('anonymous callers', () => {
       '/api/admin/workspace',
       '/api/admin/connections',
       '/api/admin/events',
+      '/api/admin/launch-checklist',
     ]) {
       expect((await call(path)).status, path).toBe(401);
     }
@@ -158,8 +159,24 @@ describe('role separation', () => {
       '/api/admin/sessions',
       '/api/admin/events',
       '/api/admin/connections',
+      // The launch checklist reports the state of the whole installation —
+      // how many accounts exist, whether backups have run, what setup skipped.
+      // Metadata, but an administrator's metadata.
+      '/api/admin/launch-checklist',
     ]) {
       expect((await call(path, { jar: cookies.alice })).status, path).toBe(403);
+    }
+  });
+
+  it('a member cannot dismiss the administrator’s checklist, or claim its confirmations', async () => {
+    for (const path of [
+      '/api/admin/launch-checklist/seen',
+      '/api/admin/launch-checklist/master-key-backed-up',
+      '/api/admin/launch-checklist/dismiss/connectors',
+      '/api/admin/launch-checklist/restore/connectors',
+    ]) {
+      const res = await call(path, { method: 'POST', jar: cookies.alice, body: {} });
+      expect(res.status, path).toBe(403);
     }
   });
 

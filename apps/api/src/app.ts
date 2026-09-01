@@ -11,6 +11,7 @@ import { attachUser } from './http/authz.js';
 import { requireCsrf } from './http/cookies.js';
 import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
+import { checklistRoutes } from './http/checklistRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
@@ -157,6 +158,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
   }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
+  // Same mount point, so the super-admin guard above covers it too.
+  api.use('/admin', checklistRoutes(db));
   api.use('/mail', mailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));
   api.use('/admin/mail', adminMailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));
   api.use('/admin/connectors', adminConnectorRoutes({

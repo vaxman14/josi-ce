@@ -23,6 +23,7 @@ import { AdminPolicy } from '@/pages/admin/Policy';
 import { AdminConnectors } from '@/pages/admin/Connectors';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
+import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
 
 /** Routing is convenience, not security.
  *
@@ -36,6 +37,38 @@ function RequireAuth({ children, admin = false }: { children: React.ReactNode; a
   if (!user) return <Navigate to="/login" replace />;
   if (admin && user.role !== 'super_admin') return <Navigate to="/app" replace />;
   return <>{children}</>;
+}
+
+/** First-run routing for the person who installed this.
+ *
+ * Setup finishing and the installation being ready to use are different
+ * things, and the gap was invisible: the super admin landed on the ordinary
+ * user dashboard with no sign that nobody had been invited, no backup existed,
+ * and the master key had never left the server.
+ *
+ * So the first sign-in after setup goes to the checklist instead. Exactly once
+ * — the checklist records that it has been seen, and after that this returns
+ * null and ordinary role-aware routing takes over. It is a convenience, not a
+ * control: nothing here grants or refuses anything.
+ */
+function useFirstRunRedirect(): string | null {
+  const { user, loading } = useAuth();
+  const [target, setTarget] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (loading || user?.role !== 'super_admin') return;
+    // Already there, or deliberately somewhere else in the admin section.
+    if (window.location.pathname.startsWith('/admin')) return;
+    void fetch('/api/admin/launch-checklist', { credentials: 'same-origin' })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const body = await res.json().catch(() => null) as { seen?: boolean } | null;
+        if (body && body.seen === false) setTarget('/admin/launch');
+      })
+      .catch(() => undefined);
+  }, [loading, user?.role]);
+
+  return target;
 }
 
 /** An unconfigured installation shows the wizard and nothing else.
@@ -60,8 +93,10 @@ function useSetupNeeded(): boolean | null {
 
 export function App() {
   const setupNeeded = useSetupNeeded();
+  const firstRun = useFirstRunRedirect();
   if (setupNeeded === null) return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
   if (setupNeeded) return <Setup onDone={() => window.location.assign('/login')} />;
+  if (firstRun) return <Navigate to={firstRun} replace />;
 
   return (
     <Routes>
@@ -90,6 +125,7 @@ export function App() {
         <Route path="connectors" element={<AdminConnectors />} />
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />
+        <Route path="launch" element={<AdminLaunchChecklist />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/app" replace />} />

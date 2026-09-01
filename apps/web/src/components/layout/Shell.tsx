@@ -34,6 +34,9 @@ const MEMBER_NAV = [
 
 const ADMIN_NAV = [
   { to: '/admin', label: 'Overview', end: true },
+  // First for as long as it matters. An administrator who dismissed the
+  // first-run redirect still has to be able to find the thing they dismissed.
+  { to: '/admin/launch', label: 'Getting started' },
   { to: '/admin/people', label: 'People' },
   { to: '/admin/model', label: 'Model' },
   { to: '/admin/policy', label: 'Policy' },
