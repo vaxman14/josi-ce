@@ -52,3 +52,50 @@ Acceptance:
 - Mobile apps use the same canonical terminology and coverage rules.
 - Missing or malformed translations fail CI and never render raw translation
   keys to users.
+
+## V2.2 — Hiring-review worker
+
+Add a narrowly scoped worker that reads applications, resumes, cover letters
+and role requirements, then gives a hiring manager a useful evidence-based
+brief. It must not behave like a keyword filter or make the hiring decision.
+
+Required behavior:
+
+- Summarize each candidate's relevant experience, demonstrated outcomes,
+  transferable skills, career progression and practical constraints.
+- Compare evidence against explicit job requirements while distinguishing
+  required, preferred and trainable qualifications.
+- Explain why each observation matters and cite the exact source passage.
+- Identify unclear claims, gaps and contradictions as interview questions, not
+  automatic grounds for rejection.
+- Recognize equivalent experience and nontraditional career paths instead of
+  demanding exact titles or fashionable buzzwords.
+- Produce structured interview topics and follow-up questions tailored to the
+  candidate and role.
+- Let the employer define a role rubric before applications are reviewed. Log
+  rubric changes and never silently optimize it from past hiring decisions.
+- Redact or suppress protected and irrelevant personal characteristics where
+  practical, including name, photo, age indicators, address and graduation year,
+  before substantive review.
+- Never infer race, ethnicity, religion, sex, gender, disability, health,
+  pregnancy, family status, national origin or other protected characteristics.
+- Never auto-reject, auto-rank, or make a final recommendation. A human reviews
+  the evidence and owns every employment decision.
+- Preserve candidate isolation, least-privilege access, retention/deletion
+  controls, audit history and the source documents required to verify a summary.
+- Provide an appeal/correction path when extracted facts or summaries are wrong.
+- Display prominent limitations and require legal/compliance review before the
+  feature is enabled in a jurisdiction.
+
+Acceptance:
+
+- Every material claim in a candidate brief links to source evidence or is
+  explicitly labelled as an unanswered question.
+- Removing buzzwords while preserving equivalent evidence does not reduce the
+  substance of the brief.
+- Protected-characteristic probes, proxy features and prompt-injected resumes
+  cannot influence the rubric or output.
+- The worker cannot reject, hide or permanently rank an applicant through UI,
+  API, background job or client-side tampering.
+- Bias, accessibility, retention, privacy and employment-law reviews are
+  completed and recorded before release.
