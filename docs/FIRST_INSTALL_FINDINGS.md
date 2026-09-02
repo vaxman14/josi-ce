@@ -125,8 +125,11 @@ Claude correctly with an Anthropic API key.
 - The page must show whether Codex is installed and signed in before asking the
   operator to test it.
 - Claude must appear as a normal provider that can be configured with an
-  Anthropic API key. The prohibited Claude subscription option may remain as
-  explanatory text, but it must not make Claude itself appear unavailable.
+  Anthropic API key.
+- The prohibited Claude subscription path must not appear as an unavailable
+  provider option or occupy the primary model-selection UI. If the policy needs
+  explanation, put it in documentation or behind a small contextual **Why
+  isn't Claude subscription supported?** help link.
 - Contextual **Show me how** links must open the exact Codex and Anthropic
   setup instructions.
 
@@ -135,7 +138,7 @@ their ChatGPT plan from **Admin → Model**, see a confirmed signed-in state,
 select it as primary, and run the real model test without using a shell. The
 same page lets an administrator configure and test Claude with an Anthropic API
 key. The UI never conflates an unavailable Claude subscription with an
-unavailable Claude API.
+unavailable Claude API, and it does not present unusable providers as choices.
 
 ## Verified during this run
 
