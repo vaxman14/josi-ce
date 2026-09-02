@@ -439,6 +439,47 @@ administrator who edits the database directly still holds both halves.
 
 ---
 
+### T-69 A handshake state is replayed
+**Attacker:** anyone who observes a callback URL — browser history, a referrer,
+a shared screen, a proxy log.
+**Impact:** a second connection attached from one consent, or an authorization
+code redeemed twice.
+**Control:** `packages/connectors/src/oauthState.ts` — the state is claimed by a
+conditional `update … where consumed_at is null`, so two concurrent redemptions
+resolve to exactly one winner, and a replay is refused before the code is
+exchanged.
+**Test:** refuses a state that has already been used
+
+### T-70 A state is redeemed at the wrong provider's callback
+**Attacker:** anyone who can make the browser follow a chosen callback URL.
+**Impact:** a consent granted for one provider used to attach a connection at
+another, with scopes nobody agreed to.
+**Control:** `packages/connectors/src/oauthState.ts` — the stored handshake
+records which provider it was minted for, and the callback compares it, so a
+Google state at the Microsoft callback is `wrong_provider` rather than an
+exchange.
+**Test:** refuses a Google state redeemed at the Microsoft callback
+
+### T-71 A token is stored against the wrong person
+**Attacker:** a member who completes a handshake somebody else started, or who
+replays a callback in their own session.
+**Impact:** one person's provider account attached to another's connection —
+which is a mailbox and a calendar handed to the wrong colleague.
+**Control:** `apps/api/src/http/connectorRoutes.ts` — the owner comes from the
+STORED handshake and never from the session on the callback request or from the
+query string, and the state is additionally bound to the session that minted it.
+**Test:** stores the token against the handshake’s owner, not the caller
+
+### T-72 A connection id is used by somebody who does not own it
+**Attacker:** a signed-in member who has learned another member's connection id.
+**Impact:** reading, re-permissioning or deleting a colleague's connection.
+**Control:** `apps/api/src/http/connectorRoutes.ts` — every route resolves the
+connection and compares its owner, answering 404 rather than 403 so the reply
+does not confirm that an id belonging to somebody else exists.
+**Test:** does not let one person point a connection id at their own request
+
+---
+
 ## Contact synchronisation
 
 ### T-51 A deleted contact comes back on the next full resync

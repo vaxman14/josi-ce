@@ -729,3 +729,79 @@ describe('attachments over the wire (L1.6)', () => {
     expect(botCalls.filter((c) => c.method === 'getFile')).toHaveLength(0);
   });
 });
+
+// ------------------------------------------------------------ webhook replay
+
+describe('webhook replay (T-48)', () => {
+  it('processes a redelivered update exactly once', async () => {
+    // Telegram redelivers when it does not see a timely 200 — a slow turn, a
+    // restart mid-request, an ordinary retry. Handling it twice sends the
+    // person two replies to one message and bills the model twice.
+    await configureModel();
+    await configureBot();
+    await linkChat(cookies.alice, 9301);
+    const secret = await webhookSecret();
+    const update = {
+      update_id: 7301,
+      message: { chat: { id: 9301, type: 'private' }, from: { id: 9301 }, text: 'only once please' },
+    };
+
+    botCalls = [];
+    const first = await postWebhook(update, secret);
+    expect(first.status).toBe(200);
+    const firstSends = botCalls.filter((c) => c.method === 'sendMessage').length;
+    expect(firstSends).toBeGreaterThan(0);
+
+    botCalls = [];
+    const replay = await postWebhook(update, secret);
+    // Answered, so Telegram stops retrying — but nothing happened again.
+    expect(replay.status).toBe(200);
+    expect(botCalls.filter((c) => c.method === 'sendMessage')).toHaveLength(0);
+
+    const stored = await db.query<{ update_id: string }>(
+      `select update_id from telegram_updates where update_id = 7301`,
+    );
+    expect(stored, 'recorded once').toHaveLength(1);
+
+    const inbound = await db.query<{ id: string }>(
+      `select id from messages where body like '%only once please%'`,
+    );
+    expect(inbound, 'the message is not duplicated').toHaveLength(1);
+  });
+
+  it('does not let a replay of somebody else’s update reach them', async () => {
+    // The update id is an attacker-supplied integer. Replaying one that was
+    // already handled must not re-run it, and a fabricated one for an unlinked
+    // chat must not be handled at all.
+    await configureBot();
+    await linkChat(cookies.alice, 9302);
+    const secret = await webhookSecret();
+
+    const forged = await postWebhook({
+      update_id: 7302,
+      message: { chat: { id: 999999, type: 'private' }, from: { id: 999999 }, text: 'let me in' },
+    }, secret);
+    expect(forged.body.outcome).not.toBe('handled');
+
+    const threads = await db.query<{ id: string }>(`select id from threads`);
+    const bodies = await db.query<{ body: string }>(
+      `select body from messages where body like '%let me in%'`,
+    );
+    expect(bodies, 'nothing was stored for an unlinked chat').toHaveLength(0);
+    void threads;
+  });
+
+  it('still refuses a replay that arrives without the webhook secret', async () => {
+    // Replay protection is not a substitute for authenticating the caller.
+    await configureBot();
+    await linkChat(cookies.alice, 9303);
+    const update = {
+      update_id: 7303,
+      message: { chat: { id: 9303, type: 'private' }, from: { id: 9303 }, text: 'hello' },
+    };
+    await postWebhook(update, await webhookSecret());
+
+    const res = await postWebhook(update, 'not-the-secret');
+    expect(res.status).toBe(404);
+  });
+});
