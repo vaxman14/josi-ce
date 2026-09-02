@@ -26,8 +26,8 @@ supplied has not tested anything, and its row says so.
 
 | # | Blocker | Status | Evidence / what is missing |
 |---|---|---|---|
-| 1 | Appliance-simple Docker installation | **BLOCKED** | Built and unit-proven: `apps/api/test/installer.test.ts` (37). The published-image path, the preflight, the mode fix and the disk fix are all in and asserted, two of them by executing preflight's own helpers on this host. **Cannot close**: no Docker daemon and no N150 host here, so LB1.10 — the clean-install measurement from published artifacts — has not been run, and the images it pulls are not published yet. |
-| 2 | Working ChatGPT subscription auth in clean Docker CE | **BLOCKED** | Built and unit-proven: `packages/llm/test/codexLogin.test.ts` (7) parses a byte-for-byte capture of the real `codex login --device-auth` output from `@openai/codex@0.152.0`; `apps/api/test/setupVerification.test.ts` (29) covers the wizard offer, the API-key refusal, the not-signed-in refusal and the capability-gated mounting; `apps/api/test/installer.test.ts` asserts the exact pin, the durable volume and the ownership. The CLI is pinned in the image, the login is driven from the wizard rather than from a shell the operator does not have, and `CODEX_HOME` is a dedicated volume in both compose files. **Cannot close**: LB2.4 (login survives container replacement) and LB2.10 (a clean install returns a real model response) both need a Docker daemon, and LB2.10 additionally needs ChatGPT credentials. Neither is available here. |
+| 1 | Appliance-simple Docker installation | **BLOCKED on publishing only** | Now measured rather than asserted. `scripts/acceptance/clean-install.sh` ran on `claw` (Ryzen 7 8745H, 28 GiB, Ubuntu 26.04, Docker 29.1.3, amd64): **50 passed, 0 failed, 5 skipped** — image 348 MB, build 7 s, boot→health 9 s, health→ready 0 s, idle 92.9 MiB across four containers. The first run that actually booted found a real defect that no static test could see: the proxy's site address was a bare hostname, which turns Caddy's automatic HTTPS on, so every plain-HTTP request became a `308` to a dropped port and the documented LAN path did not work at all — 19 passed, 36 failed. Fixed, re-run, and now asserted by evaluating the compose interpolation for both the domain and no-domain cases rather than matching its shape. `apps/api/test/installer.test.ts` (46) covers the rest. **Cannot close**: the images the published compose file pulls are still not published — CI builds both architectures successfully and GHCR refuses the push with `denied: permission_denied: read_package`. See "Publishing" below. LB1.10 (measurement from *published* artifacts) and the n150/pi4 hardware profiles remain unrun.
+| 2 | Working ChatGPT subscription auth in clean Docker CE | **BLOCKED on a ChatGPT account only** | LB2.4 is now proven by doing it. `scripts/test-codex-runtime.sh` on `claw`: **10 passed, 0 failed, 1 skipped** — the Dockerfile pins `0.152.0` and the running container reports `codex-cli 0.152.0`; `CODEX_HOME=/data/codex` is a named volume, writable from inside a read-only container; the container was genuinely replaced (`6dcda9a41a90` → `835a8f41c725`) and the replacement read back exactly the bytes the old one wrote, so an update does not sign the operator out; `codex login status` on a fresh volume says "Not logged in" in words rather than failing the way an absent CLI would. Unit coverage unchanged: `packages/llm/test/codexLogin.test.ts` (7) parses a byte-for-byte capture of the real `codex login --device-auth` output, and `apps/api/test/setupVerification.test.ts` (29) covers the offer, the API-key refusal, the not-signed-in refusal and the capability gate. **Cannot close**: LB2.10 — a clean install returning a real model response — needs a person with a browser and a ChatGPT subscription to approve the device code. Reported SKIPPED by the harness, never as a pass.
 | 3 | Real, account-aware model selection | **DONE** | `packages/llm/test/discovery.test.ts` (31) plus the wire tests in `apps/api/test/setupVerification.test.ts`. `modelCatalog.ts` is deleted; models come from each provider's own listing endpoint, scoped to the credential supplied. Nothing falls back to a built-in list. Errors are categorized into eight kinds, with 429-plus-`insufficient_quota` distinguished from a plain rate limit. Curated labels are derived; exact IDs sit behind "Show technical details". |
 | 4 | Setup must test everything it configures | **DONE** | `apps/api/test/setupVerification.test.ts` (23) and `apps/api/test/setup.test.ts` (55). A real model request that must return real content, a real SMTP send to an admin-chosen address or an explicit skip, and a real OAuth token-endpoint handshake per application. `/complete` refuses server-side while anything required is failing or untested. `/verify/:item` is the rerun control. |
 | 5 | Complete Google and Microsoft onboarding | **BLOCKED** | Done and tested: org application registration is in the wizard (it previously claimed the flow was "not in this release"), the callback is generated from the HTTPS app URL rather than accepted from the client, LAN-only installations are told the domain requirement instead of being given an unusable callback, scopes are read-only by default, and the credentials now reach the table the connector system reads. LB5.6 is now verified against the blocker's wording over the wire — `apps/api/test/connectorHostile.test.ts` (21) walks Connect, status, scope display with each write permission's consequence, re-consent asking for only the new capability, revoke, disconnect, and recovery from a revoked connection healing the same row rather than creating a second. LB5.2 is asserted from both sides: a member cannot register the installation's application, and an administrator has no route to connect an account for anybody else. **Cannot close**: LB5.8 — two real users connecting real accounts — needs a Google Cloud project and a Microsoft Entra tenant. Every test injects `fetchImpl`; no provider has been contacted. |
@@ -39,6 +39,39 @@ supplied has not tested anything, and its row says so.
 | 11 | Fix workspace and branding | **DONE** | `apps/api/test/branding.test.ts` (20). `git grep shepherd` finds nothing in any product surface and only labelled historical records elsewhere; the mark is now the white J cut from the approved wordmark by `scripts/build-brand.sh`; the "branding may not be removed" claim is withdrawn across `TRADEMARK.md`, `NOTICE` and `README.md`; and every Workspace outcome — ready, empty, error, timeout, unauthorized — is classified by a pure function that is tested exhaustively and is what the page calls. **Legal text needs counsel** (see below). |
 | 12 | Hide plumbing without hiding truth | **DONE** | `apps/api/test/plainLanguage.test.ts` (32) asserts the property generally rather than per screen: **no page renders a bare database value**, checked across every `.tsx` under `apps/web/src/pages`, with template-literal interpolation and JSX attributes excluded because neither is text a person reads. The vocabulary in `apps/web/src/lib/plainLanguage.ts` is validated against the **CHECK constraints in the migrations** and against the `ErrorCategory` and `ProviderKind` unions, so a state added in SQL or in a type with no plain-language entry fails the suite. Copy controls are one shared `Copyable`; the redirect-URL override and the exact model identifier are behind labelled disclosures and remain reachable. LB12.4 is asserted directly — the external-data consent, the master-key warning, the connector-policy security text, the scope list and per-screen failure detail are all still present. The full technical explanation stays in `docs/INSTALLATION.md`, which gained §12A. |
 | 13 | Banana | DONE | This row. See below. |
+
+
+## Publishing
+
+The release workflow is correct and the build works. Both architectures build,
+the suite runs against the same source that is about to ship, and the secret
+scan passes. The push is refused:
+
+```
+ERROR: failed to push ghcr.io/vaxman14/josi-ce:0.1.0:
+denied: permission_denied: read_package
+```
+
+This is an account-level permission, not a defect in the workflow or the
+Dockerfile. `josi-ce` is a **private, user-owned** repository, and the
+`GITHUB_TOKEN` the workflow uses cannot create a package in the user namespace
+even with `permissions: packages: write` declared, which it is. The
+fine-grained PAT available on this machine has no package access at all — GHCR
+returns 403 for it — so this cannot be worked around from here.
+
+**Remediation, which needs Roman and takes a few minutes:**
+
+1. Create a **classic** PAT with the `write:packages` scope.
+2. Push once with it, which creates the package:
+   `echo $PAT | docker login ghcr.io -u vaxman14 --password-stdin`
+3. In the package's settings on GitHub, link it to the `josi-ce` repository and
+   give that repository **write** access.
+4. Re-run the release workflow. From then on `GITHUB_TOKEN` is sufficient and
+   no long-lived token needs to exist anywhere.
+
+Until that happens, `docker-compose.release.yml` is correct and points at
+nothing, and §0 of `docs/INSTALLATION.md` cannot be followed. That is the one
+thing standing between Blocker 1 and closed.
 
 ## 13 — Banana
 

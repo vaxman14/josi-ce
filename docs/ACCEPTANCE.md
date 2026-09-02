@@ -71,21 +71,97 @@ No table is read. A bundle that could carry a row is a bundle nobody can send.
 
 ## Results
 
-**Nothing below has been run yet.** The script is written and syntax-checked;
-that is all that is currently true. The earlier wording gave the reason as a
-missing Docker daemon and an unreachable host, and that is no longer accurate:
-`claw` is reachable and runs Docker 29.1.3 with Compose 5.5.0. The script simply
-has not been run, and no hardware profile is claimed until it is on the hardware
-named in the row.
+The script has now been run on real hardware. The rows below include the runs
+that failed, because a table of only successes is a table that has been curated
+— and in this case the failures are the most useful thing in it.
+
+**Host `claw`** — AMD Ryzen 7 8745H, 28 GiB, Ubuntu 26.04 LTS, Linux 7.0.0,
+Docker 29.1.3, Compose 5.5.0, amd64.
 
 | Profile | Arch | Host | Date | Result | Image MB | Build s | Boot→ready s | Idle MiB | Bundle |
 |---|---|---|---|---|---|---|---|---|---|
-| default | — | — | **never run** | — | — | — | — | — | — |
+| default | amd64 | claw (Ryzen 7 8745H / 28 GiB) | 2026-09-02 | **19 passed, 36 failed** | 348 | 8 | never reached | — | `josi-acceptance-default-20260902T031033Z.tar.gz` |
+| default | amd64 | claw (Ryzen 7 8745H / 28 GiB) | 2026-09-02 | **50 passed, 0 failed, 5 skipped** | 348 | 7 | 9 | 92.9 | none — bundles are collected on failure |
 | n150 | amd64 | Intel N150 / 16 GB | **never run** | — | — | — | — | — | — |
 | pi4 | arm64 | Raspberry Pi 4 / 8 GB | **never run** | — | — | — | — | — | — |
 
-When a run happens, add a row with the real numbers and keep the failed runs
-too. A table of only successes is a table that has been curated.
+The `default` profile records the host it ran on, not a hardware claim. The
+`n150` and `pi4` rows stay empty until the script runs on those boxes: "it
+installs" and "it installs in ten minutes on the hardware CE targets" are
+different claims and only one of them is proven here.
+
+### What the first run found
+
+The first run to actually boot the stack failed 36 of 55 checks on a single
+line. The bundled proxy's site address was a bare hostname defaulting to
+`localhost`, which is what turns Caddy's automatic HTTPS ON — so every
+plain-HTTP request was answered with `308 Permanent Redirect` to `https://`
+on a port that had been dropped. The documented LAN path did not work at all,
+and no static test could see it because the line was syntactically perfect.
+
+That is the entire argument for this script existing. Four further rounds were
+needed before the run said anything trustworthy, and every one of those was a
+defect in the harness rather than the product:
+
+- the run configured itself into the same defect by exporting
+  `JOSI_DOMAIN=localhost`, so it could not have caught it;
+- it never fetched a CSRF token, so every POST was refused 403 and the whole
+  wizard section reported failures that said nothing about the product;
+- the sealed-credential probe passed `ENC=` where the shell read it as an
+  argument rather than an assignment, so it reported a decryption error
+  regardless of what was stored;
+- the Phase 13.3 section gave `python3` two stdin redirections, so the JSON
+  body was executed as the program. It had never run, and its verdicts were
+  printed where the summary could not count them — a traceback sat inside a
+  run reporting "0 failed".
+
+### What the passing run does not prove
+
+Five checks are reported **SKIPPED**, which is never counted as a pass:
+
+| Skipped | Exact dependency |
+|---|---|
+| The wizard closes behind itself | A real model credential |
+| The owner can sign in, session resolves | A real model credential |
+| No webhook route inside `/api` | A real model credential |
+| The Telegram admin surface | A real model credential |
+| The subscription-auth options | A real model credential |
+
+All five live past one gate: setup will not finish with a model that has never
+been successfully called (LB4.4). That refusal is itself asserted as a pass, so
+the gate is tested rather than merely encountered. Supply a working key and the
+five run for real:
+
+```bash
+JOSI_ACCEPTANCE_LLM_KEY=sk-... bash scripts/acceptance/clean-install.sh
+```
+
+SMTP is skipped by the same principle: configuring mail means proving mail can
+be sent, this host has no relay, and a fixture that passed would report a mail
+system that does not exist. Sending is covered by
+`scripts/test-mail-runtime.sh` against a real server.
+
+## The Codex subscription path
+
+`scripts/test-codex-runtime.sh` covers LB2 separately, because the property that
+matters there is what happens across an update rather than at install time.
+Measured on `claw`, **10 passed, 0 failed, 1 skipped**:
+
+- the Dockerfile pins `0.152.0` and the running container reports
+  `codex-cli 0.152.0` — the pin is real, not aspirational;
+- `CODEX_HOME=/data/codex`, mounted as a named volume, and writable from inside
+  a read-only container;
+- the container was genuinely replaced (`6dcda9a41a90` → `835a8f41c725`) and
+  the replacement read back exactly the bytes the old one wrote. A device login
+  that `docker compose pull && up -d` discards is a login the operator repeats
+  on every update;
+- `codex login status` on a fresh volume says "Not logged in" in words, rather
+  than failing the way an absent CLI would.
+
+**SKIPPED:** completing a real device login needs a person with a browser and a
+ChatGPT subscription. The parsing of the CLI's output is covered against a
+byte-for-byte capture of the pinned version in
+`packages/llm/test/codexLogin.test.ts`.
 
 ## Operator checklist for a hardware run
 
