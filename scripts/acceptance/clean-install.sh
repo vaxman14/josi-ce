@@ -96,7 +96,11 @@ esac
 
 export JOSI_HTTP_PORT="${JOSI_HTTP_PORT:-8480}"
 export JOSI_HTTPS_PORT="${JOSI_HTTPS_PORT:-8443}"
-export JOSI_DOMAIN="${JOSI_DOMAIN:-localhost}"
+# EMPTY, deliberately. A bare hostname here turns Caddy's automatic HTTPS on
+# and every plain-HTTP request becomes a 308 to a port that was never mapped.
+# That is the defect this run exists to catch, so the run must not configure
+# itself around it: empty is what a default installation has.
+export JOSI_DOMAIN="${JOSI_DOMAIN:-}"
 export JOSI_APP_URL="${JOSI_APP_URL:-http://localhost:${JOSI_HTTP_PORT}}"
 # Plain HTTP on a test port, so a `secure` cookie would be dropped by the
 # browser and every sign-in would fail for a reason unrelated to the install.
@@ -110,12 +114,28 @@ export POSTGRES_USER="${POSTGRES_USER:-josi}"
 BASE="http://127.0.0.1:${JOSI_HTTP_PORT}"
 JAR="$(mktemp)"
 
+# The double-submit CSRF token, as curl stores it: Netscape jar, name in $6.
+csrf_token() { awk '$6 == "josi_csrf" {print $7}' "$JAR" 2>/dev/null | tail -1; }
+
 api() {
   local method="$1" path="$2" body="${3:-}"
+  local csrf
+  csrf="$(csrf_token)"
+
+  # A browser fetches GET /api/auth/csrf before its first state-changing
+  # request; so must this. That route is the single always-available auth path
+  # (see apps/api/src/http/setupGate.ts), because an installation that has not
+  # been set up still has to be able to run the wizard.
+  #
+  # Without this the script sent no token, every POST was refused 403, and the
+  # wizard section reported ten failures that said nothing about the product.
+  if [[ -z "$csrf" && "$method" != "GET" && "$method" != "HEAD" ]]; then
+    curl -s -o /dev/null -b "$JAR" -c "$JAR" "${BASE}/api/auth/csrf" 2>/dev/null || true
+    csrf="$(csrf_token)"
+  fi
+
   local args=(-s -o /tmp/josi-acc-body -w '%{http_code}' -X "$method"
               -b "$JAR" -c "$JAR" -H 'Content-Type: application/json')
-  local csrf
-  csrf="$(awk '/josi_csrf/ {print $7}' "$JAR" 2>/dev/null | tail -1)"
   [[ -n "$csrf" ]] && args+=(-H "x-josi-csrf: $csrf")
   [[ -n "$body" ]] && args+=(-d "$body")
   curl "${args[@]}" "${BASE}${path}" 2>/dev/null

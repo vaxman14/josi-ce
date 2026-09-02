@@ -13,7 +13,8 @@
 //   - Ubuntu's Snap Docker produced a root:root socket and no `docker` group,
 //     so the advice every search result gives could not work.
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 
@@ -226,11 +227,31 @@ describe('LB1.5 — a permission mode is a number, never a filesystem-stat dump'
     }
   });
 
-  it('reads this repository’s own master key as a plain mode', () => {
-    // The property, executed rather than pattern-matched. `secrets/master.key`
-    // exists in a working checkout and is 0600.
-    const out = execPreflightHelper('file_mode secrets/master.key');
-    expect(out, 'a mode is octal digits and nothing else').toMatch(/^[0-7]{3,4}$/);
+  it('reads a real file’s mode as plain octal digits', () => {
+    // The property, executed rather than pattern-matched.
+    //
+    // This used to read `secrets/master.key`, which exists in a working
+    // checkout and does not exist in a fresh clone or in CI — so it passed
+    // locally for an incidental reason and failed the moment the suite ran
+    // anywhere else. It now makes its own file, which also lets it assert that
+    // the helper reports what is REALLY there rather than a constant.
+    const dir = mkdtempSync(join(tmpdir(), 'josi-mode-'));
+    try {
+      for (const mode of [0o600, 0o644, 0o400]) {
+        const file = join(dir, `f${mode.toString(8)}`);
+        writeFileSync(file, 'x', { mode });
+        chmodSync(file, mode);
+        expect(execPreflightHelper(`file_mode '${file}'`)).toBe(mode.toString(8));
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports nothing rather than junk when there is no mode to read', () => {
+    // A missing file must not produce a "mode" at all. The original defect was
+    // exactly this shape: a failed stat whose output was printed as a mode.
+    expect(() => execPreflightHelper('file_mode /nonexistent/file/here')).toThrow();
   });
 });
 
