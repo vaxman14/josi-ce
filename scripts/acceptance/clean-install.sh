@@ -51,10 +51,15 @@ done
 
 COMPOSE=(docker compose -p "$PROJECT")
 
-pass=0; fail=0
+pass=0; fail=0; skips=0
 declare -a FAILURES=()
+declare -a SKIPS=()
 ok()   { printf '  PASS  %s\n' "$*"; pass=$((pass+1)); }
 bad()  { printf '  FAIL  %s\n' "$*"; fail=$((fail+1)); FAILURES+=("$*"); }
+# Not proven, and saying so. A SKIP is never a PASS: it names the exact external
+# dependency that was missing, and it is listed separately in the summary so a
+# run that proved less cannot read as a run that proved everything.
+skip() { printf '  SKIP  %s\n' "$*"; skips=$((skips+1)); SKIPS+=("$*"); }
 step() { printf '\n== %s\n' "$*"; }
 note() { printf '        %s\n' "$*"; }
 
@@ -396,14 +401,48 @@ done
 
 step "completing the wizard"
 OWNER_PW="acceptance-password-$RANDOM$RANDOM"
-LLM_KEY="acceptance-fixture-key-DO-NOT-USE-$RANDOM"
+# The one input this run cannot synthesise. Setup will not FINISH with a model
+# it has never successfully called (LB4.4), so without a real credential the
+# run can prove everything up to that gate and nothing past it.
+#
+#   JOSI_ACCEPTANCE_LLM_KEY=sk-... bash scripts/acceptance/clean-install.sh
+#
+# The fixture below is still submitted when none is supplied: it exercises
+# sealing, storage and the round trip, and it makes the gate itself testable.
+LLM_KEY="${JOSI_ACCEPTANCE_LLM_KEY:-}"
+LLM_REAL=1
+if [[ -z "$LLM_KEY" ]]; then
+  LLM_REAL=0
+  LLM_KEY="acceptance-fixture-key-DO-NOT-USE-$RANDOM"
+fi
+SETUP_DONE=0
+
+# Guards a check that cannot run until setup has finished. Reports the exact
+# missing dependency rather than a failure, because "not proven" and "broken"
+# are different findings and only one of them is about the product.
+needs_setup() {
+  [[ $SETUP_DONE -eq 1 ]] && return 0
+  skip "$1 — needs a real model credential (set JOSI_ACCEPTANCE_LLM_KEY); setup will not finish with an untested model"
+  return 1
+}
 t0=$(now_ms)
 declare -a STEPS=(
   'host_checks|{}'
   "owner|{\"email\":\"owner@acceptance.test\",\"username\":\"owner\",\"password\":\"$OWNER_PW\"}"
   "domain|{\"domain\":\"localhost\",\"tlsMode\":\"bundled_caddy\"}"
   "llm|{\"provider\":\"openai\",\"model\":\"gpt-4o-mini\",\"apiKey\":\"$LLM_KEY\",\"externalAcknowledged\":true}"
-  'smtp|{"system":{"host":"smtp.example.test","port":587,"security":"starttls","username":"u","password":"acceptance-smtp-pw","fromName":"Josi","fromAddress":"noreply@example.test"},"communications":{"copyFromSystem":true,"fromName":"Josi","fromAddress":"josi@example.test"}}'
+  # SKIPPED, and that is the honest answer rather than a convenient one.
+  #
+  # Configuring mail means PROVING mail can be sent: the step demands an
+  # address and actually sends to it (LB4.2), and refuses to record mail as
+  # working otherwise. This host has no relay, so a configured step would
+  # either fail or — far worse — pass against a fixture and report a mail
+  # system that does not exist. `skip` is recorded in the verification table
+  # as a decision, which is exactly what it is here.
+  #
+  # THIS RUN THEREFORE PROVES NOTHING ABOUT SMTP. Sending is covered by the
+  # runtime harness in scripts/test-mail-runtime.sh, against a real relay.
+  'smtp|{"skip":true}'
   'connectors|{"skip":true}'
   'security|{"folderMappingEnabled":true}'
   'telemetry|{}'
@@ -415,12 +454,26 @@ for entry in "${STEPS[@]}"; do
   [[ "$code" == "200" ]] && ok "wizard step $name" || bad "wizard step $name returned $code: $(body)"
 done
 code=$(api POST /api/setup/complete '{}')
-[[ "$code" == "200" ]] && ok "setup completed" || bad "setup completion returned $code: $(body)"
+if [[ $LLM_REAL -eq 1 ]]; then
+  if [[ "$code" == "200" ]]; then SETUP_DONE=1; ok "setup completed"
+  else bad "setup completion returned $code: $(body)"; fi
+else
+  # LB4.4, asserted rather than worked around. An installation that would let
+  # itself be declared finished with a model nobody ever called successfully is
+  # the exact failure the blocker describes, so the refusal is a PASS here.
+  if [[ "$code" == "409" ]] && grep -q '"key":"llm"' /tmp/josi-acc-body 2>/dev/null; then
+    ok "setup refuses to finish with an untested model, and names it ($code)"
+  else
+    bad "setup completion returned $code with an untested model, expected a 409 naming llm: $(body)"
+  fi
+fi
 measure "wizard_seconds" "$(( ($(now_ms) - t0) / 1000 ))"
 
 step "the wizard closed behind itself"
-code=$(api GET /api/setup/state)
-[[ "$code" == "404" ]] && ok "the wizard is gone ($code)" || bad "the wizard still answers $code"
+if needs_setup "the wizard closes behind itself"; then
+  code=$(api GET /api/setup/state)
+  [[ "$code" == "404" ]] && ok "the wizard is gone ($code)" || bad "the wizard still answers $code"
+fi
 
 step "credentials survived the round trip"
 # THE PHASE 13 REGRESSION. `seal()` used to store the literal string
@@ -433,7 +486,12 @@ case "$enc" in
   v1.*) ok "the LLM key is sealed ciphertext" ;;
   *)    bad "the LLM key is not sealed: ${enc:0:24}" ;;
 esac
-opened=$("${COMPOSE[@]}" exec -T web node -e "
+# `-e ENC=` belongs to `compose exec`. It used to sit after the here-string at
+# the end of the command, where the shell treated it as an ARGUMENT to node
+# rather than an assignment — so process.env.ENC was undefined, openSealed got
+# undefined, and the check reported "Cannot read properties of undefined" as if
+# the stored credential were wrong.
+opened=$("${COMPOSE[@]}" exec -T -e ENC="$enc" web node -e "
   const fs = require('node:fs');
   Promise.all([
     import('/app/packages/core/dist/masterKey.js'),
@@ -442,7 +500,7 @@ opened=$("${COMPOSE[@]}" exec -T web node -e "
     const key = mk.loadMasterKey();
     process.stdout.write(sealing.openSealed(key, process.env.ENC).apiKey ?? '');
   }).catch((e) => process.stdout.write('ERROR:' + e.message));
-" 2>/dev/null <<< "" ENC="$enc" | tr -d '\r')
+" 2>/dev/null </dev/null | tr -d '\r')
 if [[ "$opened" == "$LLM_KEY" ]]; then
   ok "the stored key opens to exactly what was submitted"
 elif [[ "$opened" == "[secret redacted]" ]]; then
@@ -452,10 +510,12 @@ else
 fi
 
 step "signing in"
-code=$(api POST /api/auth/login "{\"identifier\":\"owner\",\"password\":\"$OWNER_PW\"}")
-[[ "$code" == "200" ]] && ok "the owner can sign in" || bad "sign-in returned $code: $(body)"
-code=$(api GET /api/auth/me)
-[[ "$code" == "200" ]] && ok "the session works" || bad "/api/auth/me returned $code"
+if needs_setup "the owner can sign in"; then
+  code=$(api POST /api/auth/login "{\"identifier\":\"owner\",\"password\":\"$OWNER_PW\"}")
+  [[ "$code" == "200" ]] && ok "the owner can sign in" || bad "sign-in returned $code: $(body)"
+  code=$(api GET /api/auth/me)
+  [[ "$code" == "200" ]] && ok "the session works" || bad "/api/auth/me returned $code"
+fi
 
 step "the PWA is installable (Phase 13.2)"
 code=$(curl -s -o /tmp/josi-acc-manifest -w '%{http_code}' "${BASE}/manifest.webmanifest")
@@ -486,17 +546,34 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE}/telegram/webhook"
   -H 'Content-Type: application/json' -d '{}')
 [[ "$code" == "404" ]] && ok "the webhook is invisible while the channel is off ($code)" \
   || bad "the webhook returned $code with no secret and the channel off"
+# Two questions, and one request could not answer both. An unauthenticated POST
+# to any /api path is refused by the CSRF middleware BEFORE routing, so this
+# expected a 404 it could never see — every /api path answers 403 there.
+#
+# So ask separately. Without a token: 403, proving the path carries no CSRF
+# exemption. With one: 404, proving no webhook route exists inside /api at all.
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE}/api/telegram/webhook")
-[[ "$code" == "404" ]] && ok "there is no webhook inside /api, so no CSRF exemption exists" \
-  || bad "/api/telegram/webhook returned $code"
-code=$(api GET /api/admin/telegram)
-[[ "$code" == "200" ]] && ok "the admin surface is reachable by the owner" || bad "admin telegram returned $code"
-grep -q '"tokenSet":false' /tmp/josi-acc-body && ok "no bot token is configured, as shipped" \
-  || note "a bot token is already configured on this installation"
+[[ "$code" == "403" ]] && ok "an /api webhook path has no CSRF exemption ($code)" \
+  || bad "/api/telegram/webhook without a token returned $code, expected 403"
+# Both of these are behind the setup gate, which answers 503 for every /api
+# path until the installation is finished — so neither can be read before then.
+if needs_setup "no webhook route exists inside /api"; then
+  code=$(api POST /api/telegram/webhook '{}')
+  [[ "$code" == "404" ]] && ok "there is no webhook inside /api at all ($code)" \
+    || bad "/api/telegram/webhook with a valid token returned $code, expected 404"
+fi
+if needs_setup "the Telegram admin surface"; then
+  code=$(api GET /api/admin/telegram)
+  [[ "$code" == "200" ]] && ok "the admin surface is reachable by the owner" || bad "admin telegram returned $code"
+  grep -q '"tokenSet":false' /tmp/josi-acc-body && ok "no bot token is configured, as shipped" \
+    || note "a bot token is already configured on this installation"
+fi
 
 step "subscription authentication is offered honestly (Phase 13.3)"
-code=$(api GET /api/admin/llm)
-[[ "$code" == "200" ]] && ok "the model screen loads" || bad "admin llm returned $code"
+if needs_setup "the model screen"; then
+  code=$(api GET /api/admin/llm)
+  [[ "$code" == "200" ]] && ok "the model screen loads" || bad "admin llm returned $code"
+fi
 python3 - <<'PY' < /tmp/josi-acc-body
 import json, sys
 try:
@@ -538,11 +615,18 @@ printf 'profile:      %s (%s)\n' "$PROFILE" "$HOST_LABEL"
 printf 'arch:         %s\n' "$(uname -m)"
 printf 'measurements:\n'
 printf '  %s\n' "${MEASUREMENTS[@]}"
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
+printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skips"
 
 if [[ $fail -gt 0 ]]; then
   printf '\nfailures:\n'
   printf '  - %s\n' "${FAILURES[@]}"
+fi
+
+# Listed even on a clean run, and never folded into the pass count: a run that
+# proved less has to say so out loud, next to the number that looks like proof.
+if [[ $skips -gt 0 ]]; then
+  printf '\nnot proven by this run:\n'
+  printf '  - %s\n' "${SKIPS[@]}"
 fi
 
 exit $(( fail == 0 ? 0 : 1 ))
