@@ -78,7 +78,7 @@ create unique index if not exists contact_sync_origins_one_per_connection
   on contact_sync_origins (connection_id);
 create index if not exists contact_sync_origins_owner
   on contact_sync_origins (owner_user_id);
-create trigger contact_sync_origins_touch before update on contact_sync_origins
+create or replace trigger contact_sync_origins_touch before update on contact_sync_origins
   for each row execute function touch_updated_at();
 
 -- ---------- which local contact is which remote record ----------
@@ -112,7 +112,7 @@ create unique index if not exists contact_links_remote
 create unique index if not exists contact_links_local
   on contact_links (origin_id, contact_id);
 create index if not exists contact_links_contact on contact_links (contact_id);
-create trigger contact_links_touch before update on contact_links
+create or replace trigger contact_links_touch before update on contact_links
   for each row execute function touch_updated_at();
 
 -- ---------- deletion safety ----------
