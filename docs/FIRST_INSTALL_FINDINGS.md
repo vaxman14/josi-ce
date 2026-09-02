@@ -55,6 +55,30 @@ and hunt for instructions.
 targets exist, and an operator can complete each item using only the linked
 instructions.
 
+### FI-003: OpenAI model test sends an invalid request
+
+**Observed:** The admin Model page shows the configured OpenAI primary model as
+`not tested`. Running **Test this model** fails the basic-reply check with:
+"The provider rejected the shape of the request. This is a defect in Josi
+rather than in your configuration." Josi then disables assistant chat, task
+extraction, calendar tools, email tools, and document search.
+
+**Required:**
+
+- The OpenAI verification request must use the correct request shape for the
+  selected model and authentication method.
+- The test must distinguish a malformed Josi request from invalid credentials,
+  an unavailable model, quota exhaustion, and unsupported capabilities.
+- A failed basic request must retain enough non-secret diagnostic detail for
+  the operator and support documentation to identify the failing API contract.
+- The first-install flow must not present the model as usable until this exact
+  verification succeeds.
+
+**Acceptance:** From a clean installation, the configured OpenAI model passes
+the basic-reply test with real content, and only capabilities actually verified
+for that model are enabled. The provider receives a valid request for the
+selected model and authentication method.
+
 ## Verified during this run
 
 - The source-built stack starts successfully on the N150.
