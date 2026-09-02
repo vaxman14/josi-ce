@@ -79,6 +79,30 @@ the basic-reply test with real content, and only capabilities actually verified
 for that model are enabled. The provider receives a valid request for the
 selected model and authentication method.
 
+### FI-004: Replace ambiguous setup deferral with explicit choices
+
+**Observed:** Optional setup work can be dismissed with **Not for this
+installation**. That wording sounds permanent and does not tell the operator
+whether the task will return, remain incomplete, or be disabled.
+
+**Required:**
+
+- Replace **Not for this installation** with two explicit actions:
+  **Skip once** and **Remind me later**.
+- **Skip once** bypasses the item for the current setup pass only. It remains
+  visibly incomplete on the admin launch checklist and can be resumed at any
+  time.
+- **Remind me later** keeps the item incomplete and creates a visible reminder
+  rather than silently burying it.
+- Neither action may imply that the feature is permanently disabled or that
+  its verification passed.
+- The screen must explain the consequence of each choice in plain language.
+
+**Acceptance:** Choosing **Skip once** lets setup continue and leaves the item
+open on the launch checklist. Choosing **Remind me later** does the same and
+causes the operator to receive a clear follow-up reminder. Both choices can be
+reversed without repeating installation.
+
 ## Verified during this run
 
 - The source-built stack starts successfully on the N150.
