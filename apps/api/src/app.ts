@@ -13,6 +13,7 @@ import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { checklistRoutes } from './http/checklistRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
+import { contactSyncRoutes } from './http/contactSyncRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
 import { storageRoutes } from './http/storageRoutes.js';
@@ -133,6 +134,13 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // shape against a real table; this one actually connects accounts.
   api.use('/connections', connectorRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
+  }));
+  // Contact sync sits under /contacts, beside the assistant's own contact
+  // routes. Every route in it resolves ownership from the origin rather than
+  // from the request, and there is no administrator equivalent: an admin who
+  // could start somebody's contact sync could read their address book.
+  api.use('/contacts', contactSyncRoutes({
+    db, masterKey: cfg.masterKeyCheck, connectorFetch: cfg.connectorFetch,
   }));
   api.use('/llm', llmRoutes({ db, masterKey: cfg.masterKeyCheck, codexRunner: cfg.codexRunner }));
   // Mounted before /admin so the more specific prefix wins; both are behind

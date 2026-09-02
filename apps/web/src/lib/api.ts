@@ -116,6 +116,14 @@ export interface Contact {
   phone: string | null;
   email: string | null;
   created_at: string;
+  /** Where it came from. 'josi' for one somebody typed here. */
+  source?: string;
+  /** Which connected account, so two Google accounts are distinguishable. */
+  source_account?: string | null;
+  /** Set when both sides changed since the last sync and nothing was
+   * overwritten. */
+  conflict_state?: string | null;
+  synced_at?: string | null;
 }
 
 export interface LlmStatus {

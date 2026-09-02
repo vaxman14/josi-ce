@@ -72,6 +72,26 @@ export const CAPABILITIES: readonly CapabilitySpec[] = [
     consequence: 'Josi can send email that appears to come from you. Every send is still approved by you first.',
   },
   {
+    key: 'google.contacts.read',
+    provider: 'google',
+    label: 'Read your Google contacts',
+    // People API. `contacts.readonly` covers the user's own contacts; it does
+    // NOT cover the directory, and it is not widened to `contacts` just because
+    // reading and writing share an endpoint.
+    scopes: ['https://www.googleapis.com/auth/contacts.readonly'],
+    kind: 'read',
+  },
+  {
+    key: 'google.contacts.write',
+    provider: 'google',
+    label: 'Create and change your Google contacts',
+    scopes: ['https://www.googleapis.com/auth/contacts'],
+    kind: 'write',
+    consequence:
+      'Josi can add contacts to your Google account and change ones already there. Two-way sync '
+      + 'needs this; importing does not.',
+  },
+  {
     key: 'microsoft.calendar.read',
     provider: 'microsoft',
     label: 'Read your Outlook calendar',
@@ -101,7 +121,40 @@ export const CAPABILITIES: readonly CapabilitySpec[] = [
     kind: 'write',
     consequence: 'Josi can send email that appears to come from you. Every send is still approved by you first.',
   },
+  {
+    key: 'microsoft.contacts.read',
+    provider: 'microsoft',
+    label: 'Read your Outlook contacts',
+    scopes: ['Contacts.Read'],
+    kind: 'read',
+  },
+  {
+    key: 'microsoft.contacts.write',
+    provider: 'microsoft',
+    label: 'Create and change your Outlook contacts',
+    scopes: ['Contacts.ReadWrite'],
+    kind: 'write',
+    consequence:
+      'Josi can add contacts to your Outlook account and change ones already there. Two-way sync '
+      + 'needs this; importing does not.',
+  },
 ] as const;
+
+/** The capability a sync mode needs, per provider.
+ *
+ * M32 and LB8.10: importing needs read, and two-way needs write — which is a
+ * SECOND trip through consent, not a checkbox on a connection that already
+ * exists. Expressed here so the sync layer cannot decide for itself that it
+ * has enough. */
+export const CONTACT_CAPABILITY: Record<Provider, { read: string; write: string }> = {
+  google: { read: 'google.contacts.read', write: 'google.contacts.write' },
+  microsoft: { read: 'microsoft.contacts.read', write: 'microsoft.contacts.write' },
+};
+
+export function contactCapabilityFor(provider: Provider, mode: 'import_only' | 'two_way'): string {
+  const pair = CONTACT_CAPABILITY[provider];
+  return mode === 'two_way' ? pair.write : pair.read;
+}
 
 export const CAPABILITY_KEYS: readonly string[] = CAPABILITIES.map((c) => c.key);
 
