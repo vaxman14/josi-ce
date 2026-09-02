@@ -12,8 +12,9 @@ import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { MasterKey } from '@josi-ce/core';
 import {
-  SyncError, decideApply, fingerprint, keepSeparate, listOrigins, mergeContacts,
-  saveClient, setCapability, setSyncMode, stopSync, syncOrigin, upsertConnection,
+  SyncError, decideApply, dueOrigins, fingerprint, keepSeparate, listOrigins, markAttempted,
+  mergeContacts, saveClient, setCapability, setSyncInterval, setSyncMode, stopSync, syncOrigin,
+  upsertConnection,
   type ConnectionRow, type LocalContact, type SyncMode,
 } from '../src/index.js';
 
@@ -587,6 +588,84 @@ describe('disconnecting', () => {
     // imported a second time.
     expect(again.counts.created).toBe(0);
     expect(await contactsOf(alice)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------- schedule
+
+describe('syncing on a schedule', () => {
+  it('offers a new origin for sync straight away', async () => {
+    const connection = await connect({ user: alice });
+    const origin = await startSync(connection);
+    const due = await dueOrigins(db);
+    expect(due.map((o) => o.id)).toEqual([origin.id]);
+  });
+
+  it('does not offer it again until its own interval has elapsed', async () => {
+    const connection = await connect({ user: alice });
+    const origin = await startSync(connection);
+    await markAttempted(db, origin.id);
+    expect(await dueOrigins(db)).toEqual([]);
+
+    // Far enough back that the default fifteen minutes has passed.
+    await db.query(
+      `update contact_sync_origins set last_attempt_at = now() - interval '20 minutes' where id = $1`,
+      [origin.id],
+    );
+    expect((await dueOrigins(db)).map((o) => o.id)).toEqual([origin.id]);
+  });
+
+  it('paces a FAILING origin on its interval too', async () => {
+    // The pacing is by attempt, not by success. Using `last_sync_at` would mean
+    // an account whose provider is down being retried on every tick, which is
+    // how an installation gets rate-limited into a hole.
+    const connection = await connect({ user: alice });
+    const origin = await startSync(connection);
+    await db.query(`update contact_sync_origins set status = 'error' where id = $1`, [origin.id]);
+
+    expect((await dueOrigins(db)).map((o) => o.id), 'an errored origin is retried').toEqual([origin.id]);
+    await markAttempted(db, origin.id);
+    expect(await dueOrigins(db), 'but not until its interval elapses').toEqual([]);
+  });
+
+  it('leaves a paused or disconnected origin alone entirely', async () => {
+    const connection = await connect({ user: alice });
+    const origin = await startSync(connection);
+    for (const status of ['paused', 'disconnected'] as const) {
+      await db.query(`update contact_sync_origins set status = $2, last_attempt_at = null where id = $1`,
+        [origin.id, status]);
+      expect(await dueOrigins(db), status).toEqual([]);
+    }
+  });
+
+  it('lets each account be paced separately', async () => {
+    const google = await startSync(await connect({ user: alice, provider: 'google' }));
+    const microsoft = await startSync(await connect({ user: alice, provider: 'microsoft' }));
+
+    await setSyncInterval(db, { originId: google.id, ownerUserId: alice, seconds: 300 });
+    await markAttempted(db, google.id);
+    await markAttempted(db, microsoft.id);
+    await db.query(`update contact_sync_origins set last_attempt_at = now() - interval '6 minutes'`);
+
+    // Google's five minutes has elapsed; Microsoft's fifteen has not.
+    expect((await dueOrigins(db)).map((o) => o.id)).toEqual([google.id]);
+  });
+
+  it('refuses an interval that would hammer a provider, or one nobody wants', async () => {
+    const origin = await startSync(await connect({ user: alice }));
+    for (const seconds of [0, 60, 299, 86_401, 1.5]) {
+      await expect(
+        setSyncInterval(db, { originId: origin.id, ownerUserId: alice, seconds }),
+        String(seconds),
+      ).rejects.toBeInstanceOf(SyncError);
+    }
+  });
+
+  it('refuses to pace somebody else’s account', async () => {
+    const origin = await startSync(await connect({ user: bob }));
+    await expect(
+      setSyncInterval(db, { originId: origin.id, ownerUserId: alice, seconds: 600 }),
+    ).rejects.toBeInstanceOf(SyncError);
   });
 });
 

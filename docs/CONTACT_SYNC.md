@@ -72,6 +72,25 @@ failing halfway through.
   request to a contacts API quotes somebody's address book; only the provider's
   short error *code* is passed through.
 
+## How often it runs
+
+Every account has its own interval — 5, 15, 30 or 60 minutes, or once a day —
+with 15 minutes the default and 5 the floor the server enforces. Per account
+rather than global, so a provider rate-limiting one does not slow another, and
+an hourly Outlook alongside a five-minute Google is possible.
+
+A schedule ticks every two minutes and **fans out**: it enqueues one job per
+account whose own interval has elapsed and syncs nothing itself, so one slow
+provider delays its own account and nobody else's, and a worker that dies
+mid-run costs one account its turn rather than everybody's.
+
+Pacing is by **attempt**, not by success. An account whose provider is down is
+retried on its interval rather than on every tick — otherwise a permanently
+failing account is hammered until the provider rate-limits the whole
+installation.
+
+**Sync now** is always available and ignores the interval.
+
 ## Using it
 
 1. **Connections** → connect Google or Microsoft, granting contacts access.
@@ -95,7 +114,5 @@ Written down here rather than left for somebody to discover:
 - **Two-way push is tested against a stub, not a provider.** The conditional
   write — Google's `etag` in the body, Graph's `If-Match` header — is asserted
   to be sent, and no provider has been observed rejecting a stale one.
-- **Scheduled sync is not built.** Sync runs when somebody presses Sync now.
-  There is no periodic job.
 - **Rate-limit behaviour is tested, not measured.** Retry and backoff honour
   `Retry-After`; no provider has actually rate-limited this code.

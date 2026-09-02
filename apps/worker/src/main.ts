@@ -14,8 +14,9 @@ const TICK_MS = 30_000;
 const { db, close, describe } = await connectFromEnv({ ...process.env }, { max: 4 });
 console.log(`josi-ce worker: database ${describe}`);
 
+let masterKey: Awaited<ReturnType<typeof loadMasterKey>> | null = null;
 try {
-  loadMasterKey();
+  masterKey = loadMasterKey();
   console.log('josi-ce worker: master key loaded');
 } catch (err) {
   console.error(`josi-ce worker: ${(err as Error).message}`);
@@ -38,7 +39,7 @@ function heartbeat(): void {
 const WORKER_ID = `worker-${process.pid}`;
 
 async function tick(): Promise<void> {
-  const outcome = await processQueue(db, WORKER_ID);
+  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey });
   if (outcome.claimed) {
     console.log(`josi-ce worker: ${outcome.done} done, ${outcome.failed} failed`);
   }

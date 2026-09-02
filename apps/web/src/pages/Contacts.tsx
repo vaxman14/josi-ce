@@ -101,7 +101,19 @@ interface Origin {
   lastSyncAt: string | null;
   lastErrorCategory: string | null;
   counts: Record<string, number>;
+  intervalSeconds: number;
 }
+
+/** The choices offered. Five minutes is the floor the server enforces too —
+ * anything faster is polling a provider hard for contacts that change a few
+ * times a month. */
+const INTERVALS: Array<[number, string]> = [
+  [300, 'Every 5 minutes'],
+  [900, 'Every 15 minutes'],
+  [1800, 'Every 30 minutes'],
+  [3600, 'Every hour'],
+  [86400, 'Once a day'],
+];
 
 /** Which accounts are syncing, and what happened last time.
  *
@@ -170,6 +182,24 @@ function ContactSyncPanel({ onChanged }: { onChanged: () => void }) {
                         onClick={() => void act(`/contacts/sync/${o.id}/stop`, o.id)}>
                   Stop syncing
                 </Button>
+                <label className="sr-only" htmlFor={`iv-${o.id}`}>How often to sync</label>
+                <select
+                  id={`iv-${o.id}`}
+                  value={o.intervalSeconds}
+                  disabled={!!busy}
+                  onChange={(e) => {
+                    setBusy(o.id);
+                    void api.put(`/contacts/sync/${o.id}/interval`, { seconds: Number(e.target.value) })
+                      .then(load)
+                      .catch((err) => setError(err instanceof Error ? err.message : 'That did not work'))
+                      .finally(() => setBusy(''));
+                  }}
+                  className="min-h-11 rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  {INTERVALS.map(([seconds, label]) => (
+                    <option key={seconds} value={seconds}>{label}</option>
+                  ))}
+                </select>
               </div>
             ) : (
               <p className="mt-1 text-xs text-muted-foreground">

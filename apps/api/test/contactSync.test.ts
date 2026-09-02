@@ -358,3 +358,37 @@ describe('stopping', () => {
     expect(after).toHaveLength(before);
   });
 });
+
+describe('how often it syncs', () => {
+  it('is settable, and reported', async () => {
+    const list = await call('/api/contacts/sync', { jar: cookies.alice });
+    const origin = list.body.origins[0];
+    expect(origin.intervalSeconds).toBe(900);
+
+    const res = await call(`/api/contacts/sync/${origin.id}/interval`, {
+      method: 'PUT', jar: cookies.alice, body: { seconds: 3600 },
+    });
+    expect(res.status).toBe(200);
+
+    const after = await call('/api/contacts/sync', { jar: cookies.alice });
+    expect(after.body.origins.find((o: any) => o.id === origin.id).intervalSeconds).toBe(3600);
+  });
+
+  it('refuses an interval that would hammer a provider', async () => {
+    const list = await call('/api/contacts/sync', { jar: cookies.alice });
+    for (const seconds of [30, 299, 999999, 'soon']) {
+      const res = await call(`/api/contacts/sync/${list.body.origins[0].id}/interval`, {
+        method: 'PUT', jar: cookies.alice, body: { seconds },
+      });
+      expect(res.status, String(seconds)).toBe(400);
+    }
+  });
+
+  it('cannot be changed on somebody else’s account', async () => {
+    const list = await call('/api/contacts/sync', { jar: cookies.alice });
+    const res = await call(`/api/contacts/sync/${list.body.origins[0].id}/interval`, {
+      method: 'PUT', jar: cookies.bob, body: { seconds: 3600 },
+    });
+    expect(res.status).toBe(404);
+  });
+});

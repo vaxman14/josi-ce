@@ -5,7 +5,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
-import { createTask, enqueue, placeHold, requestApproval, transition } from '@josi-ce/core';
+import { MasterKey, createTask, enqueue, placeHold, requestApproval, transition } from '@josi-ce/core';
+import { saveClient, setCapability, setSyncMode, upsertConnection } from '@josi-ce/connectors';
 import { processQueue } from '../../worker/src/jobs.js';
 
 let db: TestDb;
@@ -117,5 +118,167 @@ describe('the worker drains the queue', () => {
     await enqueue(db, { kind: 'task.wake', payload: { taskId: task.id } });
     const dump = JSON.stringify(await db.query(`select * from job_queue`));
     expect(dump).not.toContain('PRIVATE-SLOT');
+  });
+});
+
+// --------------------------------------------------- scheduled contact sync
+
+describe('the worker syncs contacts on a schedule', () => {
+  const key = new MasterKey(Buffer.alloc(32, 9));
+
+  /** A connected account with the contacts capability really granted. */
+  async function connect(user: string, token: string) {
+    const connection = await upsertConnection(db, key, {
+      ownerUserId: user,
+      provider: 'google',
+      tokens: {
+        accessToken: token, refreshToken: `${token}-r`, expiresIn: 3600,
+        grantedScopes: 'https://www.googleapis.com/auth/contacts.readonly',
+      },
+      accountEmail: `${token}@google.test`,
+      providerAccountId: `acct-${token}`,
+      requestedCapabilities: ['google.contacts.read'],
+    });
+    await setCapability(db, {
+      connection, capability: 'google.contacts.read', enabled: true, actorUserId: user,
+    });
+    return setSyncMode(db, { connectionId: connection.id, ownerUserId: user, mode: 'import_only' });
+  }
+
+  /** Answers per access token, so one person's request cannot receive another's
+   * contacts even by mistake. */
+  const books: Record<string, Array<Record<string, unknown>>> = {};
+  const connectorFetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    const token = (new Headers(init?.headers as HeadersInit).get('authorization') ?? '')
+      .replace(/^Bearer /, '');
+    if (String(url).includes('token')) {
+      return new Response(JSON.stringify({ access_token: token || 'x', expires_in: 3600 }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      connections: books[token] ?? [], nextSyncToken: `tok-${token}`,
+    }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  beforeEach(async () => {
+    for (const k of Object.keys(books)) delete books[k];
+    await saveClient(db, key, {
+      provider: 'google', clientId: 'cid', clientSecret: 'SECRET',
+      redirectUri: 'https://josi.example.test/api/connections/google/callback',
+      actorUserId: owner,
+    });
+  });
+
+  it('fans a due schedule out into one job per origin, and syncs nothing itself', async () => {
+    // One slow provider must delay its own account and nobody else's, so the
+    // schedule enqueues rather than syncing inline.
+    const origin = await connect(owner, 'owner-token');
+    books['owner-token'] = [{
+      resourceName: 'people/x1', names: [{ displayName: 'Scheduled Contact' }],
+      emailAddresses: [{ value: 'scheduled@example.test' }],
+    }];
+
+    await enqueue(db, { kind: 'contacts.sync_due', payload: {} });
+    const fanout = await processQueue(db, 'w1', 5, { masterKey: key, connectorFetch });
+    expect(fanout.done).toBe(1);
+
+    const queued = await db.query<{ kind: string; payload: any }>(
+      `select kind, payload from job_queue where kind = 'contacts.sync'`,
+    );
+    expect(queued).toHaveLength(1);
+    expect(queued[0].payload.originId).toBe(origin.id);
+    // The fan-out itself imported nothing.
+    expect(await db.query(`select id from contacts`)).toHaveLength(0);
+
+    const run = await processQueue(db, 'w1', 5, { masterKey: key, connectorFetch });
+    expect(run.failed).toBe(0);
+    const contacts = await db.query<{ name: string; owner_user_id: string }>(
+      `select name, owner_user_id from contacts`,
+    );
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0].name).toBe('Scheduled Contact');
+    expect(contacts[0].owner_user_id).toBe(owner);
+  });
+
+  it('keeps two people’s address books apart when the WORKER runs them', async () => {
+    // The isolation claim has to hold for a background job as well as for a
+    // request: there is no session here, and the owner comes from the origin.
+    const other = (await createUser(db, { email: 'o2@ce.test', username: 'other', role: 'member' })).id;
+    await connect(owner, 'owner-token');
+    await connect(other, 'other-token');
+    books['owner-token'] = [{
+      resourceName: 'people/o1', names: [{ displayName: 'Owner Client' }],
+      emailAddresses: [{ value: 'owner-client@example.test' }],
+    }];
+    books['other-token'] = [{
+      resourceName: 'people/t1', names: [{ displayName: 'Other Client' }],
+      emailAddresses: [{ value: 'other-client@example.test' }],
+    }];
+
+    await enqueue(db, { kind: 'contacts.sync_due', payload: {} });
+    await processQueue(db, 'w1', 10, { masterKey: key, connectorFetch });
+    await processQueue(db, 'w1', 10, { masterKey: key, connectorFetch });
+
+    const mine = await db.query<{ name: string }>(
+      `select name from contacts where owner_user_id = $1`, [owner],
+    );
+    const theirs = await db.query<{ name: string }>(
+      `select name from contacts where owner_user_id = $1`, [other],
+    );
+    expect(mine.map((c) => c.name)).toEqual(['Owner Client']);
+    expect(theirs.map((c) => c.name)).toEqual(['Other Client']);
+  });
+
+  it('stamps the attempt before running, so a crash is not a hot loop', async () => {
+    const origin = await connect(owner, 'owner-token');
+    await enqueue(db, { kind: 'contacts.sync_due', payload: {} });
+    await processQueue(db, 'w1', 5, { masterKey: key, connectorFetch });
+
+    const [row] = await db.query<{ last_attempt_at: string | null }>(
+      `select last_attempt_at from contact_sync_origins where id = $1`, [origin.id],
+    );
+    expect(row.last_attempt_at).toBeTruthy();
+
+    // A second fan-out finds nothing due, so the origin is not re-queued on
+    // every tick.
+    await enqueue(db, { kind: 'contacts.sync_due', payload: {} });
+    await processQueue(db, 'w1', 5, { masterKey: key, connectorFetch });
+    expect(await db.query(`select id from job_queue where kind = 'contacts.sync'`)).toHaveLength(1);
+  });
+
+  it('fails the job rather than skipping it when the master key is absent', async () => {
+    // The tokens are sealed with it. A silent skip would leave an origin that
+    // never syncs and never says why.
+    await connect(owner, 'owner-token');
+    await enqueue(db, { kind: 'contacts.sync', payload: { originId: 'not-checked-yet' } });
+    const outcome = await processQueue(db, 'w1', 5, {});
+    expect(outcome.failed).toBe(1);
+    const [job] = await db.query<{ last_error: string }>(`select last_error from job_queue`);
+    expect(job.last_error).toMatch(/master key/i);
+  });
+
+  it('records a revoked connection on the origin rather than dying', async () => {
+    // A background job that throws is a failure nobody sees. A status on the
+    // origin is one the person can act on.
+    const origin = await connect(owner, 'owner-token');
+    await db.query(`update connections set status = 'revoked' where owner_user_id = $1`, [owner]);
+
+    await enqueue(db, { kind: 'contacts.sync', payload: { originId: origin.id } });
+    const outcome = await processQueue(db, 'w1', 5, { masterKey: key, connectorFetch });
+    expect(outcome.failed).toBe(0);
+
+    const [after] = await db.query<{ status: string }>(
+      `select status from contact_sync_origins where id = $1`, [origin.id],
+    );
+    expect(after.status).toBe('disconnected');
+    expect(await db.query(`select id from contacts`), 'nothing was deleted').toHaveLength(0);
+  });
+
+  it('is scheduled by a row the migration installs, exactly once', async () => {
+    const rows = await db.query<{ interval_seconds: number; enabled: boolean }>(
+      `select interval_seconds, enabled from schedules where kind = 'contacts.sync_due'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].enabled).toBe(true);
+    expect(rows[0].interval_seconds).toBe(120);
   });
 });

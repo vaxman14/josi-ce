@@ -11,8 +11,8 @@
 // could read it.
 import { Router } from 'express';
 import {
-  SyncError, keepSeparate, listOrigins, mergeContacts, setSyncMode, stopSync, syncOrigin,
-  type SyncMode,
+  SyncError, keepSeparate, listOrigins, mergeContacts, setSyncInterval, setSyncMode, stopSync,
+  syncOrigin, type SyncMode,
 } from '@josi-ce/connectors';
 import { loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
@@ -75,6 +75,7 @@ export function contactSyncRoutes(ctx: ContactSyncCtx): Router {
           lastSyncAt: o.last_sync_at,
           lastErrorCategory: o.last_error_category,
           counts: o.last_sync_counts,
+          intervalSeconds: o.sync_interval_seconds,
           // A cursor is an opaque provider token; its presence is the only
           // useful part and the value is nobody's business.
           incremental: !!o.delta_cursor,
@@ -97,6 +98,23 @@ export function contactSyncRoutes(ctx: ContactSyncCtx): Router {
         mode: mode as SyncMode,
       });
       return res.json({ origin: { id: origin.id, syncMode: origin.sync_mode, status: origin.status } });
+    }),
+  );
+
+  /** How often this account is synced without being asked.
+   *
+   * Per origin rather than global: a provider rate-limiting one account must
+   * not slow another down, and an hourly Outlook alongside a five-minute
+   * Google is a reasonable thing to want. */
+  r.put(
+    '/sync/:originId/interval',
+    guard(async (req, res) => {
+      await setSyncInterval(db, {
+        originId: param(req, 'originId'),
+        ownerUserId: req.user!.id,
+        seconds: Number(req.body?.seconds),
+      });
+      return res.json({ ok: true });
     }),
   );
 

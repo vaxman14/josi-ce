@@ -53,6 +53,8 @@ export interface SyncOrigin {
   delta_cursor: string | null;
   page_cursor: string | null;
   status: OriginStatus;
+  sync_interval_seconds: number;
+  last_attempt_at: string | null;
   last_error_category: ErrorCategory | null;
   last_sync_at: string | null;
   last_sync_counts: Record<string, number>;
@@ -190,7 +192,8 @@ export function decideApply(args: {
 async function loadOrigin(db: Db, originId: string): Promise<SyncOrigin | null> {
   const [row] = await db.query<SyncOrigin>(
     `select id, connection_id, owner_user_id, provider, source_account, sync_mode,
-            delta_cursor, page_cursor, status, last_error_category, last_sync_at, last_sync_counts
+            delta_cursor, page_cursor, status, last_error_category, last_sync_at, last_sync_counts,
+            sync_interval_seconds, last_attempt_at
      from contact_sync_origins where id = $1`,
     [originId],
   );
@@ -793,7 +796,8 @@ export async function setSyncMode(
      values ($1, $2, $3, $4, $5)
      on conflict (connection_id) do update set sync_mode = excluded.sync_mode, status = 'idle'
      returning id, connection_id, owner_user_id, provider, source_account, sync_mode,
-               delta_cursor, page_cursor, status, last_error_category, last_sync_at, last_sync_counts`,
+               delta_cursor, page_cursor, status, last_error_category, last_sync_at, last_sync_counts,
+               sync_interval_seconds, last_attempt_at`,
     [
       connection.id, connection.owner_user_id, connection.provider,
       connection.account_email ?? connection.provider_account_id ?? 'unknown', args.mode,
@@ -841,12 +845,71 @@ export async function stopSync(
   return { contactsKept: Number(kept?.n ?? 0) };
 }
 
+// ----------------------------------------------------------- the schedule
+
+/** Origins whose own interval has elapsed.
+ *
+ * Selected by `last_attempt_at` rather than `last_sync_at`, and the difference
+ * is the whole of the pacing: a run that FAILS still counts as an attempt, so
+ * an origin whose provider is down is retried on its interval instead of on
+ * every tick. Using `last_sync_at` would mean a permanently failing account
+ * being hammered forever, which is how an installation gets rate-limited into
+ * a hole it cannot climb out of.
+ *
+ * `paused` and `disconnected` are excluded here as well as inside `syncOrigin`.
+ * Two checks, because this one decides what the worker even wakes up for. */
+export async function dueOrigins(db: Db, limit = 20): Promise<Array<{ id: string; owner_user_id: string }>> {
+  return db.query<{ id: string; owner_user_id: string }>(
+    `select id, owner_user_id from contact_sync_origins
+     where status in ('idle', 'error')
+       and (last_attempt_at is null
+            or last_attempt_at < now() - make_interval(secs => sync_interval_seconds))
+     order by last_attempt_at asc nulls first
+     limit $1`,
+    [limit],
+  );
+}
+
+/** Record that the scheduler picked this origin up.
+ *
+ * Written BEFORE the run, not after. A crash mid-sync must not leave the origin
+ * looking never-attempted, or the next tick picks it straight back up and the
+ * crash repeats as fast as the worker can loop. */
+export async function markAttempted(db: Db, originId: string): Promise<void> {
+  await db.query(
+    `update contact_sync_origins set last_attempt_at = now() where id = $1`,
+    [originId],
+  );
+}
+
+/** How often this account is synced. */
+export async function setSyncInterval(
+  db: Db,
+  args: { originId: string; ownerUserId: string; seconds: number },
+): Promise<void> {
+  const origin = await loadOrigin(db, args.originId);
+  if (!origin) throw new SyncError('no such contact sync origin');
+  if (origin.owner_user_id !== args.ownerUserId) {
+    throw new SyncError('that connection belongs to somebody else');
+  }
+  // The bounds are also a CHECK constraint. Both, because the constraint is a
+  // promise about the column and this is the message a person reads.
+  if (!Number.isInteger(args.seconds) || args.seconds < 300 || args.seconds > 86_400) {
+    throw new SyncError('choose an interval between five minutes and a day');
+  }
+  await db.query(
+    `update contact_sync_origins set sync_interval_seconds = $2 where id = $1`,
+    [args.originId, args.seconds],
+  );
+}
+
 /** Everything the contacts screen needs in order to say where a contact came
  * from and whether it is still arriving. */
 export async function listOrigins(db: Db, ownerUserId: string): Promise<SyncOrigin[]> {
   return db.query<SyncOrigin>(
     `select id, connection_id, owner_user_id, provider, source_account, sync_mode,
-            delta_cursor, page_cursor, status, last_error_category, last_sync_at, last_sync_counts
+            delta_cursor, page_cursor, status, last_error_category, last_sync_at, last_sync_counts,
+            sync_interval_seconds, last_attempt_at
      from contact_sync_origins where owner_user_id = $1 order by provider, source_account`,
     [ownerUserId],
   );
