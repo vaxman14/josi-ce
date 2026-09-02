@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
+import { plain } from '@/lib/plainLanguage';
 
 interface AdminTelegramConfig {
   enabled: boolean;
@@ -239,7 +240,7 @@ export function AdminTelegram() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge tone={link.status === 'active' ? 'ok' : 'muted'}>{link.status}</Badge>
+                  <Badge tone={link.status === 'active' ? 'ok' : 'muted'}>{plain('telegram_link_status', link.status)}</Badge>
                   {link.status === 'active' ? (
                     <Button
                       variant="secondary"
@@ -269,7 +270,7 @@ export function AdminTelegram() {
           {health.errors.length ? (
             <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
               {health.errors.map((e) => (
-                <li key={e.category}>{e.category}: {e.count}</li>
+                <li key={e.category}>{plain('telegram_error', e.category)}: {e.count}</li>
               ))}
             </ul>
           ) : null}

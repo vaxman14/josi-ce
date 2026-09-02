@@ -8,6 +8,7 @@
 // The 44px rule lives HERE, in the components, not in each call site: an iOS
 // tap target smaller than 44x44 is the accessibility failure the acceptance
 // criteria name, and it is not something to remember page by page.
+import { useState } from 'react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
@@ -100,6 +101,38 @@ export function NotYet({ title, children }: { title: string; children: ReactNode
     <div className="rounded-lg border border-border bg-secondary/40 p-4" data-not-built="true">
       <p className="text-sm font-semibold">{title}</p>
       <p className="mt-1 text-sm text-muted-foreground">{children}</p>
+    </div>
+  );
+}
+
+/** A value somebody has to paste somewhere else, with a way to take it.
+ *
+ * LB12.2. The plumbing a person genuinely has to act on — a callback URL, a
+ * model identifier, a one-time code — is not hidden; it is put where it can be
+ * copied without being retyped. A value shown but not copyable is a value that
+ * gets transcribed wrong, and a redirect URL transcribed wrong produces the
+ * provider's error page rather than ours.
+ */
+export function Copyable({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mb-3">
+      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 break-all rounded bg-secondary px-2 py-1.5 text-xs">{value}</code>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => {
+            void navigator.clipboard?.writeText(value).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }).catch(() => undefined);
+          }}
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </Button>
+      </div>
     </div>
   );
 }

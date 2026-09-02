@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Approval, type LlmStatus, type Task } from '@/lib/api';
 import { Badge, Card, CardTitle, Empty } from '@/components/ui';
+import { plain } from '@/lib/plainLanguage';
 import { useAuth } from '@/lib/auth';
 
 export function Home() {
@@ -66,7 +67,7 @@ export function Home() {
               {tasks.slice(0, 4).map((t) => (
                 <li key={t.id} className="flex min-w-0 items-center justify-between gap-2 text-sm">
                   <span className="truncate">{t.template_key.replace(/_/g, ' ')}</span>
-                  <Badge>{t.state}</Badge>
+                  <Badge>{plain('task_state', t.state)}</Badge>
                 </li>
               ))}
             </ul>

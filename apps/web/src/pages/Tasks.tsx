@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api, type Task, type TaskType } from '@/lib/api';
 import { Badge, Button, Card, Empty, ErrorNote, Input } from '@/components/ui';
+import { plain } from '@/lib/plainLanguage';
 
 export function Tasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -88,7 +89,7 @@ export function Tasks() {
               <Card>
                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                   <span className="min-w-0 truncate text-sm font-medium">{task.template_key.replace(/_/g, ' ')}</span>
-                  <Badge tone={task.state === 'ready' ? 'primary' : 'muted'}>{task.state}</Badge>
+                  <Badge tone={task.state === 'ready' ? 'primary' : 'muted'}>{plain('task_state', task.state)}</Badge>
                 </div>
                 {Object.entries(task.slots).length ? (
                   <dl className="mt-2 space-y-1 text-sm text-muted-foreground">

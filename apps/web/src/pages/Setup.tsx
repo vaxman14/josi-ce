@@ -12,7 +12,7 @@
 // PostgreSQL. Nothing is kept in component state after the step is submitted.
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, primeCsrf } from '@/lib/api';
-import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { Button, Card, CardTitle, Copyable, ErrorNote, Input } from '@/components/ui';
 
 /** A model the provider said this account may use. Never a list of ours. */
 interface DiscoveredModel {
@@ -877,30 +877,6 @@ function ConnectorStep({
               onClick={() => void onSubmit('connectors', { skip: true })}>
         Skip for now
       </Button>
-    </div>
-  );
-}
-
-/** A value an operator has to paste somewhere else, with a way to take it. */
-function Copyable({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div>
-      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
-      <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 break-all rounded bg-secondary px-2 py-1.5 text-xs">{value}</code>
-        <Button
-          type="button" variant="secondary"
-          onClick={() => {
-            void navigator.clipboard?.writeText(value).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            }).catch(() => undefined);
-          }}
-        >
-          {copied ? 'Copied' : 'Copy'}
-        </Button>
-      </div>
     </div>
   );
 }

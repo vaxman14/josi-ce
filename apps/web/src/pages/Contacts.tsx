@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, type Contact } from '@/lib/api';
 import { Button, Card, Empty, ErrorNote, Input } from '@/components/ui';
+import { plain, plainDetail } from '@/lib/plainLanguage';
 
 export function Contacts() {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -70,7 +71,7 @@ export function Contacts() {
                       it changes on its own. */}
                   {c.source && c.source !== 'josi' ? (
                     <span className="text-xs text-muted-foreground">
-                      {SOURCE_LABEL[c.source] ?? c.source}
+                      {plain('contact_source', c.source)}
                       {c.source_account ? ` · ${c.source_account}` : ''}
                     </span>
                   ) : null}
@@ -79,8 +80,7 @@ export function Contacts() {
                 {c.phone ? <p className="truncate text-sm text-muted-foreground">{c.phone}</p> : null}
                 {c.conflict_state === 'both_changed' ? (
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                    Changed here and at {SOURCE_LABEL[c.source ?? ''] ?? 'the provider'} since the last
-                    sync. Nothing was overwritten — edit it here to settle it.
+{plainDetail('contact_conflict', 'both_changed')}
                   </p>
                 ) : null}
               </Card>
@@ -92,12 +92,6 @@ export function Contacts() {
   );
 }
 
-const SOURCE_LABEL: Record<string, string> = {
-  google: 'Google',
-  microsoft: 'Microsoft',
-  device: 'Your phone',
-};
-
 interface Origin {
   id: string;
   provider: 'google' | 'microsoft';
@@ -108,14 +102,6 @@ interface Origin {
   lastErrorCategory: string | null;
   counts: Record<string, number>;
 }
-
-const STATUS_TEXT: Record<Origin['status'], string> = {
-  idle: 'Syncing',
-  syncing: 'Syncing now',
-  error: 'Not working',
-  paused: 'Paused',
-  disconnected: 'Stopped',
-};
 
 /** Which accounts are syncing, and what happened last time.
  *
@@ -161,19 +147,18 @@ function ContactSyncPanel({ onChanged }: { onChanged: () => void }) {
           <li key={o.id} className="border-t border-input pt-3 first:border-0 first:pt-0">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <span className="min-w-0 truncate text-sm">
-                {SOURCE_LABEL[o.provider]} · {o.sourceAccount}
+                {plain('contact_source', o.provider)} · {o.sourceAccount}
               </span>
               <span className="text-xs text-muted-foreground">
-                {STATUS_TEXT[o.status]}
-                {o.syncMode === 'two_way' ? ' · two-way' : ' · import only'}
+                {plain('contact_sync_status', o.status)}
+                {' · '}{plain('contact_sync_mode', o.syncMode).toLowerCase()}
               </span>
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {o.lastSyncAt ? `Last synced ${new Date(o.lastSyncAt).toLocaleString()}` : 'Not synced yet'}
               {o.status === 'error' && o.lastErrorCategory
-                ? ` · ${o.lastErrorCategory === 'insufficient_scope'
-                    ? 'permission was removed — reconnect to fix it'
-                    : o.lastErrorCategory.replace(/_/g, ' ')}`
+                ? ` · ${plainDetail('connector_error', o.lastErrorCategory)
+                    ?? plain('connector_error', o.lastErrorCategory)}`
                 : ''}
             </p>
             {o.status !== 'disconnected' ? (
@@ -188,7 +173,7 @@ function ContactSyncPanel({ onChanged }: { onChanged: () => void }) {
               </div>
             ) : (
               <p className="mt-1 text-xs text-muted-foreground">
-                Stopped. The contacts it brought are still here, and nothing was changed at the provider.
+                {plain('contact_sync_status', 'disconnected')}. {plainDetail('contact_sync_status', 'disconnected')}
               </p>
             )}
           </li>

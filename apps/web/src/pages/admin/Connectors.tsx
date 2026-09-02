@@ -7,7 +7,8 @@
 // is and whether it works.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, Copyable, ErrorNote, Input } from '@/components/ui';
+import { plain, plainDetail } from '@/lib/plainLanguage';
 
 interface ClientStatus {
   provider: 'google' | 'microsoft';
@@ -114,9 +115,11 @@ export function AdminConnectors() {
               paste its credentials here. The secret is encrypted with this installation's master key and is
               never shown again.
             </p>
-            <p className="mb-3 break-all text-xs text-muted-foreground">
-              Register this exact callback URL: <code>{suggested}</code>
-            </p>
+            {/* LB12.2: the one value that has to be pasted somewhere else,
+                with a way to take it. A callback typed by hand and a callback
+                the server honours must be the same string, and a mismatch
+                produces the provider's error page rather than ours. */}
+            <Copyable label={`Paste this into ${LABEL[client.provider]} as the redirect URL`} value={suggested} />
             <form
               onSubmit={(e) => { e.preventDefault(); void saveClient(client.provider, new FormData(e.currentTarget)); }}
               className="space-y-3"
@@ -131,11 +134,24 @@ export function AdminConnectors() {
                        autoComplete="off" required
                        placeholder={client.configured ? 'stored — enter a new one to replace it' : ''} />
               </div>
-              <div>
-                <label className="mb-1 block text-sm" htmlFor={`uri-${client.provider}`}>Redirect URI</label>
-                <Input id={`uri-${client.provider}`} name="redirectUri"
-                       defaultValue={client.redirectUri ?? suggested} required />
-              </div>
+              {/* Behind a disclosure: almost nobody changes this, and the
+                  generated value above is the one that works. It stays
+                  editable because an installation behind a proxy that rewrites
+                  paths genuinely needs to. */}
+              <details className="text-sm">
+                <summary className="cursor-pointer text-muted-foreground">
+                  Advanced — override the redirect URL
+                </summary>
+                <div className="mt-2">
+                  <label className="mb-1 block text-sm" htmlFor={`uri-${client.provider}`}>Redirect URL</label>
+                  <Input id={`uri-${client.provider}`} name="redirectUri"
+                         defaultValue={client.redirectUri ?? suggested} required />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Only change this if a proxy in front of Josi rewrites the path. It must match what
+                    you registered with the provider exactly.
+                  </p>
+                </div>
+              </details>
               <Button type="submit">Save</Button>
             </form>
           </Card>
@@ -191,9 +207,14 @@ export function AdminConnectors() {
                     <td className="py-2">{row.username}</td>
                     <td className="py-2">{LABEL[row.provider] ?? row.provider}</td>
                     <td className="py-2">
-                      <Badge tone={row.status === 'active' ? 'ok' : 'danger'}>{row.status}</Badge>
+                      <Badge tone={row.status === 'active' ? 'ok' : 'danger'}>
+                        {plain('connection_status', row.status)}
+                      </Badge>
                       {row.last_error_category ? (
-                        <span className="ml-2 text-xs text-muted-foreground">{row.last_error_category}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {plainDetail('connector_error', row.last_error_category)
+                            ?? plain('connector_error', row.last_error_category)}
+                        </span>
                       ) : null}
                     </td>
                     <td className="py-2 text-right">

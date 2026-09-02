@@ -439,6 +439,203 @@ administrator who edits the database directly still holds both halves.
 
 ---
 
+## Contact synchronisation
+
+### T-51 A deleted contact comes back on the next full resync
+**Attacker:** no attacker — the provider itself, expiring a sync cursor as it
+routinely does, which makes Josi re-read the whole address book.
+**Impact:** every contact the user deleted is recreated. They delete it again,
+it returns again, and they stop trusting the product with their data.
+**Control:** `packages/connectors/src/contactSync.ts` — a deletion writes a
+tombstone keyed by owner, provider, account and the provider's own id, and an
+incoming record is checked against it before anything is created, so a full
+re-read cannot undo a deletion.
+**Test:** does not bring a deleted contact back on the next full resync
+
+### T-52 One person's address book reaches another
+**Attacker:** any member of the installation with their own connected account.
+**Impact:** they read a colleague's clients, suppliers and personal contacts.
+**Control:** `packages/connectors/src/contactSync.ts` — every query is keyed by
+`owner_user_id` taken from the sync origin rather than from a request, so there
+is no argument a caller can pass that reaches another owner's contacts.
+**Test:** sync separate address books that never meet
+
+### T-53 A guessed origin or contact id reaches somebody else's sync
+**Attacker:** a signed-in member enumerating uuids.
+**Impact:** running, stopping or merging into another person's contacts.
+**Control:** `apps/api/src/http/contactSyncRoutes.ts` — no route accepts an
+owner id; ownership is resolved from the origin or the connection, and an id
+belonging to somebody else answers 404 rather than 403, because confirming that
+it exists is itself a disclosure.
+**Test:** refuses to merge a contact belonging to somebody else
+
+### T-54 An administrator starts somebody's contact sync in order to read it
+**Attacker:** the super admin of the installation.
+**Impact:** an address book they have no route to read becomes readable by
+being imported on the owner's behalf.
+**Control:** `apps/api/src/http/contactSyncRoutes.ts` — there is deliberately no
+administrative equivalent of any route in this file, so the capability an
+administrator would abuse does not exist rather than being guarded.
+**Test:** is not reachable by an administrator either
+
+### T-55 A provider cursor points Josi at an attacker's server
+**Attacker:** anyone who can influence what a provider returns, including a
+compromised or spoofed Graph response.
+**Impact:** Josi calls that URL **with a bearer token attached**, handing the
+account's access token to whoever answers.
+**Control:** `packages/connectors/src/providers/contacts.ts` — a Microsoft
+cursor is a URL that will be requested with the token, so it is checked against
+the Graph origin before any request is made, and a foreign one is refused
+rather than followed.
+**Test:** refuses a cursor that points somewhere other than Graph
+
+### T-56 A provider error message quotes the address book into a log or a screen
+**Attacker:** no attacker — the provider, echoing the request that failed.
+**Impact:** names, addresses and phone numbers appear in an error surfaced to an
+operator, or in an audit payload that is supposed to hold metadata only.
+**Control:** `packages/connectors/src/providers/contacts.ts` — only the
+provider's short `code`/`status` is repeated, validated as an identifier rather
+than a sentence; the `message` field is never carried, because a request to a
+contacts API quotes somebody's contacts.
+**Test:** never repeats a provider message, which quotes the address book
+
+### T-57 Two different people are merged into one contact
+**Attacker:** no attacker — two colleagues who share a household phone line, or
+an `office@` address that everybody lists.
+**Impact:** a message meant for one person reaches the other, and the original
+records no longer exist to correct it.
+**Control:** `packages/core/src/contactIdentity.ts` — a shared line with nothing
+else agreeing is graded `weak` and never merges unattended; the only rule that
+may act alone is the same record from the same account seen twice.
+**Test:** is WEAK about a shared line with nothing else, which is the family phone
+
+### T-58 Write access to a provider is obtained without a second consent
+**Attacker:** a member who enables two-way sync on a read-only connection.
+**Impact:** Josi writes to their Google or Microsoft account under a permission
+nobody granted for writing.
+**Control:** `packages/connectors/src/contactSync.ts` — the capability the mode
+needs is resolved per provider and checked against what the provider actually
+granted, both when the mode is set and again at the moment of every sync run.
+**Test:** refuses two-way without the write permission actually granted
+
+### T-59 Contact sync keeps running after the account is disconnected
+**Attacker:** no attacker — a user who revoked access and expects it to stop.
+**Impact:** continued reads against an account whose owner withdrew consent, or
+silent deletion of contacts they wanted to keep.
+**Control:** `packages/connectors/src/contactSync.ts` — a disconnected or
+revoked origin returns before any provider is contacted, and stopping deletes
+nothing on either side because disconnecting a source is not consent to lose
+what it brought.
+**Test:** does nothing further once disconnected, even if asked
+
+---
+
+## Subscription sign-in
+
+### T-60 Josi is used to harvest the operator's ChatGPT credentials
+**Attacker:** a modified build, or a future contributor taking a shortcut.
+**Impact:** the operator's ChatGPT login is copied out of the CLI's own storage
+and used elsewhere, which is impersonation rather than delegation and is
+prohibited by the provider.
+**Control:** `packages/llm/src/providers/codexLogin.ts` — no credential store is
+read anywhere on this path; the child process is given `PATH`, `HOME` and
+`CODEX_HOME` and nothing else, and a source guard fails the suite on any
+reference to an auth file, a keychain or a cookie jar.
+**Test:** never reads a credential store to find a login
+
+### T-61 The sign-in prompt sends the operator to an attacker's page
+**Attacker:** anyone who can influence what the CLI prints, including a
+compromised or substituted binary.
+**Impact:** the operator signs in to a page of the attacker's choosing while
+believing they are completing a Josi-initiated device login.
+**Control:** `packages/llm/src/providers/codexLogin.ts` — the verification URL
+parsed out of the CLI's output must be an OpenAI address, and a challenge whose
+link is anywhere else is discarded rather than shown.
+**Test:** takes no URL that is not OpenAI’s
+
+### T-62 A hosted build enables the CE-only subscription path
+**Attacker:** whoever runs a hosted or white-label build, by environment
+variable, direct SQL, or a modified client request.
+**Impact:** a personal ChatGPT plan powers a commercial service, which the
+provider's terms exclude and which is the reason the boundary exists.
+**Control:** `apps/api/src/setup/setupRoutes.ts` — the sign-in routes are
+mounted inside an edition capability check rather than guarded by one, so a
+hosted build's route table does not contain them at all and cannot confirm the
+capability exists to be asked for.
+**Test:** mounts the sign-in routes behind the edition capability, not behind a guard
+
+---
+
+## Setup verification and model discovery
+
+### T-63 A key typed into the wizard is echoed back or stored by discovery
+**Attacker:** anyone who can read a response the wizard returns, including the
+person at a shared screen.
+**Impact:** a provider API key leaks from a step that was only meant to list
+models.
+**Control:** `apps/api/src/setup/setupRoutes.ts` — model discovery takes the key
+from the request, uses it once to ask the provider what the account may use, and
+returns only the model list; nothing is written and nothing is reflected.
+**Test:** never echoes the key it was given
+
+### T-64 A provider's prose is repeated into setup and carries the prompt
+**Attacker:** no attacker — the provider, quoting the request that failed.
+**Impact:** the contents of a request, which on this path includes a prompt,
+appear in an operator-facing error.
+**Control:** `packages/llm/src/providers/openaiCompatible.ts` — only the
+provider's short error code is carried, matched against an identifier shape and
+capped in length, so a provider that puts prose in a code field is ignored
+rather than trusted.
+**Test:** never carries the provider’s prose, which quotes the request back
+
+### T-65 Setup completes with a required thing that does not work
+**Attacker:** no attacker — an operator clicking through, or a client that
+skips a step.
+**Impact:** an installation reports itself configured while the model, the mail
+server or a connector has never answered, which is the failure this whole audit
+exists to remove.
+**Control:** `apps/api/src/setup/setupRoutes.ts` — completion rebuilds the
+review server-side at the moment of the request and refuses while anything
+required is failing or untested, rather than trusting what the review screen
+last showed.
+**Test:** refuses to finish while the model test is failing
+
+---
+
+## Approval policy
+
+### T-66 A fresh installation acts without approval because nobody set a ceiling
+**Attacker:** no attacker — an installation nobody configured, and a user who
+chose the loosest setting available to them.
+**Impact:** Josi sends mail or changes a calendar on somebody's behalf with
+nobody having decided that was allowed.
+**Control:** `packages/core/src/approvals.ts` — a missing administrator policy
+resolves to `always_ask` rather than to no ceiling, and migration 0016 seeds an
+explicit row for every action class so the default is visible as well as safe.
+**Test:** does not treat "no policy" as "no ceiling"
+
+### T-67 A ceiling is relaxed without anybody deciding to
+**Attacker:** a client bug, a replayed request, or an administrator who did not
+realise which direction they were moving.
+**Impact:** Josi gains autonomy nobody consciously granted, and no record exists
+of who granted it.
+**Control:** `packages/core/src/approvals.ts` — loosening requires an explicit
+confirmation flag and is refused without it, and it is recorded under its own
+event kind carrying the previous value, so a relaxation is findable in an audit
+without reading every ceiling change ever made.
+**Test:** refuses a relaxation that was not confirmed
+
+### T-68 A checklist dismissal hides a real failure
+**Attacker:** no attacker — an administrator clearing a list.
+**Impact:** a broken backup or an unverified master-key copy stops being shown,
+and the installation looks ready when it is not.
+**Control:** `packages/core/src/launchChecklist.ts` — a dismissal applies only to
+an item that is merely outstanding, never to one that is failing, and items
+whose severity is critical cannot be dismissed at all.
+**Test:** ignores a dismissal of something that is failing
+
+---
+
 ## Accepted risks
 
 These have no control, deliberately.

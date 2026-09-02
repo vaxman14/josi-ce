@@ -22,7 +22,8 @@ interface Item {
   label: string;
   why: string;
   severity: Severity;
-  href: string;
+  href: string | null;
+  insteadOfScreen?: string;
   state: State;
   detail: string | null;
   dismissible: boolean;
@@ -141,6 +142,12 @@ export function AdminLaunchChecklist() {
                 </span>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">{item.why}</p>
+              {/* No screen for it. Saying where the work happens beats a
+                  button that goes nowhere — which is what the first version
+                  of this did, silently. */}
+              {!item.href && (item.state === 'outstanding' || item.state === 'failed') ? (
+                <p className="mt-1 text-xs text-muted-foreground">{item.insteadOfScreen}</p>
+              ) : null}
               {item.detail ? (
                 <p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>
               ) : null}
@@ -152,11 +159,11 @@ export function AdminLaunchChecklist() {
                             onClick={() => void act('/admin/launch-checklist/master-key-backed-up')}>
                       I have copied it somewhere safe
                     </Button>
-                  ) : (
-                    <Button type="button" disabled={busy} onClick={() => navigate(item.href)}>
+                  ) : item.href ? (
+                    <Button type="button" disabled={busy} onClick={() => navigate(item.href!)}>
                       Do this
                     </Button>
-                  )
+                  ) : null
                 ) : null}
 
                 {item.dismissible && item.state === 'outstanding' ? (

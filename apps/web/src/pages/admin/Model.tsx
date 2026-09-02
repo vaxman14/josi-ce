@@ -12,7 +12,8 @@
 // never a disabled button that looks pressable.
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, ErrorNote, Copyable } from '@/components/ui';
+import { plain, plainDetail } from '@/lib/plainLanguage';
 
 interface Provider {
   provider: string;
@@ -95,11 +96,28 @@ export function AdminModel() {
         {data.primary ? (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm">{data.primary.provider} · {data.primary.model}</span>
+              <span className="text-sm">{plain('model_provider', data.primary.provider)}</span>
               <Badge tone={data.primary.active ? 'ok' : 'danger'}>
                 {data.primary.active ? 'tested and in use' : 'not tested'}
               </Badge>
             </div>
+            {/* LB12.2. The exact model identifier is what a support
+                conversation needs and what nobody should have to read to see
+                whether their model works. It is one disclosure away, with a
+                way to copy it. */}
+            <details className="mt-2 text-sm">
+              <summary className="cursor-pointer text-xs text-muted-foreground">
+                Show technical details
+              </summary>
+              <div className="mt-2">
+                <Copyable label="Model identifier" value={data.primary.model} />
+                {plainDetail('model_provider', data.primary.provider) ? (
+                  <p className="text-xs text-muted-foreground">
+                    {plainDetail('model_provider', data.primary.provider)}
+                  </p>
+                ) : null}
+              </div>
+            </details>
             {!data.primary.active ? (
               <p className="mt-2 text-sm text-muted-foreground">
                 Josi will not use a model it has not tested. Run the test to see what it can actually do.

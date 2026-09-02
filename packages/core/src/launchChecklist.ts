@@ -28,8 +28,18 @@ export interface ChecklistItemSpec {
   /** What goes wrong if this is left. Written as a consequence, not a nag. */
   why: string;
   severity: ChecklistSeverity;
-  /** Where to go and do it. */
-  href: string;
+  /** Where to go and do it, or null when Josi has no screen for it.
+   *
+   * Null is not a shortcut. Three of these — backups, updates and diagnostics —
+   * are real work with a real API and NO user interface in this release, and
+   * the first version of this file pointed all of them at `/admin/operations`,
+   * a route that does not exist. Pressing "Do this" fell through the catch-all
+   * and silently returned the administrator to the user dashboard. An item that
+   * says where the work actually happens is better than a button that goes
+   * nowhere. */
+  href: string | null;
+  /** Shown instead of a button when there is no screen. */
+  insteadOfScreen?: string;
 }
 
 /** The whole checklist, in the order an administrator should work through it.
@@ -53,7 +63,10 @@ export const CHECKLIST_ITEMS: readonly ChecklistItemSpec[] = Object.freeze([
     label: 'Take a backup, and check it restores',
     why: 'A backup that has never been restored is a hope. Until one has run there is nothing to restore from.',
     severity: 'critical',
-    href: '/admin/operations',
+    href: null,
+    insteadOfScreen:
+      'There is no backup screen in this release. Backups run through the API and the procedure is '
+      + 'in INSTALLATION.md §15, including how to check that a restore actually works.',
   },
   {
     key: 'model',
@@ -80,7 +93,10 @@ export const CHECKLIST_ITEMS: readonly ChecklistItemSpec[] = Object.freeze([
       'Without it Josi cannot send invitations or password resets, so nobody else can be given an '
       + 'account, and it cannot send mail on anyone\'s behalf.',
     severity: 'important',
-    href: '/admin/model',
+    href: null,
+    insteadOfScreen:
+      'Mail is configured during installation. To change it afterwards, re-run setup on a fresh '
+      + 'installation or edit it through the API — there is no mail screen in this release.',
   },
   {
     key: 'users',
@@ -112,7 +128,10 @@ export const CHECKLIST_ITEMS: readonly ChecklistItemSpec[] = Object.freeze([
       'Josi never updates itself. Nothing is downloaded and nothing is applied until an '
       + 'administrator asks for it, so somebody has to be the one who asks.',
     severity: 'optional',
-    href: '/admin/operations',
+    href: null,
+    insteadOfScreen:
+      'Nothing downloads or applies an update on its own. The procedure, including rollback, is in '
+      + 'INSTALLATION.md §16.',
   },
   {
     key: 'diagnostics',
@@ -121,7 +140,10 @@ export const CHECKLIST_ITEMS: readonly ChecklistItemSpec[] = Object.freeze([
       'If you ever send one for support, it is worth knowing in advance that it is redacted, '
       + 'secret-scanned, and carries no messages or documents.',
     severity: 'optional',
-    href: '/admin/operations',
+    href: null,
+    insteadOfScreen:
+      'A diagnostics bundle is produced through the API. What it contains, and what it deliberately '
+      + 'does not, is in INSTALLATION.md §17.',
   },
 ]);
 

@@ -731,6 +731,62 @@ location / {
 After proxy changes, verify `/health`, `/ready`, login, logout, and a browser
 refresh on an authenticated route.
 
+## 12A. Google and Microsoft on a LAN-only installation
+
+Referenced from §0.4. The short answer is that you cannot connect them without
+a domain name, and Josi will tell you so rather than generating a callback that
+cannot work.
+
+### Why
+
+Both providers require the OAuth redirect URI to be an **HTTPS URL on a
+resolvable domain**. Neither accepts:
+
+- an IP address, with or without TLS — no publicly trusted certificate authority
+  will issue for one;
+- `localhost` or a `.local` name, which their servers cannot resolve;
+- plain HTTP on any host other than `localhost`, which is reserved for
+  development clients rather than web applications.
+
+So there is no redirect URI a LAN-only installation could register. Josi refuses
+the connector step in that case, with the reason, instead of generating
+`https://192.168.1.50/...` and letting Google reject it — a failure that
+produces the provider's error page rather than ours, and is the hardest
+connector problem to diagnose from the outside.
+
+### What still works without them
+
+Everything except Google and Microsoft. The assistant, tasks, approvals,
+conversations, contacts you add yourself, documents, Telegram and the model
+provider are all unaffected. The launch checklist shows the connectors as
+**Not available here** with the reason, rather than as outstanding work you
+cannot do.
+
+### The supported ways to get one
+
+1. **A public domain pointing at this server.** The normal path. Set
+   `JOSI_DOMAIN`, restart, and Caddy obtains a certificate automatically.
+2. **A public domain that resolves to a private address (split-horizon DNS).**
+   This works for the browser but **not** for the providers: the redirect goes
+   through the user's browser, so the address only has to be reachable from
+   *their* machine, not from Google. A public DNS name with a private `A` record
+   and a certificate obtained by DNS-01 challenge is a supported shape. Caddy
+   can do the DNS-01 part with a provider plugin; that is outside what the
+   bundled image includes, so it means bringing your own proxy (§12).
+3. **A tunnel.** Anything that gives the installation a stable public HTTPS
+   hostname — Cloudflare Tunnel, Tailscale Funnel, an SSH reverse tunnel to a
+   VPS — is sufficient, because the provider only ever sees the hostname.
+
+Josi does not favour any of these and ships none of them. What it requires is
+that `JOSI_APP_URL` is `https://` on a name a browser can resolve.
+
+### Adding it later
+
+Nothing needs reinstalling. Set the domain, restart, and register the
+applications from **Settings → Connectors**, which shows the exact callback URL
+to paste with a copy button. Contacts, conversations and everything else are
+untouched.
+
 ## 13. Firewall guidance
 
 Bundled Caddy normally needs only:

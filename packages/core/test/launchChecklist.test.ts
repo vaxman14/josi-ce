@@ -6,6 +6,9 @@
 // backup taken, the master key never copied off the server, and two setup steps
 // skipped.
 import { beforeEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { testDb, type TestDb } from './helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import {
@@ -51,7 +54,39 @@ describe('LB7.3 — the checklist covers what an administrator has to decide', (
     for (const item of CHECKLIST_ITEMS) {
       // A checklist that lists tasks without consequences is a chore list.
       expect(item.why.length, item.key).toBeGreaterThan(40);
-      expect(item.href, item.key).toMatch(/^\/admin/);
+    }
+  });
+
+  it('sends nobody to a screen that does not exist', () => {
+    // The first version of this file pointed backups, updates and diagnostics
+    // at `/admin/operations`, which is not a route. Pressing "Do this" fell
+    // through the router's catch-all and silently returned the administrator
+    // to the USER dashboard — the exact place LB7 exists to stop them landing.
+    //
+    // Every href is now checked against the routes the app actually declares.
+    const app = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../../apps/web/src/App.tsx'),
+      'utf8',
+    );
+    const adminBlock = app.slice(app.indexOf('path="/admin"'));
+    const routes = new Set(
+      [...adminBlock.matchAll(/path="([a-z-]+)"/g)].map((m) => `/admin/${m[1]}`),
+    );
+    routes.add('/admin');
+
+    for (const item of CHECKLIST_ITEMS) {
+      if (item.href === null) continue;
+      expect(routes.has(item.href), `${item.key} links to ${item.href}, which is not a route`).toBe(true);
+    }
+  });
+
+  it('says where the work happens when there is no screen for it', () => {
+    // Null is allowed, silence is not. An item with no screen has to say where
+    // the operator actually does it.
+    for (const item of CHECKLIST_ITEMS) {
+      if (item.href !== null) continue;
+      expect(item.insteadOfScreen, `${item.key} has no screen and does not say where to go`).toBeTruthy();
+      expect(item.insteadOfScreen!.length, item.key).toBeGreaterThan(40);
     }
   });
 
