@@ -98,7 +98,11 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-josi}@db:5432/${POSTGRES_DB:-josi}
       PGPASSWORD_FILE: /run/secrets/josi_db_password
       MASTER_KEY_FILE: /run/secrets/josi_master_key
-      APP_URL: ${JOSI_APP_URL:-https://${JOSI_DOMAIN:-localhost}}
+      # A domain gives https://domain; without one this is the LAN address the
+      # operator set. It must never resolve to a bare `https://`, which is what
+      # `https://${JOSI_DOMAIN:-localhost}` produced once the domain default
+      # stopped being `localhost`.
+      APP_URL: ${JOSI_APP_URL:-${JOSI_DOMAIN:+https://${JOSI_DOMAIN}}}
       # Empty means infer from APP_URL: secure for https, non-secure for LAN
       # http. Explicit true/false remains available as an advanced override.
       COOKIE_SECURE: ${JOSI_COOKIE_SECURE:-}
@@ -201,7 +205,15 @@ services:
       - "${JOSI_HTTP_PORT:-80}:80"
       - "${JOSI_HTTPS_PORT:-443}:443"
     environment:
-      JOSI_DOMAIN: ${JOSI_DOMAIN:-localhost}
+      # Caddy's `{$VAR:default}` falls back only when the variable is UNSET, not
+      # when it is empty — an empty one substitutes an empty string and the site
+      # block becomes `{ … }`, which Caddy rejects outright ("server block
+      # without any key"). So this must never be empty. It is assembled rather
+      # than defaulted for exactly that reason:
+      #   no domain  ->  ""       + ":80"        = ":80"          (HTTP, no ACME)
+      #   a domain   ->  "https://" + "domain"   = "https://domain" (ACME on)
+      JOSI_SITE_ADDRESS: ${JOSI_DOMAIN:+https://}${JOSI_DOMAIN:-:80}
+      JOSI_DOMAIN: ${JOSI_DOMAIN:-}
     volumes:
       # Published as part of the release next to this file. Downloading it is
       # one more `curl`; it is not generated, so it can be read before it runs.

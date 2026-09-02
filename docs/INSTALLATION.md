@@ -376,12 +376,20 @@ HTTP, so the URL scheme must be accurate.
 Local HTTP evaluation example:
 
 ```dotenv
-JOSI_DOMAIN=localhost
-JOSI_APP_URL=http://localhost
+JOSI_DOMAIN=
+JOSI_APP_URL=http://192.168.1.10:8080
 JOSI_COOKIE_SECURE=
-JOSI_HTTP_PORT=80
-JOSI_HTTPS_PORT=443
+JOSI_HTTP_PORT=8080
+JOSI_HTTPS_PORT=8443
 ```
+
+`JOSI_DOMAIN` is **empty** here, and that is the whole point of this example.
+Caddy reads the site address as `:80` — plain HTTP, no certificate, no
+redirect. Putting a bare hostname in it (`localhost` included) turns automatic
+HTTPS on instead, and Caddy then answers plain HTTP with a `308` redirect to
+`https://` on the standard port — which, behind a mapped port, is nowhere. Use
+a name here only when that name resolves publicly and you want a certificate
+for it.
 
 Do not explicitly set `JOSI_COOKIE_SECURE=false` on a public deployment.
 

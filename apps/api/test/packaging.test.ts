@@ -275,9 +275,24 @@ describe('storage mounts — M45, M60', () => {
   });
 });
 
+/**
+ * Docker Compose's `${VAR}`, `${VAR:-default}` and `${VAR:+alternate}`
+ * interpolation — enough of it to evaluate what a compose file actually hands a
+ * container, rather than to eyeball the template and hope.
+ * Compose treats unset and empty alike for both the `:-` and `:+` forms.
+ */
+function expandCompose(value: string, env: Record<string, string>): string {
+  return value.replace(/\$\{([A-Z0-9_]+)(?::([-+])([^}]*))?\}/g, (_m, name, op, arg) => {
+    const set = Boolean(env[name]);
+    if (op === '-') return set ? env[name] : expandCompose(arg, env);
+    if (op === '+') return set ? expandCompose(arg, env) : '';
+    return set ? env[name] : '';
+  });
+}
+
 describe('the proxy', () => {
   it('is templated on a domain rather than hard-coded to anything', () => {
-    expect(caddyfile).toMatch(/\{\$JOSI_DOMAIN\}/);
+    expect(caddyfile).toMatch(/\{\$JOSI_SITE_ADDRESS/);
     // No hosted-product hostname may appear here.
     expect(caddyfile).not.toMatch(/heyjosi|socalreceptionist/i);
   });
@@ -290,6 +305,72 @@ describe('the proxy', () => {
 
   it('binds its admin API to loopback', () => {
     expect(caddyfile).toMatch(/admin 127\.0\.0\.1:2019/);
+  });
+
+  it('does not turn on automatic HTTPS by default', () => {
+    // A BARE hostname as the site address makes Caddy issue itself a
+    // certificate and answer plain HTTP with a 308 to a port it has dropped.
+    // `localhost` was the default, so every LAN install was broken and no
+    // static test saw it — the first acceptance run that booted the stack
+    // failed 36 of 55 checks on this one line.
+    //
+    // The address must therefore carry a scheme or a port. `:80` is HTTP with
+    // automatic HTTPS off; `https://host` asks for it deliberately.
+    const site = /^\s*\{\$JOSI_SITE_ADDRESS:([^}]*)\}/m.exec(caddyfile);
+    expect(site, 'the site address must be an env substitution with a default').toBeTruthy();
+    expect(site![1], 'the default must be a port or carry a scheme').toMatch(/^(:\d+|https?:\/\/)/);
+
+    // And the compose files must produce a usable address for BOTH cases. This
+    // is evaluated rather than pattern-matched, because the first fix here
+    // matched a perfectly good-looking pattern and still took the stack down:
+    // it produced an EMPTY value when no domain was set, and Caddy's
+    // `{$VAR:default}` falls back only when the variable is UNSET. An empty one
+    // substitutes nothing, the site block becomes `{ … }`, Caddy rejects it
+    // ("server block without any key is global configuration") and refuses to
+    // start — so every request returned 000 rather than 308. Trading one total
+    // outage for another is not a fix, and only evaluation sees the difference.
+    for (const name of ['docker-compose.yml', 'docker-compose.release.yml']) {
+      const raw = readFileSync(join(root, name), 'utf8');
+      const assigned = /^\s*JOSI_SITE_ADDRESS:\s*(.+?)\s*$/m.exec(raw)?.[1];
+      expect(assigned, `${name} must set JOSI_SITE_ADDRESS`).toBeTruthy();
+
+      expect(expandCompose(assigned!, {}), `${name} with no domain`).toBe(':80');
+      expect(expandCompose(assigned!, { JOSI_DOMAIN: '' }), `${name} with an empty domain`).toBe(':80');
+      expect(expandCompose(assigned!, { JOSI_DOMAIN: 'josi.example.com' }), `${name} with a domain`)
+        .toBe('https://josi.example.com');
+    }
+  });
+
+  it('never ships `JOSI_DOMAIN=localhost` anywhere an operator will copy it', () => {
+    // The compose files are fixed above, but the value reaches Caddy from
+    // whatever the operator's .env says — so the defect also lives in every
+    // file that TELLS them what to put there. It did: the documented LAN
+    // example set `JOSI_DOMAIN=localhost`, and the acceptance script exported
+    // the same thing, which is how a run meant to catch this was configured
+    // into reproducing it.
+    //
+    // A domain is for a name that resolves publicly. Anything else must leave
+    // it empty.
+    const files = [
+      '.env.example',
+      'docs/INSTALLATION.md',
+      'README.md',
+      'scripts/install.sh',
+      'scripts/acceptance/clean-install.sh',
+      'docker-compose.yml',
+      'docker-compose.release.yml',
+    ];
+    for (const name of files) {
+      const text = readFileSync(join(root, name), 'utf8');
+      for (const line of text.split('\n')) {
+        // Skip prose explaining why this is wrong — it has to name the value.
+        if (/^\s*(#|\/\/|>)/.test(line)) continue;
+        expect(
+          line,
+          `${name} must not set JOSI_DOMAIN to a non-resolving name`,
+        ).not.toMatch(/JOSI_DOMAIN[:=]\s*"?(localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1)/);
+      }
+    }
   });
 
   it('never passes a bare, defaultless env substitution as a directive argument', () => {

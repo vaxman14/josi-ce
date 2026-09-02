@@ -223,7 +223,15 @@ services:
       - "${JOSI_HTTP_PORT:-80}:80"
       - "${JOSI_HTTPS_PORT:-443}:443"
     environment:
-      JOSI_DOMAIN: ${JOSI_DOMAIN:-localhost}
+      # Caddy's `{$VAR:default}` falls back only when the variable is UNSET, not
+      # when it is empty — an empty one substitutes an empty string and the site
+      # block becomes `{ … }`, which Caddy rejects outright ("server block
+      # without any key"). So this must never be empty. It is assembled rather
+      # than defaulted for exactly that reason:
+      #   no domain  ->  ""       + ":80"        = ":80"          (HTTP, no ACME)
+      #   a domain   ->  "https://" + "domain"   = "https://domain" (ACME on)
+      JOSI_SITE_ADDRESS: ${JOSI_DOMAIN:+https://}${JOSI_DOMAIN:-:80}
+      JOSI_DOMAIN: ${JOSI_DOMAIN:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
