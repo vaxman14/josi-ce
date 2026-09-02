@@ -140,6 +140,44 @@ same page lets an administrator configure and test Claude with an Anthropic API
 key. The UI never conflates an unavailable Claude subscription with an
 unavailable Claude API, and it does not present unusable providers as choices.
 
+### FI-006: Claude subscription policy is represented incorrectly
+
+**Observed:** The Model page and `docs/SUBSCRIPTION_AUTH.md` say Anthropic
+prohibits using a Claude subscription through Josi and therefore expose no
+supported Claude subscription path. Anthropic's current legal and compliance
+documentation explicitly permits products to preinstall or run the unmodified
+Claude Code binary when each end user authenticates with their own Claude
+subscription, API key, or supported inference-provider credential. It forbids
+a third-party product from implementing its own Claude.ai login, collecting or
+intermediating Claude.ai credentials, or routing requests through a user's
+subscription credentials itself. OpenClaw uses the permitted first-party
+Claude Code/Agent SDK path and leaves authentication and refresh under
+Anthropic's control.
+
+**Required:**
+
+- Re-evaluate Claude subscription support against Anthropic's current
+  **Legal and compliance** documentation, including the section **Can customers
+  offer Claude Code in their products?**
+- If Josi offers this path, it must run the unmodified first-party Claude Code
+  binary and use Anthropic's own authentication flow.
+- Josi must not implement Claude.ai OAuth, read or store Claude credentials,
+  intermediate session tokens, resell usage, or authenticate on a user's
+  behalf.
+- Each operator must authenticate with their own Anthropic account, and the UI
+  must distinguish this first-party CLI path from direct Anthropic API-key use.
+- Replace the current blanket prohibition in the UI and documentation; cite
+  the exact current Anthropic terms and the date checked.
+- Confirm whether Josi must accept Anthropic's Commercial Terms before shipping
+  Claude Code inside the image, and obtain counsel review before representing
+  the integration as permitted in a public release.
+
+**Acceptance:** The product's Claude options match Anthropic's current written
+policy exactly. If the first-party Claude Code route ships, a clean Docker
+installation can authenticate through Anthropic's own flow and return a real
+response without Josi accessing the credential. If it does not ship, the UI
+does not falsely claim Anthropic prohibits the permitted first-party route.
+
 ## Verified during this run
 
 - The source-built stack starts successfully on the N150.
