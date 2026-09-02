@@ -98,7 +98,7 @@ step "jsonb columns hold arrays, not strings that look like arrays"
 kind=$("${COMPOSE[@]}" exec -T db psql -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -tAc \
   "insert into contacts (owner_user_id, name, emails, phones)
    select id, 'Runtime Probe', '[\"a@example.test\"]'::jsonb, '[]'::jsonb from users where username='lb8'
-   returning jsonb_typeof(emails)" 2>/dev/null | tr -d '\r ')
+   returning jsonb_typeof(emails)" 2>/dev/null | tr -d '\r ' | sed -n 1p)
 [[ "$kind" == "array" ]] && ok "contacts.emails is a jsonb array" || bad "contacts.emails came back as '$kind'"
 
 # -------------------------------------------------- PART A: stubbed provider
@@ -135,20 +135,33 @@ docker run -d --name "$STUB" --network "$NET" -v /tmp/josi-lb8-stub.js:/stub.js:
   && ok "stub provider running on the project network" \
   || bad "stub provider did not start"
 
-# NOTE FOR WHOEVER RUNS THIS FIRST.
+# The stub above answers over HTTP and is kept because it proves the project
+# network is usable. The end-to-end steps below do NOT go through it: they drive
+# the real sync engine inside the web container with `fetchImpl` injected, which
+# is the seam the unit suite already uses.
 #
-# Part A is written and has NEVER BEEN EXECUTED. The steps below drive the
-# product's own HTTP surface — sign in two members, connect each to the stub,
-# sync, delete at the provider, resync, and assert isolation and tombstones.
-# They are the same assertions the wire suite makes, against real PostgreSQL
-# rather than pglite.
+# WHY NOT POINT THE PRODUCT AT THE STUB. The provider endpoints are compile-time
+# constants. Making them configurable would put an environment variable into
+# every shipped installation that redirects where OAuth tokens and address books
+# are sent — an exfiltration hook added for the convenience of a test. The
+# existing seam costs nothing and adds no attack surface.
 #
-# Rather than print a list of checks that have not run, this section reports
-# itself as skipped until somebody has driven it on a host with Docker and
-# replaced this block with the real steps and their results. A harness that
-# claims coverage it has never produced is the thing this whole audit exists
-# to remove.
-skip "PART A end-to-end steps are written but have never been executed (see the note in this file)"
+# What this catches that the unit suite structurally cannot: pglite accepts a
+# hand-serialised jsonb parameter, postgres.js stores it as a string scalar.
+# Silent in tests, permanent in production. The assertions ask PostgreSQL what
+# the column actually holds.
+# Passed on the command line rather than copied in: `docker cp` is refused by a
+# read-only container, and the containers are read-only deliberately.
+part_a=$("${COMPOSE[@]}" exec -T web node --input-type=module -e "$(cat scripts/lb8-part-a.mjs)" \
+  2>/tmp/josi-lb8-parta.err)
+if [[ -z "$part_a" ]]; then
+  bad "PART A produced no verdict at all: $(head -c 300 /tmp/josi-lb8-parta.err)"
+else
+  while IFS='|' read -r verdict msg; do
+    [[ -z "$verdict" ]] && continue
+    [[ "$verdict" == "PASS" ]] && ok "$msg" || bad "$msg"
+  done <<< "$part_a"
+fi
 
 # -------------------------------------------------- PART B: a real provider
 
