@@ -2,10 +2,12 @@
 
 Google and Microsoft contacts, per user, private by default.
 
-> **Status.** Implemented and covered by 68 tests against the real migrations,
-> including the two-user isolation criterion over the wire. **No run against a
-> real Google or Microsoft account has happened.** `scripts/test-contacts-runtime.sh`
-> exists for that and has never been executed — see "What has not been proven".
+> **Status.** Implemented and covered by **118 tests** against the real
+> migrations — identity and matching (25), provider adapters (20), the sync
+> engine (41), the HTTP surface including two-user isolation (17), and
+> scheduled sync in the worker (15). **No run against a real Google or
+> Microsoft account has happened.** `scripts/test-contacts-runtime.sh` exists
+> for that and has never been executed — see "What has not been proven".
 
 ## What it does
 
