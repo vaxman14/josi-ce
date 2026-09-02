@@ -570,29 +570,58 @@ if needs_setup "the Telegram admin surface"; then
 fi
 
 step "subscription authentication is offered honestly (Phase 13.3)"
-if needs_setup "the model screen"; then
+if needs_setup "the subscription-auth options"; then
   code=$(api GET /api/admin/llm)
-  [[ "$code" == "200" ]] && ok "the model screen loads" || bad "admin llm returned $code"
-fi
-python3 - <<'PY' < /tmp/josi-acc-body
-import json, sys
+  if [[ "$code" != "200" ]]; then
+    bad "admin llm returned $code"
+  else
+    ok "the model screen loads"
+
+    # TWO defects lived here, and between them this section never checked
+    # anything at all.
+    #
+    # `python3 - <<'PY' < /tmp/josi-acc-body` gives python TWO stdin
+    # redirections, and the later one wins — so the JSON body was read as the
+    # PROGRAM and the heredoc was never seen. Every run of this block died with
+    # `NameError: name 'null' is not defined`. The file is opened by name now.
+    #
+    # And the verdicts were printed straight to stdout, where the summary could
+    # not see them: they were never added to the pass or fail counts, so the
+    # traceback above sat in a run that reported "0 failed". They come back as
+    # `PASS|message` now and bash counts every one.
+    verdicts=$(python3 <<'PY'
+import json
+out = []
+def check(cond, msg): out.append(("PASS" if cond else "FAIL") + "|" + msg)
 try:
-    data = json.load(sys.stdin)
+    with open("/tmp/josi-acc-body") as fh:
+        data = json.load(fh)
 except Exception as exc:
-    print(f"  FAIL  could not read the model payload: {exc}"); sys.exit(0)
-options = {o["id"]: o for o in data.get("subscriptionOptions", [])}
-def check(cond, msg):
-    print(("  PASS  " if cond else "  FAIL  ") + msg)
-check(data.get("edition", {}).get("edition") == "ce", "the running app reports edition=ce")
-check(options.get("chatgpt_subscription", {}).get("available") is True,
-      "the ChatGPT/Codex path is offered on a CE build")
-check(options.get("claude_subscription", {}).get("available") is False,
-      "the Claude path is not offered")
-check("4 April 2026" in options.get("claude_subscription", {}).get("reason", ""),
-      "and it cites the policy rather than promising a date")
-check(all("coming soon" not in o.get("reason", "").lower() for o in options.values()),
-      "no option says 'coming soon'")
+    print("FAIL|could not read the model payload: %s" % exc)
+else:
+    options = {o["id"]: o for o in data.get("subscriptionOptions", [])}
+    chatgpt = options.get("chatgpt_subscription", {})
+    claude = options.get("claude_subscription", {})
+    check(data.get("edition", {}).get("edition") == "ce", "the running app reports edition=ce")
+    check(chatgpt.get("available") is True, "the ChatGPT/Codex path is offered on a CE build")
+    check(claude.get("available") is False, "the Claude path is not offered")
+    check("4 April 2026" in (claude.get("reason") or ""),
+          "and it cites the policy rather than promising a date")
+    check(all("coming soon" not in (o.get("reason") or "").lower() for o in options.values()),
+          "no option says 'coming soon'")
+    print("\n".join(out))
 PY
+)
+    if [[ -z "$verdicts" ]]; then
+      bad "the subscription-auth checks produced no verdict at all"
+    else
+      while IFS='|' read -r verdict msg; do
+        [[ -z "$verdict" ]] && continue
+        [[ "$verdict" == "PASS" ]] && ok "$msg" || bad "$msg"
+      done <<< "$verdicts"
+    fi
+  fi
+fi
 
 step "resource use with the stack idle"
 sleep 5
