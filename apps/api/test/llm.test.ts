@@ -506,11 +506,27 @@ describe('subscription options', () => {
   it('still refuses the ones with no supported path', async () => {
     const res = await call('/api/admin/llm', { jar: cookies.admin });
     const byId = Object.fromEntries(res.body.subscriptionOptions.map((o: any) => [o.id, o]));
-    expect(byId.claude_subscription.available).toBe(false);
+    // Copilot is licensed for use inside GitHub's own editor integrations.
+    // There is still no supported path, so it is still not offered.
     expect(byId.copilot_subscription.available).toBe(false);
+    expect(byId.copilot_subscription.provider).toBeNull();
+  });
+
+  it('offers Claude through the first-party CLI on a CE build', async () => {
+    // This used to assert the opposite. What changed is the reading of
+    // Anthropic's terms, not the standard of evidence: the offered path runs
+    // the unmodified Claude Code binary and Anthropic's own sign-in, which is
+    // the arrangement they document. FI-006.
+    const res = await call('/api/admin/llm', { jar: cookies.admin });
+    const byId = Object.fromEntries(res.body.subscriptionOptions.map((o: any) => [o.id, o]));
+    expect(byId.claude_subscription.available).toBe(true);
+    expect(byId.claude_subscription.provider).toBe('anthropic_subscription');
   });
 
   it('cannot be configured by naming one as a provider', async () => {
+    // These are OPTION IDS, not provider kinds. Naming one as a provider must
+    // still fail — including for Claude, whose provider kind is
+    // `anthropic_subscription` and whose screen label is not routable.
     for (const provider of ['claude_subscription', 'chatgpt_subscription', 'copilot_subscription']) {
       const res = await configure({ provider });
       expect(res.status, provider).toBe(400);

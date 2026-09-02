@@ -22,7 +22,8 @@ import {
 } from '@josi-ce/core';
 import { discoverModels } from '@josi-ce/llm';
 import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
-import { DeviceLogin, codexLoginStatus, codexLogout } from '@josi-ce/llm';
+import { DeviceLogin, codexLoginStatus, codexLogout, claudeAuthStatus } from '@josi-ce/llm';
+import { claudeSubscriptionRouter, claudeEnv } from '../http/claudeSubscriptionRoutes.js';
 import { hasCapability } from '@josi-ce/core';
 import { savableProviders, subscriptionOptions } from '../http/llmRoutes.js';
 
@@ -210,7 +211,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
 
       const body = (req.body ?? {}) as Record<string, unknown>;
       const provider = str(body.provider, 32);
-      if (!['openai', 'anthropic', 'xai', 'openai_compatible', 'openai_subscription'].includes(provider)) {
+      if (!savableProviders().includes(provider)) {
         return res.status(400).json({ error: 'choose a model provider' });
       }
 
@@ -258,6 +259,10 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         return res.json({
           options: subscriptionOptions(),
           cli: await codexLoginStatus(codexEnv()),
+          // Reported separately rather than folded into one "the CLI" field:
+          // an installation can have either, both or neither signed in, and a
+          // single flag could not say which.
+          claudeCli: await claudeAuthStatus(claudeEnv()),
         });
       }),
     );
@@ -323,6 +328,13 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         return res.json(await codexLogout(codexEnv()));
       }),
     );
+
+    // Claude, on its own prefix, with the same disappear-after-setup rule the
+    // routes above have — expressed as the router's own availability check so
+    // there is one copy of it rather than five.
+    r.use('/subscription/claude', claudeSubscriptionRouter({
+      available: async () => !(await getSetupState(db)).completed,
+    }));
   }
 
   /** Everything an administrator needs in order to register the two OAuth
@@ -623,11 +635,11 @@ async function applyStep(
       if (!savableProviders().includes(provider)) throw new SetupError(400, 'choose a model provider');
       if (!model) throw new SetupError(400, 'a model name is required');
 
-      // The subscription path carries no API key at all — the credential lives
-      // in the operator's own Codex login and never enters this process — so
-      // the "a key is required" rule below must not apply to it. It IS still
-      // external: the bytes reach OpenAI, by way of OpenAI's own binary.
-      const isSubscription = provider === 'openai_subscription';
+      // A subscription path carries no API key at all — the credential lives in
+      // the operator's own CLI login and never enters this process — so the
+      // "a key is required" rule below must not apply to it. It IS still
+      // external: the bytes reach the vendor, by way of the vendor's own binary.
+      const isSubscription = provider === 'openai_subscription' || provider === 'anthropic_subscription';
       if (isSubscription) {
         if (!apiKey.isEmpty) {
           throw new SetupError(
@@ -636,9 +648,15 @@ async function applyStep(
             + 'while calling itself a subscription',
           );
         }
-        const status = await codexLoginStatus({ codexHome: process.env.CODEX_HOME ?? null });
-        if (!status.signedIn) {
-          throw new SetupError(400, `${status.detail} Sign in first, then continue.`);
+        // ASKED OF THE CLI THAT WILL ACTUALLY BE RUN. Checking the wrong one
+        // would let an installation finish setup pointing at a binary nobody
+        // has signed in to, which is the failure this whole step exists to
+        // prevent.
+        const signedIn = provider === 'anthropic_subscription'
+          ? await claudeAuthStatus(claudeEnv())
+          : await codexLoginStatus({ codexHome: process.env.CODEX_HOME ?? null });
+        if (!signedIn.signedIn) {
+          throw new SetupError(400, `${signedIn.detail} Sign in first, then continue.`);
         }
       }
 

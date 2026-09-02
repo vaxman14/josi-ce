@@ -21,9 +21,11 @@ import {
   UnsafeEndpointError, buildProvider, capabilitiesOf, checkCaps, disabledFeatures,
   isExternalProvider, isLocalOnly, isSubscriptionProvider, loadStoredProvider, meteredProvider,
   probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CODEX_COMMAND,
+  DeviceLogin, codexLoginStatus, codexLogout,
 } from '@josi-ce/llm';
 import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
+import { claudeSubscriptionRouter } from './claudeSubscriptionRoutes.js';
 import { assertMetadataOnly, requireAuth, requireSuperAdmin } from './authz.js';
 
 export interface LlmRoutesCtx {
@@ -59,6 +61,15 @@ function asArray(value: unknown): unknown[] {
 }
 const KNOWN_PROVIDERS = ['openai', 'anthropic', 'xai', 'openai_compatible'];
 
+/** One administrator-driven Codex login at a time. This is a live child
+ * process, so persisting it would create a database row that lies after a
+ * restart. A restart during login only costs one fresh pairing code. */
+let adminCodexLogin: DeviceLogin | null = null;
+
+function codexEnv() {
+  return { codexHome: process.env.CODEX_HOME ?? null };
+}
+
 /** Providers that exist only on a build whose edition permits them.
  *
  * Kept out of `KNOWN_PROVIDERS` so a hosted build's provider list does not even
@@ -66,6 +77,7 @@ const KNOWN_PROVIDERS = ['openai', 'anthropic', 'xai', 'openai_compatible'];
  * lists are joined. */
 export const CAPABILITY_PROVIDERS: Array<{ provider: string; capability: 'subscription_auth' }> = [
   { provider: 'openai_subscription', capability: 'subscription_auth' },
+  { provider: 'anthropic_subscription', capability: 'subscription_auth' },
 ];
 
 export function savableProviders(): string[] {
@@ -123,15 +135,23 @@ export function subscriptionOptions(): Array<{
     },
     {
       id: 'claude_subscription',
-      label: 'Use my Claude subscription',
-      provider: null,
-      available: false,
-      // NOT "coming soon". There is a policy, it is current, and it says no.
-      reason:
-        'Anthropic\'s authentication and credential-use policy restricts Claude Free, Pro and Max '
-        + 'sign-in to Claude Code and Claude.ai, and states that using those credentials in any '
-        + 'other product, tool or service — including the Agent SDK — is not permitted. It was '
-        + 'enforced against third-party tools on 4 April 2026. Use an Anthropic API key instead.',
+      label: 'Use my Claude subscription through Claude Code',
+      provider: 'anthropic_subscription',
+      available: ceOnly,
+      // The previous entry here said Anthropic forbids this outright. Re-reading
+      // the current terms showed that what is forbidden is a third party
+      // implementing Claude.ai login or intermediating credentials — shipping
+      // the unmodified first-party binary and letting the user authenticate
+      // through Anthropic's own flow is the documented arrangement. FI-006.
+      reason: ceOnly
+        ? 'Josi runs Anthropic\'s own Claude Code CLI on this machine, signed in as you through '
+          + 'Anthropic\'s own sign-in. Josi never sees, stores or forwards your login — it shows '
+          + 'you the link and carries the one-time code you bring back. It is per installation '
+          + 'rather than per person, it shares your own Claude usage limits, and it cannot call '
+          + 'tools, so Josi can talk but cannot act on this path.'
+        : 'A personal Claude plan is licensed for an individual rather than for powering a '
+          + 'commercial service. This build is not a Community Edition installation, so it cannot '
+          + 'offer it. An Anthropic API key works on any build.',
     },
     {
       id: 'copilot_subscription',
@@ -230,6 +250,54 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       });
     }),
   );
+
+  // The setup wizard has the same first-party device flow, but its routes are
+  // intentionally gone after installation. Administrators still need to sign
+  // in, reconnect, inspect status and sign out from the Model page.
+  if (hasCapability('subscription_auth')) {
+    r.get('/subscription/status', asyncRoute(async (_req, res) => {
+      return res.json({ cli: await codexLoginStatus(codexEnv()) });
+    }));
+
+    r.post('/subscription/login', asyncRoute(async (_req, res) => {
+      if (adminCodexLogin?.running) adminCodexLogin.cancel();
+      adminCodexLogin = new DeviceLogin(codexEnv());
+      return res.json(await adminCodexLogin.start());
+    }));
+
+    r.get('/subscription/login', asyncRoute(async (_req, res) => {
+      if (!adminCodexLogin) {
+        return res.json({ state: 'idle', challenge: null, expiresAt: null, message: null });
+      }
+      const snapshot = adminCodexLogin.status;
+      if (snapshot.state === 'signed_in') {
+        const status = await codexLoginStatus(codexEnv());
+        if (!status.signedIn) {
+          return res.json({
+            state: 'failed', challenge: null, expiresAt: null,
+            message: 'The sign-in reported success but Codex is still not signed in. Try again.',
+          });
+        }
+      }
+      return res.json(snapshot);
+    }));
+
+    r.post('/subscription/login/cancel', asyncRoute(async (_req, res) => {
+      adminCodexLogin?.cancel();
+      return res.json({ ok: true });
+    }));
+
+    r.post('/subscription/logout', asyncRoute(async (_req, res) => {
+      adminCodexLogin?.cancel();
+      adminCodexLogin = null;
+      return res.json(await codexLogout(codexEnv()));
+    }));
+
+    // Claude, on its own prefix. Not a parameter on the routes above because
+    // the flows genuinely differ: Anthropic's CLI blocks on stdin for a code
+    // the operator pastes back, so it needs a route that writes.
+    r.use('/subscription/claude', claudeSubscriptionRouter());
+  }
 
   /** Configure a provider.
    *

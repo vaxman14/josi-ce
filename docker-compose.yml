@@ -89,6 +89,10 @@ services:
       # from its own origin; unset, the API runs headless.
       WEB_DIR: /app/web
       CODEX_HOME: /data/codex
+      # Where the official Claude Code CLI keeps its login. Its own volume for
+      # the same reason: an update replaces the container and must not sign the
+      # operator out.
+      CLAUDE_CONFIG_DIR: /data/claude
     secrets:
       - josi_master_key
       - josi_db_password
@@ -120,6 +124,7 @@ services:
       # so replacing a container does not sign the operator out, and so
       # removing it is a deliberate act separate from removing the database.
       - josi_codex:/data/codex
+      - josi_claude:/data/claude
       # Shared folders (M45). Deny-by-default: nothing is mounted here unless an
       # operator writes it, and mounting alone grants nothing — a root must also
       # be registered before Josi will touch it.
@@ -153,6 +158,10 @@ services:
       PGPASSWORD_FILE: /run/secrets/josi_db_password
       MASTER_KEY_FILE: /run/secrets/josi_master_key
       CODEX_HOME: /data/codex
+      # Where the official Claude Code CLI keeps its login. Its own volume for
+      # the same reason: an update replaces the container and must not sign the
+      # operator out.
+      CLAUDE_CONFIG_DIR: /data/claude
     secrets:
       - josi_master_key
       - josi_db_password
@@ -184,6 +193,7 @@ services:
       # so replacing a container does not sign the operator out, and so
       # removing it is a deliberate act separate from removing the database.
       - josi_codex:/data/codex
+      - josi_claude:/data/claude
       # Shared folders (M45). Deny-by-default: nothing is mounted here unless an
       # operator writes it, and mounting alone grants nothing — a root must also
       # be registered before Josi will touch it.
@@ -327,6 +337,7 @@ volumes:
   josi_backups:
   josi_diagnostics:
   josi_codex:
+  josi_claude:
   caddy_data:
   caddy_config:
   clamav_data:

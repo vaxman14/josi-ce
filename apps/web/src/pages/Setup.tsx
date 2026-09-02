@@ -12,6 +12,7 @@
 // PostgreSQL. Nothing is kept in component state after the step is submitted.
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, primeCsrf } from '@/lib/api';
+import { ClaudeSignIn } from '@/components/ClaudeSignIn';
 import { Button, Card, CardTitle, Copyable, ErrorNote, Input } from '@/components/ui';
 
 /** A model the provider said this account may use. Never a list of ours. */
@@ -471,7 +472,7 @@ function LlmStep({
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
 
   const external = provider !== 'openai_compatible';
-  const isSubscription = provider === 'openai_subscription';
+  const isSubscription = provider === 'openai_subscription' || provider === 'anthropic_subscription';
 
   // Only a build whose edition permits it answers this at all. A hosted build
   // 404s and the option never appears — which is the outermost of four layers,
@@ -481,6 +482,7 @@ function LlmStep({
   }, []);
 
   const chatgpt = subscription?.options.find((o) => o.provider === 'openai_subscription');
+  const claude = subscription?.options.find((o) => o.provider === 'anthropic_subscription');
 
   // Anything that changes which account we are asking invalidates the answer.
   useEffect(() => { setModels(null); setDiscovery(null); setChosen(''); }, [provider, apiKey, baseUrl]);
@@ -534,6 +536,9 @@ function LlmStep({
           {chatgpt?.available ? (
             <option value="openai_subscription">My ChatGPT plan (no API key)</option>
           ) : null}
+          {claude?.available ? (
+            <option value="anthropic_subscription">My Claude plan (no API key)</option>
+          ) : null}
         </select>
       </div>
 
@@ -555,7 +560,11 @@ function LlmStep({
         </details>
       ) : null}
 
-      {isSubscription ? <SubscriptionSignIn info={subscription} /> : null}
+      {/* Two different flows, and the component matches the CLI rather than
+          the other way round: ChatGPT's polls itself, Claude's needs a code
+          pasted back. */}
+      {provider === 'openai_subscription' ? <SubscriptionSignIn info={subscription} /> : null}
+      {provider === 'anthropic_subscription' ? <ClaudeSignIn basePath="/setup/subscription/claude" /> : null}
 
       {!external && !isSubscription ? (
         <div>

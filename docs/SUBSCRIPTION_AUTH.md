@@ -1,9 +1,14 @@
 # Using a subscription instead of an API key
 
-Josi CE can use a **ChatGPT plan** for its model, instead of a metered OpenAI
-API key. It cannot use a **Claude subscription**, and this document says exactly
-why for both — with sources and dates, so the reasoning can be re-checked rather
-than taken on trust.
+Josi CE can use a **ChatGPT plan** or a **Claude subscription** for its model,
+instead of a metered API key. This document says exactly how, and on what
+basis — with sources and dates, so the reasoning can be re-checked rather than
+taken on trust.
+
+> **The Claude section of this document said the opposite until 2 September
+> 2026.** It stated that Anthropic prohibited the path outright. That reading
+> was wrong, and the correction is recorded below rather than quietly applied,
+> because anyone who read the old version made a decision on it.
 
 This is a Community Edition capability. A hosted, business or white-label build
 of this same source is structurally unable to enable it. See
@@ -41,26 +46,46 @@ The terms confine this to **individual productivity** and exclude using a
 personal plan to **power a commercial service or resell access**. That sentence
 is the entire reason the edition boundary exists.
 
-### Anthropic / Claude — no supported path, and it is prohibited
+### Anthropic / Claude — a supported path exists, through Anthropic's own CLI
 
-Anthropic's authentication and credential-use policy states that OAuth sign-in
-for Free, Pro and Max plans is **intended exclusively for Claude Code and
-Claude.ai**, and that using credentials obtained that way **in any other
-product, tool or service — including the Agent SDK — is not permitted**.
-Developers building products are directed to API key authentication through the
-Claude Console or a supported cloud provider.
-([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance))
+**What this document used to say.** That Anthropic's policy confines Free, Pro
+and Max sign-in to Claude Code and Claude.ai, that using those credentials in
+any other product "including the Agent SDK" is not permitted, that it was
+enforced on 4 April 2026, and that there was therefore nothing to build.
 
-This was **enforced on 4 April 2026** against third-party harnesses that routed
-subscription credentials through their own tooling.
+**What re-reading it showed.** The prohibition is narrower than that summary,
+and the distinction it draws is the one that matters here. What is forbidden is
+a third party **implementing Claude.ai login itself, collecting or
+intermediating Claude.ai credentials, or routing requests through a user's
+subscription credentials on their behalf**. What is described as permitted is a
+product that **preinstalls or runs the unmodified Claude Code binary, where each
+end user authenticates with their own credential through Anthropic's own flow**.
+([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance),
+section "Can customers offer Claude Code in their products?", read 2 September
+2026.)
 
-So there is nothing to build. Josi CE keeps Claude subscription authentication
-unavailable, and the admin screen states the policy and the date rather than
-saying "coming soon" — which would be a promise about somebody else's product
-that Josi has no standing to make.
+The old summary collapsed those two into one prohibition. The Agent SDK clause
+is real; it is not the same clause as the one about shipping the CLI.
 
-**Use an Anthropic API key instead.** That path is fully supported and has been
-since Phase 4.
+**What Josi does, therefore, and what it refuses to do.** Josi installs the
+published `@anthropic-ai/claude-code` package at a pinned version and runs it
+unmodified. Signing in runs `claude auth login --claudeai`, which prints an
+Anthropic URL and then waits on its own standard input for a code the operator
+brings back from their own browser. Josi displays the link and passes the one
+paste through to that process. It does not implement Claude.ai OAuth, does not
+read or store the credential the CLI writes, does not refresh or forward it,
+and makes no HTTP request to Anthropic on this path at all.
+
+**Still outstanding, and not for this document to close.** FI-006 in
+`docs/FIRST_INSTALL_FINDINGS.md` requires two things that remain open:
+confirmation of whether Anthropic's Commercial Terms must be accepted before
+shipping Claude Code inside a distributed image, and **counsel review before
+this integration is represented as permitted in a public release**. Nothing here
+substitutes for either. The implementation exists and is honest about its
+mechanism; the legal representation is Roman's call to make with advice.
+
+**An Anthropic API key remains available** on every build, including hosted
+ones, and needs none of the above.
 
 ### GitHub Copilot
 

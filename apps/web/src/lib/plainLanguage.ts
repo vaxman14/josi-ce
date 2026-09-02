@@ -62,19 +62,29 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
   model_provider: {
     // `llm_providers.provider` carries no CHECK — it is validated in code — so
     // this is asserted against the `ProviderKind` union instead.
-    source: { literal: ['openai', 'anthropic', 'xai', 'openai_compatible', 'openai_subscription'] },
+    source: {
+      literal: [
+        'openai', 'anthropic', 'xai', 'openai_compatible',
+        'openai_subscription', 'anthropic_subscription',
+      ],
+    },
     labels: {
       openai: 'OpenAI',
       anthropic: 'Anthropic',
       xai: 'xAI',
       openai_compatible: 'Your own server',
       openai_subscription: 'Your ChatGPT plan',
+      anthropic_subscription: 'Your Claude plan',
     },
     detail: {
       openai_compatible: 'A model running on hardware you control. Nothing leaves this server for it.',
       openai_subscription:
         'Runs OpenAI\'s own Codex CLI, signed in as you. Shared across this installation, and it '
         + 'reports no cost, so every usage figure on this path is an estimate.',
+      anthropic_subscription:
+        'Runs Anthropic\'s own Claude Code CLI, signed in as you. Shared across this installation. '
+        + 'It reports real token counts but no cost, because a monthly plan has no per-message '
+        + 'price.',
     },
   },
 

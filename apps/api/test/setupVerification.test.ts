@@ -387,14 +387,29 @@ describe('LB2 — the ChatGPT subscription path is offered in the wizard', () =>
     expect(chatgpt.available).toBe(true);
     expect(chatgpt.reason).toMatch(/never sees, stores or forwards your login/i);
 
-    // Not "coming soon". There is a policy, it is current, and it says no.
+    // Claude is offered on the same terms and through the same kind of path:
+    // the vendor's own CLI, the vendor's own sign-in, no credential in Josi.
     const claude = res.body.options.find((o: any) => o.id === 'claude_subscription');
-    expect(claude.available).toBe(false);
-    expect(claude.reason).toMatch(/not permitted/i);
+    expect(claude.available).toBe(true);
+    expect(claude.provider).toBe('anthropic_subscription');
+    expect(claude.reason).toMatch(/never sees, stores or forwards your login/i);
     expect(claude.reason).toMatch(/Claude Code/);
+
+    // Copilot has no supported path and still gets no control.
+    const copilot = res.body.options.find((o: any) => o.id === 'copilot_subscription');
+    expect(copilot.available).toBe(false);
+    expect(copilot.provider).toBeNull();
+
+    // The rule that never moved: an unavailable option states a reason, and
+    // "coming soon" is a guess rather than a reason.
     for (const option of res.body.options) {
       expect(option.reason, option.id).not.toMatch(/coming soon/i);
     }
+
+    // Both CLIs are reported separately, because an installation can have
+    // either, both or neither signed in.
+    expect(res.body).toHaveProperty('cli');
+    expect(res.body).toHaveProperty('claudeCli');
   });
 
   it('reports the CLI honestly when it is not in this environment', async () => {

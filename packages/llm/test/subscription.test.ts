@@ -19,6 +19,9 @@ import {
   type SpawnRunner,
 } from '../src/providers/codexCli.js';
 import { EXTERNAL_PROVIDERS, LlmError, isExternalProvider } from '../src/types.js';
+import {
+  DENIED_TOOLS, claudeArgs, claudeChildEnvironment, classifyClaudeFailure, parseClaudeResult,
+} from '../src/providers/claudeCli.js';
 import { priceCall } from '../src/metering.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -36,6 +39,16 @@ function fakeRunner(over: Partial<{ stdout: string; stderr: string; code: number
     };
   };
   return { runner, calls };
+}
+
+/** Every TypeScript source in the LLM package. */
+function llmSources(dir = join(ROOT, 'packages/llm/src'), out: string[] = []): string[] {
+  for (const e of readdirSync(dir)) {
+    const f = join(dir, e);
+    if (statSync(f).isDirectory()) llmSources(f, out);
+    else if (f.endsWith('.ts')) out.push(f);
+  }
+  return out;
 }
 
 describe('it delegates to the documented CLI and nothing else (L3.2)', () => {
@@ -224,7 +237,11 @@ describe('it is honest about what it cannot do (L3.4)', () => {
 
   it('is recognised as a subscription provider, and nothing else is', () => {
     expect(isSubscriptionProvider('openai_subscription')).toBe(true);
-    for (const other of ['openai', 'anthropic', 'anthropic_subscription', 'xai', 'openai_compatible']) {
+    expect(isSubscriptionProvider('anthropic_subscription')).toBe(true);
+    // `anthropic` is the API-key provider and must never be confused with the
+    // subscription one — that confusion is what would bill an API account
+    // while calling itself a subscription.
+    for (const other of ['openai', 'anthropic', 'xai', 'openai_compatible']) {
       expect(isSubscriptionProvider(other), other).toBe(false);
     }
   });
@@ -360,28 +377,93 @@ describe('the edition boundary refuses it outside CE (L3.6, L4.3)', () => {
   });
 });
 
-describe('there is no Anthropic path, and the absence is deliberate (L3.5)', () => {
-  it('no subscription provider exists for Anthropic', () => {
-    expect(isSubscriptionProvider('anthropic_subscription')).toBe(false);
+describe('the Anthropic path runs the first-party CLI and nothing else (L3.5)', () => {
+  // This block used to assert that no Anthropic path existed at all, on the
+  // basis that their policy forbade one. Re-reading the current terms showed
+  // that what is forbidden is a third party implementing Claude.ai login or
+  // intermediating credentials — running the unmodified first-party binary,
+  // with the user authenticating through Anthropic's own flow, is the
+  // documented arrangement. See FI-006 in docs/FIRST_INSTALL_FINDINGS.md.
+  //
+  // So the assertions moved rather than relaxed: what is now checked is that
+  // the implementation stays inside that arrangement. Each one below is a way
+  // the path could stop being compliant without anybody noticing.
+
+  it('is offered as a subscription provider', () => {
+    expect(isSubscriptionProvider('anthropic_subscription')).toBe(true);
+    // The OPTION id in the UI is not a provider kind. Confusing the two would
+    // make a screen label routable.
     expect(isSubscriptionProvider('claude_subscription')).toBe(false);
   });
 
-  it('nothing in the LLM package tries to run Claude Code', () => {
-    const dir = join(ROOT, 'packages/llm/src');
-    const walk = (d: string, out: string[] = []): string[] => {
-      for (const e of readdirSync(d)) {
-        const f = join(d, e);
-        if (statSync(f).isDirectory()) walk(f, out);
-        else if (f.endsWith('.ts')) out.push(f);
-      }
-      return out;
-    };
-    for (const file of walk(dir)) {
+  it('never implements Anthropic sign-in itself', () => {
+    for (const file of llmSources()) {
       const text = readFileSync(file, 'utf8');
-      // A comment may explain why it is absent; a spawn of it may not exist.
-      expect(text, file).not.toMatch(/spawn\([^)]*['"]claude['"]/);
-      expect(text, file).not.toMatch(/claude-agent-sdk/);
+      // No OAuth of Josi's own: no client id, no redirect handler, no token
+      // exchange. The URL Josi shows is the one the CLI printed.
+      expect(text, file).not.toMatch(/claude\.ai\/oauth|console\.anthropic\.com\/oauth/);
+      expect(text, file).not.toMatch(/client_secret|code_verifier|refresh_token/);
+      // The Agent SDK is the path Anthropic distinguishes from shipping the
+      // CLI. Josi ships the CLI.
+      expect(text, file).not.toMatch(/claude-agent-sdk|@anthropic-ai\/sdk/);
     }
+  });
+
+  it('never reads the credential the CLI stores', () => {
+    for (const file of llmSources()) {
+      const text = readFileSync(file, 'utf8');
+      // `.credentials.json`, a keychain, or any read of the config directory.
+      // Josi sets CLAUDE_CONFIG_DIR and never opens what is inside it.
+      expect(text, file).not.toMatch(/\.credentials\.json|security find-generic-password|keytar/);
+      expect(text, file).not.toMatch(/readFileSync\([^)]*CLAUDE_CONFIG_DIR/);
+    }
+  });
+
+  it('runs the published binary with the documented non-interactive options', () => {
+    const source = readFileSync(join(ROOT, 'packages/llm/src/providers/claudeCli.ts'), 'utf8');
+    expect(claudeArgs('sonnet')).toEqual([
+      '--print', '--output-format', 'json', '--model', 'sonnet',
+      '--permission-mode', 'manual', '--disallowed-tools', ...DENIED_TOOLS,
+    ]);
+    // `--bare` documents itself as making auth "strictly ANTHROPIC_API_KEY" and
+    // never reading OAuth. On a subscription path it would defeat the feature.
+    expect(source).not.toMatch(/'--bare'/);
+  });
+
+  it('refuses on a hosted build, at the provider factory', () => {
+    const source = readFileSync(join(ROOT, 'packages/llm/src/providers/claudeCli.ts'), 'utf8');
+    // Spawning a process and spawning THIS process are two different
+    // permissions, and a hosted build must fail the first one too.
+    expect(source).toContain("assertCapability('local_command_execution')");
+    expect(source).toContain("assertCapability('subscription_auth')");
+  });
+
+  it('strips every credential that would silently bill an API account', () => {
+    const env = claudeChildEnvironment('/data/claude', {
+      ANTHROPIC_API_KEY: 'k', ANTHROPIC_AUTH_TOKEN: 't', CLAUDE_CODE_OAUTH_TOKEN: 'o',
+      ANTHROPIC_BASE_URL: 'https://elsewhere.invalid', DATABASE_URL: 'postgres://x', PATH: '/usr/bin',
+    });
+    for (const key of [
+      'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN',
+      'ANTHROPIC_BASE_URL', 'DATABASE_URL',
+    ]) {
+      expect(env[key], key).toBeUndefined();
+    }
+    // The one thing that MUST survive: without it the CLI cannot find the
+    // login and every call would report the operator as signed out.
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/data/claude');
+  });
+
+  it('treats a signed-out CLI as a failure even though it exits zero', () => {
+    // The trap, asserted directly. `claude --print` reports "Not logged in" in
+    // a normal-looking envelope with is_error true and exit code 0. A caller
+    // trusting the exit code would hand that sentence to a user as the model's
+    // answer.
+    const parsed = parseClaudeResult(JSON.stringify({
+      result: 'Not logged in · Please run /login', is_error: true, usage: {},
+    }));
+    expect(parsed?.isError).toBe(true);
+    expect(classifyClaudeFailure(parsed!.text, 'claude').needsReconfiguration).toBe(true);
   });
 });
 

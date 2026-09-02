@@ -11,7 +11,13 @@ export type ProviderKind =
   // operator's own first-party Codex CLI is run as a subprocess. It is a
   // separate kind so that nothing which branches on provider can confuse the
   // two, and so the edition boundary has something concrete to refuse.
-  | 'openai_subscription';
+  | 'openai_subscription'
+  // Phase 14. The same shape for Anthropic: not "Anthropic with a different
+  // credential" but a different TRANSPORT — no HTTP request is made by CE, the
+  // operator's own first-party Claude Code CLI is run as a subprocess. Separate
+  // from `anthropic` so nothing branching on provider can confuse a subscription
+  // with an API account, and so the edition boundary has something to refuse.
+  | 'anthropic_subscription';
 
 /** Providers that send request content off this server. `openai_compatible`
  * is absent on purpose: it points at whatever the operator runs, which is the
@@ -23,7 +29,7 @@ export type ProviderKind =
 // key-based provider. Leaving it out would have made "nothing leaves this
 // server" false while the badge still said otherwise.
 export const EXTERNAL_PROVIDERS: readonly ProviderKind[] = [
-  'openai', 'anthropic', 'xai', 'openai_subscription',
+  'openai', 'anthropic', 'xai', 'openai_subscription', 'anthropic_subscription',
 ];
 
 export function isExternalProvider(kind: string): boolean {

@@ -131,13 +131,22 @@ describe('what a CE build offers (L3.7)', () => {
     expect(chatgpt.reason).toContain('never sees, stores or forwards your login');
   });
 
-  it('keeps Anthropic unavailable, and cites the policy rather than saying "coming soon" (L3.5)', async () => {
+  it('offers Anthropic through the first-party CLI, and says what that means (L3.5)', async () => {
+    // The previous version of this test asserted a blanket refusal citing a
+    // policy read in April 2026. That reading was wrong in one direction:
+    // what Anthropic forbids is a third party implementing Claude.ai login or
+    // intermediating credentials, not shipping their unmodified CLI and
+    // letting the user sign in through their own flow. FI-006.
+    //
+    // The honesty requirements did not move. The reason must still say what
+    // the operator is agreeing to, and must still never say "coming soon".
     const res = await call('/api/admin/llm', { jar: cookies.admin });
     const claude = res.body.subscriptionOptions.find((o: any) => o.id === 'claude_subscription');
-    expect(claude.available).toBe(false);
-    expect(claude.provider).toBeNull();
-    expect(claude.reason).toContain('Claude Code and Claude.ai');
-    expect(claude.reason).toContain('4 April 2026');
+    expect(claude.available).toBe(true);
+    expect(claude.provider).toBe('anthropic_subscription');
+    expect(claude.reason).toMatch(/never sees, stores or forwards your login/);
+    expect(claude.reason).toMatch(/per installation/);
+    expect(claude.reason).toMatch(/cannot call tools/);
     expect(claude.reason).not.toMatch(/coming soon/i);
   });
 

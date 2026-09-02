@@ -99,7 +99,7 @@ WORKDIR /app
 # daemon as root:root 0755, the application runs as `node`, and every backup
 # fails with a permission error on a real installation — which is exactly what
 # the first runtime run found while every unit test passed.
-RUN mkdir -p /data/backups /data/diagnostics /data/versions /data/codex \
+RUN mkdir -p /data/backups /data/diagnostics /data/versions /data/codex /data/claude \
  && chown -R node:node /data
 
 # ------------------------------------------------- the ChatGPT subscription path
@@ -125,6 +125,40 @@ RUN if [ -n "$JOSI_CODEX_VERSION" ]; then \
       && codex --version; \
     else \
       echo "JOSI_CODEX_VERSION empty — building without the Codex CLI"; \
+    fi
+
+# -------------------------------------------------- the Claude subscription path
+#
+# Anthropic's own CLI, pinned the same way and for the same reason. The sign-in
+# it drives is Anthropic's: `claude auth login --claudeai` prints an authorize
+# URL and then waits on STDIN for a code the operator brings back from their own
+# browser. Josi shows the link, carries the paste, and never sees a credential —
+# the CLI writes its own login into CLAUDE_CONFIG_DIR.
+#
+# THE BINARY IS UNMODIFIED. It is installed from the published package and run
+# as published; nothing here patches it, wraps its auth, or reads its files.
+# That is the arrangement Anthropic documents for a product that ships Claude
+# Code, and it is the only one Josi implements. See docs/SUBSCRIPTION_AUTH.md
+# for the terms, the date read, and the outstanding counsel review (FI-006).
+#
+# PINNED, NEVER FLOATING, for the same reason as Codex: the login flow is driven
+# by reading what this CLI prints, so a reworded prompt is a broken sign-in.
+# `--build-arg JOSI_CLAUDE_VERSION=` skips the install, and an image built that
+# way reports the path as unavailable rather than pretending.
+ARG JOSI_CLAUDE_VERSION=2.1.258
+#
+# `--ignore-scripts` STAYS, and the one script that has to run is run by name.
+# This package needs its own postinstall to link its native build — without it
+# the binary is a stub that exits 1 — but dropping the flag would also let every
+# transitive dependency execute arbitrary code during the image build. Naming
+# the single script keeps that blast radius at one file, in the open, in a line
+# a reviewer can see.
+RUN if [ -n "$JOSI_CLAUDE_VERSION" ]; then \
+      npm install -g --ignore-scripts "@anthropic-ai/claude-code@${JOSI_CLAUDE_VERSION}" \
+      && node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs" \
+      && claude --version; \
+    else \
+      echo "JOSI_CLAUDE_VERSION empty — building without the Claude Code CLI"; \
     fi
 
 # The `node` user (uid 1000) ships with the base image. Everything below runs as

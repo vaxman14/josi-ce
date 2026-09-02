@@ -8,3 +8,5 @@ export * from './providers/openaiCompatible.js';
 export * from './providers/anthropic.js';
 export * from './providers/codexCli.js';
 export * from './providers/codexLogin.js';
+export * from './providers/claudeCli.js';
+export * from './providers/claudeLogin.js';

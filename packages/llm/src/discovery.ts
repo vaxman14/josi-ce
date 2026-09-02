@@ -178,6 +178,40 @@ export async function discoverModels(opts: DiscoverOptions): Promise<DiscoveryRe
     };
   }
 
+  if (opts.provider === 'anthropic_subscription') {
+    // There is no listing interface on the subscription path either — but
+    // unlike Codex, the CLI DOES take a model, so claiming there is nothing to
+    // choose would be false in the other direction.
+    //
+    // These are the aliases the CLI's own `--model` documents, not a catalogue
+    // Josi discovered and not a guess at what a plan includes. Which of them a
+    // particular Claude plan can actually reach is between the operator and
+    // Anthropic, so nothing here is marked available: Josi confirms the one
+    // that was chosen by making a real request, exactly as it does elsewhere.
+    const aliases = [
+      { id: 'opus', label: 'Opus — most capable' },
+      { id: 'sonnet', label: 'Sonnet — balanced' },
+      { id: 'haiku', label: 'Haiku — fastest' },
+    ];
+    return {
+      ok: true,
+      models: aliases.map((a, index) => ({
+        id: a.id,
+        label: a.label,
+        // These come from the CLI's documented aliases rather than from a
+        // provider listing call, and the flag says so rather than implying an
+        // API answered.
+        fromProvider: false,
+        recommended: index === 1,
+        likelyNonChat: false,
+      })),
+      message:
+        'These are the model aliases Claude Code accepts. A full model name works too. Which ones '
+        + 'your plan can reach is between you and Anthropic — Josi will confirm your choice by '
+        + 'making a real request.',
+    };
+  }
+
   const base = (opts.baseUrl || DEFAULT_BASE[opts.provider] || '').replace(/\/$/, '');
   if (!base) {
     return failure('malformed_request', 'No endpoint is configured for this provider.');

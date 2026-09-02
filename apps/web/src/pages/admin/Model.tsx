@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, ErrorNote, Copyable } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
+import { ClaudeSignIn } from '@/components/ClaudeSignIn';
 
 interface Provider {
   provider: string;
@@ -33,6 +34,19 @@ interface AdminLlm {
     id: string; label: string; available: boolean; provider: string | null; reason: string;
   }>;
   edition: { edition: string; capabilities: string[] };
+}
+
+interface CodexStatus {
+  installed: boolean;
+  signedIn: boolean;
+  detail: string;
+}
+
+interface DeviceLoginState {
+  state: 'idle' | 'starting' | 'awaiting_approval' | 'signed_in' | 'failed' | 'cancelled';
+  challenge: { verificationUrl: string; userCode: string } | null;
+  expiresAt: string | null;
+  message: string | null;
 }
 
 export function AdminModel() {
@@ -181,14 +195,18 @@ export function AdminModel() {
                   "coming soon". */}
               <p className="mt-1 text-sm text-muted-foreground">{o.reason}</p>
               {o.available && o.provider ? (
-                <Button
-                  className="mt-2"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => void useSubscription(o.provider!)}
-                >
-                  Use this for the primary model
-                </Button>
+                <div className="mt-2 space-y-3">
+                  {o.provider === 'openai_subscription' ? <CodexConnection /> : null}
+                  {o.provider === 'anthropic_subscription'
+                    ? <ClaudeSignIn basePath="/admin/llm/subscription/claude" /> : null}
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => void useSubscription(o.provider!)}
+                  >
+                    Use this for the primary model
+                  </Button>
+                </div>
               ) : null}
             </li>
           ))}
@@ -196,6 +214,86 @@ export function AdminModel() {
       </Card>
         </>
       ) : null}
+    </div>
+  );
+}
+
+function CodexConnection() {
+  const [status, setStatus] = useState<CodexStatus | null>(null);
+  const [login, setLogin] = useState<DeviceLoginState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadStatus = () => api.get<{ cli: CodexStatus }>('/admin/llm/subscription/status')
+    .then((r) => setStatus(r.cli));
+
+  useEffect(() => { void loadStatus().catch(() => undefined); }, []);
+  useEffect(() => {
+    if (login?.state !== 'starting' && login?.state !== 'awaiting_approval') return;
+    const timer = setInterval(() => {
+      void api.get<DeviceLoginState>('/admin/llm/subscription/login').then((next) => {
+        setLogin(next);
+        if (next.state === 'signed_in') void loadStatus();
+      }).catch(() => undefined);
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [login?.state]);
+
+  async function connect() {
+    setBusy(true);
+    setError('');
+    try {
+      setLogin(await api.post<DeviceLoginState>('/admin/llm/subscription/login', {}));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ChatGPT sign-in could not be started');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true);
+    setError('');
+    try {
+      await api.post('/admin/llm/subscription/logout', {});
+      setLogin(null);
+      await loadStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ChatGPT could not be disconnected');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!status) return <p className="text-sm text-muted-foreground">Checking Codex…</p>;
+  if (!status.installed) return <ErrorNote>{status.detail}</ErrorNote>;
+
+  return (
+    <div className="space-y-2 rounded-md border border-input p-3">
+      <p className="text-sm font-medium">
+        {status.signedIn ? 'Connected to your ChatGPT plan' : 'Not connected to ChatGPT'}
+      </p>
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+      {login?.challenge ? (
+        <>
+          <p className="text-sm">
+            Open <a className="underline" href={login.challenge.verificationUrl} target="_blank" rel="noreferrer">
+              {login.challenge.verificationUrl}
+            </a>, sign in, then enter this code:
+          </p>
+          <Copyable label="One-time code" value={login.challenge.userCode} />
+          <p className="text-xs text-muted-foreground">Waiting for approval. This page updates automatically.</p>
+        </>
+      ) : status.signedIn ? (
+        <Button type="button" variant="secondary" disabled={busy} onClick={() => void disconnect()}>
+          {busy ? 'Disconnecting…' : 'Disconnect ChatGPT'}
+        </Button>
+      ) : (
+        <Button type="button" disabled={busy} onClick={() => void connect()}>
+          {busy ? 'Starting…' : 'Connect ChatGPT'}
+        </Button>
+      )}
+      {login?.state === 'failed' ? <ErrorNote>{login.message ?? 'Sign-in failed.'}</ErrorNote> : null}
     </div>
   );
 }

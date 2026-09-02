@@ -12,6 +12,7 @@
 import { openSealed, type Db, type MasterKey } from '@josi-ce/core';
 import { anthropicProvider } from './providers/anthropic.js';
 import { codexCliProvider, isSubscriptionProvider, type SpawnRunner } from './providers/codexCli.js';
+import { claudeCliProvider } from './providers/claudeCli.js';
 import { openAiCompatibleProvider } from './providers/openaiCompatible.js';
 import { checkCaps, priceCall, recordUsage, type CapVerdict } from './metering.js';
 import {
@@ -124,6 +125,17 @@ export async function buildProvider(
         + 'account while calling itself a subscription',
         { needsReconfiguration: true },
       );
+    }
+    if (stored.provider === 'anthropic_subscription') {
+      return claudeCliProvider({
+        model: stored.model,
+        command: stored.subscription_command ?? null,
+        // Where the CLI keeps its own login. Read from the environment rather
+        // than stored, because it is a property of how this container was run.
+        configDir: process.env.CLAUDE_CONFIG_DIR ?? null,
+        timeoutMs: opts.timeoutMs,
+        runner: opts.codexRunner,
+      });
     }
     return codexCliProvider({
       model: stored.model,

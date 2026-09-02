@@ -55,9 +55,17 @@ import {
   type ChatRequest, type ChatResponse, type LlmProvider, type ProviderKind,
 } from '../types.js';
 
-/** Only what OpenAI documents. There is no Anthropic entry and adding one
- * would be adding a path their policy forbids — see `docs/SUBSCRIPTION_AUTH.md`. */
-export const SUBSCRIPTION_PROVIDERS = ['openai_subscription'] as const;
+/** Only paths where the vendor publishes a first-party CLI and a first-party
+ * sign-in flow, and where Josi therefore never touches a credential.
+ *
+ * The Anthropic entry was absent until Phase 14 on the basis that their policy
+ * forbade it. Re-reading the current terms showed that what is forbidden is a
+ * third party implementing Claude.ai login or intermediating credentials —
+ * running the unmodified first-party binary, with the user authenticating
+ * through Anthropic's own flow, is the documented arrangement. The date read
+ * and the outstanding counsel review are recorded in
+ * `docs/SUBSCRIPTION_AUTH.md`; see FI-006 in `docs/FIRST_INSTALL_FINDINGS.md`. */
+export const SUBSCRIPTION_PROVIDERS = ['openai_subscription', 'anthropic_subscription'] as const;
 export type SubscriptionProvider = (typeof SUBSCRIPTION_PROVIDERS)[number];
 
 export function isSubscriptionProvider(kind: string): kind is SubscriptionProvider {

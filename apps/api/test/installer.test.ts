@@ -142,6 +142,54 @@ describe('LB1.1 — the published install keeps the development stack’s securi
     }
     expect(release.volumes).toHaveProperty('josi_codex');
   });
+
+  it('keeps the Claude login on its own durable volume too', () => {
+    // Same property, second vendor. Anthropic's CLI writes its login into
+    // CLAUDE_CONFIG_DIR; if that were container-local, every update would sign
+    // the operator out and the screen would offer to reconnect forever.
+    for (const name of ['web', 'worker']) {
+      expect(release.services[name].volumes, name).toContain('josi_claude:/data/claude');
+      expect(release.services[name].environment.CLAUDE_CONFIG_DIR, name).toBe('/data/claude');
+    }
+    expect(release.volumes).toHaveProperty('josi_claude');
+  });
+
+  it('gives the two CLIs separate volumes', () => {
+    // Sharing one would mean signing out of one vendor could destroy the
+    // other's login, and removing either would be indivisible from the other.
+    expect(release.services.web.environment.CODEX_HOME)
+      .not.toBe(release.services.web.environment.CLAUDE_CONFIG_DIR);
+  });
+});
+
+describe('LB2.2 — the published image carries a pinned Claude Code CLI', () => {
+  const dockerfile = read('Dockerfile');
+
+  it('installs Anthropic\u2019s own CLI, unmodified', () => {
+    expect(dockerfile).toMatch(/npm install -g[^\n]*@anthropic-ai\/claude-code@/);
+    // From the published package, with no patch step of any kind. Modifying the
+    // binary is the difference between shipping Claude Code and shipping
+    // something that impersonates it.
+    const install = /@anthropic-ai\/claude-code@[^\s"']*/.exec(dockerfile)?.[0] ?? '';
+    expect(install).not.toMatch(/latest/);
+  });
+
+  it('pins an exact version rather than a moving tag', () => {
+    // The sign-in flow is driven by READING what this CLI prints, so a reworded
+    // prompt is a broken sign-in. The fixtures in
+    // packages/llm/test/claudeLogin.test.ts are captures of this exact version.
+    const pin = /ARG JOSI_CLAUDE_VERSION=([^\s]*)/.exec(dockerfile)?.[1];
+    expect(pin, 'the version must be a concrete default').toMatch(/^\d+\.\d+\.\d+$/);
+    const instructions = dockerfile.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
+    expect(instructions).not.toMatch(/@anthropic-ai\/claude-code@latest/);
+  });
+
+  it('creates the CLI\u2019s home with the right owner', () => {
+    // Created root:root by the daemon and written by `node` is the permission
+    // failure that every unit test passes through.
+    expect(dockerfile).toMatch(/mkdir -p[^\n]*\/data\/claude/);
+    expect(dockerfile).toMatch(/chown -R node:node \/data/);
+  });
 });
 
 describe('LB2.2 — the published image carries a pinned Codex CLI', () => {
