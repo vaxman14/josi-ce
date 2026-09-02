@@ -127,12 +127,22 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
   // ---- 3. tool calling ----------------------------------------------------
   try {
     const res = await ask({
-      messages: [{ role: 'user', content: 'Record the number 7 using the available tool.' }],
+      // Imperative on purpose. "Record the number 7" alone reads, to some
+      // models, like a request they can satisfy in prose — and a probe that
+      // flaps on phrasing measures the prompt, not the capability.
+      messages: [{ role: 'user', content: 'Call the record_number tool with the number 7. You must use the tool; do not answer in text.' }],
       tools: [PROBE_TOOL],
       maxTokens: 128,
       temperature: 0,
     });
-    const passed = res.toolCalls.some((c) => c.name === PROBE_TOOL.name);
+    // Two ways a call can "come back in a response we read": an HTTP provider
+    // returns it as a pending request, and the CLI harness reports it as an
+    // executed fact after Josi's own MCP server recorded it. Both are the
+    // model genuinely calling a tool end-to-end — the harness case even more
+    // so, since the call demonstrably reached our server. (`record_number` is
+    // implemented by that server as a no-op for exactly this reason.)
+    const observed = [...res.toolCalls, ...(res.executedToolCalls ?? [])];
+    const passed = observed.some((c) => c.name === PROBE_TOOL.name);
     capabilities.toolCalling = passed;
     steps.push({
       id: 'toolCalling',

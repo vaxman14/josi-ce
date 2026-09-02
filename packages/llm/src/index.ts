@@ -2,6 +2,7 @@ export * from './types.js';
 export * from './ssrf.js';
 export * from './probe.js';
 export * from './metering.js';
+export * from './harness.js';
 export * from './registry.js';
 export * from './discovery.js';
 export * from './providers/openaiCompatible.js';

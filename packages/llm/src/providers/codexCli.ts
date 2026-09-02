@@ -43,13 +43,20 @@
 //     billed, estimated or metered against a currency cap. Usage rows record
 //     `subscription` as the charge basis and zero as the amount, because zero
 //     per-call is the true figure for a flat monthly fee.
-//   * It has NO TOOL CALLING and NO STRUCTURED OUTPUT through this seam, so the
-//     capability probe finds them false and Phase 4's feature gates disable
-//     everything that needs them. Josi can talk; it cannot act.
+//   * Tool calling exists ONLY through the MCP harness (see `harness.ts`): the
+//     CLI's agent loop calls Josi's own tools over an MCP stdio server that
+//     enforces Josi's own step-up policy. When the harness is not present in
+//     the image, tools are refused exactly as before and the capability probe
+//     honestly finds `toolCalling: false`. Structured output is still not
+//     offered through this seam.
 //   * It needs the binary present in the container or on the host, signed in,
 //     and it will not be either by default.
 import { spawn } from 'node:child_process';
 import { assertCapability } from '@josi-ce/core';
+import {
+  MCP_SERVER_NAME, openHarnessSession, readExecutedCalls, resolveMcpServerPath,
+  type HarnessSession,
+} from '../harness.js';
 import {
   LlmError,
   type ChatRequest, type ChatResponse, type LlmProvider, type ProviderKind,
@@ -90,6 +97,10 @@ export interface CodexCliOptions {
   command?: string | null;
   timeoutMs?: number;
   runner?: SpawnRunner;
+  /** The MCP tool server entry, for the harness. `undefined` means "look in
+   * the environment and the image's known location"; explicit `null` disables
+   * the harness (tests use this to assert the refusal path). */
+  mcpServerPath?: string | null;
 }
 
 const DEFAULT_TIMEOUT_MS = 180_000;
@@ -131,18 +142,42 @@ export function childEnvironment(parent: NodeJS.ProcessEnv = process.env): NodeJ
  * Kept as its own function so a test can assert it is the documented
  * non-interactive form and nothing else. Notably absent: any flag that would
  * let the model touch the filesystem or run commands. `--sandbox read-only`
- * and `--skip-git-repo-check` say plainly that this is a text-in, text-out
- * call — Josi's own tool permissions are enforced by routes reading database
+ * and `--skip-git-repo-check` say plainly that the MODEL may not touch this
+ * machine — Josi's own tool permissions are enforced by code reading database
  * rows, and a subprocess that could write files would sit entirely outside
  * them.
+ *
+ * When a harness session is supplied, the Josi MCP server is added as `-c`
+ * overrides. That does NOT weaken the sandbox: the tools act through Josi's
+ * API layer in a separate process we own, which is the point of the design.
+ * `default_tools_approval_mode = "approve"` is required because `codex exec`
+ * runs with approval policy `never` and would otherwise fail every MCP call
+ * with "requires approval" (verified against the pinned 0.152.0). Approving
+ * at the CLI is safe precisely because the approval that matters — Josi's
+ * step-up policy — is enforced inside the server, where the CLI cannot reach.
  */
-export function codexArgs(model: string): string[] {
+export function codexArgs(model: string, harness?: HarnessSession | null): string[] {
+  const mcp = harness
+    ? [
+      // process.execPath, not `node`: the CLI spawns the server itself and
+      // its PATH is not a promise we rely on. JSON.stringify produces a valid
+      // TOML basic string for these paths.
+      '-c', `mcp_servers.${MCP_SERVER_NAME}.command=${JSON.stringify(process.execPath)}`,
+      '-c', `mcp_servers.${MCP_SERVER_NAME}.args=[${JSON.stringify(harness.serverPath)}]`,
+      '-c', `mcp_servers.${MCP_SERVER_NAME}.env={${'JOSI_MCP_CONTEXT'} = ${JSON.stringify(harness.contextPath)}}`,
+      '-c', `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
+    ]
+    : [];
   return [
     'exec',
     '--json',
     '--sandbox', 'read-only',
     '--skip-git-repo-check',
-    '--model', model,
+    ...mcp,
+    // An empty model means 'the plan's own default': the CLI chooses, exactly
+    // as it does for its interactive users. Passing --model '' would instead
+    // ask for a model literally named nothing.
+    ...(model ? ['--model', model] : []),
     // A single `-` means "the prompt is on stdin", which keeps the prompt out
     // of the process table. An argv is world-readable on most systems, and the
     // prompt is somebody's private conversation.
@@ -297,22 +332,34 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
     external: true,
 
     async chat(request: ChatRequest): Promise<ChatResponse> {
+      // The harness path. Tools were asked for; they are offered to the CLI's
+      // own agent loop over MCP, or — when the server is not present — refused
+      // rather than silently dropped. An agent that asked for tools and got
+      // prose back would report success having done nothing.
+      const serverPath = opts.mcpServerPath === undefined ? resolveMcpServerPath() : opts.mcpServerPath;
+      let harness: HarnessSession | null = null;
       if (request.tools?.length) {
-        // Refused rather than silently dropped. An agent that asked for tools
-        // and got prose back would report success having done nothing.
-        throw new LlmError(
-          'The Codex CLI path cannot call tools, so Josi cannot use it for anything that acts. '
-          + 'Configure an API key provider for that.',
-          { needsReconfiguration: true },
-        );
+        if (!serverPath) {
+          throw new LlmError(
+            'The Codex CLI path cannot call tools on this installation — the Josi tool server is '
+            + 'not available to it. Configure an API key provider for anything that acts.',
+            { needsReconfiguration: true },
+          );
+        }
+        harness = openHarnessSession({
+          serverPath,
+          tools: request.tools,
+          toolContext: request.toolContext,
+        });
       }
 
       const started = Date.now();
       let result: Awaited<ReturnType<SpawnRunner>>;
+      let executedToolCalls: ChatResponse['executedToolCalls'];
       try {
         result = await runner({
           command,
-          args: codexArgs(opts.model),
+          args: codexArgs(opts.model, harness),
           input: renderPrompt(request),
           env: childEnvironment(),
           timeoutMs,
@@ -333,6 +380,14 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
           );
         }
         throw new LlmError('The Codex CLI could not be started.', { needsReconfiguration: true });
+      } finally {
+        if (harness) {
+          // Read before cleanup: the calls file is the ground truth of which
+          // tools genuinely reached Josi's server, recorded by our own code
+          // rather than parsed out of the CLI's event stream.
+          executedToolCalls = readExecutedCalls(harness.callsPath);
+          harness.cleanup();
+        }
       }
 
       if (result.timedOut) {
@@ -349,8 +404,10 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
 
       return {
         text,
-        // No tool calling through this seam, by construction.
+        // Nothing PENDING, ever: on the harness path the CLI's own loop already
+        // ran the tools, and what ran is reported below as fact.
         toolCalls: [],
+        ...(executedToolCalls?.length ? { executedToolCalls } : {}),
         // NOT GUESSED. The CLI reports no token counts, and inventing an
         // estimate here would put a fabricated number into the usage ledger and
         // against the cap. Zero with a `subscription` charge basis is the true

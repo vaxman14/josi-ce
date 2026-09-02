@@ -23,8 +23,7 @@
 // to call tools is not offered any, because offering them produces a confident
 // description of work that never happened.
 import {
-  appendEvent, checkStepUp, createTask, getTemplate, listTasksFor, listTemplates,
-  missingSlots, setSlots, transition, enqueue,
+  appendEvent, checkStepUp, listTemplates,
   type Db,
 } from '@josi-ce/core';
 import {
@@ -35,6 +34,7 @@ import {
   CAUTION_ORDER, assembleSystemContext, extractDurableFacts, loadAll,
   narrowPolicy, relevantMemories, suggestMemory, type Memory,
 } from '@josi-ce/persona';
+import { executeAssistantTool } from './execute.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
 
 /** Recall over the user's own history, injected by the caller. A function
@@ -199,7 +199,14 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     try {
       outcome = await chat(
         args.registry,
-        { messages, system, tools, maxTokens: 1024 },
+        {
+          messages, system, tools, maxTokens: 1024,
+          // For providers that execute tools OUT of process (the subscription
+          // CLI harness): who is asking travels with the request, so the MCP
+          // server enforces the same step-up gate this loop enforces below.
+          // From the session, never from a request body.
+          toolContext: { userId, sessionKey, threadId: args.threadId },
+        },
         { userId, purpose: 'assistant_chat' },
       );
     } catch (err) {
@@ -215,6 +222,15 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     }
 
     const res = outcome.response;
+
+    // Calls a harness provider's model already ran, out of process, against
+    // Josi's own MCP server — which gated and executed them. Recorded here so
+    // the person can see what acted on their behalf; NOT executed again, which
+    // is why they are kept apart from `toolCalls` in the seam.
+    for (const call of res.executedToolCalls ?? []) {
+      actions.push({ tool: call.name, result: { executed: 'by_model_harness', input: call.input } });
+    }
+
     if (!res.toolCalls.length) {
       // A completed exchange, so there is something to learn from — and only
       // ever from what the PERSON wrote. Never the reply, never tool output.
@@ -314,117 +330,10 @@ async function execTool(
   name: string,
   input: Record<string, unknown>,
 ): Promise<unknown> {
-  const { db, userId } = args;
   const spec = TOOL_SPECS_BY_NAME.get(name);
   if (!spec) return { ok: false, error: 'unknown_tool', message: `no tool named ${name}` };
-
-  switch (name) {
-    case 'list_task_types': {
-      const templates = await listTemplates(db);
-      return {
-        ok: true,
-        types: templates.map((t) => ({
-          key: t.key,
-          name: t.name,
-          required_slots: t.contract.slots.required,
-          // Stated per type, so the model cannot claim one kind of work is
-          // possible because another one was.
-          can_be_carried_out: t.requiresCapability === null,
-          waiting_on: t.requiresCapability,
-        })),
-      };
-    }
-
-    case 'create_task': {
-      const templateKey = String(input.template_key ?? '');
-      const template = await getTemplate(db, templateKey);
-      const slots = (input.slots as Record<string, unknown>) ?? {};
-      const task = await createTask(db, {
-        ownerUserId: userId,
-        templateKey,
-        slots,
-        threadId: args.threadId,
-      });
-      const missing = missingSlots(template.contract, task.slots);
-      if (!missing.length) {
-        // The person asked for it directly; that is the approval.
-        await transition(db, task.id, 'ready', { actor: 'user', actorUserId: userId });
-        if (template.requiresCapability === null) {
-          await enqueue(db, { kind: 'task.wake', payload: { taskId: task.id } });
-        }
-      }
-      return {
-        ok: true,
-        task_id: task.id,
-        state: missing.length ? 'drafting' : 'ready',
-        missing_slots: missing,
-        // Never let "ready" be read as "done".
-        will_be_carried_out: template.requiresCapability === null,
-        waiting_on: template.requiresCapability,
-      };
-    }
-
-    case 'update_task_slots': {
-      const taskId = String(input.task_id ?? '');
-      const owned = await ownTask(db, taskId, userId);
-      if (!owned) return NOT_YOURS;
-      const task = await setSlots(db, taskId, (input.slots as Record<string, unknown>) ?? {}, {
-        actor: 'user', actorUserId: userId,
-      });
-      const template = await getTemplate(db, task.template_key);
-      const missing = missingSlots(template.contract, task.slots);
-      if (!missing.length && task.state === 'drafting') {
-        await transition(db, task.id, 'ready', { actor: 'user', actorUserId: userId });
-        if (template.requiresCapability === null) {
-          await enqueue(db, { kind: 'task.wake', payload: { taskId: task.id } });
-        }
-      }
-      return { ok: true, task_id: task.id, missing_slots: missing, state: missing.length ? task.state : 'ready' };
-    }
-
-    case 'approve_task': {
-      const taskId = String(input.task_id ?? '');
-      if (!(await ownTask(db, taskId, userId))) return NOT_YOURS;
-      const t = await transition(db, taskId, 'ready', { actor: 'user', actorUserId: userId });
-      await enqueue(db, { kind: 'task.wake', payload: { taskId: t.id } });
-      return { ok: true, task_id: t.id, state: t.state };
-    }
-
-    case 'cancel_task': {
-      const taskId = String(input.task_id ?? '');
-      if (!(await ownTask(db, taskId, userId))) return NOT_YOURS;
-      const t = await transition(db, taskId, 'cancelled', { actor: 'user', actorUserId: userId });
-      return { ok: true, task_id: t.id, state: t.state };
-    }
-
-    case 'list_open_tasks': {
-      const tasks = await listTasksFor(db, { ownerUserId: userId, limit: 20 });
-      return {
-        ok: true,
-        tasks: tasks.map((t) => ({
-          task_id: t.id, template: t.template_key, state: t.state, slots: t.slots,
-          attempts: t.attempt_count,
-        })),
-      };
-    }
-
-    default:
-      return { ok: false, error: 'unknown_tool', message: `no tool named ${name}` };
-  }
-}
-
-/** Same wording whether the task belongs to someone else or does not exist.
- *
- * A model that learns "that one is not yours" can be steered into enumerating
- * a colleague's task ids — the same reason the HTTP layer answers 404 rather
- * than 403. */
-const NOT_YOURS = { ok: false, error: 'not_found', message: 'There is no task with that id.' };
-
-async function ownTask(db: Db, taskId: string, userId: string): Promise<boolean> {
-  if (!/^[0-9a-fA-F-]{36}$/.test(taskId)) return false;
-  const rows = await db.query<{ id: string }>(
-    `select id from tasks where id = $1 and owner_user_id = $2`,
-    [taskId, userId],
-  );
-  return rows.length > 0;
+  // The implementations live in execute.ts so the MCP server — which offers
+  // these same tools to a subscription CLI's own agent loop — runs the exact
+  // code this loop runs, ownership checks and all.
+  return executeAssistantTool(args.db, { userId: args.userId, threadId: args.threadId }, name, input);
 }

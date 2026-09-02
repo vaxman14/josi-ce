@@ -63,10 +63,26 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>;
 }
 
+/** Who is asking, carried with the request for providers that execute tools
+ * OUT of process.
+ *
+ * HTTP providers ignore this entirely: their tool calls come back in the
+ * response and are executed — and permission-checked — by the agent loop in
+ * this process. A subscription (CLI) provider runs the loop inside the
+ * vendor's own binary, so the identity has to travel with the request for the
+ * out-of-process tool server to enforce the same step-up policy. Populated by
+ * the agent from the authenticated session, never from a request body. */
+export interface ToolContext {
+  userId: string | null;
+  sessionKey: string | null;
+  threadId: string | null;
+}
+
 export interface ChatRequest {
   messages: ChatMessage[];
   system?: string;
   tools?: ToolDefinition[];
+  toolContext?: ToolContext;
   /** Ask for a JSON object back. Providers differ wildly in how well they
    * honour this, which is exactly why the probe checks it. */
   jsonMode?: boolean;
@@ -88,6 +104,15 @@ export interface Usage {
 export interface ChatResponse {
   text: string;
   toolCalls: ToolCall[];
+  /** Tool calls that ALREADY RAN before this response was assembled.
+   *
+   * Only the harness path sets this: a CLI provider's model runs its own tool
+   * loop against Josi's MCP server, so by the time the subprocess exits the
+   * calls are history, not requests. They are reported so the agent can show
+   * what happened and the probe can verify a call genuinely reached us — and
+   * they must NEVER be executed again by the caller. Pending calls that still
+   * need executing stay in `toolCalls`, exactly as before. */
+  executedToolCalls?: ToolCall[];
   usage: Usage;
   /** Wall-clock time for the call, recorded for self-hosted endpoints where
    * latency is the only cost signal there is. */

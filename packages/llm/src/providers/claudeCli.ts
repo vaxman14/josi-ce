@@ -36,10 +36,17 @@
 //   * It reports REAL TOKEN COUNTS — unlike Codex, which reports none — but no
 //     per-call cost, because a flat monthly fee has none. Usage rows record
 //     `subscription` as the charge basis and zero as the amount.
-//   * It has NO TOOL CALLING through this seam. Every tool is denied on the
-//     command line, so Josi can talk but cannot act on this path.
+//   * Tool calling exists ONLY through the MCP harness (see `harness.ts`): the
+//     CLI's built-in tools stay denied by name, and the one thing allowed is
+//     Josi's own MCP server, whose tools enforce Josi's own step-up policy.
+//     Without the harness in the image, every tool is denied and Josi can talk
+//     but cannot act on this path — and the probe says so.
 import { spawn } from 'node:child_process';
 import { assertCapability } from '@josi-ce/core';
+import {
+  MCP_SERVER_NAME, openHarnessSession, readExecutedCalls, resolveMcpServerPath, writeClaudeMcpConfig,
+  type HarnessSession,
+} from '../harness.js';
 import {
   LlmError,
   type ChatRequest, type ChatResponse, type LlmProvider, type ProviderKind,
@@ -77,6 +84,10 @@ export interface ClaudeCliOptions {
   configDir?: string | null;
   timeoutMs?: number;
   runner?: SpawnRunner;
+  /** The MCP tool server entry, for the harness. `undefined` means "look in
+   * the environment and the image's known location"; explicit `null` disables
+   * the harness (tests use this to assert the refusal path). */
+  mcpServerPath?: string | null;
 }
 
 /**
@@ -127,13 +138,25 @@ export function claudeChildEnvironment(
  * CLI documents as making authentication "strictly ANTHROPIC_API_KEY" and
  * never reading OAuth — on a subscription path that flag would defeat the
  * entire feature.
+ *
+ * With a harness, the Josi MCP server is loaded from a private config file and
+ * `--strict-mcp-config` refuses every other MCP server the operator's own
+ * Claude setup might declare — the CLI is Josi's model transport here, not the
+ * operator's dev environment. `--allowed-tools mcp__josi` scopes the allowance
+ * to that one server (Claude namespaces MCP tools as `mcp__<server>__<tool>`),
+ * which is safe precisely because the approval that matters — Josi's step-up
+ * policy — is enforced inside the server, where the CLI cannot reach. The
+ * built-in tools stay denied by name, harness or not.
  */
-export function claudeArgs(model: string): string[] {
+export function claudeArgs(model: string, mcpConfigPath?: string | null): string[] {
   return [
     '--print',
     '--output-format', 'json',
     '--model', model,
     '--permission-mode', 'manual',
+    ...(mcpConfigPath
+      ? ['--mcp-config', mcpConfigPath, '--strict-mcp-config', '--allowed-tools', `mcp__${MCP_SERVER_NAME}`]
+      : []),
     '--disallowed-tools', ...DENIED_TOOLS,
     // The prompt goes on stdin, which keeps it out of the process table. An
     // argv is world-readable on most systems and the prompt is somebody's
@@ -289,22 +312,36 @@ export function claudeCliProvider(opts: ClaudeCliOptions): LlmProvider {
     external: true,
 
     async chat(request: ChatRequest): Promise<ChatResponse> {
+      // The harness path, exactly as on Codex: tools are offered to the CLI's
+      // own agent loop over MCP, or — when the server is not present — refused
+      // rather than silently dropped. An agent that asked for tools and got
+      // prose back would report success having done nothing.
+      const serverPath = opts.mcpServerPath === undefined ? resolveMcpServerPath() : opts.mcpServerPath;
+      let harness: HarnessSession | null = null;
+      let mcpConfigPath: string | null = null;
       if (request.tools?.length) {
-        // Refused rather than silently dropped. An agent that asked for tools
-        // and got prose back would report success having done nothing.
-        throw new LlmError(
-          'The Claude Code path cannot call tools, so Josi cannot use it for anything that acts. '
-          + 'Configure an API key provider for that.',
-          { needsReconfiguration: true },
-        );
+        if (!serverPath) {
+          throw new LlmError(
+            'The Claude Code path cannot call tools on this installation — the Josi tool server is '
+            + 'not available to it. Configure an API key provider for anything that acts.',
+            { needsReconfiguration: true },
+          );
+        }
+        harness = openHarnessSession({
+          serverPath,
+          tools: request.tools,
+          toolContext: request.toolContext,
+        });
+        mcpConfigPath = writeClaudeMcpConfig(harness);
       }
 
       const started = Date.now();
       let result: Awaited<ReturnType<SpawnRunner>>;
+      let executedToolCalls: ChatResponse['executedToolCalls'];
       try {
         result = await runner({
           command,
-          args: claudeArgs(opts.model),
+          args: claudeArgs(opts.model, mcpConfigPath),
           input: renderClaudePrompt(request),
           env: claudeChildEnvironment(configDir),
           timeoutMs,
@@ -325,6 +362,14 @@ export function claudeCliProvider(opts: ClaudeCliOptions): LlmProvider {
           );
         }
         throw new LlmError('The Claude Code CLI could not be started.', { needsReconfiguration: true });
+      } finally {
+        if (harness) {
+          // Read before cleanup: the calls file is the ground truth of which
+          // tools genuinely reached Josi's server, recorded by our own code
+          // rather than parsed out of the CLI's event stream.
+          executedToolCalls = readExecutedCalls(harness.callsPath);
+          harness.cleanup();
+        }
       }
 
       if (result.timedOut) {
@@ -350,8 +395,10 @@ export function claudeCliProvider(opts: ClaudeCliOptions): LlmProvider {
 
       return {
         text: parsed.text,
-        // No tool calling through this seam, by construction.
+        // Nothing PENDING, ever: on the harness path the CLI's own loop already
+        // ran the tools, and what ran is reported below as fact.
         toolCalls: [],
+        ...(executedToolCalls?.length ? { executedToolCalls } : {}),
         // REAL counts, unlike the Codex path, because the CLI reports them.
         usage: { inputTokens: parsed.inputTokens, outputTokens: parsed.outputTokens },
         latencyMs: Date.now() - started,
