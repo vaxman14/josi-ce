@@ -103,6 +103,40 @@ open on the launch checklist. Choosing **Remind me later** does the same and
 causes the operator to receive a clear follow-up reminder. Both choices can be
 reversed without repeating installation.
 
+### FI-005: Admin Model page cannot actually connect Codex or configure Claude
+
+**Observed:** The subscription card says ChatGPT through Codex is available,
+but its only action is **Use this for the primary model**. That action merely
+changes the configured provider. The page does not start Codex device login,
+show the verification URL and one-time code, report sign-in state, or explain
+the next action. The documentation incorrectly says the setup wizard's sign-in
+flow is also available at **Admin → Model**. The same screen discusses why a
+Claude subscription is unavailable but offers no visible route to configure
+Claude correctly with an Anthropic API key.
+
+**Required:**
+
+- The Codex option must present a clear **Connect ChatGPT** action.
+- Starting it must run the supported device-login flow and display the
+  verification URL, one-time code, expiration, progress, success, and
+  actionable failure state.
+- Selecting Codex as primary and authenticating it must be separate, clearly
+  labelled steps; neither may imply the other already happened.
+- The page must show whether Codex is installed and signed in before asking the
+  operator to test it.
+- Claude must appear as a normal provider that can be configured with an
+  Anthropic API key. The prohibited Claude subscription option may remain as
+  explanatory text, but it must not make Claude itself appear unavailable.
+- Contextual **Show me how** links must open the exact Codex and Anthropic
+  setup instructions.
+
+**Acceptance:** On a clean CE Docker installation, an administrator can connect
+their ChatGPT plan from **Admin → Model**, see a confirmed signed-in state,
+select it as primary, and run the real model test without using a shell. The
+same page lets an administrator configure and test Claude with an Anthropic API
+key. The UI never conflates an unavailable Claude subscription with an
+unavailable Claude API.
+
 ## Verified during this run
 
 - The source-built stack starts successfully on the N150.
