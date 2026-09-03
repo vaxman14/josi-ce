@@ -250,6 +250,26 @@ describe('LB11.5 — the workspace page cannot load forever', () => {
     expect(fallback, 'a failure must offer a way out').toMatch(/Try again/);
   });
 
+  it('the first-run redirect cannot blank the app (round-2 item 10)', () => {
+    // The first sign-in after setup used to hand a redirect target back to
+    // App, which returned a bare <Navigate> IN PLACE OF the route tree — and
+    // kept returning it, because nothing cleared the target. At the
+    // destination <Navigate> renders null, so the first post-setup login was
+    // a blank page until a manual refresh. The redirect must be imperative
+    // (useNavigate inside the effect, fired once) and the route tree must
+    // always render.
+    const app = read('apps/web/src/App.tsx');
+    expect(app, 'redirect is imperative').toMatch(/navigate\('\/admin\/launch', \{ replace: true \}\)/);
+    expect(app, 'fires at most once').toMatch(/redirected\.current/);
+    // The fatal shape: App() early-returning a bare <Navigate> in place of
+    // the route tree. (RequireAuth's <Navigate> is fine — it lives INSIDE the
+    // tree, and the destination route renders a real page.) Grep App's own
+    // body so the shape cannot come back.
+    const appBody = app.slice(app.indexOf('export function App'));
+    expect(appBody, 'App must never substitute a bare <Navigate> for the tree')
+      .not.toMatch(/return\s*<Navigate/);
+  });
+
   it('the API client bypasses the HTTP cache, so a poisoned redirect cannot replay', () => {
     // A `308 Permanent Redirect` to https:// once served by a bad proxy config
     // is cached per-URL and replayed by the browser even after the config is

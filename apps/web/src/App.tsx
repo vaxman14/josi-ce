@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Shell } from '@/components/layout/Shell';
 import { Login } from '@/pages/Login';
@@ -47,28 +47,38 @@ function RequireAuth({ children, admin = false }: { children: React.ReactNode; a
  * and the master key had never left the server.
  *
  * So the first sign-in after setup goes to the checklist instead. Exactly once
- * — the checklist records that it has been seen, and after that this returns
- * null and ordinary role-aware routing takes over. It is a convenience, not a
- * control: nothing here grants or refuses anything.
+ * — the checklist records that it has been seen, and after that ordinary
+ * role-aware routing takes over. It is a convenience, not a control: nothing
+ * here grants or refuses anything.
+ *
+ * HOW it redirects matters (round-2 item 10). This used to hand a target back
+ * to App, which then returned a bare <Navigate> in place of the whole route
+ * tree — and kept returning it, because nothing ever cleared the target. Once
+ * the URL reached /admin/launch, <Navigate> rendered null and the first
+ * sign-in after setup was a BLANK PAGE until a manual refresh rebuilt the
+ * state. The redirect is now imperative and fired at most once; the route
+ * tree always renders, so no state combination can blank the screen.
  */
-function useFirstRunRedirect(): string | null {
+function useFirstRunRedirect(): void {
   const { user, loading } = useAuth();
-  const [target, setTarget] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const redirected = useRef(false);
 
   useEffect(() => {
-    if (loading || user?.role !== 'super_admin') return;
+    if (loading || user?.role !== 'super_admin' || redirected.current) return;
     // Already there, or deliberately somewhere else in the admin section.
     if (window.location.pathname.startsWith('/admin')) return;
     void fetch('/api/admin/launch-checklist', { credentials: 'same-origin', cache: 'no-store' })
       .then(async (res) => {
         if (!res.ok) return;
         const body = await res.json().catch(() => null) as { seen?: boolean } | null;
-        if (body && body.seen === false) setTarget('/admin/launch');
+        if (body && body.seen === false && !redirected.current) {
+          redirected.current = true;
+          navigate('/admin/launch', { replace: true });
+        }
       })
       .catch(() => undefined);
-  }, [loading, user?.role]);
-
-  return target;
+  }, [loading, user?.role, navigate]);
 }
 
 /** An unconfigured installation shows the wizard and nothing else.
@@ -95,11 +105,15 @@ function useSetupNeeded(): boolean | null {
 
 export function App() {
   const setupNeeded = useSetupNeeded();
-  const firstRun = useFirstRunRedirect();
+  useFirstRunRedirect();
   if (setupNeeded === null) return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
   if (setupNeeded) return <Setup onDone={() => window.location.assign('/login')} />;
-  if (firstRun) return <Navigate to={firstRun} replace />;
 
+  // Everything below always renders a page. Redirects are either declared
+  // inside the route tree (so the tree keeps rendering) or fired imperatively
+  // above — App never substitutes a bare, null-rendering element for the
+  // whole tree. That substitution is exactly what blanked the first
+  // post-setup sign-in.
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
