@@ -633,7 +633,12 @@ async function applyStep(
       // string, which is deliberate: a hosted build should not confirm that
       // the capability exists to be asked for.
       if (!savableProviders().includes(provider)) throw new SetupError(400, 'choose a model provider');
-      if (!model) throw new SetupError(400, 'a model name is required');
+      // The Codex CLI selects the model for a ChatGPT plan itself; discovery
+      // says so (unsupported, nothing to choose). Requiring a name here made
+      // the subscription path a dead end: the screen offers no model field,
+      // and Continue could never succeed. An empty model on this one provider
+      // means 'let the CLI use the plan's model'.
+      if (!model && provider !== 'openai_subscription') throw new SetupError(400, 'a model name is required');
 
       // A subscription path carries no API key at all — the credential lives in
       // the operator's own CLI login and never enters this process — so the

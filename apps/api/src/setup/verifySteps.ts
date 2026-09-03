@@ -63,9 +63,12 @@ export async function verifyLlm(
       return failed('provider_outage', 'The model answered, but with nothing in it. Josi cannot use a model that returns empty replies.');
     }
 
+    // A subscription path may carry no model name at all — the CLI chooses.
+    // " answered a test message." with a leading blank is not a sentence.
+    const who = stored.model || "your plan's model";
     return {
       status: 'passed',
-      detail: `${stored.model} answered a test message.`,
+      detail: `${who} answered a test message.`,
       target: stored.model,
     };
   } catch (err) {

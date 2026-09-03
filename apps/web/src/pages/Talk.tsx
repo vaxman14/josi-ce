@@ -22,8 +22,18 @@
 //
 // The e2e suite taps this button in WebKit with touch emulation, which is the
 // closest thing to Safari on an iPhone that runs unattended.
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ApiError, type Message, type Thread, type TurnResult } from '@/lib/api';
+
+/** "Today", "Yesterday", or the date — the label WhatsApp taught everyone. */
+function dayLabel(at: Date): string {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (at.toDateString() === today.toDateString()) return 'Today';
+  if (at.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return at.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: at.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+}
 import { Button, ErrorNote } from '@/components/ui';
 
 export function Talk() {
@@ -111,11 +121,16 @@ export function Talk() {
       // no model is configured, over its cap, or Local-only blocks it; that
       // sentence is shown as itself rather than dressed up as something Josi
       // said.
-      const message = err instanceof ApiError
-        ? ((err.body as TurnResult | null)?.refusal?.message ?? err.message)
-        : 'Josi could not answer';
-      setMessages((current) => current.filter((m) => m.id !== optimistic.id));
-      setInput(body);
+      const refusal = err instanceof ApiError ? (err.body as TurnResult | null)?.refusal : null;
+      const message = refusal?.message ?? (err instanceof ApiError ? err.message : 'Josi could not answer');
+      // A refusal (503 with a reason) RECORDED the inbound message server-side.
+      // Removing the bubble here made the client disagree with the database,
+      // and the next load showed an unexplained duplicate. Keep what was truly
+      // recorded; only a transport failure (nothing stored) takes the bubble back.
+      if (!refusal) {
+        setMessages((current) => current.filter((m) => m.id !== optimistic.id));
+        setInput(body);
+      }
       setError(message);
     } finally {
       sendLock.current = false;
@@ -146,20 +161,37 @@ export function Talk() {
             </p>
           </div>
         ) : null}
-        {messages.map((message) => {
+        {messages.map((message, index) => {
           const mine = message.direction === 'in';
+          const at = new Date(message.created_at);
+          const prev = index > 0 ? new Date(messages[index - 1].created_at) : null;
+          const newDay = !prev || prev.toDateString() !== at.toDateString();
           return (
-            <div key={message.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-[86%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm leading-6 sm:max-w-[75%] ${
-                  mine
-                    ? 'rounded-br-md bg-primary text-primary-foreground'
-                    : 'rounded-bl-md border border-border bg-secondary text-secondary-foreground'
-                }`}
-              >
-                {message.body}
+            <Fragment key={message.id}>
+              {newDay ? (
+                <div className="flex justify-center">
+                  <span className="rounded-full bg-secondary px-3 py-1 text-xs text-muted-foreground">
+                    {dayLabel(at)}
+                  </span>
+                </div>
+              ) : null}
+              <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-[86%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm leading-6 sm:max-w-[75%] ${
+                    mine
+                      ? 'rounded-br-md bg-primary text-primary-foreground'
+                      : 'rounded-bl-md border border-border bg-secondary text-secondary-foreground'
+                  }`}
+                >
+                  {message.body}
+                  <span className={`ml-2 inline-block translate-y-0.5 select-none whitespace-nowrap text-[10px] leading-none ${
+                    mine ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                  }`}>
+                    {at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                  </span>
+                </div>
               </div>
-            </div>
+            </Fragment>
           );
         })}
         {sending ? <p className="text-sm text-muted-foreground">Josi is working…</p> : null}

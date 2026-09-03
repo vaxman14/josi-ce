@@ -128,7 +128,15 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
   // --- Disk headroom ---
   // Advisory. A warning, not a refusal: the operator knows their disk better
   // than a threshold does.
-  const free = (opts.freeBytes ?? freeBytesOf)('/tmp');
+  //
+  // Measured where data actually grows. /tmp in the hardened container is a
+  // small tmpfs; measuring it warned about a 64 MB scratchpad while the data
+  // volume sat on a nearly empty disk, which is a warning about the wrong
+  // thing. /data/versions is a named volume on the host disk; /tmp is only
+  // the fallback when no data volume is mounted (tests, bare runs).
+  const gb = (n: number) => (n / (1024 ** 3)).toFixed(n >= 100 * (1024 ** 3) ? 0 : 1);
+  const measure = opts.freeBytes ?? freeBytesOf;
+  const free = measure('/data/versions') ?? measure('/tmp');
   checks.push({
     id: 'disk_space',
     label: 'Free disk space',
@@ -137,8 +145,8 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     detail: free === null
       ? 'Could not determine free space. Make sure there is room for the database to grow.'
       : free >= MIN_FREE_BYTES
-        ? 'There is room to install and grow.'
-        : 'Free space is low. Josi will install, but the database and documents need room.',
+        ? `There is room to install and grow: ${gb(free)} GB free where Josi stores its data.`
+        : `Free space is low: ${gb(free)} GB free where Josi stores its data. Josi will install, but the database and documents need room.`,
   });
 
   return checks;

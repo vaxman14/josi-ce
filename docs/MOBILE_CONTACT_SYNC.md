@@ -206,6 +206,17 @@ produced it.** No dash in this table may be filled in from a simulator: the
 limited-access and revocation behaviours are exactly the ones simulators model
 badly.
 
+**BLOCKED, and not pending.** On 2 September 2026 Roman confirmed that mobile
+hardware will not be provided for this work. LB9.6 therefore cannot be closed
+here by anyone, and nothing is waiting on a queue: the table stays empty until
+whoever owns the mobile repository runs these cases on real iOS and Android
+devices. Treat "native contact sync" as **specified and unsupported** in every
+document, release note and UI string until that happens.
+
+**Exact dependency:** a physical iOS device and a physical Android device, plus
+write access to the separate Josi mobile repository. Nothing in this repository
+can substitute for either.
+
 ## Status against LB9
 
 | ID | Promise | State |

@@ -82,13 +82,23 @@ Docker 29.1.3, Compose 5.5.0, amd64.
 |---|---|---|---|---|---|---|---|---|---|
 | default | amd64 | claw (Ryzen 7 8745H / 28 GiB) | 2026-09-02 | **19 passed, 36 failed** | 348 | 8 | never reached | — | `josi-acceptance-default-20260902T031033Z.tar.gz` |
 | default | amd64 | claw (Ryzen 7 8745H / 28 GiB) | 2026-09-02 | **50 passed, 0 failed, 5 skipped** | 348 | 7 | 9 | 92.9 | none — bundles are collected on failure |
-| n150 | amd64 | Intel N150 / 16 GB | **never run** | — | — | — | — | — | — |
+| n150 | amd64 | Intel N150 / 16 GB (`gate`) | **this script: never run** | — | — | — | — | — | — |
 | pi4 | arm64 | Raspberry Pi 4 / 8 GB | **never run** | — | — | — | — | — | — |
 
 The `default` profile records the host it ran on, not a hardware claim. The
 `n150` and `pi4` rows stay empty until the script runs on those boxes: "it
 installs" and "it installs in ten minutes on the hardware CE targets" are
 different claims and only one of them is proven here.
+
+**A real first install HAS happened on the N150**, by hand rather than by this
+script, and it is written up in `docs/FIRST_INSTALL_FINDINGS.md`. That run
+confirmed the stack starts, all four containers report healthy, migrations exit
+0, and `/health` and `/ready` both answer — and it produced six open findings,
+including the scheme-qualified `JOSI_DOMAIN` defect this script's own site
+address fix does not cover. The `n150` row above stays empty regardless: a
+manual install and a scripted acceptance run measure different things, and
+filling the row from the former would be exactly the curation this table exists
+to prevent.
 
 ### What the first run found
 
@@ -136,10 +146,35 @@ five run for real:
 JOSI_ACCEPTANCE_LLM_KEY=sk-... bash scripts/acceptance/clean-install.sh
 ```
 
+No such key has been supplied to this repository, and the five have never run.
+Note that `docs/FIRST_INSTALL_FINDINGS.md` FI-003 reports the same gate firing
+on a real install against a real OpenAI key, because the verification request
+Josi sends is malformed. Until FI-003 is fixed, supplying a key here would very
+likely reproduce FI-003 rather than turn these five green — so a future run
+that still shows five skips is not necessarily a run that was configured
+wrongly.
+
 SMTP is skipped by the same principle: configuring mail means proving mail can
 be sent, this host has no relay, and a fixture that passed would report a mail
 system that does not exist. Sending is covered by
 `scripts/test-mail-runtime.sh` against a real server.
+
+### What will never be proven from this repository
+
+Confirmed by Roman on 2 September 2026. These are not pending; nothing is
+queued behind them, and no future run here will fill them in.
+
+| Item | Exact dependency that will not be supplied |
+|---|---|
+| LB2.10 — subscription path returns a real model response | A ChatGPT account with an active subscription, and a person with a browser to approve the device code |
+| LB5.8 — two real users connect real accounts | A Google Cloud project with the People API enabled, and a Microsoft Entra tenant with an app registration |
+| LB8 Part B — sync against real providers | `JOSI_REAL_GOOGLE_*` and `JOSI_REAL_MS_*` credentials for real accounts |
+| LB9.6 — native contact sync on real devices | A physical iOS device, a physical Android device, and the separate Josi mobile repository |
+
+Each remains **BLOCKED**, which is a statement about evidence and not about the
+code: the paths are built and unit-tested, and none of them has ever contacted a
+provider. Nothing in this document should be read as claiming otherwise, and no
+green count anywhere in this repository covers them.
 
 ## The Codex subscription path
 

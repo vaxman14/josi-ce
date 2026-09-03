@@ -947,6 +947,16 @@ function ReviewPanel({
                     Test again
                   </Button>
                 ) : null}
+                {/* A required item that has never been tested needs a way to BE
+                    tested. Offering only "Change" here was a dead end: the
+                    server refuses to finish until a test passes, and the screen
+                    provided no way to run one. */}
+                {item.status === 'required' && !item.verification && ITEM_STEP[item.key] ? (
+                  <Button type="button" disabled={busy}
+                          onClick={() => onRetest(item.key)}>
+                    Test
+                  </Button>
+                ) : null}
               </div>
             ) : null}
           </li>
