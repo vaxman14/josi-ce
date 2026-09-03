@@ -3,6 +3,8 @@ export * from './oauthState.js';
 export * from './providers.js';
 export * from './connections.js';
 export * from './providers/contacts.js';
+export * from './providers/mail.js';
+export * from './providers/calendar.js';
 export * from './providers/files.js';
 export * from './storageSync.js';
 export * from './contactSync.js';
