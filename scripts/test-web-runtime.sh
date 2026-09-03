@@ -216,7 +216,7 @@ done
 
 # The WORDMARK is the master and is never regenerated, so its hash is pinned.
 word_sha=$("${COMPOSE[@]}" exec -T web sh -c "sha256sum /app/web/brand/josi-wordmark.png 2>/dev/null | cut -d' ' -f1" 2>/dev/null | tr -d '\r')
-[[ "$word_sha" == "6778fd3584f6ed4d9ed7281752aa09276fd7a871d3e3cfbe2e3a607c509c9e45" ]] \
+[[ "$word_sha" == "d5b822231e69bce51f9a662a158aa23d07e26650224124b28684b8b3fcb86803" ]] \
   && ok "the wordmark is byte-identical to the approved master" \
   || bad "wordmark hash is $word_sha"
 

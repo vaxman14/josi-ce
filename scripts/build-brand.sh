@@ -18,6 +18,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# 2026-09-02: the wordmark master was replaced with a transparent-alpha export
+# (1231x573, no navy field, no vignette, plain dot over the i — the tennis-ball
+# tittle left with the retired mascot). The crop/navy constants below describe
+# the OLD flattened 1360x660 master and must be re-derived before this script
+# is run again. Nothing runs it automatically; every output is committed.
 WORDMARK="apps/web/public/brand/josi-wordmark.png"
 NAVY="0x0A1B33"      # the wordmark's field, flattened — it carries a vignette
 GLYPH_R=253          # the wordmark's own warm white, sampled: #fdf6ea

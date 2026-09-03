@@ -89,7 +89,7 @@ describe('LB11.2 — the J identity is applied everywhere', () => {
 
   it('pins the wordmark, which is the one thing never regenerated', () => {
     const harness = read('scripts/test-web-runtime.sh');
-    expect(harness).toMatch(/6778fd3584f6ed4d9ed7281752aa09276fd7a871d3e3cfbe2e3a607c509c9e45/);
+    expect(harness).toMatch(/d5b822231e69bce51f9a662a158aa23d07e26650224124b28684b8b3fcb86803/);
   });
 
   it('declares every PWA icon the manifest promises, at the size it promises', () => {
@@ -230,5 +230,54 @@ describe('LB11.5 — the workspace page cannot load forever', () => {
       expect(page, `Workspace.tsx renders nothing for "${state}"`).toContain(state);
     }
     expect(page, 'a failure must offer a way out').toMatch(/Try again/);
+  });
+
+  it('Overview and Usage use it too — the pages that spun forever on gate', () => {
+    // Round-2 item 5: both pages had their own private copy of the Workspace
+    // bug (`.catch(() => undefined)` + a spinner keyed on null), so a failed
+    // fetch — including one killed by a poisoned cached HTTPS redirect — was
+    // an infinite spinner. The shared fallback renders every non-ready state.
+    for (const path of ['apps/web/src/pages/admin/Overview.tsx', 'apps/web/src/pages/Usage.tsx']) {
+      const page = read(path);
+      expect(page, path).toMatch(/useResource/);
+      expect(page, path).toMatch(/ResourceFallback/);
+      expect(page, path).not.toMatch(/\.catch\(\(\) => undefined\)/);
+    }
+    const fallback = read('apps/web/src/components/ResourceFallback.tsx');
+    for (const state of ['loading', 'unauthorized', 'error', 'timeout']) {
+      expect(fallback, `ResourceFallback renders nothing for "${state}"`).toContain(state);
+    }
+    expect(fallback, 'a failure must offer a way out').toMatch(/Try again/);
+  });
+
+  it('the API client bypasses the HTTP cache, so a poisoned redirect cannot replay', () => {
+    // A `308 Permanent Redirect` to https:// once served by a bad proxy config
+    // is cached per-URL and replayed by the browser even after the config is
+    // fixed. `cache: 'no-store'` makes fetch skip the HTTP cache entirely,
+    // cached redirects included. Nothing this client fetches is cacheable
+    // state anyway.
+    expect(read('apps/web/src/lib/api.ts')).toMatch(/cache: 'no-store'/);
+  });
+});
+
+describe('round-2 item 1 — the wordmark ships clean', () => {
+  const png = (path: string) => readFileSync(join(root, path));
+
+  it('carries a real alpha channel rather than a baked-in background box', () => {
+    // PNG IHDR colour type lives at byte 25: 6 = truecolour with alpha. The
+    // old export was type 2 (RGB, no alpha) with the navy field and vignette
+    // baked in, which rendered as an opaque rectangle on the setup header.
+    expect(png('apps/web/public/brand/josi-wordmark.png')[25]).toBe(6);
+  });
+
+  it('has no tennis-ball tittle left in it', () => {
+    // The ball was the retired dog mascot's prop — orange with white seams,
+    // sitting where the dot over the i belongs. The mascot is gone (LB11.1);
+    // an orphaned ball is not the identity. Cheap structural check: the old
+    // asset was 1360x660 RGB; the clean master is the recropped RGBA export.
+    const buf = png('apps/web/public/brand/josi-wordmark.png');
+    const width = buf.readUInt32BE(16);
+    const height = buf.readUInt32BE(20);
+    expect([width, height]).toEqual([1231, 573]);
   });
 });

@@ -31,7 +31,7 @@ export function Login() {
     <div className="flex min-h-full items-center justify-center p-4">
       <div className="w-full min-w-0 max-w-sm">
         <div className="mb-6 flex flex-col items-center text-center">
-          <img src="/brand/josi-wordmark.png" alt="Josi" width={200} height={97}
+          <img src="/brand/josi-wordmark.png" alt="Josi" width={200} height={93}
                className="mb-2 h-auto w-40 max-w-full" />
           <p className="text-sm text-muted-foreground">Your assistant, on your own server.</p>
         </div>
