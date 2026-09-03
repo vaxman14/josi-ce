@@ -72,6 +72,20 @@ export function Talk() {
 
   useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
 
+  // When the keyboard opens/closes the page height changes and the scrolling
+  // list reflows from the top — visually indistinguishable from the whole
+  // conversation reloading (round-2 item 25, Chrome-on-iOS evidence). Re-pin
+  // the newest message instantly on every viewport resize so the list never
+  // appears to reset. `instant` because an animated correction reads as a
+  // second glitch, not a fix.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const repin = () => { end.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior }); };
+    vv.addEventListener('resize', repin);
+    return () => vv.removeEventListener('resize', repin);
+  }, []);
+
   async function send(): Promise<void> {
     // Read the DOM value as well as React state: iOS can display composition
     // text before a controlled component catches up.
