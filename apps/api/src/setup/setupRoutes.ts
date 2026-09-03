@@ -721,15 +721,20 @@ async function applyStep(
       // `gpt-5.6-luna`, be told they were configured, and discover at the first
       // real request that no such model had ever existed. Discovery answers
       // that question with the credential they just supplied.
-      const offered = await assertModelIsOffered({
-        provider,
-        model,
-        apiKey: apiKey.isEmpty ? null : apiKey.reveal(),
-        baseUrl: provider === 'openai_compatible' ? baseUrl : null,
-        fetchImpl: ctx.llmFetch,
-        resolve: ctx.llmResolve,
-      });
-      if (!offered.ok) throw new SetupError(400, offered.detail);
+      // An empty model on a subscription provider means 'the plan's default':
+      // there is nothing to look up, and asking discovery whether it offers ""
+      // guarantees a refusal with a blank name in it.
+      if (model || !subscriptionProvider) {
+        const offered = await assertModelIsOffered({
+          provider,
+          model,
+          apiKey: apiKey.isEmpty ? null : apiKey.reveal(),
+          baseUrl: provider === 'openai_compatible' ? baseUrl : null,
+          fetchImpl: ctx.llmFetch,
+          resolve: ctx.llmResolve,
+        });
+        if (!offered.ok) throw new SetupError(400, offered.detail);
+      }
 
       // Sealed before it goes anywhere near the database, and only if a key is
       // available. No key means the step fails and nothing is written.
