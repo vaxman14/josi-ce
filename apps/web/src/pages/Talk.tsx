@@ -70,7 +70,14 @@ export function Talk() {
     })();
   }, []);
 
-  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
+  // Never animate through the full transcript when a message is sent. On a
+  // long thread, that looked exactly like the conversation was being fetched
+  // and replayed from the top (especially while Chrome-on-iOS also resized its
+  // toolbar). Put the newest message in place immediately; the bubble itself is
+  // the motion/feedback the user needs.
+  useEffect(() => {
+    end.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior });
+  }, [messages]);
 
   // When the keyboard opens/closes the page height changes and the scrolling
   // list reflows from the top — visually indistinguishable from the whole
