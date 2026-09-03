@@ -31,6 +31,12 @@ export interface CapabilitySpec {
   /** Write capabilities name what they can do to someone else's day, because
    * the consent screen should say it plainly. */
   consequence?: string;
+  /** True for capabilities that are NOT part of the default read bundle at
+   * connect time. Somebody connecting an account for calendar and mail must
+   * not be asked to grant file access as a side effect — storage is a grant
+   * they go and make deliberately, from the Connections page, and the
+   * incremental-consent handshake is how it arrives. */
+  connectOptIn?: boolean;
 }
 
 /** Scope notes worth keeping.
@@ -92,6 +98,17 @@ export const CAPABILITIES: readonly CapabilitySpec[] = [
       + 'needs this; importing does not.',
   },
   {
+    key: 'google.drive.read',
+    provider: 'google',
+    label: 'Read files in Google Drive folders you choose',
+    // The readonly scope. There is deliberately no `drive` (write) capability
+    // in this list: this round is read-only ingestion, and a scope that could
+    // write would be a scope somebody eventually uses.
+    scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+    kind: 'read',
+    connectOptIn: true,
+  },
+  {
     key: 'microsoft.calendar.read',
     provider: 'microsoft',
     label: 'Read your Outlook calendar',
@@ -138,7 +155,25 @@ export const CAPABILITIES: readonly CapabilitySpec[] = [
       'Josi can add contacts to your Outlook account and change ones already there. Two-way sync '
       + 'needs this; importing does not.',
   },
+  {
+    key: 'microsoft.files.read',
+    provider: 'microsoft',
+    label: 'Read files in OneDrive folders you choose',
+    // Files.Read covers the signed-in person's own drive, read-only.
+    // Files.Read.All (shared content) is deliberately not asked for.
+    scopes: ['Files.Read'],
+    kind: 'read',
+    connectOptIn: true,
+  },
 ] as const;
+
+/** The capability cloud file ingestion needs, per provider. Same shape and
+ * reason as CONTACT_CAPABILITY: expressed here so the sync layer cannot decide
+ * for itself that it has enough. */
+export const STORAGE_CAPABILITY: Record<Provider, string> = {
+  google: 'google.drive.read',
+  microsoft: 'microsoft.files.read',
+};
 
 /** The capability a sync mode needs, per provider.
  *
