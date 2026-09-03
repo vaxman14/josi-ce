@@ -342,6 +342,7 @@ volumes:
   josi_diagnostics:
   josi_codex:
   josi_claude:
+  josi_chat_attachments:
   caddy_data:
   caddy_config:
   clamav_data:
