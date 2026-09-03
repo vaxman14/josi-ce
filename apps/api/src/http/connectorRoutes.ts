@@ -14,10 +14,11 @@ import {
   appendEvent, asSecret, loadMasterKey, type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
-  CAPABILITIES, CapabilityError, ConnectorError, NoClientError,
-  buildAuthUrl, capabilitySpec, capabilityViews, clientStatuses, connectionFor,
+  CAPABILITIES, CapabilityError, ConnectorError, NoClientError, STORAGE_CAPABILITY,
+  accessTokenFor, buildAuthUrl, can, capabilitySpec, capabilityViews, clientStatuses, connectionFor,
   createStateStore, deleteClient, deleteConnection, exchangeCode, fetchIdentity, getConnection,
-  loadClient, revokeAtProvider, safeReturnPath, saveClient, scopesFor, setCapability, upsertConnection,
+  listFolderPage, loadClient, refusalReason, revokeAtProvider, safeReturnPath, saveClient, scopesFor,
+  setCapability, upsertConnection,
   type Provider,
 } from '@josi-ce/connectors';
 import { openSealed } from '@josi-ce/core';
@@ -151,6 +152,51 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
     }),
   );
 
+  /** The folders inside a connected account, for choosing one to map.
+   *
+   * Owner-only and 404 for anyone else, like every connection route. The
+   * listing is live and nothing about it is stored: browsing is not mapping,
+   * and until a mapping exists with consent recorded, Josi keeps nothing.
+   * Requires the storage capability to be ON — not merely granted — so a
+   * person who granted the scope but left the switch off is not browsed. */
+  r.get(
+    '/:id/storage/folders',
+    handle(async (req, res) => {
+      const id = param(req, 'id');
+      if (!/^[0-9a-fA-F-]{36}$/.test(id)) throw new RouteError(404, 'not found');
+      const connection = await getConnection(db, id);
+      if (!connection || connection.owner_user_id !== req.user!.id) {
+        throw new RouteError(404, 'not found');
+      }
+
+      const capability = STORAGE_CAPABILITY[connection.provider];
+      const verdict = await can(db, { ownerUserId: req.user!.id, capability });
+      if (!verdict.allowed) {
+        return res.status(409).json({
+          error: refusalReason(verdict.state, capability),
+          state: verdict.state,
+        });
+      }
+
+      const key = requireKey(ctx);
+      const client = await loadClient(db, key, connection.provider);
+      const accessToken = await accessTokenFor(db, key, { connection, client }, { fetchImpl: ctx.fetchImpl });
+      const page = await listFolderPage(connection.provider, {
+        accessToken,
+        // 'root' is both providers' own alias for the top of the drive. A
+        // mapping still has to name a real folder — M46 forbids "map my whole
+        // Drive" — but browsing starts somewhere.
+        folderId: str(req.query.parent, 250) || 'root',
+        pageCursor: str(req.query.cursor, 2000) || null,
+      }, { fetchImpl: ctx.fetchImpl });
+
+      return res.json({
+        folders: page.entries.filter((e) => e.folder).map((e) => ({ id: e.sourceId, name: e.name })),
+        nextPageCursor: page.nextPageCursor,
+      });
+    }),
+  );
+
   /** Begin a handshake. Returns the URL rather than redirecting, so the client
    * decides when to leave the page and the response stays inspectable. */
   r.post(
@@ -168,10 +214,14 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         : [];
       const known = requested.filter((c) => capabilitySpec(c)?.provider === provider);
       // A connect with nothing named still gets the read capabilities, which is
-      // the "read first" half of M32.
+      // the "read first" half of M32 — minus the opt-in ones. File access is
+      // never bundled into a connect somebody made for calendar or mail; it is
+      // asked for by name, from the Connections page, when its owner wants it.
       const capabilities = known.length
         ? known
-        : CAPABILITIES.filter((c) => c.provider === provider && c.kind === 'read').map((c) => c.key);
+        : CAPABILITIES
+            .filter((c) => c.provider === provider && c.kind === 'read' && !c.connectOptIn)
+            .map((c) => c.key);
 
       const store = createStateStore(db, key);
       const scopes = scopesFor(provider, capabilities);

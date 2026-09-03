@@ -20,6 +20,10 @@ export {
   type IngestDeps, type IngestOutcome,
 } from './ingest.js';
 export {
+  MAX_EXTRACT_CHARS, extractSegments, isExtractableExtension, skipDocument, storeExtraction,
+  type ExtractedSegment,
+} from './extract.js';
+export {
   SEMANTIC_DISCLOSURE, SemanticForbidden, SemanticNotConsented,
   assertSemanticAllowed, citationLabel, cosine, decodeVector, encodeVector,
   recordSemanticConsent, resolveCitations, revokeSemanticConsent, searchDocuments,
