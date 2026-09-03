@@ -111,6 +111,8 @@ services:
       retries: 5
       start_period: 20s
     volumes:
+      # web-specific anchor for the attachments volume; see the shared list below.
+      - josi_chat_attachments:/data/chat-attachments
       # Josi's OWN storage: recovery copies (M60/M62) live here, never in a
       # user's mapped folder. A named volume so they survive the container being
       # replaced, and so `docker compose down` does not silently destroy the
@@ -180,6 +182,8 @@ services:
       retries: 3
       start_period: 20s
     volumes:
+      # worker-specific anchor for the attachments volume; see the shared list below.
+      - josi_chat_attachments:/data/chat-attachments
       # Josi's OWN storage: recovery copies (M60/M62) live here, never in a
       # user's mapped folder. A named volume so they survive the container being
       # replaced, and so `docker compose down` does not silently destroy the
