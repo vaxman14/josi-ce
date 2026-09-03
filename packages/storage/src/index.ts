@@ -20,7 +20,8 @@ export {
   type IngestDeps, type IngestOutcome,
 } from './ingest.js';
 export {
-  MAX_EXTRACT_CHARS, extractSegments, isExtractableExtension, skipDocument, storeExtraction,
+  MAX_EXTRACT_CHARS, extractSegments, extractRichSegments, isExtractableExtension,
+  looksLikeCredentialFile, skipDocument, storeExtraction,
   type ExtractedSegment,
 } from './extract.js';
 export {

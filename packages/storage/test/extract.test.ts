@@ -1,15 +1,16 @@
 // Extraction decisions, pure.
 import { describe, expect, it } from 'vitest';
-import { MAX_EXTRACT_CHARS, extractSegments, isExtractableExtension } from '../src/extract.js';
+import { MAX_EXTRACT_CHARS, extractSegments, isExtractableExtension, looksLikeCredentialFile } from '../src/extract.js';
 
 describe('what is extractable', () => {
   it('reads the plain-text family and nothing it would have to guess at', () => {
     for (const ext of ['txt', 'md', 'csv', 'json', 'html']) {
       expect(isExtractableExtension(ext), ext).toBe(true);
     }
-    for (const ext of ['pdf', 'docx', 'xlsx', 'zip', 'exe', '']) {
+    for (const ext of ['zip', 'exe', '']) {
       expect(isExtractableExtension(ext), ext).toBe(false);
     }
+    for (const ext of ['pdf', 'docx', 'xlsx', 'pptx', 'png']) expect(isExtractableExtension(ext), ext).toBe(true);
   });
 
   it('an unsupported format is a null, not an exception and not garbage in the index', () => {
@@ -19,6 +20,14 @@ describe('what is extractable', () => {
   it('a mislabelled binary comes back null rather than polluting the index', () => {
     const noise = Buffer.from(Array.from({ length: 2000 }, (_, i) => (i * 7) % 251));
     expect(extractSegments({ extension: 'txt', bytes: noise })).toBeNull();
+  });
+});
+
+describe('credential exclusion', () => {
+  it('spots secrets by filename and content without flagging ordinary prose', () => {
+    expect(looksLikeCredentialFile('backup-codes.txt')).toBe(true);
+    expect(looksLikeCredentialFile('notes.txt', 'api_key = abcdefghijklmnop')).toBe(true);
+    expect(looksLikeCredentialFile('meeting-notes.txt', 'Discuss password reset UX')).toBe(false);
   });
 });
 

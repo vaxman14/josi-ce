@@ -23,7 +23,7 @@ import { extensionOf } from './paths.js';
 export type SkipReason =
   | 'encrypted' | 'password_protected' | 'too_large' | 'extension_not_allowed'
   | 'archive_excluded' | 'archive_limits_exceeded' | 'unreadable' | 'malware_found'
-  | 'quota_exceeded' | 'unsupported_type';
+  | 'quota_exceeded' | 'unsupported_type' | 'credential_detected';
 
 export interface StoragePolicy {
   max_file_bytes: number | string;

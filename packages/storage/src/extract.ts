@@ -1,16 +1,23 @@
 // Turning a file's bytes into searchable text — for the formats where that is
 // honest to do without a parser.
 //
-// CE ships no PDF or Office parser in this round. The text-bearing plain
-// formats (txt, md, csv, json, html…) are decoded here; everything else that
-// passed the gates is recorded as `unsupported_type`, whose explanation to the
-// owner already reads "Josi cannot read this kind of file yet". A file counted
-// and honestly skipped is the house rule; a parser guessed at is not.
+// Plain text is decoded directly; PDF, Office/OpenDocument and images go
+// through bundled parsers. Everything else is recorded as `unsupported_type`,
+// whose explanation to the owner reads "Josi cannot read this kind of file
+// yet". A file counted and honestly skipped is the house rule.
 //
 // Nothing in this module touches the network or the providers. Bytes in,
 // segments out, and the decision of what to DO with a refusal stays with the
 // caller — which is what makes the whole matrix testable without a database.
 import { appendEvent, type Db } from '@josi-ce/core';
+import { PDFParse } from 'pdf-parse';
+import mammoth from 'mammoth';
+import ExcelJS from 'exceljs';
+import { unzipSync } from 'fflate';
+import { createWorker } from 'tesseract.js';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import type { SkipReason } from './gates.js';
 
 export interface ExtractedSegment {
   locatorKind: 'none' | 'line' | 'heading';
@@ -24,13 +31,67 @@ export interface ExtractedSegment {
 const TEXT_EXTENSIONS = new Set([
   'txt', 'md', 'csv', 'tsv', 'json', 'xml', 'html', 'htm',
 ]);
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tif', 'tiff']);
+const XML_OFFICE_EXTENSIONS = new Set(['pptx', 'odt', 'ods', 'odp']);
+const require = createRequire(import.meta.url);
+const OCR_LANGUAGE_PATH = join(dirname(require.resolve('@tesseract.js-data/eng/package.json')), '4.0.0');
 
 /** How much text one document may contribute to the index. Generous for
  * documents, small next to the database — and a ceiling, not a target. */
 export const MAX_EXTRACT_CHARS = 500_000;
 
 export function isExtractableExtension(extension: string): boolean {
-  return TEXT_EXTENSIONS.has(extension.toLowerCase());
+  const ext = extension.toLowerCase();
+  return TEXT_EXTENSIONS.has(ext) || ext === 'pdf' || ext === 'docx' || ext === 'xlsx'
+    || XML_OFFICE_EXTENSIONS.has(ext) || IMAGE_EXTENSIONS.has(ext);
+}
+
+export function looksLikeCredentialFile(filename: string, text = ''): boolean {
+  const name = filename.toLowerCase();
+  if (/(^|[-_. ])(cred(ential)?s?|passwords?|passwd|recovery[-_ ]?codes?|backup[-_ ]?codes?|private[-_ ]?key|tokens?|secrets?)([-_. ]|$)/i.test(name)) return true;
+  const sample = text.slice(0, 32_000);
+  return /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(sample)
+    || /\b(?:api[_ -]?key|client[_ -]?secret|refresh[_ -]?token|password)\s*[:=]\s*\S{8,}/i.test(sample);
+}
+
+export async function extractRichSegments(
+  args: { extension: string; bytes: Buffer },
+): Promise<ExtractedSegment[] | null> {
+  const ext = args.extension.toLowerCase();
+  const plain = extractSegments(args);
+  if (plain) return plain;
+  let text = '';
+  if (ext === 'pdf') {
+    const parser = new PDFParse({ data: args.bytes });
+    try { text = (await parser.getText()).text; } finally { await parser.destroy(); }
+  } else if (ext === 'docx') {
+    text = (await mammoth.extractRawText({ buffer: Buffer.from(args.bytes) })).value;
+  } else if (ext === 'xlsx') {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(args.bytes) as unknown as ExcelJS.Buffer);
+    const rows: string[] = [];
+    workbook.eachSheet((sheet) => sheet.eachRow((row) => {
+      const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+      rows.push(values.map((value: ExcelJS.CellValue) => (
+        typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')
+      )).join('\t'));
+    }));
+    text = rows.join('\n');
+  } else if (XML_OFFICE_EXTENSIONS.has(ext)) {
+    const files = unzipSync(new Uint8Array(args.bytes));
+    text = Object.entries(files).filter(([name]) => /\.(?:xml|txt)$/i.test(name))
+      .map(([, bytes]) => stripHtml(Buffer.from(bytes).toString('utf8'))).join('\n');
+  } else if (IMAGE_EXTENSIONS.has(ext)) {
+    // Language data ships inside the image. Indexing a photo must not quietly
+    // download a model from a CDN or stop working on an offline installation.
+    const worker = await createWorker('eng', undefined, { langPath: OCR_LANGUAGE_PATH });
+    try {
+      const image = Buffer.from(args.bytes) as unknown as Parameters<typeof worker.recognize>[0];
+      text = (await worker.recognize(image)).data.text;
+    } finally { await worker.terminate(); }
+  } else return null;
+  text = text.replace(/\u0000/g, '').trim().slice(0, MAX_EXTRACT_CHARS);
+  return text ? [{ locatorKind: 'none', locator: '', content: text }] : null;
 }
 
 /** Markup stripped, entities the bare minimum, structure ignored. Search wants
@@ -117,7 +178,7 @@ export async function skipDocument(
   args: {
     documentId: string;
     ownerUserId: string;
-    reason: 'encrypted' | 'too_large' | 'unreadable' | 'unsupported_type';
+    reason: SkipReason;
   },
 ): Promise<void> {
   await db.query(

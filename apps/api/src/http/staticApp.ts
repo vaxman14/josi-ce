@@ -84,7 +84,11 @@ export function mountWebApp(app: Express, opts: StaticAppOptions = {}): boolean 
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Service-Worker-Allowed', '/');
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-    res.sendFile(join(dir, 'sw.js'));
+    // The test/runtime temp root may itself live below a dot-directory (for
+    // example OpenClaw's `.openclaw/tmp`). This is an exact, operator-supplied
+    // file path, not a user-controlled static lookup, so allowing that parent
+    // path does not expose dotfiles.
+    res.sendFile(join(dir, 'sw.js'), { dotfiles: 'allow' });
   });
 
   // Hashed assets are immutable; index.html must never be, or an upgrade leaves
@@ -111,7 +115,7 @@ export function mountWebApp(app: Express, opts: StaticAppOptions = {}): boolean 
   // API's JSON 404 rather than an HTML page a fetch() cannot read.
   app.get(/^(?!\/api\/).*/, (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.sendFile(join(dir, 'index.html'));
+    res.sendFile(join(dir, 'index.html'), { dotfiles: 'allow' });
   });
 
   return true;

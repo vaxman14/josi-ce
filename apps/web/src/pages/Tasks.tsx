@@ -22,6 +22,7 @@ export function Tasks() {
   const [upcoming, setUpcoming] = useState<Reminder[]>([]);
   const [recent, setRecent] = useState<Reminder[]>([]);
   const [reminderError, setReminderError] = useState('');
+  const [approvalPassword, setApprovalPassword] = useState('');
 
   const load = () =>
     api.get<{ tasks: Task[] }>('/assistant/tasks').then((r) => setTasks(r.tasks)).catch(() => undefined);
@@ -48,6 +49,14 @@ export function Tasks() {
     } catch (err) {
       setReminderError(err instanceof Error ? err.message : 'Could not cancel that reminder');
     }
+  }
+
+  async function approveTask(id: string) {
+    setError(''); try {
+      await api.post('/assistant/step-up', { password: approvalPassword });
+      await api.patch(`/assistant/tasks/${id}`, { state: 'ready' }); setApprovalPassword(''); await load();
+    }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not approve that task'); }
   }
 
   const selected = types.find((t) => t.key === templateKey);
@@ -176,6 +185,10 @@ export function Tasks() {
                       </div>
                     ))}
                   </dl>
+                ) : null}
+                {task.state === 'awaiting_approval' ? (
+                  <div className="mt-3 space-y-2"><Input type="password" autoComplete="current-password" placeholder="Confirm your password" value={approvalPassword} onChange={(e) => setApprovalPassword(e.target.value)} />
+                    <Button disabled={!approvalPassword} onClick={() => void approveTask(task.id)}>Approve and carry out</Button></div>
                 ) : null}
               </Card>
             </li>

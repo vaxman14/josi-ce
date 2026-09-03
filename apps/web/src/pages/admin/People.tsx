@@ -3,12 +3,26 @@ import { useEffect, useState } from 'react';
 import { api, type User } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
 
+interface StorageGrant {
+  user_id: string; may_map_local: boolean; may_map_cloud: boolean; may_index: boolean;
+  max_files: number | null; max_bytes: number | null; mappings: number;
+}
+
 export function AdminPeople() {
   const [users, setUsers] = useState<User[]>([]);
   const [invite, setInvite] = useState('');
   const [error, setError] = useState('');
+  const [storage, setStorage] = useState<Record<string, StorageGrant>>({});
+  const [busy, setBusy] = useState<string | null>(null);
 
-  const load = () => api.get<{ users: User[] }>('/admin/users').then((r) => setUsers(r.users)).catch(() => undefined);
+  const load = async () => {
+    const [people, grants] = await Promise.all([
+      api.get<{ users: User[] }>('/admin/users'),
+      api.get<{ users: StorageGrant[] }>('/storage/admin/capabilities'),
+    ]);
+    setUsers(people.users);
+    setStorage(Object.fromEntries(grants.users.map((g) => [g.user_id, g])));
+  };
   useEffect(() => { void load(); }, []);
 
   async function create(event: React.FormEvent<HTMLFormElement>) {
@@ -28,6 +42,23 @@ export function AdminPeople() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add them');
     }
+  }
+
+  async function setStorageGrant(userId: string, patch: Partial<StorageGrant>) {
+    const current = storage[userId];
+    if (!current) return;
+    setBusy(userId); setError('');
+    try {
+      await api.put(`/storage/admin/capabilities/${userId}`, {
+        mayMapLocal: patch.may_map_local ?? current.may_map_local,
+        mayMapCloud: patch.may_map_cloud ?? current.may_map_cloud,
+        mayIndex: patch.may_index ?? current.may_index,
+        maxFiles: current.max_files,
+        maxBytes: current.max_bytes,
+      });
+      await load();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not change storage access'); }
+    finally { setBusy(null); }
   }
 
   return (
@@ -70,6 +101,23 @@ export function AdminPeople() {
                 </Badge>
               </div>
               <p className="truncate text-sm text-muted-foreground">{u.email}</p>
+              {storage[u.id] ? (
+                <div className="mt-3 border-t border-border pt-3">
+                  <p className="mb-2 text-xs font-medium">Folder and indexing access</p>
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      ['may_map_local', 'Local folders'], ['may_map_cloud', 'Cloud folders'], ['may_index', 'Index/search'],
+                    ] as const).map(([key, label]) => (
+                      <Button key={key} variant={storage[u.id][key] ? 'primary' : 'secondary'}
+                        disabled={busy === u.id}
+                        onClick={() => void setStorageGrant(u.id, { [key]: !storage[u.id][key] })}>
+                        {label}: {storage[u.id][key] ? 'On' : 'Off'}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">{storage[u.id].mappings} mapped folder(s). Turning indexing off purges derived searchable text.</p>
+                </div>
+              ) : null}
             </Card>
           </li>
         ))}

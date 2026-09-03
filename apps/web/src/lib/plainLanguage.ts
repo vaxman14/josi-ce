@@ -179,6 +179,14 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     },
   },
 
+  document_state: {
+    source: { migrationTable: 'documents', column: 'state' },
+    labels: {
+      discovered: 'Found', extracted: 'Read', indexed: 'Searchable',
+      skipped: 'Skipped', blocked: 'Blocked', failed: 'Could not read',
+    },
+  },
+
   mapping_paused_reason: {
     source: { migrationTable: 'folder_mappings', column: 'paused_reason' },
     labels: {

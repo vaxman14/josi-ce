@@ -49,12 +49,22 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return parsed as T;
 }
 
+async function upload<T>(path: string, body: FormData): Promise<T> {
+  const headers: Record<string, string> = {};
+  const token = csrfToken(); if (token) headers['x-josi-csrf'] = token;
+  const res = await fetch(`/api${path}`, { method: 'POST', headers, body, credentials: 'same-origin', cache: 'no-store' });
+  const parsed = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(res.status, (parsed as { error?: string })?.error ?? `Request failed (${res.status})`, parsed);
+  return parsed as T;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body ?? {}),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {}),
   del: <T>(path: string) => request<T>('DELETE', path),
+  upload,
 };
 
 /** Fetches the CSRF cookie before the first state-changing request. The login
@@ -88,6 +98,7 @@ export interface Message {
   direction: 'in' | 'out';
   channel: string;
   body: string;
+  meta?: { attachments?: Array<{ id: string; filename: string; contentType: string }> };
   created_at: string;
 }
 

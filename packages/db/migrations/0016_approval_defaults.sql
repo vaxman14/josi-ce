@@ -45,6 +45,7 @@ with factory (action_class, max_level) as (
   values
     ('email_send',        'always_ask'),
     ('calendar_write',    'always_ask'),
+    ('contacts_write',    'always_ask'),
     ('task_management',   'always_ask'),
     ('delete_data',       'always_ask'),
     ('cancel_commitment', 'always_ask'),

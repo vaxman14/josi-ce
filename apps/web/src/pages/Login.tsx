@@ -1,22 +1,38 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Button, Card, ErrorNote, Input } from '@/components/ui';
 
 export function Login() {
-  const { signIn } = useAuth();
+  const { signIn, finishMfa } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [challenge, setChallenge] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+
+  useEffect(() => {
+    const reason = searchParams.get('error');
+    if (!reason) return;
+    setError(reason === 'google_not_linked'
+      ? 'That Google account is not linked to a Josi account. Sign in with your password, then connect Google first.'
+      : reason === 'google_unavailable'
+        ? 'Google sign-in is not configured on this Josi installation.'
+        : 'Google sign-in did not finish. Please try again.');
+  }, [searchParams]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError('');
     try {
-      await signIn(identifier, password);
+      const pending = await signIn(identifier, password, rememberMe);
+      if (pending) { setChallenge(pending); return; }
       navigate('/app', { replace: true });
     } catch (err) {
       // The server answers identically for an unknown account and a wrong
@@ -25,6 +41,13 @@ export function Login() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function verifyMfa(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await finishMfa(challenge, mfaCode); navigate('/app', { replace: true }); }
+    catch (err) { setError(err instanceof Error ? err.message : 'That code did not work'); }
+    finally { setBusy(false); }
   }
 
   return (
@@ -36,7 +59,9 @@ export function Login() {
           <p className="text-sm text-muted-foreground">Your assistant, on your own server.</p>
         </div>
         <Card>
-          <form onSubmit={submit} className="space-y-3">
+          <form onSubmit={challenge ? verifyMfa : submit} className="space-y-3">
+            {challenge ? <><p className="text-sm">Enter the 6-digit code from your authenticator app, or a recovery code.</p>
+              <Input inputMode="numeric" autoComplete="one-time-code" value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} required autoFocus /></> : <>
             <div>
               <label className="mb-1 block text-sm" htmlFor="identifier">Username or email</label>
               <Input id="identifier" name="identifier" autoComplete="username" autoCapitalize="none"
@@ -44,11 +69,24 @@ export function Login() {
             </div>
             <div>
               <label className="mb-1 block text-sm" htmlFor="password">Password</label>
-              <Input id="password" name="password" type="password" autoComplete="current-password"
-                     value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <div className="flex gap-2">
+                <Input id="password" name="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password"
+                       value={password} onChange={(e) => setPassword(e.target.value)} required />
+                <Button type="button" variant="secondary" onClick={() => setShowPassword((value) => !value)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                  {showPassword ? 'Hide' : 'Show'}
+                </Button>
+              </div>
             </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} />
+              Keep me signed in on this device
+            </label>
+            </>}
             {error ? <ErrorNote>{error}</ErrorNote> : null}
-            <Button type="submit" className="w-full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
+            <Button type="submit" className="w-full" disabled={busy}>{busy ? 'Signing in…' : challenge ? 'Verify' : 'Sign in'}</Button>
+            <a className="block text-center text-sm text-primary underline" href="/forgot-password">Forgot password?</a>
+            <a className="block text-center text-sm text-primary underline" href="/api/auth/google/start">Sign in with Google</a>
           </form>
         </Card>
         <p className="mt-6 text-center text-xs text-muted-foreground">

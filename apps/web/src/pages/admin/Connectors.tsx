@@ -29,7 +29,7 @@ interface PolicyRow {
 interface AdminView {
   clients: ClientStatus[];
   policy: PolicyRow[];
-  suggestedRedirectUris: Array<{ provider: string; uri: string }>;
+  suggestedRedirectUris: Array<{ provider: string; uri: string; additionalUris?: string[] }>;
 }
 
 interface HealthRow {
@@ -101,7 +101,8 @@ export function AdminConnectors() {
       {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
       {view?.clients.map((client) => {
-        const suggested = view.suggestedRedirectUris.find((u) => u.provider === client.provider)?.uri ?? '';
+        const suggestion = view.suggestedRedirectUris.find((u) => u.provider === client.provider);
+        const suggested = suggestion?.uri ?? '';
         return (
           <Card key={client.provider}>
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -120,6 +121,9 @@ export function AdminConnectors() {
                 the server honours must be the same string, and a mismatch
                 produces the provider's error page rather than ours. */}
             <Copyable label={`Paste this into ${LABEL[client.provider]} as the redirect URL`} value={suggested} />
+            {suggestion?.additionalUris?.map((uri) => (
+              <Copyable key={uri} label="Also register this URL for Sign in with Google" value={uri} />
+            ))}
             <form
               onSubmit={(e) => { e.preventDefault(); void saveClient(client.provider, new FormData(e.currentTarget)); }}
               className="space-y-3"

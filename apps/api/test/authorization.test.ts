@@ -128,6 +128,7 @@ describe('anonymous callers', () => {
   it('are refused every protected surface', async () => {
     for (const path of [
       '/api/auth/me',
+      '/api/auth/mfa',
       '/api/connections',
       `/api/connections/${ids.aliceConn}`,
       '/api/admin/users',
@@ -148,6 +149,28 @@ describe('anonymous callers', () => {
     expect(unknown.status).toBe(401);
     expect(wrong.status).toBe(401);
     expect(unknown.body).toEqual(wrong.body);
+  });
+});
+
+describe('login hardening routes', () => {
+  it('registers MFA as a normal authenticated route, independent of Google sign-in', async () => {
+    const res = await call('/api/auth/mfa', { jar: cookies.alice });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: false, recoveryCodesRemaining: 0 });
+  });
+
+  it('keeps password-reset requests enumeration-safe', async () => {
+    const pre = await call('/api/auth/csrf');
+    const jar = mergeJar(undefined, pre.setCookie);
+    const known = await call('/api/auth/forgot-password', {
+      method: 'POST', jar, body: { identifier: 'alice' },
+    });
+    const unknown = await call('/api/auth/forgot-password', {
+      method: 'POST', jar, body: { identifier: 'nobody-here' },
+    });
+    expect(known.status).toBe(200);
+    expect(unknown.status).toBe(200);
+    expect(known.body).toEqual(unknown.body);
   });
 });
 

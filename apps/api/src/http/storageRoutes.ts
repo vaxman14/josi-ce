@@ -302,6 +302,25 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
     }),
   );
 
+  r.get(
+    '/documents',
+    handle(async (req, res) => {
+      const limit = Math.max(1, Math.min(Number(req.query?.limit) || 100, 200));
+      const documents = await db.query(
+        `select d.id, d.filename, d.extension, d.byte_size, d.state, d.skip_reason,
+                d.updated_at, m.display_path as folder
+         from documents d join folder_mappings m on m.id = d.mapping_id
+         where d.owner_user_id = $1 order by d.updated_at desc limit $2`,
+        [req.user!.id, limit],
+      );
+      return res.json({ documents: (documents as Array<Record<string, unknown>>).map((document) => ({
+        id: document.id, filename: document.filename, extension: document.extension,
+        byteSize: document.byte_size, state: document.state, skipReason: document.skip_reason,
+        updatedAt: document.updated_at, folder: document.folder,
+      })) });
+    }),
+  );
+
   /** M51: agreeing to send document text to an embedding service. */
   r.get(
     '/semantic',

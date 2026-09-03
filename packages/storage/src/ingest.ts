@@ -242,4 +242,5 @@ export const SKIP_EXPLANATIONS: Record<SkipReason, string> = {
   malware_found: 'A malware scan flagged this file. It has been left exactly as it was, and nothing was read from it.',
   quota_exceeded: 'You have reached your storage limit, so this file was not indexed.',
   unsupported_type: 'Josi cannot read this kind of file yet.',
+  credential_detected: 'This looks like a credential or recovery-code file, so Josi deliberately did not index it.',
 };

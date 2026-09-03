@@ -87,6 +87,13 @@ export const ACTION_CLASSES: readonly ActionClassSpec[] = Object.freeze([
     factoryCeiling: 'always_ask',
   },
   {
+    key: 'contacts_write',
+    label: 'Creating and changing contacts',
+    description: 'Adding or editing a person in a connected address book.',
+    impact: 'routine',
+    factoryCeiling: 'always_ask',
+  },
+  {
     key: 'task_management',
     label: 'Creating and changing tasks',
     description: 'Work Josi tracks for you. Nothing leaves this installation.',

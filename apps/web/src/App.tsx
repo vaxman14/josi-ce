@@ -3,6 +3,8 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Shell } from '@/components/layout/Shell';
 import { Login } from '@/pages/Login';
+import { ForgotPassword } from '@/pages/ForgotPassword';
+import { SetPassword } from '@/pages/SetPassword';
 import { Setup } from '@/pages/Setup';
 import { Home } from '@/pages/Home';
 import { Talk } from '@/pages/Talk';
@@ -117,6 +119,8 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/set-password" element={<SetPassword />} />
 
       <Route path="/app" element={<RequireAuth><Shell /></RequireAuth>}>
         <Route index element={<Home />} />

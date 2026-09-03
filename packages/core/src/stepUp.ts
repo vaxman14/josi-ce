@@ -50,6 +50,7 @@ export const SENSITIVE_ACTIONS = [
   'delete_data',
   'send_as_user',
   'send_approved_email',
+  'approve_task',
   // CE-specific: handing another person access to your own private resource is
   // as consequential as sending mail as you, and is the one an attacker on a
   // borrowed session would reach for to make their access outlive the session.

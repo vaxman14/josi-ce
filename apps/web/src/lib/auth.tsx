@@ -9,7 +9,8 @@ import { api, primeCsrf, type User } from './api';
 interface AuthValue {
   user: User | null;
   loading: boolean;
-  signIn: (identifier: string, password: string) => Promise<void>;
+  signIn: (identifier: string, password: string, rememberMe?: boolean) => Promise<string | null>;
+  finishMfa: (challenge: string, code: string) => Promise<void>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -33,10 +34,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { void primeCsrf().then(refresh); }, [refresh]);
 
-  const signIn = useCallback(async (identifier: string, password: string) => {
+  const signIn = useCallback(async (identifier: string, password: string, rememberMe = false) => {
     await primeCsrf();
-    const result = await api.post<{ user: User }>('/auth/login', { identifier, password });
-    setUser(result.user);
+    const result = await api.post<{ user?: User; mfaRequired?: boolean; challenge?: string }>('/auth/login', { identifier, password, rememberMe });
+    if (result.mfaRequired && result.challenge) return result.challenge;
+    setUser(result.user ?? null); return null;
+  }, []);
+
+  const finishMfa = useCallback(async (challenge: string, code: string) => {
+    const result = await api.post<{ user: User }>('/auth/mfa/verify-login', { challenge, code }); setUser(result.user);
   }, []);
 
   const signOut = useCallback(async () => {
@@ -45,8 +51,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, signIn, signOut, refresh }),
-    [user, loading, signIn, signOut, refresh],
+    () => ({ user, loading, signIn, finishMfa, signOut, refresh }),
+    [user, loading, signIn, finishMfa, signOut, refresh],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

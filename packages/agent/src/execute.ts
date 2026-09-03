@@ -48,6 +48,14 @@ export async function executeAssistantTool(
   }
 
   switch (name) {
+    case 'draft_email':
+    case 'draft_calendar_event':
+    case 'draft_contact_update': {
+      const templateKey = name === 'draft_email' ? 'send_message' : name === 'draft_calendar_event' ? 'schedule_appointment' : 'update_contact';
+      const task = await createTask(db, { ownerUserId: userId, templateKey, slots: input, threadId: ctx.threadId ?? undefined });
+      await transition(db, task.id, 'awaiting_approval', { actor: 'agent', actorUserId: userId });
+      return { ok: true, task_id: task.id, state: 'awaiting_approval', message: 'Prepared, but not carried out. Ask the user to approve this exact task before calling approve_task.' };
+    }
     case 'list_task_types': {
       const templates = await listTemplates(db);
       return {
@@ -197,6 +205,19 @@ export async function executeAssistantTool(
           document_id: h.documentId,
         })),
       };
+    }
+
+    case 'list_documents': {
+      const limit = Math.max(1, Math.min(Number(input.limit) || 50, 100));
+      const documents = await db.query<{
+        id: string; filename: string; state: string; skip_reason: string | null; folder: string;
+      }>(
+        `select d.id, d.filename, d.state, d.skip_reason, m.display_path as folder
+         from documents d join folder_mappings m on m.id = d.mapping_id
+         where d.owner_user_id = $1 order by d.updated_at desc limit $2`,
+        [userId, limit],
+      );
+      return { ok: true, documents };
     }
 
     case 'list_reminders': {

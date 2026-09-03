@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, ErrorNote, NotYet } from '@/components/ui';
 import { CloudFolders } from '@/components/CloudFolders';
+import { plain } from '@/lib/plainLanguage';
 
 interface Capability {
   key: string;
@@ -220,8 +221,22 @@ export function Connections() {
           follow later; they are not available yet.
         </p>
       </Card>
+      <DocumentInventory />
     </div>
   );
+}
+
+function DocumentInventory() {
+  const [documents, setDocuments] = useState<Array<{ id: string; filename: string; state: string; skipReason: string | null; folder: string }>>([]);
+  useEffect(() => { void api.get<{ documents: typeof documents }>('/storage/documents?limit=100').then((r) => setDocuments(r.documents)).catch(() => undefined); }, []);
+  if (!documents.length) return null;
+  return <Card><CardTitle>Files Josi can see</CardTitle><ul className="max-h-80 space-y-2 overflow-y-auto">
+    {documents.map((document) => <li key={document.id} className="flex min-w-0 items-start justify-between gap-3 border-t border-border pt-2 first:border-0">
+      <div className="min-w-0"><p className="truncate text-sm font-medium">{document.filename}</p><p className="truncate text-xs text-muted-foreground">{document.folder}</p>
+      {document.skipReason ? <p className="text-xs text-destructive">Skipped: {document.skipReason.replace(/_/g, ' ')}</p> : null}</div>
+      <Badge tone={document.state === 'indexed' ? 'ok' : 'muted'}>{plain('document_state', document.state)}</Badge>
+    </li>)}
+  </ul></Card>;
 }
 
 function CapabilityControl({

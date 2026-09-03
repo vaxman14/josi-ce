@@ -25,6 +25,7 @@
 // closest thing to Safari on an iPhone that runs unattended.
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ApiError, type Message, type Thread, type TurnResult } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 
 /** "Today", "Yesterday", or the date — the label WhatsApp taught everyone. */
 function dayLabel(at: Date): string {
@@ -37,12 +38,17 @@ function dayLabel(at: Date): string {
 }
 import { Button, ErrorNote } from '@/components/ui';
 
+const talkCache = new Map<string, { thread: Thread; messages: Message[] }>();
+
 export function Talk() {
-  const [thread, setThread] = useState<Thread | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const { user } = useAuth();
+  const cached = user ? talkCache.get(user.id) : undefined;
+  const [thread, setThread] = useState<Thread | null>(cached?.thread ?? null);
+  const [messages, setMessages] = useState<Message[]>(cached?.messages ?? []);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!cached);
   const [sending, setSending] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState('');
   const end = useRef<HTMLDivElement>(null);
   const inputElement = useRef<HTMLTextAreaElement>(null);
@@ -50,6 +56,7 @@ export function Talk() {
 
   // The most recent thread, or a new one. A member always has somewhere to talk.
   useEffect(() => {
+    if (!user || talkCache.has(user.id)) return;
     void (async () => {
       try {
         const { threads } = await api.get<{ threads: Thread[] }>('/assistant/threads');
@@ -58,9 +65,11 @@ export function Talk() {
           setThread(existing);
           const detail = await api.get<{ messages: Message[] }>(`/assistant/threads/${existing.id}`);
           setMessages(detail.messages);
+          talkCache.set(user.id, { thread: existing, messages: detail.messages });
         } else {
           const created = await api.post<{ thread: Thread }>('/assistant/threads', { title: 'Talk' });
           setThread(created.thread);
+          talkCache.set(user.id, { thread: created.thread, messages: [] });
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not open the conversation');
@@ -68,7 +77,11 @@ export function Talk() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [user]);
+
+  useEffect(() => {
+    if (user && thread) talkCache.set(user.id, { thread, messages });
+  }, [messages, thread, user]);
 
   // Never animate through the full transcript when a message is sent. On a
   // long thread, that looked exactly like the conversation was being fetched
@@ -97,12 +110,12 @@ export function Talk() {
     // Read the DOM value as well as React state: iOS can display composition
     // text before a controlled component catches up.
     const body = (inputElement.current?.value ?? input).trim();
-    if (!thread || !body || sendLock.current) return;
+    if (!thread || (!body && !files.length) || sendLock.current) return;
     sendLock.current = true;
 
     const optimistic: Message = {
       id: `pending-${Math.random().toString(36).slice(2)}`,
-      thread_id: thread.id, direction: 'in', channel: 'web', body,
+      thread_id: thread.id, direction: 'in', channel: 'web', body: body || 'Sent an attachment',
       created_at: new Date().toISOString(),
     };
     setMessages((current) => [...current, optimistic]);
@@ -111,7 +124,14 @@ export function Talk() {
     setError('');
 
     try {
-      const result = await api.post<TurnResult>(`/assistant/threads/${thread.id}/talk`, { message: body });
+      const attachmentIds: string[] = [];
+      for (const file of files) {
+        const form = new FormData(); form.append('file', file);
+        const uploaded = await api.upload<{ attachment: { id: string } }>(`/assistant/threads/${thread.id}/attachments`, form);
+        attachmentIds.push(uploaded.attachment.id);
+      }
+      const result = await api.post<TurnResult>(`/assistant/threads/${thread.id}/talk`, { message: body, attachmentIds });
+      setFiles([]);
       if (result.reply !== undefined) {
         setMessages((current) => [...current, {
           id: `reply-${Math.random().toString(36).slice(2)}`,
@@ -194,6 +214,11 @@ export function Talk() {
                       : 'rounded-bl-md border border-border bg-secondary text-secondary-foreground'
                   }`}
                 >
+                  {message.meta?.attachments?.length ? (
+                    <div className="mb-1 space-y-1 text-xs opacity-80">
+                      {message.meta.attachments.map((attachment) => <div key={attachment.id}>📎 {attachment.filename}</div>)}
+                    </div>
+                  ) : null}
                   {message.body}
                   <span className={`ml-2 inline-block translate-y-0.5 select-none whitespace-nowrap text-[10px] leading-none ${
                     mine ? 'text-primary-foreground/70' : 'text-muted-foreground'
@@ -215,6 +240,10 @@ export function Talk() {
           onSubmit={(event) => { event.preventDefault(); void send(); }}
           className="flex min-w-0 items-end gap-2 rounded-lg border border-input bg-background p-1.5 focus-within:ring-2 focus-within:ring-ring"
         >
+          <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-xl hover:bg-secondary" aria-label="Attach pictures or files">
+            <span aria-hidden>＋</span>
+            <input type="file" multiple className="sr-only" accept="image/*,.pdf,.doc,.docx,.rtf,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.md,.csv" onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 10))} />
+          </label>
           <textarea
             ref={inputElement}
             value={input}
@@ -233,6 +262,7 @@ export function Talk() {
             <span aria-hidden>↑</span>
           </Button>
         </form>
+        {files.length ? <p className="mt-1 truncate text-xs text-muted-foreground">Attached: {files.map((file) => file.name).join(', ')}</p> : null}
       </footer>
     </div>
   );

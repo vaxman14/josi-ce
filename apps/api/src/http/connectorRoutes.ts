@@ -42,6 +42,14 @@ class RouteError extends Error {
 const str = (v: unknown, max = 500): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const PROVIDERS: Provider[] = ['google', 'microsoft'];
 
+async function publicAppUrl(db: Db, fallback: string): Promise<string> {
+  const [deployment] = await db.query<{ domain: string }>(
+    `select domain from deployment_config where id = true`,
+  );
+  const domain = deployment?.domain?.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+  return domain ? `https://${domain}` : fallback.replace(/\/$/, '');
+}
+
 function isProvider(value: string): value is Provider {
   return (PROVIDERS as string[]).includes(value);
 }
@@ -402,6 +410,7 @@ export function adminConnectorRoutes(ctx: ConnectorRoutesCtx): Router {
   r.get(
     '/',
     handle(async (_req, res) => {
+      const appUrl = await publicAppUrl(db, ctx.appUrl);
       const policy = await db.query<{ capability: string; allowed: boolean; note: string | null }>(
         `select capability, allowed, note from admin_capability_policy`,
       );
@@ -423,7 +432,8 @@ export function adminConnectorRoutes(ctx: ConnectorRoutesCtx): Router {
         // knows what to paste into Google's or Microsoft's console.
         suggestedRedirectUris: PROVIDERS.map((provider) => ({
           provider,
-          uri: `${ctx.appUrl.replace(/\/$/, '')}/api/connections/${provider}/callback`,
+          uri: `${appUrl}/api/connections/${provider}/callback`,
+          additionalUris: provider === 'google' ? [`${appUrl}/api/auth/google/callback`] : [],
         })),
       });
     }),

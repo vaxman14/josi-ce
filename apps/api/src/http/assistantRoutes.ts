@@ -8,19 +8,25 @@
 //     confirm a colleague has one.
 //   * The super admin gets nothing here. Not a thread, not a task, not a
 //     message. Their surface is `/api/admin/assistant`, which returns counts.
+import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { extname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { Router, type Request, type Response } from 'express';
+import multer from 'multer';
 import {
   addMessage, appendEvent, createContact, createTask, createThread, decideApproval,
   getTask, getTemplate, getThread, listContactsFor, listMessages, listPendingApprovals,
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
-  canWrite, recordExchange, reminderOverview, cancelReminder,
+  canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
 import { runAssistantTurn, type RecallLookup } from '@josi-ce/agent';
 import type { LoadOptions } from '@josi-ce/core';
 import { loadMasterKey } from '@josi-ce/core';
+import { extractRichSegments, looksLikeCredentialFile } from '@josi-ce/storage';
 import { asyncRoute, param } from './async.js';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
 
@@ -65,6 +71,8 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
   r.use(requireAuth);
+  const uploadDir = process.env.JOSI_UPLOAD_DIR ?? (process.env.NODE_ENV === 'test' ? join(tmpdir(), 'josi-chat-attachments') : '/data/chat-attachments');
+  const receive = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
 
   const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
     asyncRoute(async (req: Request, res: Response) => {
@@ -113,6 +121,27 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       res.json({ threads: await listThreadsFor(db, { ownerUserId: req.user!.id }) })),
   );
 
+  r.post('/threads/:id/attachments', requireOwnership({ db }, { type: 'thread', need: 'write' }), receive.single('file'),
+    handle(async (req, res) => {
+      if (!req.file) throw new RouteError(400, 'choose a file first');
+      const filename = req.file.originalname.slice(0, 240);
+      if (looksLikeCredentialFile(filename, req.file.mimetype.startsWith('text/') ? req.file.buffer.toString('utf8') : '')) {
+        throw new RouteError(400, 'That looks like a password, key, token, or recovery-code file. Josi will not upload it.');
+      }
+      const extension = extname(filename).replace(/^\./, '').toLowerCase();
+      const segments = await extractRichSegments({ extension, bytes: req.file.buffer }).catch(() => null);
+      const id = randomUUID(); const storagePath = join(uploadDir, id);
+      mkdirSync(uploadDir, { recursive: true, mode: 0o700 });
+      await import('node:fs/promises').then((fs) => fs.writeFile(storagePath, req.file!.buffer, { mode: 0o600 }));
+      await db.query(
+        `insert into chat_attachments (id, owner_user_id, thread_id, filename, content_type, byte_size, storage_path, extracted_text)
+         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [id, req.user!.id, param(req, 'id'), filename, req.file.mimetype || 'application/octet-stream', req.file.size,
+          storagePath, segments?.map((s) => s.content).join('\n').slice(0, 100_000) || null],
+      );
+      return res.status(201).json({ attachment: { id, filename, contentType: req.file.mimetype, byteSize: req.file.size } });
+    }));
+
   r.post(
     '/threads',
     handle(async (req, res) => {
@@ -146,7 +175,9 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     handle(async (req, res) => {
       const threadId = param(req, 'id');
       const inbound = str(req.body?.message, 8000);
-      if (!inbound) throw new RouteError(400, 'say something');
+      const attachmentIds = Array.isArray(req.body?.attachmentIds)
+        ? req.body.attachmentIds.map((id: unknown) => str(id, 80)).filter(Boolean).slice(0, 10) : [];
+      if (!inbound && !attachmentIds.length) throw new RouteError(400, 'say something or attach a file');
 
       const thread = await getThread(db, threadId);
       if (!thread) throw new RouteError(404, 'not found');
@@ -160,13 +191,24 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         content: m.body,
       }));
 
+      const attachments = attachmentIds.length ? await db.query<{ id: string; filename: string; content_type: string; extracted_text: string | null }>(
+        `select id, filename, content_type, extracted_text from chat_attachments
+         where id = any($1::uuid[]) and thread_id = $2 and owner_user_id = $3`,
+        [attachmentIds, threadId, thread.owner_user_id],
+      ) : [];
+      if (attachments.length !== attachmentIds.length) throw new RouteError(404, 'one of those attachments is not available');
+      const attachmentContext = attachments.map((a) => a.extracted_text
+        ? `Attached file ${a.filename}:\n${a.extracted_text}`
+        : `Attached file ${a.filename} (${a.content_type}); no readable text was extracted.`).join('\n\n');
+      const modelInbound = [inbound, attachmentContext].filter(Boolean).join('\n\n');
+      const attachmentMeta = attachments.map((a) => ({ id: a.id, filename: a.filename, contentType: a.content_type }));
       const result = await runAssistantTurn({
         db,
         registry: registryOptions(ctx),
         userId: thread.owner_user_id,
         threadId,
         history,
-        inbound,
+        inbound: modelInbound,
         recall: ctx.recall,
         connectorFetch: ctx.connectorFetch,
         sessionKey: req.user!.session_id,
@@ -175,16 +217,15 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       if (result.refusal) {
         // Recorded as an inbound message so the conversation is not silently
         // missing what the person said, but no reply is fabricated.
-        await addMessage(db, { threadId, direction: 'in', body: inbound });
+        await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
         return res.status(503).json({ refusal: result.refusal, actions: result.actions });
       }
 
-      await recordExchange(db, {
-        ownerUserId: thread.owner_user_id,
-        threadId,
-        inbound,
-        reply: result.reply,
-      });
+      await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
+      await addMessage(db, { threadId, direction: 'out', body: result.reply });
+      await appendEvent(db, { actorUserId: thread.owner_user_id, actor: 'user', kind: 'thread.exchange',
+        subjectType: 'thread', subjectId: threadId,
+        payload: { channel: 'web', inboundChars: inbound.length, attachmentCount: attachments.length, replyChars: result.reply.length } });
       return res.json({ reply: result.reply, actions: result.actions });
     }),
   );
@@ -241,8 +282,13 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       }
       const state = str(req.body?.state, 40) as TaskState | '';
       if (state) {
+        if (state === 'ready') {
+          const stepUp = await checkStepUp(db, { userId: req.user!.id, sessionKey: req.user!.session_id, action: 'approve_task' });
+          if (!stepUp.allowed) throw new RouteError(401, stepUp.message ?? 'Confirm your password before approving this action.');
+        }
         try {
           await transition(db, taskId, state, { actor: 'user', actorUserId: req.user!.id });
+          if (state === 'ready') await enqueue(db, { kind: 'task.wake', payload: { taskId } });
         } catch (err) {
           // An illegal transition is the caller's mistake, not a server fault.
           throw new RouteError(409, (err as Error).message);

@@ -131,6 +131,17 @@ export const TASK_TOOLS: ToolSpec[] = [
   },
   {
     def: {
+      name: 'list_documents',
+      description: 'List the user\'s own indexed and skipped documents with filenames, folder labels, states, and skip reasons. Use this when the user asks what Josi can see rather than searching for a phrase.',
+      parameters: {
+        type: 'object',
+        properties: { limit: { type: 'number', description: 'Maximum items, up to 100.' } },
+      },
+    },
+    actionClass: null,
+  },
+  {
+    def: {
       name: 'list_reminders',
       description: "List the user's own upcoming reminders, with each one's id and delivery time.",
       parameters: { type: 'object', properties: {} },
@@ -148,6 +159,23 @@ export const TASK_TOOLS: ToolSpec[] = [
       },
     },
     actionClass: 'task_management',
+  },
+  {
+    def: { name: 'draft_email', description: 'Prepare an email for the user to approve before it is sent.', parameters: {
+      type: 'object', properties: { recipient: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' }, cc: { type: 'array', items: { type: 'string' } } },
+      required: ['recipient', 'subject', 'body'],
+    } }, actionClass: 'email_send', requiresCapability: 'email_send',
+  },
+  {
+    def: { name: 'draft_calendar_event', description: 'Prepare a calendar event creation or edit for the user to approve.', parameters: {
+      type: 'object', properties: { event_id: { type: 'string' }, title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' }, attendees: { type: 'array', items: { type: 'string' } } },
+      required: ['title', 'start', 'end'],
+    } }, actionClass: 'calendar_write', requiresCapability: 'calendar_write',
+  },
+  {
+    def: { name: 'draft_contact_update', description: 'Prepare a contact creation or update for the user to approve.', parameters: {
+      type: 'object', properties: { contact_id: { type: 'string' }, name: { type: 'string' }, email: { type: 'string' }, phone: { type: 'string' }, notes: { type: 'string' } }, required: ['name'],
+    } }, actionClass: 'contacts_write', requiresCapability: 'contacts_write',
   },
 ];
 

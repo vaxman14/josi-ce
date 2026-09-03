@@ -130,7 +130,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     connectorFetch: cfg.connectorFetch,
     mailTransport: cfg.mailTransport,
   }));
-  api.use('/auth', authRoutes({ db, cookieSecure: cfg.cookieSecure }));
+  api.use('/auth', authRoutes({
+    db, cookieSecure: cfg.cookieSecure, appUrl: cfg.appUrl,
+    masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport, connectorFetch: cfg.connectorFetch,
+  }));
   // Phase 7 owns /connections now: the Phase 1 router proved the ownership
   // shape against a real table; this one actually connects accounts.
   api.use('/connections', connectorRoutes({

@@ -9,9 +9,9 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "nodemailer": "^6.9.16"
+    "nodemailer": "^9.1.1"
   },
   "devDependencies": {
-    "@types/nodemailer": "^6.4.17"
+    "@types/nodemailer": "^8.0.1"
   }
 }

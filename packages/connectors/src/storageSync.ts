@@ -30,7 +30,8 @@
 // exist. Graph's per-folder delta is a candidate optimisation for later.
 import { appendEvent, type Db, type MasterKey } from '@josi-ce/core';
 import {
-  ScanBlocked, extractSegments, ingestFile, looksEncrypted, recordSyncFailure, sha256, skipDocument,
+  ScanBlocked, extractRichSegments, ingestFile, looksEncrypted, looksLikeCredentialFile,
+  recordSyncFailure, sha256, skipDocument,
   storagePolicy, storeExtraction, type Scanner, type StoragePolicy,
 } from '@josi-ce/storage';
 import { STORAGE_CAPABILITY, type Provider } from './capabilities.js';
@@ -433,10 +434,16 @@ async function ingestOne(
     return;
   }
 
-  const segments = extractSegments({
-    extension: entry.exportExtension ?? extensionOf(filename),
-    bytes: content,
-  });
+  const extension = entry.exportExtension ?? extensionOf(filename);
+  if (looksLikeCredentialFile(filename, extension === 'txt' ? content.toString('utf8') : '')) {
+    await skipDocument(db, {
+      documentId: outcome.documentId, ownerUserId: mapping.owner_user_id, reason: 'credential_detected',
+    });
+    counts.skipped++;
+    return;
+  }
+  let segments = null;
+  try { segments = await extractRichSegments({ extension, bytes: content }); } catch { segments = null; }
   if (!segments) {
     await skipDocument(db, {
       documentId: outcome.documentId, ownerUserId: mapping.owner_user_id, reason: 'unsupported_type',
