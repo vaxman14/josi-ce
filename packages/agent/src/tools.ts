@@ -111,6 +111,25 @@ export const TASK_TOOLS: ToolSpec[] = [
   },
   {
     def: {
+      name: 'search_documents',
+      description:
+        'Search the text of documents the user has connected and indexed (mapped folders, Google '
+        + 'Drive, OneDrive). Read-only. Returns matching passages with a citation for each. If '
+        + 'nothing is indexed, it says so — report that honestly rather than guessing at file '
+        + 'contents.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'What to look for, in plain words.' },
+        },
+        required: ['query'],
+      },
+    },
+    // Reads only. Owner-scoped by construction in the executor.
+    actionClass: null,
+  },
+  {
+    def: {
       name: 'list_reminders',
       description: "List the user's own upcoming reminders, with each one's id and delivery time.",
       parameters: { type: 'object', properties: {} },

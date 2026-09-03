@@ -16,6 +16,7 @@ import {
   listTasksFor, listTemplates, missingSlots, setSlots, transition,
   type Db,
 } from '@josi-ce/core';
+import { citationLabel, searchDocuments } from '@josi-ce/storage';
 
 export interface ToolExecutionContext {
   /** Whose work this is. Everything created belongs to them. Never a value
@@ -151,6 +152,38 @@ export async function executeAssistantTool(
         // Stated so the model does not promise more than delivery: the message
         // comes back, it is not an autonomous action.
         will_be_delivered: 'Josi will send this message back to the user at that time.',
+      };
+    }
+
+    case 'search_documents': {
+      const query = String(input.query ?? '').trim();
+      if (!query) return { ok: false, error: 'bad_query', message: 'Say what to search for.' };
+      // Owner-scoped by construction: `searchDocuments` requires the owner and
+      // every query inside it is keyed on it. There is no argument the model
+      // could pass that widens this beyond the person asking.
+      const hits = await searchDocuments(db, { ownerUserId: userId, query, limit: 8 });
+      if (!hits.length) {
+        const [indexed] = await db.query<{ n: number }>(
+          `select count(*)::int as n from documents where owner_user_id = $1 and state = 'indexed'`,
+          [userId],
+        );
+        return {
+          ok: true,
+          hits: [],
+          // Two different honest sentences: "nothing matched" and "there is
+          // nothing to search" send the person to different fixes.
+          message: (indexed?.n ?? 0) > 0
+            ? `No indexed document matched that. ${indexed.n} document(s) are indexed and searchable.`
+            : 'No documents are indexed yet. Connect a folder on the Connections page and turn on indexing first.',
+        };
+      }
+      return {
+        ok: true,
+        hits: hits.map((h) => ({
+          citation: citationLabel(h),
+          snippet: h.snippet,
+          document_id: h.documentId,
+        })),
       };
     }
 
