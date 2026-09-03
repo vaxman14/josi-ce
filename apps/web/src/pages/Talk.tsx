@@ -15,16 +15,16 @@
 //   * h-11 w-11 on the button — 44x44, the iOS tap target minimum.
 //   * pb-[max(...,env(safe-area-inset-bottom))] plus viewport-fit=cover in
 //     index.html, or the composer sits under the home indicator.
-//   * --josi-visible-height from visualViewport. Chrome's iOS wrapper reports
-//     100dvh as including its own toolbar, so a composer pinned to the bottom
-//     ends up beneath it. CSS viewport units alone do not fix this.
+//   * Plain 100dvh height, normal flex flow, NO VisualViewport JS. A previous
+//     round drove the height from a VisualViewport handler and the composer
+//     shot to the top of the screen when the keyboard opened (round-2 item
+//     25). iOS pans the focused field into view natively; let it.
 //   * A send lock, because a double tap must not send twice.
 //
 // The e2e suite taps this button in WebKit with touch emulation, which is the
 // closest thing to Safari on an iPhone that runs unattended.
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ApiError, type Message, type Thread, type TurnResult } from '@/lib/api';
-import { viewportState, type ViewportState } from '@/lib/viewport';
 
 /** "Today", "Yesterday", or the date — the label WhatsApp taught everyone. */
 function dayLabel(at: Date): string {
@@ -48,30 +48,6 @@ export function Talk() {
   const inputElement = useRef<HTMLTextAreaElement>(null);
   const sendLock = useRef(false);
 
-  // Keep the composer inside the pixels a thumb can actually reach.
-  //
-  // --josi-visible-height is published globally by lib/viewport.ts. What this
-  // page adds is keyboard awareness: when the iOS keyboard is up, the bottom
-  // nav is hidden (it sits under the keyboard) and the shell's clearance for it
-  // collapses, so the chrome we subtract shrinks from 10rem to 5rem — otherwise
-  // the conversation shrinks to a sliver and the composer floats in dead space
-  // (Roman's round-2 screenshot). iOS also pans the page when a field focuses;
-  // snapping scroll back to 0 keeps the layout and visual viewports aligned,
-  // since with our own height math everything already fits on screen.
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-  useEffect(() => {
-    const onViewport = (event: Event) => {
-      const state = (event as CustomEvent<ViewportState>).detail ?? viewportState();
-      setKeyboardOpen((open) => {
-        if (state.keyboardOpen && !open) window.scrollTo(0, 0);
-        return state.keyboardOpen;
-      });
-    };
-    setKeyboardOpen(viewportState().keyboardOpen);
-    window.addEventListener('josi:viewport', onViewport);
-    return () => window.removeEventListener('josi:viewport', onViewport);
-  }, []);
-
   // The most recent thread, or a new one. A member always has somewhere to talk.
   useEffect(() => {
     void (async () => {
@@ -94,9 +70,7 @@ export function Talk() {
     })();
   }, []);
 
-  // keyboardOpen is in the deps because opening the keyboard reshapes the list;
-  // without a re-scroll the newest message can end up hidden above the fold.
-  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending, keyboardOpen]);
+  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
 
   async function send(): Promise<void> {
     // Read the DOM value as well as React state: iOS can display composition
@@ -148,9 +122,16 @@ export function Talk() {
 
   return (
     <div
+      // The chat sizes itself with plain 100dvh and lives in normal flow: a
+      // flex column of header / scrolling list / composer. When the iOS
+      // keyboard opens, Safari pans the visual viewport to keep the focused
+      // composer visible — native behaviour, no JS. The previous release drove
+      // this height from a VisualViewport handler and the composer ended up
+      // rendered at the TOP of the screen with the history invisible (round-2
+      // item 25). data-viewport-managed opts out of the global focus helper.
       data-viewport-managed
       className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-card"
-      style={{ height: `calc(var(--josi-visible-height, 100dvh) - ${keyboardOpen ? '5rem' : '10rem'})` }}
+      style={{ height: 'calc(100dvh - 10rem)' }}
     >
       <header className="flex min-w-0 items-center gap-2 border-b border-border px-4 py-3">
         <img src="/brand/josi-mark.png" alt="" width={28} height={28} className="h-7 w-7 rounded-md" />

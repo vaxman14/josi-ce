@@ -1,35 +1,26 @@
-// iOS keyboard-aware viewport tracking. One module, initialised once.
+// Mobile keyboard handling, the boring way.
 //
-// The problem class (Roman's round-2 item 23, two iPhone screenshots): the iOS
-// keyboard does NOT resize the layout viewport. 100vh, 100dvh and `height:100%`
-// all keep their pre-keyboard value; only window.visualViewport shrinks. So a
-// login form centred in `min-h-full` has no scroll room and the password field
-// disappears under the keyboard, and a chat layout sized in dvh collapses into
-// dead space. The fixes all hang off the same primitive: publish the REAL
-// visible height as CSS variables and a `keyboard-open` class, and nudge the
-// focused field into view ourselves.
+// Round-2 item 25 taught the expensive lesson: a VisualViewport JS positioning
+// layer (CSS variables, keyboard-open classes, window.scrollTo, per-keystroke
+// re-layout) is itself the source of exactly the bugs it tries to fix — the
+// login field twitching on focus, the Talk composer flying to the top of the
+// screen, and re-render churn that read as the history reloading. All of that
+// is gone. What remains:
 //
-// Published on <html>:
-//   --josi-visible-height   visualViewport.height in px (fallback: innerHeight)
-//   --josi-keyboard-inset   px of layout viewport hidden by the keyboard
-//   .keyboard-open          present while the inset looks like a keyboard
+//   * index.html declares `interactive-widget=resizes-content`, so browsers
+//     that support it (Chrome/Android) resize the layout viewport themselves.
+//   * Layouts use 100dvh / normal flex flow; iOS Safari pans the visual
+//     viewport to keep a focused field visible, which is native and smooth.
+//   * The ONE thing iOS occasionally gets wrong — a focused field left sitting
+//     under the keyboard on a page with no scroll room — is corrected here:
+//     a single debounced check after the keyboard animation settles, which
+//     scrolls the field into view ONLY if it is actually hidden. No resize
+//     listeners, no CSS variables, no repeated fights with Safari's own pan.
 //
-// A `josi:viewport` CustomEvent fires on every change so components (Talk)
-// can react without each wiring their own listeners.
-
-export type ViewportState = { visibleHeight: number; keyboardInset: number; keyboardOpen: boolean };
-
-/** Anything smaller reads as browser chrome settling, not a keyboard. */
-const KEYBOARD_THRESHOLD_PX = 80;
+// Containers that manage their own scrolling (Talk) opt out with
+// data-viewport-managed.
 
 let initialised = false;
-
-export function viewportState(): ViewportState {
-  const viewport = window.visualViewport;
-  const visibleHeight = Math.round(viewport?.height ?? window.innerHeight);
-  const keyboardInset = Math.max(0, Math.round(window.innerHeight - ((viewport?.height ?? window.innerHeight) + (viewport?.offsetTop ?? 0))));
-  return { visibleHeight, keyboardInset, keyboardOpen: keyboardInset > KEYBOARD_THRESHOLD_PX };
-}
 
 function isTextField(el: EventTarget | null): el is HTMLElement {
   if (!(el instanceof HTMLElement)) return false;
@@ -37,38 +28,33 @@ function isTextField(el: EventTarget | null): el is HTMLElement {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
+/** True when the element is fully inside the area the user can actually see
+ * (the visual viewport — the part not covered by the iOS keyboard). */
+function fullyVisible(el: HTMLElement): boolean {
+  const rect = el.getBoundingClientRect();
+  const viewport = window.visualViewport;
+  const top = viewport?.offsetTop ?? 0;
+  const height = viewport?.height ?? window.innerHeight;
+  return rect.top >= top && rect.bottom <= top + height;
+}
+
 export function initViewportTracking(): void {
   if (initialised || typeof window === 'undefined') return;
   initialised = true;
 
-  const root = document.documentElement;
-  const sync = () => {
-    const state = viewportState();
-    root.style.setProperty('--josi-visible-height', `${state.visibleHeight}px`);
-    root.style.setProperty('--josi-keyboard-inset', `${state.keyboardInset}px`);
-    root.classList.toggle('keyboard-open', state.keyboardOpen);
-    window.dispatchEvent(new CustomEvent<ViewportState>('josi:viewport', { detail: state }));
-  };
-
-  sync();
-  const viewport = window.visualViewport;
-  viewport?.addEventListener('resize', sync);
-  viewport?.addEventListener('scroll', sync);
-  window.addEventListener('resize', sync);
-  window.addEventListener('orientationchange', sync);
-
-  // iOS Safari scrolls a focused field "into view" against the LAYOUT viewport,
-  // which can still leave it under the keyboard (the login screenshot). After
-  // the keyboard animation settles, put the field in the middle of what is
-  // actually visible. Containers that manage their own keyboard layout (Talk)
-  // opt out with data-viewport-managed.
+  let pending = 0;
   window.addEventListener('focusin', (event) => {
     const target = event.target;
     if (!isTextField(target)) return;
     if (target.closest('[data-viewport-managed]')) return;
-    window.setTimeout(() => {
+    // One check per focus, after the keyboard animation settles. Re-focusing
+    // (or iOS re-dispatching focus during its own pan) resets the timer rather
+    // than stacking corrections — the double-fire was the ~3mm login jitter.
+    window.clearTimeout(pending);
+    pending = window.setTimeout(() => {
       if (document.activeElement !== target) return;
+      if (fullyVisible(target)) return; // Safari already handled it. Do nothing.
       target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }, 350);
+    }, 400);
   });
 }
