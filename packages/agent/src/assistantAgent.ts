@@ -34,6 +34,9 @@ import {
   CAUTION_ORDER, assembleSystemContext, extractDurableFacts, loadAll,
   narrowPolicy, relevantMemories, suggestMemory, type Memory,
 } from '@josi-ce/persona';
+import {
+  CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsCompletedAction,
+} from './claimGuard.js';
 import { executeAssistantTool } from './execute.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
 
@@ -194,6 +197,10 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // transcript a lie about what was asked.
   const messages: ChatMessage[] = [...args.history, { role: 'user', content: args.inbound }];
 
+  // Claims require receipts (round-2 item 12). One corrective re-prompt is
+  // allowed per turn; a model that fabricates twice gets its reply replaced.
+  let claimGuardReprompted = false;
+
   for (let hop = 0; hop < (args.maxHops ?? HOP_LIMIT); hop++) {
     let outcome;
     try {
@@ -232,10 +239,33 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     }
 
     if (!res.toolCalls.length) {
+      // ---- claims require receipts --------------------------------------
+      // `actions` holds every receipt this turn produced: tools this loop ran
+      // AND tools a subscription CLI harness executed out of process
+      // (recorded from executedToolCalls above). Zero receipts + a reply that
+      // claims a completed action = a fabrication, and it does not pass.
+      let reply = res.text;
+      if (actions.length === 0 && claimsCompletedAction(reply)) {
+        if (!claimGuardReprompted) {
+          claimGuardReprompted = true;
+          messages.push({ role: 'assistant', content: reply });
+          messages.push({ role: 'user', content: CLAIM_GUARD_REPROMPT });
+          continue; // one more hop: call the tool for real, or restate honestly
+        }
+        await appendEvent(db, {
+          actorUserId: userId,
+          actor: 'agent',
+          kind: 'agent.claim_without_receipt',
+          subjectType: 'thread',
+          subjectId: args.threadId,
+        });
+        reply = CLAIM_GUARD_FALLBACK;
+      }
+
       // A completed exchange, so there is something to learn from — and only
       // ever from what the PERSON wrote. Never the reply, never tool output.
       const learned = await learnFromTurn(db, { userId, inbound: args.inbound });
-      return { reply: res.text, actions, memoriesUsed, learned };
+      return { reply, actions, memoriesUsed, learned };
     }
 
     const toolResults: ToolResult[] = [];
