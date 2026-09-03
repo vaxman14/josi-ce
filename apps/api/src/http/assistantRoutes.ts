@@ -26,7 +26,7 @@ import { verifyPassword } from '@josi-ce/auth';
 import { runAssistantTurn, type RecallLookup } from '@josi-ce/agent';
 import type { LoadOptions } from '@josi-ce/core';
 import { loadMasterKey } from '@josi-ce/core';
-import { extractRichSegments, looksLikeCredentialFile } from '@josi-ce/storage';
+import { extractRichSegments, isExtractableExtension, looksLikeCredentialFile } from '@josi-ce/storage';
 import { asyncRoute, param } from './async.js';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
 
@@ -129,6 +129,16 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         throw new RouteError(400, 'That looks like a password, key, token, or recovery-code file. Josi will not upload it.');
       }
       const extension = extname(filename).replace(/^\./, '').toLowerCase();
+      if (!isExtractableExtension(extension)) {
+        throw new RouteError(400, 'Josi cannot read that file type yet. Choose an image, PDF, Office document, or text file.');
+      }
+      const [usage] = await db.query<{ bytes: number }>(
+        `select coalesce(sum(byte_size), 0)::bigint as bytes from chat_attachments where owner_user_id = $1`,
+        [req.user!.id],
+      );
+      if (Number(usage?.bytes ?? 0) + req.file.size > 200 * 1024 * 1024) {
+        throw new RouteError(413, 'Your chat attachments have reached the 200 MB limit. Remove old conversations before uploading more.');
+      }
       const segments = await extractRichSegments({ extension, bytes: req.file.buffer }).catch(() => null);
       const id = randomUUID(); const storagePath = join(uploadDir, id);
       mkdirSync(uploadDir, { recursive: true, mode: 0o700 });
@@ -141,6 +151,18 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       );
       return res.status(201).json({ attachment: { id, filename, contentType: req.file.mimetype, byteSize: req.file.size } });
     }));
+
+  r.get('/attachments/:attachmentId', handle(async (req, res) => {
+    const [attachment] = await db.query<{ filename: string; content_type: string; storage_path: string }>(
+      `select filename, content_type, storage_path from chat_attachments where id = $1 and owner_user_id = $2`,
+      [param(req, 'attachmentId'), req.user!.id],
+    );
+    if (!attachment) throw new RouteError(404, 'not found');
+    res.type(attachment.content_type);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`);
+    return res.sendFile(attachment.storage_path, { dotfiles: 'deny' });
+  }));
 
   r.post(
     '/threads',

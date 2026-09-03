@@ -127,9 +127,14 @@ export function Talk() {
       const attachmentIds: string[] = [];
       for (const file of files) {
         const form = new FormData(); form.append('file', file);
-        const uploaded = await api.upload<{ attachment: { id: string } }>(`/assistant/threads/${thread.id}/attachments`, form);
+        const uploaded = await api.upload<{ attachment: { id: string; filename: string; contentType: string } }>(`/assistant/threads/${thread.id}/attachments`, form);
         attachmentIds.push(uploaded.attachment.id);
       }
+      const uploadedMeta = files.map((file, index) => ({
+        id: attachmentIds[index], filename: file.name, contentType: file.type || 'application/octet-stream',
+      }));
+      setMessages((current) => current.map((message) => message.id === optimistic.id
+        ? { ...message, meta: { attachments: uploadedMeta } } : message));
       const result = await api.post<TurnResult>(`/assistant/threads/${thread.id}/talk`, { message: body, attachmentIds });
       setFiles([]);
       if (result.reply !== undefined) {
@@ -216,7 +221,16 @@ export function Talk() {
                 >
                   {message.meta?.attachments?.length ? (
                     <div className="mb-1 space-y-1 text-xs opacity-80">
-                      {message.meta.attachments.map((attachment) => <div key={attachment.id}>📎 {attachment.filename}</div>)}
+                      {message.meta.attachments.map((attachment) => attachment.contentType.startsWith('image/') ? (
+                        <a key={attachment.id} href={`/api/assistant/attachments/${attachment.id}`} target="_blank" rel="noreferrer">
+                          <img src={`/api/assistant/attachments/${attachment.id}`} alt={attachment.filename}
+                               className="max-h-64 max-w-full rounded-lg object-contain" />
+                        </a>
+                      ) : (
+                        <a key={attachment.id} className="block underline" href={`/api/assistant/attachments/${attachment.id}`} target="_blank" rel="noreferrer">
+                          📎 {attachment.filename}
+                        </a>
+                      ))}
                     </div>
                   ) : null}
                   {message.body}
