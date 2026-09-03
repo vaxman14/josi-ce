@@ -125,8 +125,8 @@ export function subscriptionOptions(): Array<{
       reason: ceOnly
         ? 'Josi runs OpenAI\'s own Codex CLI on this machine, signed in as you. Josi never sees, '
           + 'stores or forwards your login. It is per installation rather than per person, it '
-          + 'shares your own Codex usage limits, it reports no token counts or cost, and it '
-          + 'cannot call tools — so Josi can talk but cannot act on this path.'
+          + 'shares your own Codex usage limits, and it reports no token counts or cost. Tools '
+          + 'work on this path once the model test confirms them.'
         // The honest sentence for a build that is not CE. It names the reason
         // as a licence boundary rather than implying a missing feature.
         : 'OpenAI permits a personal ChatGPT plan to be used for individual productivity and not '
@@ -147,8 +147,8 @@ export function subscriptionOptions(): Array<{
         ? 'Josi runs Anthropic\'s own Claude Code CLI on this machine, signed in as you through '
           + 'Anthropic\'s own sign-in. Josi never sees, stores or forwards your login — it shows '
           + 'you the link and carries the one-time code you bring back. It is per installation '
-          + 'rather than per person, it shares your own Claude usage limits, and it cannot call '
-          + 'tools, so Josi can talk but cannot act on this path.'
+          + 'rather than per person, and it shares your own Claude usage limits. Tools work on '
+          + 'this path once the model test confirms them.'
         : 'A personal Claude plan is licensed for an individual rather than for powering a '
           + 'commercial service. This build is not a Community Edition installation, so it cannot '
           + 'offer it. An Anthropic API key works on any build.',

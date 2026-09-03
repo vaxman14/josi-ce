@@ -127,7 +127,10 @@ describe('what a CE build offers (L3.7)', () => {
     expect(chatgpt.provider).toBe('openai_subscription');
     // The limits are in the product, not only in the docs.
     expect(chatgpt.reason).toContain('per installation rather than per person');
-    expect(chatgpt.reason).toContain('cannot call tools');
+    // Tools were live-verified over the MCP harness on 2026-09-02; the copy
+    // must not still claim the path cannot act.
+    expect(chatgpt.reason).toContain('Tools work on this path');
+    expect(chatgpt.reason).not.toContain('cannot call tools');
     expect(chatgpt.reason).toContain('never sees, stores or forwards your login');
   });
 
@@ -146,7 +149,8 @@ describe('what a CE build offers (L3.7)', () => {
     expect(claude.provider).toBe('anthropic_subscription');
     expect(claude.reason).toMatch(/never sees, stores or forwards your login/);
     expect(claude.reason).toMatch(/per installation/);
-    expect(claude.reason).toMatch(/cannot call tools/);
+    expect(claude.reason).toMatch(/Tools work on\s+this path/);
+    expect(claude.reason).not.toMatch(/cannot call tools/);
     expect(claude.reason).not.toMatch(/coming soon/i);
   });
 
