@@ -3,8 +3,8 @@
 // Counts and health. There is deliberately no way from here into anybody's
 // conversation, task or contact — the server answers 404 for those the same as
 // it would for a stranger, and this page does not offer a link that would.
-import { useEffect, useState } from 'react';
-import { api } from '@/lib/api';
+import { useResource } from '@/lib/useResource';
+import { ResourceFallback } from '@/components/ResourceFallback';
 import { Card, CardTitle } from '@/components/ui';
 
 interface AdminAssistant {
@@ -14,14 +14,17 @@ interface AdminAssistant {
 }
 
 export function AdminOverview() {
-  const [data, setData] = useState<AdminAssistant | null>(null);
+  // Every outcome named. This page used to swallow the failure and key a
+  // spinner on `data === null`, so any failed fetch — including one killed by
+  // a poisoned cached HTTPS redirect — was a page loading forever.
+  const resource = useResource<AdminAssistant>('/admin/assistant');
+  const data = resource.data;
 
-  useEffect(() => { void api.get<AdminAssistant>('/admin/assistant').then(setData).catch(() => undefined); }, []);
-  if (!data) {
+  if (resource.state !== 'ready' || !data) {
     return (
       <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
         <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <ResourceFallback resource={resource} />
       </div>
     );
   }

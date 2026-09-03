@@ -28,6 +28,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     method,
     headers,
     credentials: 'same-origin',
+    // Bypass the HTTP cache entirely, INCLUDING cached redirects. A `308
+    // Permanent Redirect` to https:// once served by a misconfigured proxy is
+    // cached per-URL and replayed by the browser forever — on a plain-HTTP LAN
+    // install nothing answers on 443, so those requests died and the pages
+    // that made them spun. Nothing this client fetches benefits from HTTP
+    // caching; every response here is state.
+    cache: 'no-store',
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 

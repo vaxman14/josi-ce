@@ -108,7 +108,14 @@ export function AdminLaunchChecklist() {
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Getting started</h1>
+        {/* An explicit exit, at the top. This page had no completion action at
+            all — a person read it and then… nothing. Reading it already marks
+            it seen (the POST above), so "Done" is honest: it will not come
+            back uninvited, and it stays reachable from the admin menu. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-xl font-semibold tracking-tight">Getting started</h1>
+          <Button type="button" onClick={() => navigate('/app')}>Done — go to my dashboard</Button>
+        </div>
         <p className="mt-1 text-sm text-muted-foreground">
           Josi is installed. These are the things only you can do — {done} of {total} settled.
         </p>
@@ -189,8 +196,8 @@ export function AdminLaunchChecklist() {
         <p className="text-sm text-muted-foreground">
           You can come back to this from the admin section at any time. Nothing here expires.
         </p>
-        <Button className="mt-3" variant="secondary" onClick={() => navigate('/app')}>
-          Go to your dashboard
+        <Button className="mt-3" onClick={() => navigate('/app')}>
+          Done — go to my dashboard
         </Button>
       </Card>
     </div>

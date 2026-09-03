@@ -59,7 +59,7 @@ function useFirstRunRedirect(): string | null {
     if (loading || user?.role !== 'super_admin') return;
     // Already there, or deliberately somewhere else in the admin section.
     if (window.location.pathname.startsWith('/admin')) return;
-    void fetch('/api/admin/launch-checklist', { credentials: 'same-origin' })
+    void fetch('/api/admin/launch-checklist', { credentials: 'same-origin', cache: 'no-store' })
       .then(async (res) => {
         if (!res.ok) return;
         const body = await res.json().catch(() => null) as { seen?: boolean } | null;
@@ -80,7 +80,9 @@ function useFirstRunRedirect(): string | null {
 function useSetupNeeded(): boolean | null {
   const [needed, setNeeded] = useState<boolean | null>(null);
   useEffect(() => {
-    void fetch('/api/setup/state', { credentials: 'same-origin' })
+    // `cache: 'no-store'` for the same reason as lib/api.ts: a cached
+    // permanent redirect must not be replayed here.
+    void fetch('/api/setup/state', { credentials: 'same-origin', cache: 'no-store' })
       .then(async (res) => {
         if (res.status === 404) return setNeeded(false);
         const body = await res.json().catch(() => null);

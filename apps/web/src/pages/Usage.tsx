@@ -3,25 +3,25 @@
 // Three numbers, never blended into one. M88: a provider-reported charge and a
 // figure we worked out from a local price list are different kinds of claim,
 // and a self-hosted model has no provider charge at all.
-import { useEffect, useState } from 'react';
-import { api, type LlmStatus } from '@/lib/api';
+import { type LlmStatus } from '@/lib/api';
+import { useResource } from '@/lib/useResource';
+import { ResourceFallback } from '@/components/ResourceFallback';
 import { Badge, Card, CardTitle } from '@/components/ui';
 
 export function Usage() {
-  const [status, setStatus] = useState<LlmStatus | null>(null);
+  // Every outcome named — same fix as Overview.   // undefined)` made any failed fetch an infinite spinner.
+  const resource = useResource<LlmStatus>('/llm/status');
 
-  useEffect(() => { void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => undefined); }, []);
-
-  if (!status) {
+  if (resource.state !== 'ready' || !resource.data) {
     // The heading renders even while the numbers are still coming.
     return (
       <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
         <h1 className="text-xl font-semibold tracking-tight">Usage</h1>
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <ResourceFallback resource={resource} />
       </div>
     );
   }
-  const { usage, cap } = status;
+  const { usage, cap } = resource.data;
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
