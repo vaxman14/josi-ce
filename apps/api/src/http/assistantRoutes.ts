@@ -31,6 +31,9 @@ export interface AssistantRoutesCtx {
   resolve?: (hostname: string) => Promise<string[]>;
   /** Injected in tests so no suite ever executes the Codex binary. */
   codexRunner?: import('@josi-ce/llm').SpawnRunner;
+  /** HTTP for connected-provider (Gmail, Graph…) calls the data tools make.
+   * Injected by tests; unset in production. */
+  connectorFetch?: typeof fetch;
   recall?: RecallLookup;
 }
 
@@ -165,6 +168,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         history,
         inbound,
         recall: ctx.recall,
+        connectorFetch: ctx.connectorFetch,
         sessionKey: req.user!.session_id,
       });
 

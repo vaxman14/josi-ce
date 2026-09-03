@@ -109,6 +109,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     appUrl: cfg.appUrl,
     llmFetch: cfg.llmFetch,
     llmResolve: cfg.llmResolve,
+    connectorFetch: cfg.connectorFetch,
     retry: cfg.telegramRetry,
   });
 
@@ -147,7 +148,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // requireSuperAdmin either way.
   api.use('/assistant', assistantRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
-    codexRunner: cfg.codexRunner,
+    codexRunner: cfg.codexRunner, connectorFetch: cfg.connectorFetch,
   }));
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({

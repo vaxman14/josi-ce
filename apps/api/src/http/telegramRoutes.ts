@@ -44,6 +44,9 @@ export interface TelegramRoutesCtx {
   /** Provider HTTP/DNS for the model call a turn makes. */
   llmFetch?: typeof fetch;
   llmResolve?: (hostname: string) => Promise<string[]>;
+  /** HTTP for connected-provider (Gmail, Graph…) calls a turn's data tools
+   * make. Injected by tests; unset in production. */
+  connectorFetch?: typeof fetch;
   /** Short retries in tests so a backoff assertion does not take 30 seconds. */
   retry?: RetryOptions;
 }
@@ -400,6 +403,7 @@ export function mountTelegramWebhook(app: Express, ctx: TelegramRoutesCtx): void
                 threadId: args.threadId,
                 history: await historyFor(db, args.threadId),
                 inbound: args.inbound,
+                connectorFetch: ctx.connectorFetch,
                 // The step-up scope is the THREAD, not a session — there is no
                 // session here. A person cannot re-authenticate over Telegram,
                 // so anything needing step-up is refused with the message the
