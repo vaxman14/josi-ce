@@ -41,4 +41,17 @@
   button, a[role='button'], [type='submit'] { touch-action: manipulation; }
 
   :focus-visible { @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background; }
+
+  /* iOS keyboard handling (see src/lib/viewport.ts). The keyboard shrinks only
+     the visual viewport, never the layout viewport, so pages that fit exactly
+     in `height:100%` have zero scroll room and a focused field can sit under
+     the keyboard with nowhere to go. While the keyboard is up:
+     - .josi-keyboard-pad containers (login, setup) gain bottom padding equal
+       to the hidden area, creating the scroll room scrollIntoView needs;
+     - the fixed bottom nav is hidden (it is under the keyboard anyway, and
+       hiding it stops it reappearing mid-screen while iOS pans the page);
+     - the main pane drops its bottom-nav clearance so Talk can use the pixels. */
+  html.keyboard-open .josi-keyboard-pad { padding-bottom: calc(var(--josi-keyboard-inset, 0px) + 1rem); }
+  html.keyboard-open .josi-bottom-nav { display: none; }
+  html.keyboard-open main { padding-bottom: 0.75rem; }
 }

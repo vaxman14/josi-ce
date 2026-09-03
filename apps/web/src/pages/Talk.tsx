@@ -24,6 +24,7 @@
 // closest thing to Safari on an iPhone that runs unattended.
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ApiError, type Message, type Thread, type TurnResult } from '@/lib/api';
+import { viewportState, type ViewportState } from '@/lib/viewport';
 
 /** "Today", "Yesterday", or the date — the label WhatsApp taught everyone. */
 function dayLabel(at: Date): string {
@@ -48,22 +49,27 @@ export function Talk() {
   const sendLock = useRef(false);
 
   // Keep the composer inside the pixels a thumb can actually reach.
+  //
+  // --josi-visible-height is published globally by lib/viewport.ts. What this
+  // page adds is keyboard awareness: when the iOS keyboard is up, the bottom
+  // nav is hidden (it sits under the keyboard) and the shell's clearance for it
+  // collapses, so the chrome we subtract shrinks from 10rem to 5rem — otherwise
+  // the conversation shrinks to a sliver and the composer floats in dead space
+  // (Roman's round-2 screenshot). iOS also pans the page when a field focuses;
+  // snapping scroll back to 0 keeps the layout and visual viewports aligned,
+  // since with our own height math everything already fits on screen.
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   useEffect(() => {
-    const viewport = window.visualViewport;
-    const sync = () => {
-      const height = viewport?.height ?? window.innerHeight;
-      document.documentElement.style.setProperty('--josi-visible-height', `${Math.round(height)}px`);
+    const onViewport = (event: Event) => {
+      const state = (event as CustomEvent<ViewportState>).detail ?? viewportState();
+      setKeyboardOpen((open) => {
+        if (state.keyboardOpen && !open) window.scrollTo(0, 0);
+        return state.keyboardOpen;
+      });
     };
-    sync();
-    viewport?.addEventListener('resize', sync);
-    viewport?.addEventListener('scroll', sync);
-    window.addEventListener('resize', sync);
-    return () => {
-      viewport?.removeEventListener('resize', sync);
-      viewport?.removeEventListener('scroll', sync);
-      window.removeEventListener('resize', sync);
-      document.documentElement.style.removeProperty('--josi-visible-height');
-    };
+    setKeyboardOpen(viewportState().keyboardOpen);
+    window.addEventListener('josi:viewport', onViewport);
+    return () => window.removeEventListener('josi:viewport', onViewport);
   }, []);
 
   // The most recent thread, or a new one. A member always has somewhere to talk.
@@ -88,7 +94,9 @@ export function Talk() {
     })();
   }, []);
 
-  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
+  // keyboardOpen is in the deps because opening the keyboard reshapes the list;
+  // without a re-scroll the newest message can end up hidden above the fold.
+  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending, keyboardOpen]);
 
   async function send(): Promise<void> {
     // Read the DOM value as well as React state: iOS can display composition
@@ -140,8 +148,9 @@ export function Talk() {
 
   return (
     <div
+      data-viewport-managed
       className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-card"
-      style={{ height: 'calc(var(--josi-visible-height, 100dvh) - 10rem)' }}
+      style={{ height: `calc(var(--josi-visible-height, 100dvh) - ${keyboardOpen ? '5rem' : '10rem'})` }}
     >
       <header className="flex min-w-0 items-center gap-2 border-b border-border px-4 py-3">
         <img src="/brand/josi-mark.png" alt="" width={28} height={28} className="h-7 w-7 rounded-md" />

@@ -155,7 +155,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const position = state.completedSteps.length + 1;
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-xl p-4">
+    <div className="josi-keyboard-pad mx-auto w-full min-w-0 max-w-xl p-4">
       <div className="mb-6 flex flex-col items-center text-center">
         <img src="/brand/josi-wordmark.png" alt="Josi" width={200} height={93}
              className="mb-2 h-auto w-40 max-w-full" />

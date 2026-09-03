@@ -138,7 +138,7 @@ export function Shell() {
 
       <nav
         aria-label="Primary"
-        className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-card pb-[env(safe-area-inset-bottom)] lg:hidden"
+        className="josi-bottom-nav fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-card pb-[env(safe-area-inset-bottom)] lg:hidden"
       >
         {(isAdminArea ? ADMIN_NAV : PHONE_NAV).map((item) => (
           <NavLink
