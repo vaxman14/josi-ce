@@ -166,6 +166,34 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     },
   },
 
+  mapping_status: {
+    source: { migrationTable: 'folder_mappings', column: 'status' },
+    labels: {
+      active: 'Syncing',
+      paused: 'Paused',
+      revoked: 'Removed',
+    },
+    detail: {
+      paused: 'Nothing was deleted. Fix the reason below and syncing resumes.',
+      revoked: 'This folder is no longer connected. Everything Josi kept from it has been deleted.',
+    },
+  },
+
+  mapping_paused_reason: {
+    source: { migrationTable: 'folder_mappings', column: 'paused_reason' },
+    labels: {
+      token_expired: 'The connection needs signing in again',
+      admin_paused: 'An administrator paused it',
+      global_pause: 'All document processing is paused',
+      quota_exceeded: 'Your storage limit was reached',
+      source_missing: 'The folder could not be found',
+    },
+    detail: {
+      token_expired: 'Reconnect the account on this page and syncing resumes. Nothing was deleted.',
+      quota_exceeded: 'Ask your administrator for more room, or unmap something else.',
+    },
+  },
+
   telegram_error: {
     source: { migrationTable: 'telegram_outbound', column: 'error_category' },
     labels: {

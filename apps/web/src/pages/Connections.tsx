@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, ErrorNote, NotYet } from '@/components/ui';
+import { CloudFolders } from '@/components/CloudFolders';
 
 interface Capability {
   key: string;
@@ -191,6 +192,17 @@ export function Connections() {
                 ))}
               </ul>
 
+              {/* Files. Real now — this replaces the "planned" placeholder.
+                  Shown only under a live connection, because a folder is
+                  mapped through a connection and read-only by scope. */}
+              <CloudFolders
+                provider={view.provider}
+                connectionId={view.connection.id}
+                capabilityOn={view.capabilities.some(
+                  (c) => (c.key === 'google.drive.read' || c.key === 'microsoft.files.read') && c.state === 'on',
+                )}
+              />
+
               <div className="mt-4">
                 <Button variant="secondary" onClick={() => void disconnect(view)} disabled={busy === view.provider}>
                   Disconnect
@@ -202,9 +214,10 @@ export function Connections() {
       ))}
 
       <Card>
-        <CardTitle>Storage providers</CardTitle>
+        <CardTitle>Other storage providers</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Google Drive and OneDrive are planned. Box and Dropbox may follow. None of them are available yet.
+          Google Drive and OneDrive folders can be connected above, read-only. Box and Dropbox may
+          follow later; they are not available yet.
         </p>
       </Card>
     </div>
