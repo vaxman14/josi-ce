@@ -14,7 +14,9 @@ import {
   expireApprovals, expireHolds, failJob, getTask, markReminderFailed, tickSchedules,
   type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
-import { dueOrigins, markAttempted, syncOrigin } from '@josi-ce/connectors';
+import {
+  dueCloudMappings, dueOrigins, markAttempted, markSyncScheduled, syncCloudMapping, syncOrigin,
+} from '@josi-ce/connectors';
 import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk,
 } from '@josi-ce/channels';
@@ -101,6 +103,39 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       // revoked connection or a removed scope is a status on the origin, not a
       // dead job nobody sees.
       await syncOrigin(db, originId, {
+        masterKey: ctx.masterKey,
+        fetchImpl: ctx.connectorFetch,
+      });
+      return;
+    }
+
+    // ---------------------------------------------------- cloud storage sync
+    //
+    // The same fan-out split as contact sync, for the same reasons: one due
+    // schedule enqueues one job per due mapping, so one slow provider delays
+    // its own folder and nobody else's.
+    case 'storage.sync_due': {
+      const due = await dueCloudMappings(db);
+      for (const mapping of due) {
+        // Stamped BEFORE the job runs — a crash mid-sync must cost this
+        // mapping its turn, not repeat as fast as the worker can loop.
+        await markSyncScheduled(db, mapping.id);
+        await enqueue(db, { kind: 'storage.sync', payload: { mappingId: mapping.id } });
+      }
+      return;
+    }
+
+    case 'storage.sync': {
+      const mappingId = String((job.payload as { mappingId?: unknown }).mappingId ?? '');
+      if (!mappingId) throw new Error('storage.sync without a mappingId');
+      if (!ctx.masterKey) {
+        throw new Error('storage.sync needs the installation master key');
+      }
+      // `syncCloudMapping` resolves the owner from the MAPPING, never from
+      // this payload — a forged job id can only sync a folder that already
+      // exists, for its own owner, through its owner's own connection. It
+      // returns rather than throws for anything the owner can act on.
+      await syncCloudMapping(db, mappingId, {
         masterKey: ctx.masterKey,
         fetchImpl: ctx.connectorFetch,
       });

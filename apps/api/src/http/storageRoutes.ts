@@ -12,7 +12,7 @@
 // Second: the owner is always `req.user!.id`. It is never read from the request
 // body, in any route, for any reason.
 import { Router, type Request, type Response } from 'express';
-import { LIMITS, appendEvent, consume, type Db } from '@josi-ce/core';
+import { LIMITS, appendEvent, consume, enqueue, type Db } from '@josi-ce/core';
 import {
   MappingError, PathEscape, SemanticForbidden, SemanticNotConsented, SharingDisabled,
   SEMANTIC_DISCLOSURE, assertSemanticAllowed, assertSharingAllowed, auditRetentionNotice,
@@ -449,6 +449,9 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
          on conflict (mapping_id) do update set last_manual_sync_at = now()`,
         [mappingId, req.user!.id],
       );
+      // The job the button claims to queue. The worker resolves the owner from
+      // the mapping itself, so this id is the only thing the payload carries.
+      await enqueue(db, { kind: 'storage.sync', payload: { mappingId } });
       return res.json({ queued: true });
     }),
   );
