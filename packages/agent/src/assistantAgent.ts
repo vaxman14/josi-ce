@@ -37,6 +37,7 @@ import {
 import {
   CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsCompletedAction,
 } from './claimGuard.js';
+import { dataToolAvailability, type DataToolAvailability } from './dataTools.js';
 import { executeAssistantTool } from './execute.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
 
@@ -72,6 +73,10 @@ export interface TurnArgs {
   history: ChatMessage[];
   inbound: string;
   recall?: RecallLookup;
+  /** Fetch used for connected-provider calls (Gmail, Graph…). Injected by the
+   * tests; unset in production, where the real fetch is used. Deliberately
+   * separate from the registry's fetchImpl — that one talks to the MODEL. */
+  connectorFetch?: typeof fetch;
   /** What a step-up unlock is scoped to. Defaults to the thread, so verifying
    * in one conversation does not silently unlock another. */
   sessionKey?: string;
@@ -85,6 +90,7 @@ function systemPrompt(args: {
   templateNames: string[];
   hasRecall: boolean;
   unavailable: string[];
+  data?: DataToolAvailability;
 }): string {
   return [
     'You are Josi, an assistant working for one person inside a small shared workspace.',
@@ -106,6 +112,15 @@ function systemPrompt(args: {
     args.capabilities.toolCalling
       ? ''
       : 'You cannot call tools on this installation, so you can talk but cannot create or change anything. Say so if asked to do something.',
+    // Connected data, stated honestly in both directions. What is ON is a
+    // real ability backed by a tool; what is OFF is named with the exact
+    // switch that fixes it, so "can you read my email" never gets a guess.
+    args.capabilities.toolCalling && args.data?.granted.length
+      ? `You have READ access to this person's connected ${args.data.granted.join(', ')} through your tools. Use the tools to answer from the real data; never invent a message, event or person. Report empty results as empty.`
+      : '',
+    args.capabilities.toolCalling && args.data?.denied.length
+      ? `You currently have no access to: ${args.data.denied.map((d) => d.what).join(', ')}. If asked about one of these, say so and pass on the fix: ${args.data.denied.map((d) => `${d.what} — ${d.hint}`).join(' ')}`
+      : '',
     args.hasRecall
       ? 'You can search this person\'s own history. Do that before saying you do not know.'
       : '',
@@ -147,7 +162,23 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // not inferred from the model name.
   const templates = await listTemplates(db);
   const unavailable = [...new Set(templates.map((t) => t.requiresCapability).filter(Boolean))] as string[];
-  const tools = capabilities.toolCalling ? TASK_TOOLS.map((t) => t.def) : undefined;
+
+  // Which connected-data tools THIS person's switches allow, right now. The
+  // offering is per turn: flip a switch off between turns and the tool is
+  // gone from the next list; execution re-checks anyway for the same turn.
+  let data: DataToolAvailability = { specs: [], granted: [], denied: [] };
+  if (capabilities.toolCalling) {
+    try {
+      data = await dataToolAvailability(db, userId);
+    } catch (err) {
+      // Availability is a bonus; a broken connections table must not cost the
+      // person their conversation. The tools are simply not offered.
+      console.error('data tool availability check failed', (err as Error).message);
+    }
+  }
+  const tools = capabilities.toolCalling
+    ? [...TASK_TOOLS, ...data.specs].map((t) => t.def)
+    : undefined;
 
   let recalled = '';
   if (args.recall) {
@@ -167,6 +198,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     templateNames: templates.map((t) => t.key),
     hasRecall: !!args.recall && !!recalled,
     unavailable,
+    data,
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '');
 
   // The person's own layers, in the order the plan fixes. A failure here costs
@@ -365,5 +397,12 @@ async function execTool(
   // The implementations live in execute.ts so the MCP server — which offers
   // these same tools to a subscription CLI's own agent loop — runs the exact
   // code this loop runs, ownership checks and all.
-  return executeAssistantTool(args.db, { userId: args.userId, threadId: args.threadId }, name, input);
+  const masterKey = args.registry.masterKey;
+  return executeAssistantTool(args.db, {
+    userId: args.userId,
+    threadId: args.threadId,
+    // The registry already holds the installation key when there is one; the
+    // data tools open sealed tokens with it at the moment of use.
+    connectors: masterKey ? { masterKey: () => masterKey, fetchImpl: args.connectorFetch } : null,
+  }, name, input);
 }

@@ -60,6 +60,10 @@ export function resolveMcpServerPath(env: NodeJS.ProcessEnv = process.env): stri
 export interface HarnessContext {
   databaseUrl: string | null;
   passwordFile: string | null;
+  /** Path to the installation master key FILE — never the key itself. The
+   * server loads it only when a connected-data tool actually runs; without it
+   * those tools refuse honestly and everything else works unchanged. */
+  masterKeyPath: string | null;
   userId: string | null;
   sessionKey: string | null;
   threadId: string | null;
@@ -97,6 +101,7 @@ export function openHarnessSession(args: {
     // the vendor binary is not and may not.
     databaseUrl: env.DATABASE_URL ?? null,
     passwordFile: env.PGPASSWORD_FILE ?? null,
+    masterKeyPath: env.MASTER_KEY_FILE ?? null,
     userId: args.toolContext?.userId ?? null,
     sessionKey: args.toolContext?.sessionKey ?? null,
     threadId: args.toolContext?.threadId ?? null,

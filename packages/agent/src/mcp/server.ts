@@ -25,15 +25,18 @@
 // database, so a context with no user can still prove the plumbing.
 import { appendFileSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { checkStepUp, connectFromEnv } from '@josi-ce/core';
-import type { Db } from '@josi-ce/core';
+import { checkStepUp, connectFromEnv, loadMasterKey } from '@josi-ce/core';
+import type { Db, MasterKey } from '@josi-ce/core';
 import { executeAssistantTool } from '../execute.js';
-import { TASK_TOOLS } from '../tools.js';
+import { ALL_TOOLS } from '../tools.js';
 import { handleMcpMessage, type McpCore, type McpToolDescriptor, type McpToolOutcome } from './protocol.js';
 
 interface HarnessContext {
   databaseUrl: string | null;
   passwordFile: string | null;
+  /** Path to the master key file, when the harness knew one. The key itself
+   * never travels — the path is only useful inside our own container. */
+  masterKeyPath?: string | null;
   userId: string | null;
   sessionKey: string | null;
   threadId: string | null;
@@ -70,9 +73,10 @@ export function buildCore(ctx: HarnessContext, connect: () => Promise<Db>): McpC
   const offered = new Set(ctx.tools);
   const tools: McpToolDescriptor[] = [
     ...PROBE_TOOLS,
-    // Only what this turn offered. TASK_TOOLS is the catalogue; the context
-    // file is the turn's actual promise.
-    ...TASK_TOOLS.filter((t) => offered.has(t.def.name)).map((t) => ({
+    // Only what this turn offered. ALL_TOOLS is the catalogue — task tools and
+    // connected-data tools alike; the context file is the turn's actual
+    // promise, already narrowed to this person's capability switches.
+    ...ALL_TOOLS.filter((t) => offered.has(t.def.name)).map((t) => ({
       name: t.def.name,
       description: t.def.description,
       inputSchema: t.def.parameters,
@@ -80,6 +84,21 @@ export function buildCore(ctx: HarnessContext, connect: () => Promise<Db>): McpC
   ];
 
   let db: Promise<Db> | null = null;
+
+  // Loaded once, on the first data tool that needs it. A missing key file is
+  // not an error here: executeAssistantTool refuses those tools honestly.
+  let masterKey: MasterKey | null | undefined;
+  const connectors = () => {
+    if (masterKey === undefined) {
+      try {
+        masterKey = loadMasterKey(ctx.masterKeyPath ? { path: ctx.masterKeyPath } : {});
+      } catch {
+        masterKey = null;
+      }
+    }
+    const key = masterKey;
+    return key ? { masterKey: () => key } : null;
+  };
 
   const execute = async (name: string, input: Record<string, unknown>, callId: string): Promise<McpToolOutcome> => {
     // Ground truth first: recorded before execution so even a failing call is
@@ -114,7 +133,12 @@ export function buildCore(ctx: HarnessContext, connect: () => Promise<Db>): McpC
       return { text: JSON.stringify({ ok: false, error: decision.reason, message: decision.message }) };
     }
 
-    const result = await executeAssistantTool(conn, { userId: ctx.userId, threadId: ctx.threadId }, name, input);
+    const result = await executeAssistantTool(
+      conn,
+      { userId: ctx.userId, threadId: ctx.threadId, connectors: connectors() },
+      name,
+      input,
+    );
     return { text: JSON.stringify(result) };
   };
 
