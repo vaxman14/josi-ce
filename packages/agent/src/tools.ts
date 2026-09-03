@@ -5,6 +5,7 @@
 // a `book_appointment` tool and no calendar will promise a booking, because the
 // tool's existence is the promise. Absent tool, absent promise.
 import type { ToolDefinition } from '@josi-ce/llm';
+import { DATA_TOOLS } from './dataTools.js';
 
 /** Everything the assistant can do that changes something.
  *
@@ -150,7 +151,12 @@ export const TASK_TOOLS: ToolSpec[] = [
   },
 ];
 
+/** The full catalogue, task tools and connected-data tools together. What a
+ * TURN offers is a subset of this, decided per person per turn — the catalogue
+ * is what CAN exist, never what IS offered. */
+export const ALL_TOOLS: ToolSpec[] = [...TASK_TOOLS, ...DATA_TOOLS];
+
 /** Names that map to the step-up gate. The gate keys on the tool name, so
  * adding a destructive tool later means adding it to SENSITIVE_ACTIONS in core
  * — not remembering to write a guard at the call site. */
-export const TOOL_SPECS_BY_NAME = new Map(TASK_TOOLS.map((t) => [t.def.name, t]));
+export const TOOL_SPECS_BY_NAME = new Map(ALL_TOOLS.map((t) => [t.def.name, t]));

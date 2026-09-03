@@ -17,6 +17,7 @@ import {
   type Db,
 } from '@josi-ce/core';
 import { citationLabel, searchDocuments } from '@josi-ce/storage';
+import { DATA_TOOL_FAMILY, executeDataTool, type ConnectorAccess } from './dataTools.js';
 
 export interface ToolExecutionContext {
   /** Whose work this is. Everything created belongs to them. Never a value
@@ -25,6 +26,10 @@ export interface ToolExecutionContext {
   userId: string;
   /** The conversation the work came from, when there is one to link. */
   threadId: string | null;
+  /** How the connected-data tools reach sealed tokens. Absent for callers
+   * that cannot open secrets; those tools then refuse honestly rather than
+   * crash. The task and reminder tools never touch it. */
+  connectors?: ConnectorAccess | null;
 }
 
 export async function executeAssistantTool(
@@ -34,6 +39,13 @@ export async function executeAssistantTool(
   input: Record<string, unknown>,
 ): Promise<unknown> {
   const { userId } = ctx;
+
+  // Connected-data reads live in their own module; every one of them
+  // re-checks the person's capability switches at this moment, not at the
+  // moment the tool was offered.
+  if (DATA_TOOL_FAMILY.has(name)) {
+    return executeDataTool(db, { userId, access: ctx.connectors ?? null }, name, input);
+  }
 
   switch (name) {
     case 'list_task_types': {
