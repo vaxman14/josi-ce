@@ -115,8 +115,8 @@ export function ClaudeSignIn({ basePath }: { basePath: string }) {
         <p className="text-xs text-muted-foreground">{status.detail}</p>
         <p className="text-xs text-muted-foreground">
           Josi will send one real message before treating this as working. Everyone on this
-          installation shares your plan and its limits, no cost is reported, and Josi can talk but
-          cannot use tools on this path.
+          installation shares your plan and its limits, no cost is reported, and tools work once the
+          model test confirms them.
         </p>
         {error ? <ErrorNote>{error}</ErrorNote> : null}
         <Button type="button" variant="secondary" disabled={busy} onClick={() => void disconnect()}>

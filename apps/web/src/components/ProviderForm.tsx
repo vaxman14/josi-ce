@@ -339,8 +339,8 @@ function SubscriptionSignIn({ info, loginPath }: { info: SubscriptionInfo | null
         <p className="text-sm">Signed in to your ChatGPT plan.</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Josi will send one real message before treating this as working. Everyone on this
-          installation shares your plan and its limits, no cost is reported, and Josi can talk but
-          cannot use tools on this path.
+          installation shares your plan and its limits, no cost is reported, and tools work once the
+          model test confirms them.
         </p>
       </div>
     );
