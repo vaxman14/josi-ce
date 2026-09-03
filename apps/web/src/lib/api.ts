@@ -100,6 +100,15 @@ export interface Task {
   created_at: string;
 }
 
+export interface Reminder {
+  id: string;
+  body: string;
+  due_at: string;
+  status: 'scheduled' | 'delivered' | 'cancelled' | 'failed';
+  delivered_at: string | null;
+  created_at: string;
+}
+
 export interface TaskType {
   key: string;
   name: string;

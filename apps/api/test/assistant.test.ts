@@ -15,7 +15,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { seal, MasterKey } from '@josi-ce/core';
+import { createReminder, seal, MasterKey } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -107,6 +107,7 @@ afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); 
 beforeEach(async () => {
   replies = [];
   await db.query(`delete from approvals`);
+  await db.query(`delete from reminders`);
   await db.query(`delete from tasks`);
   await db.query(`delete from messages`);
   await db.query(`delete from threads`);
@@ -462,6 +463,81 @@ describe('approvals over the wire', () => {
     }
     const [row] = await db.query<{ status: string }>(`select status from approvals where id = $1`, [approval.id]);
     expect(row.status).toBe('pending');
+  });
+});
+
+describe('reminders over the wire', () => {
+  // Round-2 item 13: the Tasks page's window into what the assistant
+  // scheduled. Same spine as tasks: owner-scoped reads, 404 for anything that
+  // is not yours — never a 403 that would confirm it exists.
+  const inMinutes = (m: number) => new Date(Date.now() + m * 60_000);
+
+  it('answers with upcoming and recently settled, owner-scoped', async () => {
+    const mine = await createReminder(db, {
+      ownerUserId: ids.alice, body: 'ALICE-UPCOMING', dueAt: inMinutes(30),
+    });
+    const settled = await createReminder(db, {
+      ownerUserId: ids.alice, body: 'ALICE-DELIVERED', dueAt: inMinutes(30),
+    });
+    await db.query(
+      `update reminders set status = 'delivered', delivered_at = now() - interval '1 day' where id = $1`,
+      [settled.id],
+    );
+    // Settled long ago: out of the recent window, invisible.
+    const stale = await createReminder(db, {
+      ownerUserId: ids.alice, body: 'ALICE-ANCIENT', dueAt: inMinutes(30),
+    });
+    await db.query(
+      `update reminders set status = 'delivered', delivered_at = now() - interval '30 days' where id = $1`,
+      [stale.id],
+    );
+    await createReminder(db, { ownerUserId: ids.bob, body: 'BOB-PRIVATE', dueAt: inMinutes(30) });
+
+    const res = await call('/api/assistant/reminders', { jar: cookies.alice });
+    expect(res.status).toBe(200);
+    expect(res.body.upcoming.map((r: { body: string }) => r.body)).toEqual(['ALICE-UPCOMING']);
+    expect(res.body.recent.map((r: { body: string }) => r.body)).toEqual(['ALICE-DELIVERED']);
+    expect(JSON.stringify(res.body)).not.toContain('BOB-PRIVATE');
+    expect(mine.id).toBeTruthy();
+  });
+
+  it('cancels the owner\u2019s own scheduled reminder', async () => {
+    const r = await createReminder(db, {
+      ownerUserId: ids.alice, body: 'cancel me', dueAt: inMinutes(30),
+    });
+    const res = await call(`/api/assistant/reminders/${r.id}/cancel`, {
+      method: 'POST', jar: cookies.alice,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.reminder.status).toBe('cancelled');
+    // Gone from upcoming, present in recent — the page shows what happened.
+    const list = await call('/api/assistant/reminders', { jar: cookies.alice });
+    expect(list.body.upcoming).toHaveLength(0);
+    expect(list.body.recent.map((x: { status: string }) => x.status)).toEqual(['cancelled']);
+  });
+
+  it('a colleague\u2019s reminder or a settled one is 404, and nothing changes', async () => {
+    const r = await createReminder(db, {
+      ownerUserId: ids.alice, body: 'not yours', dueAt: inMinutes(30),
+    });
+    for (const who of ['bob', 'admin'] as const) {
+      const res = await call(`/api/assistant/reminders/${r.id}/cancel`, {
+        method: 'POST', jar: cookies[who],
+      });
+      expect(res.status, who).toBe(404);
+    }
+    const [row] = await db.query<{ status: string }>(`select status from reminders where id = $1`, [r.id]);
+    expect(row.status).toBe('scheduled');
+
+    // Cancel it, then a second cancel finds nothing left.
+    await call(`/api/assistant/reminders/${r.id}/cancel`, { method: 'POST', jar: cookies.alice });
+    const again = await call(`/api/assistant/reminders/${r.id}/cancel`, { method: 'POST', jar: cookies.alice });
+    expect(again.status).toBe(404);
+  });
+
+  it('refuses anonymous callers', async () => {
+    const anonJar = mergeJar(undefined, (await call('/api/auth/csrf')).setCookie);
+    expect((await call('/api/assistant/reminders', { jar: anonJar })).status).toBe(401);
   });
 });
 

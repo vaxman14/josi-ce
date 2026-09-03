@@ -14,7 +14,7 @@ import {
   getTask, getTemplate, getThread, listContactsFor, listMessages, listPendingApprovals,
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
-  canWrite, recordExchange,
+  canWrite, recordExchange, reminderOverview, cancelReminder,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -245,6 +245,29 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         }
       }
       return res.json({ task: await getTask(db, taskId) });
+    }),
+  );
+
+  // ---------------------------------------------------------- reminders
+  // The window into what the assistant scheduled (round-2 item 13). Same
+  // owner-scoping as tasks: the queries resolve by owner_user_id, so knowing
+  // another member's reminder id earns a 404, never a 403.
+  r.get(
+    '/reminders',
+    handle(async (req, res) =>
+      res.json(await reminderOverview(db, { ownerUserId: req.user!.id }))),
+  );
+
+  r.post(
+    '/reminders/:id/cancel',
+    handle(async (req, res) => {
+      const cancelled = await cancelReminder(db, {
+        ownerUserId: req.user!.id,
+        reminderId: param(req, 'id'),
+      });
+      // Somebody else's, already settled, or never existed: one answer.
+      if (!cancelled) throw new RouteError(404, 'not found');
+      return res.json({ reminder: cancelled });
     }),
   );
 

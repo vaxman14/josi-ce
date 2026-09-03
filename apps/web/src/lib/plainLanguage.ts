@@ -153,6 +153,19 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     },
   },
 
+  reminder_status: {
+    source: { migrationTable: 'reminders', column: 'status' },
+    labels: {
+      scheduled: 'Coming up',
+      delivered: 'Delivered',
+      cancelled: 'Cancelled',
+      failed: 'Did not go out',
+    },
+    detail: {
+      failed: 'Josi could not deliver this reminder anywhere. It will not fire again — set a new one.',
+    },
+  },
+
   telegram_error: {
     source: { migrationTable: 'telegram_outbound', column: 'error_category' },
     labels: {

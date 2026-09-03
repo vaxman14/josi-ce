@@ -117,6 +117,34 @@ export async function claimReminderForDelivery(db: Db, reminderId: string): Prom
   return row ?? null;
 }
 
+/** What the Tasks page shows (round-2 item 13): everything still to come,
+ * plus the recent past — anything that settled (delivered, cancelled, failed)
+ * in the last week. Anything the assistant schedules must be visible and
+ * manageable in the product, not trapped in chat. Owner-scoped like every
+ * other read here. */
+export async function reminderOverview(
+  db: Db,
+  args: { ownerUserId: string; recentDays?: number },
+): Promise<{ upcoming: Reminder[]; recent: Reminder[] }> {
+  const days = Math.min(Math.max(args.recentDays ?? 7, 1), 31);
+  const upcoming = await db.query<Reminder>(
+    `select * from reminders
+     where owner_user_id = $1 and status = 'scheduled'
+     order by due_at asc
+     limit 100`,
+    [args.ownerUserId],
+  );
+  const recent = await db.query<Reminder>(
+    `select * from reminders
+     where owner_user_id = $1 and status <> 'scheduled'
+       and coalesce(delivered_at, due_at) > now() - make_interval(days => $2)
+     order by coalesce(delivered_at, due_at) desc
+     limit 100`,
+    [args.ownerUserId, days],
+  );
+  return { upcoming, recent };
+}
+
 /** Delivery was claimed and then could not happen anywhere. Recorded as failed
  * rather than silently un-delivered, so the owner's list tells the truth. */
 export async function markReminderFailed(db: Db, reminderId: string): Promise<void> {
