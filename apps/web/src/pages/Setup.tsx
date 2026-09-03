@@ -300,7 +300,7 @@ function StepForm({
           }))}
           className="space-y-3"
         >
-          <Field id="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" />
+          <Field id="domain" name="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" autoComplete="off" />
           <div>
             <label className="mb-1 block text-sm" htmlFor="tlsMode">HTTPS</label>
             <select id="tlsMode" name="tlsMode" defaultValue="bundled_caddy"
@@ -312,7 +312,7 @@ function StepForm({
           <p className="text-xs text-muted-foreground">
             Public certificates require a domain pointing to this server. A LAN IP works over HTTP and needs no certificate email.
           </p>
-          <Field id="acmeEmail" label="Email for certificate notices" type="email" />
+          <Field id="acmeEmail" name="acmeEmail" label="Email for certificate notices" type="email" autoComplete="off" />
           <Button type="submit" disabled={busy}>Continue</Button>
         </form>
       );
