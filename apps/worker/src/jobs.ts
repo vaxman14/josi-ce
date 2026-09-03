@@ -10,10 +10,15 @@
 // because Phase 7 has not happened yet would read, to the person waiting on it,
 // exactly like Josi tried and could not.
 import {
-  claimJobs, completeJob, enqueue, expireApprovals, expireHolds, failJob, getTask, tickSchedules,
+  addMessage, claimJobs, claimReminderForDelivery, completeJob, createThread, enqueue,
+  expireApprovals, expireHolds, failJob, getTask, markReminderFailed, tickSchedules,
   type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import { dueOrigins, markAttempted, syncOrigin } from '@josi-ce/connectors';
+import {
+  TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk,
+} from '@josi-ce/channels';
+import { mailPolicy } from '@josi-ce/mail';
 
 /** What the worker needs beyond the database.
  *
@@ -24,6 +29,8 @@ export interface WorkerContext {
   masterKey?: MasterKey | null;
   /** Injected by the tests so no suite contacts a provider. */
   connectorFetch?: typeof fetch;
+  /** Injected by the tests so no suite contacts api.telegram.org. */
+  telegramFetch?: typeof fetch;
 }
 
 export interface JobOutcome {
@@ -100,8 +107,77 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       return;
     }
 
+    case 'reminder.deliver': {
+      const reminderId = String((job.payload as { reminderId?: unknown }).reminderId ?? '');
+      if (!reminderId) throw new Error('reminder.deliver without a reminderId');
+      await deliverReminder(db, reminderId, ctx);
+      return;
+    }
+
     default:
       throw new Error(`no handler for job kind ${job.kind}`);
+  }
+}
+
+/** Deliver one due reminder.
+ *
+ * The claim is the concurrency control: `claimReminderForDelivery` flips
+ * 'scheduled' to 'delivered' atomically, so a cancelled reminder, a second
+ * worker holding the same job, or a retry of a job that already delivered all
+ * land here and find nothing to do. The chat surface is the delivery that
+ * counts; Telegram is best-effort on top — a person whose bot is briefly
+ * unreachable still gets the reminder where they asked for it, and a Telegram
+ * failure must not fail a delivery that already happened. */
+async function deliverReminder(db: Db, reminderId: string, ctx: WorkerContext): Promise<void> {
+  const reminder = await claimReminderForDelivery(db, reminderId);
+  if (!reminder) return;
+
+  const text = `Reminder: ${reminder.body}`;
+  try {
+    // The conversation it was asked in, or a fresh one when that thread has
+    // been deleted since — the reminder is owed to the person, not the thread.
+    const threadId = reminder.thread_id
+      ?? (await createThread(db, { ownerUserId: reminder.owner_user_id, title: 'Reminders' })).id;
+    await addMessage(db, { threadId, direction: 'out', body: text, channel: 'web' });
+  } catch (err) {
+    // Claimed but delivered nowhere. Recorded as failed so the owner's list
+    // tells the truth, then rethrown so the queue's retry/dead machinery and
+    // its visible last_error apply.
+    await markReminderFailed(db, reminderId);
+    throw err;
+  }
+
+  await deliverReminderToTelegram(db, reminder.owner_user_id, text, ctx).catch(() => {
+    // sendChunk already records the failed attempt and its category; a dead
+    // chat has already revoked its own link. Nothing useful is left to do.
+  });
+}
+
+async function deliverReminderToTelegram(
+  db: Db,
+  userId: string,
+  text: string,
+  ctx: WorkerContext,
+): Promise<void> {
+  if (!ctx.masterKey) return;   // the token is sealed with it; without it there is no channel
+  const config = await loadConfig(db);
+  if (!config?.enabled || !config.bot_token_enc) return;
+
+  const links = (await listLinksFor(db, userId)).filter((l) => l.status === 'active');
+  if (!links.length) return;
+
+  const api = new TelegramBotApi({
+    token: openToken(ctx.masterKey, config),
+    fetchImpl: ctx.telegramFetch,
+  });
+  const policy = await mailPolicy(db);
+  const chunks = prepareOutbound({ body: text, disclosure: policy.disclosure.replace('{user}', 'you') });
+  for (const link of links) {
+    for (const chunk of chunks) {
+      await sendChunk({ db, api }, {
+        chatId: Number(link.chat_id), text: chunk, userId, kind: 'notice',
+      });
+    }
   }
 }
 

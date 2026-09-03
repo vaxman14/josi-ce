@@ -90,6 +90,45 @@ export const TASK_TOOLS: ToolSpec[] = [
     },
     actionClass: 'task_management',
   },
+  {
+    def: {
+      name: 'schedule_reminder',
+      description:
+        'Schedule a reminder for the user. When it comes due, Josi delivers the message back to '
+        + 'them in this conversation (and on Telegram if they have linked it). Give either '
+        + 'in_minutes (how far from now) or due_at (an exact ISO 8601 time with timezone).',
+      parameters: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: 'What to say when the reminder fires.' },
+          in_minutes: { type: 'number', description: 'Deliver this many minutes from now. Use for "in 5 minutes".' },
+          due_at: { type: 'string', description: 'Exact delivery time, ISO 8601 with timezone. Use for "at 3pm".' },
+        },
+        required: ['message'],
+      },
+    },
+    actionClass: 'task_management',
+  },
+  {
+    def: {
+      name: 'list_reminders',
+      description: "List the user's own upcoming reminders, with each one's id and delivery time.",
+      parameters: { type: 'object', properties: {} },
+    },
+    actionClass: null,
+  },
+  {
+    def: {
+      name: 'cancel_reminder',
+      description: 'Cancel one of the user\'s scheduled reminders before it fires. Use list_reminders first if unsure of the id.',
+      parameters: {
+        type: 'object',
+        properties: { reminder_id: { type: 'string' } },
+        required: ['reminder_id'],
+      },
+    },
+    actionClass: 'task_management',
+  },
 ];
 
 /** Names that map to the step-up gate. The gate keys on the tool name, so

@@ -2,5 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "outDir": "dist", "rootDir": "src" },
   "include": ["src"],
-  "references": [{ "path": "../../packages/core" }, { "path": "../../packages/connectors" }]
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/connectors" },
+    { "path": "../../packages/channels" },
+    { "path": "../../packages/mail" }
+  ]
 }

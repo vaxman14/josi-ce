@@ -12,7 +12,8 @@
 // at the call sites also keeps this function honest about what it is: the
 // action, not the permission.
 import {
-  createTask, enqueue, getTemplate, listTasksFor, listTemplates, missingSlots, setSlots, transition,
+  ReminderError, cancelReminder, createReminder, createTask, enqueue, getTemplate, listRemindersFor,
+  listTasksFor, listTemplates, missingSlots, setSlots, transition,
   type Db,
 } from '@josi-ce/core';
 
@@ -123,6 +124,55 @@ export async function executeAssistantTool(
       };
     }
 
+    case 'schedule_reminder': {
+      const message = String(input.message ?? '').trim();
+      const dueAt = reminderDueAt(input);
+      if (!dueAt) {
+        return {
+          ok: false, error: 'bad_time',
+          message: 'Say when: pass in_minutes (a positive number) or due_at (an ISO 8601 time in the future).',
+        };
+      }
+      let reminder;
+      try {
+        reminder = await createReminder(db, {
+          ownerUserId: userId, threadId: ctx.threadId, body: message, dueAt,
+        });
+      } catch (err) {
+        // A refusal the model can relay in the person's own terms. Anything
+        // else is a real fault and belongs to the caller's error path.
+        if (err instanceof ReminderError) return { ok: false, error: 'bad_reminder', message: err.message };
+        throw err;
+      }
+      return {
+        ok: true,
+        reminder_id: reminder.id,
+        due_at: reminder.due_at,
+        // Stated so the model does not promise more than delivery: the message
+        // comes back, it is not an autonomous action.
+        will_be_delivered: 'Josi will send this message back to the user at that time.',
+      };
+    }
+
+    case 'list_reminders': {
+      const reminders = await listRemindersFor(db, { ownerUserId: userId });
+      return {
+        ok: true,
+        reminders: reminders.map((r) => ({
+          reminder_id: r.id, message: r.body, due_at: r.due_at, status: r.status,
+        })),
+      };
+    }
+
+    case 'cancel_reminder': {
+      const reminderId = String(input.reminder_id ?? '');
+      const cancelled = await cancelReminder(db, { ownerUserId: userId, reminderId });
+      // Same sentence for "someone else's", "never existed" and "already
+      // settled" — the reasoning behind NOT_YOURS, applied to reminders.
+      if (!cancelled) return { ok: false, error: 'not_found', message: 'There is no scheduled reminder with that id.' };
+      return { ok: true, reminder_id: cancelled.id, status: cancelled.status };
+    }
+
     default:
       return { ok: false, error: 'unknown_tool', message: `no tool named ${name}` };
   }
@@ -134,6 +184,22 @@ export async function executeAssistantTool(
  * a colleague's task ids — the same reason the HTTP layer answers 404 rather
  * than 403. */
 const NOT_YOURS = { ok: false, error: 'not_found', message: 'There is no task with that id.' };
+
+/** The model may say "in five minutes" or name an exact time; both become a
+ * Date or nothing. Nothing means the tool answers with instructions rather
+ * than guessing a time on the user's behalf. */
+function reminderDueAt(input: Record<string, unknown>): Date | null {
+  const minutes = Number(input.in_minutes);
+  if (Number.isFinite(minutes) && minutes > 0) {
+    return new Date(Date.now() + Math.round(minutes * 60_000));
+  }
+  const at = String(input.due_at ?? '').trim();
+  if (at) {
+    const parsed = new Date(at);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return null;
+}
 
 async function ownTask(db: Db, taskId: string, userId: string): Promise<boolean> {
   if (!/^[0-9a-fA-F-]{36}$/.test(taskId)) return false;
