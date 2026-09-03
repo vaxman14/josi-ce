@@ -503,13 +503,12 @@ describe('subscription options', () => {
     }
   });
 
-  it('still refuses the ones with no supported path', async () => {
+  it('does not mention Copilot at all any more', async () => {
+    // It used to appear as a permanently-unavailable entry. A choice that can
+    // never be chosen is noise, so it was dropped entirely (2026-09-02).
     const res = await call('/api/admin/llm', { jar: cookies.admin });
     const byId = Object.fromEntries(res.body.subscriptionOptions.map((o: any) => [o.id, o]));
-    // Copilot is licensed for use inside GitHub's own editor integrations.
-    // There is still no supported path, so it is still not offered.
-    expect(byId.copilot_subscription.available).toBe(false);
-    expect(byId.copilot_subscription.provider).toBeNull();
+    expect(byId.copilot_subscription).toBeUndefined();
   });
 
   it('offers Claude through the first-party CLI on a CE build', async () => {

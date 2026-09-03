@@ -152,7 +152,10 @@ export function claudeArgs(model: string, mcpConfigPath?: string | null): string
   return [
     '--print',
     '--output-format', 'json',
-    '--model', model,
+    // An empty model means 'the plan's own default': the CLI chooses, exactly
+    // as it does for its interactive users. Passing --model '' would instead
+    // ask for a model literally named nothing.
+    ...(model ? ['--model', model] : []),
     '--permission-mode', 'manual',
     ...(mcpConfigPath
       ? ['--mcp-config', mcpConfigPath, '--strict-mcp-config', '--allowed-tools', `mcp__${MCP_SERVER_NAME}`]

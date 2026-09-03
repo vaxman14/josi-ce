@@ -236,9 +236,12 @@ describe('LB12.2 — advanced detail is behind a label, and reachable', () => {
   });
 
   it('puts the exact model identifier behind one in the wizard', () => {
-    const setup = read('apps/web/src/pages/Setup.tsx');
-    expect(setup).toMatch(/Show technical details/);
-    expect(setup, 'the identifier is still reachable').toMatch(/Model identifier/);
+    // The model step now lives in the shared ProviderForm (so the admin Model
+    // page can offer the same choices — round-2 item 8); the disclosure moved
+    // with it and the wizard renders it unchanged.
+    const form = read('apps/web/src/components/ProviderForm.tsx');
+    expect(form).toMatch(/Show technical details/);
+    expect(form, 'the identifier is still reachable').toMatch(/Model identifier/);
   });
 });
 
@@ -248,9 +251,11 @@ describe('LB12.4 — nothing necessary was removed', () => {
 
   it('keeps the consent the server refuses to proceed without', () => {
     // M89. Simplifying this away would leave the server refusing a step for a
-    // reason the screen no longer explains.
-    expect(setup).toMatch(/leaves this server and is processed under/i);
-    expect(setup).toMatch(/name="ack"/);
+    // reason the screen no longer explains. The model step lives in the shared
+    // ProviderForm now; the wizard still renders it.
+    const form = read('apps/web/src/components/ProviderForm.tsx');
+    expect(form).toMatch(/leaves this server and is processed under/i);
+    expect(form).toMatch(/name="ack"/);
   });
 
   it('keeps the master-key warning', () => {

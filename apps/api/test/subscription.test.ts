@@ -150,10 +150,12 @@ describe('what a CE build offers (L3.7)', () => {
     expect(claude.reason).not.toMatch(/coming soon/i);
   });
 
-  it('keeps Copilot unavailable too', async () => {
+  it('does not offer Copilot at all', async () => {
+    // Dropped entirely (2026-09-02): it only ever appeared as a permanently
+    // unavailable entry, which is noise, not information.
     const res = await call('/api/admin/llm', { jar: cookies.admin });
     const copilot = res.body.subscriptionOptions.find((o: any) => o.id === 'copilot_subscription');
-    expect(copilot.available).toBe(false);
+    expect(copilot).toBeUndefined();
   });
 
   it('reports the edition, so a screen can explain a refusal', async () => {
@@ -234,6 +236,51 @@ describe('configuring it (L3.4)', () => {
     });
     expect(res.status).toBe(409);
     expect(res.body.error).toContain('Local-only');
+  });
+
+  // ---- Round-2 item 6: ChatGPT → Claude used to die on the DB constraint,
+  // carrying the Codex model and CLI into the Claude row on the way down.
+
+  it('accepts the Claude subscription — the constraint admits anthropic_subscription', async () => {
+    const res = await save({ provider: 'anthropic_subscription', externalAcknowledged: true });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const [row] = await db.query<{ provider: string; api_key_enc: string | null }>(
+      `select provider, api_key_enc from llm_providers where role = 'primary'`,
+    );
+    expect(row.provider).toBe('anthropic_subscription');
+    expect(row.api_key_enc).toBeNull();
+  });
+
+  it('does not carry the previous provider\u2019s model or CLI into the new row', async () => {
+    // The exact sequence from the live failure: ChatGPT plan active, then
+    // switch to Claude. The failing row was provider=anthropic_subscription,
+    // model=gpt-5-codex, cli=codex — two thirds of it somebody else's config.
+    await save({ provider: 'openai_subscription', model: 'gpt-5-codex', externalAcknowledged: true });
+    const res = await save({ provider: 'anthropic_subscription', externalAcknowledged: true });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const [row] = await db.query<{ model: string; subscription_command: string }>(
+      `select model, subscription_command from llm_providers where role = 'primary'`,
+    );
+    expect(row.model).toBe('');               // the plan's own model, not Codex's
+    expect(row.subscription_command).toBe('claude');  // Anthropic's CLI, not codex
+  });
+
+  it('allows an empty model on both subscription kinds — the CLI chooses', async () => {
+    const chatgpt = await save({ provider: 'openai_subscription', externalAcknowledged: true });
+    expect(chatgpt.status).toBe(200);
+    const claude = await save({ provider: 'anthropic_subscription', externalAcknowledged: true });
+    expect(claude.status).toBe(200);
+    // A NON-subscription provider still needs a name.
+    const openai = await save({ provider: 'openai', apiKey: 'k-value-here', externalAcknowledged: true });
+    expect(openai.status).toBe(400);
+    expect(openai.body.error).toContain('model name');
+  });
+
+  it('the database refuses a key on the Claude row too', async () => {
+    await save({ provider: 'anthropic_subscription', externalAcknowledged: true });
+    await expect(db.query(
+      `update llm_providers set api_key_enc = 'v1.a.b.c' where role = 'primary'`,
+    )).rejects.toThrow();
   });
 
   it('records an operator-supplied binary path', async () => {

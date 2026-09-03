@@ -18,10 +18,10 @@ import {
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
-  UnsafeEndpointError, buildProvider, capabilitiesOf, checkCaps, disabledFeatures,
+  UnsafeEndpointError, buildProvider, capabilitiesOf, checkCaps, disabledFeatures, discoverModels,
   isExternalProvider, isLocalOnly, isSubscriptionProvider, loadStoredProvider, meteredProvider,
-  probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CODEX_COMMAND,
-  DeviceLogin, codexLoginStatus, codexLogout,
+  probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CLAUDE_COMMAND,
+  DEFAULT_CODEX_COMMAND, DeviceLogin, codexLoginStatus, codexLogout,
 } from '@josi-ce/llm';
 import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
@@ -153,15 +153,10 @@ export function subscriptionOptions(): Array<{
           + 'commercial service. This build is not a Community Edition installation, so it cannot '
           + 'offer it. An Anthropic API key works on any build.',
     },
-    {
-      id: 'copilot_subscription',
-      label: 'Use my GitHub Copilot subscription',
-      provider: null,
-      available: false,
-      reason:
-        'Copilot is licensed for use inside GitHub\'s own editor integrations, not for a server '
-        + 'answering on somebody\'s behalf. There is no supported path, so Josi does not offer one.',
-    },
+    // GitHub Copilot is deliberately NOT in this list any more. It used to
+    // appear as a permanently-unavailable entry; a choice that can never be
+    // chosen is noise, and the decision (2026-09-02) was to drop it entirely
+    // rather than keep explaining it.
   ];
 }
 
@@ -251,6 +246,38 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
     }),
   );
 
+  /** Model discovery for a credential that has not been stored yet — the same
+   * question the wizard asks, answerable after installation too. Without it
+   * the admin page could not offer the full provider form, and the first
+   * choice made during setup became a trap. The key comes from the request,
+   * is used for the one listing call, and is never written or echoed. */
+  r.post(
+    '/models',
+    handle(async (req, res) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const provider = str(body.provider, 32);
+      if (!savableProviders().includes(provider)) {
+        throw new RouteError(400, 'choose a model provider');
+      }
+      const apiKey = asSecret(body.apiKey);
+      const result = await discoverModels({
+        provider: provider as never,
+        apiKey: apiKey.isEmpty ? null : apiKey.reveal(),
+        baseUrl: str(body.baseUrl, 500) || null,
+        fetchImpl: ctx.fetchImpl,
+        resolve: ctx.resolve,
+      });
+      return res.json({
+        ok: result.ok,
+        unsupported: !!result.unsupported,
+        models: result.models,
+        category: result.category ?? null,
+        message: result.message ?? null,
+        providerCode: result.providerCode ?? null,
+      });
+    }),
+  );
+
   // The setup wizard has the same first-party device flow, but its routes are
   // intentionally gone after installation. Administrators still need to sign
   // in, reconnect, inspect status and sign out from the Model page.
@@ -326,9 +353,13 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       if (!savableProviders().includes(provider)) {
         throw new RouteError(400, 'choose a model provider');
       }
-      if (!model) throw new RouteError(400, 'a model name is required');
-
       const subscription = isSubscriptionProvider(provider);
+      // A subscription CLI chooses its plan's model itself; an empty name here
+      // means exactly that. Requiring one forced the UI to invent an
+      // identifier, and the invented one then leaked into the next provider
+      // switch — a Claude row carrying `gpt-5-codex` is how this rule was
+      // found to be wrong.
+      if (!model && !subscription) throw new RouteError(400, 'a model name is required');
       if (subscription) {
         // L3.4. Accepting a key here — even to ignore it — would leave a route
         // that takes a credential under the word "subscription". The database
@@ -386,8 +417,13 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
 
       // Which binary to run. Bounded and recorded so the admin screen can show
       // what will actually be executed rather than an assumption.
+      // Defaulted PER PROVIDER. The old default was always the Codex binary,
+      // so switching the slot to the Claude subscription silently recorded
+      // `codex` as the thing to run — the previous provider's CLI bleeding
+      // into the new row.
       const command = subscription
-        ? (str(body.subscriptionCommand, 200) || DEFAULT_CODEX_COMMAND)
+        ? (str(body.subscriptionCommand, 200)
+          || (provider === 'anthropic_subscription' ? DEFAULT_CLAUDE_COMMAND : DEFAULT_CODEX_COMMAND))
         : null;
 
       await db.query(

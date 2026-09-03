@@ -201,6 +201,22 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     console.error(`api error ${req.method} ${req.originalUrl}`, err);
     if (res.headersSent) return;
+    // A database constraint refusing a write is the server rejecting the
+    // REQUEST, not the server breaking. "Something broke on our side" for a
+    // CHECK violation sent an operator hunting a crash that was actually a
+    // validation gap — three identical retries against the same constraint,
+    // each told the same lie. The constraint name is schema, not content, and
+    // it is the one word a bug report needs.
+    const pgCode = (err as { code?: unknown })?.code;
+    if (pgCode === '23514' || pgCode === '23505' || pgCode === '23503') {
+      const constraint = String((err as { constraint_name?: unknown; constraint?: unknown }).constraint_name
+        ?? (err as { constraint?: unknown }).constraint ?? 'a database rule');
+      res.status(409).json({
+        error: `the database refused that: it violates ${constraint}. This is a validation gap — `
+          + 'the request should have been refused with a clearer reason. Please report it, quoting the rule name.',
+      });
+      return;
+    }
     res.status(500).json({ error: 'something broke on our side' });
   });
 

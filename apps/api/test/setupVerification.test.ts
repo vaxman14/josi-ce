@@ -131,6 +131,34 @@ describe('LB4.1 — the model step makes a real request', () => {
     expect(res.body.target).toBe('gpt-4o-mini');
   });
 
+  it('a pass carries through: the provider is activated, not just annotated', async () => {
+    // Round-2 item 2. The wizard said "passed", setup completed, and the admin
+    // Model page then said "not tested" and asked for the same test again —
+    // the product refusing to trust its own check. A passing verification is a
+    // real chat that really happened, so the chat capability is recorded and
+    // the provider activated. Tool calling stays null: it was not observed.
+    await wizardTo('smtp');
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    const [row] = await db.query<{
+      activated_at: string | null; probed_at: string | null;
+      cap_chat: boolean | null; cap_tool_calling: boolean | null;
+    }>(`select activated_at, probed_at, cap_chat, cap_tool_calling from llm_providers where role = 'primary'`);
+    expect(row.cap_chat).toBe(true);
+    expect(row.probed_at).not.toBeNull();
+    expect(row.activated_at).not.toBeNull();
+    expect(row.cap_tool_calling).toBeNull();
+  });
+
+  it('a failing verification activates nothing', async () => {
+    await wizardTo('smtp');
+    llmBehaviour = 'unauthorized';
+    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    const [row] = await db.query<{ activated_at: string | null }>(
+      `select activated_at from llm_providers where role = 'primary'`,
+    );
+    expect(row.activated_at).toBeNull();
+  });
+
   it('fails, and says which kind of failure it was', async () => {
     await wizardTo('smtp');
     llmBehaviour = 'unauthorized';
@@ -395,10 +423,9 @@ describe('LB2 — the ChatGPT subscription path is offered in the wizard', () =>
     expect(claude.reason).toMatch(/never sees, stores or forwards your login/i);
     expect(claude.reason).toMatch(/Claude Code/);
 
-    // Copilot has no supported path and still gets no control.
-    const copilot = res.body.options.find((o: any) => o.id === 'copilot_subscription');
-    expect(copilot.available).toBe(false);
-    expect(copilot.provider).toBeNull();
+    // Copilot is not offered at all any more — not even as an unavailable
+    // entry. A choice that can never be chosen is noise (dropped 2026-09-02).
+    expect(res.body.options.find((o: any) => o.id === 'copilot_subscription')).toBeUndefined();
 
     // The rule that never moved: an unavailable option states a reason, and
     // "coming soon" is a guess rather than a reason.

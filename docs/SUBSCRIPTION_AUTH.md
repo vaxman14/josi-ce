@@ -89,8 +89,10 @@ ones, and needs none of the above.
 
 ### GitHub Copilot
 
-Licensed for use inside GitHub's own editor integrations, not for a server
-answering on somebody's behalf. No supported path, so none is offered.
+Not offered, and as of 2026-09-02 not listed in the product at all. It is
+licensed for use inside GitHub's own editor integrations, not for a server
+answering on somebody's behalf; a choice that can never be chosen is noise, so
+the permanently-unavailable entry was removed.
 
 ---
 

@@ -15,6 +15,7 @@ import { api } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, ErrorNote, Copyable } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 import { ClaudeSignIn } from '@/components/ClaudeSignIn';
+import { ProviderForm, type SubscriptionInfo } from '@/components/ProviderForm';
 
 interface Provider {
   provider: string;
@@ -69,8 +70,10 @@ export function AdminModel() {
     try {
       await api.put('/admin/llm/providers/primary', {
         provider,
-        // The CLI decides what it supports; this is the model it is asked for.
-        model: 'gpt-5-codex',
+        // Empty on purpose: the CLI uses the plan's own model. Hardcoding
+        // `gpt-5-codex` here is how a Claude row once ended up carrying
+        // another provider's model name.
+        model: '',
         externalAcknowledged: true,
       });
       await load();
@@ -174,6 +177,16 @@ export function AdminModel() {
       ) : null}
 
       <Card>
+        <CardTitle>Change the model</CardTitle>
+        <p className="mb-3 text-sm text-muted-foreground">
+          The same choices as during installation — a model on your own hardware, an API key, or a
+          subscription — switchable in any direction, any time. Saving replaces the primary model and
+          Josi will not use the new one until it has been tested.
+        </p>
+        <ChangeModelForm onSaved={() => void load()} />
+      </Card>
+
+      <Card>
         <CardTitle>Using a Claude or ChatGPT subscription</CardTitle>
         <p className="mb-3 text-sm text-muted-foreground">
           What each provider currently permits, and nothing more optimistic than that.
@@ -214,6 +227,61 @@ export function AdminModel() {
       </Card>
         </>
       ) : null}
+    </div>
+  );
+}
+
+/** The wizard's provider form, pointed at the admin endpoints. */
+function ChangeModelForm({ onSaved }: { onSaved: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  return (
+    <div className="space-y-2">
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+      {saved ? (
+        <p className="text-sm text-emerald-400">
+          Saved. Run the test above so Josi will actually use it.
+        </p>
+      ) : null}
+      <ProviderForm
+        busy={busy}
+        paths={{
+          models: '/admin/llm/models',
+          codexBase: '/admin/llm/subscription',
+          claudeBase: '/admin/llm/subscription/claude',
+        }}
+        loadSubscriptionInfo={async () => {
+          try {
+            const llm = await api.get<AdminLlm>('/admin/llm');
+            const cli = await api.get<{ cli: CodexStatus }>('/admin/llm/subscription/status')
+              .catch(() => null);
+            return {
+              options: llm.subscriptionOptions,
+              cli: cli?.cli ?? { installed: false, signedIn: false, detail: 'Not available on this build.' },
+            } satisfies SubscriptionInfo;
+          } catch {
+            return null;
+          }
+        }}
+        submitLabel="Use this as the primary model"
+        onSubmit={async (body) => {
+          setBusy(true);
+          setError('');
+          setSaved(false);
+          try {
+            await api.put('/admin/llm/providers/primary', body);
+            setSaved(true);
+            onSaved();
+          } catch (err) {
+            // The server writes its refusals for people; pass one through.
+            setError(err instanceof Error ? err.message : 'That could not be saved');
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
     </div>
   );
 }

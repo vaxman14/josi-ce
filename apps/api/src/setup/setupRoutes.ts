@@ -16,7 +16,7 @@
 import { isIP } from 'node:net';
 import { Router } from 'express';
 import {
-  appendEvent, asSecret, getInstallId, getSetupState, getVerifications, loadMasterKey,
+  appendEvent, asSecret, getInstallId, getSetupState, getVerifications, json, loadMasterKey,
   recordVerification, seal, summarizeReview,
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
@@ -416,6 +416,29 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         detail: outcome.detail,
         target: outcome.target ?? null,
       });
+
+      // A verification that PASSED is a real chat that really happened, and it
+      // must count everywhere — not only on the review screen. Without this,
+      // the wizard said "passed", setup completed, and the admin Model page
+      // then said "not tested" and asked the operator to test the same model
+      // again: the product refusing to trust its own check. Only what was
+      // observed is recorded — the chat capability, because a chat is what
+      // ran. Tool calling and the rest stay null (unknown) until a full probe.
+      if (item === 'llm' && outcome.status === 'passed') {
+        await db.query(
+          `update llm_providers set
+             probed_at = now(), cap_chat = true,
+             activated_at = coalesce(activated_at, now()),
+             probe_steps = $1
+           where role = 'primary'`,
+          [json([{
+            id: 'chat',
+            label: 'Holds a conversation',
+            passed: true,
+            detail: outcome.detail,
+          }])],
+        );
+      }
       return res.json(outcome);
     }),
   );
@@ -636,15 +659,16 @@ async function applyStep(
       // The Codex CLI selects the model for a ChatGPT plan itself; discovery
       // says so (unsupported, nothing to choose). Requiring a name here made
       // the subscription path a dead end: the screen offers no model field,
-      // and Continue could never succeed. An empty model on this one provider
-      // means 'let the CLI use the plan's model'.
-      if (!model && provider !== 'openai_subscription') throw new SetupError(400, 'a model name is required');
+      // and Continue could never succeed. An empty model on a subscription
+      // provider — either of them — means 'let the CLI use the plan's model'.
+      const subscriptionProvider = provider === 'openai_subscription' || provider === 'anthropic_subscription';
+      if (!model && !subscriptionProvider) throw new SetupError(400, 'a model name is required');
 
       // A subscription path carries no API key at all — the credential lives in
       // the operator's own CLI login and never enters this process — so the
       // "a key is required" rule below must not apply to it. It IS still
       // external: the bytes reach the vendor, by way of the vendor's own binary.
-      const isSubscription = provider === 'openai_subscription' || provider === 'anthropic_subscription';
+      const isSubscription = subscriptionProvider;
       if (isSubscription) {
         if (!apiKey.isEmpty) {
           throw new SetupError(
