@@ -132,18 +132,15 @@ export function checkFile(args: {
 }): GateResult {
   const { candidate, policy, usage, ceilings } = args;
 
-  // 1. Quota. M55 — per-user ceilings, with the tighter of the two winning.
-  // A per-user override may only be TIGHTER than the workspace maximum; an
-  // administrator raising one person above the installation limit is how a Pi
-  // ends up swapping.
-  const maxFiles = Math.min(
-    policy.max_files_per_user,
-    ceilings.maxFiles ?? policy.max_files_per_user,
-  );
-  const maxBytes = Math.min(
-    num(policy.max_total_bytes_per_user),
-    ceilings.maxBytes ?? num(policy.max_total_bytes_per_user),
-  );
+  // 1. Quota. M55 / item 40h — a per-user override REPLACES the workspace
+  // default when an administrator has set one; null means "the workspace
+  // default applies". This is a deliberate per-person decision (set through
+  // PUT /storage/admin/capabilities/:userId), so it may raise a person above
+  // the installation default as easily as it may lower them below it — an
+  // administrator granting one person more room is exactly what the control
+  // is for, not a mistake to guard against.
+  const maxFiles = ceilings.maxFiles ?? policy.max_files_per_user;
+  const maxBytes = ceilings.maxBytes ?? num(policy.max_total_bytes_per_user);
   if (usage.files >= maxFiles) return { ok: false, reason: 'quota_exceeded', detail: 'file count' };
   if (usage.bytes + candidate.byteSize > maxBytes) {
     return { ok: false, reason: 'quota_exceeded', detail: 'storage' };
