@@ -14,6 +14,8 @@ import { anthropicProvider } from './providers/anthropic.js';
 import { codexCliProvider, isSubscriptionProvider, type SpawnRunner } from './providers/codexCli.js';
 import { claudeCliProvider } from './providers/claudeCli.js';
 import { openAiCompatibleProvider } from './providers/openaiCompatible.js';
+import { geminiProvider } from './providers/gemini.js';
+import { cohereProvider } from './providers/cohere.js';
 import { checkCaps, priceCall, recordUsage, type CapVerdict } from './metering.js';
 import {
   LlmError, isExternalProvider,
@@ -167,6 +169,8 @@ export async function buildProvider(
   };
 
   if (stored.provider === 'anthropic') return anthropicProvider(shared);
+  if (stored.provider === 'gemini') return geminiProvider(shared);
+  if (stored.provider === 'cohere') return cohereProvider(shared);
   return openAiCompatibleProvider({ ...shared, kind: stored.provider, external });
 }
 

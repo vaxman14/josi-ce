@@ -6,6 +6,9 @@
 
 export type ProviderKind =
   | 'openai' | 'anthropic' | 'xai' | 'openai_compatible'
+  | 'gemini' | 'deepseek' | 'qwen' | 'mistral' | 'kimi' | 'zhipu'
+  | 'cohere' | 'openrouter' | 'minimax' | 'baidu' | 'hunyuan'
+  | 'azure_openai' | 'aws_bedrock' | 'vertex_ai'
   // Phase 13.3. Not "OpenAI with a different credential" — a different
   // TRANSPORT: no HTTP request is made by CE on this path at all, the
   // operator's own first-party Codex CLI is run as a subprocess. It is a
@@ -29,7 +32,9 @@ export type ProviderKind =
 // key-based provider. Leaving it out would have made "nothing leaves this
 // server" false while the badge still said otherwise.
 export const EXTERNAL_PROVIDERS: readonly ProviderKind[] = [
-  'openai', 'anthropic', 'xai', 'openai_subscription', 'anthropic_subscription',
+  'openai', 'anthropic', 'xai', 'gemini', 'deepseek', 'qwen', 'mistral', 'kimi',
+  'zhipu', 'cohere', 'openrouter', 'minimax', 'baidu', 'hunyuan', 'azure_openai',
+  'aws_bedrock', 'vertex_ai', 'openai_subscription', 'anthropic_subscription',
 ];
 
 export function isExternalProvider(kind: string): boolean {

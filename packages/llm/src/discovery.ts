@@ -65,6 +65,15 @@ const DEFAULT_BASE: Partial<Record<ProviderKind, string>> = {
   openai: 'https://api.openai.com/v1',
   xai: 'https://api.x.ai/v1',
   anthropic: 'https://api.anthropic.com/v1',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta',
+  cohere: 'https://api.cohere.com/v2',
+  deepseek: 'https://api.deepseek.com/v1',
+  qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+  mistral: 'https://api.mistral.ai/v1',
+  kimi: 'https://api.moonshot.ai/v1',
+  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+  openrouter: 'https://openrouter.ai/api/v1',
+  minimax: 'https://api.minimax.io/v1',
 };
 
 /** Model families that are not chat models, whatever else they are.
@@ -221,6 +230,8 @@ export async function discoverModels(opts: DiscoverOptions): Promise<DiscoveryRe
   if (opts.provider === 'anthropic') {
     if (opts.apiKey) headers['x-api-key'] = opts.apiKey;
     headers['anthropic-version'] = '2023-06-01';
+  } else if (opts.provider === 'gemini') {
+    if (opts.apiKey) headers['x-goog-api-key'] = opts.apiKey;
   } else if (opts.apiKey) {
     headers.Authorization = `Bearer ${opts.apiKey}`;
   }
@@ -256,7 +267,12 @@ export async function discoverModels(opts: DiscoverOptions): Promise<DiscoveryRe
   // OpenAI, Anthropic and xAI all use `data`. Some self-hosted runtimes use
   // `models`. Anything else is a runtime that does not speak this API.
   const rows = Array.isArray(parsed.data) ? parsed.data
-    : Array.isArray(parsed.models) ? parsed.models
+    : Array.isArray(parsed.models) ? parsed.models.map((row: unknown) => {
+      if (!row || typeof row !== 'object') return row;
+      const record = row as Record<string, unknown>;
+      const rawId = typeof record.id === 'string' ? record.id : typeof record.name === 'string' ? record.name : '';
+      return { id: rawId.replace(/^models\//, ''), display_name: record.display_name ?? record.displayName ?? record.name };
+    })
     : null;
   if (!rows) {
     return {

@@ -22,6 +22,7 @@ import {
   isExternalProvider, isLocalOnly, isSubscriptionProvider, loadStoredProvider, meteredProvider,
   probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CLAUDE_COMMAND,
   DEFAULT_CODEX_COMMAND, DeviceLogin, codexLoginStatus, codexLogout,
+  PROVIDER_CATALOG, providerDefinition,
 } from '@josi-ce/llm';
 import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
@@ -59,7 +60,7 @@ function asArray(value: unknown): unknown[] {
   }
   return [];
 }
-const KNOWN_PROVIDERS = ['openai', 'anthropic', 'xai', 'openai_compatible'];
+const KNOWN_PROVIDERS = PROVIDER_CATALOG.map((provider) => provider.id);
 
 /** One administrator-driven Codex login at a time. This is a live child
  * process, so persisting it would create a database row that lies after a
@@ -209,6 +210,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
   r.use(requireSuperAdmin);
+  r.get('/catalog', (_req, res) => res.json({ providers: PROVIDER_CATALOG }));
 
   /** Turns the two expected refusals into responses an operator can act on, and
    * lets anything unexpected reach the error handler — which says nothing at
@@ -395,7 +397,8 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         throw new RouteError(400, 'an API key is required for this provider');
       }
 
-      if (provider === 'openai_compatible') {
+      const definition = providerDefinition(provider);
+      if (definition?.configurableBaseUrl) {
         if (!baseUrl) throw new RouteError(400, 'a base URL is required for a self-hosted endpoint');
         // Resolves and classifies. Loopback and LAN pass; cloud metadata does
         // not. See packages/llm/src/ssrf.ts for why that split is the right one.
@@ -444,7 +447,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
            subscription_command = excluded.subscription_command`,
         [
           role, provider, model,
-          provider === 'openai_compatible' ? baseUrl : null,
+          definition?.configurableBaseUrl ? baseUrl : null,
           sealedKey,
           external ? true : acknowledged,
           external ? new Date().toISOString() : null,

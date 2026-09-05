@@ -11,6 +11,13 @@ import { safeFetch, UnsafeEndpointError, type SafeFetchOptions } from '../ssrf.j
 const DEFAULT_BASE: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
   xai: 'https://api.x.ai/v1',
+  deepseek: 'https://api.deepseek.com/v1',
+  qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+  mistral: 'https://api.mistral.ai/v1',
+  kimi: 'https://api.moonshot.ai/v1',
+  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+  openrouter: 'https://openrouter.ai/api/v1',
+  minimax: 'https://api.minimax.io/v1',
 };
 
 export interface OpenAiCompatibleOptions {

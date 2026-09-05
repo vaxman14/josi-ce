@@ -52,6 +52,14 @@ export interface ProviderFormPaths {
   claudeBase: string;
 }
 
+interface ProviderDefinition {
+  id: string;
+  label: string;
+  note: string;
+  docsUrl: string;
+  configurableBaseUrl?: boolean;
+}
+
 export interface ProviderFormProps {
   busy: boolean;
   paths: ProviderFormPaths;
@@ -73,9 +81,11 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
   const [showAll, setShowAll] = useState(false);
   const [showIds, setShowIds] = useState(false);
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
+  const [catalog, setCatalog] = useState<ProviderDefinition[]>([]);
 
   const external = provider !== 'openai_compatible';
   const isSubscription = provider === 'openai_subscription' || provider === 'anthropic_subscription';
+  const selectedDefinition = catalog.find((entry) => entry.id === provider);
 
   // Only a build whose edition permits it answers this at all. A hosted build
   // 404s and the option never appears — the outermost of four layers, not the
@@ -86,6 +96,13 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const catalogPath = paths.models.replace(/\/providers\/models$/, '/catalog');
+    void api.get<{ providers: ProviderDefinition[] }>(catalogPath)
+      .then((result) => setCatalog(result.providers))
+      .catch(() => undefined);
+  }, [paths.models]);
 
   const chatgpt = subscription?.options.find((o) => o.provider === 'openai_subscription');
   const claude = subscription?.options.find((o) => o.provider === 'anthropic_subscription');
@@ -115,7 +132,9 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
   }
 
   const usable = (models ?? []).filter((m) => showAll || !m.likelyNonChat);
-  const canDiscover = external ? apiKey.length > 0 : baseUrl.length > 0;
+  const canDiscover = external
+    ? apiKey.length > 0 && (!selectedDefinition?.configurableBaseUrl || baseUrl.length > 0)
+    : baseUrl.length > 0;
 
   return (
     <form
@@ -135,10 +154,12 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
           id="provider" value={provider} onChange={(e) => setProvider(e.target.value)}
           className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
         >
-          <option value="openai_compatible">A model on your own hardware</option>
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-          <option value="xai">xAI</option>
+          {(catalog.length ? catalog : [
+            { id: 'openai_compatible', label: 'A model on your own hardware', note: '', docsUrl: '' },
+            { id: 'openai', label: 'OpenAI', note: '', docsUrl: '' },
+            { id: 'anthropic', label: 'Anthropic', note: '', docsUrl: '' },
+            { id: 'xai', label: 'xAI', note: '', docsUrl: '' },
+          ]).map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
           {chatgpt?.available ? (
             <option value="openai_subscription">My ChatGPT plan (no API key)</option>
           ) : null}
@@ -147,6 +168,7 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
           ) : null}
         </select>
       </div>
+      {selectedDefinition ? <p className="text-xs text-muted-foreground">{selectedDefinition.note}</p> : null}
 
       {/* Every subscription option, including the ones that are not on offer,
           with the actual reason. "Coming soon" would be a guess; these are
@@ -173,9 +195,11 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
         ? <SubscriptionSignIn info={subscription} loginPath={`${paths.codexBase}/login`} /> : null}
       {provider === 'anthropic_subscription' ? <ClaudeSignIn basePath={paths.claudeBase} /> : null}
 
-      {!external && !isSubscription ? (
+      {(!external || selectedDefinition?.configurableBaseUrl) && !isSubscription ? (
         <div>
-          <label className="mb-1 block text-sm" htmlFor="baseUrl">Address of your model server</label>
+          <label className="mb-1 block text-sm" htmlFor="baseUrl">
+            {external ? 'Provider deployment endpoint' : 'Address of your model server'}
+          </label>
           <Input id="baseUrl" name="baseUrl" value={baseUrl} autoCapitalize="none" required
                  placeholder="http://ollama:11434/v1" onChange={(e) => setBaseUrl(e.target.value)} />
         </div>
