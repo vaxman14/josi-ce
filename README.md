@@ -20,6 +20,7 @@
 
 <p align="center">
   <a href="#quick-start"><strong>Quick start</strong></a> ·
+  <a href="https://help.heyjosi.com/ce/">Help docs</a> ·
   <a href="docs/INSTALLATION.md">Installation guide</a> ·
   <a href="docs/THREAT_MODEL.md">Security model</a> ·
   <a href="SUPPORT.md">Support policy</a>
