@@ -1,50 +1,40 @@
 Josi CE — Community Edition
 Copyright (C) 2026 SOCAL RECEPTIONIST LLC
 
-Josi and Josi CE are created and published by SOCAL RECEPTIONIST LLC.
+Josi CE is created and published by SOCAL RECEPTIONIST LLC. Other contributors and third-party components retain their respective rights as identified in the applicable source files and notices.
 
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU Affero General Public License as published by the Free
-Software Foundation, either version 3 of the License, or (at your option) any
-later version. See LICENSE for the full text.
+SOFTWARE LICENSE
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. See LICENSE for the full text.
 
---------------------------------------------------------------------------------
-TRADEMARKS AND BRANDING
+SPDX-License-Identifier: AGPL-3.0-or-later
 
-The AGPL covers the code. It does not cover the Josi name, the Josi mark (the
-white J on navy), the Josi wordmark, or the Josi product identity, which remain
-the property of SOCAL RECEPTIONIST LLC.
+The Company's copyright license includes Company-owned branding artwork supplied with this program. Separately identified third-party material remains subject to its applicable license.
 
-Copyright and trademark are different rights and this distribution keeps them
-apart. The AGPL grants you the right to modify and redistribute this software,
-and that includes its branding assets; nothing here restricts that. What the
-trademark covers is narrower: do not use the Josi name or marks in a way that
-tells people a modified version came from us.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
 
-Redistributing Josi CE unmodified, with its branding intact, needs no
-permission. A modified version should carry your identity rather than ours.
+SOURCE ACCESS AND LEGAL NOTICES
 
-See TRADEMARK.md for the full policy.
+Rebranding does not remove obligations under the applicable software license. Under AGPL version 3, distribution of covered software must satisfy the applicable requirements of sections 4 through 6, including requirements for legal notices, notices of modification, and Corresponding Source.
 
-  *** TRADEMARK.md IS A DRAFT AND HAS NOT BEEN REVIEWED BY A LAWYER. ***
+If you modify the program and your version supports remote interaction over a computer network, section 13 requires your version to prominently offer all users interacting with it in that way access, at no charge, to the Corresponding Source of your version through a network server. A link to an upstream version that omits your modifications is not sufficient.
 
---------------------------------------------------------------------------------
+These paragraphs explain existing license requirements. They do not replace the license, create additional conditions, require contribution of changes back to the Company, or require use of GitHub as the source-delivery method. If you elect a permitted later license version, that version governs.
+
+TRADEMARKS
+
+The Company claims trademark rights in the Josi and Josi CE names, the Josi wordmark, and the specific Josi logo depicting a white stylized J on a navy background, as used to identify its software and related offerings.
+
+Copyright permission to copy or modify the code and artwork does not grant unrestricted permission to use these identifiers as trademarks. Consistent with AGPL section 7(e), trademark permissions are reserved except as expressly granted in TRADEMARK.md or a separate written agreement, or as provided by law.
+
+You may rebrand a fork under the applicable copyright license. Preserve the notices and source access required by that license. Do not present a modified product or independently operated service as operated, endorsed, certified, or supported by the Company without authorization. See TRADEMARK.md for the full policy, including permission to retain marks in unchanged official releases and recognition of independently lawful uses.
+
 SUPPORT
 
-Josi CE carries no support entitlement, no guaranteed response time and no SLA.
-You may email SOCAL RECEPTIONIST LLC, but nothing obliges a reply.
+Josi CE Community Preview includes no Company support entitlement, guaranteed response time, maintenance commitment, or service-level agreement unless separately agreed in writing. This statement does not limit rights that cannot lawfully be excluded.
 
---------------------------------------------------------------------------------
 THIRD-PARTY SERVICES
 
-Josi CE integrates with services operated by third parties, including Google,
-Microsoft, OpenAI, Anthropic, xAI and Twilio. It is not affiliated with,
-endorsed by or sponsored by any of them. Their names and marks belong to their
-respective owners.
+References to third-party products and services identify integrations or compatibility where supported. Their names and marks belong to their respective owners. The inclusion of an integration or reference does not, by itself, establish affiliation, sponsorship, endorsement, or certification.
 
-Self-hosters supply their own credentials for every such service. No credentials
-belonging to SOCAL RECEPTIONIST LLC are included in this distribution.
+Self-hosters supply and manage the credentials required for their chosen services and remain responsible for complying with those services' terms. No SOCAL RECEPTIONIST LLC production credentials, provider API keys, or account secrets are supplied with this distribution.

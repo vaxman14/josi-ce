@@ -89,6 +89,18 @@ report() {
   findings=$((findings + 1))
 }
 
+# A tiny allowlist for public endpoints that belong in public legal/help text.
+# Keep this path-and-value specific: allowing either company domain globally
+# would defeat the production-surface guard this scanner exists to enforce.
+is_approved_public_reference() {
+  local file="$1" needle="$2"
+  case "$file:$needle" in
+    README.md:heyjosi.com) return 0 ;;
+    TRADEMARK.md:socalreceptionist.com) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
   scanned=$((scanned + 1))
@@ -99,6 +111,7 @@ while IFS= read -r file; do
 
   for needle in "${FORBIDDEN_LITERAL[@]}"; do
     if grep -Fn -- "$needle" "$file" >/dev/null 2>&1; then
+      is_approved_public_reference "$file" "$needle" && continue
       while IFS= read -r hit; do
         report "$file:${hit%%:*}  forbidden string: $needle"
       done < <(grep -Fn -- "$needle" "$file")

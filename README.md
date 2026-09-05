@@ -125,10 +125,10 @@ as working before it is.
 - One workspace per installation. Multi-tenant hosting is not supported by the
   current architecture; the AGPL does not prohibit operating the software as a
   network service.
-- Not a white-label product. You may fork it and put your own identity on it —
-  the AGPL grants that and the trademark policy expects it. What is not on offer
-  is *us* standing behind a rebranded build; that is a commercial arrangement.
-  See `TRADEMARK.md`.
+- **Rebranding and independent services.** You may maintain and offer a
+  rebranded fork under the applicable license. SOCAL RECEPTIONIST LLC provides
+  no support or assurances for that offering unless separately agreed in
+  writing. See [`TRADEMARK.md`](TRADEMARK.md).
 - Not an enterprise product. The initial market is SMB.
 - No voice or SMS receptionist in 0.1.
 - No audio/video transcription or media indexing in 0.1.
@@ -322,20 +322,24 @@ Josi CE includes no support entitlement, guaranteed response, or SLA. Read the
 
 ## Licence
 
-Code: **GNU AGPL v3** — see [`LICENSE`](LICENSE).
+Josi CE is released under the GNU Affero General Public License, version 3 or,
+at your option, any later version (AGPL-3.0-or-later). See
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE); separately identified third-party
+components remain under their own licenses.
 
-Branding: the Josi name, the mark (the white `J` on navy), the wordmark and the
-product identity are **not** covered by the AGPL and remain the property of
-SOCAL RECEPTIONIST LLC.
+The AGPL copyright grant includes Company-owned branding artwork supplied with
+the software. Trademark rights in the Josi and Josi CE names and logos are
+separate: permission to copy or modify artwork does not grant unrestricted
+permission to use it as your brand. See [`TRADEMARK.md`](TRADEMARK.md) for
+permitted uses of the names and logos.
 
-This does not restrict what the AGPL grants. You may modify Josi CE and you may
-remove its branding — for a fork, removing it is the right thing to do. What the
-trademark asks is only that a modified version not present itself as the
-official Josi product. Unmodified redistribution may keep the branding, because
-it is accurate. See [`TRADEMARK.md`](TRADEMARK.md).
+You may modify and rebrand the software under its applicable license.
+Rebranding does not remove source-sharing or legal-notice obligations. Do not
+imply that an independently operated service or modified product is operated,
+endorsed, certified, or supported by SOCAL RECEPTIONIST LLC.
 
-> `TRADEMARK.md` and `NOTICE` are **drafts pending legal review**. They are not
-> approved legal wording.
+Josi CE Community Preview includes no Company support entitlement, guaranteed
+response, or SLA unless separately agreed in writing.
 
 ## Appliance platforms and launch material
 

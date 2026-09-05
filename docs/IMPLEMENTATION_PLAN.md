@@ -20,7 +20,7 @@ decisions live in `EXTRACTION_MAP.md`. Neither is summarised away here.
   generic key shapes (`sk-`, `AKIA`, PEM headers, JWTs).
 - The three docs: extraction map, this plan, decision traceability.
 - Draft legal: `LICENSE` (AGPL-3.0), `TRADEMARK.md`, `NOTICE`, each marked
-  **DRAFT — REQUIRES LEGAL REVIEW**.
+  reviewed trademark policy and legal notices.
 
 **Acceptance:** `scripts/scan-secrets.sh` exits 0 on a clean tree and non-zero
 when a SoCal string is introduced (tested with a deliberate fixture).
@@ -1168,7 +1168,7 @@ device work belongs to the separate Josi mobile repository.
 | **LB11.1** | Shepherd retired | Test: a repository-wide search finds no live shepherd branding claim. Historical records may retain it only where they are labelled as history. | Pending |
 | **LB11.2** | J identity applied | The approved white `J` on navy is applied to the web UI, PWA icons, docs site, installation UI, metadata, favicon and distributable assets. | Pending |
 | **LB11.3** | Licensing stated coherently | The "not replaceable" claim is replaced by a correct separation of AGPL copyright/licence rights from trademark rights. | Pending |
-| **LB11.4** | Trademark policy drafted | A policy permitting compliant unmodified distribution, requiring forks to avoid confusion, and not purporting to restrict AGPL rights. Marked DRAFT and flagged for legal review. | Pending |
+| **LB11.4** | Trademark policy adopted | Counsel-reviewed policy permits qualified retention of marks in authentic unchanged releases, recognizes lawful references, requires modified and independent offerings to avoid confusion, and does not add conditions to the AGPL grant. | Complete |
 | **LB11.5** | Workspace page renders | Test: loaded, empty, timeout, API failure and unauthorized states each render something honest, with retry on failure. No endless Loading. | Pending |
 | **LB11.6** | Surfaces agree | Test: UI and documentation agree on identity and licensing. | Pending |
 
