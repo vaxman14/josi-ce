@@ -1,9 +1,29 @@
-# Josi CE 0.1 — Community Preview
+<p align="center">
+  <img src="docs-site/brand/josi-mark.png" alt="Josi" width="128">
+</p>
 
-**Your assistant, on your own server.**
+<h1 align="center">Josi CE</h1>
 
-A self-hosted AI executive assistant. One workspace, your people, your server,
-your credentials.
+<p align="center"><strong>Your assistant. Your server. Your data.</strong></p>
+
+<p align="center">
+  A self-hosted AI executive assistant for one private workspace—your people,
+  your credentials, and your infrastructure.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-24324a"></a>
+  <a href="https://github.com/vaxman14/josi-ce/actions/workflows/release.yml"><img alt="Release workflow" src="https://github.com/vaxman14/josi-ce/actions/workflows/release.yml/badge.svg"></a>
+  <a href="https://hub.docker.com/r/romanvaxman/josi-ce"><img alt="Docker Hub" src="https://img.shields.io/badge/Docker%20Hub-amd64%20%7C%20arm64-2496ed?logo=docker&logoColor=white"></a>
+  <img alt="Community Preview" src="https://img.shields.io/badge/status-Community%20Preview-f59e0b">
+</p>
+
+<p align="center">
+  <a href="#quick-start"><strong>Quick start</strong></a> ·
+  <a href="docs/INSTALLATION.md">Installation guide</a> ·
+  <a href="docs/THREAT_MODEL.md">Security model</a> ·
+  <a href="SUPPORT.md">Support policy</a>
+</p>
 
 Created and published by **SOCAL RECEPTIONIST LLC**.
 
@@ -15,7 +35,56 @@ Created and published by **SOCAL RECEPTIONIST LLC**.
 
 ---
 
-## Status
+## Why Josi
+
+- **Self-hosted:** your workspace runs on infrastructure you control.
+- **Bring your own providers:** OpenAI, Anthropic, xAI, local models, and
+  OpenAI-compatible endpoints.
+- **Actually useful:** web app, documents, mail, storage, connectors, Telegram,
+  backup and restore—not merely a chat box in a Docker container.
+- **Multi-user by design:** private per-user connections and content inside one
+  shared workspace.
+- **No seat cap:** capacity is determined by your hardware, not a pricing page.
+- **Auditable:** AGPL source, published threat model, reproducible images, and
+  test evidence for claims made here.
+
+## Quick start
+
+Requires Docker Engine with Compose v2 on a 64-bit `amd64` or `arm64` host.
+
+```bash
+mkdir -p ~/josi-ce && cd ~/josi-ce
+docker run --rm \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD:$PWD" -w "$PWD" \
+  romanvaxman/josi-ce-installer:0.1.0
+```
+
+Open <http://localhost>. The first person through setup becomes the super
+admin. **Immediately back up `secrets/master.key` somewhere off the host.**
+
+The installer is temporary: it generates owner-only secrets, starts the normal
+isolated Compose services, and exits. No privileged controller remains.
+
+Prefer GHCR? Use `ghcr.io/vaxman14/josi-ce-installer:0.1.0`. On macOS with
+Docker Desktop, follow the socket instructions in the
+[quick-start guide](docs/QUICK_START.md).
+
+## Proven in the Community Preview
+
+| Release gate | Result |
+|---|---|
+| Architectures | Published `linux/amd64` and `linux/arm64` images |
+| Clean installation | Fresh published-image install, migrations, health and UI verified |
+| Isolation | 69/69 live multi-user isolation checks passed |
+| Test suite | 2,197 tests passed at release cut |
+| Dependency audit | Zero known npm vulnerabilities at release cut |
+| Supply chain | Versioned images with provenance attestations |
+
+These are release-cut results, not an evergreen guarantee. The detailed
+evidence and limitations remain in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md).
+
+## Project status
 
 **Josi CE 0.1 is a Community Preview.** Setup, isolation, the assistant, the web
 app, connectors, mail, documents and storage, and backup and restore are
@@ -106,7 +175,7 @@ supported within realistic limits.
 > remote. Real figures will be published only after representative hardware has
 > actually been benchmarked — not estimated.
 
-## Installation
+## Installation details
 
 For the shortest verified path, see [`docs/QUICK_START.md`](docs/QUICK_START.md).
 
