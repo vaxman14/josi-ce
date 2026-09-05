@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1
+
+# One-shot bootstrapper for the published Josi CE stack. This container is not
+# part of the running product: it writes the reviewed release assets into the
+# operator's chosen directory, starts Compose, and exits.
+FROM docker:29-cli
+
+RUN apk add --no-cache bash openssl
+
+COPY docker-compose.release.yml /opt/josi-ce-release/docker-compose.yml
+COPY Caddyfile /opt/josi-ce-release/Caddyfile
+COPY .env.example /opt/josi-ce-release/.env.example
+COPY scripts/install.sh /opt/josi-ce-release/install.sh
+COPY scripts/preflight.sh /opt/josi-ce-release/preflight.sh
+COPY scripts/aio-install.sh /usr/local/bin/josi-ce-aio-install
+
+RUN chmod 0755 \
+      /opt/josi-ce-release/install.sh \
+      /opt/josi-ce-release/preflight.sh \
+      /usr/local/bin/josi-ce-aio-install
+
+ENTRYPOINT ["/usr/local/bin/josi-ce-aio-install"]

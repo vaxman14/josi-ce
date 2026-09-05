@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The official Josi palette: deep navy, orange/gold. Locked on 2026-08-30 and
+   not a self-hoster's to replace — see the branding note in the README. */
+@layer base {
+  :root {
+    --background: 222 47% 8%;
+    --foreground: 210 40% 96%;
+    --card: 222 44% 11%;
+    --card-foreground: 210 40% 96%;
+    --primary: 28 92% 54%;          /* Josi orange */
+    --primary-foreground: 222 47% 8%;
+    --secondary: 222 32% 18%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 222 30% 16%;
+    --muted-foreground: 215 20% 68%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 222 28% 20%;
+    --input: 222 28% 22%;
+    --ring: 28 92% 54%;
+    --radius: 0.75rem;
+  }
+
+  * { @apply border-border; }
+
+  html, body, #root { height: 100%; }
+
+  body {
+    @apply bg-background text-foreground;
+    /* Nothing may scroll sideways on a phone. This is the backstop; the
+       layout is built not to need it, and the e2e suite measures it. */
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Every interactive control clears the 44px iOS tap target. Written once
+     here rather than remembered at each call site. */
+  button, a[role='button'], [type='submit'] { touch-action: manipulation; }
+
+  :focus-visible { @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background; }
+}

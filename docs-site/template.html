@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#07101f">
+  <title>Install Josi CE</title>
+  <meta name="description" content="The complete installation and operations manual for Josi CE.">
+  <style>
+    :root{--bg:#07101f;--panel:#0d192b;--panel2:#111f34;--text:#eef4fb;--muted:#9badc3;--line:#26374f;--orange:#f58220;--gold:#f5ad42;--code:#050b15;--max:860px}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.68 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--gold);text-decoration-thickness:1px;text-underline-offset:3px}a:hover{color:#ffc46b}.top{position:sticky;top:0;z-index:20;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(7,16,31,.92);backdrop-filter:blur(16px)}.top-inner{max-width:1180px;margin:auto;height:68px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{display:flex;align-items:center;gap:12px;color:var(--text);text-decoration:none;font-weight:750;letter-spacing:-.02em}.brand img{width:38px;height:38px;object-fit:contain}.brand span small{display:block;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}.top-links{display:flex;gap:16px;align-items:center;font-size:14px}.pill{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 15px;border-radius:999px;background:var(--orange);color:#111827!important;font-weight:800;text-decoration:none}.layout{max-width:1180px;margin:auto;display:grid;grid-template-columns:250px minmax(0,var(--max));gap:54px;padding:48px 24px 96px}.side{position:sticky;top:96px;align-self:start;max-height:calc(100vh - 120px);overflow:auto;padding-right:16px}.side strong{display:block;margin-bottom:12px;color:#fff;font-size:13px;text-transform:uppercase;letter-spacing:.09em}.side a{display:block;padding:5px 0;color:var(--muted);font-size:13px;text-decoration:none}.side a:hover{color:var(--orange)}main{min-width:0}.hero{padding:42px 0 36px;border-bottom:1px solid var(--line);margin-bottom:42px}.eyebrow{color:var(--orange);font-size:13px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.hero h1{margin:8px 0 14px;font-size:clamp(42px,8vw,72px);line-height:.98;letter-spacing:-.055em}.hero p{max-width:680px;color:var(--muted);font-size:19px}.meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}.meta span{border:1px solid var(--line);border-radius:999px;padding:7px 11px;color:#bfd0e3;font-size:12px}article h1{display:none}article h2{margin:64px 0 18px;padding-top:20px;border-top:1px solid var(--line);font-size:30px;line-height:1.2;letter-spacing:-.025em;scroll-margin-top:92px}article h3{margin:38px 0 12px;font-size:21px;line-height:1.3;scroll-margin-top:92px}article p,article li{color:#d5dfeb}article strong{color:#fff}article blockquote{margin:24px 0;padding:18px 22px;border-left:4px solid var(--orange);border-radius:0 12px 12px 0;background:var(--panel);color:#dbe6f3}article blockquote p{margin:0}article ul,article ol{padding-left:24px}article li+li{margin-top:6px}pre{overflow:auto;margin:18px 0 26px;padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:var(--code);box-shadow:0 14px 34px rgba(0,0,0,.16)}code{font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#ffd393}p code,li code,td code{padding:2px 5px;border-radius:5px;background:var(--panel2)}table{display:block;overflow-x:auto;width:100%;border-collapse:collapse;margin:22px 0}th,td{padding:11px 13px;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--panel2);color:#fff}td{color:#cad7e6}.copy{float:right;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--muted);padding:5px 8px;font-size:11px;cursor:pointer}.copy:hover{color:#fff}.footer{max-width:var(--max);margin:0 auto;padding:30px 24px 60px;color:var(--muted);border-top:1px solid var(--line);font-size:13px}@media(max-width:900px){.layout{display:block;padding-top:24px}.side{display:none}.top-links a:not(.pill){display:none}.hero{padding-top:26px}article h2{font-size:26px}}@media(max-width:520px){.top-inner{padding:0 16px}.layout{padding-left:16px;padding-right:16px}.brand span small{display:none}.pill{padding:0 12px}.hero h1{font-size:44px}pre{margin-left:-4px;margin-right:-4px;padding:15px}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="top-inner">
+    <a class="brand" href="#top"><img src="brand/josi-mark.png" alt=""><span>Josi CE<small>Community Preview</small></span></a>
+    <nav class="top-links"><a href="#security-checklist">Security checklist</a><a href="#troubleshooting">Troubleshooting</a><a class="pill" href="#obtain-the-source">Start installing</a></nav>
+  </div></header>
+  <div class="layout" id="top">
+    <aside class="side"><strong>On this page</strong><!--TOC--></aside>
+    <main>
+      <section class="hero"><div class="eyebrow">Official operator guide</div><h1>Install Josi CE.</h1><p>From an empty Linux server to a verified Josi installation, with every supplied option explained and every unfinished workflow labeled honestly.</p><div class="meta"><span>Docker Compose</span><span>AMD64 + ARM64</span><span>Bundled HTTPS</span><span>Bring your own proxy</span></div></section>
+      <article><!--CONTENT--></article>
+    </main>
+  </div>
+  <footer class="footer">Josi CE is created and published by SOCAL RECEPTIONIST LLC. Community Preview software carries no support entitlement or SLA.</footer>
+  <script>
+    document.querySelectorAll('pre').forEach(function(pre){var b=document.createElement('button');b.className='copy';b.textContent='Copy';b.addEventListener('click',function(){navigator.clipboard.writeText(pre.innerText.replace(/^Copy\n/,''));b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1200)});pre.prepend(b)});
+  </script>
+</body>
+</html>
