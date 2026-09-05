@@ -28,6 +28,7 @@ const MEMBER_NAV = [
   { to: '/app/usage', label: 'Usage' },
   { to: '/app/personalization', label: 'Personalization' },
   { to: '/app/telegram', label: 'Telegram' },
+  { to: '/app/channels', label: 'Channels' },
   { to: '/app/settings', label: 'Settings' },
   { to: '/app/apps', label: 'Apps' },
 ];
@@ -43,6 +44,7 @@ const ADMIN_NAV = [
   { to: '/admin/storage', label: 'Storage' },
   { to: '/admin/connectors', label: 'Connectors' },
   { to: '/admin/telegram', label: 'Telegram' },
+  { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/workspace', label: 'Workspace' },
 ];
 

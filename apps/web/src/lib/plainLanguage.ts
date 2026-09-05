@@ -25,6 +25,11 @@ export interface Vocabulary {
 }
 
 export const VOCABULARIES: Record<string, Vocabulary> = {
+  external_channel: {
+    source: { literal: ['whatsapp', 'slack', 'signal'] },
+    labels: { whatsapp: 'WhatsApp', slack: 'Slack', signal: 'Signal' },
+  },
+
   connection_status: {
     source: { migrationTable: 'connections', column: 'status' },
     labels: {
@@ -66,6 +71,8 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
       literal: [
         'openai', 'anthropic', 'xai', 'openai_compatible',
         'openai_subscription', 'anthropic_subscription',
+        'gemini', 'deepseek', 'qwen', 'mistral', 'kimi', 'zhipu', 'cohere',
+        'openrouter', 'minimax', 'baidu', 'hunyuan', 'azure_openai', 'aws_bedrock', 'vertex_ai',
       ],
     },
     labels: {
@@ -75,8 +82,36 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
       openai_compatible: 'Your own server',
       openai_subscription: 'Your ChatGPT plan',
       anthropic_subscription: 'Your Claude plan',
+      gemini: 'Google Gemini',
+      deepseek: 'DeepSeek',
+      qwen: 'Alibaba Qwen',
+      mistral: 'Mistral',
+      kimi: 'Moonshot Kimi',
+      zhipu: 'Zhipu GLM',
+      cohere: 'Cohere',
+      openrouter: 'OpenRouter',
+      minimax: 'MiniMax',
+      baidu: 'Baidu ERNIE',
+      hunyuan: 'Tencent Hunyuan',
+      azure_openai: 'Azure AI',
+      aws_bedrock: 'AWS Bedrock',
+      vertex_ai: 'Google Vertex AI',
     },
     detail: {
+      gemini: 'Uses Google’s native Gemini API and its own capability test before activation.',
+      deepseek: 'Connects to DeepSeek through its documented OpenAI-compatible API.',
+      qwen: 'Connects to Alibaba Qwen through its documented compatible endpoint.',
+      mistral: 'Connects to Mistral’s hosted model API.',
+      kimi: 'Connects to Moonshot AI’s Kimi API.',
+      zhipu: 'Connects to Zhipu AI’s GLM API.',
+      cohere: 'Uses Cohere’s native Chat v2 API.',
+      openrouter: 'Routes requests through OpenRouter to a model selected by the administrator.',
+      minimax: 'Connects to MiniMax through its documented compatible endpoint.',
+      baidu: 'Uses an administrator-supplied Baidu deployment endpoint.',
+      hunyuan: 'Uses an administrator-supplied Tencent Hunyuan deployment endpoint.',
+      azure_openai: 'Uses the Azure deployment and API version configured by the administrator.',
+      aws_bedrock: 'Uses the AWS Bedrock deployment endpoint configured by the administrator.',
+      vertex_ai: 'Uses the Google Vertex AI deployment endpoint configured by the administrator.',
       openai_compatible: 'A model running on hardware you control. Nothing leaves this server for it.',
       openai_subscription:
         'Runs OpenAI\'s own Codex CLI, signed in as you. Shared across this installation, and it '

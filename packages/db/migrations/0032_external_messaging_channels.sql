@@ -21,7 +21,7 @@ create table external_channel_links (
   user_id uuid not null references users(id) on delete cascade,
   external_identity text not null,
   conversation_id text not null,
-  thread_id uuid references conversation_threads(id) on delete set null,
+  thread_id uuid references threads(id) on delete set null,
   status text not null default 'active' check (status in ('active', 'revoked')),
   linked_at timestamptz not null default now(),
   revoked_at timestamptz,

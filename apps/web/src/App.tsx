@@ -17,6 +17,7 @@ import { Usage } from '@/pages/Usage';
 import { Personalization } from '@/pages/Personalization';
 import { Settings } from '@/pages/Settings';
 import { Telegram } from '@/pages/Telegram';
+import { Channels } from '@/pages/Channels';
 import { Apps } from '@/pages/Apps';
 import { AdminOverview } from '@/pages/admin/Overview';
 import { AdminPeople } from '@/pages/admin/People';
@@ -26,6 +27,7 @@ import { AdminStorage } from '@/pages/admin/Storage';
 import { AdminConnectors } from '@/pages/admin/Connectors';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
+import { AdminChannels } from '@/pages/admin/Channels';
 import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
 
 /** Routing is convenience, not security.
@@ -135,6 +137,7 @@ export function App() {
         <Route path="personalization" element={<Personalization />} />
         <Route path="settings" element={<Settings />} />
         <Route path="telegram" element={<Telegram />} />
+        <Route path="channels" element={<Channels />} />
         <Route path="apps" element={<Apps />} />
       </Route>
 
@@ -147,6 +150,7 @@ export function App() {
         <Route path="connectors" element={<AdminConnectors />} />
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />
+        <Route path="channels" element={<AdminChannels />} />
         <Route path="launch" element={<AdminLaunchChecklist />} />
       </Route>
 
