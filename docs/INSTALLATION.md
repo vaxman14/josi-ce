@@ -1447,3 +1447,37 @@ permanent removal, take a `full` backup, copy it off the host, verify it by
 restoring it somewhere else, and separately preserve the master key — a backup
 you have never restored is not a backup you know you have. This manual
 deliberately does not provide a one-line destructive wipe command.
+# Connections, APIs, MCP servers, skills, and migration
+
+After setup, a super administrator can open **Admin → Connections & skills**.
+This is the single guided surface for optional developer services, custom APIs,
+third-party MCP servers, skills, and configuration transfer. None are preset or
+enabled automatically.
+
+## Security model
+
+- GitHub, Netlify, Vercel, Supabase, custom API, and MCP credentials are sealed
+  with `secrets/master.key` before entering PostgreSQL. The API returns only
+  `credentialSet: true`; neither plaintext nor ciphertext is returned.
+- Custom API operations and discovered MCP tools begin disabled. Read, write,
+  and delete operations are classified separately; consequential operations
+  retain approval requirements.
+- Administrator-supplied network endpoints pass DNS and SSRF validation. HTTP
+  redirects are not trusted as a way around the validated endpoint.
+- Local MCP entries accept only an absolute executable path without shell
+  syntax. They do not inherit arbitrary environment variables or installation
+  secrets.
+- Skills are staged before activation. Approval does not grant capabilities:
+  a skill may use only tools and connections already permitted to its caller.
+
+## Moving an installation
+
+Choose **Export configuration** to download a versioned JSON configuration.
+It contains service names, endpoints, reviewed operations, MCP tool metadata,
+and skill provenance. It never contains credentials.
+
+On the destination installation, choose **Import configuration**. Josi validates
+every network endpoint before writing any imported row; imported services remain disabled
+and appear in the returned reauthorization checklist. Imported skills return
+to pending review. Keep the original installation until the destination has
+been reauthorized and verified.

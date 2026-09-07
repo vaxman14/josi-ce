@@ -25,6 +25,7 @@ import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './htt
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
+import { extensibilityRoutes } from './http/extensibilityRoutes.js';
 
 export interface AppConfig {
   /** https in production; false lets cookies work over plain http locally. */
@@ -178,6 +179,9 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
   }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
+  api.use('/admin/extensibility', extensibilityRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, resolve: cfg.outboundResolve,
+  }));
   api.use('/storage', storageRoutes({ db }));
   api.use('/telegram', telegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,

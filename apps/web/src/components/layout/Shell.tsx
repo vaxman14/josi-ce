@@ -42,6 +42,7 @@ const ADMIN_NAV = [
   { to: '/admin/policy', label: 'Policy' },
   { to: '/admin/storage', label: 'Storage' },
   { to: '/admin/connectors', label: 'Connectors' },
+  { to: '/admin/extensibility', label: 'Connections & skills' },
   { to: '/admin/telegram', label: 'Telegram' },
   { to: '/admin/workspace', label: 'Workspace' },
 ];

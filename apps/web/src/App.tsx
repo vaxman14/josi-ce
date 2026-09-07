@@ -27,6 +27,7 @@ import { AdminConnectors } from '@/pages/admin/Connectors';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
 import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
+import { AdminExtensibility } from '@/pages/admin/Extensibility';
 
 /** Routing is convenience, not security.
  *
@@ -145,6 +146,7 @@ export function App() {
         <Route path="policy" element={<AdminPolicy />} />
         <Route path="storage" element={<AdminStorage />} />
         <Route path="connectors" element={<AdminConnectors />} />
+        <Route path="extensibility" element={<AdminExtensibility />} />
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />
         <Route path="launch" element={<AdminLaunchChecklist />} />
