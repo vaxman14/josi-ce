@@ -279,5 +279,11 @@ directory and the published `0.1.1` application image.
   passed; `npm audit` reported zero vulnerabilities; the reachable-blob secret
   scan was clean; the release Compose file validated.
 
-Published `0.1.2` multi-architecture manifests and a clean install from those
-published artifacts must still be verified after the release workflow finishes.
+Release run `34167317390` published commit `dffe9f2`. Anonymous Docker Hub
+inspection verified that both `romanvaxman/josi-ce:0.1.2` and
+`romanvaxman/josi-ce-installer:0.1.2` are OCI indexes containing distinct
+`linux/amd64` and `linux/arm64` manifests. A forced pull of the public installer
+into a second empty directory produced the quiet output above, pinned `.env` to
+`0.1.2`, reached healthy state for PostgreSQL, web, worker, and Caddy, returned
+OK from `/health`, left the installer exited, and produced an installer log with
+no error, fatal, panic, authentication, or permission-denial lines.
