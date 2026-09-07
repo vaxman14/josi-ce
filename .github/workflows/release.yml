@@ -59,7 +59,10 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # The existing package predates this public repository and does not
+          # grant its ephemeral GITHUB_TOKEN write access. Use the dedicated,
+          # least-scoped Packages credential stored as a repository secret.
+          password: ${{ secrets.GHCR_TOKEN }}
 
       # The tests run against the same source that is about to be published.
       # Publishing an image whose suite was never run is how a release goes out
