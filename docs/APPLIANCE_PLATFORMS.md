@@ -15,7 +15,7 @@ docker run --rm \
   -e JOSI_PREPARE_ONLY=1 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  romanvaxman/josi-ce-installer:0.1.1
+  romanvaxman/josi-ce-installer:0.1.2
 ```
 
 Back up `/opt/josi-ce/secrets/master.key` outside the appliance. In `.env`, set

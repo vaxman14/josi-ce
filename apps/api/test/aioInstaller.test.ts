@@ -12,7 +12,7 @@ describe('the one-shot AIO installer', () => {
     expect(dockerfile).toMatch(/^FROM docker:29-cli$/m);
     expect(dockerfile).toMatch(/ENTRYPOINT \["\/usr\/local\/bin\/josi-ce-aio-install"\]/);
     expect(installer).toMatch(/docker compose .* up -d --wait/s);
-    expect(installer).toMatch(/installer container has exited/);
+    expect(installer).toContain('Josi CE is ready');
   });
 
   it('requires an explicit Docker socket and proves the host path mapping', () => {
@@ -53,5 +53,14 @@ describe('the one-shot AIO installer', () => {
     expect(installer).not.toMatch(/MASTER_KEY=/);
     expect(installer).not.toMatch(/POSTGRES_PASSWORD=/);
     expect(installer).not.toMatch(/cat .*secrets\//);
+  });
+
+  it('is quiet by default, supports verbose output, and persists the requested public URL', () => {
+    expect(installer).toContain('[[ "${1:-}" == "--verbose"');
+    expect(installer).toContain('--project-name josi-ce pull --quiet');
+    expect(installer).toContain('--wait-timeout 300 --quiet-pull');
+    expect(installer).toContain('set_env_value JOSI_APP_URL "$JOSI_APP_URL"');
+    expect(installer).toContain('set_env_value JOSI_DOMAIN "$JOSI_DOMAIN"');
+    expect(installer).toContain('Detailed log: $LOG_FILE');
   });
 });

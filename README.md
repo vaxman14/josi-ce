@@ -56,9 +56,10 @@ Requires Docker Engine with Compose v2 on a 64-bit `amd64` or `arm64` host.
 ```bash
 mkdir -p ~/josi-ce && cd ~/josi-ce
 docker run --rm \
+  -e JOSI_APP_URL=http://localhost \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  romanvaxman/josi-ce-installer:0.1.1
+  romanvaxman/josi-ce-installer:0.1.2
 ```
 
 Open <http://localhost>. The first person through setup becomes the super
@@ -67,7 +68,12 @@ admin. **Immediately back up `secrets/master.key` somewhere off the host.**
 The installer is temporary: it generates owner-only secrets, starts the normal
 isolated Compose services, and exits. No privileged controller remains.
 
-Prefer GHCR? Use `ghcr.io/vaxman14/josi-ce-installer:0.1.1`. On macOS with
+The default output shows only installation milestones. Add `--verbose` after
+the image name to stream the underlying Docker output. For public HTTPS, also
+pass `-e JOSI_DOMAIN=josi.example.com` and set `JOSI_APP_URL` to the matching
+`https://` origin.
+
+Prefer GHCR? Use `ghcr.io/vaxman14/josi-ce-installer:0.1.2`. On macOS with
 Docker Desktop, follow the socket instructions in the
 [quick-start guide](docs/QUICK_START.md).
 
@@ -193,18 +199,20 @@ then exits; no privileged controller remains running.
 mkdir josi-ce && cd josi-ce
 # Linux:
 docker run --rm \
+  -e JOSI_APP_URL=http://localhost \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.1
+  ghcr.io/vaxman14/josi-ce-installer:0.1.2
 ```
 
 On macOS with Docker Desktop, use its user socket instead:
 
 ```bash
 docker run --rm \
+  -e JOSI_APP_URL=http://localhost \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.1
+  ghcr.io/vaxman14/josi-ce-installer:0.1.2
 ```
 
 Review `.env` before exposing the installation publicly. Set `JOSI_DOMAIN` and

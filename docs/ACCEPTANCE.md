@@ -258,3 +258,26 @@ byte-for-byte capture of the pinned version in
   a timing taken with swap thrashing is not a measurement of Josi.
 - `@node-rs/argon2` ships an arm64 prebuild, so no compiler is needed. That is
   the assumption a real run has to confirm.
+
+## Quiet one-shot installer candidate — 7 September 2026
+
+The `0.1.2` installer candidate was built from base commit `0a229fc` plus the
+installer changes recorded by the release commit. It was exercised on Linux
+`x86_64` with Docker Engine `29.7.2` and Compose `5.5.1`, using an empty host
+directory and the published `0.1.1` application image.
+
+- Default terminal output contained only five installation milestones, the
+  final URL, the master-key backup warning, and the private log path. Docker
+  layer, network, volume, migration, container, and health-wait progress stayed
+  in `.josi-installer.log`.
+- `JOSI_APP_URL=http://localhost` supplied to `docker run` was written to the
+  generated `.env` and printed as the final address.
+- PostgreSQL, web, worker, and Caddy all reached healthy state; `/health`
+  returned `{"ok":true,"service":"josi-ce"}`; the installer container exited.
+- A second installer run preserved both generated secret files byte-for-byte.
+- TypeScript and the production build passed; 80 test files and 2,209 tests
+  passed; `npm audit` reported zero vulnerabilities; the reachable-blob secret
+  scan was clean; the release Compose file validated.
+
+Published `0.1.2` multi-architecture manifests and a clean install from those
+published artifacts must still be verified after the release workflow finishes.
