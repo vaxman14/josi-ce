@@ -285,3 +285,17 @@ describe('LB12.4 — nothing necessary was removed', () => {
     expect(setup).toMatch(/Read-only/);
   });
 });
+
+describe('setup wizard browser autofill isolation', () => {
+  const setup = read('apps/web/src/pages/Setup.tsx');
+
+  it('remounts fields when the wizard advances so credentials cannot bleed into the next step', () => {
+    expect(setup).toMatch(/<StepForm key=\{current\.id\} step=\{current\.id\}/);
+    expect(setup).toMatch(/<StepForm key=\{revisingStep\.id\} step=\{revisingStep\.id\}/);
+  });
+
+  it('marks address and certificate email fields with their actual autocomplete purpose', () => {
+    expect(setup).toMatch(/id="domain"[^>]+autoComplete="url"/);
+    expect(setup).toMatch(/id="acmeEmail"[^>]+autoComplete="email"/);
+  });
+});

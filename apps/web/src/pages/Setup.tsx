@@ -182,7 +182,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-4 text-sm text-muted-foreground">
             {revisingStep.summary} Saving this replaces what is stored and tests it again.
           </p>
-          <StepForm step={revisingStep.id} busy={busy} onSubmit={submit} />
+          <StepForm key={revisingStep.id} step={revisingStep.id} busy={busy} onSubmit={submit} />
           <div className="mt-3">
             <Button type="button" variant="secondary" disabled={busy} onClick={() => setRevising(null)}>
               Leave it as it is
@@ -194,7 +194,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-1 text-xs text-muted-foreground">Step {position} of {state.steps.length}</p>
           <CardTitle>{current.title}</CardTitle>
           <p className="mb-4 text-sm text-muted-foreground">{current.summary}</p>
-          <StepForm step={current.id} busy={busy} onSubmit={submit} />
+          <StepForm key={current.id} step={current.id} busy={busy} onSubmit={submit} />
         </Card>
       ) : (
         <Card>
@@ -282,9 +282,9 @@ function StepForm({
           }))}
           className="space-y-3"
         >
-          <Field id="email" label="Email" type="email" required />
-          <Field id="username" label="Username" required autoCapitalize="none" />
-          <Field id="displayName" label="Your name" />
+          <Field id="email" label="Email" type="email" autoComplete="email" required />
+          <Field id="username" label="Username" autoComplete="username" required autoCapitalize="none" />
+          <Field id="displayName" label="Your name" autoComplete="name" />
           <Field id="password" label="Password" type="password" required
                  autoComplete="new-password" minLength={12} />
           <p className="text-xs text-muted-foreground">At least 12 characters. This is the one administrator account.</p>
@@ -300,7 +300,7 @@ function StepForm({
           }))}
           className="space-y-3"
         >
-          <Field id="domain" name="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" autoComplete="off" />
+          <Field id="domain" name="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" autoComplete="url" />
           <div>
             <label className="mb-1 block text-sm" htmlFor="tlsMode">HTTPS</label>
             <select id="tlsMode" name="tlsMode" defaultValue="bundled_caddy"
@@ -312,7 +312,7 @@ function StepForm({
           <p className="text-xs text-muted-foreground">
             Public certificates require a domain pointing to this server. A LAN IP works over HTTP and needs no certificate email.
           </p>
-          <Field id="acmeEmail" name="acmeEmail" label="Email for certificate notices" type="email" autoComplete="off" />
+          <Field id="acmeEmail" name="acmeEmail" label="Email for certificate notices" type="email" autoComplete="email" />
           <Button type="submit" disabled={busy}>Continue</Button>
         </form>
       );
