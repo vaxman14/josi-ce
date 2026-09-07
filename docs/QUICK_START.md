@@ -19,14 +19,14 @@ mkdir -p ~/josi-ce && cd ~/josi-ce
 docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  romanvaxman/josi-ce-installer:0.1.0
+  romanvaxman/josi-ce-installer:0.1.1
 ```
 
 The installer writes the release files, generates owner-only secrets, starts
 the stack, and exits. It does not leave a Docker-socket controller running.
 
 The same image is also published on GHCR as
-`ghcr.io/vaxman14/josi-ce-installer:0.1.0`.
+`ghcr.io/vaxman14/josi-ce-installer:0.1.1`.
 
 For Docker Desktop on macOS, replace the socket source with
 `$HOME/.docker/run/docker.sock`. macOS is suitable for evaluation, not a

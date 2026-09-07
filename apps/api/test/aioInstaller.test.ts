@@ -30,7 +30,10 @@ describe('the one-shot AIO installer', () => {
   });
 
   it('pins the published stack instead of silently floating on latest', () => {
-    expect(installer).toContain("sed -i.bak 's/^JOSI_TAG=.*/JOSI_TAG=0.1.0/' .env");
+    expect(dockerfile).toContain('ARG JOSI_VERSION=0.1.0');
+    expect(dockerfile).toContain('ENV JOSI_VERSION=$JOSI_VERSION');
+    expect(installer).toContain('readonly VERSION="${JOSI_VERSION:-0.1.0}"');
+    expect(installer).toContain('JOSI_TAG=${VERSION}');
     expect(installer).toContain('.env.pre-${VERSION}');
     expect(installer).not.toMatch(/JOSI_TAG=latest/);
   });

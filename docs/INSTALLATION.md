@@ -41,7 +41,7 @@ mkdir -p /opt/josi && cd /opt/josi
 docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  romanvaxman/josi-ce-installer:0.1.0
+  romanvaxman/josi-ce-installer:0.1.1
 ```
 
 The version-pinned installer checks Docker, writes the reviewed release files,

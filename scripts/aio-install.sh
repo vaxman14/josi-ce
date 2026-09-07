@@ -10,14 +10,14 @@
 #   docker run --rm \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v "$PWD:$PWD" -w "$PWD" \
-#     ghcr.io/vaxman14/josi-ce-installer:0.1.0
+#     ghcr.io/vaxman14/josi-ce-installer:0.1.1
 #
 # Docker Desktop for Mac exposes its socket at ~/.docker/run/docker.sock. Mount
 # that source to the same /var/run/docker.sock destination shown above.
 set -euo pipefail
 
 readonly ASSETS=/opt/josi-ce-release
-readonly VERSION=0.1.0
+readonly VERSION="${JOSI_VERSION:-0.1.0}"
 readonly INSTALL_UID="$(stat -c '%u' "$PWD")"
 readonly INSTALL_GID="$(stat -c '%g' "$PWD")"
 
@@ -73,22 +73,22 @@ if [[ ! -e .env ]]; then
   cp .env.example .env
   # The source checkout defaults to `local`; a published installation must be
   # pinned to the release that shipped this installer.
-  sed -i.bak 's/^JOSI_TAG=.*/JOSI_TAG=0.1.0/' .env
+  sed -i.bak "s/^JOSI_TAG=.*/JOSI_TAG=${VERSION}/" .env
   rm -f .env.bak
   chmod 0600 .env
   chown "$INSTALL_UID:$INSTALL_GID" .env
-  say 'created .env pinned to JOSI_TAG=0.1.0'
+  say "created .env pinned to JOSI_TAG=${VERSION}"
 else
   cp -p .env ".env.pre-${VERSION}"
   if grep -q '^JOSI_TAG=' .env; then
-    sed -i.bak 's/^JOSI_TAG=.*/JOSI_TAG=0.1.0/' .env
+    sed -i.bak "s/^JOSI_TAG=.*/JOSI_TAG=${VERSION}/" .env
   else
-    printf '\nJOSI_TAG=0.1.0\n' >> .env
+    printf '\nJOSI_TAG=%s\n' "$VERSION" >> .env
   fi
   rm -f .env.bak
   chmod 0600 .env
   chown "$INSTALL_UID:$INSTALL_GID" .env ".env.pre-${VERSION}"
-  say 'updated existing .env to JOSI_TAG=0.1.0 (backup: .env.pre-0.1.0)'
+  say "updated existing .env to JOSI_TAG=${VERSION} (backup: .env.pre-${VERSION})"
 fi
 
 JOSI_COMPOSE_SECRETS=1 bash ./install.sh
