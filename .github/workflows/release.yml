@@ -104,6 +104,8 @@ jobs:
           file: Dockerfile.aio
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            JOSI_VERSION=${{ steps.version.outputs.value }}
           tags: |
             ${{ env.REGISTRY }}/${{ steps.owner.outputs.value }}/josi-ce-installer:${{ steps.version.outputs.value }}
           labels: |

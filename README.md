@@ -58,7 +58,7 @@ mkdir -p ~/josi-ce && cd ~/josi-ce
 docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  romanvaxman/josi-ce-installer:0.1.0
+  romanvaxman/josi-ce-installer:0.1.1
 ```
 
 Open <http://localhost>. The first person through setup becomes the super
@@ -67,7 +67,7 @@ admin. **Immediately back up `secrets/master.key` somewhere off the host.**
 The installer is temporary: it generates owner-only secrets, starts the normal
 isolated Compose services, and exits. No privileged controller remains.
 
-Prefer GHCR? Use `ghcr.io/vaxman14/josi-ce-installer:0.1.0`. On macOS with
+Prefer GHCR? Use `ghcr.io/vaxman14/josi-ce-installer:0.1.1`. On macOS with
 Docker Desktop, follow the socket instructions in the
 [quick-start guide](docs/QUICK_START.md).
 
@@ -195,7 +195,7 @@ mkdir josi-ce && cd josi-ce
 docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.0
+  ghcr.io/vaxman14/josi-ce-installer:0.1.1
 ```
 
 On macOS with Docker Desktop, use its user socket instead:
@@ -204,7 +204,7 @@ On macOS with Docker Desktop, use its user socket instead:
 docker run --rm \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.0
+  ghcr.io/vaxman14/josi-ce-installer:0.1.1
 ```
 
 Review `.env` before exposing the installation publicly. Set `JOSI_DOMAIN` and
