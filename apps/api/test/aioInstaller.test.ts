@@ -22,15 +22,23 @@ describe('the one-shot AIO installer', () => {
     expect(installer).toContain('~/.docker/run/docker.sock');
   });
 
-  it('does not overwrite operator files or regenerate existing secrets', () => {
-    expect(installer).toMatch(/if \[\[ -e "\$target" \]\]/);
-    expect(installer).toMatch(/leaving existing \$target unchanged/);
+  it('refreshes release-managed files while preserving operator files and existing secrets', () => {
+    expect(installer).toContain('policy="${4:-replace}"');
+    expect(installer).toContain('Caddyfile 0644 preserve');
+    expect(installer).toContain('${target}.pre-${VERSION}');
     expect(installer).toMatch(/bash \.\/install\.sh/);
   });
 
   it('pins the published stack instead of silently floating on latest', () => {
     expect(installer).toContain("sed -i.bak 's/^JOSI_TAG=.*/JOSI_TAG=0.1.0/' .env");
+    expect(installer).toContain('.env.pre-${VERSION}');
     expect(installer).not.toMatch(/JOSI_TAG=latest/);
+  });
+
+  it('returns generated files to the invoking host user and makes secrets readable to non-root services', () => {
+    expect(installer).toContain("INSTALL_UID=\"$(stat -c '%u' \"$PWD\")\"");
+    expect(installer).toContain('chown -R "$INSTALL_UID:$INSTALL_GID" secrets');
+    expect(installer).toContain('JOSI_COMPOSE_SECRETS=1 bash ./install.sh');
   });
 
   it('points the default browser URL at the proxy port that is actually published', () => {

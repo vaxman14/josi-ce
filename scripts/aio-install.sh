@@ -18,6 +18,8 @@ set -euo pipefail
 
 readonly ASSETS=/opt/josi-ce-release
 readonly VERSION=0.1.0
+readonly INSTALL_UID="$(stat -c '%u' "$PWD")"
+readonly INSTALL_GID="$(stat -c '%g' "$PWD")"
 
 say()  { printf '%s\n' "$*"; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -45,18 +47,24 @@ say "Josi CE ${VERSION} — one-shot installer"
 say "The Docker socket is used only by this temporary installer container."
 
 install_asset() {
-  local source="$1" target="$2" mode="$3"
-  if [[ -e "$target" ]]; then
-    say "leaving existing $target unchanged"
+  local source="$1" target="$2" mode="$3" policy="${4:-replace}"
+  if [[ -e "$target" && "$policy" == preserve ]]; then
+    say "leaving operator-managed $target unchanged"
     return 0
+  fi
+  if [[ -e "$target" ]] && ! cmp -s "$source" "$target"; then
+    cp -p "$target" "${target}.pre-${VERSION}"
+    chown "$INSTALL_UID:$INSTALL_GID" "${target}.pre-${VERSION}"
+    say "backed up previous $target to ${target}.pre-${VERSION}"
   fi
   cp "$source" "$target"
   chmod "$mode" "$target"
+  chown "$INSTALL_UID:$INSTALL_GID" "$target"
   say "installed $target"
 }
 
 install_asset "$ASSETS/docker-compose.yml" docker-compose.yml 0644
-install_asset "$ASSETS/Caddyfile" Caddyfile 0644
+install_asset "$ASSETS/Caddyfile" Caddyfile 0644 preserve
 install_asset "$ASSETS/.env.example" .env.example 0644
 install_asset "$ASSETS/install.sh" install.sh 0755
 install_asset "$ASSETS/preflight.sh" preflight.sh 0755
@@ -68,12 +76,23 @@ if [[ ! -e .env ]]; then
   sed -i.bak 's/^JOSI_TAG=.*/JOSI_TAG=0.1.0/' .env
   rm -f .env.bak
   chmod 0600 .env
+  chown "$INSTALL_UID:$INSTALL_GID" .env
   say 'created .env pinned to JOSI_TAG=0.1.0'
 else
-  say 'leaving existing .env unchanged'
+  cp -p .env ".env.pre-${VERSION}"
+  if grep -q '^JOSI_TAG=' .env; then
+    sed -i.bak 's/^JOSI_TAG=.*/JOSI_TAG=0.1.0/' .env
+  else
+    printf '\nJOSI_TAG=0.1.0\n' >> .env
+  fi
+  rm -f .env.bak
+  chmod 0600 .env
+  chown "$INSTALL_UID:$INSTALL_GID" .env ".env.pre-${VERSION}"
+  say 'updated existing .env to JOSI_TAG=0.1.0 (backup: .env.pre-0.1.0)'
 fi
 
-bash ./install.sh
+JOSI_COMPOSE_SECRETS=1 bash ./install.sh
+chown -R "$INSTALL_UID:$INSTALL_GID" secrets
 
 if [[ "${JOSI_PREPARE_ONLY:-0}" == "1" ]]; then
   say ''
