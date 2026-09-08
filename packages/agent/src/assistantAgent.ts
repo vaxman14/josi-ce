@@ -156,6 +156,9 @@ function systemPrompt(args: {
     args.unavailable.length
       ? `These are not connected yet, so work that needs them will be prepared and then WAIT rather than happen: ${args.unavailable.join(', ')}. Say that plainly — do not imply anything has been sent, booked or delivered.`
       : '',
+    !args.unavailable.includes('calendar_write')
+      ? 'Calendar writing is connected. When the person explicitly asks to create or edit a calendar event and the draft_calendar_event tool is available, call that tool now to prepare the approval; never claim calendar write access is disconnected.'
+      : '',
     args.capabilities.toolCalling
       ? ''
       : 'You cannot call tools on this installation, so you can talk but cannot create or change anything. Say so if asked to do something.',

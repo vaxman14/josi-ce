@@ -150,6 +150,8 @@ describe('capability gating', () => {
 
     const system = requests[0].messages[0].content;
     expect(system).not.toMatch(/not connected yet[^.]*calendar_write/i);
+    expect(system).toMatch(/Calendar writing is connected/);
+    expect(system).toMatch(/call that tool now to prepare the approval/);
     expect(requests[0].tools.map((tool: any) => tool.function.name)).toContain('draft_calendar_event');
   });
 
