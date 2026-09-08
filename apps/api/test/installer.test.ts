@@ -104,6 +104,17 @@ describe('LB1.1 — the published install keeps the development stack’s securi
     }
   });
 
+  it('persists chat attachments in the read-only web and worker services', () => {
+    for (const compose of [dev, release]) {
+      expect(compose.volumes.josi_chat_attachments).toBeDefined();
+      for (const service of ['web', 'worker']) {
+        expect(compose.services[service].volumes, service).toContain(
+          'josi_chat_attachments:/data/chat-attachments',
+        );
+      }
+    }
+  });
+
   it('supports prepare-only mode for appliance stack UIs', () => {
     const aio = read('scripts/aio-install.sh');
     expect(aio).toContain('JOSI_PREPARE_ONLY');
