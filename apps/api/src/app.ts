@@ -31,6 +31,7 @@ import { adminExternalChannelRoutes, externalChannelRoutes, mountExternalChannel
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
+import { helpRoutes } from './http/helpRoutes.js';
 
 export interface AppConfig {
   /** https in production; false lets cookies work over plain http locally. */
@@ -92,6 +93,10 @@ export interface AppConfig {
    * one answers with a catalogue and a document and never speaks to anything
    * the other three do. */
   skillFetch?: typeof fetch;
+  /** Public docs + Groq only. Kept separate from every assistant/provider seam
+   * so documentation help cannot inherit workspace tools or context. */
+  helpFetch?: typeof fetch;
+  helpGroqApiKey?: string;
   /** The publisher key paid-module licences are checked against. Unset in
    * production, where the key stamped into the build is used and nothing can
    * substitute for it. The tests inject their own so a licence can be signed
@@ -285,6 +290,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // own instructions is an administrative act, and the transparency members are
   // owed is the full text — which this returns.
   api.use('/skills', skillRoutes({ db }));
+  api.use('/help', helpRoutes({ apiKey: cfg.helpGroqApiKey, fetchImpl: cfg.helpFetch }));
   // Parental Controls, the AUTHORITY half. Its own prefix and not a branch
   // inside anything above, because it is the only place in CE where one person
   // may read another person's private rows — and it may do so only while a

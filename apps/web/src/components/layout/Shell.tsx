@@ -16,6 +16,7 @@ import { cn } from '@/lib/cn';
 import { PwaPrompts } from '@/lib/pwa';
 import { Button } from '@/components/ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { HelpChat } from '@/components/HelpChat';
 
 const MEMBER_NAV = [
   { to: '/app', label: 'Home', end: true },
@@ -88,6 +89,17 @@ const ADMIN_NAV = [
  * the sidebar; a bottom bar with nine items is a bar with none. */
 const PHONE_NAV = MEMBER_NAV.filter((i) => ['Home', 'Talk', 'Tasks', 'Approvals', 'Usage'].includes(i.label));
 
+const HELP_ROOT = 'https://josi-ce-docs.netlify.app/';
+
+/** Link to a known documentation section when the current screen has one.
+ * Unknown screens deliberately fall back to the documentation home page; a
+ * plausible-looking dead anchor is less helpful than an honest index. */
+function helpUrl(pathname: string): string {
+  if (pathname.includes('/developer-services')) return `${HELP_ROOT}#developer-services`;
+  if (pathname.includes('/custom-apis')) return `${HELP_ROOT}#custom-api`;
+  return HELP_ROOT;
+}
+
 export function Shell() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
@@ -130,6 +142,14 @@ export function Shell() {
         ) : null}
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          <a
+            href={helpUrl(location.pathname)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-11 items-center rounded-md px-3 text-sm font-medium hover:bg-secondary"
+          >
+            Help
+          </a>
           {user?.role === 'super_admin' ? (
             <Link
               to={isAdminArea ? '/app' : '/admin'}
@@ -209,6 +229,7 @@ export function Shell() {
           nothing offers to install an app to somebody looking at a login form,
           and an update prompt is only meaningful to somebody using the app. */}
       <PwaPrompts />
+      <HelpChat />
     </div>
   );
 }

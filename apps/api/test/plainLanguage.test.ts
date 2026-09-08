@@ -286,6 +286,23 @@ describe('LB12.4 — nothing necessary was removed', () => {
   });
 });
 
+describe('round 3 — humane onboarding and persistent help', () => {
+  it('uses a simple Skip action while keeping skipped work revisitable', () => {
+    const checklist = read('apps/web/src/pages/admin/LaunchChecklist.tsx');
+    expect(checklist).not.toContain('Not for this installation');
+    expect(checklist).toMatch(/>\s*Skip\s*</);
+    expect(checklist).toContain('Put it back on the list');
+  });
+
+  it('keeps Help in the authenticated shell with known contextual links', () => {
+    const shell = read('apps/web/src/components/layout/Shell.tsx');
+    expect(shell).toContain('https://josi-ce-docs.netlify.app/');
+    expect(shell).toMatch(/>\s*Help\s*</);
+    expect(shell).toContain('#developer-services');
+    expect(shell).toContain('#custom-api');
+  });
+});
+
 describe('setup wizard browser autofill isolation', () => {
   const setup = read('apps/web/src/pages/Setup.tsx');
 

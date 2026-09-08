@@ -93,6 +93,9 @@ services:
       # the same reason: an update replaces the container and must not sign the
       # operator out.
       CLAUDE_CONFIG_DIR: /data/claude
+      # Optional. An absent/empty file leaves Help chat honestly unavailable;
+      # the documentation link continues to work.
+      GROQ_API_KEY_FILE: /run/josi-optional-secrets/groq_api_key
     secrets:
       - josi_master_key
       - josi_db_password
@@ -113,6 +116,7 @@ services:
     volumes:
       # web-specific anchor for the attachments volume; see the shared list below.
       - josi_chat_attachments:/data/chat-attachments
+      - ./secrets:/run/josi-optional-secrets:ro
       # Josi's OWN storage: recovery copies (M60/M62) live here, never in a
       # user's mapped folder. A named volume so they survive the container being
       # replaced, and so `docker compose down` does not silently destroy the
