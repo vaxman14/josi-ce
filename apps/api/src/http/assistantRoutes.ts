@@ -43,6 +43,12 @@ export interface AssistantRoutesCtx {
   /** HTTP for connected-provider (Gmail, Graph…) calls the data tools make.
    * Injected by tests; unset in production. */
   connectorFetch?: typeof fetch;
+  /** HTTP for administrator-defined custom APIs the assistant may call.
+   * Injected by tests; unset in production. */
+  customApiFetch?: typeof fetch;
+  /** DNS for those calls, injected by the tests. Unset in production, where
+   * the host's own resolver is used and re-consulted on every request. */
+  outboundResolve?: (hostname: string) => Promise<string[]>;
   recall?: RecallLookup;
 }
 
@@ -283,6 +289,8 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         images,
         recall: ctx.recall,
         connectorFetch: ctx.connectorFetch,
+        customApiFetch: ctx.customApiFetch,
+        outboundResolve: ctx.outboundResolve,
         sessionKey: req.user!.session_id,
       });
 

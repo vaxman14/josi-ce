@@ -14,6 +14,7 @@ import { adminRoutes } from './http/adminRoutes.js';
 import { checklistRoutes } from './http/checklistRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
 import { adminDevServiceRoutes, devServiceRoutes } from './http/devServiceRoutes.js';
+import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
 import { contactSyncRoutes } from './http/contactSyncRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
@@ -71,6 +72,11 @@ export interface AppConfig {
   /** GitHub/Netlify/Vercel/Supabase HTTP, injected by the tests so no suite
    * contacts a developer service. Unset in production. */
   devServiceFetch?: typeof fetch;
+  /** HTTP for administrator-defined custom APIs, injected by the tests so no
+   * suite contacts one. Deliberately its own seam rather than reusing
+   * `connectorFetch`: that one answers as Google and Microsoft, and a suite
+   * that had to satisfy both in one stub would be asserting less about each. */
+  customApiFetch?: typeof fetch;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -161,6 +167,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/assistant', assistantRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
     codexRunner: cfg.codexRunner, connectorFetch: cfg.connectorFetch,
+    customApiFetch: cfg.customApiFetch, outboundResolve: cfg.outboundResolve,
   }));
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({
@@ -188,6 +195,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/developer-services', adminDevServiceRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.devServiceFetch, resolve: cfg.outboundResolve,
   }));
+  // Custom APIs. BEFORE `/admin` for the reason recorded above
+  // `/admin/telegram`: with the generic admin router registered first, this one
+  // is never reached and its own guard stops being the thing protecting it.
+  api.use('/admin/custom-apis', adminCustomApiRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch, resolve: cfg.outboundResolve,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -203,6 +216,14 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // connector routes would mean one router with two credential models in it.
   api.use('/developer-services', devServiceRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.devServiceFetch, resolve: cfg.outboundResolve,
+  }));
+  // Administrator-defined external APIs. Its own prefix rather than a branch
+  // inside /connections or /developer-services: this is the only connection
+  // kind where the ASSISTANT chooses which request to make, and folding it in
+  // beside an OAuth grant or a pasted token would present three different
+  // authority models as one thing.
+  api.use('/custom-apis', customApiRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch, resolve: cfg.outboundResolve,
   }));
   api.use('/storage', storageRoutes({ db }));
   api.use('/telegram', telegramRoutes({

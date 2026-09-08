@@ -262,6 +262,61 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
       revoked: 'Unlinked',
     },
   },
+
+  custom_api_status: {
+    source: { migrationTable: 'custom_api_connections', column: 'status' },
+    labels: {
+      unverified: 'Not tested yet',
+      active: 'Working',
+      needs_attention: 'Needs attention',
+    },
+    detail: {
+      unverified:
+        'Nobody has asked this API whether it accepts the stored credential. Josi will not offer it '
+        + 'to the assistant until a test succeeds.',
+      needs_attention:
+        'The last request to this API did not succeed. If the credential was refused, Josi has also '
+        + 'switched the connection off until a test succeeds again.',
+    },
+  },
+
+  custom_api_capability: {
+    source: { migrationTable: 'custom_api_endpoints', column: 'capability' },
+    labels: {
+      read: 'Reads only',
+      write: 'Changes something',
+      delete: 'Deletes something',
+    },
+    detail: {
+      read: 'Josi may do this on its own. Nothing at the other end is changed.',
+      write: 'Josi prepares it and you are shown exactly what would be sent before anything happens.',
+      delete: 'Josi prepares it and you are shown exactly what would be sent before anything happens.',
+    },
+  },
+
+  custom_api_endpoint_source: {
+    source: { migrationTable: 'custom_api_endpoints', column: 'source' },
+    labels: {
+      manual: 'Added by hand',
+      openapi: 'Imported from a specification',
+    },
+  },
+
+  custom_api_call_status: {
+    source: { migrationTable: 'custom_api_pending_calls', column: 'status' },
+    labels: {
+      pending: 'Waiting for you',
+      approved: 'Approved',
+      denied: 'Declined',
+      expired: 'Expired',
+      executed: 'Sent',
+      failed: 'Did not go through',
+    },
+    detail: {
+      expired: 'Nobody answered in time. Ask Josi again and it will prepare a fresh request.',
+      failed: 'The API was asked and did not accept the request. Nothing was changed by Josi.',
+    },
+  },
 };
 
 /** The sentence for a value, or the value itself if nothing knows it.

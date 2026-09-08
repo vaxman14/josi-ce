@@ -64,9 +64,12 @@ They are also deliberately distinct from:
 
 * **model providers** (`packages/llm`) — a key the assistant reasons with;
 * **messaging Channels** (`packages/channels`) — inbound and outbound transports;
-* **Custom API connections** and **MCP servers** — separate ledger items, not
-  implemented here. Nothing in this change adds a general outbound HTTP
-  capability, and the assistant gains no tool from it.
+* **Custom API connections** (`docs/CUSTOM_API_CONNECTIONS.md`) — a separate
+  feature with a separate table. There the host comes from a form and the
+  assistant picks which of several reviewed actions to call; here the host is
+  pinned in CE's own source and the assistant gains no tool at all.
+* **MCP servers** — a separate ledger item, not implemented. Nothing in this
+  change adds a general outbound HTTP capability.
 
 A pointer card on the Connections page links to the new page, so somebody
 looking in the obvious place finds it.

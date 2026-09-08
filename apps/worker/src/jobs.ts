@@ -15,8 +15,8 @@ import {
   transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
-  accessTokenFor, can, connectionFor, dueCloudMappings, dueOrigins, loadClient,
-  markAttempted, markSyncScheduled, syncCloudMapping, syncOrigin,
+  accessTokenFor, can, connectionFor, dueCloudMappings, dueOrigins, expireCustomApiCalls,
+  loadClient, markAttempted, markSyncScheduled, syncCloudMapping, syncOrigin,
 } from '@josi-ce/connectors';
 
 // Write-action tasks (send a message, schedule an appointment, add a contact)
@@ -81,6 +81,11 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
 
     case 'approvals.expire': {
       await expireApprovals(db);
+      // Custom API requests waiting on their owner expire on the same tick and
+      // for the same reason: a pending write nobody answered is not consent,
+      // and offering it as one a week later is how somebody approves something
+      // they no longer remember being asked about.
+      await expireCustomApiCalls(db);
       return;
     }
 

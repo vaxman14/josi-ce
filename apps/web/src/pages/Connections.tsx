@@ -271,7 +271,57 @@ export function Connections() {
           <Link className="underline" to="/app/developer-services">Open Developer services</Link>.
         </p>
       </Card>
+
+      <ConnectedApis />
     </div>
+  );
+}
+
+/** What an administrator has connected on behalf of the whole installation, and
+ * exactly what Josi may ask it.
+ *
+ * READ-ONLY, and shown to every member rather than to administrators alone. An
+ * assistant that can reach an outside service in your name is something you
+ * should be able to look up without having to ask somebody — so the list of
+ * actions, and the one host they can reach, are here. It carries no credential
+ * and nothing on it is a control. */
+function ConnectedApis() {
+  const [connections, setConnections] = useState<Array<{
+    name: string; slug: string; host: string;
+    actions: Array<{ operationId: string; summary: string; capability: string; needsApproval: boolean }>;
+  }>>([]);
+  useEffect(() => {
+    void api.get<{ connections: typeof connections }>('/custom-apis')
+      .then((r) => setConnections(r.connections)).catch(() => undefined);
+  }, []);
+  if (!connections.length) return null;
+  return (
+    <Card>
+      <CardTitle>Connected APIs</CardTitle>
+      <p className="mb-3 text-sm text-muted-foreground">
+        An administrator connected these for everyone here and chose exactly what Josi may ask
+        them. Josi cannot reach any other address, and anything that changes or deletes something
+        waits for you on your Approvals page before it happens.
+      </p>
+      <ul className="space-y-3">
+        {connections.map((connection) => (
+          <li key={connection.slug} className="border-t border-border pt-3 first:border-0 first:pt-0">
+            <p className="text-sm font-medium">{connection.name}</p>
+            <p className="break-all text-xs text-muted-foreground">Requests go only to {connection.host}</p>
+            <ul className="mt-1 space-y-1">
+              {connection.actions.map((action) => (
+                <li key={action.operationId} className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+                  <Badge tone={action.needsApproval ? 'danger' : 'muted'}>
+                    {plain('custom_api_capability', action.capability)}
+                  </Badge>
+                  <span className="min-w-0 break-words">{action.summary}</span>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 

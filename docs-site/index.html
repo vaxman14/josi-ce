@@ -17,7 +17,8 @@
     <nav class="top-links"><a href="#security-checklist">Security checklist</a><a href="#troubleshooting">Troubleshooting</a><a class="pill" href="#obtain-the-source">Start installing</a></nav>
   </div></header>
   <div class="layout" id="top">
-    <aside class="side"><strong>On this page</strong><a href="#developer-services">18. Developer service connections</a></aside>
+    <aside class="side"><strong>On this page</strong><a href="#developer-services">18. Developer service connections</a>
+<a href="#custom-api">19. Custom API connections</a></aside>
     <main>
       <section class="hero"><div class="eyebrow">Official operator guide</div><h1>Install Josi CE.</h1><p>From an empty Linux server to a verified Josi installation, with every supplied option explained and every unfinished workflow labeled honestly.</p><div class="meta"><span>Docker Compose</span><span>AMD64 + ARM64</span><span>Bundled HTTPS</span><span>Bring your own proxy</span></div></section>
       <article><h1>Josi CE installation and operations manual</h1>
@@ -677,7 +678,83 @@ page names where to do that in your own account.</p>
 Microsoft accounts under <strong>Connections</strong>, and from messaging <strong>Channels</strong>.
 Connecting one of them gives Josi a stored credential and a status; it does not add a
 messaging transport and does not change which model answers.</p>
-<h2>19. Security checklist</h2>
+<h2 id="custom-api">19. Custom API connections</h2>
+<p><strong>Admin → Custom API</strong> connects an external HTTP service Josi has never heard
+of — a booking system, a CRM, something written in-house — and then says, one action at a
+time, exactly what Josi may ask it. Nothing here is preset: a fresh installation has no
+connection, and no environment variable or seeded row creates one.</p>
+<p>This is the only connection kind in Josi where <strong>the assistant chooses which request to
+make</strong>. Every decision below follows from that.</p>
+<h3>19.1 What an administrator sets up</h3>
+<ol>
+<li>A name and an <code>https://</code> address. Plain <code>http://</code> is refused: it would
+put this installation’s credential on the wire in the clear on every call.</li>
+<li>A credential — an API key in a header you name, a bearer token, or a username and
+password. It is sealed with the installation master key before it reaches the database.</li>
+<li><strong>Test connection</strong>, which sends a <code>GET</code> to the test path you chose and
+nothing else.</li>
+<li><strong>Make it available to Josi</strong>, which does not work until that test has succeeded.
+A connection cannot reach the assistant on the strength of a form somebody filled in — only
+on the strength of the API having answered.</li>
+<li>The list of actions Josi may use. Each one arrives <strong>switched off</strong> and has its
+own switch.</li>
+</ol>
+<p>Josi can call an action only when both switches are on. There is no row anywhere that
+means “any path on this host”.</p>
+<h3>19.2 Reading, changing and deleting</h3>
+<p>What Josi may do on its own is decided by the HTTP method, and the database enforces the
+pairing — an administrator cannot label a <code>POST</code> that creates an invoice as a read.</p>
+<table>
+<thead><tr><th>Method</th><th>What happens when the assistant calls it</th></tr></thead>
+<tbody>
+<tr><td><code>GET</code>, <code>HEAD</code></td><td>Runs immediately.</td></tr>
+<tr><td><code>POST</code>, <code>PUT</code>, <code>PATCH</code></td><td>Waits on the person’s
+<strong>Approvals</strong> page, showing exactly what would be sent.</td></tr>
+<tr><td><code>DELETE</code></td><td>Waits on the person’s <strong>Approvals</strong> page.</td></tr>
+</tbody>
+</table>
+<p>A search endpoint that genuinely needs <code>POST</code> is therefore treated as a change and
+asks first. That is the safe side of a deliberate trade-off. No user preference and no
+administrator setting can make a change automatic here, and approving IS sending: the
+decision and the request happen together, so an approved call can neither sit unexecuted
+nor be spent twice. An unanswered request expires after thirty minutes, because a pending
+write from last month is not consent.</p>
+<h3>19.3 Importing an OpenAPI document</h3>
+<p>Paste the <strong>JSON</strong> form of an OpenAPI 3 document. Josi proposes actions and saves
+nothing until you choose from the list; everything you choose arrives switched off. The
+document’s own <code>servers</code> are <strong>ignored completely</strong> and only reported back so
+you can check they agree with the address you typed — a specification comes from the party
+on the other side of the credential. Header and cookie parameters are dropped, because a
+header the assistant can set is a header nobody reviewed. YAML is refused by name rather
+than parsed: Josi ships no YAML parser, so convert the document first.</p>
+<h3>19.4 Where requests can go</h3>
+<p>The host you gave <em>is</em> the allowlist. Every assembled URL is re-parsed and refused
+unless its host matches exactly and its path lies under the base URL. Addresses are
+re-checked at request time rather than once at save time, every resolved address is checked
+rather than the first, redirects are never followed, and anything off the public internet —
+loopback, private ranges, link-local, cloud metadata — is refused. A custom API on your own
+LAN therefore cannot be connected, and that is deliberate.</p>
+<h3>19.5 What happens to the credential</h3>
+<p>Sealed with the installation master key and opened only inside the request builder at the
+moment of use. It is never shown again: the page displays a fixed mask, because four
+characters of a credential are still four characters of a credential. It does not appear in
+chat, in a tool result, in logs, in a diagnostics bundle, in the audit trail, or in any
+ordinary API response, and a database dump without the master key does not yield it. It
+travels in a header and never in a URL. An API’s own error text is never passed through —
+failures become a category and a sentence Josi wrote.</p>
+<h3>19.6 Who owns what</h3>
+<p>Connections are <strong>installation-scoped and administrator-owned</strong>, because a custom
+API credential acts as the product rather than as a person — the opposite of a developer
+service token, and for the same reason applied to a different fact. Every request is made
+<em>for</em> one person, though, and a pending change is visible only to them. An
+administrator configures the pipe; they do not see what somebody sent through it.</p>
+<h3>19.7 What this is not</h3>
+<p>Custom APIs are separate from the model provider Josi thinks with, from the Google or
+Microsoft accounts under <strong>Connections</strong>, from <strong>Developer services</strong>, and from
+messaging <strong>Channels</strong>. This is also not an MCP server and not a step towards one:
+nothing here speaks a protocol, and nothing here lets the model name a URL, a method or a
+header.</p>
+<h2>20. Security checklist</h2>
 <p>Before considering an installation reachable by other people, confirm:</p>
 <ul>
 <li><input disabled="" type="checkbox"> The checkout is an intended release, not an arbitrary dirty branch.</li>
@@ -700,7 +777,7 @@ resourced.</li>
 entrusted to the system.</li>
 <li><input disabled="" type="checkbox"> Phase 11 threat-model and release gates have passed before public launch.</li>
 </ul>
-<h2>20. Collecting useful support information</h2>
+<h2>21. Collecting useful support information</h2>
 <p>The redacted diagnostics bundle is a Phase 10 feature and does not yet exist.
 Until it does, inspect logs locally and redact them before sharing. Never send:</p>
 <ul>

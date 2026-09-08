@@ -98,6 +98,10 @@ describe('deleting a person takes their data with them', () => {
     // A developer-service token that outlives its owner is a live GitHub,
     // Netlify, Vercel or Supabase credential nobody is responsible for.
     'developer_service_connections',
+    // A pending custom API request that outlives its owner is an outbound
+    // write nobody is answerable for — and its sealed payload is that person's
+    // data sitting in a table with nobody attached to it.
+    'custom_api_pending_calls',
   ];
 
   it('declares a cascade on every owner column', () => {
@@ -158,6 +162,27 @@ describe('deleting a person takes their data with them', () => {
       await db.query(
         `insert into developer_service_connections (owner_user_id, service, credentials_enc)
          values ($1, 'github', 'v1.aaaa.bbbb.cccc')`, [owner],
+      );
+      const [customApi] = await db.query<{ id: string }>(
+        `insert into custom_api_connections
+           (name, slug, base_url, host, auth_kind, credentials_enc)
+         values ('An API', $1, 'https://api.example.com', 'api.example.com', 'bearer',
+                 'v1.aaaa.bbbb.cccc')
+         returning id`,
+        [`api_${owner.replace(/-/g, '').slice(0, 20)}`],
+      );
+      const [customEndpoint] = await db.query<{ id: string }>(
+        `insert into custom_api_endpoints
+           (connection_id, operation_id, summary, method, path_template, capability)
+         values ($1, 'change_thing', 'Change a thing', 'POST', '/things', 'write')
+         returning id`,
+        [customApi.id],
+      );
+      await db.query(
+        `insert into custom_api_pending_calls
+           (owner_user_id, endpoint_id, summary, request_enc, payload_hash, expires_at)
+         values ($1, $2, 'Change a thing', 'v1.aaaa.bbbb.cccc', 'hash', now() + interval '1 hour')`,
+        [owner, customEndpoint.id],
       );
     }
 

@@ -728,6 +728,92 @@ redirects are not followed.
 
 ---
 
+## Custom API connections
+
+### T-84 A custom API credential is readable from the database
+**Attacker:** anybody who obtains a database dump — a stolen backup, a
+misconfigured replica, a support export.
+**Impact:** a live credential this installation holds on everybody's behalf,
+which can do whatever the external service permits it to do.
+**Control:** `packages/connectors/src/customApi.ts` — the credential is sealed
+with the installation master key before it is passed to a query, the row carries
+no prefix, suffix, length or hash of it, and the only function that opens it
+returns the value to a single caller at the moment of a request.
+**Test:** stores ciphertext, and the row holds no plaintext
+
+### T-85 A custom API credential is read back through an ordinary response
+**Attacker:** an administrator, or anything that logs a response body — a
+browser extension, a proxy, a support screenshot.
+**Impact:** the credential leaves the installation through a surface nobody
+thought of as a credential surface.
+**Control:** `apps/api/src/http/customApiRoutes.ts` — the administrator's view
+carries a constant mask rather than anything derived from the secret, is run
+through `assertMetadataOnly`, and does not serve the ciphertext either, because
+ciphertext is something an attacker can work on offline.
+**Test:** stores ciphertext and serves a constant mask
+
+### T-86 The assistant is given general outbound HTTP authority
+**Attacker:** a prompt injected through any content the model reads — an email,
+a document, an API response — steering it towards a request nobody authorised.
+**Impact:** the installation's credential is spent on an endpoint no
+administrator reviewed, or the model is used as a proxy onto the operator's
+network.
+**Control:** `packages/agent/src/customApiTools.ts` — the model names a
+connection and an action, both looked up in the administrator's allowlist, and
+has no argument anywhere that could carry a URL, a host, a method, a path or a
+header; the allowlist is re-resolved at call time rather than trusted from when
+the tool was offered.
+**Test:** refuses an operation that is not allowed, and says so honestly
+
+### T-87 DNS or a redirect points a custom API request at an internal address
+**Attacker:** a poisoned resolver, a rebinding answer, a hostile API answering
+302, or an operator's own split-horizon DNS gone wrong.
+**Impact:** Josi sends this installation's credential to a cloud-metadata
+endpoint or a LAN service, which is both a credential leak and a request the
+installation did not intend to make.
+**Control:** `packages/connectors/src/customApiRequest.ts` — the finished URL is
+re-parsed and refused unless its host matches the connection's host column
+exactly, every resolved address is checked at request time rather than once at
+save time, anything off the public internet is refused, and redirects are never
+followed.
+**Test:** refuses when DNS answers with a cloud-metadata address
+
+### T-88 An imported specification moves the target
+**Attacker:** the operator of the external API, or anybody who can substitute
+the specification document an administrator pastes in.
+**Impact:** a document that names its own `servers` redirects this
+installation's credential to an address the administrator never typed.
+**Control:** `packages/connectors/src/openapiImport.ts` — the document's
+`servers` are ignored completely and only reported back for comparison, every
+field is re-validated by the same functions a hand-typed row goes through, and
+nothing the document proposes is saved or enabled without a person choosing it.
+**Test:** ignores the servers in the document entirely, and reports them
+
+### T-89 A write or a delete happens without its owner agreeing to it
+**Attacker:** a model that has been talked into it, or a bug in a future caller
+that forgets to ask.
+**Impact:** something outside this installation is changed or destroyed in
+somebody's name, and an apology does not undo it.
+**Control:** `packages/connectors/src/customApiCalls.ts` — the decision comes
+from the endpoint's `capability` column, which the database ties to the HTTP
+method, so no preference or setting can make it automatic; the request is sealed
+and pinned to a payload hash, expires if unanswered, and is claimed for execution
+by one conditional UPDATE so it can neither sit unexecuted nor be spent twice.
+**Test:** sends nothing and records a pending request instead
+
+### T-90 One member decides or reads another member's pending request
+**Attacker:** a signed-in member of the same installation, or an administrator
+using the member routes.
+**Impact:** somebody else's outbound request is authorised, declined, or simply
+observed — and what it would send is that person's own data.
+**Control:** `apps/api/src/http/customApiRoutes.ts` — pending requests are
+listed by `owner_user_id` so there is no id to substitute, a request belonging to
+somebody else and one that never existed produce the same 404, and no route
+branches on role to widen a read.
+**Test:** answers 404, not 403, when somebody else tries to decide it
+
+---
+
 ## Accepted risks
 
 These have no control, deliberately.

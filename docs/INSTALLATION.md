@@ -1412,6 +1412,95 @@ an Authorization header.
 - No assistant tool reads these services in this release. Josi stores the
   credential and reports its health; that is the whole scope.
 
+## 17D. Custom API connections — `docs/CUSTOM_API_CONNECTIONS.md`
+
+An external HTTP service this product has never heard of, connected from
+**Admin → Custom API**. Nothing here is installed, seeded or configured by you:
+there is no environment variable, no `.env` entry and no seeded row. A fresh
+installation has no connection.
+
+This is the only connection kind where **the assistant chooses which request to
+make**, and every decision below follows from that.
+
+### 17D.1 What you configure, in order
+
+1. A name and an `https://` base URL. Plain `http://` is refused — it would put
+   this installation's credential on the wire in the clear on every call.
+2. A credential: an API key in a header you name, a bearer token, or HTTP basic.
+   Sealed with the installation master key before it reaches PostgreSQL.
+3. **Test connection** — a `GET` to the test path you chose, and nothing else.
+4. **Make it available to Josi** — which does not work until the test has
+   succeeded. This is enforced by the route, not only by the button.
+5. The actions Josi may use, added by hand or proposed by an OpenAPI import.
+   Each one arrives switched off and has its own switch.
+
+Josi can call an action only when both switches are on. There is no row that
+means "any path on this host".
+
+### 17D.2 Read is separated from write and delete, and the method decides
+
+| Method | Capability | When the assistant calls it |
+| --- | --- | --- |
+| `GET`, `HEAD` | read | Runs immediately. |
+| `POST`, `PUT`, `PATCH` | write | Waits on the owner's **Approvals** page. |
+| `DELETE` | delete | Waits on the owner's **Approvals** page. |
+
+The database refuses any other pairing, so an administrator cannot label a
+`POST` that creates an invoice as a read. A search endpoint that genuinely needs
+`POST` is therefore treated as a write and asks — the safe side of a deliberate
+trade-off.
+
+**No setting makes a write automatic.** The per-user approval levels under
+**Policy** govern Josi's own actions (email, calendar, tasks) and are
+deliberately not wired to this.
+
+Approving is sending: the decision and the request happen on one route, so an
+approved call can neither sit unexecuted nor be spent twice. An unanswered
+request expires after thirty minutes.
+
+### 17D.3 Where requests can go
+
+- The host column **is** the allowlist: every assembled URL is re-parsed and
+  refused unless its host matches exactly and its path lies under the base URL.
+- Addresses are re-checked **at request time**, and every resolved address is
+  checked, not the first.
+- **Public addresses only.** Loopback, RFC1918, carrier-grade NAT, link-local
+  and cloud metadata are refused. A custom API on your own LAN cannot be
+  connected, and that is deliberate — unlike a self-hosted model endpoint,
+  nothing here has a fixed path.
+- Redirects are never followed.
+
+### 17D.4 Importing an OpenAPI document
+
+Paste the **JSON** form of an OpenAPI 3 document. Josi proposes actions and
+saves nothing until you choose from the list; everything you choose arrives
+switched off.
+
+The document's own `servers` are **ignored completely** and only reported back
+so you can check they agree with the address you typed — a specification comes
+from the party on the other side of the credential. Header and cookie parameters
+are dropped, because a header the assistant can set is a header nobody reviewed.
+YAML is refused by name rather than parsed: CE ships no YAML parser in its
+runtime dependencies, so convert the document first.
+
+### 17D.5 Operational notes
+
+- **Editing the address or the credential resets the verification and switches
+  the connection off.** A row that still claimed "tested last Tuesday" while
+  pointing somewhere new would be a lie the assistant acts on.
+- A refused credential (401) switches the connection off automatically. A
+  refused *request* (403) marks it as needing attention and leaves it on — a 403
+  is very often about one record rather than about the credential.
+- An API's own error text is never shown or logged; failures become a category
+  and a sentence Josi wrote.
+- Connections are installation-scoped and administrator-owned. Every request is
+  made **for** one person, and a pending write is visible only to them — an
+  administrator configures the pipe and does not see what goes through it.
+- Deleting a person deletes their pending requests with them.
+- A diagnostics bundle carries counts only: how many connections exist, how many
+  are available, how many actions are switched on. Never a name, a host or a
+  credential.
+
 ## 18. Security checklist
 
 Before considering an installation reachable by other people, confirm:

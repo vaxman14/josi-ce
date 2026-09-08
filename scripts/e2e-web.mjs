@@ -23,7 +23,7 @@ const MEMBER_PAGES = [
 ];
 const ADMIN_PAGES = [
   '/admin', '/admin/people', '/admin/model', '/admin/policy', '/admin/connectors',
-  '/admin/developer-services', '/admin/telegram', '/admin/workspace',
+  '/admin/developer-services', '/admin/custom-apis', '/admin/telegram', '/admin/workspace',
 ];
 
 let pass = 0;

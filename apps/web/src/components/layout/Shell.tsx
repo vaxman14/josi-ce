@@ -48,6 +48,10 @@ const ADMIN_NAV = [
   { to: '/admin/storage', label: 'Storage' },
   { to: '/admin/connectors', label: 'Connectors' },
   { to: '/admin/developer-services', label: 'Developer services' },
+  // Its own entry rather than a tab under Connectors: this is the only
+  // connection kind where the ASSISTANT picks which request to make, and the
+  // page is mostly the allowlist that constrains it.
+  { to: '/admin/custom-apis', label: 'Custom API' },
   { to: '/admin/telegram', label: 'Telegram' },
   { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/workspace', label: 'Workspace' },

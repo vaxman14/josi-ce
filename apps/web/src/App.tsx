@@ -27,6 +27,7 @@ import { AdminPolicy } from '@/pages/admin/Policy';
 import { AdminStorage } from '@/pages/admin/Storage';
 import { AdminConnectors } from '@/pages/admin/Connectors';
 import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
+import { AdminCustomApis } from '@/pages/admin/CustomApis';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
 import { AdminChannels } from '@/pages/admin/Channels';
@@ -152,6 +153,7 @@ export function App() {
         <Route path="storage" element={<AdminStorage />} />
         <Route path="connectors" element={<AdminConnectors />} />
         <Route path="developer-services" element={<AdminDeveloperServices />} />
+        <Route path="custom-apis" element={<AdminCustomApis />} />
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />
         <Route path="channels" element={<AdminChannels />} />

@@ -6,6 +6,13 @@ export * from './connections.js';
 // folded into it: these are pasted personal access tokens, not OAuth grants.
 export * from './devServices.js';
 export * from './devServiceProbe.js';
+// Custom API connections. After the developer services and folded into neither:
+// these are operator-supplied hosts with a reviewed allowlist of requests, which
+// is a different shape from a pinned host with four hand-written probes.
+export * from './customApi.js';
+export * from './customApiRequest.js';
+export * from './customApiCalls.js';
+export * from './openapiImport.js';
 export * from './providers/contacts.js';
 export * from './providers/mail.js';
 export * from './providers/calendar.js';
