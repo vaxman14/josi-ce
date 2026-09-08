@@ -113,6 +113,10 @@ describe('LB1.1 — the published install keeps the development stack’s securi
         );
       }
     }
+
+    const dockerfile = read('Dockerfile');
+    expect(dockerfile).toMatch(/mkdir -p .*\/data\/chat-attachments/);
+    expect(dockerfile).toContain('chown -R node:node /data');
   });
 
   it('supports prepare-only mode for appliance stack UIs', () => {
