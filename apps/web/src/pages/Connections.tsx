@@ -9,6 +9,7 @@
 // Every write capability shows what it permits before it can be switched on.
 // A toggle labelled only "Send email" is not consent.
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, ErrorNote, NotYet } from '@/components/ui';
 import { CloudFolders } from '@/components/CloudFolders';
@@ -255,6 +256,21 @@ export function Connections() {
       ))}
 
       <DocumentInventory />
+
+      {/* Deliberately a pointer, not a section.
+          GitHub, Netlify, Vercel and Supabase are connected with a personal
+          access token somebody pastes — there is no consent screen and no
+          per-capability switch — so showing them among these cards would imply
+          a provider scoped that token when none did. They get their own page,
+          and this is how somebody looking in the obvious place finds it. */}
+      <Card>
+        <CardTitle>Developer services</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          GitHub, Netlify, Vercel and Supabase are connected with an access token you create
+          yourself rather than by signing in, so they live on their own page.{' '}
+          <Link className="underline" to="/app/developer-services">Open Developer services</Link>.
+        </p>
+      </Card>
     </div>
   );
 }

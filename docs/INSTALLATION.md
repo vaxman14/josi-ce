@@ -1344,6 +1344,74 @@ four independent layers refuse — including for a row inserted directly with
 docker build --build-arg JOSI_EDITION=hosted -t josi:hosted .
 ```
 
+## 17C. Developer service connections — `docs/DEVELOPER_SERVICE_CONNECTIONS.md`
+
+GitHub, Netlify, Vercel and Supabase, connected from **Workspace → Developer
+services**. Nothing about them is installed, seeded or configured by you: there
+is no environment variable, no `.env` entry and no admin field that connects one.
+Each is disconnected until the person who owns the account pastes an access
+token they created themselves.
+
+### 17C.1 Who owns these connections
+
+They are **user-scoped**, like a connected Google or Microsoft account and for
+the same reason: a GitHub token acts as the person who created it, a Netlify or
+Vercel token deploys to their team, and a Supabase personal access token
+administers their projects. None of them is installation plumbing the way an
+SMTP profile or an OAuth *client* registration is.
+
+From **Admin → Developer services** an administrator can:
+
+- see whose connection exists and whether it is working;
+- disconnect somebody's connection;
+- switch a service off for the whole installation.
+
+Switching a service off stops anyone connecting it and stops Josi using the
+connections that already exist; the owner can still take their own token back.
+Switching it back on connects nothing — it returns the choice to each person.
+
+An administrator cannot read a token, see which account or project it points at,
+see what it is permitted to do, or connect a service for somebody else.
+
+### 17C.2 The minimum permissions to tell people to grant
+
+| Service | Grant this, and nothing more |
+| --- | --- |
+| GitHub | A **fine-grained** token, limited to selected repositories, Repository → Metadata and Contents read-only, with an expiry. No organization permissions and no write, admin or delete permission. |
+| Netlify | A token created for Josi alone. Netlify tokens **cannot be scoped**: the token can do anything the account can. A dedicated token is what makes it revocable without disruption. |
+| Vercel | A token scoped to the one team or personal account Josi should see, with an expiry. A Vercel token is scoped to a team, not to an action. |
+| Supabase | A personal access token from Account → Access tokens. **Not** a project API key — the `service_role` key bypasses every row-level security policy on the project, and Josi refuses to store one. |
+
+The page states these above the field, including the cases where a provider has
+no read-only token at all. Josi cannot request a narrower grant than a provider
+offers, and does not imply that it did.
+
+### 17C.3 What happens to the token
+
+Sent once to the service's own API to check that it works, then sealed with the
+installation master key before it reaches PostgreSQL. It is never shown again:
+the page displays a fixed mask and the account name the provider reported. It
+does not appear in chat, in logs, in a diagnostics bundle, in the audit trail,
+in an administrator's view, or in any ordinary API response, and a database dump
+without the master key does not yield it.
+
+Requests go only to `api.github.com`, `api.netlify.com`, `api.vercel.com` and
+`api.supabase.com`. No part of the connect form is a URL, redirects are not
+followed, and an address off the public internet is refused **at request time**
+— so a resolver that answers with `169.254.169.254` gets a refusal rather than
+an Authorization header.
+
+### 17C.4 Operational notes
+
+- **Test connection** asks the provider again, now. A token revoked at the
+  provider shows as needing reconnection rather than continuing to claim it works.
+- **Disconnect** deletes Josi's copy. None of the four exposes an API to revoke a
+  personal access token, so the page names where to finish the job in your own
+  account.
+- Deleting a person deletes their developer-service connections with them.
+- No assistant tool reads these services in this release. Josi stores the
+  credential and reports its health; that is the whole scope.
+
 ## 18. Security checklist
 
 Before considering an installation reachable by other people, confirm:

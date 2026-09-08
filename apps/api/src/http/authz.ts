@@ -161,6 +161,11 @@ const CONTENT_KEYS = new Set([
   // work on offline, and there is no reason any surface needs it — a boolean
   // "a key is set" answers every legitimate question.
   'api_key_enc', 'apiKeyEnc', 'apiKeyCiphertext', 'apiKey', 'api_key', 'password_enc',
+  // Developer services (GitHub, Netlify, Vercel, Supabase). `credentials_enc`
+  // is the sealed token; the other three are facts about somebody's own
+  // account — which GitHub handle, which Supabase project, what a token
+  // covers — and an administrator administers plumbing, not accounts.
+  'credentials_enc', 'account_label', 'reported_scopes', 'project_ref',
 ]);
 
 /** Belt and braces for admin DTOs. A field that looks like content or a

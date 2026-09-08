@@ -2,6 +2,10 @@ export * from './capabilities.js';
 export * from './oauthState.js';
 export * from './providers.js';
 export * from './connections.js';
+// The developer/deployment services. Deliberately after `connections` and not
+// folded into it: these are pasted personal access tokens, not OAuth grants.
+export * from './devServices.js';
+export * from './devServiceProbe.js';
 export * from './providers/contacts.js';
 export * from './providers/mail.js';
 export * from './providers/calendar.js';

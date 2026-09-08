@@ -592,7 +592,70 @@ An out-of-memory kill appears in container state and host kernel logs.</p>
 connector features members are allowed to enable for their own accounts.
 Allowing a permission does not turn it on for anyone or grant access by itself;
 each member must still connect their own account and enable the feature.</p>
-<h2>18. Security checklist</h2>
+<h2 id="developer-services">18. Developer service connections</h2>
+<p><strong>Workspace → Developer services</strong> is where a person connects GitHub, Netlify,
+Vercel or Supabase to Josi. None of the four is configured by the installer, by an
+environment variable, or by an administrator on anyone’s behalf: each one is
+disconnected until the person who owns the account pastes an access token they created
+themselves.</p>
+<h3>18.1 Who owns these connections</h3>
+<p>They are <strong>user-scoped</strong>, not installation services. A GitHub token acts as the
+person who created it, a Netlify or Vercel token deploys to their team, and a Supabase
+personal access token administers their projects. The connection therefore belongs to one
+account, exactly as a connected Google or Microsoft account does.</p>
+<p>An administrator can:</p>
+<ul>
+<li>see, on <strong>Admin → Developer services</strong>, whose connection exists and whether it
+is working;</li>
+<li>disconnect somebody’s connection;</li>
+<li>switch a service off for the whole installation.</li>
+</ul>
+<p>Switching a service off stops anyone connecting it and stops Josi using the connections that
+already exist. The owner can still take their own token back — a ceiling removes a credential’s
+use, it does not trap it here.</p>
+<p>An administrator cannot read a token, see which account or project it points at, see what
+it is permitted to do, or connect a service for somebody else. Switching a service back on
+does not connect it for anyone — it returns the choice to each person, who still has to
+create and paste their own token.</p>
+<h3>18.2 The minimum permissions to grant</h3>
+<table>
+<thead><tr><th>Service</th><th>Grant this, and nothing more</th></tr></thead>
+<tbody>
+<tr><td>GitHub</td><td>A <em>fine-grained</em> personal access token, limited to selected
+repositories, with Repository → Metadata read-only and Contents read-only, and an expiry
+date. No organization permissions, and no write, admin or delete permission.</td></tr>
+<tr><td>Netlify</td><td>A personal access token created for Josi alone. Netlify tokens
+<em>cannot be scoped</em>: the token can do anything the account can, including deleting
+sites. A dedicated token is what makes it revocable without disruption.</td></tr>
+<tr><td>Vercel</td><td>A token scoped to the one team or personal account Josi should see,
+with an expiry. A Vercel token is scoped to a team, not to an action.</td></tr>
+<tr><td>Supabase</td><td>A personal access token from Account → Access tokens. <strong>Not</strong>
+a project API key: the <code>service_role</code> key bypasses every row-level security policy
+on the project, and Josi refuses to store one.</td></tr>
+</tbody>
+</table>
+<h3>18.3 What happens to the token</h3>
+<p>The token is sent once to the service’s own API to check that it works, then sealed with
+the installation master key before it reaches PostgreSQL. It is never shown again — the
+page displays a fixed mask and the account name the provider reported. It does not appear
+in chat, in logs, in a diagnostics bundle, in the audit trail, in an administrator’s view,
+or in any ordinary API response, and a database dump without the master key does not yield
+it. Requests go only to <code>api.github.com</code>, <code>api.netlify.com</code>,
+<code>api.vercel.com</code> and <code>api.supabase.com</code>; nothing in the connect form is a
+URL, redirects are not followed, and an address that is not on the public internet is
+refused at request time.</p>
+<h3>18.4 Testing, disconnecting and reconnecting</h3>
+<p><strong>Test connection</strong> asks the provider again, now, and updates the status. A token
+that has been revoked at the provider shows as needing reconnection rather than continuing
+to claim it works. <strong>Replace token</strong> stores a new one on the same connection.
+<strong>Disconnect</strong> deletes Josi’s copy — it cannot revoke the token for you, so the
+page names where to do that in your own account.</p>
+<h3>18.5 What this is not</h3>
+<p>Developer services are separate from the model provider Josi uses, from the Google or
+Microsoft accounts under <strong>Connections</strong>, and from messaging <strong>Channels</strong>.
+Connecting one of them gives Josi a stored credential and a status; it does not add a
+messaging transport and does not change which model answers.</p>
+<h2>19. Security checklist</h2>
 <p>Before considering an installation reachable by other people, confirm:</p>
 <ul>
 <li><input disabled="" type="checkbox"> The checkout is an intended release, not an arbitrary dirty branch.</li>
@@ -615,7 +678,7 @@ resourced.</li>
 entrusted to the system.</li>
 <li><input disabled="" type="checkbox"> Phase 11 threat-model and release gates have passed before public launch.</li>
 </ul>
-<h2>19. Collecting useful support information</h2>
+<h2>20. Collecting useful support information</h2>
 <p>The redacted diagnostics bundle is a Phase 10 feature and does not yet exist.
 Until it does, inspect logs locally and redact them before sharing. Never send:</p>
 <ul>
@@ -635,7 +698,7 @@ docker version
 docker compose version
 docker compose ps -a
 </code></pre>
-<h2>20. Uninstallation</h2>
+<h2>21. Uninstallation</h2>
 <p>There is no supported uninstall-and-preserve-data wizard yet.</p>
 <p>Stopping the installation is reversible:</p>
 <pre><code class="language-bash">docker compose stop

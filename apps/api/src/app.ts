@@ -13,6 +13,7 @@ import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { checklistRoutes } from './http/checklistRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
+import { adminDevServiceRoutes, devServiceRoutes } from './http/devServiceRoutes.js';
 import { contactSyncRoutes } from './http/contactSyncRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
@@ -67,6 +68,9 @@ export interface AppConfig {
   fetchLatestVersion?: () => Promise<string | null>;
   /** DNS for outbound admin-supplied URLs, injected by the tests. */
   outboundResolve?: (hostname: string) => Promise<string[]>;
+  /** GitHub/Netlify/Vercel/Supabase HTTP, injected by the tests so no suite
+   * contacts a developer service. Unset in production. */
+  devServiceFetch?: typeof fetch;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -178,6 +182,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   }));
+  // Developer services. BEFORE `/admin` for the reason recorded above
+  // `/admin/telegram`: with the generic admin router registered first, this one
+  // is never reached and its own guard stops being the thing protecting it.
+  api.use('/admin/developer-services', adminDevServiceRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.devServiceFetch, resolve: cfg.outboundResolve,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -187,6 +197,13 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
   }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
+  // GitHub, Netlify, Vercel and Supabase. Its own prefix rather than a branch
+  // inside /connections: these are pasted personal access tokens with no OAuth
+  // handshake, no scope vocabulary and no refresh, and folding them into the
+  // connector routes would mean one router with two credential models in it.
+  api.use('/developer-services', devServiceRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.devServiceFetch, resolve: cfg.outboundResolve,
+  }));
   api.use('/storage', storageRoutes({ db }));
   api.use('/telegram', telegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,

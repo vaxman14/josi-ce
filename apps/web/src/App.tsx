@@ -13,6 +13,7 @@ import { Approvals } from '@/pages/Approvals';
 import { Conversations } from '@/pages/Conversations';
 import { Contacts } from '@/pages/Contacts';
 import { Connections } from '@/pages/Connections';
+import { DeveloperServices } from '@/pages/DeveloperServices';
 import { Usage } from '@/pages/Usage';
 import { Personalization } from '@/pages/Personalization';
 import { Settings } from '@/pages/Settings';
@@ -25,6 +26,7 @@ import { AdminModel } from '@/pages/admin/Model';
 import { AdminPolicy } from '@/pages/admin/Policy';
 import { AdminStorage } from '@/pages/admin/Storage';
 import { AdminConnectors } from '@/pages/admin/Connectors';
+import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
 import { AdminChannels } from '@/pages/admin/Channels';
@@ -133,6 +135,7 @@ export function App() {
         <Route path="conversations" element={<Conversations />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="connections" element={<Connections />} />
+        <Route path="developer-services" element={<DeveloperServices />} />
         <Route path="usage" element={<Usage />} />
         <Route path="personalization" element={<Personalization />} />
         <Route path="settings" element={<Settings />} />
@@ -148,6 +151,7 @@ export function App() {
         <Route path="policy" element={<AdminPolicy />} />
         <Route path="storage" element={<AdminStorage />} />
         <Route path="connectors" element={<AdminConnectors />} />
+        <Route path="developer-services" element={<AdminDeveloperServices />} />
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />
         <Route path="channels" element={<AdminChannels />} />

@@ -95,6 +95,9 @@ describe('deleting a person takes their data with them', () => {
   const OWNED = [
     'contacts', 'contact_sync_origins', 'contact_links',
     'contact_tombstones', 'contact_merge_decisions',
+    // A developer-service token that outlives its owner is a live GitHub,
+    // Netlify, Vercel or Supabase credential nobody is responsible for.
+    'developer_service_connections',
   ];
 
   it('declares a cascade on every owner column', () => {
@@ -151,6 +154,10 @@ describe('deleting a person takes their data with them', () => {
       await db.query(
         `insert into contact_merge_decisions (owner_user_id, contact_a, contact_b, decision)
          values ($1, $2, $3, 'keep_separate')`, [owner, a, b],
+      );
+      await db.query(
+        `insert into developer_service_connections (owner_user_id, service, credentials_enc)
+         values ($1, 'github', 'v1.aaaa.bbbb.cccc')`, [owner],
       );
     }
 

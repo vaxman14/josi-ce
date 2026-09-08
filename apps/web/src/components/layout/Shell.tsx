@@ -25,6 +25,10 @@ const MEMBER_NAV = [
   { to: '/app/conversations', label: 'Conversations' },
   { to: '/app/contacts', label: 'Contacts' },
   { to: '/app/connections', label: 'Connections' },
+  // Its own entry rather than a tab inside Connections: a pasted personal
+  // access token and an OAuth account are different enough that one page
+  // showing both teaches people the wrong thing about what they granted.
+  { to: '/app/developer-services', label: 'Developer services' },
   { to: '/app/usage', label: 'Usage' },
   { to: '/app/personalization', label: 'Personalization' },
   { to: '/app/telegram', label: 'Telegram' },
@@ -43,6 +47,7 @@ const ADMIN_NAV = [
   { to: '/admin/policy', label: 'Policy' },
   { to: '/admin/storage', label: 'Storage' },
   { to: '/admin/connectors', label: 'Connectors' },
+  { to: '/admin/developer-services', label: 'Developer services' },
   { to: '/admin/telegram', label: 'Telegram' },
   { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/workspace', label: 'Workspace' },

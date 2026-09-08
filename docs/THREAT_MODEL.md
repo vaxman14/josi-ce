@@ -677,6 +677,57 @@ whose severity is critical cannot be dismissed at all.
 
 ---
 
+## Developer service connections
+
+### T-80 A pasted developer token is readable from the database
+**Attacker:** anybody who obtains a database dump — a stolen backup, a
+misconfigured replica, a support export.
+**Impact:** a live GitHub, Netlify, Vercel or Supabase personal access token,
+which acts as its owner and, for three of the four, cannot be scoped narrower
+than their whole account.
+**Control:** `packages/connectors/src/devServices.ts` — the token is sealed with
+the installation master key before it is passed to a query, the row carries no
+prefix, suffix, length or hash of it, and the only function that opens it
+returns the value to a single caller at the moment of a request.
+**Test:** seals it, and the row contains no plaintext anywhere
+
+### T-81 A developer token is read back through an ordinary response
+**Attacker:** a curious member, an administrator, or anything that logs a
+response body — a browser extension, a proxy, a support screenshot.
+**Impact:** the credential leaves the installation through a surface nobody
+thought of as a credential surface.
+**Control:** `apps/api/src/http/devServiceRoutes.ts` — the owner's view carries a
+constant mask rather than anything derived from the secret, the administrator's
+view is run through `assertMetadataOnly`, and the ciphertext is not served
+either, because ciphertext is something an attacker can work on offline.
+**Test:** returns a constant mask and never the token
+
+### T-82 One member reads or removes another member's developer connection
+**Attacker:** a signed-in member of the same installation, guessing or
+harvesting a connection id.
+**Impact:** somebody else's deployment or source-control credential is tested,
+replaced or disconnected by a person who does not own it.
+**Control:** `apps/api/src/http/devServiceRoutes.ts` — ownership is resolved from
+the stored row rather than from the request, a row belonging to somebody else
+and a row that does not exist both produce 404 so the two are
+indistinguishable, and no route branches on role to widen a read.
+**Test:** answers 404, not 403, for another member's connection
+
+### T-83 DNS points a pinned developer-service host at cloud metadata
+**Attacker:** a poisoned resolver on the host, a rebinding answer, or an
+operator's own split-horizon DNS gone wrong.
+**Impact:** Josi sends an Authorization header to 169.254.169.254 or to a LAN
+service, which is both a credential leak and a request the installation did not
+intend to make.
+**Control:** `packages/connectors/src/devServiceProbe.ts` — the host is pinned per
+service and never taken from input, every resolved address is checked at request
+time rather than once at save time, anything off the public internet is refused
+(unlike the model-endpoint checker, which must permit LAN addresses), and
+redirects are not followed.
+**Test:** refuses the request when DNS answers with a cloud-metadata address
+
+---
+
 ## Accepted risks
 
 These have no control, deliberately.
