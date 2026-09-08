@@ -129,6 +129,30 @@ describe('capability gating', () => {
     expect(system).toMatch(/calendar_write|email_send/);
   });
 
+  it('does not call calendar writing unavailable when this user enabled a provider executor', async () => {
+    await configureModel();
+    const [connection] = await db.query<{ id: string }>(
+      `insert into connections
+         (owner_user_id, provider, status, granted_scopes)
+       values ($1, 'google', 'active', 'https://www.googleapis.com/auth/calendar')
+       returning id`,
+      [alice],
+    );
+    await db.query(
+      `insert into connection_capabilities
+         (connection_id, capability, enabled, scopes_granted_at)
+       values ($1, 'google.calendar.write', true, now())`,
+      [connection!.id],
+    );
+    replies = [{ content: 'I can prepare that for approval.' }];
+
+    await turn({ inbound: 'Create a calendar event tomorrow at 9 AM.' });
+
+    const system = requests[0].messages[0].content;
+    expect(system).not.toMatch(/not connected yet[^.]*calendar_write/i);
+    expect(requests[0].tools.map((tool: any) => tool.function.name)).toContain('draft_calendar_event');
+  });
+
   it('supplies scheduling defaults instead of making the model ask for known context', async () => {
     await configureModel();
     replies = [{ content: 'How long should it be?' }];

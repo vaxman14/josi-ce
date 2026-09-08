@@ -26,6 +26,7 @@ import {
   appendEvent, checkStepUp, listTemplates,
   type Db,
 } from '@josi-ce/core';
+import { can } from '@josi-ce/connectors';
 import {
   capabilitiesOf, chat, featureAvailable, loadStoredProvider,
   type ChatImage, type ChatMessage, type Capabilities, type RegistryOptions, type ToolResult,
@@ -102,6 +103,32 @@ export interface TurnArgs {
 }
 
 const HOP_LIMIT = 6;
+
+const TASK_PROVIDER_CAPABILITIES: Record<string, string[]> = {
+  calendar_write: ['google.calendar.write', 'microsoft.calendar.write'],
+  email_send: ['google.mail.send', 'microsoft.mail.send'],
+  contacts_write: ['google.contacts.write', 'microsoft.contacts.write'],
+};
+
+async function unavailableTaskCapabilities(db: Db, userId: string, required: string[]): Promise<string[]> {
+  const unavailable: string[] = [];
+  for (const capability of [...new Set(required)]) {
+    const providerCapabilities = TASK_PROVIDER_CAPABILITIES[capability];
+    if (!providerCapabilities) {
+      unavailable.push(capability);
+      continue;
+    }
+    let available = false;
+    for (const providerCapability of providerCapabilities) {
+      if ((await can(db, { ownerUserId: userId, capability: providerCapability })).allowed) {
+        available = true;
+        break;
+      }
+    }
+    if (!available) unavailable.push(capability);
+  }
+  return unavailable;
+}
 
 function systemPrompt(args: {
   capabilities: Capabilities;
@@ -192,7 +219,8 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // Tools only if the model was PROVEN to call them. Not "probably supports",
   // not inferred from the model name.
   const templates = await listTemplates(db);
-  const unavailable = [...new Set(templates.map((t) => t.requiresCapability).filter(Boolean))] as string[];
+  const required = templates.map((t) => t.requiresCapability).filter((value): value is string => !!value);
+  const unavailable = await unavailableTaskCapabilities(db, userId, required);
 
   // Which connected-data tools THIS person's switches allow, right now. The
   // offering is per turn: flip a switch off between turns and the tool is
