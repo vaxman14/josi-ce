@@ -804,7 +804,62 @@ so plainly.</p>
 accounts under <strong>Connections</strong>, from <strong>Developer services</strong>, from
 <strong>Custom API</strong> connections and from messaging <strong>Channels</strong>. Connecting
 one does not add a messaging transport and does not change which model answers.</p>
-<h2>21. Security checklist</h2>
+<h2 id="skills">21. The Skills library</h2>
+<p><strong>Admin → Skills</strong> installs written instructions Josi follows for a kind of work.
+<strong>Workspace → Skills</strong> shows everybody what is installed, in full. Nothing here is
+preset: a fresh installation has an empty library, and the starter catalogue that ships in the
+release is four documents nobody has installed.</p>
+<p>A skill is a <strong>document, not a program</strong>. No code, no command, no address, no
+credential, no tool. That matters because the assumption in the other direction is the dangerous
+one:</p>
+<p><strong>A skill cannot give Josi anything.</strong> It cannot hand the assistant a tool it did
+not have, reach an account somebody has not connected, widen a permission somebody switched off, or
+let something happen that a person would otherwise have been asked to agree to. What a skill says
+it uses is checked against <em>each person’s own connections</em>, on every message — so two people
+with the same skill and different connections get two different, honest answers.</p>
+<h3>21.1 Installing is not switching on</h3>
+<ol>
+<li><strong>Install.</strong> The package is fetched, validated, checked against the digest its
+catalogue pinned, and its signature verified if the source publishes a key. It lands switched off
+and doing nothing; no conversation reads it.</li>
+<li><strong>Switch on</strong>, after somebody reads the whole text. The request carries the digest
+of what was on screen, so a package that changed in between is refused rather than approved.</li>
+</ol>
+<p><strong>An update goes back to step two even if the skill was switched on.</strong> New
+instructions from outside your installation are not covered by somebody having read the old ones.
+The database enforces that rather than trusting the code to.</p>
+<h3>21.2 Where packages come from</h3>
+<p>The source list <em>is</em> the trust list. There is nowhere in Josi to paste a package: an
+install names a source and a skill key, and the address comes from that source’s own catalogue.</p>
+<ul>
+<li><strong>Included with Josi</strong> — four starter skills compiled into the release. Nothing is
+fetched, so this works with no outbound internet, and nothing from it is installed until somebody
+installs it.</li>
+<li><strong>A curated registry</strong> or <strong>a repository you add</strong> — an
+<code>https://</code> index address. Packages are fetched only from that host and only from
+addresses under that index’s own directory. Every resolved address is checked, redirects are not
+followed, and anything off the public internet is refused.</li>
+</ul>
+<p>Josi sends no credential to a registry and there is no field for one. Paste the publisher’s
+ed25519 signing key on the source if they give you one: every package from it then has to be signed
+by that key. Without one, Josi still checks the package against the digest the catalogue pinned —
+which catches a package changing under you — but not who wrote it, and every screen says which of
+the two you have.</p>
+<h3>21.3 What is refused, and what happens to it</h3>
+<p>A package that fails a check is <strong>quarantined</strong>: recorded with its key, version,
+digest and a reason, and with none of its text kept — the reason it is there is that its text could
+not be trusted. There is no way to promote one into the library; installing it means fixing what
+failed and installing again.</p>
+<p>The reason worth explaining is <em>its text tries to override Josi’s own rules</em>. A skill is a
+runbook for a person to read as well as the assistant, and a package telling the model to disregard
+its rules, act without asking, or keep something from its owner has told you what it is for.</p>
+<h3>21.4 What this is not</h3>
+<p>Skills are separate from the model provider Josi thinks with, from the Google or Microsoft
+accounts under <strong>Connections</strong>, from <strong>Developer services</strong>, from
+<strong>Custom API</strong> connections, from <strong>MCP servers</strong> and from messaging
+<strong>Channels</strong>. Installing one adds no tool, no connection and no permission. It is a
+runbook, and everything it describes was already something Josi could be asked to do.</p>
+<h2>22. Security checklist</h2>
 <p>Before considering an installation reachable by other people, confirm:</p>
 <ul>
 <li><input disabled="" type="checkbox"> The checkout is an intended release, not an arbitrary dirty branch.</li>
@@ -827,7 +882,7 @@ resourced.</li>
 entrusted to the system.</li>
 <li><input disabled="" type="checkbox"> Phase 11 threat-model and release gates have passed before public launch.</li>
 </ul>
-<h2>22. Collecting useful support information</h2>
+<h2>23. Collecting useful support information</h2>
 <p>The redacted diagnostics bundle is a Phase 10 feature and does not yet exist.
 Until it does, inspect logs locally and redact them before sharing. Never send:</p>
 <ul>
@@ -847,7 +902,7 @@ docker version
 docker compose version
 docker compose ps -a
 </code></pre>
-<h2>23. Uninstallation</h2>
+<h2>24. Uninstallation</h2>
 <p>There is no supported uninstall-and-preserve-data wizard yet.</p>
 <p>Stopping the installation is reversible:</p>
 <pre><code class="language-bash">docker compose stop

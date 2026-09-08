@@ -911,6 +911,106 @@ approve route re-resolves the tool against the approved set, so a tool switched
 off while the request waited is refused rather than run.
 **Test:** runs exactly once when approved
 
+### T-98 An installed skill becomes an authority Josi does not have
+**Attacker:** a skill publisher, or anybody who can get a package into a
+registry an installation trusts.
+**Impact:** prose sitting near the assistant's own instructions talks it into
+reaching an account somebody has not connected, using a tool it was not given,
+or acting without the person agreeing — which would make the whole permission
+model advisory.
+**Control:** `packages/agent/src/skillGuidance.ts` — a skill contributes TEXT and
+nothing else: no `ToolSpec` is produced here, the turn's tool list is decided
+before this runs and is not touched after, and every capability a package
+declares is resolved per person with `can()` and reported as unavailable when
+they lack it. The tool layer re-checks the person's own switches at the moment
+of every call regardless, so a skill that talked the model into trying something
+meets the refusal the person's own request would have met.
+**Test:** puts nothing in the catalogue, however many are installed
+
+### T-99 A skill is switched on that nobody here has read
+**Attacker:** a careless install, a race between a page rendering and a button
+being pressed, or a future code path that forgets the review step.
+**Impact:** instructions nobody on this installation has read are placed in
+front of the assistant for every member, on every message.
+**Control:** `packages/db/migrations/0037_skills_library.sql` — `skills.state`
+starts at `review`, and the `skills_enabled_was_reviewed` CHECK refuses the
+`enabled` state unless `reviewed_digest` is non-null AND equal to
+`package_digest`. The activate route carries the digest the page displayed, so a
+package that changed in between is refused rather than approved.
+**Test:** pins the activation to the text that was on screen
+
+### T-100 An update slips new instructions past the review that approved the old ones
+**Attacker:** a publisher whose first version was unobjectionable.
+**Impact:** a skill somebody read and switched on months ago silently becomes a
+different skill under the same name.
+**Control:** `packages/connectors/src/skills.ts` — `updateSkill` writes the new
+digest, `state = 'review'` and `reviewed_digest = null` in one UPDATE, and the
+CHECK in 0037 means a row carrying new instructions CANNOT remain enabled even
+if a future code path forgot to send it back. The route says outright that a
+live skill was switched off and why.
+**Test:** switches a live skill off until the new text is read
+
+### T-101 A package is replaced between the catalogue and the fetch
+**Attacker:** a registry serving one thing to its listing and another to the
+download, or anybody who can write to the address the listing names.
+**Impact:** an administrator reviews a package that is not the one installed.
+**Control:** `packages/connectors/src/skills.ts` — `assessSkillPackage` requires
+the canonical digest of the fetched document to equal the digest the catalogue
+entry pinned, and requires the package to call itself by the key that was
+listed. A mismatch is quarantined and nothing is installed. The digest is
+canonical rather than byte-exact, so reformatting is not mistaken for a change
+and a changed word always is.
+**Test:** refuses a package that is not the one the catalogue pinned
+
+### T-102 A registry serves a package nobody signed
+**Attacker:** whoever controls a registry, or the TLS endpoint in front of it.
+**Impact:** a package is presented as coming from a publisher who never wrote
+it.
+**Control:** `packages/connectors/src/skillPackage.ts` — `verifySkillSignature`
+checks an ed25519 signature over the same canonical bytes the digest covers,
+against the key registered for the SOURCE rather than any key in the package. A
+source that publishes a key refuses an unsigned or badly signed package into
+quarantine; a source without one records `unverified`/`unsigned` and every
+screen says which, rather than showing a tick nobody earned.
+**Test:** quarantines an unsigned package from a source that publishes a key
+
+### T-103 A skill's prose escapes its own section of the prompt
+**Attacker:** a package author who writes a line of dashes.
+**Impact:** the model reads the rest of the package as though Josi had said it,
+which needs no suspicious word in it at all and so would not be caught by
+content screening.
+**Control:** `packages/agent/src/skillGuidance.ts` — `fence` neutralises any
+line that could close the marker before the text is placed, the section is
+introduced as a document written by its publisher, and `SKILL_PREAMBLE` states
+outright that everything above it wins and that nothing in it grants a tool, a
+connection or an exemption from an approval.
+**Test:** cannot forge its own end marker
+
+### T-104 A skill registry points the installer at an internal address
+**Attacker:** a poisoned resolver, a rebinding answer, or a registry that lists
+a package address of its own choosing.
+**Impact:** Josi makes a request from inside the operator's network — to
+169.254.169.254, or to a LAN service — on the strength of a catalogue entry.
+**Control:** `packages/connectors/src/skillRegistry.ts` — packages are fetched
+only from the pinned host on the source row, only over https, only from
+addresses that lie under the index document's own directory, with every resolved
+address checked rather than the first, literal addresses never reaching a
+resolver, redirects never followed, and bodies capped. There is no route that
+takes a package address at all: an install names a source row and a key.
+**Test:** checks every resolved address, not the first
+
+### T-105 A second publisher claims a skill name people already trust
+**Attacker:** anybody who can get a package into a second registry an
+installation has added.
+**Impact:** `weekly_review` arrives from somewhere else wearing a name people
+have learned to trust, or an update quietly changes hands.
+**Control:** `packages/db/migrations/0037_skills_library.sql` — `skills.skill_key`
+is unique installation-wide, so two publishers cannot hold one name; and
+`skillUpdateConflict` in `packages/connectors/src/skills.ts` refuses an update
+that changes publisher or moves the version backwards, with a sentence saying
+what to do instead.
+**Test:** refuses a key another publisher already holds
+
 ---
 
 ## Accepted risks

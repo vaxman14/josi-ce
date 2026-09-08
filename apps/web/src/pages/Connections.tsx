@@ -288,6 +288,23 @@ export function Connections() {
         </p>
       </Card>
 
+      {/* A pointer for the third time, and this one is a pointer BECAUSE it is
+          not a connection at all. A skill has no credential, no address and no
+          tool: it is written instructions an administrator installed and read.
+          It belongs in the same neighbourhood because it is the other half of
+          the question "what has Josi been set up to do for me?", and it must
+          not sit among the cards above, because every one of those grants
+          access to something and this grants nothing. */}
+      <Card>
+        <CardTitle>Skills</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Skills are written instructions Josi follows for a kind of work — installed and read by an
+          administrator. A skill cannot give Josi access to anything; what it says it uses is checked
+          against the switches on this page every time.{' '}
+          <Link className="underline" to="/app/skills">See what Josi has been taught</Link>.
+        </p>
+      </Card>
+
       <ConnectedApis />
     </div>
   );

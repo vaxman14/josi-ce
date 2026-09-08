@@ -46,6 +46,7 @@ import {
 import { customApiToolAvailability, type CustomApiAvailability } from './customApiTools.js';
 import { mcpToolAvailability, type McpAvailability } from './mcpTools.js';
 import { dataToolAvailability, type DataToolAvailability } from './dataTools.js';
+import { skillGuidanceFor, type SkillGuidance } from './skillGuidance.js';
 import { executeAssistantTool } from './execute.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
 
@@ -350,6 +351,26 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   } catch (err) {
     console.error('personalization unavailable for this turn', (err as Error).message);
   }
+
+  // Installed skills, LAST and OUTSIDE everything above.
+  //
+  // The position is the point. Everything before this — the core, the admin
+  // policy, the person's own layers — was written by somebody on this
+  // installation. A skill was written by its publisher, so it goes after all of
+  // it, inside markers, attributed, with the precedence said outright in
+  // `SKILL_PREAMBLE`. It adds no tool: `tools` was decided above and is not
+  // touched here, which is the whole reason a skill cannot be an authority
+  // bypass.
+  //
+  // Same failure rule as the data tools and the custom APIs: a broken library
+  // costs the guidance, never the turn.
+  let skills: SkillGuidance = { skills: [], text: '', dropped: [] };
+  try {
+    skills = await skillGuidanceFor(db, userId);
+  } catch (err) {
+    console.error('skill guidance unavailable for this turn', (err as Error).message);
+  }
+  if (skills.text) system = `${system}\n\n${skills.text}`;
 
   // The request stays where it belongs: one user message, not repeated in the
   // system context. Duplicating it makes a model weight it twice and makes the

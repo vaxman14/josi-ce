@@ -19,11 +19,11 @@ const WIDTHS = [320, 375, 390, 430];
 const MEMBER_PAGES = [
   '/app', '/app/talk', '/app/tasks', '/app/approvals', '/app/conversations',
   '/app/contacts', '/app/connections', '/app/developer-services', '/app/mcp-servers',
-  '/app/usage', '/app/settings', '/app/telegram', '/app/apps',
+  '/app/skills', '/app/usage', '/app/settings', '/app/telegram', '/app/apps',
 ];
 const ADMIN_PAGES = [
   '/admin', '/admin/people', '/admin/model', '/admin/policy', '/admin/connectors',
-  '/admin/developer-services', '/admin/custom-apis', '/admin/mcp-servers',
+  '/admin/developer-services', '/admin/custom-apis', '/admin/mcp-servers', '/admin/skills',
   '/admin/telegram', '/admin/workspace',
 ];
 

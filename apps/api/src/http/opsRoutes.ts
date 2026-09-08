@@ -182,6 +182,23 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           where t.state = 'approved' and t.available and s.enabled`,
       );
 
+      // Installed skills, as COUNTS and nothing else. How many are installed,
+      // how many are actually switched on, and how many packages were refused —
+      // enough for a supporter to answer "is a skill making Josi behave like
+      // this?" without ever being shown a line of what one says. Never a name,
+      // never a publisher, never a word of the instructions: those are this
+      // installation's own runbooks and a bundle goes to a third party's ticket
+      // system.
+      const [skills] = await db.query<{ total: number; live: number; review: number }>(
+        `select count(*)::int as total,
+                count(*) filter (where state = 'enabled')::int as live,
+                count(*) filter (where state = 'review')::int as review
+           from skills`,
+      );
+      const [skillQuarantine] = await db.query<{ total: number }>(
+        `select count(*)::int as total from skill_quarantine`,
+      );
+
       const built = buildBundle({
         version: process.env.JOSI_VERSION ?? '0.1.0',
         containers: [],
@@ -199,6 +216,10 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           custom_apis: (customApis?.live ?? 0) > 0,
           // WHETHER, never which, for the same reason.
           mcp_servers: (mcp?.live ?? 0) > 0,
+          // WHETHER any installed instructions are in front of the assistant.
+          // The single most useful bit in this object when a reply reads oddly,
+          // and it names nothing.
+          skills: (skills?.live ?? 0) > 0,
         },
         migrations: [],
         logs: [],
@@ -210,6 +231,10 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           mcp_servers: mcp?.total ?? 0,
           mcp_servers_enabled: mcp?.live ?? 0,
           mcp_tools_approved: mcpTools?.live ?? 0,
+          skills_installed: skills?.total ?? 0,
+          skills_enabled: skills?.live ?? 0,
+          skills_awaiting_review: skills?.review ?? 0,
+          skills_quarantined: skillQuarantine?.total ?? 0,
         },
       });
 

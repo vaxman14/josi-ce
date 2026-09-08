@@ -16,6 +16,7 @@ import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes
 import { adminDevServiceRoutes, devServiceRoutes } from './http/devServiceRoutes.js';
 import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
 import { adminMcpRoutes, mcpRoutes } from './http/mcpRoutes.js';
+import { adminSkillRoutes, skillRoutes } from './http/skillRoutes.js';
 import { contactSyncRoutes } from './http/contactSyncRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
@@ -83,6 +84,11 @@ export interface AppConfig {
    * a suite that had to satisfy it and a REST API in one stub would be
    * asserting less about each. */
   mcpFetch?: typeof fetch;
+  /** HTTP for skill registries, injected by the tests so no suite fetches a
+   * package. Its own seam again, and for the plainest reason of the four: this
+   * one answers with a catalogue and a document and never speaks to anything
+   * the other three do. */
+  skillFetch?: typeof fetch;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -214,6 +220,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/mcp-servers', adminMcpRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.mcpFetch, resolve: cfg.outboundResolve,
   }));
+  // The Skills library. BEFORE `/admin` for the reason recorded above
+  // `/admin/telegram`: with the generic admin router registered first, this one
+  // is never reached and its own guard stops being the thing protecting it.
+  api.use('/admin/skills', adminSkillRoutes({
+    db, fetchImpl: cfg.skillFetch, resolve: cfg.outboundResolve,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -246,6 +258,16 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/mcp-servers', mcpRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.mcpFetch, resolve: cfg.outboundResolve,
   }));
+  // The Skills library, read-only for a member. Its own prefix and not a branch
+  // inside any of the four above, because it is not a connection at all: a
+  // skill has no credential, no host and no tool, and presenting it beside
+  // things that do would teach people that it might.
+  //
+  // There is no member write route here, which is the shape of the feature
+  // rather than an omission. Reviewing prose that will sit near the assistant's
+  // own instructions is an administrative act, and the transparency members are
+  // owed is the full text — which this returns.
+  api.use('/skills', skillRoutes({ db }));
   api.use('/storage', storageRoutes({ db }));
   api.use('/telegram', telegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,

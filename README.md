@@ -110,6 +110,7 @@ proven and what is not.
 | [`docs/DEVELOPER_SERVICE_CONNECTIONS.md`](docs/DEVELOPER_SERVICE_CONNECTIONS.md) | Connecting your own GitHub, Netlify, Vercel or Supabase account |
 | [`docs/CUSTOM_API_CONNECTIONS.md`](docs/CUSTOM_API_CONNECTIONS.md) | Letting Josi call an external API, one reviewed action at a time |
 | [`docs/MCP_SERVER_CONNECTIONS.md`](docs/MCP_SERVER_CONNECTIONS.md) | Connecting a remote MCP server, and approving its tools one at a time |
+| [`docs/SKILLS_LIBRARY.md`](docs/SKILLS_LIBRARY.md) | Installing written instructions Josi follows, and why one can never grant anything |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Every threat with its control and the test that would fail without it |
 
 Phase progress is tracked in the implementation plan. Nothing here is presented

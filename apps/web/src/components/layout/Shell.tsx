@@ -34,6 +34,10 @@ const MEMBER_NAV = [
   // wrote and described. Folding it into Connections would put a discovered
   // allowlist beside a reviewed one and imply the same thing about both.
   { to: '/app/mcp-servers', label: 'MCP servers' },
+  // Read-only, and its own entry rather than a tab: a skill is not a connection
+  // — it has no credential, no address and no tool — and listing it beside the
+  // things that do have those would suggest it might.
+  { to: '/app/skills', label: 'Skills' },
   { to: '/app/usage', label: 'Usage' },
   { to: '/app/personalization', label: 'Personalization' },
   { to: '/app/telegram', label: 'Telegram' },
@@ -60,6 +64,10 @@ const ADMIN_NAV = [
   // The ceiling and the health table for the servers members connect
   // themselves. Not a place to connect one: there is no route for that.
   { to: '/admin/mcp-servers', label: 'MCP servers' },
+  // The library. Its own entry for the same reason the member one is: nothing
+  // installed here is a connection, and the page's whole job is reading prose
+  // before it is allowed anywhere near the assistant.
+  { to: '/admin/skills', label: 'Skills' },
   { to: '/admin/telegram', label: 'Telegram' },
   { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/workspace', label: 'Workspace' },

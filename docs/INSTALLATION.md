@@ -1610,6 +1610,113 @@ by the owner's *ask me / run without asking* choice.
   available, how many tools are approved. Never a host, a name, a tool or a
   credential.
 
+## 17F. The Skills library — `docs/SKILLS_LIBRARY.md`
+
+Written instructions Josi follows for a kind of work, installed from
+**Admin → Skills** and readable in full by everybody from **Workspace →
+Skills**. Nothing here is installed, seeded or switched on by you: there is no
+environment variable, no `.env` entry and no seeded skill. A fresh installation
+has an empty library.
+
+A skill is a **document**, not a program. No code, no command, no address, no
+credential, no tool. This is the one thing to be clear about with people,
+because the assumption in the other direction is the dangerous one:
+
+> **A skill cannot give Josi anything.** It cannot hand the assistant a tool it
+> did not have, reach an account somebody has not connected, widen a permission
+> somebody switched off, or let something happen that a person would otherwise
+> have been asked to agree to.
+
+What a skill says it uses is checked against **each person's own connections**,
+every message. Two members with the same skill and different connections get two
+different, honest answers about what can be done.
+
+### 17F.1 Who owns the library
+
+**Installation-scoped and administrator-owned**, like custom APIs and unlike
+connected accounts. A skill holds no credential and acts as nobody; what it is,
+is a claim about how this installation works, and reading prose that will sit
+near the assistant's own instructions for everybody is an administrative act.
+
+Members get the **full text** of every installed skill and, beside it, what each
+one says it uses and whether they have it. Not a summary — a page that showed a
+title and three lines would be asking them to trust a review they cannot check.
+There is no member write route.
+
+### 17F.2 Installing is not switching on
+
+Two presses, and the gap is the point.
+
+1. **Install** — the package is fetched, validated, checked against the digest
+   its catalogue pinned, and its signature verified if the source publishes a
+   key. It lands **switched off and doing nothing**. No conversation reads it.
+2. **Switch on** — after somebody reads the whole text. The request carries the
+   digest of what was on screen, so a package that changed in between is refused
+   rather than approved.
+
+**An update goes back to step 2 even if the skill was switched on.** New
+instructions from outside your installation are not covered by somebody having
+read the old ones, and the page says outright that a live skill was switched
+off and why. The database enforces this rather than trusting the code to.
+
+### 17F.3 Where packages come from
+
+The **source list is the trust list**. There is nowhere in Josi to paste a
+package: an install names a source and a skill key, and the address comes from
+that source's own catalogue.
+
+- **Included with Josi** — four starter skills compiled into the release
+  (meeting preparation, inbox triage, weekly review, finding things in
+  documents). Nothing is fetched, so this works on an installation with no
+  outbound internet. Nothing from it is installed until somebody installs it.
+- **A curated registry** or **a repository you add** — an `https://` address to
+  an index document. Packages are fetched only from that host and only from
+  addresses under that index's own directory. Every resolved address is checked,
+  redirects are not followed, and anything off the public internet is refused.
+
+Josi sends **no credential** to a registry. There is no field for one: a private
+registry would need a token, and an installer holding one would be a second
+credential store with no owner.
+
+Optionally paste the publisher's **ed25519 signing key** on the source. Every
+package from that source then has to be signed by it or it goes to quarantine.
+Without a key, Josi still checks the package against the digest the catalogue
+pinned — which catches a package changing under you — but not who wrote it, and
+every screen says which of the two you have.
+
+### 17F.4 Quarantine
+
+A package that fails a check is recorded with its key, version, digest and a
+reason, and **none of its text is kept** — the reason it is there is that its
+text could not be trusted. There is no route that promotes one into the library:
+installing it means fixing what failed and installing again.
+
+The reason worth explaining to people is `instruction_injection`: a skill is a
+runbook for a person to read as well as the assistant, and a package telling the
+model to disregard its rules, act without asking, or keep something from its
+owner has told you what it is for.
+
+### 17F.5 Operational notes
+
+- Fifty skills per installation, 16,000 characters of instructions each, and
+  24,000 characters of skill text per message. Every switched-on skill is read
+  on every message for everybody, so what does not fit is **named** — on the
+  page and to the model — rather than quietly dropped.
+- Ten sources. The starter catalogue cannot be removed, only switched off.
+- Switching a source off stops new installs and updates from it. It does **not**
+  disable what was installed: each of those was reviewed on its own merits.
+- A source that installed something cannot be removed until those skills are.
+- Two skills cannot share a key, an update cannot change publisher, and an
+  update cannot move the version backwards. All three are refused with a
+  sentence saying what to do instead.
+- Dependencies are shown and never installed for you.
+- There are no automatic updates and no background fetches. **Check for
+  updates** is a press.
+- The audit trail records every install, review, switch and update with its key,
+  version, publisher, origin and digest — never a line of the instructions.
+- A diagnostics bundle carries counts only: installed, switched on, awaiting
+  review, quarantined. Never a name, a publisher or a word of a runbook.
+
 ## 18. Security checklist
 
 Before considering an installation reachable by other people, confirm:

@@ -365,6 +365,87 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     },
   },
 
+  skill_state: {
+    source: { migrationTable: 'skills', column: 'state' },
+    labels: {
+      review: 'Waiting to be read',
+      enabled: 'Switched on',
+      disabled: 'Switched off',
+    },
+    detail: {
+      review: 'This is installed and doing nothing at all. Josi will not put instructions in front '
+        + 'of the assistant until somebody here has read them and switched it on.',
+      disabled: 'It has been read, and it is off. Switching it back on needs no second review '
+        + 'unless the skill has changed since.',
+    },
+  },
+
+  skill_signature: {
+    source: { migrationTable: 'skills', column: 'signature_state' },
+    labels: {
+      builtin: 'Included with Josi',
+      verified: 'Signature checked',
+      unverified: 'Signed, but not checkable',
+      unsigned: 'Not signed',
+    },
+    detail: {
+      builtin: 'This came with the Josi release itself, so its integrity is the release\u2019s.',
+      verified: 'The package was signed and the signature matched the key registered for the '
+        + 'source it came from.',
+      unverified: 'The package carries a signature, but no signing key is registered for that '
+        + 'source, so nobody here could check who wrote it. Add the key on the source if the '
+        + 'publisher gives you one.',
+      unsigned: 'The package is not signed. Josi checked that it matches the digest its catalogue '
+        + 'pinned, which catches a package changing under you \u2014 not who wrote it.',
+    },
+  },
+
+  skill_source_kind: {
+    source: { migrationTable: 'skill_sources', column: 'kind' },
+    labels: {
+      builtin: 'Included with Josi',
+      registry: 'Curated registry',
+      repository: 'A repository you added',
+    },
+    detail: {
+      builtin: 'The starter catalogue that ships in the release. Nothing from it is installed '
+        + 'until somebody installs it.',
+    },
+  },
+
+  skill_quarantine_reason: {
+    source: { migrationTable: 'skill_quarantine', column: 'reason' },
+    labels: {
+      schema_invalid: 'Not a valid skill package',
+      digest_mismatch: 'Not the package the catalogue promised',
+      signature_missing: 'Should have been signed and was not',
+      signature_invalid: 'The signature did not match',
+      capability_unknown: 'Asks for something Josi cannot do',
+      instruction_injection: 'Its text tries to override Josi\u2019s own rules',
+      too_large: 'Bigger than Josi will read',
+    },
+    detail: {
+      digest_mismatch: 'The catalogue pinned one package and the address served another. That is '
+        + 'either a stale catalogue or somebody serving two different things, and Josi cannot tell '
+        + 'which.',
+      instruction_injection: 'A skill is a runbook for a person to read as well as the assistant. '
+        + 'This one was written to the model \u2014 telling it to disregard its rules, to act '
+        + 'without asking, or to keep something from you.',
+    },
+  },
+
+  skill_history_action: {
+    source: { migrationTable: 'skill_history', column: 'action' },
+    labels: {
+      installed: 'Installed',
+      updated: 'Updated to a new version',
+      reviewed: 'Read and approved',
+      enabled: 'Switched on',
+      disabled: 'Switched off',
+      update_checked: 'Checked for a newer version',
+    },
+  },
+
   custom_api_call_status: {
     source: { migrationTable: 'custom_api_pending_calls', column: 'status' },
     labels: {

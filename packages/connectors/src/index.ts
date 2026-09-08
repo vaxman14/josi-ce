@@ -20,6 +20,15 @@ export * from './openapiImport.js';
 export * from './mcpClient.js';
 export * from './mcpServers.js';
 export * from './mcpCalls.js';
+// The Skills library. A skill is a DOCUMENT, not a connection: it has no
+// credential, no host, no tool and no execution path, and nothing in it is ever
+// the thing a request is made from. It lives beside the connections because the
+// library is administered from the same place, and after them because it is the
+// only thing in this package that does not connect Josi to anything.
+export * from './skillPackage.js';
+export * from './skillRegistry.js';
+export * from './starterSkills.js';
+export * from './skills.js';
 export * from './providers/contacts.js';
 export * from './providers/mail.js';
 export * from './providers/calendar.js';
