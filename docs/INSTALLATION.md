@@ -1717,6 +1717,54 @@ owner has told you what it is for.
 - A diagnostics bundle carries counts only: installed, switched on, awaiting
   review, quarantined. Never a name, a publisher or a word of a runbook.
 
+## 17G. Parental Controls — `docs/PARENTAL_CONTROLS.md`
+
+A **paid module**, and the first one CE has. It is absent from every
+installation until a licence is activated, and the schema shipping in migration
+0038 is not the feature: with no licence the routes answer 404, no account is
+managed, no conversation is visible to anybody else, and no timetable applies.
+
+**Activate it under Admin → Parental Controls.** Paste the licence key you were
+given. If the page says this build cannot check a licence, that is the truth
+rather than a fault: a build with no publisher key stamped into it (which is
+every build made from source) verifies nothing and refuses every key. That is a
+property of the image, not a setting.
+
+**What activating it gives the administrator: nothing.** They cannot see who is
+looking after whom, cannot read a child's conversations, cannot change anybody's
+hours, and there is no route that would let them. What it gives is the ability
+for the people on this installation to set up a managed account for a child.
+
+Then, as an ordinary member under **Family**:
+
+- Two-factor authentication must be switched on for the adult's own account
+  first. Creating or ending a relationship needs the password **and** a code
+  from an authenticator, in one request, spent once, within five minutes.
+- Adding a child creates a **new** account here and hands back a one-time set-up
+  link to open on their device. There is deliberately no way to take over an
+  account that already exists.
+- Hours and a daily limit are set per child, in the child's own timezone, and
+  changing either asks for the password again — the realistic attacker is the
+  child on the parent's unlocked laptop.
+- The child has a page of their own that says exactly what the adult can see,
+  what they cannot, and every time they looked.
+
+What it enforces, and nothing else:
+
+- Time spent **talking to Josi** on this installation, on every channel, counted
+  as minutes in which something was sent. Reading a reply is not counted,
+  because this server cannot see a screen being read.
+- It is **not** a device control. It cannot lock a phone, close another app or
+  filter the web, no screen implies it can, and no device enforcement is
+  planned.
+- If the licence lapses or is revoked, the module goes inert in both directions:
+  the adult stops seeing anything, and the child stops being held to hours that
+  nobody with authority can see or change. Accounts and conversations are
+  untouched.
+- The audit trail records every activation, relationship change, control change
+  and parental read — with ids, counts and the names of changed fields, never
+  their values and never a word of a conversation.
+
 ## 18. Security checklist
 
 Before considering an installation reachable by other people, confirm:

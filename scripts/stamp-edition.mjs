@@ -7,6 +7,7 @@
 //
 //   node scripts/stamp-edition.mjs --edition hosted --build-id "$(git rev-parse --short HEAD)"
 //   node scripts/stamp-edition.mjs --release-key "$(cat release-signing.pub.b64)"
+//   node scripts/stamp-edition.mjs --entitlement-key "$(cat licensing.pub.b64)"
 //
 // Refuses an unrecognised edition rather than writing it. `edition.ts` also
 // fails closed on an unrecognised stamp, but a build that was meant to be
@@ -58,6 +59,21 @@ if (rawKey && rawKey !== 'none') {
   releaseKey = JSON.stringify(rawKey);
 }
 
+// The publisher's licensing key. Same rules and the same reasoning as the
+// release key above: absent means paid-module licences cannot be checked at
+// all, which is the truthful state for a build the publisher did not make.
+const rawEntitlementKey = arg('entitlement-key', '');
+let entitlementKey = 'null';
+if (rawEntitlementKey && rawEntitlementKey !== 'none') {
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(rawEntitlementKey)) {
+    console.error(
+      'stamp-edition: --entitlement-key must be a base64 raw Ed25519 public key (32 bytes)',
+    );
+    process.exit(2);
+  }
+  entitlementKey = JSON.stringify(rawEntitlementKey);
+}
+
 // Preserve the file's prose and rewrite only the three values, so the reasoning
 // at the top of buildStamp.ts survives every rebuild.
 const original = readFileSync(TARGET, 'utf8');
@@ -67,6 +83,10 @@ let out = original
     /export const BUILD_RELEASE_PUBLIC_KEY: string \| null = [^;]*;/,
     `export const BUILD_RELEASE_PUBLIC_KEY: string | null = ${releaseKey};`,
   )
+  .replace(
+    /export const BUILD_ENTITLEMENT_PUBLIC_KEY: string \| null = [^;]*;/,
+    `export const BUILD_ENTITLEMENT_PUBLIC_KEY: string | null = ${entitlementKey};`,
+  )
   .replace(/export const BUILD_ID = '[^']*';/, `export const BUILD_ID = '${buildId}';`);
 
 // A replace that matched nothing would leave the previous edition in place —
@@ -75,6 +95,7 @@ let out = original
 for (const [what, needle] of [
   ['edition', `export const BUILD_EDITION = '${edition}';`],
   ['release key', `export const BUILD_RELEASE_PUBLIC_KEY: string | null = ${releaseKey};`],
+  ['entitlement key', `export const BUILD_ENTITLEMENT_PUBLIC_KEY: string | null = ${entitlementKey};`],
   ['build id', `export const BUILD_ID = '${buildId}';`],
 ]) {
   if (!out.includes(needle)) {
@@ -85,5 +106,6 @@ for (const [what, needle] of [
 
 writeFileSync(TARGET, out);
 console.log(
-  `stamped edition=${edition} build-id=${buildId} release-key=${releaseKey === 'null' ? 'none' : 'set'}`,
+  `stamped edition=${edition} build-id=${buildId} release-key=${releaseKey === 'null' ? 'none' : 'set'}`
+    + ` entitlement-key=${entitlementKey === 'null' ? 'none' : 'set'}`,
 );

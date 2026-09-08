@@ -3,8 +3,13 @@ export * from './connect.js';
 // Phase 13 — the edition capability boundary. First in the list because it is
 // the thing everything capability-gated has to consult.
 export * from './edition.js';
-export { BUILD_EDITION, BUILD_ID, BUILD_RELEASE_PUBLIC_KEY } from './buildStamp.js';
+export { BUILD_EDITION, BUILD_ID, BUILD_RELEASE_PUBLIC_KEY, BUILD_ENTITLEMENT_PUBLIC_KEY } from './buildStamp.js';
 export * from './events.js';
+// Paid modules, and the first one. `entitlements.ts` sits before `parental.js`
+// because nothing about a family is reachable without first answering whether
+// the module exists at all.
+export * from './entitlements.js';
+export * from './parental.js';
 export * from './masterKey.js';
 export * from './readiness.js';
 export * from './sealing.js';

@@ -1011,6 +1011,117 @@ that changes publisher or moves the version backwards, with a sentence saying
 what to do instead.
 **Test:** refuses a key another publisher already holds
 
+### T-106 An installation that never bought the module is talked into it
+
+**Attacker:** anybody with a session on an installation with no licence, poking
+at endpoints that exist in the code.
+**Impact:** one member gains a route that reads another member's conversations,
+because the feature's schema ships in every migration whether or not anybody
+paid for it.
+**Control:** `apps/api/src/http/parentalRoutes.ts` — the entitlement gate is the
+first middleware on the member router, so no handler below it can be reached;
+it answers **404 rather than 403**, so an unentitled installation is
+indistinguishable from one where the routes were never written; and
+`packages/core/src/parental.ts` asks the same question again inside
+`parentalAuthority` and `checkChildAccess`, so a caller that bypassed the router
+still gets nothing.
+**Test:** answers 404 on every parental route, for everybody
+
+### T-107 A forged, edited or borrowed licence turns a paid module on
+
+**Attacker:** an operator who would rather not pay, or anybody who obtained one
+licence and copied the database it was activated on.
+**Impact:** the module exists without a licence, and the publisher's only
+boundary is a boolean somebody can flip.
+**Control:** `packages/core/src/entitlements.ts` — a licence is an Ed25519
+signature over its own payload bytes, verified before any field of it is read,
+displayed or stored; the payload may name an installation and that name is
+re-checked against `install_identity` on EVERY read, so a restored database
+carries the row and not the entitlement; expiry is arithmetic at read time
+rather than a job that has to run; and a build with no stamped publisher key
+verifies nothing at all and says so.
+**Test:** refuses one nobody signed, one that was edited, and one already expired
+
+### T-108 A borrowed session makes itself somebody's guardian
+
+**Attacker:** whoever is holding an unlocked laptop with a parent signed in —
+which, for this feature, is most often the child.
+**Impact:** a relationship that grants a stranger the ability to read a child's
+conversations, or a relationship quietly ended so that nobody is watching.
+**Control:** `packages/db/migrations/0038_parental_controls.sql` — creating or
+ending a link is spent against a `parental_authority_grants` row, which is only
+issued for a password AND a TOTP code proved in one request, is bound to one
+session, expires in five minutes, and is consumed by a single conditional
+UPDATE so it cannot be spent twice. An account with no second factor enrolled
+cannot form a relationship at all; the gate is never downgraded to a password.
+**Test:** grants against both together, and the grant is spent once
+
+### T-109 The administrator uses installation power to read a child
+
+**Attacker:** the super admin — the one person on a CE installation who can
+change everything else about it.
+**Impact:** the whole promise of the module inverts: a household buys
+supervision and gets a third party reading their child's conversations.
+**Control:** `apps/api/src/http/parentalRoutes.ts` — authority is
+`parental_links` and nothing else, and no function in the decision path branches
+on role, so a super admin resolving a child they are not linked to gets what a
+stranger gets. The administrator's own router is a separate export that queries
+no table holding a relationship, a timetable, a minute or a message, which is
+asserted by a test that reads this file rather than by this sentence.
+**Test:** queries no table that holds a family
+
+### T-110 A parent reaches past their own child
+
+**Attacker:** a member who is legitimately a parent, editing an id in a URL.
+**Impact:** one household reads another household's conversations, or an adult
+colleague's, by naming them as a child.
+**Control:** `apps/api/src/http/parentalRoutes.ts` — every route resolves
+`:childUserId` through `parentalAuthority` before it does anything else and
+answers 404 when it fails; the conversation route then re-resolves the thread
+against THAT child rather than trusting the pair in the URL; and there is no
+route that links an existing account, so an account can only be managed if it
+was created for that purpose.
+**Test:** does not let a parent read a thread that is not their child’s
+
+### T-111 A managed child routes around their hours through another channel
+
+**Attacker:** the child, using Telegram, WhatsApp, Slack or Signal instead of
+the web app.
+**Impact:** the timetable and the daily limit hold on one surface and not on the
+others, which is worse than having none — a parent believes a limit is in force.
+**Control:** `packages/agent/src/assistantAgent.ts` — `checkChildAccess` is the
+first thing `runAssistantTurn` does, before the model is even looked up, and
+every channel in CE goes through that one function. The web route asks the same
+question first so a browser gets a plain 403 and a sentence, and a managed
+account cannot hold authority over anybody, so it cannot lift its own limit.
+**Test:** refuses a child outside their hours before it looks for a model
+
+### T-112 The audit trail becomes the transcript
+
+**Attacker:** nobody — this is the failure that arrives by helpfulness, one
+useful-looking payload field at a time.
+**Impact:** the administrator, who is deliberately given no way to read a
+child's conversations, reads them in the event log instead.
+**Control:** `packages/core/src/parental.ts` — parental events carry ids,
+counts, factor names and the NAMES of the fields that changed, never their
+values and never a word of a conversation; `appendEvent` refuses payload keys
+that look like content on top of that.
+**Test:** carries no conversation, no schedule value and no secret
+
+### T-113 The feature is believed to control the device
+
+**Attacker:** none. The risk is what the product says about itself.
+**Impact:** a parent relies on this instead of the controls on the phone, and a
+child has fewer limits than the adult believes.
+**Control:** `apps/api/src/http/parentalRoutes.ts` — `PARENTAL_HONESTY` is part
+of every response the feature gives, not decoration on one screen: what is
+enforced (time talking to Josi, here, on every channel), what a minute actually
+measures (a minute in which something was sent, because this server cannot see
+a screen being read), what is NOT controlled (the phone, other apps, the web),
+and that the administrator can see none of it. No device-enforcement surface is
+offered, and none is promised for later.
+**Test:** tells the administrator plainly that nothing is active
+
 ---
 
 ## Accepted risks

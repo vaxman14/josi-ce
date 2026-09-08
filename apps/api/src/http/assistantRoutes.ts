@@ -20,6 +20,7 @@ import {
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder,
+  checkChildAccess,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -223,6 +224,20 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       const thread = await getThread(db, threadId);
       if (!thread) throw new RouteError(404, 'not found');
 
+      // Parental Controls, asked about the PERSON TYPING rather than the
+      // thread's owner. A managed child writing into a thread somebody shared
+      // with them is still spending their own day; an adult answering in a
+      // child's thread is not spending the child's. `runAssistantTurn` asks the
+      // same question about the owner, which is what covers Telegram and the
+      // other channels — this one exists so the web app gets a plain 403 and a
+      // sentence rather than a refusal that reads like an outage.
+      const childAccess = await checkChildAccess(db, { userId: req.user!.id });
+      if (!childAccess.allowed) {
+        throw new RouteError(403, childAccess.opensAgain
+          ? `${childAccess.message} Josi is back at ${childAccess.opensAgain}.`
+          : (childAccess.message ?? 'Josi is not available on this account right now.'));
+      }
+
       // The turn runs as the THREAD'S OWNER, not as the caller. A colleague
       // with write access can continue the conversation; anything it creates
       // still belongs to the person whose thread it is, so a share cannot be
@@ -295,6 +310,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         customApiFetch: ctx.customApiFetch,
         mcpFetch: ctx.mcpFetch,
         outboundResolve: ctx.outboundResolve,
+        channel: 'web',
         sessionKey: req.user!.session_id,
       });
 
@@ -302,7 +318,11 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         // Recorded as an inbound message so the conversation is not silently
         // missing what the person said, but no reply is fabricated.
         await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
-        return res.status(503).json({ refusal: result.refusal, actions: result.actions });
+        // A refusal because somebody is outside their agreed hours is the
+        // server saying no, not the server being broken. 503 would have it
+        // read as an outage on the one screen where that would be a lie.
+        return res.status(result.refusal.reason === 'restricted' ? 403 : 503)
+          .json({ refusal: result.refusal, actions: result.actions });
       }
 
       await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });

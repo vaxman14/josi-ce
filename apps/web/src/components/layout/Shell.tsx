@@ -46,6 +46,13 @@ const MEMBER_NAV = [
   { to: '/app/apps', label: 'Apps' },
 ];
 
+/** Family is not in MEMBER_NAV, because on almost every installation the page
+ * does not exist. It is appended below only when the server answers, so an
+ * installation that has not bought the module shows no trace of it — and a
+ * member who is neither a parent nor a managed child is not offered a page
+ * about somebody else's household. */
+const FAMILY_NAV: { to: string; label: string; end?: boolean } = { to: '/app/family', label: 'Family' };
+
 const ADMIN_NAV = [
   { to: '/admin', label: 'Overview', end: true },
   // First for as long as it matters. An administrator who dismissed the
@@ -68,6 +75,9 @@ const ADMIN_NAV = [
   // installed here is a connection, and the page's whole job is reading prose
   // before it is allowed anywhere near the assistant.
   { to: '/admin/skills', label: 'Skills' },
+  // The paid module's licence. Under admin because buying is installation
+  // administration; the page itself is explicit that it grants no oversight.
+  { to: '/admin/parental-controls', label: 'Parental Controls' },
   { to: '/admin/telegram', label: 'Telegram' },
   { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/workspace', label: 'Workspace' },
@@ -82,13 +92,21 @@ export function Shell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [status, setStatus] = useState<LlmStatus | null>(null);
+  const [family, setFamily] = useState(false);
 
   useEffect(() => {
     void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => setStatus(null));
+    // 404 means the module is not entitled, or this person is in no family.
+    // Either way there is no page to link to, and this is not the control —
+    // every route behind it is refused server-side regardless.
+    void api.get<{ role: string }>('/parental/overview')
+      .then((res) => setFamily(res.role !== 'none'))
+      .catch(() => setFamily(false));
   }, [location.pathname]);
 
   const isAdminArea = location.pathname.startsWith('/admin');
-  const nav = isAdminArea ? ADMIN_NAV : MEMBER_NAV;
+  const memberNav = family ? [...MEMBER_NAV, FAMILY_NAV] : MEMBER_NAV;
+  const nav = isAdminArea ? ADMIN_NAV : memberNav;
 
   return (
     <div className="flex min-h-full w-full max-w-full flex-col overflow-x-hidden">

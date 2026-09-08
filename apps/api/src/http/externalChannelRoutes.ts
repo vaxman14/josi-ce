@@ -145,7 +145,7 @@ async function processInbound(ctx: ExternalChannelCtx, secrets: Record<string, s
   if (!message.text) return finish('ignored');
   const threadId = await externalThread(ctx.db, link);
   const history = (await listMessages(ctx.db, { threadId, limit: 40 })).map((m) => ({ role: m.direction === 'in' ? 'user' as const : 'assistant' as const, content: m.body }));
-  const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound: message.text, connectorFetch: ctx.connectorFetch, sessionKey: threadId });
+  const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound: message.text, connectorFetch: ctx.connectorFetch, channel: 'external', sessionKey: threadId });
   const reply = result.refusal?.message ?? result.reply;
   await recordExchange(ctx.db, { ownerUserId: link.user_id, threadId, channel: message.channel, inbound: message.text, reply });
   const disclosure = (await mailPolicy(ctx.db)).disclosure.replace('{user}', 'you');

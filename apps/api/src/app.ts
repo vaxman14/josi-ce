@@ -17,6 +17,7 @@ import { adminDevServiceRoutes, devServiceRoutes } from './http/devServiceRoutes
 import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
 import { adminMcpRoutes, mcpRoutes } from './http/mcpRoutes.js';
 import { adminSkillRoutes, skillRoutes } from './http/skillRoutes.js';
+import { adminParentalRoutes, parentalRoutes } from './http/parentalRoutes.js';
 import { contactSyncRoutes } from './http/contactSyncRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
@@ -89,6 +90,12 @@ export interface AppConfig {
    * one answers with a catalogue and a document and never speaks to anything
    * the other three do. */
   skillFetch?: typeof fetch;
+  /** The publisher key paid-module licences are checked against. Unset in
+   * production, where the key stamped into the build is used and nothing can
+   * substitute for it. The tests inject their own so a licence can be signed
+   * without the publisher's private key — the same seam every outside thing
+   * already has. */
+  entitlementPublicKey?: string | null;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -226,6 +233,14 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/skills', adminSkillRoutes({
     db, fetchImpl: cfg.skillFetch, resolve: cfg.outboundResolve,
   }));
+  // Parental Controls, the LICENCE half. BEFORE `/admin` for the reason
+  // recorded above `/admin/telegram`. Nothing here reads a relationship, a
+  // timetable or a conversation: an administrator buys the module and has no
+  // authority inside it, and the two routers are separate so that cannot blur.
+  api.use('/admin/parental-controls', adminParentalRoutes({
+    db, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck,
+    entitlementPublicKey: cfg.entitlementPublicKey,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -268,6 +283,16 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // own instructions is an administrative act, and the transparency members are
   // owed is the full text — which this returns.
   api.use('/skills', skillRoutes({ db }));
+  // Parental Controls, the AUTHORITY half. Its own prefix and not a branch
+  // inside anything above, because it is the only place in CE where one person
+  // may read another person's private rows — and it may do so only while a
+  // `parental_links` row says the two are a family. Every route answers 404
+  // when the module is not entitled, so an installation that has not bought it
+  // is indistinguishable from one where these routes were never written.
+  api.use('/parental', parentalRoutes({
+    db, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck,
+    entitlementPublicKey: cfg.entitlementPublicKey,
+  }));
   api.use('/storage', storageRoutes({ db }));
   api.use('/telegram', telegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,

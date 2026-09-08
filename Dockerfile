@@ -47,10 +47,14 @@ COPY scripts ./scripts
 ARG JOSI_EDITION=ce
 ARG JOSI_BUILD_ID=source
 ARG JOSI_RELEASE_KEY=none
+# The publisher's paid-module licensing key. Absent on every build but theirs,
+# and absent means no licence verifies — see packages/core/src/entitlements.ts.
+ARG JOSI_ENTITLEMENT_KEY=none
 RUN node scripts/stamp-edition.mjs \
       --edition "$JOSI_EDITION" \
       --build-id "$JOSI_BUILD_ID" \
-      --release-key "$JOSI_RELEASE_KEY"
+      --release-key "$JOSI_RELEASE_KEY" \
+      --entitlement-key "$JOSI_ENTITLEMENT_KEY"
 
 RUN npx tsc -b
 

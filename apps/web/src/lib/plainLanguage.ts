@@ -446,6 +446,45 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     },
   },
 
+  // Parental Controls. Both lists are TypeScript unions rather than database
+  // columns — `module_entitlements` stores dates and a token and derives its
+  // state, and an access decision is computed per request — so they are
+  // literal here and the test asserts the sentences rather than the schema.
+  entitlement_state: {
+    source: { literal: ['absent', 'active', 'expired', 'revoked', 'wrong_installation'] },
+    labels: {
+      absent: 'Not switched on',
+      active: 'Switched on',
+      expired: 'The licence has run out',
+      revoked: 'Switched off here',
+      wrong_installation: 'Issued to a different installation',
+    },
+    detail: {
+      absent: 'Nobody has activated a licence for this module, so it is not part of this installation.',
+      expired: 'The module stopped working when the licence expired. Nothing was deleted.',
+      revoked: 'An administrator switched this off. Families keep their accounts; the controls simply stop applying.',
+      wrong_installation:
+        'This licence names a different installation of Josi. That usually means a database was restored '
+        + 'onto another machine — ask the publisher to reissue it for this one.',
+    },
+  },
+
+  child_access: {
+    source: { literal: ['allowed', 'outside_schedule', 'daily_limit', 'not_managed', 'module_inert'] },
+    labels: {
+      allowed: 'Josi is available now',
+      outside_schedule: 'Outside the agreed hours',
+      daily_limit: 'Today’s time is used up',
+      not_managed: 'Not a managed account',
+      module_inert: 'Parental Controls is not active here',
+    },
+    detail: {
+      outside_schedule: 'Josi will answer again at the next time in the timetable.',
+      daily_limit: 'The daily limit has been reached. It starts again tomorrow, in this account’s own timezone.',
+      module_inert: 'Without a licence the hours and limits do not apply and nobody can see these conversations.',
+    },
+  },
+
   custom_api_call_status: {
     source: { migrationTable: 'custom_api_pending_calls', column: 'status' },
     labels: {
