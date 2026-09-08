@@ -28,6 +28,7 @@ import { AdminPeople } from '@/pages/admin/People';
 import { AdminModel } from '@/pages/admin/Model';
 import { AdminPolicy } from '@/pages/admin/Policy';
 import { AdminStorage } from '@/pages/admin/Storage';
+import { AdminBackups } from '@/pages/admin/Backups';
 import { AdminConnectors } from '@/pages/admin/Connectors';
 import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
 import { AdminCustomApis } from '@/pages/admin/CustomApis';
@@ -160,6 +161,7 @@ export function App() {
         <Route path="model" element={<AdminModel />} />
         <Route path="policy" element={<AdminPolicy />} />
         <Route path="storage" element={<AdminStorage />} />
+        <Route path="backups" element={<AdminBackups />} />
         <Route path="connectors" element={<AdminConnectors />} />
         <Route path="developer-services" element={<AdminDeveloperServices />} />
         <Route path="custom-apis" element={<AdminCustomApis />} />

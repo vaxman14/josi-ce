@@ -62,6 +62,7 @@ const ADMIN_NAV = [
   { to: '/admin/model', label: 'Model' },
   { to: '/admin/policy', label: 'Policy' },
   { to: '/admin/storage', label: 'Storage' },
+  { to: '/admin/backups', label: 'Backups' },
   { to: '/admin/connectors', label: 'Connectors' },
   { to: '/admin/developer-services', label: 'Developer services' },
   // Its own entry rather than a tab under Connectors: this is the only

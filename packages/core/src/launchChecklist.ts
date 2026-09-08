@@ -63,10 +63,7 @@ export const CHECKLIST_ITEMS: readonly ChecklistItemSpec[] = Object.freeze([
     label: 'Take a backup, and check it restores',
     why: 'A backup that has never been restored is a hope. Until one has run there is nothing to restore from.',
     severity: 'critical',
-    href: null,
-    insteadOfScreen:
-      'There is no backup screen in this release. Backups run through the API and the procedure is '
-      + 'in INSTALLATION.md §15, including how to check that a restore actually works.',
+    href: '/admin/backups',
   },
   {
     key: 'model',
