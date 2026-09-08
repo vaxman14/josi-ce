@@ -272,6 +272,22 @@ export function Connections() {
         </p>
       </Card>
 
+      {/* A pointer again, and for a stronger reason than the one above.
+          An MCP server offers TOOLS the assistant can run, described by that
+          server rather than by anybody here — so it is not a "connection" in
+          the sense the cards above use the word, and putting it among them
+          would suggest somebody on this installation reviewed what those tools
+          do. Nobody did; the person who connects one reads each tool and
+          switches it on themselves. */}
+      <Card>
+        <CardTitle>MCP servers</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          An MCP server offers tools Josi can run for you — your notes, your issue tracker, your own
+          software. You connect one yourself and approve each tool it offers, one at a time.{' '}
+          <Link className="underline" to="/app/mcp-servers">Open MCP servers</Link>.
+        </p>
+      </Card>
+
       <ConnectedApis />
     </div>
   );

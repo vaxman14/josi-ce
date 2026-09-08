@@ -68,8 +68,11 @@ They are also deliberately distinct from:
   feature with a separate table. There the host comes from a form and the
   assistant picks which of several reviewed actions to call; here the host is
   pinned in CE's own source and the assistant gains no tool at all.
-* **MCP servers** — a separate ledger item, not implemented. Nothing in this
-  change adds a general outbound HTTP capability.
+* **MCP servers** (`docs/MCP_SERVER_CONNECTIONS.md`) — a separate feature with
+  separate tables, added later. There a person connects a remote server that
+  describes its own tools, and the assistant may run the ones they approved;
+  here the host is pinned in CE's own source and the assistant gains no tool at
+  all. Nothing in this change adds a general outbound HTTP capability.
 
 A pointer card on the Connections page links to the new page, so somebody
 looking in the obvious place finds it.

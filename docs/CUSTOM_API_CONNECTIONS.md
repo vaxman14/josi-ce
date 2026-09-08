@@ -244,9 +244,12 @@ system, and a host is your internal service.
   Those have one pinned host compiled into CE and four hand-written probes;
   nothing about them is operator-supplied, so there is no allowlist to keep.
   Here the host comes from a form, so the host *is* the allowlist.
-* **Not an MCP server.** External MCP servers are not implemented in CE, and
-  this is not a step towards one: nothing here speaks a protocol, and nothing
-  here lets the model name a URL, a method or a header.
+* **Not an MCP server.** External MCP servers are a separate feature with
+  separate tables (`docs/MCP_SERVER_CONNECTIONS.md`), added later and reached
+  from a different page. There the far end speaks a protocol and describes its
+  own tools, so the allowlist is discovered and each person owns their own
+  servers. Here nothing speaks a protocol, the actions are typed by an
+  administrator, and nothing lets the model name a URL, a method or a header.
 
 ## Why there is no OAuth option
 

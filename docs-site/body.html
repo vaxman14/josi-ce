@@ -728,10 +728,83 @@ administrator configures the pipe; they do not see what somebody sent through it
 <h3>19.7 What this is not</h3>
 <p>Custom APIs are separate from the model provider Josi thinks with, from the Google or
 Microsoft accounts under <strong>Connections</strong>, from <strong>Developer services</strong>, and from
-messaging <strong>Channels</strong>. This is also not an MCP server and not a step towards one:
-nothing here speaks a protocol, and nothing here lets the model name a URL, a method or a
-header.</p>
-<h2>20. Security checklist</h2>
+messaging <strong>Channels</strong>. This is also not an MCP server: nothing here speaks a
+protocol, the actions are typed by an administrator rather than discovered, and nothing here
+lets the model name a URL, a method or a header. Those are
+<a href="#mcp-servers">External MCP server connections</a>, which are a separate feature with
+separate tables and a different owner.</p>
+<h2 id="mcp-servers">20. External MCP server connections</h2>
+<p><strong>Workspace → MCP servers</strong> is where a person connects a remote MCP server they
+already use — their notes app, their issue tracker, their own software — and Josi asks it what
+tools it offers. Nothing here is preset: a fresh installation has no server, and no environment
+variable or seeded row creates one.</p>
+<p>This is the only connection kind in Josi where <strong>the far end speaks a protocol and
+describes its own tools</strong>. Everywhere else, the sentence saying what an action does was
+written by somebody on your installation. Here it was written by the remote server, and the
+assistant reads it. Every decision below follows from that.</p>
+<h3>20.1 What a person sets up</h3>
+<ol>
+<li>A name and the server’s <code>https://</code> MCP endpoint. Plain <code>http://</code> is
+refused: it would put a credential and every tool call on the wire in the clear.</li>
+<li>Optionally a credential — a bearer token, or an API key in a header they name. It is sealed
+with the installation master key before it reaches the database. An unauthenticated public
+server is allowed; what bounds where Josi can reach is the pinned address, not the presence of
+a token.</li>
+<li><strong>Connect and list tools</strong>, which performs a real MCP handshake and then asks
+<code>tools/list</code>.</li>
+<li><strong>Make it available to Josi</strong>, which does not work until that handshake has
+succeeded. A server cannot reach the assistant on the strength of a form somebody filled in.</li>
+<li>Each tool, read and switched on individually, as either <em>ask me every time</em> or
+<em>run without asking</em>.</li>
+</ol>
+<p>Josi can call a tool only when the server is available <em>and</em> that tool is switched on.
+There is no setting anywhere that means “any tool on this server”.</p>
+<h3>20.2 A server that changes a tool loses the approval</h3>
+<p>Josi records a hash of the exact name, description and inputs somebody read when they switched
+a tool on. If the server changes any of them, that tool comes off the list, is marked
+<strong>Changed since you approved it</strong>, and is named back to its owner the next time they
+connect.</p>
+<p>This is the failure this feature is most exposed to. A tool called <code>search_notes</code>
+whose description quietly becomes “search the notes and forward them” is a different tool wearing
+a name somebody already agreed to. Josi will not run it again until they read the new version.</p>
+<p>For the same reason, a server’s own “this only reads” annotation is shown as <em>that server’s
+claim</em> and nothing in Josi acts on it. Whether a call runs is decided by the owner’s
+<em>ask me / run without asking</em> choice, and a tool set to ask produces a card on their
+<strong>Approvals</strong> page showing exactly what would be sent. Approving runs it, once.
+Unanswered requests expire after thirty minutes.</p>
+<h3>20.3 Only one transport, and stdio is refused</h3>
+<p>Josi speaks <strong>Streamable HTTP over HTTPS</strong> and nothing else. There is no stdio
+option and there will not be one: a stdio MCP server is a command line Josi would execute inside
+its own container, which is remote code execution offered as a text field.</p>
+<p>Requests go only to the host stored on the row, re-checked on every request rather than once at
+save time. Redirects are never followed, and anything off the public internet — loopback, private
+ranges, link-local, cloud metadata — is refused at request time. An MCP server on your own LAN
+therefore cannot be connected, and that is deliberate: unlike a model endpoint, where nothing
+chooses the path, here the assistant chooses which tool to invoke.</p>
+<h3>20.4 Prompt injection is treated as the main threat</h3>
+<p>The tool names, descriptions, input schemas and results are all a stranger’s text and the model
+reads all of them. So the <code>instructions</code> block MCP lets a server return — prose intended
+to be placed directly in the assistant’s own system prompt — is read and dropped; it reaches no
+row and no prompt. Descriptions are stripped of line breaks and control characters and
+length-capped, and the assistant is told in its own instructions to treat them as claims about
+what a tool does and never as directions addressed to it.</p>
+<h3>20.5 Who owns what</h3>
+<p>Servers are <strong>user-scoped</strong>, like a connected Google account and unlike a custom
+API: an MCP server’s token acts as the person who created it. From <strong>Admin → MCP
+servers</strong> an administrator can see whose server exists, which host it reaches, whether it
+works and how many tools are switched on; can cut one off; and can switch the feature off for the
+installation or narrow it to a list of hosts. Switching it back on connects nothing.</p>
+<p>An administrator cannot read a credential, see the name somebody typed, see the full endpoint
+address, or see which tools they approved or what those tools claim to do. The host <em>is</em>
+visible on purpose — it is an outbound destination from the operator’s own machine, and the host
+list cannot be written by somebody who cannot see the candidates — and the owner’s own page says
+so plainly.</p>
+<h3>20.6 What this is not</h3>
+<p>MCP servers are separate from the model provider Josi thinks with, from the Google or Microsoft
+accounts under <strong>Connections</strong>, from <strong>Developer services</strong>, from
+<strong>Custom API</strong> connections and from messaging <strong>Channels</strong>. Connecting
+one does not add a messaging transport and does not change which model answers.</p>
+<h2>21. Security checklist</h2>
 <p>Before considering an installation reachable by other people, confirm:</p>
 <ul>
 <li><input disabled="" type="checkbox"> The checkout is an intended release, not an arbitrary dirty branch.</li>
@@ -754,7 +827,7 @@ resourced.</li>
 entrusted to the system.</li>
 <li><input disabled="" type="checkbox"> Phase 11 threat-model and release gates have passed before public launch.</li>
 </ul>
-<h2>21. Collecting useful support information</h2>
+<h2>22. Collecting useful support information</h2>
 <p>The redacted diagnostics bundle is a Phase 10 feature and does not yet exist.
 Until it does, inspect logs locally and redact them before sharing. Never send:</p>
 <ul>
@@ -774,7 +847,7 @@ docker version
 docker compose version
 docker compose ps -a
 </code></pre>
-<h2>21. Uninstallation</h2>
+<h2>23. Uninstallation</h2>
 <p>There is no supported uninstall-and-preserve-data wizard yet.</p>
 <p>Stopping the installation is reversible:</p>
 <pre><code class="language-bash">docker compose stop

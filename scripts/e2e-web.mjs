@@ -18,12 +18,13 @@ const MEMBER = { id: process.env.E2E_MEMBER ?? 'alice', pw: process.env.E2E_MEMB
 const WIDTHS = [320, 375, 390, 430];
 const MEMBER_PAGES = [
   '/app', '/app/talk', '/app/tasks', '/app/approvals', '/app/conversations',
-  '/app/contacts', '/app/connections', '/app/developer-services', '/app/usage',
-  '/app/settings', '/app/telegram', '/app/apps',
+  '/app/contacts', '/app/connections', '/app/developer-services', '/app/mcp-servers',
+  '/app/usage', '/app/settings', '/app/telegram', '/app/apps',
 ];
 const ADMIN_PAGES = [
   '/admin', '/admin/people', '/admin/model', '/admin/policy', '/admin/connectors',
-  '/admin/developer-services', '/admin/custom-apis', '/admin/telegram', '/admin/workspace',
+  '/admin/developer-services', '/admin/custom-apis', '/admin/mcp-servers',
+  '/admin/telegram', '/admin/workspace',
 ];
 
 let pass = 0;

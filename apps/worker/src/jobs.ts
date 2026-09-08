@@ -16,7 +16,7 @@ import {
 } from '@josi-ce/core';
 import {
   accessTokenFor, can, connectionFor, dueCloudMappings, dueOrigins, expireCustomApiCalls,
-  loadClient, markAttempted, markSyncScheduled, syncCloudMapping, syncOrigin,
+  expireMcpCalls, loadClient, markAttempted, markSyncScheduled, syncCloudMapping, syncOrigin,
 } from '@josi-ce/connectors';
 
 // Write-action tasks (send a message, schedule an appointment, add a contact)
@@ -86,6 +86,8 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       // and offering it as one a week later is how somebody approves something
       // they no longer remember being asked about.
       await expireCustomApiCalls(db);
+      // And external MCP tool calls, on the same tick and for the same reason.
+      await expireMcpCalls(db);
       return;
     }
 

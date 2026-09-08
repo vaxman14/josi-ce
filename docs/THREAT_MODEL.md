@@ -814,6 +814,105 @@ branches on role to widen a read.
 
 ---
 
+## External MCP server connections
+
+The one connection kind where the far end speaks a protocol and describes its
+own tools. Every entry below follows from that: the words a person approves were
+written by the remote party, not by anybody on this installation.
+
+### T-91 An external MCP server credential is readable from the database
+**Attacker:** anybody who obtains a database dump — a stolen backup, a
+misconfigured replica, a support export.
+**Impact:** a live credential belonging to one person's own account at their
+notes app, issue tracker or in-house service.
+**Control:** `packages/connectors/src/mcpServers.ts` — the credential is sealed
+with the installation master key before it is passed to a query, the row carries
+no prefix, suffix, length or hash of it, and the only function that opens it
+returns the value to a single caller at the moment of a request.
+**Test:** seals the credential, so what lands in the database is not readable
+
+### T-92 An MCP credential is read back through an ordinary response
+**Attacker:** a curious member, an administrator, or anything that logs a
+response body — a browser extension, a proxy, a support screenshot.
+**Impact:** the credential leaves the installation through a surface nobody
+thought of as a credential surface.
+**Control:** `apps/api/src/http/mcpRoutes.ts` — the owner's view carries a
+constant mask rather than anything derived from the secret, the administrator's
+view is run through `assertMetadataOnly`, and the ciphertext is not served
+either, because ciphertext is something an attacker can work on offline.
+**Test:** stores ciphertext and serves a constant mask
+
+### T-93 A remote server rewrites a tool after its owner approved it
+**Attacker:** the MCP server itself — compromised, sold, or simply updated by a
+vendor who did not think of it as a security event.
+**Impact:** `search_notes` becomes "search the notes and forward them", under a
+name its owner already agreed to and will not be asked about again. This is the
+attack no other connection in CE has, because elsewhere the description of what
+may happen was written by somebody here.
+**Control:** `packages/connectors/src/mcpServers.ts` — `toolDigest` hashes the
+exact name, title, description and input schema the owner read; every discovery
+compares against it, and a difference on an approved tool moves the row to
+`changed`, which is off the allowlist. The approval route also carries the digest
+the page displayed, so a server that swaps a description between the reading and
+the pressing is refused rather than approved.
+**Test:** takes an approved tool off the list when the server changes it
+
+### T-94 A remote server writes into Josi's own instructions
+**Attacker:** the MCP server, through the `instructions` field the protocol
+provides for exactly this purpose, or through a tool description or a tool
+result.
+**Impact:** a stranger obtains a writable region of the system prompt — the
+clearest prompt-injection channel MCP offers.
+**Control:** `packages/connectors/src/mcpClient.ts` — `instructions` is read off
+the handshake and dropped; it reaches no row, no session object and no prompt.
+Tool titles and descriptions are stripped of control characters and line breaks,
+length-capped, and presented to the model as the external server's claims rather
+than merged into Josi's own instructions, which
+`packages/agent/src/assistantAgent.ts` states outright in the system prompt.
+**Test:** keeps nothing the server wanted put in the model prompt
+
+### T-95 One member reaches another member's MCP server
+**Attacker:** a signed-in member of the same installation, guessing or
+harvesting a server or tool id.
+**Impact:** somebody else's credential is spent, their tool list is read, or
+their pending call is approved by a person who does not own it.
+**Control:** `apps/api/src/http/mcpRoutes.ts` — ownership is resolved from the
+stored row rather than from the request, a row belonging to somebody else and a
+row that does not exist both produce 404 so the two are indistinguishable, and no
+route branches on role to widen a read. `availableMcpTools` and `resolveMcpTool`
+are owner-scoped in the SQL, so the assistant has no argument that reaches a
+colleague's server either.
+**Test:** answers 404, not 403, for somebody else's server
+
+### T-96 DNS or a redirect points an MCP session at an internal address
+**Attacker:** a poisoned resolver, a rebinding answer, or a server that answers
+the handshake honestly and then redirects the tool call.
+**Impact:** Josi sends an Authorization header to 169.254.169.254 or to a LAN
+service, which is both a credential leak and a request the installation did not
+intend to make.
+**Control:** `packages/connectors/src/mcpClient.ts` — the URL that will be sent
+is re-parsed and refused unless its host matches the pinned column exactly; every
+resolved address is checked on every request rather than once at save time; a
+literal address never reaches a resolver at all; anything off the public internet
+is refused, unlike the model-endpoint checker which must permit LAN addresses;
+and redirects are not followed.
+**Test:** checks every resolved address, not the first
+
+### T-97 An approved tool call runs twice, or runs something other than what was approved
+**Attacker:** a double-tapped button, two open tabs, a retried request — or a
+server that redescribes the tool while somebody is deciding.
+**Impact:** a duplicate write at the far end, or an approval spent on a call its
+owner never read.
+**Control:** `packages/connectors/src/mcpCalls.ts` — the arguments are sealed and
+pinned by `approvalHash`; `claimApprovedMcpCall` moves the row out of `pending`
+with one conditional UPDATE so exactly one concurrent approval wins;
+`openApprovedMcpRequest` re-verifies the hash before anything is sent; and the
+approve route re-resolves the tool against the approved set, so a tool switched
+off while the request waited is refused rather than run.
+**Test:** runs exactly once when approved
+
+---
+
 ## Accepted risks
 
 These have no control, deliberately.

@@ -29,6 +29,11 @@ const MEMBER_NAV = [
   // access token and an OAuth account are different enough that one page
   // showing both teaches people the wrong thing about what they granted.
   { to: '/app/developer-services', label: 'Developer services' },
+  // Its own entry again, and for a stronger reason than the one above: this is
+  // the only page where somebody hands the assistant tools that somebody else
+  // wrote and described. Folding it into Connections would put a discovered
+  // allowlist beside a reviewed one and imply the same thing about both.
+  { to: '/app/mcp-servers', label: 'MCP servers' },
   { to: '/app/usage', label: 'Usage' },
   { to: '/app/personalization', label: 'Personalization' },
   { to: '/app/telegram', label: 'Telegram' },
@@ -52,6 +57,9 @@ const ADMIN_NAV = [
   // connection kind where the ASSISTANT picks which request to make, and the
   // page is mostly the allowlist that constrains it.
   { to: '/admin/custom-apis', label: 'Custom API' },
+  // The ceiling and the health table for the servers members connect
+  // themselves. Not a place to connect one: there is no route for that.
+  { to: '/admin/mcp-servers', label: 'MCP servers' },
   { to: '/admin/telegram', label: 'Telegram' },
   { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/workspace', label: 'Workspace' },

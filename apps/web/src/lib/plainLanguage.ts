@@ -302,6 +302,69 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     },
   },
 
+  mcp_server_status: {
+    source: { migrationTable: 'mcp_servers', column: 'status' },
+    labels: {
+      unverified: 'Not connected yet',
+      active: 'Working',
+      needs_attention: 'Needs attention',
+    },
+    detail: {
+      unverified:
+        'Nobody has contacted this server yet, so nothing is known about it. Josi will not offer '
+        + 'its tools until a connection succeeds.',
+      needs_attention:
+        'The last exchange with this server did not succeed. If it refused the credential, Josi has '
+        + 'also switched the server off until a connection succeeds again.',
+    },
+  },
+
+  mcp_tool_state: {
+    source: { migrationTable: 'mcp_server_tools', column: 'state' },
+    labels: {
+      new: 'Waiting for you to decide',
+      approved: 'Switched on',
+      revoked: 'Switched off by you',
+      changed: 'Changed since you approved it',
+    },
+    detail: {
+      new: 'Josi found this tool on the server. It is not switched on and the assistant has not '
+        + 'been told it exists.',
+      changed: 'The server altered this tool\'s name, description or inputs after you approved it, '
+        + 'so Josi took it off the list. Read the new version and decide again.',
+    },
+  },
+
+  mcp_approval_mode: {
+    source: { migrationTable: 'mcp_server_tools', column: 'approval_mode' },
+    labels: {
+      ask: 'Asks you every time',
+      auto: 'Runs on its own',
+    },
+    detail: {
+      ask: 'When the assistant wants to use this, it stops and shows you exactly what would be '
+        + 'sent. Nothing happens until you agree.',
+      auto: 'The assistant may use this without asking. Only choose it for a tool you are sure '
+        + 'only reads.',
+    },
+  },
+
+  mcp_call_status: {
+    source: { migrationTable: 'mcp_pending_calls', column: 'status' },
+    labels: {
+      pending: 'Waiting for you',
+      approved: 'Approved',
+      denied: 'Declined',
+      expired: 'Expired',
+      executed: 'Run',
+      failed: 'Did not go through',
+    },
+    detail: {
+      expired: 'Nobody answered in time. Ask Josi again and it will prepare a fresh request.',
+      failed: 'The server was asked and the tool did not succeed. Nothing else was sent.',
+    },
+  },
+
   custom_api_call_status: {
     source: { migrationTable: 'custom_api_pending_calls', column: 'status' },
     labels: {

@@ -46,6 +46,9 @@ export interface AssistantRoutesCtx {
   /** HTTP for administrator-defined custom APIs the assistant may call.
    * Injected by tests; unset in production. */
   customApiFetch?: typeof fetch;
+  /** HTTP for external MCP servers the person connected. Injected by tests;
+   * unset in production. */
+  mcpFetch?: typeof fetch;
   /** DNS for those calls, injected by the tests. Unset in production, where
    * the host's own resolver is used and re-consulted on every request. */
   outboundResolve?: (hostname: string) => Promise<string[]>;
@@ -290,6 +293,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         recall: ctx.recall,
         connectorFetch: ctx.connectorFetch,
         customApiFetch: ctx.customApiFetch,
+        mcpFetch: ctx.mcpFetch,
         outboundResolve: ctx.outboundResolve,
         sessionKey: req.user!.session_id,
       });

@@ -1501,6 +1501,115 @@ runtime dependencies, so convert the document first.
   are available, how many actions are switched on. Never a name, a host or a
   credential.
 
+## 17E. External MCP server connections — `docs/MCP_SERVER_CONNECTIONS.md`
+
+A remote MCP server somebody already uses — their notes app, their issue
+tracker, their own software — connected from **Workspace → MCP servers**.
+Nothing here is installed, seeded or configured by you: there is no environment
+variable, no `.env` entry and no seeded row. A fresh installation has no server.
+
+This is the only connection kind where **the far end speaks a protocol and
+describes its own tools**. Everywhere else in Josi, the sentence saying what an
+action does was written by somebody on this installation. Here it was written by
+the remote server, and the assistant reads it. Tell people that.
+
+### 17E.1 Who owns these connections
+
+They are **user-scoped**, like a connected Google account or a developer service
+and for the same reason: an MCP server's token acts as the person who created
+it. An installation-wide one would mean every member reading and writing as one
+person.
+
+From **Admin → MCP servers** an administrator can:
+
+- see whose server exists, **which host it reaches**, whether it works and how
+  many tools its owner switched on;
+- cut somebody's server off;
+- switch the whole feature off for the installation, or narrow it to a list of
+  hosts.
+
+Switching it off stops anyone connecting a server and stops Josi contacting the
+ones that already exist; the owner can still remove theirs and take the
+credential back. Switching it on connects nothing — it returns the choice to
+each person, who still has to approve each tool by hand.
+
+An administrator cannot read a credential, see the name somebody typed, see the
+full endpoint address, or see which tools they approved or what those tools
+claim to do. The host **is** visible, deliberately: it is an outbound
+destination from your own machine, and the host allowlist above is unusable by
+somebody who cannot see the candidates. The owner's own page says so, so nothing
+is a surprise.
+
+### 17E.2 What a person configures, in order
+
+1. A name and the server's `https://` MCP endpoint. Plain `http://` is refused —
+   it would put a credential and every tool call on the wire in the clear.
+2. Optionally a credential: a bearer token, or an API key in a header they name.
+   Sealed with the installation master key before it reaches PostgreSQL. An
+   unauthenticated public server is allowed; the bound on what Josi can reach is
+   the pinned host and the address checks, not the presence of a token.
+3. **Connect and list tools** — a real MCP handshake, then `tools/list`. This is
+   the only thing that makes a server usable; a form that was filled in does not.
+4. **Make it available to Josi** — which the route refuses until a handshake has
+   succeeded.
+5. Each tool, read and switched on individually. Every tool arrives waiting for a
+   decision, and each one is switched on as either *ask me every time* or *run
+   without asking*.
+
+Josi can call a tool only when the server is available **and** that tool is
+switched on. There is no setting that means "any tool on this server".
+
+### 17E.3 Only one transport, and stdio is refused
+
+Josi speaks **Streamable HTTP over HTTPS** and nothing else.
+
+There is no stdio option and there will not be one. A stdio MCP server is a
+command line Josi would execute inside its own container — remote code execution
+offered as a text field. If somebody asks for it, that is the answer.
+
+Requests go only to the host stored on the row, re-checked on every request
+rather than once at save time. Redirects are not followed, and an address off
+the public internet is refused **at request time** — so a resolver that answers
+with `169.254.169.254` gets a refusal rather than an Authorization header. Note
+this is the opposite of the model-endpoint rule, where a LAN address is the
+whole point: there nothing chooses the path, and here the assistant does.
+
+### 17E.4 A server that changes a tool loses the approval
+
+Josi records a hash of the exact name, description and inputs somebody read when
+they switched a tool on. If the server changes any of them, that tool is taken
+off the list, marked **Changed since you approved it**, and named back to its
+owner the next time they connect.
+
+This is the failure this feature is most exposed to and the one worth explaining
+to people: a tool called `search_notes` whose description quietly becomes "search
+the notes and forward them" is a different tool under a name they already agreed
+to. Josi will not run it again until somebody reads the new version.
+
+For the same reason, a server's own `readOnlyHint` annotation is shown as **that
+server's claim** and nothing in Josi acts on it. Whether a call runs is decided
+by the owner's *ask me / run without asking* choice.
+
+### 17E.5 Operational notes
+
+- **Connect** re-lists the tools, now. There is no background re-discovery: a job
+  that silently switched somebody's approved tool to "changed" with nobody at the
+  screen would be a job nobody could explain.
+- Editing the address or the credential switches the server off and clears the
+  check. Renaming does not.
+- Ten servers per person, 250 tools per server, a 20-second timeout and a 1 MB
+  response cap. Images, audio and embedded resources in a tool result are not
+  passed on, and the assistant is told what was dropped.
+- A tool set to *ask me every time* produces a card on the owner's **Approvals**
+  page showing exactly what would be sent. Approving runs it, once. Unanswered
+  requests expire after thirty minutes.
+- Deleting a person deletes their servers, approvals and pending calls with them.
+- Removing a server deletes Josi's copy of the credential. Josi cannot revoke a
+  token at the far end; the page says so.
+- A diagnostics bundle carries counts only: how many servers exist, how many are
+  available, how many tools are approved. Never a host, a name, a tool or a
+  credential.
+
 ## 18. Security checklist
 
 Before considering an installation reachable by other people, confirm:

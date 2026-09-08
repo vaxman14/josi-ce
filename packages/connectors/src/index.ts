@@ -13,6 +13,13 @@ export * from './customApi.js';
 export * from './customApiRequest.js';
 export * from './customApiCalls.js';
 export * from './openapiImport.js';
+// External MCP servers. After the custom APIs and folded into neither: this is
+// the only connection where the far end SPEAKS A PROTOCOL and describes its own
+// tools, so the allowlist is discovered rather than typed and every word in it
+// belongs to a stranger.
+export * from './mcpClient.js';
+export * from './mcpServers.js';
+export * from './mcpCalls.js';
 export * from './providers/contacts.js';
 export * from './providers/mail.js';
 export * from './providers/calendar.js';

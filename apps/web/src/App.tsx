@@ -14,6 +14,7 @@ import { Conversations } from '@/pages/Conversations';
 import { Contacts } from '@/pages/Contacts';
 import { Connections } from '@/pages/Connections';
 import { DeveloperServices } from '@/pages/DeveloperServices';
+import { McpServers } from '@/pages/McpServers';
 import { Usage } from '@/pages/Usage';
 import { Personalization } from '@/pages/Personalization';
 import { Settings } from '@/pages/Settings';
@@ -28,6 +29,7 @@ import { AdminStorage } from '@/pages/admin/Storage';
 import { AdminConnectors } from '@/pages/admin/Connectors';
 import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
 import { AdminCustomApis } from '@/pages/admin/CustomApis';
+import { AdminMcpServers } from '@/pages/admin/McpServers';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
 import { AdminChannels } from '@/pages/admin/Channels';
@@ -137,6 +139,7 @@ export function App() {
         <Route path="contacts" element={<Contacts />} />
         <Route path="connections" element={<Connections />} />
         <Route path="developer-services" element={<DeveloperServices />} />
+        <Route path="mcp-servers" element={<McpServers />} />
         <Route path="usage" element={<Usage />} />
         <Route path="personalization" element={<Personalization />} />
         <Route path="settings" element={<Settings />} />
@@ -154,6 +157,7 @@ export function App() {
         <Route path="connectors" element={<AdminConnectors />} />
         <Route path="developer-services" element={<AdminDeveloperServices />} />
         <Route path="custom-apis" element={<AdminCustomApis />} />
+        <Route path="mcp-servers" element={<AdminMcpServers />} />
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />
         <Route path="channels" element={<AdminChannels />} />

@@ -166,6 +166,13 @@ const CONTENT_KEYS = new Set([
   // account — which GitHub handle, which Supabase project, what a token
   // covers — and an administrator administers plumbing, not accounts.
   'credentials_enc', 'account_label', 'reported_scopes', 'project_ref',
+  // External MCP servers. `endpoint_url` is the full address including any
+  // query string somebody's server identifies itself with; `server_label`,
+  // `tool_name`, `input_schema` and `definition_digest` are the remote server's
+  // description of one person's own tools. An administrator sees that a server
+  // exists, which HOST it reaches and whether it works — never what somebody
+  // switched on there.
+  'endpoint_url', 'server_label', 'tool_name', 'input_schema', 'definition_digest',
 ]);
 
 /** Belt and braces for admin DTOs. A field that looks like content or a

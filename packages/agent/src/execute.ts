@@ -19,6 +19,7 @@ import {
 import { citationLabel, folderSyncHealthFor, searchDocuments, type FolderSyncHealth } from '@josi-ce/storage';
 import { DATA_TOOL_FAMILY, executeDataTool, type ConnectorAccess } from './dataTools.js';
 import { executeCustomApiTool, isCustomApiTool } from './customApiTools.js';
+import { executeMcpTool, isMcpTool } from './mcpTools.js';
 
 export interface ToolExecutionContext {
   /** Whose work this is. Everything created belongs to them. Never a value
@@ -55,6 +56,20 @@ export async function executeAssistantTool(
   // remember it.
   if (isCustomApiTool(name)) {
     return executeCustomApiTool(
+      db,
+      { userId, threadId: ctx.threadId, access: ctx.connectors ?? null },
+      name,
+      input,
+    );
+  }
+
+  // External MCP servers live in their own module, and the same rule holds a
+  // third time: the person's own approved set is re-resolved at THIS moment
+  // rather than trusted from when the tool was offered, and a tool its owner
+  // left at "ask me" becomes a pending request instead of a call. Both callers
+  // of this function get that behaviour without having to remember it.
+  if (isMcpTool(name)) {
+    return executeMcpTool(
       db,
       { userId, threadId: ctx.threadId, access: ctx.connectors ?? null },
       name,

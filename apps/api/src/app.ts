@@ -15,6 +15,7 @@ import { checklistRoutes } from './http/checklistRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
 import { adminDevServiceRoutes, devServiceRoutes } from './http/devServiceRoutes.js';
 import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
+import { adminMcpRoutes, mcpRoutes } from './http/mcpRoutes.js';
 import { contactSyncRoutes } from './http/contactSyncRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
@@ -77,6 +78,11 @@ export interface AppConfig {
    * `connectorFetch`: that one answers as Google and Microsoft, and a suite
    * that had to satisfy both in one stub would be asserting less about each. */
   customApiFetch?: typeof fetch;
+  /** HTTP for external MCP servers, injected by the tests so no suite contacts
+   * one. Its own seam again: an MCP stub speaks JSON-RPC over a single POST and
+   * a suite that had to satisfy it and a REST API in one stub would be
+   * asserting less about each. */
+  mcpFetch?: typeof fetch;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -167,7 +173,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/assistant', assistantRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
     codexRunner: cfg.codexRunner, connectorFetch: cfg.connectorFetch,
-    customApiFetch: cfg.customApiFetch, outboundResolve: cfg.outboundResolve,
+    customApiFetch: cfg.customApiFetch, mcpFetch: cfg.mcpFetch,
+    outboundResolve: cfg.outboundResolve,
   }));
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({
@@ -201,6 +208,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/custom-apis', adminCustomApiRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch, resolve: cfg.outboundResolve,
   }));
+  // External MCP servers. BEFORE `/admin` for the reason recorded above
+  // `/admin/telegram`: with the generic admin router registered first, this one
+  // is never reached and its own guard stops being the thing protecting it.
+  api.use('/admin/mcp-servers', adminMcpRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.mcpFetch, resolve: cfg.outboundResolve,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -224,6 +237,14 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // authority models as one thing.
   api.use('/custom-apis', customApiRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch, resolve: cfg.outboundResolve,
+  }));
+  // External MCP servers. Its own prefix rather than a branch inside any of the
+  // three above: this is the only connection kind where the far end SPEAKS A
+  // PROTOCOL and describes its own tools, so the allowlist is discovered rather
+  // than typed — and presenting a discovered allowlist beside a hand-written
+  // one would teach people that somebody here reviewed both.
+  api.use('/mcp-servers', mcpRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.mcpFetch, resolve: cfg.outboundResolve,
   }));
   api.use('/storage', storageRoutes({ db }));
   api.use('/telegram', telegramRoutes({

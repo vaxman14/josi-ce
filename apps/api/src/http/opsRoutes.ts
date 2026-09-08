@@ -165,6 +165,23 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           where e.enabled and c.enabled`,
       );
 
+      // External MCP servers, as COUNTS and nothing else. How many people have
+      // connected one, how many the assistant can actually reach, and how many
+      // individual tools are approved — the numbers a supporter needs when
+      // somebody reports "Josi will not use my notes server". Never a host,
+      // never a name, never a tool: on somebody's own server the tool names are
+      // a fact about them, and a bundle goes to a third party's ticket system.
+      const [mcp] = await db.query<{ total: number; live: number }>(
+        `select count(*)::int as total,
+                count(*) filter (where enabled)::int as live
+           from mcp_servers`,
+      );
+      const [mcpTools] = await db.query<{ live: number }>(
+        `select count(*)::int as live
+           from mcp_server_tools t join mcp_servers s on s.id = t.server_id
+          where t.state = 'approved' and t.available and s.enabled`,
+      );
+
       const built = buildBundle({
         version: process.env.JOSI_VERSION ?? '0.1.0',
         containers: [],
@@ -180,6 +197,8 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           // WHETHER, never which. A boolean answers "could this installation
           // have called an outside API?" without naming one.
           custom_apis: (customApis?.live ?? 0) > 0,
+          // WHETHER, never which, for the same reason.
+          mcp_servers: (mcp?.live ?? 0) > 0,
         },
         migrations: [],
         logs: [],
@@ -188,6 +207,9 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           custom_apis: customApis?.total ?? 0,
           custom_apis_enabled: customApis?.live ?? 0,
           custom_api_actions_enabled: customApiActions?.live ?? 0,
+          mcp_servers: mcp?.total ?? 0,
+          mcp_servers_enabled: mcp?.live ?? 0,
+          mcp_tools_approved: mcpTools?.live ?? 0,
         },
       });
 

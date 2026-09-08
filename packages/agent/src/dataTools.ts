@@ -42,6 +42,10 @@ export interface ConnectorAccess {
    * Only the custom API tools consult it: the OAuth providers below are pinned
    * hosts that `validateEndpoint` never sees. */
   resolve?: (hostname: string) => Promise<string[]>;
+  /** HTTP for external MCP servers. Its own seam again, and for the same
+   * reason: an MCP stub speaks JSON-RPC over a single POST and has nothing in
+   * common with either of the two above. */
+  mcpFetch?: typeof fetch;
 }
 
 type Family = 'mail' | 'calendar' | 'contacts';

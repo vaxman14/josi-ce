@@ -7,6 +7,7 @@
 import type { ToolDefinition } from '@josi-ce/llm';
 import { CUSTOM_API_TOOLS } from './customApiTools.js';
 import { DATA_TOOLS } from './dataTools.js';
+import { MCP_TOOLS } from './mcpTools.js';
 
 /** Everything the assistant can do that changes something.
  *
@@ -184,12 +185,14 @@ export const TASK_TOOLS: ToolSpec[] = [
  * boundary. What a TURN offers is a subset of this, decided per person per turn
  * — the catalogue is what CAN exist, never what IS offered.
  *
- * The custom API pair is here rather than only in the per-turn list because
- * this map is what the agent loop consults before executing anything, and what
- * the MCP server intersects with a turn's offering. A tool that can be offered
- * and cannot be found is a tool the model is handed and then told does not
- * exist. */
-export const ALL_TOOLS: ToolSpec[] = [...TASK_TOOLS, ...DATA_TOOLS, ...CUSTOM_API_TOOLS];
+ * The custom API pair and the external-MCP pair are here rather than only in
+ * the per-turn list because this map is what the agent loop consults before
+ * executing anything, and what the MCP server intersects with a turn's
+ * offering. A tool that can be offered and cannot be found is a tool the model
+ * is handed and then told does not exist. */
+export const ALL_TOOLS: ToolSpec[] = [
+  ...TASK_TOOLS, ...DATA_TOOLS, ...CUSTOM_API_TOOLS, ...MCP_TOOLS,
+];
 
 /** Names that map to the step-up gate. The gate keys on the tool name, so
  * adding a destructive tool later means adding it to SENSITIVE_ACTIONS in core
