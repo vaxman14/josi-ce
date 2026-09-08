@@ -134,7 +134,10 @@ step 'Configuration created'
 
 CURRENT_STEP='generating security keys'
 run_logged env JOSI_COMPOSE_SECRETS=1 bash ./install.sh
+mkdir -p secrets/backups backup-targets
+chmod 0700 secrets/backups backup-targets
 chown -R "$INSTALL_UID:$INSTALL_GID" secrets
+chown -R "$INSTALL_UID:$INSTALL_GID" backup-targets
 step 'Security keys generated'
 
 if [[ "${JOSI_PREPARE_ONLY:-0}" == "1" ]]; then

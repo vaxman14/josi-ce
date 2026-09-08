@@ -24,3 +24,9 @@ export {
 export {
   pgBackupWriter, pgRestoreReader, pgToolsAvailable, type PgConnection,
 } from './pgWriter.js';
+export {
+  BACKUP_SECRET_ROOT, BackupAgentError, enqueueDueBackups, nextRun, runBackupAgent, spawnCommand,
+  verifyResticSnapshot,
+  validateRepository, type AgentErrorCategory, type BackupDestination,
+  type CommandResult, type CommandRunner, type DestinationKind, type RetentionPolicy,
+} from './restic.js';

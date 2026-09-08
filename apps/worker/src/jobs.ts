@@ -29,6 +29,9 @@ import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk,
 } from '@josi-ce/channels';
 import { mailPolicy } from '@josi-ce/mail';
+import {
+  createBackup, runBackupAgent, type BackupDestination, type BackupWriter, type CommandRunner,
+} from '@josi-ce/ops';
 
 /** What the worker needs beyond the database.
  *
@@ -41,6 +44,9 @@ export interface WorkerContext {
   connectorFetch?: typeof fetch;
   /** Injected by the tests so no suite contacts api.telegram.org. */
   telegramFetch?: typeof fetch;
+  backupWriter?: BackupWriter;
+  resticRunner?: CommandRunner;
+  resticSecretRoot?: string;
 }
 
 export interface JobOutcome {
@@ -183,6 +189,33 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       const reminderId = String((job.payload as { reminderId?: unknown }).reminderId ?? '');
       if (!reminderId) throw new Error('reminder.deliver without a reminderId');
       await deliverReminder(db, reminderId, ctx);
+      return;
+    }
+
+    case 'backup.run': {
+      if (!ctx.backupWriter) throw new Error('backup.run needs the backup writer');
+      const destinationId = String((job.payload as { destinationId?: unknown }).destinationId ?? '');
+      const scheduleId = String((job.payload as { scheduleId?: unknown }).scheduleId ?? '');
+      if (!destinationId || !scheduleId) throw new Error('backup.run without destination and schedule ids');
+      const [destination] = await db.query<BackupDestination>(
+        `select id,name,kind,repository,secret_ref,enabled from backup_destinations where id=$1`, [destinationId],
+      );
+      const [schedule] = await db.query<{ created_by:string|null; keep_daily:number; keep_weekly:number; keep_monthly:number }>(
+        `select created_by,keep_daily,keep_weekly,keep_monthly from backup_schedules where id=$1 and destination_id=$2`,
+        [scheduleId, destinationId],
+      );
+      if (!destination || !schedule || !destination.enabled) throw new Error('backup.run destination is unavailable');
+      let actor = schedule.created_by;
+      if (!actor) {
+        const [admin] = await db.query<{ id:string }>(`select id from users where role='super_admin' and status='active' order by created_at limit 1`);
+        actor = admin?.id ?? null;
+      }
+      if (!actor) throw new Error('backup.run has no active administrator');
+      const { backup } = await createBackup(db, { kind: 'full', createdBy: actor, masterKeyConfirmed: true,
+        writer: ctx.backupWriter, filename: `josi-full-scheduled-${Date.now()}.zip` });
+      await runBackupAgent(db, { destination, backupId: backup.id, archivePath: backup.stored_path,
+        actorUserId: actor, retention: { keepDaily: schedule.keep_daily, keepWeekly: schedule.keep_weekly,
+          keepMonthly: schedule.keep_monthly }, runner: ctx.resticRunner, secretRoot: ctx.resticSecretRoot });
       return;
     }
 

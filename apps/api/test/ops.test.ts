@@ -2,12 +2,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { MasterKey, seal } from '@josi-ce/core';
-import { sha256Of, type BackupWriter, type RestoreReader, type TelemetrySender } from '@josi-ce/ops';
+import { sha256Of, type BackupWriter, type CommandRunner, type RestoreReader, type TelemetrySender } from '@josi-ce/ops';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -16,6 +16,16 @@ const keyPath = join(dir, 'master.key');
 const KEY_BYTES = Buffer.alloc(32, 23);
 writeFileSync(keyPath, KEY_BYTES.toString('base64'));
 const KEY = new MasterKey(KEY_BYTES);
+const resticSecrets = join(dir, 'backup-secrets');
+mkdirSync(resticSecrets);
+writeFileSync(join(resticSecrets, 'primary_restic_password'), 'not-a-real-password');
+const resticCalls: string[][] = [];
+const resticRunner: CommandRunner = async (_command, args) => {
+  resticCalls.push(args);
+  if (args.includes('backup')) return { code: 0, stdout: '{"message_type":"summary","snapshot_id":"abc123"}\n', stderr: '' };
+  if (args.includes('dump')) return { code: 0, stdout: Buffer.alloc(2048), stderr: '' };
+  return { code: 0, stdout: '', stderr: '' };
+};
 
 let server: Server;
 let base: string;
@@ -97,7 +107,7 @@ beforeAll(async () => {
 
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000', masterKeyCheck: { path: keyPath },
-    backupWriter, restoreReader, telemetrySender,
+    backupWriter, restoreReader, telemetrySender, resticRunner, resticSecretRoot: resticSecrets,
     // M115: no gateway by default, which is the shipped state.
     supportGatewayUrl: null,
     fetchLatestVersion: async () => '0.2.0',
@@ -120,12 +130,49 @@ beforeEach(async () => {
   await db.query(`delete from rate_limits`);
   sentTelemetry = [];
   restoresApplied = 0;
+  resticCalls.length = 0;
   await db.query(`delete from support_tickets`);
   await db.query(`delete from diagnostic_bundles`);
+  await db.query(`delete from backup_agent_runs`);
+  await db.query(`delete from backup_schedules`);
+  await db.query(`delete from backup_destinations`);
   await db.query(`delete from backups`);
   await db.query(`delete from connections`);
   await db.query(`update telemetry_state set enabled = false, endpoint = null, last_payload = null`);
   await db.query(`update update_state set current_version = '0.1.0', available_version = null`);
+});
+
+describe('the Restic backup control plane', () => {
+  it('keeps destinations admin-only and rejects unsafe host paths', async () => {
+    expect((await call('/api/ops/admin/backup-destinations', { jar: cookies.alice })).status).toBe(403);
+    const unsafe = await call('/api/ops/admin/backup-destinations', { method:'POST', jar:cookies.admin,
+      body:{ name:'Bad', kind:'local', repository:'/etc', secretRef:'primary' } });
+    expect(unsafe.status).toBe(409);
+  });
+
+  it('configures a destination and schedule, then replicates and verifies a backup', async () => {
+    const made = await call('/api/ops/admin/backup-destinations', { method:'POST', jar:cookies.admin,
+      body:{ name:'USB', kind:'local', repository:'/backup-targets/usb/josi', secretRef:'primary' } });
+    expect(made.status).toBe(201);
+    const destinationId = made.body.destination.id;
+    const scheduled = await call(`/api/ops/admin/backup-destinations/${destinationId}/schedule`, { method:'PUT', jar:cookies.admin,
+      body:{ cadence:'daily', hourUtc:3, keepDaily:7, keepWeekly:4, keepMonthly:6 } });
+    expect(scheduled.status).toBe(200);
+    const backup = await call('/api/ops/admin/backups', { method:'POST', jar:cookies.admin,
+      body:{ kind:'full', masterKeyConfirmed:true } });
+    const copied = await call(`/api/ops/admin/backups/${backup.body.backup.id}/replicate`, { method:'POST', jar:cookies.admin,
+      body:{ destinationId } });
+    expect(copied.status).toBe(200);
+    expect(copied.body.snapshotId).toBe('abc123');
+    expect(resticCalls.some((args) => args.includes('forget') && args.includes('--prune'))).toBe(true);
+    expect(resticCalls.some((args) => args.includes('check'))).toBe(true);
+    const verified = await call(`/api/ops/admin/backups/${backup.body.backup.id}/verify-offsite`, { method:'POST', jar:cookies.admin,
+      body:{ destinationId } });
+    expect(verified.body).toMatchObject({ verified:true });
+    expect(resticCalls.some((args) => args.includes('dump'))).toBe(true);
+    const status = await call('/api/ops/admin/backup-destinations', { jar:cookies.admin });
+    expect(status.body.runs[0]).toMatchObject({ state:'complete', operation:'restore_test', snapshot_id:'abc123' });
+  });
 });
 
 describe('backups are administrator-only and say what they omit — M100', () => {

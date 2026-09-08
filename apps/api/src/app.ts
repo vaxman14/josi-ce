@@ -65,6 +65,8 @@ export interface AppConfig {
   backupWriter?: import('@josi-ce/ops').BackupWriter;
   /** How a backup is applied. */
   restoreReader?: import('@josi-ce/ops').RestoreReader;
+  resticRunner?: import('@josi-ce/ops').CommandRunner;
+  resticSecretRoot?: string;
   /** Telemetry transport. Absent = nothing can be sent, whatever the setting. */
   telemetrySender?: import('@josi-ce/ops').TelemetrySender;
   /** M115: unset by default. CE ships no gateway URL and no credential. */
@@ -311,6 +313,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db,
     backupWriter: cfg.backupWriter,
     restoreReader: cfg.restoreReader,
+    resticRunner: cfg.resticRunner,
+    resticSecretRoot: cfg.resticSecretRoot,
     telemetrySender: cfg.telemetrySender,
     supportGatewayUrl: cfg.supportGatewayUrl ?? null,
     fetchLatestVersion: cfg.fetchLatestVersion,

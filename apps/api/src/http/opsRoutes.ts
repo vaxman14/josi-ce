@@ -8,11 +8,12 @@
 import { Router, type Request, type Response } from 'express';
 import { LIMITS, consume, type Db, type Limit } from '@josi-ce/core';
 import {
-  BackupError, DiagnosticsError, MASTER_KEY_DOC, RestoreError, SupportError, restoreBackup,
+  BackupAgentError, BackupError, DiagnosticsError, MASTER_KEY_DOC, RestoreError, SupportError, restoreBackup,
   TELEMETRY_DISCLOSURE, TelemetryError, acknowledgementFor, approveBundle,
   buildBundle, checkForUpdate, createBackup, describeBackup, diagnosticsRequired,
   gatewayStatus, isNewer, markInspected, passSecretScan, recordBundle,
-  scanForSecrets, sendTelemetry, setTelemetry, submitTicket,
+  scanForSecrets, sendTelemetry, setTelemetry, submitTicket, nextRun, runBackupAgent,
+  validateRepository, verifyResticSnapshot, type BackupDestination, type CommandRunner, type DestinationKind,
   type BackupWriter, type LogWindow, type TelemetrySender, type TicketCategory,
 } from '@josi-ce/ops';
 import { UnsafeEndpointError } from '@josi-ce/llm';
@@ -31,6 +32,9 @@ export interface OpsRoutesCtx {
   fetchLatestVersion?: () => Promise<string | null>;
   /** Injected by the tests so no suite resolves a hostname. */
   outboundResolve?: (hostname: string) => Promise<string[]>;
+  /** Restic process seam. Tests never execute a host binary. */
+  resticRunner?: CommandRunner;
+  resticSecretRoot?: string;
 }
 
 class RouteError extends Error {
@@ -64,6 +68,10 @@ function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
         // A category, never the underlying message: an archive error quotes
         // paths and a database error quotes configuration.
         res.status(500).json({ error: 'that could not be completed', category: err.category });
+        return;
+      }
+      if (err instanceof BackupAgentError) {
+        res.status(409).json({ error: err.message, category: err.category });
         return;
       }
       throw err;
@@ -370,6 +378,109 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       });
     }),
   );
+
+  r.get('/admin/backup-destinations', requireSuperAdmin, handle(async (_req, res) => {
+    const destinations = await db.query(
+      `select id,name,kind,repository,secret_ref,enabled,created_at,updated_at
+         from backup_destinations order by lower(name)`,
+    );
+    const schedules = await db.query(
+      `select id,destination_id,cadence,hour_utc,weekday,keep_daily,keep_weekly,
+              keep_monthly,enabled,last_enqueued_at,next_run_at
+         from backup_schedules order by next_run_at`,
+    );
+    const runs = await db.query(
+      `select id,destination_id,backup_id,operation,state,snapshot_id,error_category,
+              started_at,finished_at from backup_agent_runs order by started_at desc limit 50`,
+    );
+    return res.json({ destinations, schedules, runs, secretRoot: '/run/josi-backup-secrets' });
+  }));
+
+  r.post('/admin/backup-destinations', requireSuperAdmin, handle(async (req, res) => {
+    const kind = str(req.body?.kind, 16) as DestinationKind;
+    if (!['local', 'nas', 's3', 'r2', 'b2'].includes(kind)) throw new RouteError(400, 'choose a supported destination type');
+    const name = str(req.body?.name, 80);
+    const secretRef = str(req.body?.secretRef, 80);
+    if (!name) throw new RouteError(400, 'name the destination');
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(secretRef)) throw new RouteError(400, 'use a safe secret reference');
+    const repository = validateRepository(kind, str(req.body?.repository, 2048));
+    const [destination] = await db.query(
+      `insert into backup_destinations (name,kind,repository,secret_ref,created_by)
+       values ($1,$2,$3,$4,$5) returning id,name,kind,repository,secret_ref,enabled`,
+      [name, kind, repository, secretRef, req.user!.id],
+    );
+    return res.status(201).json({ destination });
+  }));
+
+  r.delete('/admin/backup-destinations/:id', requireSuperAdmin, handle(async (req, res) => {
+    const [row] = await db.query<{ id: string }>(
+      `delete from backup_destinations where id=$1 and not exists
+       (select 1 from backup_agent_runs where destination_id=$1) returning id`, [param(req, 'id')],
+    );
+    if (!row) throw new RouteError(409, 'a destination with backup history cannot be deleted; disable it instead');
+    return res.json({ deleted: true });
+  }));
+
+  r.put('/admin/backup-destinations/:id/schedule', requireSuperAdmin, handle(async (req, res) => {
+    const cadence = req.body?.cadence === 'weekly' ? 'weekly' : 'daily';
+    const hourUtc = Number(req.body?.hourUtc);
+    const weekday = cadence === 'weekly' ? Number(req.body?.weekday) : null;
+    const keepDaily = Number(req.body?.keepDaily ?? 7);
+    const keepWeekly = Number(req.body?.keepWeekly ?? 4);
+    const keepMonthly = Number(req.body?.keepMonthly ?? 6);
+    if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23) throw new RouteError(400, 'hourUtc must be 0 through 23');
+    if (weekday !== null && (!Number.isInteger(weekday) || weekday < 0 || weekday > 6)) throw new RouteError(400, 'weekday must be 0 through 6');
+    if (![keepDaily, keepWeekly, keepMonthly].every(Number.isInteger)) throw new RouteError(400, 'retention values must be whole numbers');
+    const destinationId = param(req, 'id');
+    const [exists] = await db.query<{ id: string }>(`select id from backup_destinations where id=$1`, [destinationId]);
+    if (!exists) throw new RouteError(404, 'no such backup destination');
+    const [schedule] = await db.query(
+      `insert into backup_schedules
+         (destination_id,cadence,hour_utc,weekday,keep_daily,keep_weekly,keep_monthly,created_by,next_run_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       on conflict (destination_id) do update set cadence=excluded.cadence,hour_utc=excluded.hour_utc,
+         weekday=excluded.weekday,keep_daily=excluded.keep_daily,keep_weekly=excluded.keep_weekly,
+         keep_monthly=excluded.keep_monthly,enabled=true,next_run_at=excluded.next_run_at
+       returning *`,
+      [destinationId, cadence, hourUtc, weekday, keepDaily, keepWeekly, keepMonthly, req.user!.id,
+        nextRun(cadence, hourUtc, weekday)],
+    );
+    return res.json({ schedule });
+  }));
+
+  r.post('/admin/backups/:id/replicate', requireSuperAdmin, handle(async (req, res) => {
+    if (!(await limited(req, res, LIMITS.backup))) return undefined;
+    const [backup] = await db.query<{ id: string; stored_path: string; state: string }>(
+      `select id,stored_path,state from backups where id=$1`, [param(req, 'id')],
+    );
+    if (!backup || backup.state !== 'complete') throw new RouteError(404, 'no such completed backup');
+    const [destination] = await db.query<BackupDestination>(
+      `select id,name,kind,repository,secret_ref,enabled from backup_destinations where id=$1`,
+      [str(req.body?.destinationId, 64)],
+    );
+    if (!destination) throw new RouteError(404, 'no such backup destination');
+    const [schedule] = await db.query<{ keep_daily:number; keep_weekly:number; keep_monthly:number }>(
+      `select keep_daily,keep_weekly,keep_monthly from backup_schedules where destination_id=$1`, [destination.id],
+    );
+    const out = await runBackupAgent(db, { destination, backupId: backup.id, archivePath: backup.stored_path,
+      actorUserId: req.user!.id, retention: { keepDaily: schedule?.keep_daily ?? 7,
+        keepWeekly: schedule?.keep_weekly ?? 4, keepMonthly: schedule?.keep_monthly ?? 6 },
+      runner: ctx.resticRunner, secretRoot: ctx.resticSecretRoot });
+    return res.json(out);
+  }));
+
+  r.post('/admin/backups/:id/verify-offsite', requireSuperAdmin, handle(async (req, res) => {
+    const [backup] = await db.query<{ id:string; stored_path:string; sha256:string|null; state:string }>(
+      `select id,stored_path,sha256,state from backups where id=$1`, [param(req, 'id')],
+    );
+    if (!backup || backup.state !== 'complete' || !backup.sha256) throw new RouteError(404, 'no such completed backup');
+    const [destination] = await db.query<BackupDestination>(
+      `select id,name,kind,repository,secret_ref,enabled from backup_destinations where id=$1`, [str(req.body?.destinationId, 64)],
+    );
+    if (!destination) throw new RouteError(404, 'no such backup destination');
+    return res.json(await verifyResticSnapshot(db, { destination, backupId:backup.id, archivePath:backup.stored_path,
+      expectedSha256:backup.sha256, actorUserId:req.user!.id, runner:ctx.resticRunner, secretRoot:ctx.resticSecretRoot }));
+  }));
 
   /** What you would be told before restoring, without restoring. */
   r.get(

@@ -135,6 +135,8 @@ services:
       # what an update does — does not destroy the only copy of anything.
       - josi_versions:/data/versions
       - josi_backups:/data/backups
+      - ${JOSI_BACKUP_TARGETS_DIR:-./backup-targets}:/backup-targets
+      - ${JOSI_BACKUP_SECRETS_DIR:-./secrets/backups}:/run/josi-backup-secrets:ro
       - josi_diagnostics:/data/diagnostics
       - josi_codex:/data/codex
       - josi_claude:/data/claude
@@ -191,6 +193,8 @@ services:
       - josi_chat_attachments:/data/chat-attachments
       - josi_versions:/data/versions
       - josi_backups:/data/backups
+      - ${JOSI_BACKUP_TARGETS_DIR:-./backup-targets}:/backup-targets
+      - ${JOSI_BACKUP_SECRETS_DIR:-./secrets/backups}:/run/josi-backup-secrets:ro
       - josi_diagnostics:/data/diagnostics
       - josi_codex:/data/codex
       - josi_claude:/data/claude

@@ -121,6 +121,10 @@ services:
       # Backups and diagnostics bundles. Named volumes so `docker compose down`
       # does not take the only copy with it.
       - josi_backups:/data/backups
+      # Restic destinations. Point JOSI_BACKUP_TARGETS_DIR at a local disk or
+      # host-mounted SMB/NFS share. Credentials are separate read-only files.
+      - ${JOSI_BACKUP_TARGETS_DIR:-./backup-targets}:/backup-targets
+      - ${JOSI_BACKUP_SECRETS_DIR:-./secrets/backups}:/run/josi-backup-secrets:ro
       - josi_diagnostics:/data/diagnostics
       # The Codex CLI's home on the ChatGPT subscription path. Its own volume
       # so replacing a container does not sign the operator out, and so
@@ -192,6 +196,8 @@ services:
       # Backups and diagnostics bundles. Named volumes so `docker compose down`
       # does not take the only copy with it.
       - josi_backups:/data/backups
+      - ${JOSI_BACKUP_TARGETS_DIR:-./backup-targets}:/backup-targets
+      - ${JOSI_BACKUP_SECRETS_DIR:-./secrets/backups}:/run/josi-backup-secrets:ro
       - josi_diagnostics:/data/diagnostics
       # The Codex CLI's home on the ChatGPT subscription path. Its own volume
       # so replacing a container does not sign the operator out, and so

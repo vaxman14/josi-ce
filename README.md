@@ -112,6 +112,7 @@ proven and what is not.
 | [`docs/MCP_SERVER_CONNECTIONS.md`](docs/MCP_SERVER_CONNECTIONS.md) | Connecting a remote MCP server, and approving its tools one at a time |
 | [`docs/SKILLS_LIBRARY.md`](docs/SKILLS_LIBRARY.md) | Installing written instructions Josi follows, and why one can never grant anything |
 | [`docs/PARENTAL_CONTROLS.md`](docs/PARENTAL_CONTROLS.md) | The paid module: one adult, one child account, and what it honestly does not control |
+| [`docs/BACKUPS.md`](docs/BACKUPS.md) | Restic destinations, schedules, retention, credential files and restore tests |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Every threat with its control and the test that would fail without it |
 
 Phase progress is tracked in the implementation plan. Nothing here is presented

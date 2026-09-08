@@ -25,6 +25,10 @@ export interface Vocabulary {
 }
 
 export const VOCABULARIES: Record<string, Vocabulary> = {
+  backup_state: {
+    source: { migrationTable: 'backups', column: 'state' },
+    labels: { running: 'In progress', complete: 'Ready', failed: 'Failed' },
+  },
   external_channel: {
     source: { literal: ['whatsapp', 'slack', 'signal'] },
     labels: { whatsapp: 'WhatsApp', slack: 'Slack', signal: 'Signal' },
