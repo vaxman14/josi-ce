@@ -4,11 +4,9 @@ repository. It is intentionally explicit. Commands are written for a Linux
 server unless a section says otherwise.</p>
 <blockquote>
 <p><strong>Release warning</strong></p>
-<p>Josi CE 0.1 is still under construction. Phase 9 is incomplete and Phases
-10 through 12 are not implemented at the time this paragraph was written.
-In particular, the product does not yet provide its promised backup,
-restore, update, rollback, diagnostics, or identity/memory workflows. Do not
-treat this preview as production-ready merely because the containers start.</p>
+<p>Josi CE 0.1 remains a preview. Use the Admin Overview best-practice scan and
+the documented restore test before trusting an installation with important
+data. A successful container start is not recovery evidence.</p>
 </blockquote>
 <h2>1. What the standard installation creates</h2>
 <p>The default Compose deployment creates five service roles:</p>
@@ -68,7 +66,7 @@ treat this preview as production-ready merely because the containers start.</p>
 </tbody></table>
 <p>The database is attached only to the private <code>data</code> network. Caddy is attached
 only to the <code>edge</code> network. The worker is not reachable through the proxy.</p>
-<h2>2. Supported deployment shapes</h2>
+<h2 id="deployment">2. Supported deployment shapes</h2>
 <p>Choose one deployment shape before changing configuration.</p>
 <h3>2.1 Public HTTPS with bundled Caddy</h3>
 <p>Use this for the usual single-server installation. You need a public DNS name,
@@ -321,7 +319,7 @@ port forwarding, firewall policy, and incorrect IPv6 records.</p>
 <pre><code class="language-bash">docker compose ps --all
 docker ps --format &#39;{{.Names}}&#39; | grep -E &#39;(ocr|clamav)&#39; &amp;&amp; echo unexpected || echo absent
 </code></pre>
-<h2>10. Complete the setup wizard</h2>
+<h2 id="setup">10. Complete the setup wizard</h2>
 <p>Open <code>JOSI_APP_URL</code> in a browser. A fresh installation exposes the setup wizard
 and refuses normal application routes until setup completes.</p>
 <p>The wizard covers:</p>
@@ -341,7 +339,7 @@ used to create another super administrator.</p>
 <p>Record recovery information in the organization&#39;s password manager. Do not put
 provider keys, OAuth secrets, SMTP passwords, or recovery material in this
 repository.</p>
-<h2>11. Enable optional OCR and ClamAV profiles</h2>
+<h2 id="storage">11. Enable optional OCR and ClamAV profiles</h2>
 <p>Profiles may be combined.</p>
 <p>OCR only:</p>
 <pre><code class="language-bash">docker compose --profile ocr up -d
@@ -469,24 +467,28 @@ volumes unless <code>--volumes</code> is supplied.</p>
 step.</strong> It deletes the PostgreSQL data volume and other named volumes.</p>
 <p>Do not delete <code>secrets/master.key</code>. Do not regenerate it to fix a startup
 problem. A replacement key cannot decrypt existing credentials.</p>
-<h2>15. Backup and restore status</h2>
-<p>Josi&#39;s required encrypted, restorable backup workflow belongs to Phase 10 and
-is not yet implemented. Therefore this preview cannot honestly provide the
-promised supported backup and restore commands.</p>
-<p>Before storing important data, wait for Phase 10 and its destructive
-backup-wipe-restore acceptance test to pass. A manual PostgreSQL dump is not a
-substitute for that complete workflow because it may omit application files,
-history copies, configuration, and the separately held master key.</p>
-<p>At minimum, any future complete backup set must preserve:</p>
+<h2 id="backups">15. Backup and restore status</h2>
+<p>Admin → Backups creates a PostgreSQL archive in Josi&#39;s internal backup volume,
+then Restic copies it to an enabled local disk, mounted NAS, Amazon S3,
+Cloudflare R2, or Backblaze B2 destination. Scheduled runs apply the configured
+daily, weekly, and monthly retention policy and run a repository integrity
+check.</p>
+<p>An uploaded snapshot is not automatically called recoverable. Use <strong>Test
+off-host restore</strong>; Josi reads the archive back from Restic and verifies its
+SHA-256 checksum against the original. Admin → Overview reports restore as
+passed only after that evidence exists.</p>
+<p>A complete recovery plan must preserve:</p>
 <ul>
 <li>PostgreSQL data</li>
-<li>The exact <code>secrets/master.key</code></li>
+<li>The exact <code>secrets/master.key</code>, separately from the repository</li>
 <li>Application configuration</li>
 <li>Uploads and recovery/history data when those features exist</li>
 <li>A record of the Josi release being restored</li>
 </ul>
-<p>The master key must be protected separately from the database backup. Restore
-must fail safely when the wrong key is supplied.</p>
+<p>Credential files for Restic live beneath the configured backup secrets
+directory, are mounted read-only, and never enter PostgreSQL or HTTP responses.
+The master key must be protected separately from both the host and the backup
+repository. Losing it makes restored encrypted credentials unreadable.</p>
 <h2>16. Upgrade and rollback status</h2>
 <p>The required one-click update, pre-update backup, health check, and automatic
 rollback belong to Phase 10 and are not yet implemented.</p>
@@ -859,7 +861,7 @@ accounts under <strong>Connections</strong>, from <strong>Developer services</st
 <strong>Custom API</strong> connections, from <strong>MCP servers</strong> and from messaging
 <strong>Channels</strong>. Installing one adds no tool, no connection and no permission. It is a
 runbook, and everything it describes was already something Josi could be asked to do.</p>
-<h2>22. Security checklist</h2>
+<h2 id="security">22. Security checklist</h2>
 <p>Before considering an installation reachable by other people, confirm:</p>
 <ul>
 <li><input disabled="" type="checkbox"> The checkout is an intended release, not an arbitrary dirty branch.</li>
