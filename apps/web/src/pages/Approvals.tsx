@@ -1,14 +1,17 @@
 // Things Josi will not do without being told to.
 //
-// TWO KINDS OF WAITING, ON ONE PAGE, KEPT VISUALLY APART.
+// THREE SOURCES, ONE MEANING OF "APPROVE".
 //
-// The first is a task Josi prepared — an email, a calendar change — where
-// approving marks it ready and something else carries it out afterwards.
+// Work Josi prepared (an email, a calendar change), an outbound request to a
+// connected API, and a tool on an MCP server all end up here, and pressing
+// Approve does the same thing for all three: one route decides and carries the
+// action out in the same breath, so an approved action can neither sit undone
+// nor happen twice.
 //
-// The second is an outbound request to a connected API, where approving IS the
-// sending: one route decides and makes the request in the same breath, so an
-// approved call can neither sit unmade nor be made twice. That difference is
-// stated on the card rather than left for somebody to discover, because
+// The prepared-work section used to be the odd one out — approving only marked
+// a task ready and something else was supposed to carry it out later, which is
+// how round-3 item 26 ended with an approved calendar event that never
+// existed. It behaves like the other two now, and the cards say so, because
 // "Approve" meaning "do it now, to an outside system" deserves to be read as
 // such before it is pressed.
 import { useCallback, useEffect, useState } from 'react';
@@ -69,7 +72,16 @@ export function Approvals() {
     setError('');
     setNotice('');
     try {
-      await api.post(`/assistant/approvals/${id}/decide`, { approve });
+      // The server carries the action out in this same request, so its answer
+      // is the provider's — not a state name. "Done" is only ever printed when
+      // `carriedOut` is true (item 26).
+      const res = await api.post<{ carriedOut?: boolean; message?: string }>(
+        `/assistant/approvals/${id}/decide`, { approve },
+      );
+      if (!approve) setNotice('Declined. Nothing was done.');
+      else if (res?.carriedOut) setNotice('Done.');
+      else if (res?.message) setError(res.message);
+      else setNotice('Recorded.');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not record that');
@@ -218,7 +230,11 @@ export function Approvals() {
 
       {approvals.length ? (
         <section className="space-y-2">
-          {calls.length || mcpCalls.length ? <h2 className="text-sm font-semibold">Work Josi has prepared</h2> : null}
+          <h2 className="text-sm font-semibold">Work Josi has prepared</h2>
+          <p className="text-sm text-muted-foreground">
+            These have not happened. Approving one carries it out immediately and tells you what the
+            connected account said.
+          </p>
           <ul className="space-y-2">
             {approvals.map((a) => (
               <li key={a.id}>
@@ -227,7 +243,9 @@ export function Approvals() {
                   <p className="break-words text-sm">{a.summary}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{a.action.replace(/_/g, ' ')}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button onClick={() => void decide(a.id, true)} disabled={busy === a.id}>Approve</Button>
+                    <Button onClick={() => void decide(a.id, true)} disabled={busy === a.id}>
+                      {busy === a.id ? 'Doing it…' : 'Approve'}
+                    </Button>
                     <Button variant="secondary" onClick={() => void decide(a.id, false)} disabled={busy === a.id}>
                       Decline
                     </Button>

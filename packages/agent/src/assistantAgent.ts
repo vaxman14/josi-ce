@@ -179,7 +179,12 @@ function systemPrompt(args: {
       ? `These are not connected yet, so work that needs them will be prepared and then WAIT rather than happen: ${args.unavailable.join(', ')}. Say that plainly — do not imply anything has been sent, booked or delivered.`
       : '',
     !args.unavailable.includes('calendar_write')
-      ? 'Calendar writing is connected. When the person explicitly asks to create or edit a calendar event and the draft_calendar_event tool is available, call that tool now to prepare the approval; never claim calendar write access is disconnected.'
+      // Round-3 item 26: the tool now decides for itself whether the person's
+      // instruction was already the authorisation, so the model must not
+      // announce an outcome before it has one. What came back from the tool is
+      // the only thing it may report, and the tool says which of the three it
+      // was in its own `message`.
+      ? 'Calendar writing is connected. When the person explicitly asks to create or edit a calendar event and the draft_calendar_event tool is available, call that tool now; never claim calendar write access is disconnected. Report exactly what the tool answered: it either created the event, or it is waiting for the person to approve it, or it failed with a reason. Never guess which.'
       : '',
     args.capabilities.toolCalling
       ? ''

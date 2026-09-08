@@ -24,7 +24,7 @@
 // The e2e suite taps this button in WebKit with touch emulation, which is the
 // closest thing to Safari on an iPhone that runs unattended.
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { api, ApiError, type Message, type Thread, type TurnResult } from '@/lib/api';
+import { api, ApiError, type ApprovalCard, type Message, type Thread, type TurnResult } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 
 /** "Today", "Yesterday", or the date — the label WhatsApp taught everyone. */
@@ -49,6 +49,12 @@ export function Talk() {
   const [loading, setLoading] = useState(!cached);
   const [sending, setSending] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  // ROUND-3 ITEM 26(2): the one approval card, in the conversation that asked
+  // for it. Not held in `talkCache` — an agreement is about this moment, and
+  // an offer restored from a cache after a reload is an offer whose task may
+  // already have been decided somewhere else.
+  const [approvals, setApprovals] = useState<ApprovalCard[]>([]);
+  const [deciding, setDeciding] = useState<string | null>(null);
   const [error, setError] = useState('');
   const end = useRef<HTMLDivElement>(null);
   const inputElement = useRef<HTMLTextAreaElement>(null);
@@ -137,6 +143,7 @@ export function Talk() {
         ? { ...message, meta: { attachments: uploadedMeta } } : message));
       const result = await api.post<TurnResult>(`/assistant/threads/${thread.id}/talk`, { message: body, attachmentIds });
       setFiles([]);
+      setApprovals(result.approvals ?? []);
       if (result.reply !== undefined) {
         setMessages((current) => [...current, {
           id: `reply-${Math.random().toString(36).slice(2)}`,
@@ -163,6 +170,34 @@ export function Talk() {
     } finally {
       sendLock.current = false;
       setSending(false);
+    }
+  }
+
+  /** Agree to one prepared action, and say what actually happened.
+   *
+   * The server carries the write out in this same request, so the sentence
+   * below is the provider's answer rather than a state name. "Created" is only
+   * ever printed when `carriedOut` is true. */
+  async function decide(card: ApprovalCard, approve: boolean): Promise<void> {
+    setDeciding(card.id);
+    setError('');
+    try {
+      const res = await api.post<{ carriedOut?: boolean; message?: string }>(
+        `/assistant/approvals/${card.id}/decide`, { approve },
+      );
+      setApprovals((current) => current.filter((a) => a.id !== card.id));
+      const said = approve
+        ? (res.carriedOut ? 'Done.' : (res.message ?? 'It did not happen.'))
+        : 'Declined. Nothing was done.';
+      setMessages((current) => [...current, {
+        id: `decision-${Math.random().toString(36).slice(2)}`,
+        thread_id: thread!.id, direction: 'out', channel: 'web', body: said,
+        created_at: new Date().toISOString(),
+      }]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not record that');
+    } finally {
+      setDeciding(null);
     }
   }
 
@@ -244,6 +279,23 @@ export function Talk() {
             </Fragment>
           );
         })}
+        {approvals.map((card) => (
+          <div key={card.id} className="flex justify-start">
+            <div className="max-w-[86%] rounded-2xl rounded-bl-md border border-border bg-secondary px-4 py-3 text-sm sm:max-w-[75%]">
+              <p className="font-medium">Approve this?</p>
+              <p className="mt-1 whitespace-pre-wrap break-words">{card.summary}</p>
+              <p className="mt-1 text-xs text-muted-foreground">This has not happened yet.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button onClick={() => void decide(card, true)} disabled={deciding === card.id}>
+                  {deciding === card.id ? 'Doing it…' : 'Approve'}
+                </Button>
+                <Button variant="secondary" onClick={() => void decide(card, false)} disabled={deciding === card.id}>
+                  Decline
+                </Button>
+              </div>
+            </div>
+          </div>
+        ))}
         {sending ? <p className="text-sm text-muted-foreground">Josi is working…</p> : null}
         <div ref={end} />
       </section>

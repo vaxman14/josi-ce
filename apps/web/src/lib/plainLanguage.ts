@@ -181,7 +181,11 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     labels: {
       drafting: 'Being worked out',
       awaiting_approval: 'Waiting for you',
-      ready: 'Ready to go',
+      // ROUND-3 ITEM 26(6). This said "Ready to go", which reads as the last
+      // step before success — and for a task nothing could carry out it was
+      // the last step there would ever be. "Queued to run" says what is
+      // actually true: it has not happened.
+      ready: 'Queued to run',
       attempting: 'In progress',
       held: 'Holding',
       awaiting_owner: 'Waiting for you',

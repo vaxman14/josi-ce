@@ -4,27 +4,21 @@
 // a pool, or a timer — the engine's equivalent was only ever exercised through
 // the running worker, which meant its failure paths were not exercised at all.
 //
-// Phase 5 ships the machinery, not the executors. `task.wake` therefore has
-// nothing to attempt for work that needs a calendar or a mailbox, and says so
-// by leaving the task alone rather than failing it. A task marked failed
-// because Phase 7 has not happened yet would read, to the person waiting on it,
-// exactly like Josi tried and could not.
+// The write executors themselves now live in `@josi-ce/connectors`
+// (`writeTasks.ts`), because the worker stopped being their only caller in
+// round-3 item 26: the request that authorised a write runs it in the same
+// breath so the person is told what the provider actually said. `task.wake`
+// keeps its old job — draining anything queued — and shares one implementation
+// with that path rather than owning a second copy of it.
 import {
   addMessage, claimJobs, claimReminderForDelivery, completeJob, createThread, enqueue,
-  expireApprovals, expireHolds, failJob, getTask, markReminderFailed, tickSchedules,
-  transition, type Db, type Job, type MasterKey,
+  expireApprovals, expireHolds, failJob, markReminderFailed, tickSchedules,
+  type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
-  accessTokenFor, can, connectionFor, dueCloudMappings, dueOrigins, expireCustomApiCalls,
-  expireMcpCalls, loadClient, markAttempted, markSyncScheduled, syncCloudMapping, syncOrigin,
+  dueCloudMappings, dueOrigins, expireCustomApiCalls, expireMcpCalls, markAttempted,
+  markSyncScheduled, runWriteTaskNow, syncCloudMapping, syncOrigin,
 } from '@josi-ce/connectors';
-
-// Write-action tasks (send a message, schedule an appointment, add a contact)
-// only ever meant Google and Microsoft — Dropbox, Box and Nextcloud are
-// storage-only providers with no mailbox, calendar or address book to write
-// to. Narrower than the connectors package's own `Provider` on purpose, the
-// same choice packages/agent/src/dataTools.ts makes for the same reason.
-type WriteProvider = 'google' | 'microsoft';
 import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk,
 } from '@josi-ce/channels';
@@ -64,19 +58,11 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       const taskId = String((job.payload as { taskId?: unknown }).taskId ?? '');
       if (!taskId) throw new Error('task.wake without a taskId');
       // Throws if the task is gone, which retries and then goes dead — visible,
-      // rather than a wake that quietly did nothing.
-      const task = await getTask(db, taskId);
-      if (task.state !== 'ready') return;
-      if (['send_message', 'schedule_appointment', 'update_contact'].includes(task.template_key)
-          && !(await taskWriteEnabled(db, task))) return;
-      if (!ctx.masterKey) throw new Error('task.wake needs the installation master key');
-      await transition(db, task.id, 'attempting', { actor: 'system' });
-      try {
-        await executeWriteTask(db, task, ctx);
-        await transition(db, task.id, 'confirmed', { actor: 'system' });
-      } catch (err) {
-        await transition(db, task.id, 'failed', { actor: 'system', reason: safeTaskError(err) });
-      }
+      // rather than a wake that quietly did nothing. The shared runner does the
+      // rest: it re-checks the capability at the moment of writing, and records
+      // a task nothing can carry out as failed rather than leaving it sitting
+      // at "ready" forever (round-3 item 26).
+      await runWriteTaskNow(db, taskId, ctx);
       return;
     }
 
@@ -224,102 +210,6 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
   }
 }
 
-type WritableTask = Awaited<ReturnType<typeof getTask>>;
-
-function textSlot(task: WritableTask, key: string): string { return String(task.slots[key] ?? '').trim(); }
-function listSlot(task: WritableTask, key: string): string[] {
-  const value = task.slots[key]; return Array.isArray(value) ? value.map(String).map((v) => v.trim()).filter(Boolean).slice(0, 20) : [];
-}
-
-function mailAddress(value: string): string {
-  const clean = value.replace(/[\r\n]/g, '').trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) throw new Error('A valid email address is required.');
-  return clean;
-}
-
-function mailHeader(value: string): string { return value.replace(/[\r\n]+/g, ' ').trim(); }
-
-function googlePersonPath(value: string): string {
-  if (!/^people\/[A-Za-z0-9._-]+$/.test(value)) throw new Error('That Google contact identifier is not valid.');
-  return value;
-}
-
-async function taskWriteEnabled(db: Db, task: WritableTask): Promise<boolean> {
-  const family = task.template_key === 'send_message' ? 'mail' : task.template_key === 'schedule_appointment' ? 'calendar' : 'contacts';
-  const keys: Record<string, Record<WriteProvider, string>> = {
-    mail: { google: 'google.mail.send', microsoft: 'microsoft.mail.send' },
-    calendar: { google: 'google.calendar.write', microsoft: 'microsoft.calendar.write' },
-    contacts: { google: 'google.contacts.write', microsoft: 'microsoft.contacts.write' },
-  };
-  for (const provider of ['google', 'microsoft'] as WriteProvider[]) {
-    if ((await can(db, { ownerUserId: task.owner_user_id, capability: keys[family][provider] })).allowed) return true;
-  }
-  return false;
-}
-
-async function writeSession(db: Db, task: WritableTask, family: 'mail' | 'calendar' | 'contacts', ctx: WorkerContext) {
-  const keys: Record<typeof family, Record<WriteProvider, string>> = {
-    mail: { google: 'google.mail.send', microsoft: 'microsoft.mail.send' },
-    calendar: { google: 'google.calendar.write', microsoft: 'microsoft.calendar.write' },
-    contacts: { google: 'google.contacts.write', microsoft: 'microsoft.contacts.write' },
-  };
-  for (const provider of ['google', 'microsoft'] as WriteProvider[]) {
-    if (!(await can(db, { ownerUserId: task.owner_user_id, capability: keys[family][provider] })).allowed) continue;
-    const connection = await connectionFor(db, { ownerUserId: task.owner_user_id, provider }); if (!connection) continue;
-    const client = await loadClient(db, ctx.masterKey!, provider);
-    const accessToken = await accessTokenFor(db, ctx.masterKey!, { connection, client }, { fetchImpl: ctx.connectorFetch });
-    return { provider, accessToken };
-  }
-  throw new Error(`Enable ${family} write access on the Connections page first.`);
-}
-
-async function providerFetch(ctx: WorkerContext, url: string, accessToken: string, init: RequestInit) {
-  const response = await (ctx.connectorFetch ?? fetch)(url, { ...init, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) } });
-  if (!response.ok) throw new Error(`The connected provider refused the write (${response.status}).`);
-}
-
-async function executeWriteTask(db: Db, task: WritableTask, ctx: WorkerContext): Promise<void> {
-  if (task.template_key === 'send_message') {
-    const session = await writeSession(db, task, 'mail', ctx); const to = mailAddress(textSlot(task, 'recipient')); const cc = listSlot(task, 'cc').map(mailAddress);
-    const bodyText = textSlot(task, 'body') || textSlot(task, 'body_brief');
-    if (session.provider === 'google') {
-      const raw = [`To: ${to}`, ...(cc.length ? [`Cc: ${cc.join(', ')}`] : []), `Subject: ${mailHeader(textSlot(task, 'subject'))}`, 'Content-Type: text/plain; charset=utf-8', '', bodyText].join('\r\n');
-      await providerFetch(ctx, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', session.accessToken,
-        { method: 'POST', body: JSON.stringify({ raw: Buffer.from(raw).toString('base64url') }) });
-    } else await providerFetch(ctx, 'https://graph.microsoft.com/v1.0/me/sendMail', session.accessToken,
-      { method: 'POST', body: JSON.stringify({ message: { subject: textSlot(task, 'subject'), body: { contentType: 'Text', content: bodyText },
-        toRecipients: [{ emailAddress: { address: to } }], ccRecipients: cc.map((address) => ({ emailAddress: { address } })) } }) });
-    return;
-  }
-  if (task.template_key === 'schedule_appointment') {
-    const session = await writeSession(db, task, 'calendar', ctx); const eventId = textSlot(task, 'event_id');
-    const googleBody = { summary: textSlot(task, 'title'), description: textSlot(task, 'description'), location: textSlot(task, 'location'),
-      start: { dateTime: textSlot(task, 'start') }, end: { dateTime: textSlot(task, 'end') }, attendees: listSlot(task, 'attendees').map((email) => ({ email })) };
-    const graphBody = { subject: textSlot(task, 'title'), body: { contentType: 'Text', content: textSlot(task, 'description') }, location: { displayName: textSlot(task, 'location') },
-      start: { dateTime: textSlot(task, 'start'), timeZone: 'UTC' }, end: { dateTime: textSlot(task, 'end'), timeZone: 'UTC' },
-      attendees: listSlot(task, 'attendees').map((address) => ({ emailAddress: { address }, type: 'required' })) };
-    const url = session.provider === 'google'
-      ? `https://www.googleapis.com/calendar/v3/calendars/primary/events${eventId ? `/${encodeURIComponent(eventId)}` : ''}`
-      : `https://graph.microsoft.com/v1.0/me/events${eventId ? `/${encodeURIComponent(eventId)}` : ''}`;
-    await providerFetch(ctx, url, session.accessToken, { method: eventId ? 'PATCH' : 'POST', body: JSON.stringify(session.provider === 'google' ? googleBody : graphBody) }); return;
-  }
-  if (task.template_key === 'update_contact') {
-    const session = await writeSession(db, task, 'contacts', ctx); const contactId = textSlot(task, 'contact_id');
-    const url = session.provider === 'google'
-      ? contactId ? `https://people.googleapis.com/v1/${googlePersonPath(contactId)}:updateContact?updatePersonFields=names,emailAddresses,phoneNumbers,biographies` : 'https://people.googleapis.com/v1/people:createContact'
-      : `https://graph.microsoft.com/v1.0/me/contacts${contactId ? `/${encodeURIComponent(contactId)}` : ''}`;
-    const body = session.provider === 'google'
-      ? { names: [{ displayName: textSlot(task, 'name') }], emailAddresses: textSlot(task, 'email') ? [{ value: textSlot(task, 'email') }] : [], phoneNumbers: textSlot(task, 'phone') ? [{ value: textSlot(task, 'phone') }] : [], biographies: textSlot(task, 'notes') ? [{ value: textSlot(task, 'notes') }] : [] }
-      : { displayName: textSlot(task, 'name'), emailAddresses: textSlot(task, 'email') ? [{ address: textSlot(task, 'email'), name: textSlot(task, 'name') }] : [], businessPhones: textSlot(task, 'phone') ? [textSlot(task, 'phone')] : [], personalNotes: textSlot(task, 'notes') };
-    await providerFetch(ctx, url, session.accessToken, { method: contactId ? 'PATCH' : 'POST', body: JSON.stringify(body) }); return;
-  }
-  throw new Error('No executor exists for this task type.');
-}
-
-function safeTaskError(err: unknown): string {
-  const message = err instanceof Error ? err.message : 'The action failed.';
-  return message.slice(0, 300);
-}
 
 /** Deliver one due reminder.
  *

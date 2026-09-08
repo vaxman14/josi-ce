@@ -13,9 +13,12 @@
 // action, not the permission.
 import {
   ReminderError, cancelReminder, createReminder, createTask, enqueue, getTemplate, listRemindersFor,
-  listTasksFor, listTemplates, missingSlots, setSlots, transition,
+  listTasksFor, listTemplates, missingSlots, needsApproval, requestApproval, setSlots, transition,
   type Db,
 } from '@josi-ce/core';
+import {
+  otherPeopleInvolved, runWriteTaskNow, writeActionClassFor, writeFamilyFor, type WritableTask,
+} from '@josi-ce/connectors';
 import { citationLabel, folderSyncHealthFor, searchDocuments, type FolderSyncHealth } from '@josi-ce/storage';
 import { DATA_TOOL_FAMILY, executeDataTool, type ConnectorAccess } from './dataTools.js';
 import { executeCustomApiTool, isCustomApiTool } from './customApiTools.js';
@@ -83,8 +86,7 @@ export async function executeAssistantTool(
     case 'draft_contact_update': {
       const templateKey = name === 'draft_email' ? 'send_message' : name === 'draft_calendar_event' ? 'schedule_appointment' : 'update_contact';
       const task = await createTask(db, { ownerUserId: userId, templateKey, slots: input, threadId: ctx.threadId ?? undefined });
-      await transition(db, task.id, 'awaiting_approval', { actor: 'agent', actorUserId: userId });
-      return { ok: true, task_id: task.id, state: 'awaiting_approval', message: 'Prepared, but not carried out. Ask the user to approve this exact task before calling approve_task.' };
+      return authoriseAndRun(db, ctx, task);
     }
     case 'list_task_types': {
       const templates = await listTemplates(db);
@@ -153,8 +155,25 @@ export async function executeAssistantTool(
       const taskId = String(input.task_id ?? '');
       if (!(await ownTask(db, taskId, userId))) return NOT_YOURS;
       const t = await transition(db, taskId, 'ready', { actor: 'user', actorUserId: userId });
-      await enqueue(db, { kind: 'task.wake', payload: { taskId: t.id } });
-      return { ok: true, task_id: t.id, state: t.state };
+      // Item 26(6): `ready` is not an outcome. If this caller can reach the
+      // sealed credentials, carry it out and answer with what the provider
+      // said; otherwise hand it to the worker and say plainly that it has not
+      // happened. Either way the model is never left to describe `ready` as
+      // though the work were done.
+      const access = ctx.connectors;
+      if (!access || writeFamilyFor(t.template_key) === null) {
+        await enqueue(db, { kind: 'task.wake', payload: { taskId: t.id } });
+        return { ok: true, task_id: t.id, state: t.state, message: 'Queued. It has NOT happened yet — do not say it is done.' };
+      }
+      const outcome = await runWriteTaskNow(db, t.id, {
+        masterKey: access.masterKey(), connectorFetch: access.fetchImpl,
+      });
+      if (outcome.state === 'confirmed') return { ok: true, task_id: t.id, state: 'confirmed', message: 'Done — the provider accepted it.' };
+      return {
+        ok: false, task_id: t.id, state: outcome.state,
+        error: outcome.error ?? 'It did not happen.',
+        message: `This did NOT happen. Tell the user exactly this: ${outcome.error ?? 'It did not happen.'}`,
+      };
     }
 
     case 'cancel_task': {
@@ -407,4 +426,128 @@ async function ownTask(db: Db, taskId: string, userId: string): Promise<boolean>
     [taskId, userId],
   );
   return rows.length > 0;
+}
+
+// ------------------------------------------------- item 26: one authorisation
+
+/** What a person is being asked to agree to, in their own words.
+ *
+ * Written from the SLOTS, never from anything the model said about them. An
+ * approval card describing something other than what would actually be sent is
+ * worse than no card at all, because it collects a real agreement to a fiction.
+ */
+export function describeWriteTask(task: WritableTask): string {
+  const slot = (key: string) => String(task.slots[key] ?? '').trim();
+  const people = otherPeopleInvolved(task);
+  if (task.template_key === 'schedule_appointment') {
+    const when = slot('start');
+    const verb = slot('event_id') ? 'Change the calendar event to' : 'Create a calendar event';
+    return [
+      `${verb} “${slot('title') || 'Untitled'}”`,
+      when ? ` starting ${when}` : '',
+      slot('end') ? ` until ${slot('end')}` : '',
+      slot('location') ? ` at ${slot('location')}` : '',
+      people.length ? ` and invite ${people.join(', ')}` : '',
+      '.',
+    ].join('');
+  }
+  if (task.template_key === 'send_message') {
+    return `Send an email to ${slot('recipient') || 'nobody named'} with the subject “${slot('subject')}”.`;
+  }
+  return `${slot('contact_id') ? 'Update' : 'Create'} the contact “${slot('name')}”.`;
+}
+
+/** Is this an ordinary action the person can take for themselves alone?
+ *
+ * Item 26(1) lets a direct chat instruction stand as the authorisation, but
+ * only for a SELF-ONLY action. Anything that puts an invitation or a message in
+ * front of another human being is `invite_external` territory — always risky,
+ * never automatic — so it goes back through an approval no matter what the
+ * policy says. */
+function isSelfOnly(task: WritableTask): boolean {
+  return otherPeopleInvolved(task).length === 0;
+}
+
+/** Decide, once, what happens to a freshly drafted write task.
+ *
+ * THE WHOLE OF ITEM 26 IS THIS FUNCTION EXISTING.
+ *
+ * Before it, `draft_calendar_event` unconditionally parked the task at
+ * `awaiting_approval` and created no `approvals` row, so the Approvals page
+ * could not show it; the Tasks page then demanded a password and moved it to
+ * `ready`; and a worker was supposed to carry it out later. Three gates, none
+ * of which knew about the others, and a person who had said plainly what they
+ * wanted still ended up with no event.
+ *
+ * There is now exactly one question — does the owner's effective policy for
+ * this class of action require them to agree to this specific one? — and two
+ * answers:
+ *
+ *   * No: their instruction WAS the authorisation. Carry it out now and report
+ *     what the provider said. `confirmed` means the event exists.
+ *   * Yes: raise ONE approval, on the Approvals page and in the chat, and stop.
+ *     Nothing else is asked of them afterwards.
+ */
+async function authoriseAndRun(
+  db: Db,
+  ctx: ToolExecutionContext,
+  task: WritableTask,
+): Promise<unknown> {
+  const { userId } = ctx;
+  const actionClass = writeActionClassFor(task.template_key) ?? 'task_management';
+  // The action a policy is consulted about. Involving other people is its own
+  // named risk, and `isRiskyAction('invite_external')` is true, so this is what
+  // makes an invitation ask even under `automatic`.
+  const action = isSelfOnly(task) ? task.template_key : 'invite_external';
+  const summary = describeWriteTask(task);
+
+  if (await needsApproval(db, { userId, actionClass, action })) {
+    await transition(db, task.id, 'awaiting_approval', { actor: 'agent', actorUserId: userId });
+    const approval = await requestApproval(db, {
+      taskId: task.id,
+      ownerUserId: userId,
+      actionClass,
+      action,
+      summary,
+      // Pins the approval to these exact slots. Editing the task afterwards
+      // invalidates it rather than riding on an agreement to something else.
+      payload: task.slots,
+    });
+    return {
+      ok: true,
+      task_id: task.id,
+      approval_id: approval.id,
+      state: 'awaiting_approval',
+      summary,
+      message: 'Nothing has been created yet. It is waiting for the user to approve it — the card is in this conversation and on their Approvals page. Say that it is waiting for them; never say it is done.',
+    };
+  }
+
+  // Their own instruction is the authorisation, so the actor is the user.
+  await transition(db, task.id, 'ready', { actor: 'user', actorUserId: userId });
+
+  // No way to open sealed credentials from this caller (the MCP server without
+  // a master key, for instance). Hand it to the worker rather than pretending,
+  // and say plainly that it has not happened yet.
+  const access = ctx.connectors;
+  if (!access) {
+    await enqueue(db, { kind: 'task.wake', payload: { taskId: task.id } });
+    return {
+      ok: true, task_id: task.id, state: 'ready', summary,
+      message: 'Queued to be carried out. It has NOT happened yet — do not say it is done.',
+    };
+  }
+
+  const outcome = await runWriteTaskNow(db, task.id, {
+    masterKey: access.masterKey(), connectorFetch: access.fetchImpl,
+  });
+  if (outcome.state === 'confirmed') {
+    return { ok: true, task_id: task.id, state: 'confirmed', summary, message: `Done — the provider accepted it. ${summary}` };
+  }
+  // Item 26(4): the actual failure, not a cheerful state name.
+  return {
+    ok: false, task_id: task.id, state: outcome.state, summary,
+    error: outcome.error ?? 'It did not happen.',
+    message: `This did NOT happen. Tell the user exactly this: ${outcome.error ?? 'It did not happen.'}`,
+  };
 }

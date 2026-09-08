@@ -35,5 +35,10 @@ export * from './providers/calendar.js';
 export * from './providers/files.js';
 export * from './providers/webdav.js';
 export * from './storageSync.js';
+// Carrying a prepared write task out against the provider. Here rather than in
+// the worker because the worker is no longer its only caller: the request that
+// authorised the write runs it too, so a person is told what the provider
+// actually said instead of being handed a state and left to hope.
+export * from './writeTasks.js';
 export * from './contactSync.js';
 export * from './oauthClients.js';

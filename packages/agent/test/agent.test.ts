@@ -151,7 +151,11 @@ describe('capability gating', () => {
     const system = requests[0].messages[0].content;
     expect(system).not.toMatch(/not connected yet[^.]*calendar_write/i);
     expect(system).toMatch(/Calendar writing is connected/);
-    expect(system).toMatch(/call that tool now to prepare the approval/);
+    expect(system).toMatch(/call that tool now/);
+    // Round-3 item 26: the tool decides whether the instruction was already
+    // the authorisation, so the prompt must not let the model announce an
+    // outcome it has not been given.
+    expect(system).toMatch(/Report exactly what the tool answered/);
     expect(requests[0].tools.map((tool: any) => tool.function.name)).toContain('draft_calendar_event');
   });
 

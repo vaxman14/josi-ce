@@ -354,7 +354,23 @@ export function isRiskyAction(action: string): boolean {
  * action inside an otherwise routine class — adding a recipient to an email.
  * The class impact catches an action nobody thought to name: a new verb added
  * to `change_access` next year is asked about by default rather than by
- * somebody remembering to extend a list. */
+ * somebody remembering to extend a list.
+ *
+ * ROUND-3 ITEM 26: `risky_only` MEANS WHAT IT SAYS.
+ *
+ * The last line used to read `level !== 'automatic'`, which made `risky_only`
+ * behave identically to `always_ask` — the two floors above had already caught
+ * every risky action, so the level had nothing left to decide and asked about
+ * everything anyway. The setting a person reads as "Ask only for risky or
+ * destructive actions" therefore asked about all of them, which is both a lie
+ * on the Settings page and the reason a middle setting existed that nobody
+ * could tell apart from the strict one.
+ *
+ * The relaxation is narrow by construction: it only reaches a routine class
+ * with an action that is not named risky, and only for somebody who chose
+ * `risky_only` under an administrator ceiling that permits it — and the ceiling
+ * is `always_ask` on a fresh installation and can only be loosened by an
+ * explicitly confirmed act. */
 export async function needsApproval(
   db: Db,
   args: { userId: string; actionClass: string; action: string },
@@ -362,7 +378,7 @@ export async function needsApproval(
   if (isRiskyAction(args.action)) return true;
   if (isHighImpactClass(args.actionClass)) return true;
   const { level } = await getApprovalLevel(db, { userId: args.userId, actionClass: args.actionClass });
-  return level !== 'automatic';
+  return level === 'always_ask';
 }
 
 /** Binds an approval to exactly what was described.
