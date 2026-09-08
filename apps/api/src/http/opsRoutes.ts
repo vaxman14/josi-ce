@@ -195,6 +195,22 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const [policy] = await db.query<{ clamav_enabled: boolean; ocr_enabled: boolean }>(
         `select clamav_enabled, ocr_enabled from storage_policy where id = true`,
       );
+      // Custom API connections, as COUNTS. How many are defined, how many the
+      // assistant can actually reach, and how many individual actions are
+      // switched on — which is the number a supporter needs when somebody
+      // reports "Josi called our CRM" or "Josi will not call our CRM". Never a
+      // name, never a host, never a credential: a host is somebody's internal
+      // service and a bundle goes to a third party's ticket system.
+      const [customApis] = await db.query<{ total: number; live: number }>(
+        `select count(*)::int as total,
+                count(*) filter (where enabled)::int as live
+           from custom_api_connections`,
+      );
+      const [customApiActions] = await db.query<{ live: number }>(
+        `select count(*)::int as live
+           from custom_api_endpoints e join custom_api_connections c on c.id = e.connection_id
+          where e.enabled and c.enabled`,
+      );
 
       const built = buildBundle({
         version: process.env.JOSI_VERSION ?? '0.1.0',
@@ -208,10 +224,18 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           smtp: (smtp?.n ?? 0) > 0,
           clamav: policy?.clamav_enabled ?? false,
           ocr: policy?.ocr_enabled ?? false,
+          // WHETHER, never which. A boolean answers "could this installation
+          // have called an outside API?" without naming one.
+          custom_apis: (customApis?.live ?? 0) > 0,
         },
         migrations: [],
         logs: [],
-        counts: { users, threads, documents },
+        counts: {
+          users, threads, documents,
+          custom_apis: customApis?.total ?? 0,
+          custom_apis_enabled: customApis?.live ?? 0,
+          custom_api_actions_enabled: customApiActions?.live ?? 0,
+        },
       });
 
       const { id } = await recordBundle(db, {

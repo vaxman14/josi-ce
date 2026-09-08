@@ -33,6 +33,15 @@ import type { ToolSpec } from './tools.js';
 export interface ConnectorAccess {
   masterKey: () => MasterKey;
   fetchImpl?: typeof fetch;
+  /** HTTP for administrator-defined custom APIs. Its own seam rather than
+   * `fetchImpl`: that one answers as Google and Microsoft, and a stub that had
+   * to satisfy both would be asserting less about each. */
+  customApiFetch?: typeof fetch;
+  /** DNS, injected by the tests so no suite performs a lookup — and by the
+   * SSRF suite so it can answer with a hostile address. Unset in production.
+   * Only the custom API tools consult it: the OAuth providers below are pinned
+   * hosts that `validateEndpoint` never sees. */
+  resolve?: (hostname: string) => Promise<string[]>;
 }
 
 type Family = 'mail' | 'calendar' | 'contacts';

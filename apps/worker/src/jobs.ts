@@ -15,7 +15,7 @@ import {
   transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
-  accessTokenFor, can, connectionsWithCapability, dueCloudMappings, dueOrigins, loadClient,
+  accessTokenFor, can, connectionsWithCapability, dueCloudMappings, dueOrigins, expireCustomApiCalls, loadClient,
   markAttempted, markSyncScheduled, syncCloudMapping, syncOrigin,
 } from '@josi-ce/connectors';
 
@@ -81,6 +81,7 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
 
     case 'approvals.expire': {
       await expireApprovals(db);
+      await expireCustomApiCalls(db);
       return;
     }
 

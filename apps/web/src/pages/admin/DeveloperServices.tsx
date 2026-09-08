@@ -12,6 +12,7 @@
 // not want a tool they were never able to use. Permission and health are two
 // separate blocks on every card, and they are labelled as such.
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Badge, Button, CollapsibleCard, Empty, ErrorNote, Input } from '@/components/ui';
 
@@ -70,12 +71,21 @@ export function AdminDeveloperServices() {
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Developer services</h1>
+      <h1 className="text-xl font-semibold tracking-tight">Integrations</h1>
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+        More integrations are coming soon. Have a special request?{' '}
+        <a className="underline" href="mailto:roman@socalreceptionist.com">Email us at roman@socalreceptionist.com</a>.
+      </div>
       <p className="text-sm text-muted-foreground">
         Each person connects their own GitHub, Netlify, Vercel or Supabase account from their
         Workspace, with their own token. What you decide here is who is permitted to do that.
         You never enter a credential for anybody, and you cannot see one.
       </p>
+      <div className="rounded-lg border border-border p-3">
+        <p className="font-medium">Custom API</p>
+        <p className="mt-1 text-sm text-muted-foreground">Connect a REST API through an explicit endpoint allowlist. Read actions can run directly; write and delete actions require approval.</p>
+        <Link className="mt-2 inline-block text-sm underline" to="/admin/custom-apis">Manage Custom APIs</Link>
+      </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 

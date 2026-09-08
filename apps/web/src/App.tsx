@@ -32,6 +32,7 @@ import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
 import { AdminBackups } from '@/pages/admin/Backups';
 import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
+import { AdminCustomApis } from '@/pages/admin/CustomApis';
 import { AdminParentalControls } from '@/pages/admin/ParentalControls';
 import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
 import { AdminVoiceBox } from '@/pages/admin/VoiceBox';
@@ -173,7 +174,9 @@ export function App() {
         <Route path="telegram" element={<AdminTelegram />} />
         <Route path="backups" element={<AdminBackups />} />
         <Route path="vault" element={<AdminVault />} />
-        <Route path="developer-services" element={<AdminDeveloperServices />} />
+        <Route path="developer-services" element={<Navigate to="/admin/integrations" replace />} />
+        <Route path="integrations" element={<AdminDeveloperServices />} />
+        <Route path="custom-apis" element={<AdminCustomApis />} />
         <Route path="parental-controls" element={<AdminParentalControls />} />
         <Route path="launch" element={<AdminLaunchChecklist />} />
       </Route>
