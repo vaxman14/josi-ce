@@ -5,6 +5,9 @@
 # operator's chosen directory, starts Compose, and exits.
 FROM docker:29-cli
 
+ARG JOSI_VERSION=0.1.0
+ENV JOSI_VERSION=$JOSI_VERSION
+
 RUN apk add --no-cache bash openssl
 
 COPY docker-compose.release.yml /opt/josi-ce-release/docker-compose.yml
