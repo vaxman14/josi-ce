@@ -14,7 +14,6 @@ export const SETUP_STEPS = [
   'domain',
   'llm',
   'smtp',
-  'connectors',
   'security',
   'telemetry',
   'review',
@@ -62,8 +61,13 @@ export type TransitionVerdict =
  * re-openable, because a step that can be submitted twice is a consent that can
  * be flipped by a replayed request. Only the three steps that hold
  * configuration for an external service are revisable, and each of them
- * re-tests what it configures on the way through. */
-export const REVISABLE_STEPS: readonly SetupStep[] = ['llm', 'smtp', 'connectors'];
+ * re-tests what it configures on the way through.
+ *
+ * `connectors` was the third until Google and Microsoft left the wizard: an
+ * OAuth application cannot be registered before a public HTTPS domain exists,
+ * so the step could never be completed on the LAN-only installation every
+ * operator starts with. It lives in admin now. */
+export const REVISABLE_STEPS: readonly SetupStep[] = ['llm', 'smtp'];
 
 export function isRevisable(step: string): boolean {
   return (REVISABLE_STEPS as readonly string[]).includes(step);
@@ -131,12 +135,6 @@ export const STEP_DESCRIPTORS: Record<SetupStep, StepDescriptor> = {
     id: 'smtp',
     title: 'Email sending',
     summary: 'Two senders: system mail for invites and resets, and the address Josi writes from.',
-    skippable: true,
-  },
-  connectors: {
-    id: 'connectors',
-    title: 'Google and Microsoft',
-    summary: 'Optional. Your own OAuth applications, so Josi can be connected to calendars and mail later.',
     skippable: true,
   },
   security: {

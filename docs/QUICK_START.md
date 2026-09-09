@@ -17,22 +17,13 @@ Create a dedicated directory and run the temporary installer:
 ```bash
 mkdir -p ~/josi-ce && cd ~/josi-ce
 docker run --rm \
-  -e JOSI_APP_URL=http://localhost \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  romanvaxman/josi-ce-installer:0.1.2
+  ghcr.io/vaxman14/josi-ce-installer:0.1.0
 ```
 
 The installer writes the release files, generates owner-only secrets, starts
 the stack, and exits. It does not leave a Docker-socket controller running.
-
-The same image is also published on GHCR as
-`ghcr.io/vaxman14/josi-ce-installer:0.1.2`.
-
-The default output contains only installation milestones. Add `--verbose`
-after the image name when troubleshooting. For automatic public HTTPS, pass
-both `-e JOSI_DOMAIN=josi.example.com` and
-`-e JOSI_APP_URL=https://josi.example.com` before the volume arguments.
 
 For Docker Desktop on macOS, replace the socket source with
 `$HOME/.docker/run/docker.sock`. macOS is suitable for evaluation, not a

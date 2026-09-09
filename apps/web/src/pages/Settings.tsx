@@ -87,33 +87,6 @@ export function Settings() {
 
       <StepUpCard />
       <MfaCard />
-
-      <Card>
-        <CardTitle>License and source code</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Josi CE is free software licensed under the GNU AGPL v3 or later.
-          You can inspect the corresponding source code and legal notices for
-          this official release at the project repository.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-3 text-sm">
-          <a
-            className="font-medium text-primary underline underline-offset-4"
-            href="https://github.com/vaxman14/josi-ce"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Source code
-          </a>
-          <a
-            className="font-medium text-primary underline underline-offset-4"
-            href="https://github.com/vaxman14/josi-ce/blob/main/NOTICE"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Legal notices
-          </a>
-        </div>
-      </Card>
     </div>
   );
 }

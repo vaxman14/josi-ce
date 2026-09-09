@@ -1,22 +1,56 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, Empty, ErrorNote } from '@/components/ui';
-import { plain } from '@/lib/plainLanguage';
+// Channels: the ways you reach Josi that are not this web app.
+//
+// One sidebar entry, not one per transport. Telegram had a top-level item of
+// its own, which made the first channel look like a category — and would have
+// made the second one either a second top-level item or an inconsistency. The
+// package boundary in packages/channels already says these are instances of one
+// thing; the navigation says so too now.
+//
+// Each channel is the individual user's own. This page lists what exists and
+// sends you into that channel's own setup; it never configures anything itself,
+// and there is no installation-wide account here to configure.
+import { Link } from 'react-router-dom';
+import { Card, CardTitle } from '@/components/ui';
 
-type Provider = 'whatsapp' | 'slack' | 'signal';
-interface Channel { provider: Provider; enabled: boolean; configured: boolean; probeOk: boolean | null }
-interface Link { id: string; provider: Provider; status: string; linkedAt: string; lastInboundAt: string | null }
+interface ChannelEntry {
+  id: string;
+  label: string;
+  to: string;
+  summary: string;
+}
+
+/** The channels this build actually has. A transport is added here when it can
+ * be set up, not when work on it starts — a row that leads to nothing is the
+ * same broken promise as a disabled button. */
+const CHANNELS: ChannelEntry[] = [
+  {
+    id: 'telegram',
+    label: 'Telegram',
+    to: '/app/channels/telegram',
+    summary:
+      'Message Josi from Telegram. You link your own Telegram account, and only messages from '
+      + 'the chat you linked are treated as yours.',
+  },
+];
 
 export function Channels() {
-  const [channels, setChannels] = useState<Channel[]>([]); const [links, setLinks] = useState<Link[]>([]);
-  const [instruction, setInstruction] = useState(''); const [error, setError] = useState('');
-  const load = useCallback(async () => { const r = await api.get<{ channels: Channel[]; links: Link[] }>('/channels'); setChannels(r.channels); setLinks(r.links); }, []);
-  useEffect(() => { void load().catch((e) => setError(e instanceof Error ? e.message : 'Could not load channels')); }, [load]);
-  async function mint(provider: Provider) { try { setError(''); const r = await api.post<{ instruction: string }>(`/channels/${provider}/link-code`); setInstruction(r.instruction); } catch (e) { setError(e instanceof Error ? e.message : 'Could not create a link code'); } }
-  return <div className="mx-auto max-w-3xl space-y-4">
-    <div><h1 className="text-xl font-semibold">Messaging channels</h1><p className="text-sm text-muted-foreground">Talk to the same Josi conversation from another app.</p></div>
-    {error ? <ErrorNote>{error}</ErrorNote> : null}{instruction ? <Card><CardTitle>One-time link code</CardTitle><p className="break-all text-sm">{instruction}</p><p className="mt-2 text-xs text-muted-foreground">Expires in 10 minutes and works once.</p></Card> : null}
-    <div className="grid gap-3 sm:grid-cols-3">{channels.map((c) => <Card key={c.provider}><CardTitle>{c.provider === 'whatsapp' ? 'WhatsApp' : c.provider === 'slack' ? 'Slack' : 'Signal'}</CardTitle><div className="mb-3 flex gap-2"><Badge tone={c.enabled ? 'ok' : 'muted'}>{c.enabled ? 'Available' : 'Off'}</Badge></div><Button disabled={!c.enabled} onClick={() => void mint(c.provider)}>Create link code</Button></Card>)}</div>
-    <Card><CardTitle>Your linked identities</CardTitle>{links.length ? <ul className="space-y-2">{links.map((l) => <li key={l.id} className="flex items-center justify-between gap-2 border-b border-border py-2"><span className="text-sm">{plain('external_channel', l.provider)} · linked {new Date(l.linkedAt).toLocaleDateString()}</span><Button variant="secondary" onClick={() => void api.del(`/channels/links/${l.id}`).then(load)}>Disconnect</Button></li>)}</ul> : <Empty title="No external channels linked" />}</Card>
-  </div>;
+  return (
+    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
+      <h1 className="text-xl font-semibold tracking-tight">Channels</h1>
+      <p className="text-sm text-muted-foreground">
+        Ways to reach Josi other than this app. Each one is yours: you set it up, you can undo it,
+        and an administrator cannot read what you send through it.
+      </p>
+
+      {CHANNELS.map((channel) => (
+        <Card key={channel.id}>
+          <Link to={channel.to} className="block min-h-11">
+            <CardTitle>{channel.label}</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">{channel.summary}</p>
+            <span className="mt-2 inline-block text-sm underline">Set up {channel.label}</span>
+          </Link>
+        </Card>
+      ))}
+    </div>
+  );
 }

@@ -45,20 +45,10 @@ describe('the worker drains the queue', () => {
     expect((await processQueue(db, 'w1')).failed).toBe(1);
   });
 
-  it('fails a ready task that nothing can carry out, naming the switch to turn on', async () => {
-    // ROUND-3 ITEM 26(6). This test used to assert the opposite: that the task
-    // was LEFT at `ready`. That was right while Phase 5 shipped no executors at
-    // all — a failure would have read, to the person waiting, like Josi tried
-    // and could not.
-    //
-    // Executors exist now, so the two cases are no longer the same one. A task
-    // sitting at `ready` because email sending is switched off is not waiting
-    // for anything; it is never going to happen, and the Tasks page rendered
-    // that as "Ready to go" — the wording of the last step before success. That
-    // is how Roman ended up watching a calendar event that was never coming.
-    //
-    // So it fails, the reason names the switch, and `failed → ready` is a legal
-    // transition, so turning the switch on and retrying still works.
+  it('leaves a ready task alone when nothing can carry it out yet', async () => {
+    // Phase 5 ships no executors. The honest behaviour is to wait, not to fail
+    // — a failed task reads, to the person waiting, like Josi tried and could
+    // not.
     const task = await createTask(db, {
       ownerUserId: owner, templateKey: 'send_message',
       slots: { recipient: 'a@b.test', subject: 's', body_brief: 'b' },
@@ -70,10 +60,8 @@ describe('the worker drains the queue', () => {
     const [row] = await db.query<{ state: string; fail_reason: string | null }>(
       `select state, fail_reason from tasks where id = $1`, [task.id],
     );
-    expect(row.state).toBe('failed');
-    expect(row.fail_reason).toMatch(/email sending is not switched on/);
-    // And it says where to fix it, rather than only that it did not work.
-    expect(row.fail_reason).toMatch(/Connections/);
+    expect(row.state).toBe('ready');
+    expect(row.fail_reason).toBeNull();
   });
 
   it('expires holds on schedule', async () => {

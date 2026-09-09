@@ -7,7 +7,6 @@
 //
 //   node scripts/stamp-edition.mjs --edition hosted --build-id "$(git rev-parse --short HEAD)"
 //   node scripts/stamp-edition.mjs --release-key "$(cat release-signing.pub.b64)"
-//   node scripts/stamp-edition.mjs --entitlement-key "$(cat licensing.pub.b64)"
 //
 // Refuses an unrecognised edition rather than writing it. `edition.ts` also
 // fails closed on an unrecognised stamp, but a build that was meant to be
@@ -46,33 +45,24 @@ if (!/^[A-Za-z0-9._-]{1,64}$/.test(buildId)) {
 
 // Empty string and the literal "none" both mean "no key", so a Dockerfile can
 // pass an unset build arg through without special-casing it.
-const rawKey = arg('release-key', '');
-let releaseKey = 'null';
-if (rawKey && rawKey !== 'none') {
+function publicKeyArg(name) {
+  const raw = arg(name, '');
+  if (!raw || raw === 'none') return 'null';
   // A raw Ed25519 public key is 32 bytes: 44 base64 characters with padding.
-  if (!/^[A-Za-z0-9+/]{43}=$/.test(rawKey)) {
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(raw)) {
     console.error(
-      'stamp-edition: --release-key must be a base64 raw Ed25519 public key (32 bytes)',
+      `stamp-edition: --${name} must be a base64 raw Ed25519 public key (32 bytes)`,
     );
     process.exit(2);
   }
-  releaseKey = JSON.stringify(rawKey);
+  return JSON.stringify(raw);
 }
 
-// The publisher's licensing key. Same rules and the same reasoning as the
-// release key above: absent means paid-module licences cannot be checked at
-// all, which is the truthful state for a build the publisher did not make.
-const rawEntitlementKey = arg('entitlement-key', '');
-let entitlementKey = 'null';
-if (rawEntitlementKey && rawEntitlementKey !== 'none') {
-  if (!/^[A-Za-z0-9+/]{43}=$/.test(rawEntitlementKey)) {
-    console.error(
-      'stamp-edition: --entitlement-key must be a base64 raw Ed25519 public key (32 bytes)',
-    );
-    process.exit(2);
-  }
-  entitlementKey = JSON.stringify(rawEntitlementKey);
-}
+const releaseKey = publicKeyArg('release-key');
+// Separate from the release key on purpose: different authorities over
+// different things. A build that can verify a release is not thereby entitled
+// to decide what is licensed.
+const licenceKey = publicKeyArg('licence-key');
 
 // Preserve the file's prose and rewrite only the three values, so the reasoning
 // at the top of buildStamp.ts survives every rebuild.
@@ -84,8 +74,8 @@ let out = original
     `export const BUILD_RELEASE_PUBLIC_KEY: string | null = ${releaseKey};`,
   )
   .replace(
-    /export const BUILD_ENTITLEMENT_PUBLIC_KEY: string \| null = [^;]*;/,
-    `export const BUILD_ENTITLEMENT_PUBLIC_KEY: string | null = ${entitlementKey};`,
+    /export const BUILD_LICENCE_PUBLIC_KEY: string \| null = [^;]*;/,
+    `export const BUILD_LICENCE_PUBLIC_KEY: string | null = ${licenceKey};`,
   )
   .replace(/export const BUILD_ID = '[^']*';/, `export const BUILD_ID = '${buildId}';`);
 
@@ -95,7 +85,7 @@ let out = original
 for (const [what, needle] of [
   ['edition', `export const BUILD_EDITION = '${edition}';`],
   ['release key', `export const BUILD_RELEASE_PUBLIC_KEY: string | null = ${releaseKey};`],
-  ['entitlement key', `export const BUILD_ENTITLEMENT_PUBLIC_KEY: string | null = ${entitlementKey};`],
+  ['licence key', `export const BUILD_LICENCE_PUBLIC_KEY: string | null = ${licenceKey};`],
   ['build id', `export const BUILD_ID = '${buildId}';`],
 ]) {
   if (!out.includes(needle)) {
@@ -106,6 +96,7 @@ for (const [what, needle] of [
 
 writeFileSync(TARGET, out);
 console.log(
-  `stamped edition=${edition} build-id=${buildId} release-key=${releaseKey === 'null' ? 'none' : 'set'}`
-    + ` entitlement-key=${entitlementKey === 'null' ? 'none' : 'set'}`,
+  `stamped edition=${edition} build-id=${buildId} `
+  + `release-key=${releaseKey === 'null' ? 'none' : 'set'} `
+  + `licence-key=${licenceKey === 'null' ? 'none' : 'set'}`,
 );

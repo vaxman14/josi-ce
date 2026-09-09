@@ -3,7 +3,6 @@
 // Reminders live here too (round-2 item 13): anything the assistant schedules
 // must be visible and cancellable in the product, not trapped in chat.
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api, type Reminder, type Task, type TaskType } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
 import { plain } from '@/lib/plainLanguage';
@@ -23,6 +22,7 @@ export function Tasks() {
   const [upcoming, setUpcoming] = useState<Reminder[]>([]);
   const [recent, setRecent] = useState<Reminder[]>([]);
   const [reminderError, setReminderError] = useState('');
+  const [approvalPassword, setApprovalPassword] = useState('');
 
   const load = () =>
     api.get<{ tasks: Task[] }>('/assistant/tasks').then((r) => setTasks(r.tasks)).catch(() => undefined);
@@ -49,6 +49,14 @@ export function Tasks() {
     } catch (err) {
       setReminderError(err instanceof Error ? err.message : 'Could not cancel that reminder');
     }
+  }
+
+  async function approveTask(id: string) {
+    setError(''); try {
+      await api.post('/assistant/step-up', { password: approvalPassword });
+      await api.patch(`/assistant/tasks/${id}`, { state: 'ready' }); setApprovalPassword(''); await load();
+    }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not approve that task'); }
   }
 
   const selected = types.find((t) => t.key === templateKey);
@@ -178,21 +186,9 @@ export function Tasks() {
                     ))}
                   </dl>
                 ) : null}
-                {/* ROUND-3 ITEM 26(5): THIS PAGE IS A RECORD, NOT A SECOND GATE.
-                    There used to be a password box and an "Approve and carry
-                    out" button right here — a third place to agree to
-                    something, after the chat said it was waiting and the
-                    Approvals page could not show it at all. Approving happens
-                    in exactly one place now; this says where. */}
                 {task.state === 'awaiting_approval' ? (
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    Waiting for you to approve it on the{' '}
-                    <Link to="/approvals" className="underline">Approvals page</Link>. Nothing has happened yet.
-                  </p>
-                ) : null}
-                {task.state === 'failed' && task.fail_reason ? (
-                  // The real reason, not a state name. Item 26(4).
-                  <p className="mt-3 break-words text-sm text-destructive">{task.fail_reason}</p>
+                  <div className="mt-3 space-y-2"><Input type="password" autoComplete="current-password" placeholder="Confirm your password" value={approvalPassword} onChange={(e) => setApprovalPassword(e.target.value)} />
+                    <Button disabled={!approvalPassword} onClick={() => void approveTask(task.id)}>Approve and carry out</Button></div>
                 ) : null}
               </Card>
             </li>

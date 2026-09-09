@@ -25,15 +25,6 @@ export interface Vocabulary {
 }
 
 export const VOCABULARIES: Record<string, Vocabulary> = {
-  backup_state: {
-    source: { migrationTable: 'backups', column: 'state' },
-    labels: { running: 'In progress', complete: 'Ready', failed: 'Failed' },
-  },
-  external_channel: {
-    source: { literal: ['whatsapp', 'slack', 'signal'] },
-    labels: { whatsapp: 'WhatsApp', slack: 'Slack', signal: 'Signal' },
-  },
-
   connection_status: {
     source: { migrationTable: 'connections', column: 'status' },
     labels: {
@@ -74,9 +65,9 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     source: {
       literal: [
         'openai', 'anthropic', 'xai', 'openai_compatible',
+        'deepseek', 'qwen', 'mistral', 'moonshot', 'zhipu', 'openrouter', 'minimax',
+        'gemini', 'cohere', 'bedrock', 'azure_ai', 'vertex_ai', 'ernie', 'hunyuan',
         'openai_subscription', 'anthropic_subscription',
-        'gemini', 'deepseek', 'qwen', 'mistral', 'kimi', 'zhipu', 'cohere',
-        'openrouter', 'minimax', 'baidu', 'hunyuan', 'azure_openai', 'aws_bedrock', 'vertex_ai',
       ],
     },
     labels: {
@@ -84,39 +75,46 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
       anthropic: 'Anthropic',
       xai: 'xAI',
       openai_compatible: 'Your own server',
-      openai_subscription: 'Your ChatGPT plan',
-      anthropic_subscription: 'Your Claude plan',
-      gemini: 'Google Gemini',
       deepseek: 'DeepSeek',
       qwen: 'Alibaba Qwen',
       mistral: 'Mistral',
-      kimi: 'Moonshot Kimi',
+      moonshot: 'Moonshot (Kimi)',
       zhipu: 'Zhipu GLM',
-      cohere: 'Cohere',
       openrouter: 'OpenRouter',
       minimax: 'MiniMax',
-      baidu: 'Baidu ERNIE',
-      hunyuan: 'Tencent Hunyuan',
-      azure_openai: 'Azure AI',
-      aws_bedrock: 'AWS Bedrock',
+      gemini: 'Google Gemini',
+      cohere: 'Cohere',
+      bedrock: 'AWS Bedrock',
+      azure_ai: 'Azure AI',
       vertex_ai: 'Google Vertex AI',
+      ernie: 'Baidu ERNIE',
+      hunyuan: 'Tencent Hunyuan',
+      openai_subscription: 'Your ChatGPT plan',
+      anthropic_subscription: 'Your Claude plan',
     },
     detail: {
-      gemini: 'Uses Google’s native Gemini API and its own capability test before activation.',
-      deepseek: 'Connects to DeepSeek through its documented OpenAI-compatible API.',
-      qwen: 'Connects to Alibaba Qwen through its documented compatible endpoint.',
-      mistral: 'Connects to Mistral’s hosted model API.',
-      kimi: 'Connects to Moonshot AI’s Kimi API.',
-      zhipu: 'Connects to Zhipu AI’s GLM API.',
-      cohere: 'Uses Cohere’s native Chat v2 API.',
-      openrouter: 'Routes requests through OpenRouter to a model selected by the administrator.',
-      minimax: 'Connects to MiniMax through its documented compatible endpoint.',
-      baidu: 'Uses an administrator-supplied Baidu deployment endpoint.',
-      hunyuan: 'Uses an administrator-supplied Tencent Hunyuan deployment endpoint.',
-      azure_openai: 'Uses the Azure deployment and API version configured by the administrator.',
-      aws_bedrock: 'Uses the AWS Bedrock deployment endpoint configured by the administrator.',
-      vertex_ai: 'Uses the Google Vertex AI deployment endpoint configured by the administrator.',
       openai_compatible: 'A model running on hardware you control. Nothing leaves this server for it.',
+      // Where the request actually lands, for the providers where that is not
+      // obvious from the name. Somebody choosing a model provider is choosing a
+      // jurisdiction as much as a vendor, and the screen should say so.
+      deepseek: 'Processed by DeepSeek on infrastructure in China.',
+      qwen: 'Processed by Alibaba Cloud. Which region depends on the endpoint you set.',
+      mistral: 'Processed by Mistral AI in the EU.',
+      moonshot: 'Processed by Moonshot AI. Which region depends on the endpoint you set.',
+      zhipu: 'Processed by Zhipu AI on infrastructure in China.',
+      openrouter:
+        'A broker rather than the model\'s operator. Each request is forwarded to whichever '
+        + 'upstream provider serves the model you picked, and that provider\'s terms apply too.',
+      minimax: 'Processed by MiniMax. Which region depends on the endpoint you set.',
+      gemini:
+        'Processed by Google under the Gemini API terms. The free tier is used to improve Google\'s '
+        + 'products; a paid tier is not.',
+      cohere: 'Processed by Cohere.',
+      bedrock: 'Processed inside your own AWS account, in the region you chose.',
+      azure_ai: 'Processed inside your own Azure resource, in its region.',
+      vertex_ai: 'Processed inside your own Google Cloud project, in the region you chose.',
+      ernie: 'Processed by Baidu on infrastructure in China.',
+      hunyuan: 'Processed by Tencent Cloud on infrastructure in China.',
       openai_subscription:
         'Runs OpenAI\'s own Codex CLI, signed in as you. Shared across this installation, and it '
         + 'reports no cost, so every usage figure on this path is an estimate.',
@@ -181,11 +179,7 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     labels: {
       drafting: 'Being worked out',
       awaiting_approval: 'Waiting for you',
-      // ROUND-3 ITEM 26(6). This said "Ready to go", which reads as the last
-      // step before success — and for a task nothing could carry out it was
-      // the last step there would ever be. "Queued to run" says what is
-      // actually true: it has not happened.
-      ready: 'Queued to run',
+      ready: 'Ready to go',
       attempting: 'In progress',
       held: 'Holding',
       awaiting_owner: 'Waiting for you',
@@ -268,244 +262,6 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     labels: {
       active: 'Linked',
       revoked: 'Unlinked',
-    },
-  },
-
-  custom_api_status: {
-    source: { migrationTable: 'custom_api_connections', column: 'status' },
-    labels: {
-      unverified: 'Not tested yet',
-      active: 'Working',
-      needs_attention: 'Needs attention',
-    },
-    detail: {
-      unverified:
-        'Nobody has asked this API whether it accepts the stored credential. Josi will not offer it '
-        + 'to the assistant until a test succeeds.',
-      needs_attention:
-        'The last request to this API did not succeed. If the credential was refused, Josi has also '
-        + 'switched the connection off until a test succeeds again.',
-    },
-  },
-
-  custom_api_capability: {
-    source: { migrationTable: 'custom_api_endpoints', column: 'capability' },
-    labels: {
-      read: 'Reads only',
-      write: 'Changes something',
-      delete: 'Deletes something',
-    },
-    detail: {
-      read: 'Josi may do this on its own. Nothing at the other end is changed.',
-      write: 'Josi prepares it and you are shown exactly what would be sent before anything happens.',
-      delete: 'Josi prepares it and you are shown exactly what would be sent before anything happens.',
-    },
-  },
-
-  custom_api_endpoint_source: {
-    source: { migrationTable: 'custom_api_endpoints', column: 'source' },
-    labels: {
-      manual: 'Added by hand',
-      openapi: 'Imported from a specification',
-    },
-  },
-
-  mcp_server_status: {
-    source: { migrationTable: 'mcp_servers', column: 'status' },
-    labels: {
-      unverified: 'Not connected yet',
-      active: 'Working',
-      needs_attention: 'Needs attention',
-    },
-    detail: {
-      unverified:
-        'Nobody has contacted this server yet, so nothing is known about it. Josi will not offer '
-        + 'its tools until a connection succeeds.',
-      needs_attention:
-        'The last exchange with this server did not succeed. If it refused the credential, Josi has '
-        + 'also switched the server off until a connection succeeds again.',
-    },
-  },
-
-  mcp_tool_state: {
-    source: { migrationTable: 'mcp_server_tools', column: 'state' },
-    labels: {
-      new: 'Waiting for you to decide',
-      approved: 'Switched on',
-      revoked: 'Switched off by you',
-      changed: 'Changed since you approved it',
-    },
-    detail: {
-      new: 'Josi found this tool on the server. It is not switched on and the assistant has not '
-        + 'been told it exists.',
-      changed: 'The server altered this tool\'s name, description or inputs after you approved it, '
-        + 'so Josi took it off the list. Read the new version and decide again.',
-    },
-  },
-
-  mcp_approval_mode: {
-    source: { migrationTable: 'mcp_server_tools', column: 'approval_mode' },
-    labels: {
-      ask: 'Asks you every time',
-      auto: 'Runs on its own',
-    },
-    detail: {
-      ask: 'When the assistant wants to use this, it stops and shows you exactly what would be '
-        + 'sent. Nothing happens until you agree.',
-      auto: 'The assistant may use this without asking. Only choose it for a tool you are sure '
-        + 'only reads.',
-    },
-  },
-
-  mcp_call_status: {
-    source: { migrationTable: 'mcp_pending_calls', column: 'status' },
-    labels: {
-      pending: 'Waiting for you',
-      approved: 'Approved',
-      denied: 'Declined',
-      expired: 'Expired',
-      executed: 'Run',
-      failed: 'Did not go through',
-    },
-    detail: {
-      expired: 'Nobody answered in time. Ask Josi again and it will prepare a fresh request.',
-      failed: 'The server was asked and the tool did not succeed. Nothing else was sent.',
-    },
-  },
-
-  skill_state: {
-    source: { migrationTable: 'skills', column: 'state' },
-    labels: {
-      review: 'Waiting to be read',
-      enabled: 'Switched on',
-      disabled: 'Switched off',
-    },
-    detail: {
-      review: 'This is installed and doing nothing at all. Josi will not put instructions in front '
-        + 'of the assistant until somebody here has read them and switched it on.',
-      disabled: 'It has been read, and it is off. Switching it back on needs no second review '
-        + 'unless the skill has changed since.',
-    },
-  },
-
-  skill_signature: {
-    source: { migrationTable: 'skills', column: 'signature_state' },
-    labels: {
-      builtin: 'Included with Josi',
-      verified: 'Signature checked',
-      unverified: 'Signed, but not checkable',
-      unsigned: 'Not signed',
-    },
-    detail: {
-      builtin: 'This came with the Josi release itself, so its integrity is the release\u2019s.',
-      verified: 'The package was signed and the signature matched the key registered for the '
-        + 'source it came from.',
-      unverified: 'The package carries a signature, but no signing key is registered for that '
-        + 'source, so nobody here could check who wrote it. Add the key on the source if the '
-        + 'publisher gives you one.',
-      unsigned: 'The package is not signed. Josi checked that it matches the digest its catalogue '
-        + 'pinned, which catches a package changing under you \u2014 not who wrote it.',
-    },
-  },
-
-  skill_source_kind: {
-    source: { migrationTable: 'skill_sources', column: 'kind' },
-    labels: {
-      builtin: 'Included with Josi',
-      registry: 'Curated registry',
-      repository: 'A repository you added',
-    },
-    detail: {
-      builtin: 'The starter catalogue that ships in the release. Nothing from it is installed '
-        + 'until somebody installs it.',
-    },
-  },
-
-  skill_quarantine_reason: {
-    source: { migrationTable: 'skill_quarantine', column: 'reason' },
-    labels: {
-      schema_invalid: 'Not a valid skill package',
-      digest_mismatch: 'Not the package the catalogue promised',
-      signature_missing: 'Should have been signed and was not',
-      signature_invalid: 'The signature did not match',
-      capability_unknown: 'Asks for something Josi cannot do',
-      instruction_injection: 'Its text tries to override Josi\u2019s own rules',
-      too_large: 'Bigger than Josi will read',
-    },
-    detail: {
-      digest_mismatch: 'The catalogue pinned one package and the address served another. That is '
-        + 'either a stale catalogue or somebody serving two different things, and Josi cannot tell '
-        + 'which.',
-      instruction_injection: 'A skill is a runbook for a person to read as well as the assistant. '
-        + 'This one was written to the model \u2014 telling it to disregard its rules, to act '
-        + 'without asking, or to keep something from you.',
-    },
-  },
-
-  skill_history_action: {
-    source: { migrationTable: 'skill_history', column: 'action' },
-    labels: {
-      installed: 'Installed',
-      updated: 'Updated to a new version',
-      reviewed: 'Read and approved',
-      enabled: 'Switched on',
-      disabled: 'Switched off',
-      update_checked: 'Checked for a newer version',
-    },
-  },
-
-  // Parental Controls. Both lists are TypeScript unions rather than database
-  // columns — `module_entitlements` stores dates and a token and derives its
-  // state, and an access decision is computed per request — so they are
-  // literal here and the test asserts the sentences rather than the schema.
-  entitlement_state: {
-    source: { literal: ['absent', 'active', 'expired', 'revoked', 'wrong_installation'] },
-    labels: {
-      absent: 'Not switched on',
-      active: 'Switched on',
-      expired: 'The licence has run out',
-      revoked: 'Switched off here',
-      wrong_installation: 'Issued to a different installation',
-    },
-    detail: {
-      absent: 'Nobody has activated a licence for this module, so it is not part of this installation.',
-      expired: 'The module stopped working when the licence expired. Nothing was deleted.',
-      revoked: 'An administrator switched this off. Families keep their accounts; the controls simply stop applying.',
-      wrong_installation:
-        'This licence names a different installation of Josi. That usually means a database was restored '
-        + 'onto another machine — ask the publisher to reissue it for this one.',
-    },
-  },
-
-  child_access: {
-    source: { literal: ['allowed', 'outside_schedule', 'daily_limit', 'not_managed', 'module_inert'] },
-    labels: {
-      allowed: 'Josi is available now',
-      outside_schedule: 'Outside the agreed hours',
-      daily_limit: 'Today’s time is used up',
-      not_managed: 'Not a managed account',
-      module_inert: 'Parental Controls is not active here',
-    },
-    detail: {
-      outside_schedule: 'Josi will answer again at the next time in the timetable.',
-      daily_limit: 'The daily limit has been reached. It starts again tomorrow, in this account’s own timezone.',
-      module_inert: 'Without a licence the hours and limits do not apply and nobody can see these conversations.',
-    },
-  },
-
-  custom_api_call_status: {
-    source: { migrationTable: 'custom_api_pending_calls', column: 'status' },
-    labels: {
-      pending: 'Waiting for you',
-      approved: 'Approved',
-      denied: 'Declined',
-      expired: 'Expired',
-      executed: 'Sent',
-      failed: 'Did not go through',
-    },
-    detail: {
-      expired: 'Nobody answered in time. Ask Josi again and it will prepare a fresh request.',
-      failed: 'The API was asked and did not accept the request. Nothing was changed by Josi.',
     },
   },
 };

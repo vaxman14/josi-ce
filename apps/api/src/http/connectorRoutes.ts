@@ -26,6 +26,7 @@ import {
 import { openSealed } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
+import { publicHttpsBase } from '../setup/setupRoutes.js';
 
 export interface ConnectorRoutesCtx {
   db: Db;
@@ -522,12 +523,31 @@ export function adminConnectorRoutes(ctx: ConnectorRoutesCtx): Router {
     '/',
     handle(async (_req, res) => {
       const appUrl = await publicAppUrl(db, ctx.appUrl);
+      // Google and Microsoft only accept an HTTPS redirect on a real domain
+      // name. This used to be discovered inside the setup wizard, which offered
+      // the registration as step 6 on installations that could never complete
+      // it; the wizard no longer asks, and this page is where the answer
+      // belongs. A base means an application can be registered right now.
+      const httpsBase = await publicHttpsBase(db);
       const policy = await db.query<{ capability: string; allowed: boolean; note: string | null }>(
         `select capability, allowed, note from admin_capability_policy`,
       );
       const byKey = new Map(policy.map((p) => [p.capability, p]));
       return res.json({
         clients: await clientStatuses(db),
+        // Whether an OAuth application can be registered at all yet, and why
+        // not. The page draws no credential fields while this is false rather
+        // than offering a form whose result no provider would accept.
+        registration: {
+          available: !!httpsBase,
+          publicHttpsBase: httpsBase,
+          reason: httpsBase
+            ? null
+            : 'Google and Microsoft only accept an HTTPS redirect on a real domain name. This '
+              + 'installation is reachable only on your network, so there is nothing to register '
+              + 'yet. Set a public domain and this becomes available without reinstalling '
+              + 'anything.',
+        },
         // Every capability with whether it is permitted installation-wide.
         // There is no "granted" here, only "allowed" — the shape itself says
         // this can deny and cannot bestow.

@@ -51,6 +51,18 @@ function llmSources(dir = join(ROOT, 'packages/llm/src'), out: string[] = []): s
   return out;
 }
 
+/** The files that make up the Anthropic path.
+ *
+ * Kept as a derived list rather than a hardcoded one so a new Claude file is
+ * covered the day it is added. The emptiness check below is the point: a rename
+ * that stopped matching would otherwise turn the strictest assertion in this
+ * file into a loop over nothing, and it would still be green. */
+function anthropicSources(): string[] {
+  const files = llmSources().filter((f) => /anthropic|claude/i.test(f));
+  expect(files.length, 'the Anthropic path must be findable by name').toBeGreaterThanOrEqual(3);
+  return files;
+}
+
 describe('it delegates to the documented CLI and nothing else (L3.2)', () => {
   it('runs the exact non-interactive form OpenAI documents', () => {
     expect(codexArgs('gpt-5-codex')).toEqual([
@@ -423,12 +435,25 @@ describe('the Anthropic path runs the first-party CLI and nothing else (L3.5)', 
     for (const file of llmSources()) {
       const text = readFileSync(file, 'utf8');
       // No OAuth of Josi's own: no client id, no redirect handler, no token
-      // exchange. The URL Josi shows is the one the CLI printed.
+      // exchange. The URL Josi shows is the one the CLI printed. These two are
+      // Anthropic's own strings, so they are checked everywhere — a Claude
+      // sign-in smuggled into an unrelated file is still a Claude sign-in.
       expect(text, file).not.toMatch(/claude\.ai\/oauth|console\.anthropic\.com\/oauth/);
-      expect(text, file).not.toMatch(/client_secret|code_verifier|refresh_token/);
       // The Agent SDK is the path Anthropic distinguishes from shipping the
       // CLI. Josi ships the CLI.
       expect(text, file).not.toMatch(/claude-agent-sdk|@anthropic-ai\/sdk/);
+    }
+
+    // The OAuth token-exchange parameter names are NOT Anthropic's — they are
+    // RFC 6749's, and other vendors ask for them by the same names. Baidu's
+    // Qianfan token endpoint takes `client_secret`, so scanning every provider
+    // for that word stopped meaning "Josi implements Claude login" the moment a
+    // provider with ordinary vendor OAuth was added. Scoped to the Anthropic
+    // path, where it still means exactly that.
+    const anthropicPath = anthropicSources();
+    for (const file of anthropicPath) {
+      const text = readFileSync(file, 'utf8');
+      expect(text, file).not.toMatch(/client_secret|code_verifier|refresh_token/);
     }
   });
 

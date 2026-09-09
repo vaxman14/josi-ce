@@ -1,14 +1,24 @@
-import { useState } from 'react';
+// Backups and portable exports.
+//
+// The archives existed before this screen did: the routes could create one and
+// list it, and the operator had no way to retrieve either. A row saying
+// "Portable export · Ready" described a file on a volume inside the container,
+// which is not a place a person can reach — so the feature was, in practice,
+// unavailable.
+//
+// The one thing this page must never imply is that an archive is a complete
+// recovery. It is not. The installation master key is stored separately, is in
+// no backup by construction, and is required alongside the archive — so the
+// warning travels with the download rather than living somewhere else.
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { useResource } from '@/lib/useResource';
-import { plain } from '@/lib/plainLanguage';
-import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
 
 interface BackupRow {
   id: string;
   kind: 'full' | 'portable';
-  byte_size: number | string;
-  state: 'running' | 'complete' | 'failed';
+  byte_size: string | number;
+  state: 'pending' | 'complete' | 'failed';
   error_category: string | null;
   includes_recovery_copies: boolean;
   master_key_confirmed: boolean;
@@ -16,198 +26,432 @@ interface BackupRow {
   completed_at: string | null;
 }
 
-interface BackupList {
+interface BackupsView {
   backups: BackupRow[];
   masterKeyGuidance: string;
 }
 
-interface RestorePreflight {
-  masterKeyPresent: boolean;
-  guidance: string;
-  warning: string;
+interface DestinationField {
+  key: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+  placeholder: string | null;
+  help: string | null;
+}
+
+interface DestinationKindInfo {
+  kind: string;
+  label: string;
+  credentialsHelp: string;
+  docsUrl: string;
+  fields: DestinationField[];
 }
 
 interface Destination {
-  id: string; name: string; kind: 'local'|'nas'|'s3'|'r2'|'b2'; repository: string;
-  secret_ref: string; enabled: boolean;
-}
-interface DestinationList {
-  destinations: Destination[];
-  schedules: Array<{ destination_id:string; cadence:'daily'|'weekly'; next_run_at:string }>;
-  runs: Array<{ id:string; destination_id:string; state:string; error_category:string|null; started_at:string }>;
-  secretRoot: string;
+  kind: string;
+  label: string;
+  bucket: string;
+  region: string;
+  accountId: string | null;
+  endpoint: string | null;
+  objectPrefix: string;
+  credentialsSet: boolean;
+  resolvedEndpoint: string;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastCheckError: string | null;
 }
 
-const bytes = (value: number | string) => {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const power = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
-  return `${(n / 1024 ** power).toFixed(power ? 1 : 0)} ${units[power]}`;
+interface DestinationView {
+  catalog: DestinationKindInfo[];
+  destination: Destination | null;
+  localPath: string;
+}
+
+const KIND_LABEL: Record<BackupRow['kind'], string> = {
+  full: 'Full backup',
+  portable: 'Portable export',
 };
 
+/** What each state means to the person looking at the row, rather than the
+ * enum value. "Ready" is only ever said about an archive that can be had. */
+const STATE_LABEL: Record<BackupRow['state'], string> = {
+  pending: 'Still being written',
+  complete: 'Ready',
+  failed: 'Did not finish',
+};
+
+function size(bytes: string | number): string {
+  const n = typeof bytes === 'string' ? Number(bytes) : bytes;
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function AdminBackups() {
-  const list = useResource<BackupList>('/ops/admin/backups');
-  const preflight = useResource<RestorePreflight>('/ops/admin/restore/preflight');
-  const destinations = useResource<DestinationList>('/ops/admin/backup-destinations');
-  const [working, setWorking] = useState('');
+  const [view, setView] = useState<BackupsView | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [confirmedKey, setConfirmedKey] = useState(false);
-  const [destinationId, setDestinationId] = useState('');
-  const [destinationName, setDestinationName] = useState('');
-  const [destinationKind, setDestinationKind] = useState<Destination['kind']>('local');
-  const [repository, setRepository] = useState('/backup-targets/josi');
-  const [secretRef, setSecretRef] = useState('primary');
+  const [note, setNote] = useState('');
 
-  async function create(kind: 'full' | 'portable') {
-    setWorking(kind); setError(''); setNotice('');
+  const load = useCallback(async () => {
     try {
-      const result = await api.post<{ description: string }>('/ops/admin/backups', {
-        kind, masterKeyConfirmed: confirmedKey,
-      });
-      setNotice(result.description);
-      list.reload();
+      setView(await api.get<BackupsView>('/ops/admin/backups'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'The backup could not be created.');
-    } finally { setWorking(''); }
-  }
+      setError(err instanceof Error ? err.message : 'Could not read the backup history');
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
 
-  async function restore(row: BackupRow) {
-    if (!window.confirm('Restore this backup? This replaces the current database and cannot be undone.')) return;
-    const typed = window.prompt('Type restore to confirm.');
-    if (typed !== 'restore') return;
-    setWorking(row.id); setError(''); setNotice('');
+  async function take(kind: 'full' | 'portable') {
+    setBusy(true);
+    setError('');
+    setNote('');
     try {
-      const result = await api.post<{ credentialsRecovered: boolean; rowsRestored: number; warning?: string }>(
-        '/ops/admin/restore', { backupId: row.id, confirm: 'restore' },
-      );
-      setNotice(result.warning ?? `Restore completed. ${result.rowsRestored} rows restored; encrypted credentials recovered.`);
-      list.reload();
+      const res = await api.post<{ description: string }>('/ops/admin/backups', { kind });
+      setNote(res.description);
+      await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'The restore could not be completed.');
-    } finally { setWorking(''); }
+      setError(err instanceof Error ? err.message : 'That backup could not be taken');
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function addDestination() {
-    setWorking('destination'); setError(''); setNotice('');
-    try {
-      const result = await api.post<{ destination:Destination }>('/ops/admin/backup-destinations', {
-        name: destinationName, kind: destinationKind, repository, secretRef,
-      });
-      setDestinationId(result.destination.id); setDestinationName('');
-      setNotice(`Destination “${result.destination.name}” added. Mount its credential files before the first run.`);
-      destinations.reload();
-    } catch (err) { setError(err instanceof Error ? err.message : 'The destination could not be added.'); }
-    finally { setWorking(''); }
-  }
-
-  async function saveSchedule() {
-    if (!destinationId) return;
-    setWorking('schedule'); setError(''); setNotice('');
-    try {
-      await api.put(`/ops/admin/backup-destinations/${destinationId}/schedule`, {
-        cadence: 'daily', hourUtc: 3, keepDaily: 7, keepWeekly: 4, keepMonthly: 6,
-      });
-      setNotice('Daily backup scheduled for 03:00 UTC with 7 daily, 4 weekly and 6 monthly snapshots.');
-      destinations.reload();
-    } catch (err) { setError(err instanceof Error ? err.message : 'The schedule could not be saved.'); }
-    finally { setWorking(''); }
-  }
-
-  async function replicate(row: BackupRow) {
-    if (!destinationId) { setError('Choose a backup destination first.'); return; }
-    setWorking(`replicate-${row.id}`); setError(''); setNotice('');
-    try {
-      await api.post(`/ops/admin/backups/${row.id}/replicate`, { destinationId });
-      setNotice('Backup copied to the Restic repository, retention applied, and repository integrity checked.');
-      destinations.reload();
-    } catch (err) { setError(err instanceof Error ? err.message : 'The backup could not be copied.'); }
-    finally { setWorking(''); }
-  }
-
-  async function verifyOffsite(row: BackupRow) {
-    if (!destinationId) return;
-    setWorking(`verify-${row.id}`); setError(''); setNotice('');
-    try {
-      await api.post(`/ops/admin/backups/${row.id}/verify-offsite`, { destinationId });
-      setNotice('Restore test passed: Restic read the snapshot back and its checksum exactly matches the original archive.');
-      destinations.reload();
-    } catch (err) { setError(err instanceof Error ? err.message : 'The restore test failed.'); }
-    finally { setWorking(''); }
-  }
-
-  return <div className="mx-auto w-full min-w-0 max-w-4xl space-y-4">
-    <div>
+  return (
+    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
       <h1 className="text-xl font-semibold tracking-tight">Backups</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Create restorable snapshots and prove they can come back before you need them.</p>
+      <p className="text-sm text-muted-foreground">
+        A full backup is what a restore reads. A portable export is your data in a form you can take
+        elsewhere, and deliberately carries no recovery copies.
+      </p>
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+
+      <Card>
+        <CardTitle>Take one now</CardTitle>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button type="button" disabled={busy} onClick={() => void take('full')}>
+            {busy ? 'Working…' : 'Full backup'}
+          </Button>
+          <Button type="button" variant="secondary" disabled={busy} onClick={() => void take('portable')}>
+            Portable export
+          </Button>
+        </div>
+        {note ? <p className="mt-2 text-sm text-muted-foreground">{note}</p> : null}
+      </Card>
+
+      {/* Stated once, prominently, rather than repeated beside every row: an
+          archive on its own does not restore this installation. */}
+      {view?.masterKeyGuidance ? (
+        <Card>
+          <CardTitle>The master key is not in any of these</CardTitle>
+          <p className="mt-2 text-sm text-muted-foreground">{view.masterKeyGuidance}</p>
+        </Card>
+      ) : null}
+
+      <BackupDestination />
+
+      <Card>
+        <CardTitle>History</CardTitle>
+        {!view ? <p className="mt-2 text-sm text-muted-foreground">Loading…</p> : null}
+        {view && !view.backups.length ? (
+          <Empty title="Nothing has been backed up yet">
+            Take a full backup before you rely on this installation for anything.
+          </Empty>
+        ) : null}
+        <ul className="mt-2 divide-y divide-border">
+          {(view?.backups ?? []).map((b) => (
+            <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
+              <span className="min-w-0">
+                <span className="block text-sm">
+                  {KIND_LABEL[b.kind]} · {STATE_LABEL[b.state]}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {new Date(b.created_at).toLocaleString()} · {size(b.byte_size)}
+                  {b.state === 'failed' && b.error_category ? ` · ${b.error_category}` : ''}
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                <Badge tone={b.state === 'complete' ? 'ok' : b.state === 'failed' ? 'danger' : 'muted'}>
+                  {STATE_LABEL[b.state]}
+                </Badge>
+                {/* Only a completed archive gets a control. A pressable
+                    Download on a row that has no file is the same lie the
+                    missing route was. The link is a plain anchor so the
+                    browser's own download handling applies; the session cookie
+                    goes with it and the server decides. */}
+                {b.state === 'complete' ? (
+                  <a
+                    className="inline-flex min-h-11 items-center rounded-md border border-input px-3 text-sm underline"
+                    href={`/api/ops/admin/backups/${b.id}/download`}
+                  >
+                    Download
+                  </a>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Card>
     </div>
+  );
+}
 
+/** Where backups are kept, set up by a person.
+ *
+ * This replaces a form that asked for a "secret prefix" — a string like
+ * `primary` naming host files the operator was expected to create and mount
+ * themselves before any of it worked. Nothing here asks anyone to touch the
+ * host: the credential is typed once, sealed with the installation master key,
+ * and proved against the bucket before the screen calls it configured.
+ *
+ * The fields come from the server's catalogue, so each vendor is asked for what
+ * its own console calls things. Backblaze shows you a keyID and an
+ * applicationKey; labelling those "Access key ID" and "Secret access key"
+ * because that is what the protocol calls them sends an operator hunting for
+ * fields that do not exist under those names.
+ */
+function BackupDestination() {
+  const [view, setView] = useState<DestinationView | null>(null);
+  const [kind, setKind] = useState('');
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  /** Only ever true while a test this person asked for is running. */
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const next = await api.get<DestinationView>('/ops/admin/backups/destination');
+      setView(next);
+      if (next.destination) setKind(next.destination.kind);
+      else setKind(next.catalog[0]?.kind ?? '');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not read the backup destination');
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const entry = view?.catalog.find((c) => c.kind === kind) ?? null;
+  const destination = view?.destination ?? null;
+
+  // Switching vendor clears what was typed. An R2 token is not an AWS key, and
+  // a field left populated from the previous choice would be sent to a
+  // different company's endpoint.
+  useEffect(() => { setValues({}); setResult(null); }, [kind]);
+
+  function setField(key: string, value: string) {
+    setValues((v) => ({ ...v, [key]: value }));
+  }
+
+  /** A stored credential may be left blank to keep it, but only while the
+   * vendor is unchanged — which is exactly what the server enforces. */
+  const keepingCredential = !!destination?.credentialsSet && destination.kind === kind;
+  const missing = (entry?.fields ?? []).filter((f) => {
+    if (!f.required) return false;
+    if (f.secret && keepingCredential) return false;
+    return !(values[f.key] ?? '').trim();
+  });
+
+  async function save() {
+    setBusy(true);
+    setError('');
+    setResult(null);
+    try {
+      await api.put('/ops/admin/backups/destination', { kind, ...values });
+      setEditing(false);
+      setValues({});
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That destination could not be saved');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Runs only from the button. Nothing here tests on open: a test is a real
+   * signed request to somebody else's service, and opening a page is not a
+   * reason to make one. */
+  async function test() {
+    setTesting(true);
+    setError('');
+    try {
+      const res = await api.post<{ ok: boolean; detail: string }>(
+        '/ops/admin/backups/destination/test', {},
+      );
+      setResult(res);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The test could not run');
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    setError('');
+    try {
+      await api.del('/ops/admin/backups/destination');
+      setEditing(false);
+      setValues({});
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That destination could not be removed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
     <Card>
-      <CardTitle>Master key</CardTitle>
-      <p className="mb-3 text-sm text-muted-foreground">{list.data?.masterKeyGuidance ?? preflight.data?.guidance}</p>
-      <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
-        <input type="checkbox" checked={confirmedKey} onChange={(e) => setConfirmedKey(e.target.checked)} className="h-5 w-5" />
-        I have stored the master key separately from these backups
-      </label>
-      {preflight.state === 'ready' && !preflight.data?.masterKeyPresent ?
-        <ErrorNote>The master key is not mounted in this container. A restore can recover data, but not encrypted credentials.</ErrorNote> : null}
-    </Card>
+      <CardTitle>Where backups are kept</CardTitle>
+      {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
 
-    <Card>
-      <CardTitle>Create backup</CardTitle>
-      <div className="flex flex-wrap gap-3">
-        <Button onClick={() => void create('full')} disabled={!!working || !confirmedKey}>{working === 'full' ? 'Creating…' : 'Create full backup'}</Button>
-        <Button variant="secondary" onClick={() => void create('portable')} disabled={!!working}>{working === 'portable' ? 'Exporting…' : 'Create portable export'}</Button>
-      </div>
-      {!confirmedKey ? <p className="mt-3 text-sm text-amber-300">Confirm the separately stored master key before creating a restorable backup.</p> : null}
-    </Card>
+      {/* The volume is always there. Saying so is the difference between "no
+          destination configured" and "backups are not being kept anywhere". */}
+      <p className="mt-2 text-sm text-muted-foreground">
+        Every backup is written to this server at <code>{view?.localPath ?? '/data/backups'}</code>.
+        A copy somewhere else protects you from losing the server itself.
+      </p>
 
-    <Card>
-      <CardTitle>Backup destinations</CardTitle>
-      <p className="mb-3 text-sm text-muted-foreground">Local disks and NAS shares must be mounted beneath /backup-targets. S3, Cloudflare R2 and Backblaze B2 use Restic credential files—secrets are never stored in the database.</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Input aria-label="Destination name" placeholder="Destination name" value={destinationName} onChange={(e) => setDestinationName(e.target.value)} />
-        <select aria-label="Destination type" value={destinationKind} onChange={(e) => setDestinationKind(e.target.value as Destination['kind'])} className="min-h-11 rounded-md border border-input bg-background px-3 text-base sm:text-sm">
-          <option value="local">Local disk</option><option value="nas">NAS share</option><option value="s3">Amazon S3</option><option value="r2">Cloudflare R2</option><option value="b2">Backblaze B2</option>
-        </select>
-        <Input aria-label="Restic repository" placeholder="/backup-targets/josi or s3:https://…" value={repository} onChange={(e) => setRepository(e.target.value)} />
-        <Input aria-label="Secret reference" placeholder="Secret reference" value={secretRef} onChange={(e) => setSecretRef(e.target.value)} />
-      </div>
-      <Button className="mt-3" disabled={!!working || !destinationName || !repository || !secretRef} onClick={() => void addDestination()}>{working === 'destination' ? 'Adding…' : 'Add destination'}</Button>
-      <div className="mt-4 space-y-2">
-        {destinations.data?.destinations.map((item) => <label key={item.id} className="flex min-h-11 items-center gap-3 rounded-md border border-border p-3">
-          <input type="radio" name="backup-destination" checked={destinationId === item.id} onChange={() => setDestinationId(item.id)} className="h-5 w-5" />
-          <span className="min-w-0"><span className="block font-medium">{item.name} · {item.kind.toUpperCase()}</span><span className="block truncate text-xs text-muted-foreground">{item.repository}</span></span>
-        </label>)}
-      </div>
-      {destinationId ? <Button variant="secondary" className="mt-3" disabled={!!working} onClick={() => void saveSchedule()}>{working === 'schedule' ? 'Saving…' : 'Schedule daily backup'}</Button> : null}
-    </Card>
-
-    {error ? <ErrorNote>{error}</ErrorNote> : null}
-    {notice ? <Card><p className="text-sm text-emerald-300">{notice}</p></Card> : null}
-
-    <Card>
-      <CardTitle>Backup history</CardTitle>
-      {list.state === 'loading' ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
-      {list.state === 'error' || list.state === 'timeout' ? <ErrorNote>{list.message}</ErrorNote> : null}
-      {list.state === 'ready' && !list.data?.backups.length ? <p className="text-sm text-muted-foreground">No backups yet.</p> : null}
-      <div className="space-y-3">
-        {list.data?.backups.map((row) => <div key={row.id} className="rounded-md border border-border p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="font-medium">{row.kind === 'full' ? 'Full backup' : 'Portable export'} · {plain('backup_state', row.state)}</p>
-              <p className="text-xs text-muted-foreground">{new Date(row.created_at).toLocaleString()} · {bytes(row.byte_size)}</p>
-            </div>
-            {row.kind === 'full' && row.state === 'complete' ?
-              <div className="flex flex-wrap gap-2"><Button variant="secondary" disabled={!!working} onClick={() => void restore(row)}>{working === row.id ? 'Restoring…' : 'Restore'}</Button>
-              <Button variant="secondary" disabled={!!working || !destinationId} onClick={() => void replicate(row)}>{working === `replicate-${row.id}` ? 'Copying…' : 'Copy off-host'}</Button>
-              <Button variant="secondary" disabled={!!working || !destinationId} onClick={() => void verifyOffsite(row)}>{working === `verify-${row.id}` ? 'Testing…' : 'Test off-host restore'}</Button></div> : null}
+      {destination && !editing ? (
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm">
+              {view?.catalog.find((c) => c.kind === destination.kind)?.label ?? destination.kind}
+              {destination.label ? ` · ${destination.label}` : ''}
+            </span>
+            {/* Never tested is its own state. A destination nobody has proved
+                is not shown as working, and not shown as broken either. */}
+            <Badge tone={destination.lastCheckOk === true ? 'ok' : destination.lastCheckOk === false ? 'danger' : 'muted'}>
+              {destination.lastCheckOk === true
+                ? 'tested'
+                : destination.lastCheckOk === false ? 'last test failed' : 'not tested yet'}
+            </Badge>
           </div>
-          {row.error_category ? <p className="mt-2 text-sm text-destructive">Failed: {row.error_category.replaceAll('_', ' ')}</p> : null}
-          {!row.master_key_confirmed && row.kind === 'full' ? <p className="mt-2 text-sm text-amber-300">Master key backup was not confirmed when this was created.</p> : null}
-        </div>)}
-      </div>
+          <dl className="text-sm text-muted-foreground">
+            <div><dt className="inline font-medium">Bucket: </dt><dd className="inline">{destination.bucket}</dd></div>
+            {destination.kind !== 'r2' ? (
+              <div><dt className="inline font-medium">Region: </dt><dd className="inline">{destination.region}</dd></div>
+            ) : null}
+            {destination.objectPrefix ? (
+              <div><dt className="inline font-medium">Folder: </dt><dd className="inline">{destination.objectPrefix}</dd></div>
+            ) : null}
+            {/* Assembled by the server from the stored fields, so an operator
+                checking their bucket does not have to reconstruct it. */}
+            <div><dt className="inline font-medium">Address: </dt><dd className="inline break-all">{destination.resolvedEndpoint}</dd></div>
+          </dl>
+          {destination.lastCheckOk === false && destination.lastCheckError ? (
+            <ErrorNote>{destination.lastCheckError}</ErrorNote>
+          ) : null}
+          {result ? (
+            <p className={`text-sm ${result.ok ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
+              {result.detail}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" disabled={busy || testing} onClick={() => void test()}>
+              {testing ? 'Testing…' : destination.lastCheckOk === true ? 'Test again' : 'Test connection'}
+            </Button>
+            <Button type="button" variant="secondary" disabled={busy || testing}
+                    onClick={() => { setEditing(true); setResult(null); }}>
+              Change
+            </Button>
+            <Button type="button" variant="secondary" disabled={busy || testing} onClick={() => void remove()}>
+              Stop copying off this server
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {!destination || editing ? (
+        <form
+          className="mt-3 space-y-3"
+          onSubmit={(e) => { e.preventDefault(); void save(); }}
+        >
+          <div>
+            <label className="mb-1 block text-sm" htmlFor="destKind">Storage service</label>
+            <select
+              id="destKind" value={kind} onChange={(e) => setKind(e.target.value)}
+              className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
+            >
+              {(view?.catalog ?? []).map((c) => (
+                <option key={c.kind} value={c.kind}>{c.label}</option>
+              ))}
+            </select>
+            {entry ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {entry.credentialsHelp}{' '}
+                <a className="underline" href={entry.docsUrl} target="_blank" rel="noreferrer noopener">
+                  Their documentation
+                </a>
+              </p>
+            ) : null}
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm" htmlFor="destLabel">A name for this (optional)</label>
+            <Input id="destLabel" name="label" value={values.label ?? ''}
+                   placeholder="Off-site copy"
+                   onChange={(e) => setField('label', e.target.value)} />
+          </div>
+
+          {(entry?.fields ?? []).map((f) => (
+            <div key={f.key}>
+              <label className="mb-1 block text-sm" htmlFor={`dest-${f.key}`}>
+                {f.label}{f.required ? '' : ' (optional)'}
+              </label>
+              <Input
+                id={`dest-${f.key}`}
+                name={f.key}
+                type={f.secret ? 'password' : 'text'}
+                autoComplete="off"
+                autoCapitalize="none"
+                placeholder={f.placeholder ?? undefined}
+                value={values[f.key] ?? ''}
+                onChange={(e) => setField(f.key, e.target.value)}
+              />
+              {f.help ? <p className="mt-1 text-xs text-muted-foreground">{f.help}</p> : null}
+              {f.secret && keepingCredential ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Already saved. Leave empty to keep it.
+                </p>
+              ) : null}
+            </div>
+          ))}
+
+          <p className="text-xs text-muted-foreground">
+            These are stored encrypted with this installation's master key. Josi never asks you to
+            create or mount a file on the host.
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={busy || !!missing.length}>
+              {busy ? 'Saving…' : 'Save destination'}
+            </Button>
+            {destination ? (
+              <Button type="button" variant="secondary" disabled={busy}
+                      onClick={() => { setEditing(false); setValues({}); setKind(destination.kind); }}>
+                Cancel
+              </Button>
+            ) : null}
+          </div>
+          {missing.length ? (
+            <p className="text-xs text-muted-foreground">
+              Still needed: {missing.map((f) => f.label).join(', ')}.
+            </p>
+          ) : null}
+          <p className="text-xs text-muted-foreground">
+            Saving clears any previous test result. A credential that has not been tried against the
+            bucket it now points at has proved nothing.
+          </p>
+        </form>
+      ) : null}
     </Card>
-  </div>;
+  );
 }

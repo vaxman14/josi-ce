@@ -1,169 +1,269 @@
-// Administration for developer services.
+// Who is permitted to connect a developer service.
 //
-// Two things, and it must not imply a third.
+// The one thing this page governs is PERMISSION. GitHub, Netlify, Vercel and
+// Supabase are each person's own account, connected with their own token in
+// their own Workspace — so there is no credential field here, and no route
+// behind this page accepts one.
 //
-//   1. A deny-only ceiling. Switching a service off stops anyone connecting it
-//      and stops Josi using the connections that already exist — the routes
-//      that open a sealed token check the ceiling, not only the one that stores
-//      it. Switching it back on grants nothing: it returns the choice to each
-//      person, who still has to paste their own token.
-//   2. Health. Whose connection it is and whether it works. Not the account
-//      handle, not the project, not what the token covers, and not the token.
-//
-// The third thing, which does not exist here on purpose: connecting a service
-// on somebody else's behalf. There is no route for it, and an installation-wide
-// GitHub token is exactly the "preset, silently configured" shape this whole
-// feature was asked to avoid.
-import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote } from '@/components/ui';
-import { plain, plainDetail } from '@/lib/plainLanguage';
+// The second thing it must get right is not conflating "allowed" with
+// "connected". A service permitted for everyone that nobody has connected and a
+// service nobody may connect look identical if you only count connections, and
+// an administrator reading the second as the first concludes their team does
+// not want a tool they were never able to use. Permission and health are two
+// separate blocks on every card, and they are labelled as such.
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { api } from '@/lib/api';
+import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
 
-interface PolicyRow {
+type Mode = 'not_allowed' | 'everyone' | 'specific_users';
+
+interface Person {
+  id: string;
+  username: string;
+  email: string;
+}
+
+interface ConnectionHealth {
+  userId: string;
+  username: string;
+  accountLabel: string | null;
+  status: string;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastError: string | null;
+}
+
+interface ServiceRow {
   service: string;
   label: string;
-  allowed: boolean;
+  capability: string;
+  mode: Mode;
+  allowedUserIds: string[];
   note: string | null;
+  summary: string;
+  connections: ConnectionHealth[];
 }
 
-interface HealthRow {
-  id: string;
-  owner_user_id: string;
-  username: string | null;
-  service: string;
-  status: string;
-  last_check_at: string | null;
-  last_check_ok: boolean | null;
-  last_error_category: string | null;
-  created_at: string;
+interface AdminView {
+  people: Person[];
+  services: ServiceRow[];
 }
+
+const MODE_LABEL: Record<Mode, string> = {
+  not_allowed: 'Not allowed',
+  everyone: 'Allowed for everyone',
+  specific_users: 'Allowed for specific people',
+};
 
 export function AdminDeveloperServices() {
-  const [policy, setPolicy] = useState<PolicyRow[]>([]);
-  const [connections, setConnections] = useState<HealthRow[]>([]);
+  const [view, setView] = useState<AdminView | null>(null);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get<{ policy: PolicyRow[]; connections: HealthRow[] }>(
-        '/admin/developer-services',
-      );
-      setPolicy(res.policy);
-      setConnections(res.connections);
+      setView(await api.get<AdminView>('/admin/developer-services'));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load developer services');
+      setError(err instanceof Error ? err.message : 'Could not read developer services');
     }
   }, []);
-
   useEffect(() => { void load(); }, [load]);
-
-  async function setAllowed(row: PolicyRow, allowed: boolean) {
-    setBusy(row.service);
-    setError('');
-    try {
-      await api.put(`/admin/developer-services/policy/${row.service}`, { allowed });
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not change that');
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function revoke(row: HealthRow) {
-    setBusy(row.id);
-    setError('');
-    try {
-      await api.del(`/admin/developer-services/connections/${row.id}`);
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not disconnect that');
-    } finally {
-      setBusy('');
-    }
-  }
-
-  const labelFor = (service: string) => policy.find((p) => p.service === service)?.label ?? service;
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
       <h1 className="text-xl font-semibold tracking-tight">Developer services</h1>
+      <p className="text-sm text-muted-foreground">
+        Each person connects their own GitHub, Netlify, Vercel or Supabase account from their
+        Workspace, with their own token. What you decide here is who is permitted to do that.
+        You never enter a credential for anybody, and you cannot see one.
+      </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
+      {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
-      <Card>
-        <CardTitle>What this installation permits</CardTitle>
-        <p className="mb-3 text-sm text-muted-foreground">
-          This can only take permissions away. Switching a service off stops anyone connecting it
-          and stops Josi using the connections that already exist; their owners can still take
-          their tokens back. Switching a service on does not switch it on for anyone — each person
-          still has to create a token in their own account and connect it themselves. Nothing here
-          is preset.
-        </p>
-        <ul className="space-y-3">
-          {policy.map((row) => (
-            <li key={row.service} className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-3 first:border-0 first:pt-0">
-              <span className="min-w-0 text-sm font-medium">{row.label}</span>
-              <Button
-                variant={row.allowed ? 'secondary' : 'danger'}
-                disabled={busy === row.service}
-                aria-pressed={!row.allowed}
-                onClick={() => void setAllowed(row, !row.allowed)}
-              >
-                {row.allowed ? 'Allowed' : 'Switched off'}
-              </Button>
-            </li>
-          ))}
-        </ul>
-      </Card>
-
-      <Card>
-        <CardTitle>Connection health</CardTitle>
-        <p className="mb-3 text-sm text-muted-foreground">
-          Whose connection it is and whether it works. Not the account it points at, and never the
-          token — that stays encrypted and is not readable from here.
-        </p>
-        {connections.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nobody has connected a developer service yet.</p>
-        ) : (
-          <div className="-mx-4 overflow-x-auto px-4">
-            <table className="w-full min-w-[24rem] text-sm">
-              <thead>
-                <tr className="text-left text-muted-foreground">
-                  <th className="py-1 font-medium">Person</th>
-                  <th className="py-1 font-medium">Service</th>
-                  <th className="py-1 font-medium">State</th>
-                  <th className="py-1" />
-                </tr>
-              </thead>
-              <tbody>
-                {connections.map((row) => (
-                  <tr key={row.id} className="border-t border-border">
-                    <td className="py-2">{row.username ?? row.owner_user_id}</td>
-                    <td className="py-2">{labelFor(row.service)}</td>
-                    <td className="py-2">
-                      <Badge tone={row.status === 'active' ? 'ok' : 'danger'}>
-                        {plain('connection_status', row.status)}
-                      </Badge>
-                      {row.last_error_category ? (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          {plainDetail('connector_error', row.last_error_category)
-                            ?? plain('connector_error', row.last_error_category)}
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="py-2 text-right">
-                      <Button variant="ghost" disabled={busy === row.id} onClick={() => void revoke(row)}>
-                        Disconnect
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      {(view?.services ?? []).map((row) => (
+        <ServiceCard key={row.service} row={row} people={view!.people} onSaved={load} />
+      ))}
     </div>
+  );
+}
+
+function ServiceCard(
+  { row, people, onSaved }: { row: ServiceRow; people: Person[]; onSaved: () => Promise<void> },
+) {
+  const [mode, setMode] = useState<Mode>(row.mode);
+  const [selected, setSelected] = useState<string[]>(row.allowedUserIds);
+  const [note, setNote] = useState(row.note ?? '');
+  const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  // The server's state is the truth; a reload after saving must not be masked
+  // by whatever this component was last holding.
+  useEffect(() => {
+    setMode(row.mode);
+    setSelected(row.allowedUserIds);
+    setNote(row.note ?? '');
+  }, [row.mode, row.allowedUserIds, row.note]);
+
+  const matches = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return people;
+    return people.filter(
+      (p) => p.username.toLowerCase().includes(q) || p.email.toLowerCase().includes(q),
+    );
+  }, [people, search]);
+
+  /** Said in the same words the server would use, so the preview and the saved
+   * summary cannot disagree. */
+  const preview = (() => {
+    if (mode === 'everyone') return 'Anyone with an account here can connect their own.';
+    if (mode === 'not_allowed') return 'Nobody here can connect this service.';
+    if (!selected.length) {
+      return 'Nobody yet — "specific people" is selected but no one has been chosen.';
+    }
+    const names = selected
+      .map((id) => people.find((p) => p.id === id)?.username ?? 'someone removed')
+      .slice(0, 3);
+    const rest = selected.length - names.length;
+    return rest > 0
+      ? `${names.join(', ')} and ${rest} more can connect their own.`
+      : `${names.join(', ')} can connect their own.`;
+  })();
+
+  const dirty = mode !== row.mode
+    || note !== (row.note ?? '')
+    || selected.join(',') !== row.allowedUserIds.join(',');
+
+  async function save() {
+    setBusy(true);
+    setError('');
+    try {
+      await api.put(`/admin/developer-services/${row.service}`, {
+        mode, note, userIds: mode === 'specific_users' ? selected : [],
+      });
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That could not be saved');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <CardTitle>{row.label}</CardTitle>
+        <Badge tone={row.mode === 'not_allowed' ? 'muted' : 'ok'}>{MODE_LABEL[row.mode]}</Badge>
+      </div>
+      <p className="mt-1 text-sm text-muted-foreground">{row.capability}</p>
+      {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
+
+      {/* ---- permission ---- */}
+      <div className="mt-3 space-y-2">
+        <p className="text-sm font-medium">Who may connect this</p>
+        {(['not_allowed', 'everyone', 'specific_users'] as Mode[]).map((m) => (
+          <label key={m} className="flex min-h-11 items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name={`mode-${row.service}`}
+              className="h-4 w-4"
+              checked={mode === m}
+              onChange={() => setMode(m)}
+            />
+            {MODE_LABEL[m]}
+          </label>
+        ))}
+
+        {mode === 'specific_users' ? (
+          <div className="rounded-md border border-border p-2">
+            <label className="mb-1 block text-sm" htmlFor={`search-${row.service}`}>
+              Find people
+            </label>
+            <Input
+              id={`search-${row.service}`}
+              value={search}
+              placeholder="Name or email"
+              autoCapitalize="none"
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+              {matches.map((p) => (
+                <li key={p.id}>
+                  <label className="flex min-h-11 items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={selected.includes(p.id)}
+                      onChange={(e) => setSelected((prev) => (
+                        e.target.checked ? [...prev, p.id] : prev.filter((id) => id !== p.id)
+                      ))}
+                    />
+                    <span className="min-w-0">
+                      <span className="block">{p.username}</span>
+                      <span className="block text-xs text-muted-foreground">{p.email}</span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+              {!matches.length ? (
+                <li className="py-2 text-sm text-muted-foreground">Nobody matches that.</li>
+              ) : null}
+            </ul>
+          </div>
+        ) : null}
+
+        <div>
+          <label className="mb-1 block text-sm" htmlFor={`note-${row.service}`}>
+            Reason to show anyone who cannot connect it (optional)
+          </label>
+          <Input
+            id={`note-${row.service}`}
+            value={note}
+            placeholder="Ask the platform team if you need this."
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </div>
+
+        {/* The effective scope in a sentence, so "specific people" never leaves
+            an administrator unsure whether they finished choosing. */}
+        <p className="text-sm text-muted-foreground">{dirty ? preview : row.summary}</p>
+
+        <Button type="button" disabled={busy || !dirty} onClick={() => void save()}>
+          {busy ? 'Saving…' : 'Save who may connect'}
+        </Button>
+      </div>
+
+      {/* ---- health, deliberately separate ---- */}
+      <div className="mt-4 border-t border-border pt-3">
+        <p className="text-sm font-medium">Who has actually connected</p>
+        {!row.connections.length ? (
+          <Empty title="Nobody has connected this">
+            {row.mode === 'not_allowed'
+              // The distinction the whole card exists to preserve.
+              ? 'Nobody is permitted to, so this is not a sign of whether anyone wants it.'
+              : 'They are permitted to; none of them has yet.'}
+          </Empty>
+        ) : (
+          <ul className="mt-1 divide-y divide-border">
+            {row.connections.map((c) => (
+              <li key={c.userId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="min-w-0">
+                  <span className="block text-sm">{c.username}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {c.accountLabel ?? 'account not named'}
+                    {c.lastCheckAt ? ` · checked ${new Date(c.lastCheckAt).toLocaleString()}` : ''}
+                  </span>
+                  {c.lastCheckOk === false && c.lastError ? (
+                    <span className="block text-xs text-red-600 dark:text-red-400">{c.lastError}</span>
+                  ) : null}
+                </span>
+                <Badge tone={c.lastCheckOk === false ? 'danger' : c.status === 'active' ? 'ok' : 'muted'}>
+                  {c.lastCheckOk === false ? 'needs attention' : c.status}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Card>
   );
 }

@@ -52,16 +52,38 @@ export interface ProviderFormPaths {
   claudeBase: string;
 }
 
-interface ProviderDefinition {
-  id: string;
+/** One provider as the server describes it.
+ *
+ * The form renders from this and knows nothing else about any provider: which
+ * exist, what each is called, which fields it takes and whether it has an
+ * endpoint of its own are all the catalogue's answers. That is the point — a
+ * provider added to the server appears here without this file changing, and a
+ * provider the build gates away never appears at all. */
+export interface ProviderCatalogEntry {
+  kind: string;
   label: string;
-  note: string;
+  external: boolean;
+  baseUrlMode: 'none' | 'optional' | 'required';
+  defaultBaseUrl: string | null;
+  fields: Array<{
+    key: string;
+    label: string;
+    secret: boolean;
+    required: boolean;
+    placeholder: string | null;
+    help: string | null;
+  }>;
+  discovery: string;
+  modelNoun: string;
+  residency: string;
   docsUrl: string;
-  configurableBaseUrl?: boolean;
 }
 
 export interface ProviderFormProps {
   busy: boolean;
+  /** Every provider this build will actually accept, in the order it sent
+   * them. Empty until the page's own fetch resolves. */
+  catalog: ProviderCatalogEntry[];
   paths: ProviderFormPaths;
   /** What subscriptions are on offer here, and the CLI's state. Null when the
    * build has none (hosted) or the endpoint is unavailable. */
@@ -70,22 +92,30 @@ export interface ProviderFormProps {
   submitLabel?: string;
 }
 
-export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, submitLabel }: ProviderFormProps) {
+export function ProviderForm({
+  busy, catalog, paths, loadSubscriptionInfo, onSubmit, submitLabel,
+}: ProviderFormProps) {
   const [provider, setProvider] = useState('openai_compatible');
-  const [apiKey, setApiKey] = useState('');
+  /** Every credential field the chosen provider takes, keyed by the catalogue's
+   * own field key. One bag rather than a variable per field: which fields exist
+   * is the server's answer, so this component cannot enumerate them. */
+  const [values, setValues] = useState<Record<string, string>>({});
   const [baseUrl, setBaseUrl] = useState('');
   const [models, setModels] = useState<DiscoveredModel[] | null>(null);
-  const [discovery, setDiscovery] = useState<{ message: string; unsupported: boolean } | null>(null);
+  const [discovery, setDiscovery] = useState<
+    { message: string; unsupported: boolean; fromCatalog: boolean; catalogVersion: string | null } | null
+  >(null);
   const [looking, setLooking] = useState(false);
   const [chosen, setChosen] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [showIds, setShowIds] = useState(false);
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
-  const [catalog, setCatalog] = useState<ProviderDefinition[]>([]);
 
-  const external = provider !== 'openai_compatible';
+  const entry = catalog.find((c) => c.kind === provider) ?? null;
+  const external = entry ? entry.external : provider !== 'openai_compatible';
   const isSubscription = provider === 'openai_subscription' || provider === 'anthropic_subscription';
-  const selectedDefinition = catalog.find((entry) => entry.id === provider);
+  const modelNoun = entry?.modelNoun ?? 'model';
+  const fields = entry?.fields ?? [];
 
   // Only a build whose edition permits it answers this at all. A hosted build
   // 404s and the option never appears — the outermost of four layers, not the
@@ -97,18 +127,34 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Switching provider clears the credential rather than carrying it across. An
+  // AWS secret access key is not a Cohere key, and a field left populated from
+  // the previous choice would be sent to the new provider.
   useEffect(() => {
-    const catalogPath = paths.models.replace(/\/providers\/models$/, '/catalog');
-    void api.get<{ providers: ProviderDefinition[] }>(catalogPath)
-      .then((result) => setCatalog(result.providers))
-      .catch(() => undefined);
-  }, [paths.models]);
-
-  const chatgpt = subscription?.options.find((o) => o.provider === 'openai_subscription');
-  const claude = subscription?.options.find((o) => o.provider === 'anthropic_subscription');
+    setValues({});
+    setBaseUrl('');
+  }, [provider]);
 
   // Anything that changes which account we are asking invalidates the answer.
-  useEffect(() => { setModels(null); setDiscovery(null); setChosen(''); }, [provider, apiKey, baseUrl]);
+  useEffect(() => { setModels(null); setDiscovery(null); setChosen(''); }, [provider, values, baseUrl]);
+
+  const setField = (key: string, value: string) => setValues((v) => ({ ...v, [key]: value }));
+
+  /** Everything the provider needs before it is worth asking it anything. */
+  const missingRequired = fields.filter((f) => f.required && !(values[f.key] ?? '').trim());
+  const needsBaseUrl = entry?.baseUrlMode === 'required' && !baseUrl.trim();
+  const canDiscover = !isSubscription && !missingRequired.length && !needsBaseUrl;
+
+  /** The credential and settings as the routes read them: every catalogue field
+   * by its own key, alongside the provider and endpoint. */
+  const credentialBody = () => {
+    const out: Record<string, unknown> = { provider, baseUrl };
+    for (const f of fields) {
+      const value = (values[f.key] ?? '').trim();
+      if (value) out[f.key] = value;
+    }
+    return out;
+  };
 
   async function findModels() {
     setLooking(true);
@@ -116,15 +162,25 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
     try {
       const r = await api.post<{
         ok: boolean; unsupported: boolean; models: DiscoveredModel[]; message: string | null;
-      }>(paths.models, { provider, apiKey, baseUrl });
+        fromCatalog?: boolean; catalogVersion?: string | null;
+      }>(paths.models, credentialBody());
       setModels(r.models);
       setChosen(r.models.find((m) => m.recommended)?.id ?? r.models.find((m) => !m.likelyNonChat)?.id ?? '');
-      if (r.message) setDiscovery({ message: r.message, unsupported: r.unsupported });
+      if (r.message) {
+        setDiscovery({
+          message: r.message,
+          unsupported: r.unsupported,
+          fromCatalog: !!r.fromCatalog,
+          catalogVersion: r.catalogVersion ?? null,
+        });
+      }
     } catch (err) {
       setModels([]);
       setDiscovery({
         message: err instanceof ApiError ? err.message : 'The provider could not be reached.',
         unsupported: false,
+        fromCatalog: false,
+        catalogVersion: null,
       });
     } finally {
       setLooking(false);
@@ -132,9 +188,9 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
   }
 
   const usable = (models ?? []).filter((m) => showAll || !m.likelyNonChat);
-  const canDiscover = external
-    ? apiKey.length > 0 && (!selectedDefinition?.configurableBaseUrl || baseUrl.length > 0)
-    : baseUrl.length > 0;
+  // A provider whose list Josi ships rather than reads can always be given a
+  // name the catalogue does not carry — a model released after this build.
+  const allowsTypedModel = !!models && (discovery?.fromCatalog || (discovery?.unsupported && !external));
 
   return (
     <form
@@ -142,8 +198,9 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
         event.preventDefault();
         const f = new FormData(event.currentTarget);
         void onSubmit({
-          provider, model: chosen || f.get('manualModel') || '', baseUrl,
-          apiKey, externalAcknowledged: f.get('ack') === 'on',
+          ...credentialBody(),
+          model: chosen || f.get('manualModel') || '',
+          externalAcknowledged: f.get('ack') === 'on',
         });
       }}
       className="space-y-3"
@@ -154,21 +211,18 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
           id="provider" value={provider} onChange={(e) => setProvider(e.target.value)}
           className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
         >
-          {(catalog.length ? catalog : [
-            { id: 'openai_compatible', label: 'A model on your own hardware', note: '', docsUrl: '' },
-            { id: 'openai', label: 'OpenAI', note: '', docsUrl: '' },
-            { id: 'anthropic', label: 'Anthropic', note: '', docsUrl: '' },
-            { id: 'xai', label: 'xAI', note: '', docsUrl: '' },
-          ]).map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
-          {chatgpt?.available ? (
-            <option value="openai_subscription">My ChatGPT plan (no API key)</option>
-          ) : null}
-          {claude?.available ? (
-            <option value="anthropic_subscription">My Claude plan (no API key)</option>
-          ) : null}
+          {/* Drawn from the catalogue the server sent. A hardcoded list here is
+              how the installer came to offer five providers while the server
+              accepted twenty — and how a provider gated behind an edition
+              capability could be selected on a build that would refuse it. */}
+          {catalog.map((c) => (
+            <option key={c.kind} value={c.kind}>{c.label}</option>
+          ))}
         </select>
+        {entry?.residency ? (
+          <p className="mt-1 text-xs text-muted-foreground">{entry.residency}</p>
+        ) : null}
       </div>
-      {selectedDefinition ? <p className="text-xs text-muted-foreground">{selectedDefinition.note}</p> : null}
 
       {/* Every subscription option, including the ones that are not on offer,
           with the actual reason. "Coming soon" would be a guess; these are
@@ -195,37 +249,59 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
         ? <SubscriptionSignIn info={subscription} loginPath={`${paths.codexBase}/login`} /> : null}
       {provider === 'anthropic_subscription' ? <ClaudeSignIn basePath={paths.claudeBase} /> : null}
 
-      {(!external || selectedDefinition?.configurableBaseUrl) && !isSubscription ? (
+      {!isSubscription && entry && entry.baseUrlMode !== 'none' ? (
         <div>
           <label className="mb-1 block text-sm" htmlFor="baseUrl">
-            {external ? 'Provider deployment endpoint' : 'Address of your model server'}
+            {entry.external ? 'Endpoint address' : 'Address of your model server'}
+            {entry.baseUrlMode === 'optional' ? ' (optional)' : ''}
           </label>
-          <Input id="baseUrl" name="baseUrl" value={baseUrl} autoCapitalize="none" required
-                 placeholder="http://ollama:11434/v1" onChange={(e) => setBaseUrl(e.target.value)} />
+          <Input
+            id="baseUrl" name="baseUrl" value={baseUrl} autoCapitalize="none"
+            required={entry.baseUrlMode === 'required'}
+            placeholder={entry.defaultBaseUrl ?? 'http://ollama:11434/v1'}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+          {entry.baseUrlMode === 'optional' && entry.defaultBaseUrl ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Leave empty to use {entry.defaultBaseUrl}.
+            </p>
+          ) : null}
         </div>
       ) : null}
 
-      {/* No key on the subscription path, and not merely hidden: the server
-          refuses one. A key there would bill an API account while the product
-          called it a subscription. */}
-      {!isSubscription ? (
-        <div>
-          <label className="mb-1 block text-sm" htmlFor="apiKey">
-            {external ? 'API key' : 'API key (only if your server needs one)'}
+      {/* No credential on the subscription path, and not merely hidden: the
+          server refuses one. A key there would bill an API account while the
+          product called it a subscription. */}
+      {!isSubscription ? fields.map((f) => (
+        <div key={f.key}>
+          <label className="mb-1 block text-sm" htmlFor={`field-${f.key}`}>
+            {f.label}{f.required ? '' : ' (optional)'}
           </label>
-          <Input id="apiKey" name="apiKey" type="password" autoComplete="off" value={apiKey}
-                 required={external} onChange={(e) => setApiKey(e.target.value)} />
+          <Input
+            id={`field-${f.key}`}
+            name={f.key}
+            type={f.secret ? 'password' : 'text'}
+            autoComplete="off"
+            autoCapitalize="none"
+            required={f.required}
+            placeholder={f.placeholder ?? undefined}
+            value={values[f.key] ?? ''}
+            onChange={(e) => setField(f.key, e.target.value)}
+          />
+          {f.help ? <p className="mt-1 text-xs text-muted-foreground">{f.help}</p> : null}
         </div>
-      ) : null}
+      )) : null}
 
       <div className={isSubscription ? 'hidden' : ''}>
         <Button type="button" variant="secondary" disabled={busy || looking || !canDiscover}
                 onClick={() => void findModels()}>
-          {looking ? 'Asking…' : models ? 'Look again' : 'Show me my models'}
+          {looking ? 'Asking…' : models ? 'Look again' : `Show me my ${modelNoun}s`}
         </Button>
         {!canDiscover ? (
           <p className="mt-1 text-xs text-muted-foreground">
-            {external ? 'Enter your API key first.' : 'Enter your server address first.'}
+            {needsBaseUrl
+              ? 'Enter your endpoint address first.'
+              : `Enter your ${missingRequired.map((f) => f.label.toLowerCase()).join(' and ')} first.`}
           </p>
         ) : null}
       </div>
@@ -236,7 +312,7 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
 
       {models && usable.length ? (
         <div>
-          <label className="mb-1 block text-sm" htmlFor="model">Model</label>
+          <label className="mb-1 block text-sm capitalize" htmlFor="model">{modelNoun}</label>
           <select
             id="model" value={chosen} onChange={(e) => setChosen(e.target.value)}
             className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
@@ -248,8 +324,11 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
             ))}
           </select>
           <p className="mt-1 text-xs text-muted-foreground">
-            These are the models your account can use. Josi will send one real message to the one you
-            pick before it counts as working.
+            {discovery?.fromCatalog
+              ? `These are the ${modelNoun}s Josi ships knowing about${
+                discovery.catalogVersion ? ` (list of ${discovery.catalogVersion})` : ''
+              }. Josi will send one real message to the one you pick before it counts as working.`
+              : `These are the ${modelNoun}s your account can use. Josi will send one real message to the one you pick before it counts as working.`}
           </p>
 
           {/* LB12.2: the exact identifier is what a support conversation needs
@@ -260,27 +339,39 @@ export function ProviderForm({ busy, paths, loadSubscriptionInfo, onSubmit, subm
             </button>
             {showIds ? (
               <p className="break-all text-xs text-muted-foreground">
-                Model identifier: <code>{chosen}</code>
+                {modelNoun === 'model' ? 'Model identifier' : 'Deployment name'}: <code>{chosen}</code>
+                {entry?.docsUrl ? (
+                  <>
+                    {' · '}
+                    <a className="underline" href={entry.docsUrl} target="_blank" rel="noreferrer noopener">
+                      Provider documentation
+                    </a>
+                  </>
+                ) : null}
               </p>
             ) : null}
             {(models ?? []).some((m) => m.likelyNonChat) ? (
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
                 <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-                Also show models that are probably not for chat
+                Also show {modelNoun}s that are probably not for chat
               </label>
             ) : null}
           </div>
         </div>
       ) : null}
 
-      {models && !models.length && discovery?.unsupported && !external ? (
-        // Only when discovery is genuinely impossible, and marked as unverified.
+      {allowsTypedModel ? (
+        // Either the endpoint publishes no list, or the list came from Josi's
+        // own catalogue — in both cases a name it does not carry may still be
+        // right, and in neither case has it been checked yet.
         <div>
-          <label className="mb-1 block text-sm" htmlFor="manualModel">Model name on your server</label>
-          <Input id="manualModel" name="manualModel" required autoCapitalize="none" />
+          <label className="mb-1 block text-sm" htmlFor="manualModel">
+            {usable.length ? `Or type a ${modelNoun} name` : `${modelNoun} name on your server`}
+          </label>
+          <Input id="manualModel" name="manualModel" required={!usable.length} autoCapitalize="none" />
           <p className="mt-1 text-xs text-muted-foreground">
-            Your server does not publish a model list, so this cannot be checked before it is saved.
-            Josi will still send a real message to it before treating it as working.
+            This cannot be checked against a list before it is saved. Josi will still send a real
+            message to it before treating it as working.
           </p>
         </div>
       ) : null}

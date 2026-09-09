@@ -4,9 +4,11 @@ repository. It is intentionally explicit. Commands are written for a Linux
 server unless a section says otherwise.</p>
 <blockquote>
 <p><strong>Release warning</strong></p>
-<p>Josi CE 0.1 remains a preview. Use the Admin Overview best-practice scan and
-the documented restore test before trusting an installation with important
-data. A successful container start is not recovery evidence.</p>
+<p>Josi CE 0.1 is still under construction. Phase 9 is incomplete and Phases
+10 through 12 are not implemented at the time this paragraph was written.
+In particular, the product does not yet provide its promised backup,
+restore, update, rollback, diagnostics, or identity/memory workflows. Do not
+treat this preview as production-ready merely because the containers start.</p>
 </blockquote>
 <h2>1. What the standard installation creates</h2>
 <p>The default Compose deployment creates five service roles:</p>
@@ -66,7 +68,7 @@ data. A successful container start is not recovery evidence.</p>
 </tbody></table>
 <p>The database is attached only to the private <code>data</code> network. Caddy is attached
 only to the <code>edge</code> network. The worker is not reachable through the proxy.</p>
-<h2 id="deployment">2. Supported deployment shapes</h2>
+<h2>2. Supported deployment shapes</h2>
 <p>Choose one deployment shape before changing configuration.</p>
 <h3>2.1 Public HTTPS with bundled Caddy</h3>
 <p>Use this for the usual single-server installation. You need a public DNS name,
@@ -319,7 +321,7 @@ port forwarding, firewall policy, and incorrect IPv6 records.</p>
 <pre><code class="language-bash">docker compose ps --all
 docker ps --format &#39;{{.Names}}&#39; | grep -E &#39;(ocr|clamav)&#39; &amp;&amp; echo unexpected || echo absent
 </code></pre>
-<h2 id="setup">10. Complete the setup wizard</h2>
+<h2>10. Complete the setup wizard</h2>
 <p>Open <code>JOSI_APP_URL</code> in a browser. A fresh installation exposes the setup wizard
 and refuses normal application routes until setup completes.</p>
 <p>The wizard covers:</p>
@@ -339,7 +341,7 @@ used to create another super administrator.</p>
 <p>Record recovery information in the organization&#39;s password manager. Do not put
 provider keys, OAuth secrets, SMTP passwords, or recovery material in this
 repository.</p>
-<h2 id="storage">11. Enable optional OCR and ClamAV profiles</h2>
+<h2>11. Enable optional OCR and ClamAV profiles</h2>
 <p>Profiles may be combined.</p>
 <p>OCR only:</p>
 <pre><code class="language-bash">docker compose --profile ocr up -d
@@ -467,28 +469,24 @@ volumes unless <code>--volumes</code> is supplied.</p>
 step.</strong> It deletes the PostgreSQL data volume and other named volumes.</p>
 <p>Do not delete <code>secrets/master.key</code>. Do not regenerate it to fix a startup
 problem. A replacement key cannot decrypt existing credentials.</p>
-<h2 id="backups">15. Backup and restore status</h2>
-<p>Admin → Backups creates a PostgreSQL archive in Josi&#39;s internal backup volume,
-then Restic copies it to an enabled local disk, mounted NAS, Amazon S3,
-Cloudflare R2, or Backblaze B2 destination. Scheduled runs apply the configured
-daily, weekly, and monthly retention policy and run a repository integrity
-check.</p>
-<p>An uploaded snapshot is not automatically called recoverable. Use <strong>Test
-off-host restore</strong>; Josi reads the archive back from Restic and verifies its
-SHA-256 checksum against the original. Admin → Overview reports restore as
-passed only after that evidence exists.</p>
-<p>A complete recovery plan must preserve:</p>
+<h2>15. Backup and restore status</h2>
+<p>Josi&#39;s required encrypted, restorable backup workflow belongs to Phase 10 and
+is not yet implemented. Therefore this preview cannot honestly provide the
+promised supported backup and restore commands.</p>
+<p>Before storing important data, wait for Phase 10 and its destructive
+backup-wipe-restore acceptance test to pass. A manual PostgreSQL dump is not a
+substitute for that complete workflow because it may omit application files,
+history copies, configuration, and the separately held master key.</p>
+<p>At minimum, any future complete backup set must preserve:</p>
 <ul>
 <li>PostgreSQL data</li>
-<li>The exact <code>secrets/master.key</code>, separately from the repository</li>
+<li>The exact <code>secrets/master.key</code></li>
 <li>Application configuration</li>
 <li>Uploads and recovery/history data when those features exist</li>
 <li>A record of the Josi release being restored</li>
 </ul>
-<p>Credential files for Restic live beneath the configured backup secrets
-directory, are mounted read-only, and never enter PostgreSQL or HTTP responses.
-The master key must be protected separately from both the host and the backup
-repository. Losing it makes restored encrypted credentials unreadable.</p>
+<p>The master key must be protected separately from the database backup. Restore
+must fail safely when the wrong key is supplied.</p>
 <h2>16. Upgrade and rollback status</h2>
 <p>The required one-click update, pre-update backup, health check, and automatic
 rollback belong to Phase 10 and are not yet implemented.</p>
@@ -594,274 +592,7 @@ An out-of-memory kill appears in container state and host kernel logs.</p>
 connector features members are allowed to enable for their own accounts.
 Allowing a permission does not turn it on for anyone or grant access by itself;
 each member must still connect their own account and enable the feature.</p>
-<h2 id="developer-services">18. Developer service connections</h2>
-<p><strong>Workspace → Developer services</strong> is where a person connects GitHub, Netlify,
-Vercel or Supabase to Josi. None of the four is configured by the installer, by an
-environment variable, or by an administrator on anyone’s behalf: each one is
-disconnected until the person who owns the account pastes an access token they created
-themselves.</p>
-<h3>18.1 Who owns these connections</h3>
-<p>They are <strong>user-scoped</strong>, not installation services. A GitHub token acts as the
-person who created it, a Netlify or Vercel token deploys to their team, and a Supabase
-personal access token administers their projects. The connection therefore belongs to one
-account, exactly as a connected Google or Microsoft account does.</p>
-<p>An administrator can:</p>
-<ul>
-<li>see, on <strong>Admin → Developer services</strong>, whose connection exists and whether it
-is working;</li>
-<li>disconnect somebody’s connection;</li>
-<li>switch a service off for the whole installation.</li>
-</ul>
-<p>Switching a service off stops anyone connecting it and stops Josi using the connections that
-already exist. The owner can still take their own token back — a ceiling removes a credential’s
-use, it does not trap it here.</p>
-<p>An administrator cannot read a token, see which account or project it points at, see what
-it is permitted to do, or connect a service for somebody else. Switching a service back on
-does not connect it for anyone — it returns the choice to each person, who still has to
-create and paste their own token.</p>
-<h3>18.2 The minimum permissions to grant</h3>
-<table>
-<thead><tr><th>Service</th><th>Grant this, and nothing more</th></tr></thead>
-<tbody>
-<tr><td>GitHub</td><td>A <em>fine-grained</em> personal access token, limited to selected
-repositories, with Repository → Metadata read-only and Contents read-only, and an expiry
-date. No organization permissions, and no write, admin or delete permission.</td></tr>
-<tr><td>Netlify</td><td>A personal access token created for Josi alone. Netlify tokens
-<em>cannot be scoped</em>: the token can do anything the account can, including deleting
-sites. A dedicated token is what makes it revocable without disruption.</td></tr>
-<tr><td>Vercel</td><td>A token scoped to the one team or personal account Josi should see,
-with an expiry. A Vercel token is scoped to a team, not to an action.</td></tr>
-<tr><td>Supabase</td><td>A personal access token from Account → Access tokens. <strong>Not</strong>
-a project API key: the <code>service_role</code> key bypasses every row-level security policy
-on the project, and Josi refuses to store one.</td></tr>
-</tbody>
-</table>
-<h3>18.3 What happens to the token</h3>
-<p>The token is sent once to the service’s own API to check that it works, then sealed with
-the installation master key before it reaches PostgreSQL. It is never shown again — the
-page displays a fixed mask and the account name the provider reported. It does not appear
-in chat, in logs, in a diagnostics bundle, in the audit trail, in an administrator’s view,
-or in any ordinary API response, and a database dump without the master key does not yield
-it. Requests go only to <code>api.github.com</code>, <code>api.netlify.com</code>,
-<code>api.vercel.com</code> and <code>api.supabase.com</code>; nothing in the connect form is a
-URL, redirects are not followed, and an address that is not on the public internet is
-refused at request time.</p>
-<h3>18.4 Testing, disconnecting and reconnecting</h3>
-<p><strong>Test connection</strong> asks the provider again, now, and updates the status. A token
-that has been revoked at the provider shows as needing reconnection rather than continuing
-to claim it works. <strong>Replace token</strong> stores a new one on the same connection.
-<strong>Disconnect</strong> deletes Josi’s copy — it cannot revoke the token for you, so the
-page names where to do that in your own account.</p>
-<h3>18.5 What this is not</h3>
-<p>Developer services are separate from the model provider Josi uses, from the Google or
-Microsoft accounts under <strong>Connections</strong>, and from messaging <strong>Channels</strong>.
-Connecting one of them gives Josi a stored credential and a status; it does not add a
-messaging transport and does not change which model answers.</p>
-<h2 id="custom-api">19. Custom API connections</h2>
-<p><strong>Admin → Custom API</strong> connects an external HTTP service Josi has never heard
-of — a booking system, a CRM, something written in-house — and then says, one action at a
-time, exactly what Josi may ask it. Nothing here is preset: a fresh installation has no
-connection, and no environment variable or seeded row creates one.</p>
-<p>This is the only connection kind in Josi where <strong>the assistant chooses which request to
-make</strong>. Every decision below follows from that.</p>
-<h3>19.1 What an administrator sets up</h3>
-<ol>
-<li>A name and an <code>https://</code> address. Plain <code>http://</code> is refused: it would
-put this installation’s credential on the wire in the clear on every call.</li>
-<li>A credential — an API key in a header you name, a bearer token, or a username and
-password. It is sealed with the installation master key before it reaches the database.</li>
-<li><strong>Test connection</strong>, which sends a <code>GET</code> to the test path you chose and
-nothing else.</li>
-<li><strong>Make it available to Josi</strong>, which does not work until that test has succeeded.
-A connection cannot reach the assistant on the strength of a form somebody filled in — only
-on the strength of the API having answered.</li>
-<li>The list of actions Josi may use. Each one arrives <strong>switched off</strong> and has its
-own switch.</li>
-</ol>
-<p>Josi can call an action only when both switches are on. There is no row anywhere that
-means “any path on this host”.</p>
-<h3>19.2 Reading, changing and deleting</h3>
-<p>What Josi may do on its own is decided by the HTTP method, and the database enforces the
-pairing — an administrator cannot label a <code>POST</code> that creates an invoice as a read.</p>
-<table>
-<thead><tr><th>Method</th><th>What happens when the assistant calls it</th></tr></thead>
-<tbody>
-<tr><td><code>GET</code>, <code>HEAD</code></td><td>Runs immediately.</td></tr>
-<tr><td><code>POST</code>, <code>PUT</code>, <code>PATCH</code></td><td>Waits on the person’s
-<strong>Approvals</strong> page, showing exactly what would be sent.</td></tr>
-<tr><td><code>DELETE</code></td><td>Waits on the person’s <strong>Approvals</strong> page.</td></tr>
-</tbody>
-</table>
-<p>A search endpoint that genuinely needs <code>POST</code> is therefore treated as a change and
-asks first. That is the safe side of a deliberate trade-off. No user preference and no
-administrator setting can make a change automatic here, and approving IS sending: the
-decision and the request happen together, so an approved call can neither sit unexecuted
-nor be spent twice. An unanswered request expires after thirty minutes, because a pending
-write from last month is not consent.</p>
-<h3>19.3 Importing an OpenAPI document</h3>
-<p>Paste the <strong>JSON</strong> form of an OpenAPI 3 document. Josi proposes actions and saves
-nothing until you choose from the list; everything you choose arrives switched off. The
-document’s own <code>servers</code> are <strong>ignored completely</strong> and only reported back so
-you can check they agree with the address you typed — a specification comes from the party
-on the other side of the credential. Header and cookie parameters are dropped, because a
-header the assistant can set is a header nobody reviewed. YAML is refused by name rather
-than parsed: Josi ships no YAML parser, so convert the document first.</p>
-<h3>19.4 Where requests can go</h3>
-<p>The host you gave <em>is</em> the allowlist. Every assembled URL is re-parsed and refused
-unless its host matches exactly and its path lies under the base URL. Addresses are
-re-checked at request time rather than once at save time, every resolved address is checked
-rather than the first, redirects are never followed, and anything off the public internet —
-loopback, private ranges, link-local, cloud metadata — is refused. A custom API on your own
-LAN therefore cannot be connected, and that is deliberate.</p>
-<h3>19.5 What happens to the credential</h3>
-<p>Sealed with the installation master key and opened only inside the request builder at the
-moment of use. It is never shown again: the page displays a fixed mask, because four
-characters of a credential are still four characters of a credential. It does not appear in
-chat, in a tool result, in logs, in a diagnostics bundle, in the audit trail, or in any
-ordinary API response, and a database dump without the master key does not yield it. It
-travels in a header and never in a URL. An API’s own error text is never passed through —
-failures become a category and a sentence Josi wrote.</p>
-<h3>19.6 Who owns what</h3>
-<p>Connections are <strong>installation-scoped and administrator-owned</strong>, because a custom
-API credential acts as the product rather than as a person — the opposite of a developer
-service token, and for the same reason applied to a different fact. Every request is made
-<em>for</em> one person, though, and a pending change is visible only to them. An
-administrator configures the pipe; they do not see what somebody sent through it.</p>
-<h3>19.7 What this is not</h3>
-<p>Custom APIs are separate from the model provider Josi thinks with, from the Google or
-Microsoft accounts under <strong>Connections</strong>, from <strong>Developer services</strong>, and from
-messaging <strong>Channels</strong>. This is also not an MCP server: nothing here speaks a
-protocol, the actions are typed by an administrator rather than discovered, and nothing here
-lets the model name a URL, a method or a header. Those are
-<a href="#mcp-servers">External MCP server connections</a>, which are a separate feature with
-separate tables and a different owner.</p>
-<h2 id="mcp-servers">20. External MCP server connections</h2>
-<p><strong>Workspace → MCP servers</strong> is where a person connects a remote MCP server they
-already use — their notes app, their issue tracker, their own software — and Josi asks it what
-tools it offers. Nothing here is preset: a fresh installation has no server, and no environment
-variable or seeded row creates one.</p>
-<p>This is the only connection kind in Josi where <strong>the far end speaks a protocol and
-describes its own tools</strong>. Everywhere else, the sentence saying what an action does was
-written by somebody on your installation. Here it was written by the remote server, and the
-assistant reads it. Every decision below follows from that.</p>
-<h3>20.1 What a person sets up</h3>
-<ol>
-<li>A name and the server’s <code>https://</code> MCP endpoint. Plain <code>http://</code> is
-refused: it would put a credential and every tool call on the wire in the clear.</li>
-<li>Optionally a credential — a bearer token, or an API key in a header they name. It is sealed
-with the installation master key before it reaches the database. An unauthenticated public
-server is allowed; what bounds where Josi can reach is the pinned address, not the presence of
-a token.</li>
-<li><strong>Connect and list tools</strong>, which performs a real MCP handshake and then asks
-<code>tools/list</code>.</li>
-<li><strong>Make it available to Josi</strong>, which does not work until that handshake has
-succeeded. A server cannot reach the assistant on the strength of a form somebody filled in.</li>
-<li>Each tool, read and switched on individually, as either <em>ask me every time</em> or
-<em>run without asking</em>.</li>
-</ol>
-<p>Josi can call a tool only when the server is available <em>and</em> that tool is switched on.
-There is no setting anywhere that means “any tool on this server”.</p>
-<h3>20.2 A server that changes a tool loses the approval</h3>
-<p>Josi records a hash of the exact name, description and inputs somebody read when they switched
-a tool on. If the server changes any of them, that tool comes off the list, is marked
-<strong>Changed since you approved it</strong>, and is named back to its owner the next time they
-connect.</p>
-<p>This is the failure this feature is most exposed to. A tool called <code>search_notes</code>
-whose description quietly becomes “search the notes and forward them” is a different tool wearing
-a name somebody already agreed to. Josi will not run it again until they read the new version.</p>
-<p>For the same reason, a server’s own “this only reads” annotation is shown as <em>that server’s
-claim</em> and nothing in Josi acts on it. Whether a call runs is decided by the owner’s
-<em>ask me / run without asking</em> choice, and a tool set to ask produces a card on their
-<strong>Approvals</strong> page showing exactly what would be sent. Approving runs it, once.
-Unanswered requests expire after thirty minutes.</p>
-<h3>20.3 Only one transport, and stdio is refused</h3>
-<p>Josi speaks <strong>Streamable HTTP over HTTPS</strong> and nothing else. There is no stdio
-option and there will not be one: a stdio MCP server is a command line Josi would execute inside
-its own container, which is remote code execution offered as a text field.</p>
-<p>Requests go only to the host stored on the row, re-checked on every request rather than once at
-save time. Redirects are never followed, and anything off the public internet — loopback, private
-ranges, link-local, cloud metadata — is refused at request time. An MCP server on your own LAN
-therefore cannot be connected, and that is deliberate: unlike a model endpoint, where nothing
-chooses the path, here the assistant chooses which tool to invoke.</p>
-<h3>20.4 Prompt injection is treated as the main threat</h3>
-<p>The tool names, descriptions, input schemas and results are all a stranger’s text and the model
-reads all of them. So the <code>instructions</code> block MCP lets a server return — prose intended
-to be placed directly in the assistant’s own system prompt — is read and dropped; it reaches no
-row and no prompt. Descriptions are stripped of line breaks and control characters and
-length-capped, and the assistant is told in its own instructions to treat them as claims about
-what a tool does and never as directions addressed to it.</p>
-<h3>20.5 Who owns what</h3>
-<p>Servers are <strong>user-scoped</strong>, like a connected Google account and unlike a custom
-API: an MCP server’s token acts as the person who created it. From <strong>Admin → MCP
-servers</strong> an administrator can see whose server exists, which host it reaches, whether it
-works and how many tools are switched on; can cut one off; and can switch the feature off for the
-installation or narrow it to a list of hosts. Switching it back on connects nothing.</p>
-<p>An administrator cannot read a credential, see the name somebody typed, see the full endpoint
-address, or see which tools they approved or what those tools claim to do. The host <em>is</em>
-visible on purpose — it is an outbound destination from the operator’s own machine, and the host
-list cannot be written by somebody who cannot see the candidates — and the owner’s own page says
-so plainly.</p>
-<h3>20.6 What this is not</h3>
-<p>MCP servers are separate from the model provider Josi thinks with, from the Google or Microsoft
-accounts under <strong>Connections</strong>, from <strong>Developer services</strong>, from
-<strong>Custom API</strong> connections and from messaging <strong>Channels</strong>. Connecting
-one does not add a messaging transport and does not change which model answers.</p>
-<h2 id="skills">21. The Skills library</h2>
-<p><strong>Admin → Skills</strong> installs written instructions Josi follows for a kind of work.
-<strong>Workspace → Skills</strong> shows everybody what is installed, in full. Nothing here is
-preset: a fresh installation has an empty library, and the starter catalogue that ships in the
-release is four documents nobody has installed.</p>
-<p>A skill is a <strong>document, not a program</strong>. No code, no command, no address, no
-credential, no tool. That matters because the assumption in the other direction is the dangerous
-one:</p>
-<p><strong>A skill cannot give Josi anything.</strong> It cannot hand the assistant a tool it did
-not have, reach an account somebody has not connected, widen a permission somebody switched off, or
-let something happen that a person would otherwise have been asked to agree to. What a skill says
-it uses is checked against <em>each person’s own connections</em>, on every message — so two people
-with the same skill and different connections get two different, honest answers.</p>
-<h3>21.1 Installing is not switching on</h3>
-<ol>
-<li><strong>Install.</strong> The package is fetched, validated, checked against the digest its
-catalogue pinned, and its signature verified if the source publishes a key. It lands switched off
-and doing nothing; no conversation reads it.</li>
-<li><strong>Switch on</strong>, after somebody reads the whole text. The request carries the digest
-of what was on screen, so a package that changed in between is refused rather than approved.</li>
-</ol>
-<p><strong>An update goes back to step two even if the skill was switched on.</strong> New
-instructions from outside your installation are not covered by somebody having read the old ones.
-The database enforces that rather than trusting the code to.</p>
-<h3>21.2 Where packages come from</h3>
-<p>The source list <em>is</em> the trust list. There is nowhere in Josi to paste a package: an
-install names a source and a skill key, and the address comes from that source’s own catalogue.</p>
-<ul>
-<li><strong>Included with Josi</strong> — four starter skills compiled into the release. Nothing is
-fetched, so this works with no outbound internet, and nothing from it is installed until somebody
-installs it.</li>
-<li><strong>A curated registry</strong> or <strong>a repository you add</strong> — an
-<code>https://</code> index address. Packages are fetched only from that host and only from
-addresses under that index’s own directory. Every resolved address is checked, redirects are not
-followed, and anything off the public internet is refused.</li>
-</ul>
-<p>Josi sends no credential to a registry and there is no field for one. Paste the publisher’s
-ed25519 signing key on the source if they give you one: every package from it then has to be signed
-by that key. Without one, Josi still checks the package against the digest the catalogue pinned —
-which catches a package changing under you — but not who wrote it, and every screen says which of
-the two you have.</p>
-<h3>21.3 What is refused, and what happens to it</h3>
-<p>A package that fails a check is <strong>quarantined</strong>: recorded with its key, version,
-digest and a reason, and with none of its text kept — the reason it is there is that its text could
-not be trusted. There is no way to promote one into the library; installing it means fixing what
-failed and installing again.</p>
-<p>The reason worth explaining is <em>its text tries to override Josi’s own rules</em>. A skill is a
-runbook for a person to read as well as the assistant, and a package telling the model to disregard
-its rules, act without asking, or keep something from its owner has told you what it is for.</p>
-<h3>21.4 What this is not</h3>
-<p>Skills are separate from the model provider Josi thinks with, from the Google or Microsoft
-accounts under <strong>Connections</strong>, from <strong>Developer services</strong>, from
-<strong>Custom API</strong> connections, from <strong>MCP servers</strong> and from messaging
-<strong>Channels</strong>. Installing one adds no tool, no connection and no permission. It is a
-runbook, and everything it describes was already something Josi could be asked to do.</p>
-<h2 id="security">22. Security checklist</h2>
+<h2>18. Security checklist</h2>
 <p>Before considering an installation reachable by other people, confirm:</p>
 <ul>
 <li><input disabled="" type="checkbox"> The checkout is an intended release, not an arbitrary dirty branch.</li>
@@ -884,7 +615,7 @@ resourced.</li>
 entrusted to the system.</li>
 <li><input disabled="" type="checkbox"> Phase 11 threat-model and release gates have passed before public launch.</li>
 </ul>
-<h2>23. Collecting useful support information</h2>
+<h2>19. Collecting useful support information</h2>
 <p>The redacted diagnostics bundle is a Phase 10 feature and does not yet exist.
 Until it does, inspect logs locally and redact them before sharing. Never send:</p>
 <ul>
@@ -904,7 +635,7 @@ docker version
 docker compose version
 docker compose ps -a
 </code></pre>
-<h2>24. Uninstallation</h2>
+<h2>20. Uninstallation</h2>
 <p>There is no supported uninstall-and-preserve-data wizard yet.</p>
 <p>Stopping the installation is reversible:</p>
 <pre><code class="language-bash">docker compose stop

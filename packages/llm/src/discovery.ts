@@ -16,15 +16,34 @@
 //   * No model is called. Discovery lists; the probe proves. A model that
 //     appears here has not been shown to work, and `activated_at` still gates
 //     use on a real request succeeding.
-//   * Nothing is invented. If discovery fails, this returns the failure and its
-//     category. It never falls back to a built-in list, because falling back to
-//     a guess is exactly the behaviour being removed.
+//   * Nothing is invented. If a listing FAILS, this returns the failure and its
+//     category. It never answers an authentication or billing problem with a
+//     built-in list, because falling back to a guess is exactly the behaviour
+//     being removed.
+//
+// V2.4 added the one case that is not a guess. Several providers have no
+// listing interface at all — Vertex publishes the same catalogue to everyone
+// rather than to a credential, Qianfan and Tencent list models through a
+// console API the inference credential cannot reach. For those, and only those,
+// a versioned list from `catalog.ts` is offered, flagged `fromCatalog` with the
+// date it was last edited, and always accompanied by a field for typing in a
+// name it does not contain. That is a different act from inventing a list for a
+// provider that would have answered: the operator is told which kind of list
+// they are looking at, and the probe still has to reach the model either way.
 import {
   LlmError, categorizeFailure, explainCategory,
   type LlmErrorCategory, type ProviderKind,
 } from './types.js';
 import { safeFetch, UnsafeEndpointError, type SafeFetchOptions } from './ssrf.js';
 import { safeErrorCode } from './providers/openaiCompatible.js';
+import { CATALOG_VERSION, describeProvider, type CatalogModel, type ProviderDescriptor } from './catalog.js';
+import { errorCodeFrom } from './providers/shared.js';
+import { listGeminiModels } from './providers/gemini.js';
+import { listCohereModels } from './providers/cohere.js';
+import { listAzureDeployments } from './providers/azureAi.js';
+import { listBedrockModels } from './providers/bedrock.js';
+import { readServiceAccount, verifyVertexCredential } from './providers/vertexAi.js';
+import { verifyErnieCredential } from './providers/ernie.js';
 
 export interface DiscoveredModel {
   /** Exactly what the provider calls it. This is what gets stored and sent. */
@@ -50,31 +69,34 @@ export interface DiscoveryResult {
   /** True when this provider has no listing interface at all, which is a
    * different thing from a listing that failed. */
   unsupported?: boolean;
+  /** True when the models below came from Josi's own versioned catalogue
+   * rather than from the provider.
+   *
+   * Surfaced rather than smoothed over. A list nobody asked the provider for
+   * can be stale, and an operator deciding whether to trust it needs to know
+   * which kind of list they are looking at. */
+  fromCatalog?: boolean;
+  /** When that catalogue was last edited, so "possibly stale" is a date rather
+   * than a feeling. */
+  catalogVersion?: string;
+  /** Whether a name the provider did not list may be typed in. */
+  allowsCustomModel?: boolean;
 }
 
 export interface DiscoverOptions {
   provider: ProviderKind;
   apiKey?: string | null;
   baseUrl?: string | null;
+  /** The other secret fields a provider needs, by the key names the catalogue
+   * declares — an AWS secret access key, a Baidu secret key, a Vertex service
+   * account file. Used for the one listing call and never stored from here. */
+  secrets?: Record<string, string>;
+  /** The non-secret fields — a region, a project, an API version. */
+  config?: Record<string, string>;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   resolve?: SafeFetchOptions['resolve'];
 }
-
-const DEFAULT_BASE: Partial<Record<ProviderKind, string>> = {
-  openai: 'https://api.openai.com/v1',
-  xai: 'https://api.x.ai/v1',
-  anthropic: 'https://api.anthropic.com/v1',
-  gemini: 'https://generativelanguage.googleapis.com/v1beta',
-  cohere: 'https://api.cohere.com/v2',
-  deepseek: 'https://api.deepseek.com/v1',
-  qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-  mistral: 'https://api.mistral.ai/v1',
-  kimi: 'https://api.moonshot.ai/v1',
-  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
-  openrouter: 'https://openrouter.ai/api/v1',
-  minimax: 'https://api.minimax.io/v1',
-};
 
 /** Model families that are not chat models, whatever else they are.
  *
@@ -171,6 +193,27 @@ const failure = (
   providerCode?: string,
 ): DiscoveryResult => ({ ok: false, models: [], category, message: message ?? explainCategory(category), providerCode });
 
+/** The versioned list, for a provider that has none of its own. */
+function fromCatalog(descriptor: ProviderDescriptor, message: string): DiscoveryResult {
+  const models: CatalogModel[] = [...(descriptor.models ?? [])];
+  return {
+    ok: true,
+    fromCatalog: true,
+    catalogVersion: CATALOG_VERSION,
+    allowsCustomModel: true,
+    models: models.map((m) => ({
+      id: m.id,
+      label: m.label,
+      // Not from the provider, and the flag says so rather than letting a
+      // shipped list wear the authority of a discovered one.
+      fromProvider: false,
+      recommended: m.recommended === true,
+      likelyNonChat: false,
+    })),
+    message,
+  };
+}
+
 /** Ask the provider what this credential may use. */
 export async function discoverModels(opts: DiscoverOptions): Promise<DiscoveryResult> {
   if (opts.provider === 'openai_subscription') {
@@ -204,6 +247,7 @@ export async function discoverModels(opts: DiscoverOptions): Promise<DiscoveryRe
     ];
     return {
       ok: true,
+      allowsCustomModel: true,
       models: aliases.map((a, index) => ({
         id: a.id,
         label: a.label,
@@ -221,17 +265,155 @@ export async function discoverModels(opts: DiscoverOptions): Promise<DiscoveryRe
     };
   }
 
-  const base = (opts.baseUrl || DEFAULT_BASE[opts.provider] || '').replace(/\/$/, '');
+  const descriptor = describeProvider(opts.provider);
+  if (!descriptor) {
+    return failure('malformed_request', 'Josi does not know that model provider.');
+  }
+
+  const secrets = opts.secrets ?? {};
+  const config = opts.config ?? {};
+  const transport = {
+    timeoutMs: opts.timeoutMs,
+    fetchImpl: opts.fetchImpl,
+    resolve: opts.resolve,
+  };
+
+  // A listing that needs its own request shape. Each returns raw rows plus the
+  // status, so the failure handling below stays in one place rather than being
+  // repeated per provider.
+  type Listing = { status: number; body: string; rows: ListRow[] | null };
+  let listing: Listing | null = null;
+
+  try {
+    switch (descriptor.wire) {
+      case 'gemini':
+        listing = await listGeminiModels({
+          model: '', apiKey: opts.apiKey, baseUrl: opts.baseUrl, ...transport,
+        });
+        break;
+
+      case 'cohere-v2':
+        listing = await listCohereModels({
+          model: '', apiKey: opts.apiKey, baseUrl: opts.baseUrl, ...transport,
+        });
+        break;
+
+      case 'azure-openai':
+        if (!opts.baseUrl) {
+          return failure('malformed_request', 'Enter the endpoint of your Azure resource first.');
+        }
+        listing = await listAzureDeployments({
+          model: '', apiKey: opts.apiKey, baseUrl: opts.baseUrl,
+          apiVersion: config.apiVersion || null, ...transport,
+        });
+        break;
+
+      case 'bedrock-converse':
+        if (!config.region) {
+          return failure('malformed_request', 'Choose the AWS region your model access is in first.');
+        }
+        listing = await listBedrockModels({
+          region: config.region,
+          credentials: {
+            accessKeyId: secrets.accessKeyId ?? '',
+            secretAccessKey: secrets.secretAccessKey ?? '',
+            sessionToken: secrets.sessionToken || null,
+          },
+          ...transport,
+        });
+        break;
+
+      case 'vertex-gemini':
+        // Nothing to list, but the credential CAN be checked — and checking it
+        // now is worth more than a longer list would be, because a service
+        // account that cannot mint a token is the failure an operator would
+        // otherwise meet after setup said it was configured.
+        await verifyVertexCredential({
+          model: '',
+          project: config.project ?? '',
+          location: config.location ?? '',
+          serviceAccount: readServiceAccount(secrets.serviceAccountJson ?? ''),
+          ...transport,
+        });
+        return fromCatalog(
+          descriptor,
+          'That service account works. Vertex offers the same published models to every project, so '
+          + 'these are the ones Josi ships knowing about — a newer model name can be typed in, and '
+          + 'Josi will confirm whichever you pick by making a real request.',
+        );
+
+      case 'ernie':
+        await verifyErnieCredential({
+          model: '', apiKey: opts.apiKey, secretKey: secrets.secretKey ?? null,
+          baseUrl: opts.baseUrl, ...transport,
+        });
+        return fromCatalog(
+          descriptor,
+          'That key pair works. Qianfan lists models through its console rather than through this '
+          + 'credential, so these are the ones Josi ships knowing about — the exact endpoint name '
+          + 'from your console can be typed in instead.',
+        );
+
+      default:
+        break;
+    }
+  } catch (err) {
+    // A listing that threw rather than answering: an unusable credential, an
+    // endpoint we will not go to, or a socket.
+    if (err instanceof LlmError) {
+      return failure(err.category, err.message, err.providerCode);
+    }
+    return failure('network');
+  }
+
+  if (listing) {
+    if (!listing.rows) {
+      const providerCode = errorCodeFrom(listing.body);
+      const category = categorizeFailure(listing.status, providerCode);
+      // A 2xx that could not be read is a provider whose listing Josi does not
+      // understand, not a credential problem — and where a catalogue exists,
+      // that is exactly what it is for.
+      if (listing.status >= 200 && listing.status < 300) {
+        if (descriptor.models?.length) {
+          return fromCatalog(
+            descriptor,
+            'That provider did not answer with a model list Josi could read, so these are the ones '
+            + 'it ships knowing about. A different name can be typed in.',
+          );
+        }
+        return {
+          ...failure('malformed_request', 'The endpoint answered, but not with a model list Josi could read.'),
+          unsupported: true,
+          allowsCustomModel: true,
+        };
+      }
+      return failure(category, explainCategory(category), providerCode);
+    }
+    return { ok: true, models: toModels(listing.rows), allowsCustomModel: true };
+  }
+
+  // Providers with no listing interface and no special request shape.
+  if (descriptor.discovery === 'catalog') {
+    return fromCatalog(
+      descriptor,
+      'This provider does not publish a model list to your credential, so these are the ones Josi '
+      + 'ships knowing about. A different name can be typed in, and Josi will confirm whichever you '
+      + 'pick by making a real request.',
+    );
+  }
+
+  // The OpenAI-shaped listing, which Anthropic and every compatible vendor also
+  // answer. The base URL is the operator's where they gave one, so a regional
+  // or self-hosted endpoint is asked rather than the vendor's default.
+  const base = (opts.baseUrl || descriptor.defaultBaseUrl || '').replace(/\/$/, '');
   if (!base) {
     return failure('malformed_request', 'No endpoint is configured for this provider.');
   }
 
   const headers: Record<string, string> = {};
-  if (opts.provider === 'anthropic') {
+  if (descriptor.wire === 'anthropic-messages') {
     if (opts.apiKey) headers['x-api-key'] = opts.apiKey;
     headers['anthropic-version'] = '2023-06-01';
-  } else if (opts.provider === 'gemini') {
-    if (opts.apiKey) headers['x-goog-api-key'] = opts.apiKey;
   } else if (opts.apiKey) {
     headers.Authorization = `Bearer ${opts.apiKey}`;
   }
@@ -267,24 +449,30 @@ export async function discoverModels(opts: DiscoverOptions): Promise<DiscoveryRe
   // OpenAI, Anthropic and xAI all use `data`. Some self-hosted runtimes use
   // `models`. Anything else is a runtime that does not speak this API.
   const rows = Array.isArray(parsed.data) ? parsed.data
-    : Array.isArray(parsed.models) ? parsed.models.map((row: unknown) => {
-      if (!row || typeof row !== 'object') return row;
-      const record = row as Record<string, unknown>;
-      const rawId = typeof record.id === 'string' ? record.id : typeof record.name === 'string' ? record.name : '';
-      return { id: rawId.replace(/^models\//, ''), display_name: record.display_name ?? record.displayName ?? record.name };
-    })
+    : Array.isArray(parsed.models) ? parsed.models
     : null;
   if (!rows) {
+    // Where the catalogue has something to offer, offer it and say where it
+    // came from. Where it does not, say plainly that the endpoint does not
+    // list models rather than showing an empty box.
+    if (descriptor.models?.length) {
+      return fromCatalog(
+        descriptor,
+        'That endpoint did not answer with a model list Josi could read, so these are the ones it '
+        + 'ships knowing about. A different name can be typed in.',
+      );
+    }
     return {
       ...failure(
         'malformed_request',
         'The endpoint answered, but its reply is not an OpenAI-compatible model list.',
       ),
       unsupported: true,
+      allowsCustomModel: true,
     };
   }
 
-  return { ok: true, models: toModels(rows as ListRow[]) };
+  return { ok: true, models: toModels(rows as ListRow[]), allowsCustomModel: true };
 }
 
 /** Turn a discovery failure into the error the rest of CE throws. */

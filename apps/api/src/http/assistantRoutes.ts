@@ -15,17 +15,13 @@ import { tmpdir } from 'node:os';
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
-  addMessage, appendEvent, consumeApproval, createContact, createTask, createThread, decideApproval,
+  addMessage, appendEvent, createContact, createTask, createThread, decideApproval,
   getTask, getTemplate, getThread, listContactsFor, listMessages, listPendingApprovals,
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder,
-  checkChildAccess, isHighImpactClass, isRiskyAction,
-  type Approval, type ApprovalLevel, type Db, type Task, type TaskState,
+  type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
-import {
-  otherPeopleInvolved, runWriteTaskNow, writeActionClassFor, writeFamilyFor,
-} from '@josi-ce/connectors';
 import { verifyPassword } from '@josi-ce/auth';
 import { runAssistantTurn, type RecallLookup } from '@josi-ce/agent';
 import type { LoadOptions } from '@josi-ce/core';
@@ -47,15 +43,6 @@ export interface AssistantRoutesCtx {
   /** HTTP for connected-provider (Gmail, Graph…) calls the data tools make.
    * Injected by tests; unset in production. */
   connectorFetch?: typeof fetch;
-  /** HTTP for administrator-defined custom APIs the assistant may call.
-   * Injected by tests; unset in production. */
-  customApiFetch?: typeof fetch;
-  /** HTTP for external MCP servers the person connected. Injected by tests;
-   * unset in production. */
-  mcpFetch?: typeof fetch;
-  /** DNS for those calls, injected by the tests. Unset in production, where
-   * the host's own resolver is used and re-consulted on every request. */
-  outboundResolve?: (hostname: string) => Promise<string[]>;
   recall?: RecallLookup;
 }
 
@@ -81,75 +68,6 @@ function registryOptions(ctx: AssistantRoutesCtx) {
     db: ctx.db, masterKey, fetchImpl: ctx.fetchImpl, resolve: ctx.resolve,
     codexRunner: ctx.codexRunner,
   };
-}
-
-/** What carrying a write task out needs beyond the database.
- *
- * The same `loadMasterKey` tolerance as `registryOptions`: a missing key is not
- * a crash, it is "this request cannot open sealed credentials", and the caller
- * hands the work to the worker instead of pretending it happened. */
-function writeContext(ctx: AssistantRoutesCtx): { masterKey: ReturnType<typeof loadMasterKey> | null; connectorFetch?: typeof fetch } {
-  let masterKey: ReturnType<typeof loadMasterKey> | null = null;
-  try {
-    masterKey = ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {});
-  } catch {
-    masterKey = null;
-  }
-  return { masterKey, connectorFetch: ctx.connectorFetch };
-}
-
-/** Does moving THIS task forward deserve a password prompt?
- *
- * ITEM 26(3). Everything used to: `PATCH /tasks/:id { state: 'ready' }` asked
- * for `approve_task` unconditionally, so booking half an hour in your own diary
- * cost the same friction as sending mail as you. A gate met constantly is a
- * gate people learn to clear without reading, which is how it stops defending
- * anything.
- *
- * So it is scoped to consequence, and the two things that make a write
- * consequential are both structural rather than a matter of opinion: the action
- * class is high impact, or the write puts something in front of somebody who is
- * not the owner. An email always has a recipient, so email keeps its gate. A
- * calendar event with attendees keeps it. A calendar event for yourself alone,
- * which you just asked for out loud, does not. */
-function stepUpNeededForTask(task: Task): boolean {
-  const actionClass = writeActionClassFor(task.template_key);
-  if (actionClass && isHighImpactClass(actionClass)) return true;
-  // Mail unconditionally. `send_as_user` is on the sensitive list for its own
-  // reasons, and reading the gate off a `recipient` slot would drop it for a
-  // draft whose recipient happens to be empty — a gate that a missing value can
-  // switch off is not a gate.
-  if (writeFamilyFor(task.template_key) === 'mail') return true;
-  if (otherPeopleInvolved(task).length) return true;
-  // Anything with no write executor keeps the old blanket treatment: it is not
-  // what item 26 examined, and loosening it here would be a change nobody asked
-  // for made in passing.
-  return writeFamilyFor(task.template_key) === null || isRiskyAction(task.template_key);
-}
-
-/** The approvals a turn just raised, ready to render beside the reply.
- *
- * Re-read from the database rather than trusted from the tool result: the
- * summary a person agrees to must be the stored one that `consumeApproval`
- * will later check the payload against, not a second copy that could drift
- * away from it. Anything no longer pending is dropped — approving twice is not
- * a thing this offers.
- */
-async function approvalCardsFrom(
-  db: Db,
-  userId: string,
-  actions: Array<{ tool: string; result: unknown }>,
-): Promise<Array<{ id: string; summary: string; action: string }>> {
-  const ids = new Set<string>();
-  for (const entry of actions) {
-    const id = (entry.result as { approval_id?: unknown } | null)?.approval_id;
-    if (typeof id === 'string' && id) ids.add(id);
-  }
-  if (!ids.size) return [];
-  const pending = await listPendingApprovals(db, userId);
-  return pending
-    .filter((a) => ids.has(a.id))
-    .map((a) => ({ id: a.id, summary: a.summary, action: a.action }));
 }
 
 export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
@@ -296,20 +214,6 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       const thread = await getThread(db, threadId);
       if (!thread) throw new RouteError(404, 'not found');
 
-      // Parental Controls, asked about the PERSON TYPING rather than the
-      // thread's owner. A managed child writing into a thread somebody shared
-      // with them is still spending their own day; an adult answering in a
-      // child's thread is not spending the child's. `runAssistantTurn` asks the
-      // same question about the owner, which is what covers Telegram and the
-      // other channels — this one exists so the web app gets a plain 403 and a
-      // sentence rather than a refusal that reads like an outage.
-      const childAccess = await checkChildAccess(db, { userId: req.user!.id });
-      if (!childAccess.allowed) {
-        throw new RouteError(403, childAccess.opensAgain
-          ? `${childAccess.message} Josi is back at ${childAccess.opensAgain}.`
-          : (childAccess.message ?? 'Josi is not available on this account right now.'));
-      }
-
       // The turn runs as the THREAD'S OWNER, not as the caller. A colleague
       // with write access can continue the conversation; anything it creates
       // still belongs to the person whose thread it is, so a share cannot be
@@ -379,10 +283,6 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         images,
         recall: ctx.recall,
         connectorFetch: ctx.connectorFetch,
-        customApiFetch: ctx.customApiFetch,
-        mcpFetch: ctx.mcpFetch,
-        outboundResolve: ctx.outboundResolve,
-        channel: 'web',
         sessionKey: req.user!.session_id,
       });
 
@@ -390,11 +290,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         // Recorded as an inbound message so the conversation is not silently
         // missing what the person said, but no reply is fabricated.
         await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
-        // A refusal because somebody is outside their agreed hours is the
-        // server saying no, not the server being broken. 503 would have it
-        // read as an outage on the one screen where that would be a lie.
-        return res.status(result.refusal.reason === 'restricted' ? 403 : 503)
-          .json({ refusal: result.refusal, actions: result.actions });
+        return res.status(503).json({ refusal: result.refusal, actions: result.actions });
       }
 
       await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
@@ -402,19 +298,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       await appendEvent(db, { actorUserId: thread.owner_user_id, actor: 'user', kind: 'thread.exchange',
         subjectType: 'thread', subjectId: threadId,
         payload: { channel: 'web', inboundChars: inbound.length, attachmentCount: attachments.length, replyChars: result.reply.length } });
-      // ITEM 26(2): ONE approval, shown where the person is already looking.
-      //
-      // A card that only exists on the Approvals page is a card nobody sees
-      // until they go looking for a thing they were not told to look for. The
-      // ids come from the tool results themselves rather than from a query over
-      // "recent" approvals, so the cards are exactly the ones this turn raised
-      // and never somebody's older pending work reappearing under a reply that
-      // has nothing to do with it.
-      return res.json({
-        reply: result.reply,
-        actions: result.actions,
-        approvals: await approvalCardsFrom(db, req.user!.id, result.actions),
-      });
+      return res.json({ reply: result.reply, actions: result.actions });
     }),
   );
 
@@ -470,7 +354,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       }
       const state = str(req.body?.state, 40) as TaskState | '';
       if (state) {
-        if (state === 'ready' && stepUpNeededForTask(await getTask(db, taskId))) {
+        if (state === 'ready') {
           const stepUp = await checkStepUp(db, { userId: req.user!.id, sessionKey: req.user!.session_id, action: 'approve_task' });
           if (!stepUp.allowed) throw new RouteError(401, stepUp.message ?? 'Confirm your password before approving this action.');
         }
@@ -516,94 +400,20 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       res.json({ approvals: await listPendingApprovals(db, req.user!.id) })),
   );
 
-  /** Agree to one prepared action — and have it happen.
-   *
-   * ITEM 26(2) AND (4). Approving used to only flip a row: the task stayed at
-   * `awaiting_approval`, the Tasks page then demanded a password to move it to
-   * `ready`, and a worker was meant to carry it out on some later tick. Roman
-   * pressed through all of that and still had no calendar event, with nothing
-   * anywhere saying why.
-   *
-   * So Approve is now the last thing asked of anybody. It carries the write out
-   * in the same request — exactly as the custom API and MCP approvals already
-   * do, and for the same reason: an approval that hands the work to something
-   * invisible cannot tell the person whether it worked. The answer reports what
-   * the provider actually said, and `carriedOut` is true only when the provider
-   * accepted it. */
   r.post(
     '/approvals/:id/decide',
     handle(async (req, res) => {
-      let approval: Approval;
       try {
-        approval = await decideApproval(db, {
+        const approval = await decideApproval(db, {
           approvalId: param(req, 'id'),
           decidedBy: req.user!.id,
           approve: req.body?.approve === true,
         });
+        return res.json({ approval });
       } catch (err) {
         // "Not yours" and "does not exist" answer the same way here too.
         throw new RouteError(404, 'not found');
       }
-
-      if (approval.status !== 'approved' || approval.subject_type !== 'task') {
-        return res.json({ approval });
-      }
-
-      let task = await getTask(db, approval.subject_id);
-      // Only work with a real executor is carried out here. Anything else keeps
-      // the behaviour it had, rather than being marched into a failure by a
-      // change that was about calendars.
-      if (writeFamilyFor(task.template_key) === null) return res.json({ approval, task });
-
-      // The agreement was to a SUMMARY, and the summary was written from the
-      // slots. Those slots can still be edited while the approval sits pending
-      // — `PATCH /tasks/:id` allows it, and so does the model's
-      // `update_task_slots`. Approving a described lunch and sending something
-      // else is exactly the rubber stamp `approvalHash` exists to prevent, so
-      // the pin is checked here, at the only moment it can protect anything.
-      const spend = await consumeApproval(db, { approvalId: approval.id, payload: task.slots });
-      if (!spend.ok) {
-        return res.json({
-          approval, task, carriedOut: false,
-          message: 'What this would do has changed since it was described to you, so nothing was done. Ask Josi for it again.',
-        });
-      }
-
-      // Cancelled, already carried out, or otherwise moved on while the card
-      // was on screen. Not an error, and not a second write.
-      if (task.state !== 'awaiting_approval' && task.state !== 'ready') {
-        return res.json({ approval, task, carriedOut: false, message: 'This is no longer waiting to be done.' });
-      }
-      if (task.state === 'awaiting_approval') {
-        await transition(db, task.id, 'ready', { actor: 'user', actorUserId: req.user!.id });
-      }
-
-      const write = writeContext(ctx);
-      if (!write.masterKey) {
-        // Cannot open sealed credentials from here. The worker can; say so
-        // rather than reporting an outcome nobody has.
-        await enqueue(db, { kind: 'task.wake', payload: { taskId: task.id } });
-        task = await getTask(db, task.id);
-        return res.json({
-          approval, task, carriedOut: false,
-          message: 'Approved and queued. It has not happened yet.',
-        });
-      }
-
-      const outcome = await runWriteTaskNow(db, task.id, write);
-      task = await getTask(db, task.id);
-      const said = outcome.state === 'confirmed' ? 'Done.' : (outcome.error ?? 'It did not happen.');
-      // Written into the conversation the request came from, so what happened
-      // is still there after a reload. A decision that lives only in the tab
-      // that made it is not a record of anything.
-      if (task.thread_id) {
-        await addMessage(db, { threadId: task.thread_id, direction: 'out', body: said, channel: 'web' });
-      }
-      return res.json({
-        approval, task,
-        carriedOut: outcome.state === 'confirmed',
-        message: said,
-      });
     }),
   );
 

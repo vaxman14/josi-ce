@@ -13,25 +13,22 @@ import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { checklistRoutes } from './http/checklistRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
-import { adminDevServiceRoutes, devServiceRoutes } from './http/devServiceRoutes.js';
-import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
-import { adminMcpRoutes, mcpRoutes } from './http/mcpRoutes.js';
-import { adminSkillRoutes, skillRoutes } from './http/skillRoutes.js';
-import { adminParentalRoutes, parentalRoutes } from './http/parentalRoutes.js';
 import { contactSyncRoutes } from './http/contactSyncRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
 import { storageRoutes } from './http/storageRoutes.js';
 import { opsRoutes } from './http/opsRoutes.js';
+import { licenceRoutes } from './http/licenceRoutes.js';
+import {
+  adminDeveloperServiceRoutes, developerServiceRoutes,
+} from './http/developerServiceRoutes.js';
 import { personaRoutes } from './http/personaRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './http/telegramRoutes.js';
-import { adminExternalChannelRoutes, externalChannelRoutes, mountExternalChannelWebhooks } from './http/externalChannelRoutes.js';
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
-import { helpRoutes } from './http/helpRoutes.js';
 
 export interface AppConfig {
   /** https in production; false lets cookies work over plain http locally. */
@@ -41,6 +38,16 @@ export interface AppConfig {
   /** Master-key options for the readiness probe, or `false` to skip the check
    * (tests, and the migration container which runs before a key exists). */
   masterKeyCheck?: LoadOptions | false;
+  /** Backup-destination HTTP, injected by the suites so no test reaches a real
+   * bucket. Unset in production, where the global fetch is used. */
+  destinationFetch?: typeof fetch;
+  /** Developer-service HTTP, injected by the suites so no test reaches GitHub,
+   * Netlify, Vercel or Supabase. */
+  developerServiceFetch?: typeof fetch;
+  /** The publisher's licence verification key. Unset in production, where the
+   * key stamped into the artefact is used; injected by the suites so a test can
+   * stand in for a supported build without rebuilding one. */
+  licencePublicKey?: string | null;
   /** Provider HTTP and DNS, injected by the tests so no suite ever contacts a
    * real model provider. Unset in production, where the real ones are used. */
   llmFetch?: typeof fetch;
@@ -66,8 +73,6 @@ export interface AppConfig {
   backupWriter?: import('@josi-ce/ops').BackupWriter;
   /** How a backup is applied. */
   restoreReader?: import('@josi-ce/ops').RestoreReader;
-  resticRunner?: import('@josi-ce/ops').CommandRunner;
-  resticSecretRoot?: string;
   /** Telemetry transport. Absent = nothing can be sent, whatever the setting. */
   telemetrySender?: import('@josi-ce/ops').TelemetrySender;
   /** M115: unset by default. CE ships no gateway URL and no credential. */
@@ -75,34 +80,6 @@ export interface AppConfig {
   fetchLatestVersion?: () => Promise<string | null>;
   /** DNS for outbound admin-supplied URLs, injected by the tests. */
   outboundResolve?: (hostname: string) => Promise<string[]>;
-  /** GitHub/Netlify/Vercel/Supabase HTTP, injected by the tests so no suite
-   * contacts a developer service. Unset in production. */
-  devServiceFetch?: typeof fetch;
-  /** HTTP for administrator-defined custom APIs, injected by the tests so no
-   * suite contacts one. Deliberately its own seam rather than reusing
-   * `connectorFetch`: that one answers as Google and Microsoft, and a suite
-   * that had to satisfy both in one stub would be asserting less about each. */
-  customApiFetch?: typeof fetch;
-  /** HTTP for external MCP servers, injected by the tests so no suite contacts
-   * one. Its own seam again: an MCP stub speaks JSON-RPC over a single POST and
-   * a suite that had to satisfy it and a REST API in one stub would be
-   * asserting less about each. */
-  mcpFetch?: typeof fetch;
-  /** HTTP for skill registries, injected by the tests so no suite fetches a
-   * package. Its own seam again, and for the plainest reason of the four: this
-   * one answers with a catalogue and a document and never speaks to anything
-   * the other three do. */
-  skillFetch?: typeof fetch;
-  /** Public docs + Groq only. Kept separate from every assistant/provider seam
-   * so documentation help cannot inherit workspace tools or context. */
-  helpFetch?: typeof fetch;
-  helpGroqApiKey?: string;
-  /** The publisher key paid-module licences are checked against. Unset in
-   * production, where the key stamped into the build is used and nothing can
-   * substitute for it. The tests inject their own so a licence can be signed
-   * without the publisher's private key — the same seam every outside thing
-   * already has. */
-  entitlementPublicKey?: string | null;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -110,7 +87,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
 
   // A request body is the only unbounded input here; 1 MB is generous for JSON
   // and small enough that a hostile client cannot exhaust memory.
-  app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as Request).rawBody = Buffer.from(buf); } }));
+  app.use(express.json({ limit: '1mb' }));
   app.disable('x-powered-by');
 
   // Liveness: is this process up. Deliberately consults nothing — a health
@@ -149,10 +126,6 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     connectorFetch: cfg.connectorFetch,
     retry: cfg.telegramRetry,
   });
-  mountExternalChannelWebhooks(app, {
-    db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
-    llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
-  });
 
   const api = express.Router();
   api.use(attachUser({ db }));
@@ -177,6 +150,16 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   // Phase 7 owns /connections now: the Phase 1 router proved the ownership
   // shape against a real table; this one actually connects accounts.
+  // Mounted BEFORE /connections on purpose. The OAuth connector router matches
+  // /:provider, so `developer` would otherwise be read as a provider name and
+  // answered 404 by the wrong router.
+  api.use('/connections/developer', developerServiceRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.developerServiceFetch,
+  }));
+  api.use('/admin/developer-services', adminDeveloperServiceRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.developerServiceFetch,
+  }));
+
   api.use('/connections', connectorRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
   }));
@@ -193,8 +176,6 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/assistant', assistantRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
     codexRunner: cfg.codexRunner, connectorFetch: cfg.connectorFetch,
-    customApiFetch: cfg.customApiFetch, mcpFetch: cfg.mcpFetch,
-    outboundResolve: cfg.outboundResolve,
   }));
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({
@@ -212,42 +193,6 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/telegram', adminTelegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
   }));
-  api.use('/admin/channels', adminExternalChannelRoutes({
-    db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
-    llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
-  }));
-  // Developer services. BEFORE `/admin` for the reason recorded above
-  // `/admin/telegram`: with the generic admin router registered first, this one
-  // is never reached and its own guard stops being the thing protecting it.
-  api.use('/admin/developer-services', adminDevServiceRoutes({
-    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.devServiceFetch, resolve: cfg.outboundResolve,
-  }));
-  // Custom APIs. BEFORE `/admin` for the reason recorded above
-  // `/admin/telegram`: with the generic admin router registered first, this one
-  // is never reached and its own guard stops being the thing protecting it.
-  api.use('/admin/custom-apis', adminCustomApiRoutes({
-    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch, resolve: cfg.outboundResolve,
-  }));
-  // External MCP servers. BEFORE `/admin` for the reason recorded above
-  // `/admin/telegram`: with the generic admin router registered first, this one
-  // is never reached and its own guard stops being the thing protecting it.
-  api.use('/admin/mcp-servers', adminMcpRoutes({
-    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.mcpFetch, resolve: cfg.outboundResolve,
-  }));
-  // The Skills library. BEFORE `/admin` for the reason recorded above
-  // `/admin/telegram`: with the generic admin router registered first, this one
-  // is never reached and its own guard stops being the thing protecting it.
-  api.use('/admin/skills', adminSkillRoutes({
-    db, fetchImpl: cfg.skillFetch, resolve: cfg.outboundResolve,
-  }));
-  // Parental Controls, the LICENCE half. BEFORE `/admin` for the reason
-  // recorded above `/admin/telegram`. Nothing here reads a relationship, a
-  // timetable or a conversation: an administrator buys the module and has no
-  // authority inside it, and the two routers are separate so that cannot blur.
-  api.use('/admin/parental-controls', adminParentalRoutes({
-    db, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck,
-    entitlementPublicKey: cfg.entitlementPublicKey,
-  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -257,57 +202,9 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
   }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
-  // GitHub, Netlify, Vercel and Supabase. Its own prefix rather than a branch
-  // inside /connections: these are pasted personal access tokens with no OAuth
-  // handshake, no scope vocabulary and no refresh, and folding them into the
-  // connector routes would mean one router with two credential models in it.
-  api.use('/developer-services', devServiceRoutes({
-    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.devServiceFetch, resolve: cfg.outboundResolve,
-  }));
-  // Administrator-defined external APIs. Its own prefix rather than a branch
-  // inside /connections or /developer-services: this is the only connection
-  // kind where the ASSISTANT chooses which request to make, and folding it in
-  // beside an OAuth grant or a pasted token would present three different
-  // authority models as one thing.
-  api.use('/custom-apis', customApiRoutes({
-    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch, resolve: cfg.outboundResolve,
-  }));
-  // External MCP servers. Its own prefix rather than a branch inside any of the
-  // three above: this is the only connection kind where the far end SPEAKS A
-  // PROTOCOL and describes its own tools, so the allowlist is discovered rather
-  // than typed — and presenting a discovered allowlist beside a hand-written
-  // one would teach people that somebody here reviewed both.
-  api.use('/mcp-servers', mcpRoutes({
-    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.mcpFetch, resolve: cfg.outboundResolve,
-  }));
-  // The Skills library, read-only for a member. Its own prefix and not a branch
-  // inside any of the four above, because it is not a connection at all: a
-  // skill has no credential, no host and no tool, and presenting it beside
-  // things that do would teach people that it might.
-  //
-  // There is no member write route here, which is the shape of the feature
-  // rather than an omission. Reviewing prose that will sit near the assistant's
-  // own instructions is an administrative act, and the transparency members are
-  // owed is the full text — which this returns.
-  api.use('/skills', skillRoutes({ db }));
-  api.use('/help', helpRoutes({ apiKey: cfg.helpGroqApiKey, fetchImpl: cfg.helpFetch }));
-  // Parental Controls, the AUTHORITY half. Its own prefix and not a branch
-  // inside anything above, because it is the only place in CE where one person
-  // may read another person's private rows — and it may do so only while a
-  // `parental_links` row says the two are a family. Every route answers 404
-  // when the module is not entitled, so an installation that has not bought it
-  // is indistinguishable from one where these routes were never written.
-  api.use('/parental', parentalRoutes({
-    db, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck,
-    entitlementPublicKey: cfg.entitlementPublicKey,
-  }));
   api.use('/storage', storageRoutes({ db }));
   api.use('/telegram', telegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
-  }));
-  api.use('/channels', externalChannelRoutes({
-    db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
-    llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   }));
   api.use('/persona', personaRoutes({
     db,
@@ -315,12 +212,14 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     fetchImpl: cfg.llmFetch,
     resolve: cfg.llmResolve,
   }));
+  api.use('/admin/licence', licenceRoutes({ db, publicKey: cfg.licencePublicKey }));
+
   api.use('/ops', opsRoutes({
     db,
+    masterKey: cfg.masterKeyCheck,
+    destinationFetch: cfg.destinationFetch,
     backupWriter: cfg.backupWriter,
     restoreReader: cfg.restoreReader,
-    resticRunner: cfg.resticRunner,
-    resticSecretRoot: cfg.resticSecretRoot,
     telemetrySender: cfg.telemetrySender,
     supportGatewayUrl: cfg.supportGatewayUrl ?? null,
     fetchLatestVersion: cfg.fetchLatestVersion,

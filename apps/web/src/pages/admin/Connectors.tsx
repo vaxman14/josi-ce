@@ -28,8 +28,18 @@ interface PolicyRow {
   note: string | null;
 }
 
+interface RegistrationState {
+  available: boolean;
+  publicHttpsBase: string | null;
+  reason: string | null;
+}
+
 interface AdminView {
   clients: ClientStatus[];
+  /** Whether an OAuth application can be registered from this address yet.
+   * Setup used to ask for these applications as its sixth step, on
+   * installations that had no public domain and so could never finish it. */
+  registration: RegistrationState;
   policy: PolicyRow[];
   suggestedRedirectUris: Array<{ provider: string; uri: string; additionalUris?: string[] }>;
 }
@@ -119,7 +129,22 @@ export function AdminConnectors() {
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
-      {view?.clients.map((client) => {
+      {/* A LAN-only installation is told the requirement and where to fix it,
+          rather than being shown credential fields whose result Google and
+          Microsoft would both reject. This is the same answer the wizard used
+          to give at step 6 — moved to the one screen that can act on it. */}
+      {view && !view.registration.available ? (
+        <Card>
+          <CardTitle>A public address is needed first</CardTitle>
+          <p className="mt-2 text-sm text-muted-foreground">{view.registration.reason}</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Set one in <a className="underline" href="/admin/workspace">Workspace</a>, then come back
+            here. Nothing else about this installation depends on it, and no data is affected.
+          </p>
+        </Card>
+      ) : null}
+
+      {view?.registration.available ? view.clients.map((client) => {
         const suggestion = view.suggestedRedirectUris.find((u) => u.provider === client.provider);
         const suggested = suggestion?.uri ?? '';
         return (
@@ -144,6 +169,33 @@ export function AdminConnectors() {
                     with a way to take it. A callback typed by hand and a callback
                     the server honours must be the same string, and a mismatch
                     produces the provider's error page rather than ours. */}
+                {/* LB12.4. Least privilege is only meaningful if the person is
+                    told what they are granting, so the scopes are named rather
+                    than summarised as "access". This disclosure used to live in
+                    the setup wizard's connector step; it moved here with the
+                    registration itself, because the consent it explains is the
+                    same one either way. */}
+                {(() => {
+                  const asks = view.policy.filter(
+                    (c) => c.provider === client.provider && c.kind === 'read',
+                  );
+                  if (!asks.length) return null;
+                  return (
+                    <div className="mb-3">
+                      <p className="text-sm font-medium">Permissions this will ask each person for</p>
+                      <ul className="mt-1 space-y-0.5 text-sm text-muted-foreground">
+                        {asks.map((c) => (
+                          <li key={c.key}>{c.label} — Read-only</li>
+                        ))}
+                      </ul>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Registering the application does not connect anyone's account or grant
+                        anything. Each person is asked separately, and anything that writes is a
+                        further consent of its own.
+                      </p>
+                    </div>
+                  );
+                })()}
                 <Copyable label={`Paste this into ${LABEL[client.provider]} as the redirect URL`} value={suggested} />
                 {suggestion?.additionalUris?.map((uri) => (
                   <Copyable key={uri} label="Also register this URL for Sign in with Google" value={uri} />
@@ -186,7 +238,7 @@ export function AdminConnectors() {
             </details>
           </Card>
         );
-      })}
+      }) : null}
 
       <Card>
         <details>

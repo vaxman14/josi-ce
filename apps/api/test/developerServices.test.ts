@@ -1,119 +1,53 @@
-// Developer services over the wire: GitHub, Netlify, Vercel, Supabase.
+// Developer services: permission and connection are two different facts.
 //
-// The claims this file attacks, one describe block each:
+// GitHub, Netlify, Vercel and Supabase are each person's own account. What an
+// administrator governs is who may connect one — not the credential, which is
+// the connecting person's and which the admin surface must never ask for.
 //
-//   1. Nothing is preset. A fresh installation lists four services and connects
-//      none of them, and no environment variable or seeded row can change that.
-//   2. Authentication and authorization. Signed out is 401; a member reaching
-//      an admin route is 403; another member's connection is 404, not 403.
-//   3. Encrypted storage. What lands in PostgreSQL is ciphertext, and the
-//      plaintext token appears nowhere in the row.
-//   4. Masked readback. Every response an owner can get shows a constant mask,
-//      never the token, a prefix, or its length.
-//   5. Connection tests, both ways, and what a failure does to the stored
-//      status.
-//   6. Disconnect and reconnect, including that disconnecting says the part CE
-//      cannot do.
-//   7. Malformed input and an SSRF-shaped answer from DNS.
-//   8. Secret redaction: the audit log, the admin surface and the diagnostics
-//      redactor.
-//
-// No suite here contacts GitHub, Netlify, Vercel or Supabase, and none performs
-// DNS: `devServiceFetch` and `outboundResolve` are both injected.
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+// The failure these guard against is conflating the two. A service permitted
+// for everyone that nobody has connected, and a service nobody may connect,
+// look identical if you only count connections; an administrator reading the
+// second as the first concludes the team does not want a tool they were never
+// able to use.
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { looksSealed } from '@josi-ce/core';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { MasterKey, looksSealed, openSealed } from '@josi-ce/core';
-import { redact } from '@josi-ce/ops';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
-const dir = mkdtempSync(join(tmpdir(), 'josi-ce-dev-services-'));
+const dir = mkdtempSync(join(tmpdir(), 'josi-ce-devsvc-'));
 const keyPath = join(dir, 'master.key');
-const KEY_BYTES = Buffer.alloc(32, 23);
-writeFileSync(keyPath, KEY_BYTES.toString('base64'));
-const masterKey = new MasterKey(KEY_BYTES);
-
-/** Deliberately not shaped like a real credential: scripts/scan-secrets.sh
- * refuses `ghp_` followed by 36 characters anywhere in the tree, and it is
- * right to. These are long enough to be recognisable and short enough not to
- * look like the real thing. */
-const TOKENS = {
-  github: 'fixture-github-token-value',
-  netlify: 'fixture-netlify-token-value',
-  vercel: 'fixture-vercel-token-value',
-  supabase: 'fixture-supabase-token-value',
-  refused: 'fixture-token-the-provider-refuses',
-};
+writeFileSync(keyPath, Buffer.alloc(32, 13).toString('base64'));
 
 let server: Server;
 let base: string;
 let db: TestDb;
-const ids: Record<string, string> = {};
-const cookies: Record<string, string> = {};
 
-/** How DNS answers. The SSRF block flips this to something hostile; every
- * other test leaves it public. */
-let resolveAnswer: string[] = ['140.82.121.6'];
-const outboundResolve = async () => resolveAnswer;
+// Not credential-shaped: the pre-commit scanner rejects anything that looks
+// real, and what matters is only that it round-trips and never comes back out.
+const TOKEN = 'not-a-real-developer-token-value';
 
-/** The four providers, stubbed. A request carrying `TOKENS.refused` is
- * answered 401 so the failure paths have something real to fail against. */
-const devServiceFetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
-  const href = String(url);
-  const auth = new Headers(init?.headers).get('authorization') ?? '';
-  const json = (body: unknown, headers: Record<string, string> = {}) =>
-    new Response(JSON.stringify(body), {
-      status: 200, headers: { 'content-type': 'application/json', ...headers },
-    });
-
-  if (auth === `Bearer ${TOKENS.refused}`) {
-    // A provider body that quotes the request back — the shape CE must never
-    // pass through to a screen or a log.
-    return new Response(JSON.stringify({ message: `Bad credentials for ${TOKENS.refused}` }), { status: 401 });
-  }
-
-  if (href === 'https://api.github.com/user') {
-    return json({ login: 'octocat-fixture', id: 4242 }, { 'x-oauth-scopes': '' });
-  }
-  if (href === 'https://api.netlify.com/api/v1/user') {
-    return json({ id: 'nl-fixture', slug: 'fixture-team', email: 'someone@example.test' });
-  }
-  if (href === 'https://api.vercel.com/v2/user') {
-    return json({ user: { id: 'vc-fixture', username: 'fixture-user' } });
-  }
-  if (href === 'https://api.supabase.com/v1/projects') {
-    return json([{ id: 'abcdefghijklmnopqrst', name: 'Fixture project' }]);
-  }
-  return new Response('{}', { status: 404 });
-}) as unknown as typeof fetch;
-
-interface Res { status: number; body: any; setCookie: string[] }
-
-async function call(
-  path: string,
-  opts: { method?: string; body?: unknown; jar?: string } = {},
-): Promise<Res> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (opts.jar) headers.cookie = opts.jar;
-  const token = opts.jar ? /josi_csrf=([^;]+)/.exec(opts.jar)?.[1] : undefined;
-  if (token) headers['x-josi-csrf'] = decodeURIComponent(token);
-  const res = await fetch(`${base}${path}`, {
-    method: opts.method ?? 'GET',
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-    redirect: 'manual',
+let serviceReply: { status: number; body: unknown } | 'throw' = {
+  status: 200, body: { login: 'octocat' },
+};
+const seen: string[] = [];
+const developerServiceFetch: typeof fetch = async (url) => {
+  seen.push(String(url));
+  if (serviceReply === 'throw') throw new Error('ECONNREFUSED');
+  return new Response(JSON.stringify(serviceReply.body), {
+    status: serviceReply.status,
+    headers: { 'content-type': 'application/json' },
   });
-  return {
-    status: res.status,
-    body: await res.json().catch(() => null),
-    setCookie: res.headers.getSetCookie?.() ?? [],
-  };
-}
+};
+
+interface Res { status: number; body: any }
+const jars: Record<string, string> = {};
+const ids: Record<string, string> = {};
 
 function mergeJar(existing: string | undefined, setCookie: string[]): string {
   const jar = new Map<string, string>();
@@ -129,518 +63,334 @@ function mergeJar(existing: string | undefined, setCookie: string[]): string {
   return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
-async function signIn(identifier: string, password: string): Promise<string> {
-  const pre = await call('/api/auth/csrf');
-  const jar = mergeJar(undefined, pre.setCookie);
-  const res = await call('/api/auth/login', { method: 'POST', body: { identifier, password }, jar });
-  expect(res.status, `login ${identifier}`).toBe(200);
-  return mergeJar(jar, res.setCookie);
+async function call(path: string, opts: { method?: string; body?: unknown; jar?: string } = {}): Promise<Res> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const jar = opts.jar ?? jars.admin;
+  if (jar) headers.cookie = jar;
+  const token = /josi_csrf=([^;]+)/.exec(jar)?.[1];
+  if (token) headers['x-josi-csrf'] = decodeURIComponent(token);
+  const method = opts.method ?? 'GET';
+  const res = await fetch(`${base}${path}`, {
+    method,
+    headers,
+    body: method !== 'GET' && opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-const PW = {
-  admin: 'admin-password-123',
-  alice: 'alice-password-123',
-  bob: 'bob-password-123',
-};
+async function signIn(identifier: string, password: string): Promise<string> {
+  const pre = await fetch(`${base}/api/auth/csrf`);
+  const jar = mergeJar(undefined, pre.headers.getSetCookie?.() ?? []);
+  const res = await fetch(`${base}/api/auth/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json', cookie: jar,
+      'x-josi-csrf': decodeURIComponent(/josi_csrf=([^;]+)/.exec(jar)?.[1] ?? ''),
+    },
+    body: JSON.stringify({ identifier, password }),
+  });
+  expect(res.status, `login ${identifier}`).toBe(200);
+  return mergeJar(jar, res.headers.getSetCookie?.() ?? []);
+}
 
-beforeAll(async () => {
+const PW = 'a-long-enough-password-123';
+
+beforeEach(async () => {
   db = await testDb();
-  await ensureWorkspace(db);
-  ids.admin = (await createUser(db, { email: 'ds-admin@ce.test', username: 'dsadmin', role: 'super_admin', password: PW.admin })).id;
-  ids.alice = (await createUser(db, { email: 'ds-alice@ce.test', username: 'dsalice', role: 'member', password: PW.alice })).id;
-  ids.bob = (await createUser(db, { email: 'ds-bob@ce.test', username: 'dsbob', role: 'member', password: PW.bob })).id;
-
+  seen.length = 0;
+  serviceReply = { status: 200, body: { login: 'octocat' } };
   const app = createApp(db, {
-    cookieSecure: false,
-    appUrl: 'http://localhost:3000',
-    masterKeyCheck: { path: keyPath },
-    devServiceFetch,
-    outboundResolve,
+    cookieSecure: false, appUrl: 'http://localhost', masterKeyCheck: { path: keyPath },
+    developerServiceFetch,
   });
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-  cookies.admin = await signIn('dsadmin', PW.admin);
-  cookies.alice = await signIn('dsalice', PW.alice);
-  cookies.bob = await signIn('dsbob', PW.bob);
+  await ensureWorkspace(db);
+  ids.admin = (await createUser(db, { email: 'admin@ce.test', username: 'admin', role: 'super_admin', password: PW })).id;
+  ids.alice = (await createUser(db, { email: 'alice@ce.test', username: 'alice', role: 'member', password: PW })).id;
+  ids.bob = (await createUser(db, { email: 'bob@ce.test', username: 'bob', role: 'member', password: PW })).id;
+  jars.admin = await signIn('admin', PW);
+  jars.alice = await signIn('alice', PW);
+  jars.bob = await signIn('bob', PW);
 });
 
-afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); });
-
-beforeEach(async () => {
-  resolveAnswer = ['140.82.121.6'];
-  await db.query(`delete from developer_service_connections`);
-  await db.query(`update developer_service_policy set allowed = true, note = null`);
-  // `events` is append-only at the database level (a trigger refuses deletes
-  // outside the retention window), which is the audit guarantee working. The
-  // assertions below scope by subject id instead of clearing the table.
+afterEach(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-async function connect(
-  who: 'alice' | 'bob',
-  service: keyof typeof TOKENS,
-  body: Record<string, unknown> = {},
-): Promise<Res> {
-  return call(`/api/developer-services/${service}`, {
-    method: 'POST', jar: cookies[who],
-    body: { token: TOKENS[service as keyof typeof TOKENS], ...body },
+/** Omitting `userIds` leaves the stored list alone, which is what the admin
+ * screen sends when it is only changing the mode. Passing one replaces it. */
+async function permit(service: string, mode: string, userIds?: string[]) {
+  const res = await call(`/api/admin/developer-services/${service}`, {
+    method: 'PUT', body: userIds === undefined ? { mode } : { mode, userIds },
   });
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
 }
 
-// ---------------------------------------------------------------- not preset
-
-describe('nothing is connected until somebody connects it', () => {
-  it('lists all four as disconnected on a fresh installation', async () => {
-    const res = await call('/api/developer-services', { jar: cookies.alice });
+describe('every service starts refused', () => {
+  it('permits nobody until an administrator says otherwise', async () => {
+    const res = await call('/api/connections/developer', { jar: jars.alice });
     expect(res.status).toBe(200);
-    expect(res.body.services.map((s: any) => s.service).sort())
-      .toEqual(['github', 'netlify', 'supabase', 'vercel']);
-    for (const service of res.body.services) {
-      expect(service.connection, service.service).toBeNull();
-      // Not forbidden is not the same as switched on.
-      expect(service.allowedByAdmin).toBe(true);
+    const services = res.body.services as Array<{ service: string; allowed: boolean }>;
+    expect(services.map((s) => s.service)).toEqual(['github', 'netlify', 'vercel', 'supabase']);
+    // A developer service reaches a third party with a person's own credential.
+    // Defaulting to permitted would switch that on for every installation that
+    // upgrades without anybody choosing it.
+    expect(services.every((s) => !s.allowed)).toBe(true);
+  });
+
+  it('refuses the connection at the route, not by hiding a control', async () => {
+    const res = await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
+    });
+    expect(res.status).toBe(403);
+    expect(await db.query(`select * from developer_connections`)).toHaveLength(0);
+    // Nothing was asked of GitHub either.
+    expect(seen).toHaveLength(0);
+  });
+});
+
+describe('the three scopes', () => {
+  it('allows everyone', async () => {
+    await permit('github', 'everyone');
+    for (const who of ['alice', 'bob']) {
+      const res = await call('/api/connections/developer', { jar: jars[who] });
+      const github = (res.body.services as any[]).find((s) => s.service === 'github');
+      expect(github.allowed, who).toBe(true);
     }
   });
 
-  it('explains what each one needs before anything is connected', async () => {
-    const res = await call('/api/developer-services', { jar: cookies.alice });
-    for (const service of res.body.services) {
-      expect(service.steps.length, service.service).toBeGreaterThan(2);
-      expect(service.minimumPermissions.length, service.service).toBeGreaterThan(0);
-      expect(service.tokenUrl, service.service).toMatch(/^https:\/\//);
-    }
+  it('allows only the people named', async () => {
+    await permit('github', 'specific_users', [ids.alice]);
+
+    const forAlice = await call('/api/connections/developer', { jar: jars.alice });
+    expect((forAlice.body.services as any[]).find((s) => s.service === 'github').allowed).toBe(true);
+
+    const forBob = await call('/api/connections/developer', { jar: jars.bob });
+    expect((forBob.body.services as any[]).find((s) => s.service === 'github').allowed).toBe(false);
+
+    // And the refusal is enforced, not merely displayed.
+    const attempt = await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.bob, body: { token: TOKEN },
+    });
+    expect(attempt.status).toBe(403);
   });
 
-  it('has no route that connects a service on somebody else\'s behalf', async () => {
-    // The admin surface can forbid and can disconnect. It cannot connect.
+  it('treats an empty named list as nobody, and says so', async () => {
+    await permit('github', 'specific_users', []);
+    const admin = await call('/api/admin/developer-services');
+    const github = (admin.body.services as any[]).find((s) => s.service === 'github');
+    // A real state — an administrator part-way through choosing — rather than
+    // an error, but it must not read as "allowed".
+    expect(github.summary).toMatch(/no one has been chosen/i);
+
+    const attempt = await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
+    });
+    expect(attempt.status).toBe(403);
+  });
+
+  it('keeps a named list across a change of mode', async () => {
+    await permit('github', 'specific_users', [ids.alice]);
+    await permit('github', 'everyone');
+    await permit('github', 'specific_users');
+
+    // Switching to "everyone" and back must not silently empty the list the
+    // administrator built.
+    const admin = await call('/api/admin/developer-services');
+    const github = (admin.body.services as any[]).find((s) => s.service === 'github');
+    expect(github.allowedUserIds).toEqual([ids.alice]);
+  });
+
+  it('shows the administrator\'s reason to whoever is refused', async () => {
+    await call('/api/admin/developer-services/github', {
+      method: 'PUT',
+      body: { mode: 'not_allowed', note: 'Ask the platform team if you need this.' },
+    });
+    const res = await call('/api/connections/developer', { jar: jars.alice });
+    const github = (res.body.services as any[]).find((s) => s.service === 'github');
+    expect(github.note).toMatch(/platform team/i);
+
+    const attempt = await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
+    });
+    expect(attempt.body.error).toMatch(/platform team/i);
+  });
+
+  it('is administrator-only to change', async () => {
     const res = await call('/api/admin/developer-services/github', {
-      method: 'POST', jar: cookies.admin, body: { token: TOKENS.github, ownerUserId: ids.alice },
+      method: 'PUT', jar: jars.alice, body: { mode: 'everyone' },
     });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
+    expect((await call('/api/admin/developer-services', { jar: jars.alice })).status).toBe(403);
   });
 });
 
-// ------------------------------------------------- authentication and access
-
-describe('authentication and authorization', () => {
-  it('refuses every route without a session', async () => {
-    expect((await call('/api/developer-services')).status).toBe(401);
-    expect((await call('/api/admin/developer-services')).status).toBe(401);
-
-    // A state-changing request needs the CSRF pair as well, and CSRF is
-    // checked before the session is — so a bare POST is 403 for a reason that
-    // is not authorization. Carry a valid CSRF pair and no session, which is
-    // the request that actually tests the auth guard.
-    const pre = await call('/api/auth/csrf');
-    const anonymous = mergeJar(undefined, pre.setCookie);
-    expect((await call('/api/developer-services/github', {
-      method: 'POST', jar: anonymous, body: { token: 'x' },
-    })).status).toBe(401);
-    expect((await call('/api/admin/developer-services/policy/github', {
-      method: 'PUT', jar: anonymous, body: { allowed: false },
-    })).status).toBe(401);
-  });
-
-  it('refuses the admin surface to a member', async () => {
-    expect((await call('/api/admin/developer-services', { jar: cookies.alice })).status).toBe(403);
-    expect((await call('/api/admin/developer-services/policy/github', {
-      method: 'PUT', jar: cookies.alice, body: { allowed: false },
-    })).status).toBe(403);
-  });
-
-  it('answers 404, not 403, for another member\'s connection', async () => {
-    const created = await connect('alice', 'github');
-    expect(created.status).toBe(201);
-    const id = created.body.connection.id;
-
-    // 403 would confirm that a colleague has a connection with that id.
-    expect((await call(`/api/developer-services/${id}/test`, { method: 'POST', jar: cookies.bob })).status)
-      .toBe(404);
-    expect((await call(`/api/developer-services/${id}`, { method: 'DELETE', jar: cookies.bob })).status)
-      .toBe(404);
-
-    // And it is still there.
-    const rows = await db.query(`select id from developer_service_connections where id = $1`, [id]);
-    expect(rows.length).toBe(1);
-  });
-
-  it('shows a member only their own connections', async () => {
-    await connect('alice', 'github');
-    const mine = await call('/api/developer-services', { jar: cookies.bob });
-    for (const service of mine.body.services) expect(service.connection).toBeNull();
-  });
-
-  it('refuses a service that does not exist', async () => {
-    expect((await call('/api/developer-services/gitlab', {
-      method: 'POST', jar: cookies.alice, body: { token: 'x' },
-    })).status).toBe(404);
-  });
-});
-
-// ------------------------------------------------------------ stored sealed
-
-describe('the token reaches PostgreSQL as ciphertext', () => {
-  it('seals it, and the row contains no plaintext anywhere', async () => {
-    const created = await connect('alice', 'github');
-    expect(created.status).toBe(201);
-
-    const [row] = await db.query<Record<string, unknown>>(
-      `select * from developer_service_connections where owner_user_id = $1`, [ids.alice],
-    );
-    expect(looksSealed(row.credentials_enc)).toBe(true);
-    // The whole row, not just the credential column: a token copied into
-    // `account_label` by a careless probe would be just as bad.
-    expect(JSON.stringify(row)).not.toContain(TOKENS.github);
-    // And it really is the token, not the redaction marker (the Phase 0
-    // sealing defect, which shipped for months).
-    expect(openSealed<{ token: string }>(masterKey, String(row.credentials_enc)).token)
-      .toBe(TOKENS.github);
-  });
-
-  it('stores one connection per person per service, replacing rather than duplicating', async () => {
-    await connect('alice', 'github');
-    await connect('alice', 'github');
-    const rows = await db.query(
-      `select id from developer_service_connections where owner_user_id = $1 and service = 'github'`,
-      [ids.alice],
-    );
-    expect(rows.length).toBe(1);
-  });
-
-  it('keeps two people\'s tokens apart', async () => {
-    await connect('alice', 'github');
-    await connect('bob', 'netlify');
-    const rows = await db.query<{ owner_user_id: string; service: string }>(
-      `select owner_user_id, service from developer_service_connections order by service`,
-    );
-    expect(rows).toEqual([
-      { owner_user_id: ids.alice, service: 'github' },
-      { owner_user_id: ids.bob, service: 'netlify' },
-    ]);
-  });
-});
-
-// ---------------------------------------------------------- masked readback
-
-describe('readback is masked', () => {
-  it('returns a constant mask and never the token', async () => {
-    const created = await connect('alice', 'github');
-    const listed = await call('/api/developer-services', { jar: cookies.alice });
-    const github = listed.body.services.find((s: any) => s.service === 'github');
-
-    expect(github.connection.tokenMask).toMatch(/^[^A-Za-z0-9]+$/);
-    expect(JSON.stringify(listed.body)).not.toContain(TOKENS.github);
-    expect(JSON.stringify(created.body)).not.toContain(TOKENS.github);
-    // Not a prefix or a suffix of it either.
-    expect(JSON.stringify(listed.body)).not.toContain(TOKENS.github.slice(-4));
-    // Nor the ciphertext, which is still a credential to work on offline.
-    expect(JSON.stringify(listed.body)).not.toMatch(/"v1\./);
-  });
-
-  it('identifies the connection by the account the provider named, not by the token', async () => {
-    await connect('alice', 'github');
-    const listed = await call('/api/developer-services', { jar: cookies.alice });
-    const github = listed.body.services.find((s: any) => s.service === 'github');
-    expect(github.connection.account).toBe('octocat-fixture');
-    // A fine-grained token reports no scopes; null lets the page say that,
-    // where an empty list would read as "no access".
-    expect(github.connection.reportedScopes).toBeNull();
-  });
-});
-
-// -------------------------------------------------------- testing a connection
-
-describe('testing a connection', () => {
-  it('reports success and records the check', async () => {
-    const created = await connect('alice', 'vercel');
-    const id = created.body.connection.id;
-    const tested = await call(`/api/developer-services/${id}/test`, { method: 'POST', jar: cookies.alice });
-    expect(tested.status).toBe(200);
-    expect(tested.body.ok).toBe(true);
-    expect(tested.body.connection.lastCheckOk).toBe(true);
-    expect(tested.body.connection.status).toBe('active');
-  });
-
-  it('never stores a token the provider refused', async () => {
-    const refused = await call('/api/developer-services/github', {
-      method: 'POST', jar: cookies.alice, body: { token: TOKENS.refused },
-    });
-    expect(refused.status).toBe(502);
-    expect(refused.body.category).toBe('revoked');
-    // The provider's body quoted the token back. Ours must not.
-    expect(JSON.stringify(refused.body)).not.toContain(TOKENS.refused);
-
-    const rows = await db.query(`select id from developer_service_connections`);
-    expect(rows.length).toBe(0);
-  });
-
-  it('marks a working connection as needing reconnection once the provider refuses it', async () => {
-    const created = await connect('alice', 'github');
-    const id = created.body.connection.id;
-
-    // The person revoked the token in their own GitHub settings. Replace the
-    // sealed value with the one the stub refuses, which is exactly what that
-    // looks like from here.
-    await db.query(
-      `update developer_service_connections set credentials_enc = $2 where id = $1`,
-      [id, (await import('@josi-ce/core')).seal(masterKey, { token: TOKENS.refused })],
-    );
-
-    const tested = await call(`/api/developer-services/${id}/test`, { method: 'POST', jar: cookies.alice });
-    expect(tested.status).toBe(502);
-    expect(tested.body.category).toBe('revoked');
-
-    const [row] = await db.query<{ status: string; last_check_ok: boolean; last_error_category: string }>(
-      `select status, last_check_ok, last_error_category from developer_service_connections where id = $1`,
-      [id],
-    );
-    expect(row.status).toBe('needs_reconnect');
-    expect(row.last_check_ok).toBe(false);
-    expect(row.last_error_category).toBe('revoked');
-  });
-});
-
-// ------------------------------------------------------ disconnect/reconnect
-
-describe('disconnect and reconnect', () => {
-  it('deletes our copy and says the part Josi cannot do', async () => {
-    const created = await connect('alice', 'netlify');
-    const id = created.body.connection.id;
-
-    const removed = await call(`/api/developer-services/${id}`, { method: 'DELETE', jar: cookies.alice });
-    expect(removed.status).toBe(200);
-    // Saying "disconnected" while a live token sits in somebody's Netlify
-    // account would be a half-truth.
-    expect(removed.body.note).toMatch(/revoke it yourself/i);
-
-    expect((await db.query(`select id from developer_service_connections where id = $1`, [id])).length).toBe(0);
-    const listed = await call('/api/developer-services', { jar: cookies.alice });
-    expect(listed.body.services.find((s: any) => s.service === 'netlify').connection).toBeNull();
-  });
-
-  it('reconnects afterwards, from scratch', async () => {
-    const first = await connect('alice', 'supabase');
-    await call(`/api/developer-services/${first.body.connection.id}`, { method: 'DELETE', jar: cookies.alice });
-    const again = await connect('alice', 'supabase');
-    expect(again.status).toBe(201);
-    expect(again.body.connection.id).not.toBe(first.body.connection.id);
-    expect(again.body.connection.status).toBe('active');
-  });
-
-  it('replaces the token on an existing connection without losing the connection', async () => {
-    const first = await connect('alice', 'github');
-    const replaced = await connect('alice', 'github');
-    expect(replaced.status).toBe(201);
-    expect(replaced.body.connection.id).toBe(first.body.connection.id);
-  });
-});
-
-// -------------------------------------------------------- malformed and SSRF
-
-describe('malformed input and hostile answers', () => {
-  it('refuses an empty, whitespace-carrying or oversized token', async () => {
-    for (const token of ['', '   ', 'has a space', 'x'.repeat(5000)]) {
-      const res = await call('/api/developer-services/github', {
-        method: 'POST', jar: cookies.alice, body: { token },
-      });
-      expect(res.status, JSON.stringify(res.body)).toBe(400);
-    }
-    expect((await db.query(`select id from developer_service_connections`)).length).toBe(0);
-  });
-
-  it('refuses a Supabase project API key where a personal access token belongs', async () => {
-    const res = await call('/api/developer-services/supabase', {
-      method: 'POST', jar: cookies.alice, body: { token: 'eyJhbGciOiJI.eyJyb2xlIjo.sig' },
+describe('the credential belongs to the person, not the installation', () => {
+  it('checks the token before storing it', async () => {
+    await permit('github', 'everyone');
+    serviceReply = { status: 401, body: { message: 'Bad credentials' } };
+    const res = await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
     });
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/service_role|project API key/);
+    expect(res.body.error).toMatch(/rejected/i);
+    // A token that does not work is never stored as though it did.
+    expect(await db.query(`select * from developer_connections`)).toHaveLength(0);
   });
 
-  it('refuses a project reference that is a URL or a path', async () => {
-    for (const projectRef of ['https://evil.test', '../../admin', 'abcdefghijklmnopqrst/..']) {
-      const res = await call('/api/developer-services/supabase', {
-        method: 'POST', jar: cookies.alice, body: { token: TOKENS.supabase, projectRef },
-      });
-      expect(res.status, projectRef).toBe(400);
-    }
-  });
-
-  it('refuses the request when DNS answers with a cloud-metadata address', async () => {
-    // The hostnames are pinned and nobody can change them, so the attack is
-    // the ANSWER: a poisoned resolver, or DNS rebinding between the check and
-    // the request. Addresses are therefore checked at request time.
-    resolveAnswer = ['169.254.169.254'];
-    const res = await call('/api/developer-services/github', {
-      method: 'POST', jar: cookies.alice, body: { token: TOKENS.github },
+  it('seals the token and never returns it', async () => {
+    await permit('github', 'everyone');
+    const res = await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
     });
-    expect(res.status).toBe(502);
-    expect(res.body.category).toBe('network');
-    expect(res.body.error).toMatch(/metadata|link-local/);
-    expect((await db.query(`select id from developer_service_connections`)).length).toBe(0);
-  });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.accountLabel).toBe('octocat');
 
-  it('refuses when one of several answers is a private address', async () => {
-    resolveAnswer = ['140.82.121.6', '10.1.2.3'];
-    const res = await call('/api/developer-services/vercel', {
-      method: 'POST', jar: cookies.alice, body: { token: TOKENS.vercel },
-    });
-    expect(res.status).toBe(502);
-  });
-});
-
-// ------------------------------------------------------------- admin ceiling
-
-describe('the administrator ceiling can only deny', () => {
-  it('stops a service being connected once it is switched off', async () => {
-    const set = await call('/api/admin/developer-services/policy/github', {
-      method: 'PUT', jar: cookies.admin, body: { allowed: false, note: 'Use the read-only mirror instead.' },
-    });
-    expect(set.status).toBe(200);
-
-    const refused = await connect('alice', 'github');
-    expect(refused.status).toBe(403);
-    expect(refused.body.error).toMatch(/administrator/i);
-    expect(refused.body.error).toMatch(/read-only mirror/);
-
-    const listed = await call('/api/developer-services', { jar: cookies.alice });
-    const github = listed.body.services.find((s: any) => s.service === 'github');
-    expect(github.allowedByAdmin).toBe(false);
-    expect(github.adminNote).toMatch(/read-only mirror/);
-  });
-
-  it('stops Josi using a connection that already exists', async () => {
-    // The ceiling has to reach the credential, not only the form. A service
-    // switched off after somebody connected it would otherwise carry on being
-    // exercised, and "switched off for this installation" would mean "switched
-    // off for people who had not got round to it yet".
-    const created = await connect('alice', 'github');
-    const id = created.body.connection.id;
-
-    await call('/api/admin/developer-services/policy/github', {
-      method: 'PUT', jar: cookies.admin, body: { allowed: false },
-    });
-
-    const tested = await call(`/api/developer-services/${id}/test`, { method: 'POST', jar: cookies.alice });
-    expect(tested.status).toBe(403);
-    expect(tested.body.error).toMatch(/administrator/i);
-  });
-
-  it('never traps somebody\'s token behind a switched-off service', async () => {
-    // A ceiling stops a credential being used. Taking your own back is not a
-    // use, and refusing it would leave a live token in Josi with no way out.
-    const created = await connect('alice', 'netlify');
-    const id = created.body.connection.id;
-    await call('/api/admin/developer-services/policy/netlify', {
-      method: 'PUT', jar: cookies.admin, body: { allowed: false },
-    });
-
-    const removed = await call(`/api/developer-services/${id}`, { method: 'DELETE', jar: cookies.alice });
-    expect(removed.status).toBe(200);
-    expect((await db.query(`select id from developer_service_connections where id = $1`, [id])).length).toBe(0);
-  });
-
-  it('switching a service back on connects nothing', async () => {
-    await call('/api/admin/developer-services/policy/github', {
-      method: 'PUT', jar: cookies.admin, body: { allowed: false },
-    });
-    await call('/api/admin/developer-services/policy/github', {
-      method: 'PUT', jar: cookies.admin, body: { allowed: true },
-    });
-    const listed = await call('/api/developer-services', { jar: cookies.alice });
-    expect(listed.body.services.find((s: any) => s.service === 'github').connection).toBeNull();
-  });
-
-  it('shows an administrator health and ownership, never the account or the token', async () => {
-    await connect('alice', 'github');
-    const view = await call('/api/admin/developer-services', { jar: cookies.admin });
-    expect(view.status).toBe(200);
-    expect(view.body.connections.length).toBe(1);
-
-    const row = view.body.connections[0];
-    expect(row.username).toBe('dsalice');
-    expect(row.service).toBe('github');
-    expect(row.status).toBe('active');
-    // The account handle is a fact about somebody's own account.
-    expect(Object.keys(row)).not.toContain('account_label');
-    expect(Object.keys(row)).not.toContain('credentials_enc');
-    expect(JSON.stringify(view.body)).not.toContain('octocat-fixture');
-    expect(JSON.stringify(view.body)).not.toContain(TOKENS.github);
-  });
-
-  it('lets an administrator cut a connection off without reading it', async () => {
-    const created = await connect('alice', 'github');
-    const id = created.body.connection.id;
-    const revoked = await call(`/api/admin/developer-services/connections/${id}`, {
-      method: 'DELETE', jar: cookies.admin,
-    });
-    expect(revoked.status).toBe(200);
-    // The response says nothing about what was inside it.
-    expect(JSON.stringify(revoked.body)).not.toContain('octocat-fixture');
-    expect((await db.query(`select id from developer_service_connections where id = $1`, [id])).length).toBe(0);
-  });
-
-  it('refuses an administrator disconnect of a connection that does not exist', async () => {
-    const res = await call('/api/admin/developer-services/connections/not-a-uuid', {
-      method: 'DELETE', jar: cookies.admin,
-    });
-    expect(res.status).toBe(404);
-  });
-});
-
-// ------------------------------------------------------------- no leakage
-
-describe('secret redaction', () => {
-  it('writes an audit trail that names the service and nothing else', async () => {
-    const created = await connect('alice', 'github');
-    await call(`/api/developer-services/${created.body.connection.id}/test`, {
-      method: 'POST', jar: cookies.alice,
-    });
-    await call(`/api/developer-services/${created.body.connection.id}`, {
-      method: 'DELETE', jar: cookies.alice,
-    });
-
-    const events = await db.query<{ kind: string; payload: unknown }>(
-      `select kind, payload from events where subject_id = $1 order by id`,
-      [created.body.connection.id],
+    const [row] = await db.query<{ credentials_enc: string }>(
+      `select credentials_enc from developer_connections`,
     );
-    expect(events.map((e) => e.kind)).toEqual([
-      'developer_service.connected',
-      'developer_service.tested',
-      'developer_service.disconnected',
+    expect(looksSealed(row.credentials_enc)).toBe(true);
+    expect(row.credentials_enc).not.toContain(TOKEN);
+
+    const mine = await call('/api/connections/developer', { jar: jars.alice });
+    expect(JSON.stringify(mine.body)).not.toContain(TOKEN);
+  });
+
+  it('never exposes it to an administrator, who cannot enter one either', async () => {
+    await permit('github', 'everyone');
+    await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
+    });
+
+    const admin = await call('/api/admin/developer-services');
+    const serialised = JSON.stringify(admin.body);
+    expect(serialised).not.toContain(TOKEN);
+    // No credential entry is duplicated onto the admin surface: the admin PUT
+    // takes a scope and ignores anything that looks like one.
+    const attempt = await call('/api/admin/developer-services/github', {
+      method: 'PUT', body: { mode: 'everyone', token: 'another-token-value-entirely' },
+    });
+    expect(attempt.status).toBe(200);
+    const [row] = await db.query<{ credentials_enc: string }>(
+      `select credentials_enc from developer_connections`,
+    );
+    expect(row.credentials_enc).not.toContain('another-token-value-entirely');
+  });
+
+  it('is one account per person per service, and mine to remove', async () => {
+    await permit('github', 'everyone');
+    await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
+    });
+    serviceReply = { status: 200, body: { login: 'octocat-two' } };
+    await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
+    });
+    // Reconnecting replaces rather than accumulating rows nobody can tell apart.
+    const rows = await db.query<{ account_label: string }>(
+      `select account_label from developer_connections where owner_user_id = $1`, [ids.alice],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].account_label).toBe('octocat-two');
+
+    const gone = await call('/api/connections/developer/github', {
+      method: 'DELETE', jar: jars.alice,
+    });
+    expect(gone.status).toBe(204);
+    expect(await db.query(`select * from developer_connections`)).toHaveLength(0);
+  });
+
+  it('lets me re-check my own connection and records what it found', async () => {
+    await permit('github', 'everyone');
+    await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
+    });
+    serviceReply = { status: 401, body: {} };
+    const res = await call('/api/connections/developer/github/check', {
+      method: 'POST', jar: jars.alice, body: {},
+    });
+    expect(res.body.ok).toBe(false);
+    const [row] = await db.query<{ status: string; last_check_ok: boolean; last_error: string }>(
+      `select status, last_check_ok, last_error from developer_connections`,
+    );
+    expect(row.last_check_ok).toBe(false);
+    expect(row.status).toBe('needs_reconnect');
+    expect(row.last_error).toMatch(/rejected/i);
+  });
+});
+
+describe('permission and connection are reported separately', () => {
+  it('distinguishes "nobody may" from "nobody has"', async () => {
+    // Permitted for everyone, connected by nobody.
+    await permit('netlify', 'everyone');
+    // Permitted for nobody at all.
+    await permit('vercel', 'not_allowed');
+
+    const admin = await call('/api/admin/developer-services');
+    const byService = new Map((admin.body.services as any[]).map((s) => [s.service, s]));
+
+    expect(byService.get('netlify').mode).toBe('everyone');
+    expect(byService.get('netlify').connections).toEqual([]);
+    expect(byService.get('vercel').mode).toBe('not_allowed');
+    expect(byService.get('vercel').connections).toEqual([]);
+
+    // Same connection count, different permission — the two facts are carried
+    // in different fields so a screen cannot read one off the other.
+    expect(byService.get('netlify').summary).not.toBe(byService.get('vercel').summary);
+  });
+
+  it('shows health per person without showing anything from inside the account', async () => {
+    await permit('github', 'everyone');
+    await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
+    });
+
+    const admin = await call('/api/admin/developer-services');
+    const github = (admin.body.services as any[]).find((s) => s.service === 'github');
+    expect(github.connections).toHaveLength(1);
+    expect(github.connections[0].username).toBe('alice');
+    expect(github.connections[0].status).toBe('active');
+    // The account's own name is what the owner already sees. Nothing else from
+    // the account is carried.
+    expect(Object.keys(github.connections[0]).sort()).toEqual([
+      'accountLabel', 'lastCheckAt', 'lastCheckOk', 'lastError', 'status', 'userId', 'username',
     ]);
-    const serialised = JSON.stringify(events);
-    expect(serialised).not.toContain(TOKENS.github);
-    // Not the account either: an audit record says who did what to which
-    // resource, not what the resource pointed at.
-    expect(serialised).not.toContain('octocat-fixture');
   });
 
-  it('records a failed test as a category, never the provider\'s words', async () => {
-    const created = await connect('alice', 'github');
-    await db.query(
-      `update developer_service_connections set credentials_enc = $2 where id = $1`,
-      [created.body.connection.id, (await import('@josi-ce/core')).seal(masterKey, { token: TOKENS.refused })],
-    );
-    await call(`/api/developer-services/${created.body.connection.id}/test`, {
-      method: 'POST', jar: cookies.alice,
+  it('un-naming somebody stops them using it without deleting what they connected', async () => {
+    await permit('github', 'specific_users', [ids.alice]);
+    await call('/api/connections/developer/github', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
     });
+    await permit('github', 'specific_users', [ids.bob]);
 
-    const [event] = await db.query<{ payload: any }>(
-      `select payload from events where kind = 'developer_service.tested' and subject_id = $1
-       order by id desc limit 1`,
-      [created.body.connection.id],
-    );
-    expect(event.payload.ok).toBe(false);
-    expect(event.payload.category).toBe('revoked');
-    expect(JSON.stringify(event.payload)).not.toContain('Bad credentials');
+    const mine = await call('/api/connections/developer', { jar: jars.alice });
+    const github = (mine.body.services as any[]).find((s) => s.service === 'github');
+    expect(github.allowed).toBe(false);
+    // Their credential is theirs to delete. Revoking permission is not a
+    // reason for the product to throw it away behind their back.
+    expect(github.connection).not.toBeNull();
+    expect(await db.query(`select * from developer_connections`)).toHaveLength(1);
+  });
+});
+
+describe('the services are the four named ones', () => {
+  it('refuses anything else', async () => {
+    expect((await call('/api/admin/developer-services/gitlab', {
+      method: 'PUT', body: { mode: 'everyone' },
+    })).status).toBe(404);
+    await permit('github', 'everyone');
+    expect((await call('/api/connections/developer/gitlab', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN },
+    })).status).toBe(404);
   });
 
-  it('redacts developer-service token shapes out of a diagnostics bundle', async () => {
-    // The prefixes the four providers document. Split so this file does not
-    // itself contain a string the secret scanner would refuse.
-    const line = `error: token ${'ghp'}_abcdefghijklmnop failed, and ${'sbp'}_abcdefghijklmnop too`;
-    const { text, redactions } = redact(line);
-    expect(text).not.toContain('abcdefghijklmnop');
-    expect(redactions.some((r) => r.pattern === 'dev_service_token')).toBe(true);
+  it('refuses a mode it does not know', async () => {
+    const res = await call('/api/admin/developer-services/github', {
+      method: 'PUT', body: { mode: 'sometimes' },
+    });
+    expect(res.status).toBe(400);
   });
 });

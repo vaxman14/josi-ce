@@ -32,15 +32,16 @@ export const BUILD_EDITION = 'ce';
  * honest pair of options. */
 export const BUILD_RELEASE_PUBLIC_KEY: string | null = null;
 
-/** Base64 Ed25519 public key (raw 32 bytes) that PAID MODULE LICENCES must be
- * signed with.
+/** Base64 Ed25519 public key (raw 32 bytes) that LICENCES must be signed with.
  *
- * `null` by default, and deliberately so, for the same reason the release key
- * is: a build that carries no publisher key can verify no licence, so it
- * refuses every one and says on screen that it cannot be sold a module. Only
- * the publisher's own images carry this, because only the publisher holds the
- * private half. See `entitlements.ts`. */
-export const BUILD_ENTITLEMENT_PUBLIC_KEY: string | null = null;
+ * Separate from the release key on purpose: they are different authorities over
+ * different things, and a build that can verify a release is not thereby
+ * entitled to decide what is licensed. Stamped by the publisher when they build
+ * the supported image.
+ *
+ * `null` here for the same reason as above — a source build cannot verify a
+ * licence, and says so, rather than accepting an unverified one. */
+export const BUILD_LICENCE_PUBLIC_KEY: string | null = null;
 
 /** Free-text build identifier — a git sha for an official build, `source` for
  * a local one. Shown in diagnostics. Never used for a security decision. */

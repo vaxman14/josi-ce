@@ -98,6 +98,11 @@ function describeLlm(err: LlmError): string {
 export async function assertModelIsOffered(
   opts: {
     provider: string; model: string; apiKey?: string | null; baseUrl?: string | null;
+    /** The other credential fields, for providers whose listing needs more than
+     * an API key — an AWS key pair, a Vertex service account. */
+    secrets?: Record<string, string>;
+    /** Non-secret settings the listing needs: a region, a project, a version. */
+    config?: Record<string, string>;
     fetchImpl?: typeof fetch; resolve?: (hostname: string) => Promise<string[]>; timeoutMs?: number;
   },
 ): Promise<{ ok: true } | { ok: false; category: string; detail: string }> {
@@ -105,6 +110,8 @@ export async function assertModelIsOffered(
     provider: opts.provider as never,
     apiKey: opts.apiKey,
     baseUrl: opts.baseUrl,
+    secrets: opts.secrets,
+    config: opts.config,
     fetchImpl: opts.fetchImpl,
     resolve: opts.resolve,
     timeoutMs: opts.timeoutMs,
@@ -120,6 +127,12 @@ export async function assertModelIsOffered(
   // caught either way — with a better error, from the thing that actually
   // tried to use it.
   if (result.unsupported || !result.ok) return { ok: true };
+  // A list Josi shipped rather than one the provider gave is not evidence about
+  // what this account offers. Refusing a model because it is missing from a
+  // catalogue written months ago would make a newly released model unusable —
+  // which is the failure this whole check was built to prevent, pointed the
+  // other way. `verifyLlm` still has to make a real request either way.
+  if (result.fromCatalog) return { ok: true };
   if (result.models.some((m) => m.id === opts.model)) return { ok: true };
 
   return {

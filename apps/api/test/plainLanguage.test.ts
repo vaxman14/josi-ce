@@ -281,38 +281,13 @@ describe('LB12.4 — nothing necessary was removed', () => {
     // Least privilege is only meaningful if the person is told what they are
     // granting; hiding the scopes entirely would be simplification that costs
     // consent.
-    expect(setup).toMatch(/Permissions this will ask each person for/);
-    expect(setup).toMatch(/Read-only/);
-  });
-});
-
-describe('round 3 — humane onboarding and persistent help', () => {
-  it('uses a simple Skip action while keeping skipped work revisitable', () => {
-    const checklist = read('apps/web/src/pages/admin/LaunchChecklist.tsx');
-    expect(checklist).not.toContain('Not for this installation');
-    expect(checklist).toMatch(/>\s*Skip\s*</);
-    expect(checklist).toContain('Put it back on the list');
-  });
-
-  it('keeps Help in the authenticated shell with known contextual links', () => {
-    const shell = read('apps/web/src/components/layout/Shell.tsx');
-    expect(shell).toContain('https://josi-ce-docs.netlify.app/');
-    expect(shell).toMatch(/>\s*Help\s*</);
-    expect(shell).toContain('#developer-services');
-    expect(shell).toContain('#custom-api');
-  });
-});
-
-describe('setup wizard browser autofill isolation', () => {
-  const setup = read('apps/web/src/pages/Setup.tsx');
-
-  it('remounts fields when the wizard advances so credentials cannot bleed into the next step', () => {
-    expect(setup).toMatch(/<StepForm key=\{current\.id\} step=\{current\.id\}/);
-    expect(setup).toMatch(/<StepForm key=\{revisingStep\.id\} step=\{revisingStep\.id\}/);
-  });
-
-  it('marks address and certificate email fields with their actual autocomplete purpose', () => {
-    expect(setup).toMatch(/id="domain"[^>]+autoComplete="url"/);
-    expect(setup).toMatch(/id="acmeEmail"[^>]+autoComplete="email"/);
+    //
+    // Asserted against the admin page rather than the wizard: registering the
+    // Google and Microsoft applications left setup, because it cannot be done
+    // before a public HTTPS domain exists. The disclosure had to travel with
+    // it, and this test is what makes sure it did rather than being quietly
+    // dropped along with the step.
+    expect(connectors).toMatch(/Permissions this will ask each person for/);
+    expect(connectors).toMatch(/Read-only/);
   });
 });

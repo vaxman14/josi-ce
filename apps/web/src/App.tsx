@@ -13,10 +13,6 @@ import { Approvals } from '@/pages/Approvals';
 import { Conversations } from '@/pages/Conversations';
 import { Contacts } from '@/pages/Contacts';
 import { Connections } from '@/pages/Connections';
-import { DeveloperServices } from '@/pages/DeveloperServices';
-import { McpServers } from '@/pages/McpServers';
-import { Skills } from '@/pages/Skills';
-import { Family } from '@/pages/Family';
 import { Usage } from '@/pages/Usage';
 import { Personalization } from '@/pages/Personalization';
 import { Settings } from '@/pages/Settings';
@@ -28,16 +24,12 @@ import { AdminPeople } from '@/pages/admin/People';
 import { AdminModel } from '@/pages/admin/Model';
 import { AdminPolicy } from '@/pages/admin/Policy';
 import { AdminStorage } from '@/pages/admin/Storage';
-import { AdminBackups } from '@/pages/admin/Backups';
 import { AdminConnectors } from '@/pages/admin/Connectors';
-import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
-import { AdminCustomApis } from '@/pages/admin/CustomApis';
-import { AdminMcpServers } from '@/pages/admin/McpServers';
-import { AdminSkills } from '@/pages/admin/Skills';
-import { AdminParentalControls } from '@/pages/admin/ParentalControls';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
-import { AdminChannels } from '@/pages/admin/Channels';
+import { AdminBackups } from '@/pages/admin/Backups';
+import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
+import { AdminParentalControls } from '@/pages/admin/ParentalControls';
 import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
 
 /** Routing is convenience, not security.
@@ -143,15 +135,16 @@ export function App() {
         <Route path="conversations" element={<Conversations />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="connections" element={<Connections />} />
-        <Route path="developer-services" element={<DeveloperServices />} />
-        <Route path="mcp-servers" element={<McpServers />} />
-        <Route path="skills" element={<Skills />} />
-        <Route path="family" element={<Family />} />
         <Route path="usage" element={<Usage />} />
         <Route path="personalization" element={<Personalization />} />
         <Route path="settings" element={<Settings />} />
-        <Route path="telegram" element={<Telegram />} />
         <Route path="channels" element={<Channels />} />
+        <Route path="channels/telegram" element={<Telegram />} />
+        {/* Telegram was a top-level item before it was a channel. Anything
+            already pointing at the old path — a bookmark, a link in an old
+            email — lands where the page lives now rather than on the
+            catch-all redirect to Home. */}
+        <Route path="telegram" element={<Navigate to="/app/channels/telegram" replace />} />
         <Route path="apps" element={<Apps />} />
       </Route>
 
@@ -161,16 +154,12 @@ export function App() {
         <Route path="model" element={<AdminModel />} />
         <Route path="policy" element={<AdminPolicy />} />
         <Route path="storage" element={<AdminStorage />} />
-        <Route path="backups" element={<AdminBackups />} />
         <Route path="connectors" element={<AdminConnectors />} />
-        <Route path="developer-services" element={<AdminDeveloperServices />} />
-        <Route path="custom-apis" element={<AdminCustomApis />} />
-        <Route path="mcp-servers" element={<AdminMcpServers />} />
-        <Route path="skills" element={<AdminSkills />} />
-        <Route path="parental-controls" element={<AdminParentalControls />} />
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />
-        <Route path="channels" element={<AdminChannels />} />
+        <Route path="backups" element={<AdminBackups />} />
+        <Route path="developer-services" element={<AdminDeveloperServices />} />
+        <Route path="parental-controls" element={<AdminParentalControls />} />
         <Route path="launch" element={<AdminLaunchChecklist />} />
       </Route>
 

@@ -108,9 +108,6 @@ export interface Task {
   state: string;
   slots: Record<string, unknown>;
   attempt_count: number;
-  /** Why it did not happen, in a sentence. Shown as itself — a state badge
-   * alone cannot tell somebody which switch to turn on (item 26). */
-  fail_reason: string | null;
   created_at: string;
 }
 
@@ -167,20 +164,8 @@ export interface LlmStatus {
   cap: { allowed: boolean; status: string; scope: string | null; fraction: number | null; message: string };
 }
 
-/** One thing Josi prepared and will not do until the person says so.
- *
- * Round-3 item 26: this rides back with the reply so the card appears in the
- * conversation the request was made in, rather than only on a page the person
- * has not been told to visit. */
-export interface ApprovalCard {
-  id: string;
-  summary: string;
-  action: string;
-}
-
 export interface TurnResult {
   reply?: string;
   actions?: Array<{ tool: string; result: unknown }>;
-  approvals?: ApprovalCard[];
   refusal?: { reason: string; message: string };
 }

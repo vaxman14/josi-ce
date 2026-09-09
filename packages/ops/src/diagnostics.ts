@@ -78,14 +78,6 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   { name: 'anthropic', re: /\bsk-ant-[A-Za-z0-9_-]{16,}/g },
   { name: 'google_oauth', re: /\b[0-9]+-[a-z0-9]{20,}\.apps\.googleusercontent\.com/gi },
   { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g },
-  // Developer-service personal access tokens: GitHub, Supabase and Netlify all
-  // use a documented prefix. Vercel's has none, so it is caught by the generic
-  // key/value and base64 patterns below rather than by a shape nobody can pin.
-  { name: 'dev_service_token', re: /\b(?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|sbp_|nfp_)[A-Za-z0-9_]{8,}/g },
-  // An MCP session id is not a password, but a stateful MCP server treats it as
-  // one: whoever holds it continues somebody's authenticated session. It has no
-  // fixed shape, so the header name is what gets matched.
-  { name: 'mcp_session', re: /\bmcp-session-id\s*[=:]\s*\S+/gi },
   { name: 'private_key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
   { name: 'password_kv', re: /\b(password|passwd|secret|token|api[_-]?key|client[_-]?secret)\s*[=:]\s*\S+/gi },
   { name: 'url_credentials', re: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@/gi },

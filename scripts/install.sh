@@ -106,8 +106,8 @@ verify_key_file() {
   # Mode check is advisory on filesystems that do not carry POSIX permissions.
   local mode
   if mode=$(file_mode "$file"); then
-    if [[ "$mode" != "600" && "$mode" != "400" && "$mode" != "644" && "$mode" != "444" ]]; then
-      say "  warning: $label is mode $mode; expected 600 (or 644 inside an owner-only Compose secrets directory)"
+    if [[ "$mode" != "600" && "$mode" != "400" ]]; then
+      say "  warning: $label is mode $mode; expected 600"
     fi
   else
     say "  note: this filesystem does not report POSIX permissions for $label"
@@ -130,15 +130,6 @@ have_random || fail "no source of secure randomness found (needs openssl or /dev
 mkdir -p "$SECRETS_DIR"
 chmod 700 "$SECRETS_DIR"
 
-# Compose implements local file-backed secrets as bind mounts on some Docker
-# engines. Those mounts preserve the source file mode, while the application
-# deliberately runs as uid 1000 rather than root. The file must therefore be
-# readable inside the container. Mode 0644 is safe on the host because the
-# enclosing directory remains 0700 and owned by the installing account: other
-# host users cannot traverse it. Standalone use keeps the stricter 0600 mode.
-SECRET_MODE=600
-[[ "${JOSI_COMPOSE_SECRETS:-0}" == "1" ]] && SECRET_MODE=644
-
 say "Josi CE — generating installation secrets"
 say ""
 
@@ -150,8 +141,8 @@ if [[ -f "$MASTER_KEY" ]]; then
   say "  (regenerating it would orphan every credential already encrypted)"
 else
   generate_key > "$MASTER_KEY"
-  chmod "$SECRET_MODE" "$MASTER_KEY"
-  say "master key written to ${MASTER_KEY} (mode ${SECRET_MODE})"
+  chmod 600 "$MASTER_KEY"
+  say "master key written to ${MASTER_KEY} (mode 600)"
 fi
 
 # ----------------------------------------------------------- database password
@@ -159,14 +150,8 @@ if [[ -f "$DB_PASSWORD" ]]; then
   say "database password already exists at ${DB_PASSWORD} — leaving it alone"
 else
   generate_password > "$DB_PASSWORD"
-  chmod "$SECRET_MODE" "$DB_PASSWORD"
-  say "database password written to ${DB_PASSWORD} (mode ${SECRET_MODE})"
-fi
-
-# A rerun may encounter secrets created by an older installer. Preserve their
-# contents exactly while correcting only the mode required by local Compose.
-if [[ "$SECRET_MODE" == "644" ]]; then
-  chmod 644 "$MASTER_KEY" "$DB_PASSWORD"
+  chmod 600 "$DB_PASSWORD"
+  say "database password written to ${DB_PASSWORD} (mode 600)"
 fi
 
 # The values are never printed. An operator who needs the master key for a

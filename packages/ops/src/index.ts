@@ -6,6 +6,11 @@ export {
   type RestoreOutcome, type RestoreReader,
 } from './backup.js';
 export {
+  DESTINATIONS, describeDestination, endpointHost, signingRegion, testDestination,
+  type CheckOptions, type DestinationCheck, type DestinationConfig, type DestinationDescriptor,
+  type DestinationFailure, type DestinationField, type DestinationKind,
+} from './destination.js';
+export {
   DEFAULT_LOG_WINDOW, DIAGNOSTICS_DIR, DiagnosticsError, LOG_WINDOW_HOURS,
   MAX_BUNDLE_BYTES, SECTIONS, approveBundle, buildBundle, markInspected,
   passSecretScan, recordBundle, redact, scanForSecrets,
@@ -24,9 +29,3 @@ export {
 export {
   pgBackupWriter, pgRestoreReader, pgToolsAvailable, type PgConnection,
 } from './pgWriter.js';
-export {
-  BACKUP_SECRET_ROOT, BackupAgentError, enqueueDueBackups, nextRun, runBackupAgent, spawnCommand,
-  verifyResticSnapshot,
-  validateRepository, type AgentErrorCategory, type BackupDestination,
-  type CommandResult, type CommandRunner, type DestinationKind, type RetentionPolicy,
-} from './restic.js';

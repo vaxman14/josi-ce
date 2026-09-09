@@ -104,21 +104,6 @@ describe('LB1.1 — the published install keeps the development stack’s securi
     }
   });
 
-  it('persists chat attachments in the read-only web and worker services', () => {
-    for (const compose of [dev, release]) {
-      expect(compose.volumes.josi_chat_attachments).toBeDefined();
-      for (const service of ['web', 'worker']) {
-        expect(compose.services[service].volumes, service).toContain(
-          'josi_chat_attachments:/data/chat-attachments',
-        );
-      }
-    }
-
-    const dockerfile = read('Dockerfile');
-    expect(dockerfile).toMatch(/mkdir -p .*\/data\/chat-attachments/);
-    expect(dockerfile).toContain('chown -R node:node /data');
-  });
-
   it('supports prepare-only mode for appliance stack UIs', () => {
     const aio = read('scripts/aio-install.sh');
     expect(aio).toContain('JOSI_PREPARE_ONLY');
@@ -456,7 +441,7 @@ describe('LB1.7 — the published installer remains inspectable and pinned', () 
 
   it('runs a concrete installer image temporarily and exposes the socket explicitly', () => {
     const docs = `${read('README.md')}\n${read('docs/QUICK_START.md')}\n${read('docs/INSTALLATION.md')}`;
-    expect(docs).toContain('ghcr.io/vaxman14/josi-ce-installer:0.1.2');
+    expect(docs).toContain('ghcr.io/vaxman14/josi-ce-installer:0.1.0');
     expect(docs).toContain('-v /var/run/docker.sock:/var/run/docker.sock');
     expect(docs).toMatch(/docker run --rm/);
     expect(read('scripts/aio-install.sh')).toContain('The installer container has exited');

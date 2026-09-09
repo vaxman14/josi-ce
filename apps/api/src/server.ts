@@ -1,5 +1,5 @@
 // Josi CE API entrypoint.
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import { createApp } from './app.js';
@@ -36,9 +36,6 @@ const pgConn = {
 };
 
 const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '') || 'http://localhost:8080';
-const helpGroqApiKey = process.env.GROQ_API_KEY_FILE && existsSync(process.env.GROQ_API_KEY_FILE)
-  ? readFileSync(process.env.GROQ_API_KEY_FILE, 'utf8').trim()
-  : undefined;
 const cookieSecure = process.env.COOKIE_SECURE === 'true'
   ? true
   : process.env.COOKIE_SECURE === 'false'
@@ -56,7 +53,6 @@ const app = createApp(db, {
   restoreReader: pgRestoreReader(pgConn),
   // M115: no gateway ships. An operator who wants one sets it.
   supportGatewayUrl: process.env.JOSI_SUPPORT_GATEWAY || null,
-  helpGroqApiKey,
 });
 
 const server = app.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));

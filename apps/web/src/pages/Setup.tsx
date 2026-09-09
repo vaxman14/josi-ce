@@ -12,8 +12,10 @@
 // PostgreSQL. Nothing is kept in component state after the step is submitted.
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, primeCsrf } from '@/lib/api';
-import { ProviderForm, type SubscriptionInfo } from '@/components/ProviderForm';
-import { Button, Card, CardTitle, Copyable, ErrorNote, Input } from '@/components/ui';
+import {
+  ProviderForm, type ProviderCatalogEntry, type SubscriptionInfo,
+} from '@/components/ProviderForm';
+import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
 
 /** The outcome of a real attempt to use something that was configured. */
 interface Verification {
@@ -47,8 +49,6 @@ interface Review {
 const ITEM_STEP: Record<string, string> = {
   llm: 'llm',
   smtp: 'smtp',
-  connector_google: 'connectors',
-  connector_microsoft: 'connectors',
 };
 
 const STATUS_TONE: Record<ReviewStatus, string> = {
@@ -72,6 +72,9 @@ interface SetupState {
   completedSteps: string[];
   nextStep: string | null;
   steps: StepDescriptor[];
+  /** Sent with the state rather than fetched by the model step, so the wizard
+   * cannot offer a provider this build would refuse to save. */
+  providerCatalog: ProviderCatalogEntry[];
 }
 
 interface HostCheck {
@@ -182,7 +185,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-4 text-sm text-muted-foreground">
             {revisingStep.summary} Saving this replaces what is stored and tests it again.
           </p>
-          <StepForm key={revisingStep.id} step={revisingStep.id} busy={busy} onSubmit={submit} />
+          <StepForm step={revisingStep.id} busy={busy} catalog={state.providerCatalog ?? []} onSubmit={submit} />
           <div className="mt-3">
             <Button type="button" variant="secondary" disabled={busy} onClick={() => setRevising(null)}>
               Leave it as it is
@@ -194,7 +197,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-1 text-xs text-muted-foreground">Step {position} of {state.steps.length}</p>
           <CardTitle>{current.title}</CardTitle>
           <p className="mb-4 text-sm text-muted-foreground">{current.summary}</p>
-          <StepForm key={current.id} step={current.id} busy={busy} onSubmit={submit} />
+          <StepForm step={current.id} busy={busy} catalog={state.providerCatalog ?? []} onSubmit={submit} />
         </Card>
       ) : (
         <Card>
@@ -241,8 +244,11 @@ export function Setup({ onDone }: { onDone: () => void }) {
 }
 
 function StepForm({
-  step, busy, onSubmit,
-}: { step: string; busy: boolean; onSubmit: (step: string, body: Record<string, unknown>) => Promise<void> }) {
+  step, busy, catalog, onSubmit,
+}: {
+  step: string; busy: boolean; catalog: ProviderCatalogEntry[];
+  onSubmit: (step: string, body: Record<string, unknown>) => Promise<void>;
+}) {
   const [checks, setChecks] = useState<HostCheck[] | null>(null);
 
   useEffect(() => {
@@ -282,9 +288,9 @@ function StepForm({
           }))}
           className="space-y-3"
         >
-          <Field id="email" label="Email" type="email" autoComplete="email" required />
-          <Field id="username" label="Username" autoComplete="username" required autoCapitalize="none" />
-          <Field id="displayName" label="Your name" autoComplete="name" />
+          <Field id="email" label="Email" type="email" required />
+          <Field id="username" label="Username" required autoCapitalize="none" />
+          <Field id="displayName" label="Your name" />
           <Field id="password" label="Password" type="password" required
                  autoComplete="new-password" minLength={12} />
           <p className="text-xs text-muted-foreground">At least 12 characters. This is the one administrator account.</p>
@@ -300,7 +306,7 @@ function StepForm({
           }))}
           className="space-y-3"
         >
-          <Field id="domain" name="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" autoComplete="url" />
+          <Field id="domain" name="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" autoComplete="off" />
           <div>
             <label className="mb-1 block text-sm" htmlFor="tlsMode">HTTPS</label>
             <select id="tlsMode" name="tlsMode" defaultValue="bundled_caddy"
@@ -312,13 +318,13 @@ function StepForm({
           <p className="text-xs text-muted-foreground">
             Public certificates require a domain pointing to this server. A LAN IP works over HTTP and needs no certificate email.
           </p>
-          <Field id="acmeEmail" name="acmeEmail" label="Email for certificate notices" type="email" autoComplete="email" />
+          <Field id="acmeEmail" name="acmeEmail" label="Email for certificate notices" type="email" autoComplete="off" />
           <Button type="submit" disabled={busy}>Continue</Button>
         </form>
       );
 
     case 'llm':
-      return <LlmStep busy={busy} onSubmit={onSubmit} />;
+      return <LlmStep busy={busy} catalog={catalog} onSubmit={onSubmit} />;
 
     case 'smtp':
       return (
@@ -366,9 +372,6 @@ function StepForm({
           </div>
         </form>
       );
-
-    case 'connectors':
-      return <ConnectorStep busy={busy} onSubmit={onSubmit} />;
 
     case 'security':
       return (
@@ -425,11 +428,15 @@ function StepForm({
  * endpoints. The form itself lives in components/ProviderForm.tsx so the admin
  * Model page offers exactly the same choices after installation. */
 function LlmStep({
-  busy, onSubmit,
-}: { busy: boolean; onSubmit: (step: string, body: Record<string, unknown>) => Promise<void> }) {
+  busy, catalog, onSubmit,
+}: {
+  busy: boolean; catalog: ProviderCatalogEntry[];
+  onSubmit: (step: string, body: Record<string, unknown>) => Promise<void>;
+}) {
   return (
     <ProviderForm
       busy={busy}
+      catalog={catalog}
       paths={{
         models: '/setup/models',
         codexBase: '/setup/subscription',
@@ -438,123 +445,6 @@ function LlmStep({
       loadSubscriptionInfo={() => api.get<SubscriptionInfo>('/setup/subscription').catch(() => null)}
       onSubmit={(body) => onSubmit('llm', body)}
     />
-  );
-}
-
-/** Registering the two OAuth applications.
- *
- * This screen used to say the flow was "not in this release" and offer only a
- * Skip button — which was untrue: the connector system had shipped two phases
- * earlier, and the credentials this step collected were being written to a
- * table nothing read.
- *
- * The instructions are here rather than in the manual because an administrator
- * doing this has two consoles open and needs the exact callback in one of them.
- * Everything they must paste into a provider is shown with a copy control; the
- * rest stays out of the way.
- */
-function ConnectorStep({
-  busy, onSubmit,
-}: { busy: boolean; onSubmit: (step: string, body: Record<string, unknown>) => Promise<void> }) {
-  interface Guidance {
-    available: boolean;
-    reason: string | null;
-    providers: Array<{
-      provider: 'google' | 'microsoft';
-      callbackUri: string;
-      scopes: string[];
-      console: { name: string; url: string };
-    }>;
-  }
-  const [guidance, setGuidance] = useState<Guidance | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
-
-  useEffect(() => {
-    void api.get<Guidance>('/setup/connector-guidance').then(setGuidance).catch(() => undefined);
-  }, []);
-
-  if (!guidance) return <p className="text-sm text-muted-foreground">Loading…</p>;
-
-  // LB5.5. A LAN-only installation is told the requirement, not handed a
-  // callback no provider would accept.
-  if (!guidance.available) {
-    return (
-      <form onSubmit={(e) => { e.preventDefault(); void onSubmit('connectors', { skip: true }); }}
-            className="space-y-3">
-        <p className="text-sm text-muted-foreground">{guidance.reason}</p>
-        <Button type="submit" disabled={busy}>Continue without them</Button>
-      </form>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Optional. Connecting Google or Microsoft lets each person link their own calendar and mail —
-        this registers the application they will connect through. You can do it later instead.
-      </p>
-
-      {guidance.providers.map((p) => (
-        <div key={p.provider} className="rounded-md border border-input p-3">
-          <button type="button" className="flex w-full items-center justify-between text-left text-sm font-medium"
-                  onClick={() => setOpen(open === p.provider ? null : p.provider)}>
-            <span>{p.provider === 'google' ? 'Google' : 'Microsoft'}</span>
-            <span aria-hidden>{open === p.provider ? '−' : '+'}</span>
-          </button>
-
-          {open === p.provider ? (
-            <form
-              className="mt-3 space-y-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const f = new FormData(e.currentTarget);
-                void onSubmit('connectors', {
-                  [p.provider]: { clientId: f.get('clientId'), clientSecret: f.get('clientSecret') },
-                });
-              }}
-            >
-              <ol className="list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
-                <li>
-                  Open the <a href={p.console.url} target="_blank" rel="noreferrer" className="underline">
-                    {p.console.name}
-                  </a> and create an OAuth application for a web application.
-                </li>
-                <li>Paste the redirect address below into it, exactly as shown.</li>
-                <li>Copy the client ID and client secret it gives you back here.</li>
-              </ol>
-
-              <Copyable label="Redirect address to register" value={p.callbackUri} />
-
-              <Field id={`${p.provider}-clientId`} name="clientId" label="Client ID" required autoCapitalize="none" />
-              <Field id={`${p.provider}-clientSecret`} name="clientSecret" label="Client secret"
-                     type="password" autoComplete="off" required />
-
-              <details className="text-xs text-muted-foreground">
-                <summary className="cursor-pointer">Permissions this will ask each person for</summary>
-                <ul className="mt-1 space-y-0.5 break-all">
-                  {p.scopes.map((s) => <li key={s}><code>{s}</code></li>)}
-                </ul>
-                <p className="mt-1">
-                  Read-only. Sending mail or changing a calendar is a separate permission, asked for
-                  later and only if the person turns it on.
-                </p>
-              </details>
-
-              <p className="text-xs text-muted-foreground">
-                Josi will check these against {p.provider === 'google' ? 'Google' : 'Microsoft'} as soon
-                as you save them.
-              </p>
-              <Button type="submit" disabled={busy}>Save and check</Button>
-            </form>
-          ) : null}
-        </div>
-      ))}
-
-      <Button type="button" variant="secondary" disabled={busy}
-              onClick={() => void onSubmit('connectors', { skip: true })}>
-        Skip for now
-      </Button>
-    </div>
   );
 }
 

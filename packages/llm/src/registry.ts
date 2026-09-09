@@ -14,8 +14,14 @@ import { anthropicProvider } from './providers/anthropic.js';
 import { codexCliProvider, isSubscriptionProvider, type SpawnRunner } from './providers/codexCli.js';
 import { claudeCliProvider } from './providers/claudeCli.js';
 import { openAiCompatibleProvider } from './providers/openaiCompatible.js';
-import { geminiProvider } from './providers/gemini.js';
+import { azureAiProvider } from './providers/azureAi.js';
+import { bedrockProvider } from './providers/bedrock.js';
 import { cohereProvider } from './providers/cohere.js';
+import { ernieProvider } from './providers/ernie.js';
+import { geminiProvider } from './providers/gemini.js';
+import { hunyuanProvider } from './providers/hunyuan.js';
+import { readServiceAccount, vertexAiProvider } from './providers/vertexAi.js';
+import { describeProvider } from './catalog.js';
 import { checkCaps, priceCall, recordUsage, type CapVerdict } from './metering.js';
 import {
   LlmError, isExternalProvider,
@@ -39,6 +45,15 @@ export interface StoredProvider {
   /** Phase 13.3. Which local binary to run, for a subscription provider. Null
    * for every other kind, and never a credential. */
   subscription_command?: string | null;
+  /** V2.4. The non-secret half of a provider's configuration — an AWS region,
+   * a Google Cloud project, an Azure API version.
+   *
+   * Non-secret is the whole point of the split: these are shown back to the
+   * operator so they can see what is configured, whereas everything in the
+   * sealed envelope is write-only. Which field goes where is declared once, per
+   * provider, in `catalog.ts`, so the save route and the form cannot disagree
+   * about it. */
+  provider_config?: Record<string, unknown> | null;
 }
 
 export class LocalOnlyViolation extends LlmError {}
@@ -69,7 +84,7 @@ export async function loadStoredProvider(
   const rows = await db.query<StoredProvider>(
     `select role, provider, model, base_url, api_key_enc, external_acknowledged, activated_at,
             probed_at, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens,
-            subscription_command
+            subscription_command, provider_config
      from llm_providers where role = $1`,
     [role],
   );
@@ -149,15 +164,25 @@ export async function buildProvider(
     });
   }
 
-  let apiKey: string | null = null;
+  // The sealed envelope holds EVERY secret this provider needs, not just an
+  // API key: Bedrock has a key pair, ERNIE has a key and a secret, Vertex has a
+  // whole service-account file. Older rows sealed a bare `{ apiKey }`, which is
+  // the same shape read the same way, so nothing has to be re-entered.
+  let secrets: Record<string, string> = {};
   if (stored.api_key_enc) {
     if (!opts.masterKey) {
       throw new LlmError('the installation master key is unavailable, so the stored API key cannot be opened', {
         needsReconfiguration: true,
       });
     }
-    apiKey = openSealed<{ apiKey: string }>(opts.masterKey, stored.api_key_enc).apiKey;
+    secrets = openSealed<Record<string, string>>(opts.masterKey, stored.api_key_enc);
   }
+  const apiKey = secrets.apiKey ?? null;
+  const config = stored.provider_config ?? {};
+  const configString = (key: string): string => {
+    const value = config[key];
+    return typeof value === 'string' ? value : '';
+  };
 
   const shared = {
     model: stored.model,
@@ -168,10 +193,85 @@ export async function buildProvider(
     timeoutMs: opts.timeoutMs,
   };
 
-  if (stored.provider === 'anthropic') return anthropicProvider(shared);
-  if (stored.provider === 'gemini') return geminiProvider(shared);
-  if (stored.provider === 'cohere') return cohereProvider(shared);
-  return openAiCompatibleProvider({ ...shared, kind: stored.provider, external });
+  // Dispatched on the WIRE FORMAT the catalogue declares, not on the provider
+  // name. Seven vendors share the OpenAI contract and two share Gemini's, so
+  // branching on the name would mean a switch with a case per vendor that has
+  // to be edited every time one is added — and forgetting a case would fall
+  // through to whatever the default was, which is how a vendor ends up being
+  // talked to in a dialect it does not speak.
+  const descriptor = describeProvider(stored.provider);
+  if (!descriptor) {
+    throw new LlmError(`Josi does not know how to talk to "${stored.provider}".`, {
+      needsReconfiguration: true,
+    });
+  }
+
+  switch (descriptor.wire) {
+    case 'anthropic-messages':
+      return anthropicProvider(shared);
+
+    case 'gemini':
+      return geminiProvider({ ...shared, kind: stored.provider });
+
+    case 'cohere-v2':
+      return cohereProvider(shared);
+
+    case 'azure-openai':
+      return azureAiProvider({ ...shared, apiVersion: configString('apiVersion') || null });
+
+    case 'bedrock-converse':
+      return bedrockProvider({
+        model: stored.model,
+        region: configString('region'),
+        credentials: {
+          accessKeyId: secrets.accessKeyId ?? '',
+          secretAccessKey: secrets.secretAccessKey ?? '',
+          sessionToken: secrets.sessionToken || null,
+        },
+        fetchImpl: opts.fetchImpl,
+        resolve: opts.resolve,
+        timeoutMs: opts.timeoutMs,
+      });
+
+    case 'vertex-gemini':
+      return vertexAiProvider({
+        model: stored.model,
+        project: configString('project'),
+        location: configString('location'),
+        // Parsed here rather than at save time as well, so a key file that
+        // stops being usable is reported as a credential problem on the call
+        // instead of as an unexplained failure.
+        serviceAccount: readServiceAccount(secrets.serviceAccountJson ?? ''),
+        fetchImpl: opts.fetchImpl,
+        resolve: opts.resolve,
+        timeoutMs: opts.timeoutMs,
+      });
+
+    case 'ernie':
+      return ernieProvider({ ...shared, secretKey: secrets.secretKey ?? null });
+
+    case 'hunyuan':
+      return hunyuanProvider({
+        model: stored.model,
+        secretId: secrets.secretId ?? null,
+        secretKey: secrets.secretKey ?? null,
+        region: configString('region') || null,
+        fetchImpl: opts.fetchImpl,
+        resolve: opts.resolve,
+        timeoutMs: opts.timeoutMs,
+      });
+
+    case 'cli':
+      // Handled above, before the key was opened, because there is no key.
+      // Reaching here means a subscription row escaped that branch.
+      throw new LlmError('this provider runs a local CLI and cannot be built as an HTTP client', {
+        needsReconfiguration: true,
+      });
+
+    case 'openai-chat':
+    default:
+      return openAiCompatibleProvider({ ...shared, kind: stored.provider, external });
+  }
 }
 
 /** Prices a completed call and writes the usage row.

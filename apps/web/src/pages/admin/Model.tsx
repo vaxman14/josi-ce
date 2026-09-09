@@ -15,7 +15,9 @@ import { api } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, ErrorNote, Copyable } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 import { ClaudeSignIn } from '@/components/ClaudeSignIn';
-import { ProviderForm, type SubscriptionInfo } from '@/components/ProviderForm';
+import {
+  ProviderForm, type ProviderCatalogEntry, type SubscriptionInfo,
+} from '@/components/ProviderForm';
 
 interface Provider {
   provider: string;
@@ -35,6 +37,9 @@ interface AdminLlm {
     id: string; label: string; available: boolean; provider: string | null; reason: string;
   }>;
   edition: { edition: string; capabilities: string[] };
+  /** Every provider this build will accept, sent with the page so the form
+   * cannot draw one the server would then refuse. */
+  providerCatalog: ProviderCatalogEntry[];
 }
 
 interface CodexStatus {
@@ -53,6 +58,13 @@ interface DeviceLoginState {
 export function AdminModel() {
   const [data, setData] = useState<AdminLlm | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Only ever true while a test this person asked for is in flight.
+   *
+   * Kept apart from `busy`, which also covers switching to a subscription
+   * provider. Sharing one flag made the Test button read "Testing…" during a
+   * save — the screen reporting a test that nobody had started, which is the
+   * same false impression as testing on open. */
+  const [probing, setProbing] = useState(false);
   const [error, setError] = useState('');
 
   const load = () => api.get<AdminLlm>('/admin/llm').then(setData).catch(() => undefined);
@@ -84,8 +96,15 @@ export function AdminModel() {
     }
   }
 
+  /** Runs ONLY from the button below.
+   *
+   * There is deliberately no effect that calls this. The model was tested
+   * during setup with a real request, that result is stored on the provider
+   * row, and re-running it because a page was opened would spend a real
+   * request — and, on a subscription provider, the operator's own quota — to
+   * re-establish something already known. */
   async function probe() {
-    setBusy(true);
+    setProbing(true);
     setError('');
     try {
       await api.post('/admin/llm/providers/primary/probe');
@@ -93,7 +112,7 @@ export function AdminModel() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The test could not run');
     } finally {
-      setBusy(false);
+      setProbing(false);
     }
   }
 
@@ -142,7 +161,24 @@ export function AdminModel() {
             ) : null}
             {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
             <div className="mt-3">
-              <Button onClick={() => void probe()} disabled={busy}>{busy ? 'Testing…' : 'Test this model'}</Button>
+              {/* Two different sentences for two different situations. A model
+                  that has never been tested needs one; a model already tested
+                  and in use does not, and offering "Test this model" there
+                  reads as outstanding work. Saving a change clears the tested
+                  state on the server, so this returns to the first form
+                  exactly when a retest genuinely is required. */}
+              <Button onClick={() => void probe()} disabled={busy || probing}>
+                {probing
+                  ? 'Testing…'
+                  : data.primary.active ? 'Test again' : 'Test this model'}
+              </Button>
+              {data.primary.active && !probing ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Optional. This model was tested with a real request and Josi is using it. Testing
+                  again is only needed if you change the provider, its credentials, its address or
+                  the model, or if it starts failing.
+                </p>
+              ) : null}
             </div>
             {/* Array.isArray, not `?.length` — a string has a length too,
                 which is exactly how a double-encoded jsonb column got past
@@ -183,7 +219,7 @@ export function AdminModel() {
           subscription — switchable in any direction, any time. Saving replaces the primary model and
           Josi will not use the new one until it has been tested.
         </p>
-        <ChangeModelForm onSaved={() => void load()} />
+        <ChangeModelForm catalog={data.providerCatalog ?? []} onSaved={() => void load()} />
       </Card>
 
       <Card>
@@ -232,7 +268,9 @@ export function AdminModel() {
 }
 
 /** The wizard's provider form, pointed at the admin endpoints. */
-function ChangeModelForm({ onSaved }: { onSaved: () => void }) {
+function ChangeModelForm(
+  { catalog, onSaved }: { catalog: ProviderCatalogEntry[]; onSaved: () => void },
+) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -247,6 +285,7 @@ function ChangeModelForm({ onSaved }: { onSaved: () => void }) {
       ) : null}
       <ProviderForm
         busy={busy}
+        catalog={catalog}
         paths={{
           models: '/admin/llm/models',
           codexBase: '/admin/llm/subscription',

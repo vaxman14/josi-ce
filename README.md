@@ -1,30 +1,9 @@
-<p align="center">
-  <img src="docs-site/brand/josi-mark.png" alt="Josi" width="128">
-</p>
+# Josi CE 0.1 — Community Preview
 
-<h1 align="center">Josi CE</h1>
+**Your assistant, on your own server.**
 
-<p align="center"><strong>Your assistant. Your server. Your data.</strong></p>
-
-<p align="center">
-  A self-hosted AI executive assistant for one private workspace—your people,
-  your credentials, and your infrastructure.
-</p>
-
-<p align="center">
-  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-24324a"></a>
-  <a href="https://github.com/vaxman14/josi-ce/actions/workflows/release.yml"><img alt="Release workflow" src="https://github.com/vaxman14/josi-ce/actions/workflows/release.yml/badge.svg"></a>
-  <a href="https://hub.docker.com/r/romanvaxman/josi-ce"><img alt="Docker Hub" src="https://img.shields.io/badge/Docker%20Hub-amd64%20%7C%20arm64-2496ed?logo=docker&logoColor=white"></a>
-  <img alt="Community Preview" src="https://img.shields.io/badge/status-Community%20Preview-f59e0b">
-</p>
-
-<p align="center">
-  <a href="#quick-start"><strong>Quick start</strong></a> ·
-  <a href="https://heyjosi.com/ce/help/">Help docs</a> ·
-  <a href="docs/INSTALLATION.md">Installation guide</a> ·
-  <a href="docs/THREAT_MODEL.md">Security model</a> ·
-  <a href="SUPPORT.md">Support policy</a>
-</p>
+A self-hosted AI executive assistant. One workspace, your people, your server,
+your credentials.
 
 Created and published by **SOCAL RECEPTIONIST LLC**.
 
@@ -36,62 +15,7 @@ Created and published by **SOCAL RECEPTIONIST LLC**.
 
 ---
 
-## Why Josi
-
-- **Self-hosted:** your workspace runs on infrastructure you control.
-- **Bring your own providers:** OpenAI, Anthropic, xAI, local models, and
-  OpenAI-compatible endpoints.
-- **Actually useful:** web app, documents, mail, storage, connectors, Telegram,
-  backup and restore—not merely a chat box in a Docker container.
-- **Multi-user by design:** private per-user connections and content inside one
-  shared workspace.
-- **No seat cap:** capacity is determined by your hardware, not a pricing page.
-- **Auditable:** AGPL source, published threat model, reproducible images, and
-  test evidence for claims made here.
-
-## Quick start
-
-Requires Docker Engine with Compose v2 on a 64-bit `amd64` or `arm64` host.
-
-```bash
-mkdir -p ~/josi-ce && cd ~/josi-ce
-docker run --rm \
-  -e JOSI_APP_URL=http://localhost \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD:$PWD" -w "$PWD" \
-  romanvaxman/josi-ce-installer:0.1.2
-```
-
-Open <http://localhost>. The first person through setup becomes the super
-admin. **Immediately back up `secrets/master.key` somewhere off the host.**
-
-The installer is temporary: it generates owner-only secrets, starts the normal
-isolated Compose services, and exits. No privileged controller remains.
-
-The default output shows only installation milestones. Add `--verbose` after
-the image name to stream the underlying Docker output. For public HTTPS, also
-pass `-e JOSI_DOMAIN=josi.example.com` and set `JOSI_APP_URL` to the matching
-`https://` origin.
-
-Prefer GHCR? Use `ghcr.io/vaxman14/josi-ce-installer:0.1.2`. On macOS with
-Docker Desktop, follow the socket instructions in the
-[quick-start guide](docs/QUICK_START.md).
-
-## Proven in the Community Preview
-
-| Release gate | Result |
-|---|---|
-| Architectures | Published `linux/amd64` and `linux/arm64` images |
-| Clean installation | Fresh published-image install, migrations, health and UI verified |
-| Isolation | 69/69 live multi-user isolation checks passed |
-| Test suite | 2,197 tests passed at release cut |
-| Dependency audit | Zero known npm vulnerabilities at release cut |
-| Supply chain | Versioned images with provenance attestations |
-
-These are release-cut results, not an evergreen guarantee. The detailed
-evidence and limitations remain in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md).
-
-## Project status
+## Status
 
 **Josi CE 0.1 is a Community Preview.** Setup, isolation, the assistant, the web
 app, connectors, mail, documents and storage, and backup and restore are
@@ -107,12 +31,6 @@ proven and what is not.
 | [`docs/PWA.md`](docs/PWA.md) | Installing Josi on a phone or desktop, and exactly what is cached |
 | [`docs/SUBSCRIPTION_AUTH.md`](docs/SUBSCRIPTION_AUTH.md) | Using a ChatGPT plan instead of an API key, why Claude cannot be used, and the edition boundary |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | Clean-install acceptance: what has actually been run, on what hardware |
-| [`docs/DEVELOPER_SERVICE_CONNECTIONS.md`](docs/DEVELOPER_SERVICE_CONNECTIONS.md) | Connecting your own GitHub, Netlify, Vercel or Supabase account |
-| [`docs/CUSTOM_API_CONNECTIONS.md`](docs/CUSTOM_API_CONNECTIONS.md) | Letting Josi call an external API, one reviewed action at a time |
-| [`docs/MCP_SERVER_CONNECTIONS.md`](docs/MCP_SERVER_CONNECTIONS.md) | Connecting a remote MCP server, and approving its tools one at a time |
-| [`docs/SKILLS_LIBRARY.md`](docs/SKILLS_LIBRARY.md) | Installing written instructions Josi follows, and why one can never grant anything |
-| [`docs/PARENTAL_CONTROLS.md`](docs/PARENTAL_CONTROLS.md) | The paid module: one adult, one child account, and what it honestly does not control |
-| [`docs/BACKUPS.md`](docs/BACKUPS.md) | Restic destinations, schedules, retention, credential files and restore tests |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Every threat with its control and the test that would fail without it |
 
 Phase progress is tracked in the implementation plan. Nothing here is presented
@@ -137,10 +55,10 @@ as working before it is.
 - One workspace per installation. Multi-tenant hosting is not supported by the
   current architecture; the AGPL does not prohibit operating the software as a
   network service.
-- **Rebranding and independent services.** You may maintain and offer a
-  rebranded fork under the applicable license. SOCAL RECEPTIONIST LLC provides
-  no support or assurances for that offering unless separately agreed in
-  writing. See [`TRADEMARK.md`](TRADEMARK.md).
+- Not a white-label product. You may fork it and put your own identity on it —
+  the AGPL grants that and the trademark policy expects it. What is not on offer
+  is *us* standing behind a rebranded build; that is a commercial arrangement.
+  See `TRADEMARK.md`.
 - Not an enterprise product. The initial market is SMB.
 - No voice or SMS receptionist in 0.1.
 - No audio/video transcription or media indexing in 0.1.
@@ -188,7 +106,7 @@ supported within realistic limits.
 > remote. Real figures will be published only after representative hardware has
 > actually been benchmarked — not estimated.
 
-## Installation details
+## Installation
 
 For the shortest verified path, see [`docs/QUICK_START.md`](docs/QUICK_START.md).
 
@@ -205,20 +123,18 @@ then exits; no privileged controller remains running.
 mkdir josi-ce && cd josi-ce
 # Linux:
 docker run --rm \
-  -e JOSI_APP_URL=http://localhost \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.2
+  ghcr.io/vaxman14/josi-ce-installer:0.1.0
 ```
 
 On macOS with Docker Desktop, use its user socket instead:
 
 ```bash
 docker run --rm \
-  -e JOSI_APP_URL=http://localhost \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.2
+  ghcr.io/vaxman14/josi-ce-installer:0.1.0
 ```
 
 Review `.env` before exposing the installation publicly. Set `JOSI_DOMAIN` and
@@ -336,24 +252,20 @@ Josi CE includes no support entitlement, guaranteed response, or SLA. Read the
 
 ## Licence
 
-Josi CE is released under the GNU Affero General Public License, version 3 or,
-at your option, any later version (AGPL-3.0-or-later). See
-[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE); separately identified third-party
-components remain under their own licenses.
+Code: **GNU AGPL v3** — see [`LICENSE`](LICENSE).
 
-The AGPL copyright grant includes Company-owned branding artwork supplied with
-the software. Trademark rights in the Josi and Josi CE names and logos are
-separate: permission to copy or modify artwork does not grant unrestricted
-permission to use it as your brand. See [`TRADEMARK.md`](TRADEMARK.md) for
-permitted uses of the names and logos.
+Branding: the Josi name, the mark (the white `J` on navy), the wordmark and the
+product identity are **not** covered by the AGPL and remain the property of
+SOCAL RECEPTIONIST LLC.
 
-You may modify and rebrand the software under its applicable license.
-Rebranding does not remove source-sharing or legal-notice obligations. Do not
-imply that an independently operated service or modified product is operated,
-endorsed, certified, or supported by SOCAL RECEPTIONIST LLC.
+This does not restrict what the AGPL grants. You may modify Josi CE and you may
+remove its branding — for a fork, removing it is the right thing to do. What the
+trademark asks is only that a modified version not present itself as the
+official Josi product. Unmodified redistribution may keep the branding, because
+it is accurate. See [`TRADEMARK.md`](TRADEMARK.md).
 
-Josi CE Community Preview includes no Company support entitlement, guaranteed
-response, or SLA unless separately agreed in writing.
+> `TRADEMARK.md` and `NOTICE` are **drafts pending legal review**. They are not
+> approved legal wording.
 
 ## Appliance platforms and launch material
 

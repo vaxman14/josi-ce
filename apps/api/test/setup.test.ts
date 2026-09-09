@@ -97,7 +97,6 @@ async function runWizard(stopBefore?: string): Promise<void> {
     ['domain', { domain: 'josi.example.test', tlsMode: 'bundled_caddy' }],
     ['llm', { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-llm-key-DO-NOT-USE-0001', externalAcknowledged: true }],
     ['smtp', SMTP_BODY],
-    ['connectors', { skip: true }],
     ['security', { folderMappingEnabled: true }],
     ['telemetry', {}],
     ['review', {}],
@@ -260,7 +259,7 @@ describe('the state machine cannot be driven by the client', () => {
         role: 'member',                    // must not change the created role
         id: '00000000-0000-0000-0000-000000000001',
         completed: true,                   // must not finish setup
-        completedSteps: [...['host_checks', 'owner', 'domain', 'llm', 'smtp', 'connectors', 'security', 'telemetry', 'review']],
+        completedSteps: [...['host_checks', 'owner', 'domain', 'llm', 'smtp', 'security', 'telemetry', 'review']],
         install_id: '11111111-1111-1111-1111-111111111111',
         nextStep: 'review',
       },
@@ -529,13 +528,15 @@ describe('secrets', () => {
     expect(byKey.get('llm').status).toBe('configured_and_tested');
     // Configured AND sent to, because the SMTP step now sends.
     expect(byKey.get('smtp').status).toBe('configured_and_tested');
-    // Skipped by runWizard, and named as skipped rather than as unfinished.
-    expect(byKey.get('connector_google').status).toBe('skipped');
+    // Google and Microsoft are not installation-time items at all now, so
+    // there is nothing here to report as skipped.
+    expect(byKey.has('connector_google')).toBe(false);
+    expect(byKey.has('connector_microsoft')).toBe(false);
 
     // The headline is computed from those items, so it cannot disagree with
     // them the way a hardcoded reassurance could.
     expect(body.canComplete).toBe(true);
-    expect(body.headline).toMatch(/skipped/);
+    expect(body.headline).not.toMatch(/skipped/);
 
     expect(body.summary.deployment.certificateVerified).toBe(false);
     expect(body.summary.reminders.join(' ')).toMatch(/master key/i);
@@ -629,7 +630,9 @@ describe('the two SMTP profiles', () => {
     expect(res.status).toBe(200);
     expect(await db.query(`select * from smtp_profiles`)).toHaveLength(0);
     const state = await call('/api/setup/state');
-    expect(state.body.nextStep).toBe('connectors');
+    // Google and Microsoft used to sit here as step 6. They are registered
+    // after installation now, so security follows email directly.
+    expect(state.body.nextStep).toBe('security');
   });
 
   it('creates two distinct profiles without duplicating the password', async () => {
@@ -738,78 +741,48 @@ describe('the two SMTP profiles', () => {
 });
 
 // ------------------------------------------------------------------- 12
-describe('connectors are optional', () => {
-  // These previously asserted against `connector_configs`, which is the table
-  // the wizard wrote to and NOTHING ELSE IN THE PRODUCT EVER READ. The
-  // connector system has used `oauth_clients` since Phase 7, so an operator who
-  // registered their applications here was told they were configured and then
-  // found the Connect button reporting that none was. The tests passed the
-  // whole time because they checked the same wrong table the wizard wrote.
-  //
-  // They now assert against the live table. See migration 0018.
+describe('Google and Microsoft are not part of installation', () => {
+  // They were step 6, and on the LAN-only installation every operator starts
+  // with, the step could not be completed: neither provider accepts an HTTPS
+  // redirect on a bare address, so the screen could only explain itself and
+  // offer "continue without them". A step whose sole outcome is being skipped
+  // is not a step. Registration moved to the admin Connectors page, which is
+  // reachable once a domain exists.
 
-  it('writes nothing when skipped', async () => {
+  it('is not a step the wizard knows about', async () => {
+    const res = await call('/api/setup/state');
+    const ids = (res.body.steps as Array<{ id: string }>).map((s) => s.id);
+    expect(ids).not.toContain('connectors');
+    expect(ids).toEqual([
+      'host_checks', 'owner', 'domain', 'llm', 'smtp', 'security', 'telemetry', 'review',
+    ]);
+  });
+
+  it('refuses a submission to the step, like any other unknown name', async () => {
+    await runWizard('smtp');
+    const res = await call('/api/setup/steps/connectors', {
+      method: 'POST', body: { skip: true },
+    });
+    // The route rejects a name that is not a step at all, exactly as it would
+    // for any invented one.
+    expect(res.status).toBe(404);
+    expect(await db.query(`select * from oauth_clients`)).toHaveLength(0);
+  });
+
+  it('does not carry the applications in the review summary', async () => {
     await runWizard();
-    expect(await db.query(`select * from oauth_clients`)).toHaveLength(0);
-    // And the decision is recorded, so the review screen can distinguish
-    // "skipped" from "not reached".
-    const rows = await db.query<{ item: string; status: string }>(
-      `select item, status from setup_verifications where item like 'connector_%'`,
-    );
-    expect(rows).toHaveLength(2);
-    expect(rows.every((r) => r.status === 'skipped')).toBe(true);
+    const res = await call('/api/setup/review');
+    const keys = (res.body.items as Array<{ key: string }>).map((i) => i.key);
+    expect(keys).not.toContain('connector_google');
+    expect(keys).not.toContain('connector_microsoft');
+    // What remains is exactly what setup actually configures.
+    expect(keys).toEqual(['llm', 'smtp']);
   });
 
-  it('stores an operator-supplied client secret encrypted, where the product reads it', async () => {
-    await runWizard('connectors');
-    const res = await call('/api/setup/steps/connectors', {
-      method: 'POST',
-      body: { google: { clientId: 'operator-own-client-id', clientSecret: 'operator-own-secret-value' } },
-    });
-    expect(res.status).toBe(200);
-    const rows = await db.query<{ provider: string; client_secret_enc: string; redirect_uri: string }>(
-      `select provider, client_secret_enc, redirect_uri from oauth_clients`,
-    );
-    expect(rows).toHaveLength(1);
-    expect(looksSealed(rows[0].client_secret_enc)).toBe(true);
-    expect(rows[0].client_secret_enc).not.toContain('operator-own-secret-value');
-    // Generated from the domain the wizard was given, never accepted from the
-    // client: the URI the operator registers and the URI the server honours
-    // have to be the same string.
-    expect(rows[0].redirect_uri).toBe('https://josi.example.test/api/connections/google/callback');
-  });
-
-  it('refuses a half-supplied credential rather than storing a broken one', async () => {
-    await runWizard('connectors');
-    const res = await call('/api/setup/steps/connectors', {
-      method: 'POST', body: { google: { clientId: 'only-an-id' } },
-    });
-    expect(res.status).toBe(400);
-    expect(await db.query(`select * from oauth_clients`)).toHaveLength(0);
-  });
-
-  it('refuses to invent a callback a provider would never accept', async () => {
-    // LB5.5. On a LAN-only installation there is no public HTTPS address, so
-    // there is no redirect URI to register. Saying so beats handing the
-    // operator `https://192.168.1.50/...` and letting Google reject it.
-    await runWizard('domain');
-    await call('/api/setup/steps/domain', {
-      method: 'POST', body: { domain: '192.168.1.50', tlsMode: 'external_proxy' },
-    });
-    await call('/api/setup/steps/llm', {
-      method: 'POST',
-      body: { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-llm-key-DO-NOT-USE-0009', externalAcknowledged: true },
-    });
-    await call('/api/setup/verify/llm', { method: 'POST', body: {} });
-    await call('/api/setup/steps/smtp', { method: 'POST', body: { skip: true } });
-
-    const res = await call('/api/setup/steps/connectors', {
-      method: 'POST',
-      body: { google: { clientId: 'id', clientSecret: 'secret' } },
-    });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/real domain name/i);
-    expect(await db.query(`select * from oauth_clients`)).toHaveLength(0);
+  it('no longer serves the wizard-only callback guidance', async () => {
+    await runWizard('smtp');
+    const res = await call('/api/setup/connector-guidance');
+    expect(res.status).toBe(404);
   });
 });
 

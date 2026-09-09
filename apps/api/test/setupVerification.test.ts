@@ -89,7 +89,6 @@ async function wizardTo(stopBefore: string) {
     ['domain', { domain: 'josi.example.test', tlsMode: 'bundled_caddy' }],
     ['llm', { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-key-0001', externalAcknowledged: true }],
     ['smtp', { skip: true }],
-    ['connectors', { skip: true }],
     ['security', {}],
     ['telemetry', {}],
     ['review', {}],
@@ -246,7 +245,6 @@ describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
     expect(smtp.status).toBe(200);
     expect(smtp.body.verification.status).toBe('failed');
 
-    await call('/api/setup/steps/connectors', { method: 'POST', body: { skip: true } });
     await call('/api/setup/steps/security', { method: 'POST', body: {} });
     await call('/api/setup/steps/telemetry', { method: 'POST', body: {} });
     await call('/api/setup/steps/review', { method: 'POST', body: {} });
@@ -256,44 +254,29 @@ describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
   });
 });
 
-describe('LB4.3 — the OAuth applications are handshaked', () => {
-  it('accepts a client the provider recognises', async () => {
-    await wizardTo('connectors');
-    const res = await call('/api/setup/steps/connectors', {
-      method: 'POST', body: { google: { clientId: 'id', clientSecret: 'secret' } },
-    });
-    expect(res.status).toBe(200);
-    expect(res.body.verification.google.status).toBe('passed');
-    // The check is honest about what it did and did not establish.
-    expect(res.body.verification.google.detail).toMatch(/redirect URI is checked the first time/i);
+describe('LB4.3 — the OAuth applications left the wizard', () => {
+  // These used to register a Google or Microsoft application during setup and
+  // handshake it against the provider. Neither can happen at installation
+  // time: both providers require an HTTPS redirect on a real domain name, and
+  // the installation being set up is reachable only on the LAN. The step could
+  // therefore only ever explain itself and offer "continue without them", so it
+  // was removed rather than left as a knowingly unusable screen.
+  //
+  // The handshake itself is not gone — `verifyOAuthClient` still backs the
+  // admin Connectors page, which is where an application is registered once a
+  // domain exists.
+
+  it('is not offered as a verifiable setup item', async () => {
+    await wizardTo('__none__');
+    for (const item of ['connector_google', 'connector_microsoft']) {
+      const res = await call(`/api/setup/verify/${item}`, { method: 'POST', body: {} });
+      expect(res.status, item).toBe(404);
+    }
   });
 
-  it('fails a client the provider does not recognise, and stores it anyway for a retry', async () => {
-    await wizardTo('connectors');
-    connectorBehaviour = 'bad_client';
-    const res = await call('/api/setup/steps/connectors', {
-      method: 'POST', body: { google: { clientId: 'id', clientSecret: 'wrong' } },
-    });
-    expect(res.status).toBe(200);
-    expect(res.body.verification.google.status).toBe('failed');
-    expect(res.body.verification.google.category).toBe('authentication');
-    // Kept, so fixing it does not mean re-entering both values.
-    expect(await db.query(`select provider from oauth_clients`)).toHaveLength(1);
-
-    const review = (await call('/api/setup/review')).body;
-    expect(review.items.find((i: any) => i.key === 'connector_google').status)
-      .toBe('configured_but_failed');
-  });
-
-  it('re-runs on demand without re-submitting the secret', async () => {
-    await wizardTo('connectors');
-    connectorBehaviour = 'bad_client';
-    await call('/api/setup/steps/connectors', {
-      method: 'POST', body: { google: { clientId: 'id', clientSecret: 'secret' } },
-    });
-    connectorBehaviour = 'ok';
-    const res = await call('/api/setup/verify/connector_google', { method: 'POST', body: {} });
-    expect(res.body.status).toBe('passed');
+  it('leaves no application registered by the wizard', async () => {
+    await wizardTo('__none__');
+    expect(await db.query(`select * from oauth_clients`)).toHaveLength(0);
   });
 });
 
@@ -341,12 +324,13 @@ describe('LB6.3 — the review carries no secret', () => {
 });
 
 describe('LB6.4 — a step holding configuration can be corrected', () => {
-  it('lets the three configuration steps be submitted again while setup is open', async () => {
+  it('lets the configuration steps be submitted again while setup is open', async () => {
     await wizardTo('__none__');
+    // Two rather than three: `connectors` was revisable until Google and
+    // Microsoft left the wizard entirely.
     for (const [step, body] of [
       ['llm', { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-key-0002', externalAcknowledged: true }],
       ['smtp', { skip: true }],
-      ['connectors', { skip: true }],
     ] as const) {
       const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
       expect(res.status, step).toBe(200);
@@ -398,7 +382,7 @@ describe('LB6.4 — a step holding configuration can be corrected', () => {
     await wizardTo('__none__');
     await call('/api/setup/verify/llm', { method: 'POST', body: {} });
     expect((await call('/api/setup/complete', { method: 'POST', body: {} })).status).toBe(200);
-    for (const step of ['llm', 'smtp', 'connectors', 'owner']) {
+    for (const step of ['llm', 'smtp', 'owner']) {
       const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body: { skip: true } });
       expect(res.status, step).toBe(404);
     }
@@ -477,14 +461,28 @@ describe('LB2 — the ChatGPT subscription path is offered in the wizard', () =>
   it('refuses to store the provider while the CLI is not signed in', async () => {
     // Saving a provider that cannot answer is exactly the "configured but
     // never checked" shape this whole blocker is about.
-    await wizardTo('llm');
-    const res = await call('/api/setup/steps/llm', {
-      method: 'POST',
-      body: { provider: 'openai_subscription', model: 'gpt-5-codex', externalAcknowledged: true },
-    });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/sign in first/i);
-    expect(await db.query(`select * from llm_providers`)).toHaveLength(0);
+    //
+    // Point the CLI at an empty home, for the same reason the PATH test above
+    // controls its own boundary: with CODEX_HOME unset the child inherits HOME
+    // and reads the developer's real ~/.codex, so on any machine that is signed
+    // in to Codex the route correctly returned 200 and this test failed for a
+    // fact about the host rather than about the product.
+    const emptyCodexHome = mkdtempSync(join(tmpdir(), 'josi-ce-codex-empty-'));
+    const originalCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = emptyCodexHome;
+    try {
+      await wizardTo('llm');
+      const res = await call('/api/setup/steps/llm', {
+        method: 'POST',
+        body: { provider: 'openai_subscription', model: 'gpt-5-codex', externalAcknowledged: true },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/sign in first/i);
+      expect(await db.query(`select * from llm_providers`)).toHaveLength(0);
+    } finally {
+      if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = originalCodexHome;
+    }
   });
 
   it('mounts the sign-in routes behind the edition capability, not behind a guard', async () => {

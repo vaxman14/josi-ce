@@ -5,9 +5,8 @@
 // checking and least-privilege networking against — and because adding it later
 // would mean revisiting all three.
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
-import { enqueueDueBackups, pgBackupWriter } from '@josi-ce/ops';
 import { processQueue } from './jobs.js';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 
 const HEARTBEAT_FILE = '/tmp/worker-alive';
 const TICK_MS = 30_000;
@@ -38,15 +37,9 @@ function heartbeat(): void {
 }
 
 const WORKER_ID = `worker-${process.pid}`;
-const backupWriter = pgBackupWriter({
-  host: process.env.PGHOST ?? 'db', port: Number(process.env.PGPORT ?? 5432),
-  user: process.env.POSTGRES_USER ?? 'josi', database: process.env.POSTGRES_DB ?? 'josi',
-  password: process.env.PGPASSWORD_FILE ? readFileSync(process.env.PGPASSWORD_FILE, 'utf8').trim() : process.env.PGPASSWORD,
-});
 
 async function tick(): Promise<void> {
-  await enqueueDueBackups(db);
-  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey, backupWriter });
+  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey });
   if (outcome.claimed) {
     console.log(`josi-ce worker: ${outcome.done} done, ${outcome.failed} failed`);
   }

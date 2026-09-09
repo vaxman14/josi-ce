@@ -136,7 +136,6 @@ describe('anonymous callers', () => {
       '/api/admin/connections',
       '/api/admin/events',
       '/api/admin/launch-checklist',
-      '/api/admin/best-practices',
     ]) {
       expect((await call(path)).status, path).toBe(401);
     }
@@ -187,7 +186,6 @@ describe('role separation', () => {
       // how many accounts exist, whether backups have run, what setup skipped.
       // Metadata, but an administrator's metadata.
       '/api/admin/launch-checklist',
-      '/api/admin/best-practices',
     ]) {
       expect((await call(path, { jar: cookies.alice })).status, path).toBe(403);
     }
@@ -221,16 +219,6 @@ describe('role separation', () => {
   it('the super admin can reach the policy surface', async () => {
     expect((await call('/api/admin/users', { jar: cookies.admin })).status).toBe(200);
     expect((await call('/api/admin/workspace', { jar: cookies.admin })).status).toBe(200);
-  });
-
-  it('gives only the super admin an evidence-backed best-practice scan', async () => {
-    const res = await call('/api/admin/best-practices', { jar: cookies.admin });
-    expect(res.status).toBe(200);
-    expect(res.body.counts).toEqual(expect.objectContaining({ pass: expect.any(Number), warning: expect.any(Number), fail: expect.any(Number) }));
-    expect(res.body.checks.map((check: { key: string }) => check.key)).toEqual([
-      'backup', 'restore', 'master_key', 'public_https', 'model', 'mail', 'security', 'storage', 'integrations',
-    ]);
-    expect(res.body.checks.every((check: { evidence: string; helpUrl: string }) => check.evidence && check.helpUrl.startsWith('https://'))).toBe(true);
   });
 });
 

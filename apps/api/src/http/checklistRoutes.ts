@@ -15,7 +15,6 @@ import {
 } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
 import { publicHttpsBase } from '../setup/setupRoutes.js';
-import { buildBestPracticeScan, type PracticeFacts } from './bestPracticeScanner.js';
 
 export function checklistRoutes(db: Db): Router {
   const r = Router();
@@ -80,72 +79,6 @@ export function checklistRoutes(db: Db): Router {
   r.get(
     '/launch-checklist',
     asyncRoute(async (_req, res) => res.json(buildChecklist(await facts(), await seen()))),
-  );
-
-  r.get(
-    '/best-practices',
-    asyncRoute(async (_req, res) => {
-      const [state] = await db.query<{ master_key_backup_confirmed_at: string | null }>(
-        `select master_key_backup_confirmed_at from admin_checklist_state where id = true`,
-      );
-      const counts = async (sql: string) => Number((await db.query<{ n: string }>(sql))[0]?.n ?? 0);
-      const verifications = await getVerifications(db);
-      const [storage] = await db.query<{
-        max_file_bytes: string; max_total_bytes_per_user: string; max_files_per_user: number;
-      }>(`select max_file_bytes::text, max_total_bytes_per_user::text, max_files_per_user from storage_policy where id = true`);
-      const [policyChanges] = await db.query<{ n: string }>(
-        `select count(*)::text as n from approval_policy_migration where acknowledged_at is null`,
-      );
-      const [channelHealth] = await db.query<{ enabled: string; unhealthy: string }>(
-        `select sum(enabled)::text as enabled, sum(unhealthy)::text as unhealthy from (
-           select count(*) filter (where enabled) as enabled,
-                  count(*) filter (where enabled and probe_ok is not true) as unhealthy
-             from external_channel_configs
-           union all
-           select count(*) filter (where enabled),
-                  count(*) filter (where enabled and probe_ok is not true)
-             from telegram_config
-           union all
-           select count(*) filter (where enabled),
-                  count(*) filter (where enabled and last_check_ok is not true)
-             from custom_api_connections
-           union all
-           select count(*) filter (where enabled),
-                  count(*) filter (where enabled and last_check_ok is not true)
-             from mcp_servers
-           union all
-           select count(*) filter (where status = 'active'),
-                  count(*) filter (where status = 'active' and last_check_ok is not true)
-             from developer_service_connections
-         ) integration_health`,
-      );
-      const oauthProviders = await db.query<{ provider: string }>(
-        `select provider from connector_configs where self_serve`,
-      );
-      const enabledOauth = oauthProviders.length;
-      const unhealthyOauth = oauthProviders.filter(
-        ({ provider }) => verifications.get(`connector_${provider}`)?.status !== 'passed',
-      ).length;
-      const facts: PracticeFacts = {
-        masterKeyBackedUp: !!state?.master_key_backup_confirmed_at,
-        completedBackups: await counts(`select count(*)::text as n from backups where state = 'complete' and kind = 'full'`),
-        enabledBackupDestinations: await counts(`select count(*)::text as n from backup_destinations where enabled`),
-        verifiedRestores: await counts(`select count(*)::text as n from restore_attempts where state = 'complete'`),
-        publicHttps: !!(await publicHttpsBase(db)),
-        modelVerification: verifications.get('llm')?.status ?? null,
-        mailVerification: verifications.get('smtp')?.status ?? null,
-        securityReviewed: await counts(`select count(*)::text as n from events where kind = 'security.policy_reviewed'`) > 0,
-        approvalPolicySet: await counts(`select count(*)::text as n from events where kind in ('approval.ceiling_set', 'approval.ceiling_relaxed')`) > 0,
-        unacknowledgedPolicyChanges: Number(policyChanges?.n ?? 0),
-        storagePolicyPresent: !!storage,
-        storageLimitsValid: !!storage && Number(storage.max_file_bytes) > 0
-          && Number(storage.max_total_bytes_per_user) > 0 && storage.max_files_per_user > 0,
-        enabledIntegrations: enabledOauth + Number(channelHealth?.enabled ?? 0),
-        unhealthyIntegrations: unhealthyOauth + Number(channelHealth?.unhealthy ?? 0),
-      };
-      res.set('Cache-Control', 'no-store');
-      return res.json(buildBestPracticeScan(facts));
-    }),
   );
 
   /** Recorded when the administrator has actually looked.

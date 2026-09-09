@@ -14,7 +14,7 @@
 // control: the next route forgets it.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, asSecret, json, loadMasterKey, seal,
+  appendEvent, asSecret, json, loadMasterKey, openSealed, seal,
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
@@ -22,7 +22,7 @@ import {
   isExternalProvider, isLocalOnly, isSubscriptionProvider, loadStoredProvider, meteredProvider,
   probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CLAUDE_COMMAND,
   DEFAULT_CODEX_COMMAND, DeviceLogin, codexLoginStatus, codexLogout,
-  PROVIDER_CATALOG, providerDefinition,
+  PROVIDERS, credentialFields, describeProvider,
 } from '@josi-ce/llm';
 import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
@@ -60,7 +60,16 @@ function asArray(value: unknown): unknown[] {
   }
   return [];
 }
-const KNOWN_PROVIDERS = PROVIDER_CATALOG.map((provider) => provider.id);
+/** Every provider that is not gated behind an edition capability.
+ *
+ * Derived from the catalogue rather than typed out. The hand-maintained version
+ * of this array is why `anthropic_subscription` could be chosen in the UI
+ * before the database would accept it, and why the fix needed migration 0022.
+ * A provider added to `catalog.ts` is savable here the moment its migration
+ * lands, and a provider removed from it stops being savable everywhere at once. */
+const KNOWN_PROVIDERS = PROVIDERS
+  .filter((p) => p.wire !== 'cli')
+  .map((p) => p.kind as string);
 
 /** One administrator-driven Codex login at a time. This is a live child
  * process, so persisting it would create a database row that lies after a
@@ -81,11 +90,88 @@ export const CAPABILITY_PROVIDERS: Array<{ provider: string; capability: 'subscr
   { provider: 'anthropic_subscription', capability: 'subscription_auth' },
 ];
 
+/** The catalogue as the admin form needs it.
+ *
+ * Everything here is metadata — labels, which fields to render, where requests
+ * go. No credential and nothing derived from one. The subscription entries are
+ * filtered by the edition capability for the same reason `savableProviders()`
+ * filters them: a hosted build should not confirm that the option exists
+ * somewhere, so the form never learns to draw it.
+ *
+ * Sent with the page rather than fetched separately, so the form cannot render
+ * a provider the server would then refuse to save. */
+export function providerCatalog(): Array<Record<string, unknown>> {
+  const gated = new Map(CAPABILITY_PROVIDERS.map((p) => [p.provider, p.capability]));
+  return PROVIDERS
+    .filter((p) => {
+      const capability = gated.get(p.kind);
+      return !capability || hasCapability(capability);
+    })
+    .map((p) => ({
+      kind: p.kind,
+      label: p.label,
+      external: p.external,
+      baseUrlMode: p.baseUrlMode,
+      defaultBaseUrl: p.defaultBaseUrl ?? null,
+      // The secret flag travels so the form knows to use a password field and
+      // to leave the value out of anything it echoes back.
+      fields: p.fields.map((f) => ({
+        key: f.key,
+        label: f.label,
+        secret: f.secret,
+        required: f.required,
+        placeholder: f.placeholder ?? null,
+        help: f.help ?? null,
+      })),
+      discovery: p.discovery,
+      modelNoun: p.modelNoun ?? 'model',
+      residency: p.residency,
+      docsUrl: p.docsUrl,
+    }));
+}
+
 export function savableProviders(): string[] {
   return [
     ...KNOWN_PROVIDERS,
     ...CAPABILITY_PROVIDERS.filter((p) => hasCapability(p.capability)).map((p) => p.provider),
   ];
+}
+
+/** The credential fields for one provider, pulled out of a request body.
+ *
+ * Which fields exist, and which half each belongs in, is the catalogue's
+ * answer rather than this route's — so a provider that needs a region and a key
+ * pair is handled by the same code as one that needs an API key, and adding a
+ * provider does not mean editing this function.
+ *
+ * Secrets stay wrapped in `Secret` the whole way: `seal` unwraps them, and
+ * nothing here ever calls reveal(). */
+export function readCredentials(kind: string, body: Record<string, unknown>) {
+  const { secret, config } = credentialFields(kind);
+  const secrets: Record<string, ReturnType<typeof asSecret>> = {};
+  for (const field of secret) {
+    secrets[field.key] = asSecret(body[field.key]);
+  }
+  const settings: Record<string, string> = {};
+  for (const field of config) {
+    const value = str(body[field.key], 200);
+    if (value) settings[field.key] = value;
+  }
+  return { secrets, settings, secretFields: secret, configFields: config };
+}
+
+/** Reveals the secrets for ONE listing call.
+ *
+ * Discovery has to present the credential to the provider, so there is no way
+ * around revealing it here. It is used for the request and nothing else — not
+ * stored, not logged, not echoed — which is the same contract the single
+ * `apiKey` path had before there were several. */
+export function revealForDiscovery(secrets: Record<string, ReturnType<typeof asSecret>>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(secrets)) {
+    if (!value.isEmpty) out[key] = value.reveal();
+  }
+  return out;
 }
 
 function requireMasterKey(ctx: LlmRoutesCtx): MasterKey {
@@ -161,6 +247,24 @@ export function subscriptionOptions(): Array<{
   ];
 }
 
+/** The non-secret settings for a provider, and nothing else.
+ *
+ * An allowlist, not a denylist: fields are kept because the catalogue says they
+ * are configuration, rather than dropped because their name looked like a
+ * credential. A field nobody declared does not come out. */
+export function publicConfig(
+  kind: string,
+  stored: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!stored || typeof stored !== 'object') return {};
+  const out: Record<string, unknown> = {};
+  for (const field of credentialFields(kind).config) {
+    const value = stored[field.key];
+    if (typeof value === 'string' && value) out[field.key] = value;
+  }
+  return out;
+}
+
 interface ProviderDto {
   role: 'primary' | 'fallback';
   provider: string;
@@ -168,6 +272,13 @@ interface ProviderDto {
   baseUrl: string | null;
   /** Whether a key is stored. Never the key, never its length or prefix. */
   apiKeySet: boolean;
+  /** The non-secret settings — region, project, API version.
+   *
+   * Shown back on purpose. An operator has to be able to see which AWS region
+   * their conversations are being sent to, and a write-only region is a support
+   * conversation waiting to happen. Nothing sealed is ever in here: the split is
+   * declared per field in the catalogue, and `readCredentials` sorts by it. */
+  providerConfig: Record<string, unknown>;
   external: boolean;
   externalAcknowledged: boolean;
   active: boolean;
@@ -189,6 +300,11 @@ async function providerDto(db: Db, role: 'primary' | 'fallback'): Promise<Provid
     model: stored.model,
     baseUrl: stored.base_url,
     apiKeySet: !!stored.api_key_enc,
+    // Projected through the catalogue rather than served as stored. Only the
+    // fields THIS provider declares non-secret come out, so a key that reached
+    // the column by any route other than `readCredentials` — a hand-edited row,
+    // a future bug — is dropped here instead of being handed to a screen.
+    providerConfig: publicConfig(stored.provider, stored.provider_config),
     external: isExternalProvider(stored.provider),
     externalAcknowledged: stored.external_acknowledged,
     active: !!stored.activated_at,
@@ -210,7 +326,6 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
   r.use(requireSuperAdmin);
-  r.get('/catalog', (_req, res) => res.json({ providers: PROVIDER_CATALOG }));
 
   /** Turns the two expected refusals into responses an operator can act on, and
    * lets anything unexpected reach the error handler — which says nothing at
@@ -240,6 +355,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         // What CE will and will not do right now, with the reason attached.
         disabledFeatures: disabledFeatures(primary?.capabilities ?? null),
         caps,
+        providerCatalog: providerCatalog(),
         subscriptionOptions: subscriptionOptions(),
         // What this build is, so the screen can explain a refusal rather than
         // showing a control that silently does nothing.
@@ -261,11 +377,14 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       if (!savableProviders().includes(provider)) {
         throw new RouteError(400, 'choose a model provider');
       }
-      const apiKey = asSecret(body.apiKey);
+      const { secrets, settings } = readCredentials(provider, body);
+      const revealed = revealForDiscovery(secrets);
       const result = await discoverModels({
         provider: provider as never,
-        apiKey: apiKey.isEmpty ? null : apiKey.reveal(),
+        apiKey: revealed.apiKey ?? null,
         baseUrl: str(body.baseUrl, 500) || null,
+        secrets: revealed,
+        config: settings,
         fetchImpl: ctx.fetchImpl,
         resolve: ctx.resolve,
       });
@@ -276,6 +395,13 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         category: result.category ?? null,
         message: result.message ?? null,
         providerCode: result.providerCode ?? null,
+        // Whether this list came from the provider or from Josi's own versioned
+        // catalogue, and when that catalogue was last edited. The operator is
+        // told which kind of list they are looking at rather than being left to
+        // assume the provider answered.
+        fromCatalog: !!result.fromCatalog,
+        catalogVersion: result.catalogVersion ?? null,
+        allowsCustomModel: !!result.allowsCustomModel,
       });
     }),
   );
@@ -391,32 +517,94 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
           + "and is processed under that provider's terms",
         );
       }
-      // A subscription provider is external and has no key, which is the one
-      // combination the original rule could not express.
-      if (external && !subscription && apiKey.isEmpty) {
-        throw new RouteError(400, 'an API key is required for this provider');
-      }
+      // Which credentials this provider needs is the catalogue's answer, and it
+      // is checked against the merged envelope further down. The rule this
+      // replaces asked every external provider for an "API key", which is not
+      // what Bedrock, Vertex, ERNIE or Hunyuan take — they would have been
+      // refused for not supplying a field they do not have.
+      const descriptor = describeProvider(provider);
+      if (!descriptor) throw new RouteError(400, 'choose a model provider');
 
-      const definition = providerDefinition(provider);
-      if (definition?.configurableBaseUrl) {
-        if (!baseUrl) throw new RouteError(400, 'a base URL is required for a self-hosted endpoint');
+      if (descriptor.baseUrlMode === 'required' && !baseUrl) {
+        throw new RouteError(
+          400,
+          provider === 'openai_compatible'
+            ? 'a base URL is required for a self-hosted endpoint'
+            : 'this provider needs the address of your own endpoint',
+        );
+      }
+      if (baseUrl) {
+        if (descriptor.baseUrlMode === 'none') {
+          // A base URL on a provider whose endpoint is derived from its own
+          // configuration would be silently ignored, and a setting that does
+          // nothing is worse than one that is refused.
+          throw new RouteError(400, 'this provider does not take an endpoint address');
+        }
         // Resolves and classifies. Loopback and LAN pass; cloud metadata does
         // not. See packages/llm/src/ssrf.ts for why that split is the right one.
         await validateEndpoint(baseUrl, { resolve: ctx.resolve });
       }
 
       const existing = await loadStoredProvider(db, role);
-      // An empty key field on an update means "leave it alone", not "delete it"
-      // — EXCEPT for a subscription provider, where the answer is always null.
-      // Switching a slot from OpenAI to the subscription path must not silently
-      // carry the old key across; the database constraint would refuse the row,
-      // and an operator would get a constraint error instead of the right
-      // behaviour.
-      const sealedKey = subscription ? null
-        : apiKey.isEmpty
-          ? existing?.api_key_enc ?? null
-          // `seal` unwraps the Secret itself; nothing here ever calls reveal().
-          : seal(requireMasterKey(ctx), { apiKey });
+      // Carrying a stored secret forward is only ever right when the slot is
+      // still pointed at the SAME provider. An AWS secret access key is not a
+      // Cohere key, so switching provider means every credential is re-entered
+      // rather than a stale one being kept because a field was left blank.
+      const sameProvider = existing?.provider === provider;
+
+      const { secrets, settings, secretFields, configFields } = readCredentials(provider, body);
+      const supplied = Object.entries(secrets).filter(([, value]) => !value.isEmpty);
+
+      let sealedKey: string | null = null;
+      // Which secret fields the row will actually hold once this save lands.
+      // Tracked explicitly rather than inferred, because "required" has to be
+      // checked against the merged result: a field left blank on an update is
+      // present if it is already stored, and absent if it never was.
+      let held: Set<string>;
+
+      if (subscription) {
+        // Always null. Switching a slot from OpenAI to the subscription path
+        // must not silently carry the old key across; the database constraint
+        // would refuse the row, and an operator would get a constraint error
+        // instead of the right behaviour.
+        sealedKey = null;
+        held = new Set();
+      } else if (!supplied.length) {
+        // Nothing was typed. Keep the stored envelope when the slot still
+        // points at the same provider, and treat its contents as satisfying the
+        // requirements — they did when it was saved, and opening it here would
+        // decrypt a credential for no reason other than to count its keys.
+        const keep = sameProvider ? existing?.api_key_enc ?? null : null;
+        sealedKey = keep;
+        held = keep
+          ? new Set(secretFields.map((f) => f.key))
+          : new Set();
+      } else {
+        const masterKey = requireMasterKey(ctx);
+        // An update that fills in some fields and leaves others blank keeps the
+        // blank ones, so changing an Azure API version does not mean retyping
+        // the key. Only within the same provider, per the rule above.
+        const carried: Record<string, unknown> = sameProvider && existing?.api_key_enc
+          ? openSealed<Record<string, unknown>>(masterKey, existing.api_key_enc)
+          : {};
+        const merged = { ...carried, ...Object.fromEntries(supplied) };
+        // `seal` unwraps each Secret itself; nothing here ever calls reveal().
+        sealedKey = seal(masterKey, merged);
+        held = new Set(Object.keys(merged));
+      }
+
+      if (!subscription) {
+        const missing = [
+          ...secretFields.filter((f) => f.required && !held.has(f.key)),
+          ...configFields.filter((f) => f.required && !settings[f.key]),
+        ];
+        if (missing.length) {
+          throw new RouteError(
+            400,
+            `this provider needs ${missing.map((f) => f.label.toLowerCase()).join(' and ')}`,
+          );
+        }
+      }
 
       // Which binary to run. Bounded and recorded so the admin screen can show
       // what will actually be executed rather than an assumption.
@@ -434,8 +622,8 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
            (role, provider, model, base_url, api_key_enc, external_acknowledged, external_acknowledged_at,
             activated_at, probed_at, probe_steps,
             cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens,
-            subscription_command)
-         values ($1, $2, $3, $4, $5, $6, $7, null, null, '[]', null, null, null, null, null, $8)
+            subscription_command, provider_config)
+         values ($1, $2, $3, $4, $5, $6, $7, null, null, '[]', null, null, null, null, null, $8, $9)
          on conflict (role) do update set
            provider = excluded.provider, model = excluded.model, base_url = excluded.base_url,
            api_key_enc = excluded.api_key_enc,
@@ -444,14 +632,21 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
            activated_at = null, probed_at = null, probe_steps = '[]',
            cap_chat = null, cap_structured_output = null, cap_tool_calling = null, cap_vision = null,
            cap_context_tokens = null,
-           subscription_command = excluded.subscription_command`,
+           subscription_command = excluded.subscription_command,
+           provider_config = excluded.provider_config`,
         [
           role, provider, model,
-          definition?.configurableBaseUrl ? baseUrl : null,
+          // Stored for every provider the catalogue lets an operator point
+          // somewhere — a regional DashScope host, an Azure resource, a local
+          // Ollama — and null for the ones whose endpoint is derived.
+          descriptor.baseUrlMode === 'none' ? null : (baseUrl || null),
           sealedKey,
           external ? true : acknowledged,
           external ? new Date().toISOString() : null,
           command,
+          // Non-secret settings only. `readCredentials` splits them by the
+          // catalogue's own `secret` flag, so a credential cannot arrive here.
+          json(settings),
         ],
       );
 

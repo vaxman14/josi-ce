@@ -176,7 +176,7 @@ export function AdminLaunchChecklist() {
                 {item.dismissible && item.state === 'outstanding' ? (
                   <Button type="button" variant="secondary" disabled={busy}
                           onClick={() => void act(`/admin/launch-checklist/dismiss/${item.key}`)}>
-                    Skip
+                    Not for this installation
                   </Button>
                 ) : null}
 

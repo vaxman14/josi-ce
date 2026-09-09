@@ -1,142 +1,248 @@
-// The paid module, as the person who administers the installation sees it.
+// Parental controls, and the licence that unlocks them.
 //
-// THIS PAGE IS BILLING, NOT AUTHORITY, and it says so on itself. An
-// administrator activates a licence here and gains nothing by it: they cannot
-// see who is looking after whom, cannot read a child's conversations, cannot
-// change anybody's hours, and there is no route that would let them. The
-// screen states that plainly rather than leaving somebody to discover it —
-// an administrator who believes they have oversight here would be wrong in a
-// way that matters.
+// What this screen replaces said the installation was unlicensed and that the
+// build had no publisher verification key, and then stopped. Two sentences of
+// explanation with nothing to do next is a dead end: the operator has bought a
+// licence and has nowhere to put it.
+//
+// So there is exactly one of two things here at any time. Either the build can
+// verify a licence, and there is a form to enter one; or it cannot, and there
+// are the steps to install the build that can. Never a refusal on its own.
+//
+// Nobody is ever asked to paste a publisher secret or edit a file inside the
+// container. The key the operator types is their own licence; the key that
+// verifies it belongs to the publisher, is public, and is already in the image.
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
-import { plain, plainDetail } from '@/lib/plainLanguage';
+import { api } from '@/lib/api';
+import { Badge, Button, Card, CardTitle, Copyable, ErrorNote, Input } from '@/components/ui';
 
-interface Entitlement {
-  state: string;
-  entitled: boolean;
-  issuedTo: string | null;
-  licenseId: string | null;
+type LicenceState =
+  | 'unverifiable_build' | 'none' | 'active' | 'expired' | 'wrong_installation' | 'invalid';
+
+interface LicenceDetails {
+  subject: string;
+  installationId: string | null;
+  features: string[];
+  issuedAt: string;
   expiresAt: string | null;
-  activatedAt: string | null;
-  boundToThisInstallation: boolean;
-  canVerifyLicenses: boolean;
-  honesty: { scope: string; notDevice: string; minutes: string; admin: string };
-  note: string;
 }
 
+interface SupportedBuild {
+  publisher: string;
+  image: string;
+  docs: string;
+  steps: string[];
+}
+
+interface LicenceView {
+  state: LicenceState;
+  detail: string;
+  activatedAt: string | null;
+  licence: LicenceDetails | null;
+  canActivate: boolean;
+  supportedBuild: SupportedBuild | null;
+  installationId: string;
+}
+
+/** What each state means to the operator, and whether it is their problem to
+ * fix. "Invalid" and "issued to a different installation" are different
+ * situations with different next steps. */
+const STATE_LABEL: Record<LicenceState, string> = {
+  active: 'Licensed',
+  none: 'Not licensed',
+  expired: 'Expired',
+  wrong_installation: 'Issued to another installation',
+  invalid: 'Not recognised',
+  unverifiable_build: 'This build cannot check licences',
+};
+
 export function AdminParentalControls() {
-  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
-  const [license, setLicense] = useState('');
+  const [view, setView] = useState<LicenceView | null>(null);
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [note, setNote] = useState('');
+  const [replacing, setReplacing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      setEntitlement(await api.get<Entitlement>('/admin/parental-controls'));
+      setView(await api.get<LicenceView>('/admin/licence'));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load this page');
+      setError(err instanceof Error ? err.message : 'Could not read the licence');
     }
   }, []);
-
   useEffect(() => { void load(); }, [load]);
 
-  async function activate(event: React.FormEvent) {
-    event.preventDefault();
-    setError(''); setNote('');
+  /** Activating and replacing are one action. Replacing is activating over the
+   * top, and a separate control would be the same request under another name. */
+  async function activate() {
+    setBusy(true);
+    setError('');
     try {
-      setEntitlement(await api.post<Entitlement>('/admin/parental-controls/license', { license }));
-      setLicense('');
-      setNote('Activated. People here can now set up a managed account for a child.');
+      await api.put('/admin/licence', { token: token.trim() });
+      setToken('');
+      setReplacing(false);
+      await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'That licence was not accepted');
+      // The server's sentence, which names which of the failures this was.
+      setError(err instanceof Error ? err.message : 'That licence could not be activated');
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function revoke() {
-    setError(''); setNote('');
+  async function deactivate() {
+    setBusy(true);
+    setError('');
     try {
-      setEntitlement(await api.del<Entitlement>('/admin/parental-controls/license'));
-      setNote('Switched off. Accounts and conversations are untouched; the controls simply stop applying.');
+      await api.del('/admin/licence');
+      await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'That did not work');
+      setError(err instanceof Error ? err.message : 'That licence could not be removed');
+    } finally {
+      setBusy(false);
     }
   }
+
+  const licensed = view?.state === 'active';
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Parental Controls</h1>
+      <h1 className="text-xl font-semibold tracking-tight">Parental controls</h1>
+      <p className="text-sm text-muted-foreground">
+        Parental controls are a licensed feature. This page is where the licence is activated and
+        managed.
+      </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {note ? <p className="text-sm text-emerald-400">{note}</p> : null}
-      {!entitlement ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
-      {entitlement ? (
-        <>
-          <Card>
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <CardTitle>This installation</CardTitle>
-              <Badge tone={entitlement.entitled ? 'ok' : 'muted'}>
-                {plain('entitlement_state', entitlement.state)}
-              </Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {plainDetail('entitlement_state', entitlement.state) ?? entitlement.note}
-            </p>
-            {entitlement.issuedTo ? (
-              <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-                <div><dt className="text-muted-foreground">Issued to</dt><dd>{entitlement.issuedTo}</dd></div>
-                <div><dt className="text-muted-foreground">Licence</dt><dd>{entitlement.licenseId}</dd></div>
-                <div>
-                  <dt className="text-muted-foreground">Expires</dt>
-                  <dd>{entitlement.expiresAt ? new Date(entitlement.expiresAt).toLocaleDateString() : 'Does not expire'}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Tied to this installation</dt>
-                  <dd>{entitlement.boundToThisInstallation ? 'Yes' : 'No'}</dd>
-                </div>
-              </dl>
-            ) : null}
-          </Card>
+      {view ? (
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle>Licence</CardTitle>
+            <Badge tone={licensed ? 'ok' : view.state === 'none' ? 'muted' : 'danger'}>
+              {STATE_LABEL[view.state]}
+            </Badge>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">{view.detail}</p>
 
-          <Card>
-            <CardTitle>What you get, and what you do not</CardTitle>
-            <p className="text-sm text-muted-foreground">{entitlement.note}</p>
-            <p className="mt-2 text-sm text-muted-foreground">{entitlement.honesty.admin}</p>
-            <p className="mt-2 text-sm text-muted-foreground">{entitlement.honesty.scope}</p>
-            <p className="mt-2 text-sm text-muted-foreground">{entitlement.honesty.notDevice}</p>
-          </Card>
-
-          <Card>
-            <CardTitle>{entitlement.entitled ? 'Replace the licence' : 'Activate a licence'}</CardTitle>
-            {!entitlement.canVerifyLicenses ? (
-              <p className="text-sm text-muted-foreground">
-                This build carries no publisher key, so it cannot check a licence and will refuse
-                every one. Paid modules are available on builds published by SOCAL RECEPTIONIST
-                LLC. Nothing you paste here can change that — it is a property of the image, not
-                a setting.
-              </p>
-            ) : (
-              <form onSubmit={activate} className="space-y-3">
-                <div>
-                  <label className="mb-1 block text-sm" htmlFor="license">Licence key</label>
-                  <Input id="license" value={license} onChange={(e) => setLicense(e.target.value)}
-                    placeholder="josi-lic.1.…" required />
-                </div>
-                <Button type="submit">Activate</Button>
-              </form>
-            )}
-            {entitlement.entitled ? (
-              <div className="mt-4 border-t border-border pt-3">
-                <Button variant="danger" onClick={() => void revoke()}>Switch the module off</Button>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Families keep their accounts and their conversations. The hours and limits stop
-                  applying, and parents stop being able to see anything — in both directions, so
-                  nobody is held to a rule nobody may change.
-                </p>
+          {view.licence ? (
+            <dl className="mt-3 space-y-1 text-sm text-muted-foreground">
+              <div>
+                <dt className="inline font-medium">Issued to: </dt>
+                <dd className="inline">{view.licence.subject}</dd>
               </div>
-            ) : null}
-          </Card>
-        </>
+              <div>
+                <dt className="inline font-medium">Covers: </dt>
+                <dd className="inline">{view.licence.features.join(', ') || 'nothing'}</dd>
+              </div>
+              <div>
+                <dt className="inline font-medium">Expires: </dt>
+                <dd className="inline">
+                  {view.licence.expiresAt
+                    ? new Date(view.licence.expiresAt).toLocaleDateString()
+                    : 'does not expire'}
+                </dd>
+              </div>
+              {view.activatedAt ? (
+                <div>
+                  <dt className="inline font-medium">Activated: </dt>
+                  <dd className="inline">{new Date(view.activatedAt).toLocaleString()}</dd>
+                </div>
+              ) : null}
+            </dl>
+          ) : null}
+
+          {/* The form appears whenever entering a key could work: with no
+              licence, with a rejected one, and when replacing a valid one.
+              Retrying IS entering it again, so there is no separate retry. */}
+          {view.canActivate && (!licensed || replacing) ? (
+            <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void activate(); }}>
+              <label className="block text-sm" htmlFor="licence">Licence key</label>
+              <textarea
+                id="licence"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                rows={3}
+                autoCapitalize="none"
+                spellCheck={false}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+                placeholder="Paste the licence key you were sent"
+              />
+              <p className="text-xs text-muted-foreground">
+                This is the key SOCAL RECEPTIONIST LLC sent you. It is checked against the
+                publisher's signature before it is stored, so a key that is not genuine is never
+                accepted.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="submit" disabled={busy || !token.trim()}>
+                  {busy ? 'Checking…' : licensed ? 'Replace licence' : 'Activate licence'}
+                </Button>
+                {replacing ? (
+                  <Button type="button" variant="secondary" disabled={busy}
+                          onClick={() => { setReplacing(false); setToken(''); }}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+            </form>
+          ) : null}
+
+          {licensed && !replacing ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" disabled={busy}
+                      onClick={() => setReplacing(true)}>
+                Replace licence
+              </Button>
+              <Button type="button" variant="secondary" disabled={busy}
+                      onClick={() => void deactivate()}>
+                Deactivate
+              </Button>
+            </div>
+          ) : null}
+
+          {/* A licence bound to an installation is refused on the wrong one, so
+              the operator needs this id to get the right licence issued. */}
+          {view.state === 'wrong_installation' || view.state === 'none' ? (
+            <div className="mt-3">
+              <Copyable label="This installation's ID" value={view.installationId} />
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
+
+      {/* The unsupported-build case: steps, not a dead end. */}
+      {view?.supportedBuild ? (
+        <Card>
+          <CardTitle>Install the supported build</CardTitle>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Licences are verified against a key that {view.supportedBuild.publisher} stamps into the
+            image it publishes. This build has none, so it cannot check any licence — entering one
+            here would not help. Your data is not affected by switching.
+          </p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
+            {view.supportedBuild.steps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <div className="mt-2">
+            <Copyable label="Image to use" value={view.supportedBuild.image} />
+          </div>
+          <p className="mt-2 text-sm">
+            <a className="underline" href={view.supportedBuild.docs} target="_blank" rel="noreferrer noopener">
+              Installation guide
+            </a>
+          </p>
+        </Card>
+      ) : null}
+
+      {licensed ? (
+        <Card>
+          <CardTitle>What this licence unlocks</CardTitle>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Parental controls are available on this installation. They are configured per person,
+            from each account's own settings.
+          </p>
+        </Card>
       ) : null}
     </div>
   );

@@ -47,14 +47,10 @@ COPY scripts ./scripts
 ARG JOSI_EDITION=ce
 ARG JOSI_BUILD_ID=source
 ARG JOSI_RELEASE_KEY=none
-# The publisher's paid-module licensing key. Absent on every build but theirs,
-# and absent means no licence verifies — see packages/core/src/entitlements.ts.
-ARG JOSI_ENTITLEMENT_KEY=none
 RUN node scripts/stamp-edition.mjs \
       --edition "$JOSI_EDITION" \
       --build-id "$JOSI_BUILD_ID" \
-      --release-key "$JOSI_RELEASE_KEY" \
-      --entitlement-key "$JOSI_ENTITLEMENT_KEY"
+      --release-key "$JOSI_RELEASE_KEY"
 
 RUN npx tsc -b
 
@@ -89,7 +85,7 @@ RUN apt-get update \
 http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends postgresql-client-16 restic \
+ && apt-get install -y --no-install-recommends postgresql-client-16 \
  && apt-get purge -y gnupg && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
@@ -103,7 +99,7 @@ WORKDIR /app
 # daemon as root:root 0755, the application runs as `node`, and every backup
 # fails with a permission error on a real installation — which is exactly what
 # the first runtime run found while every unit test passed.
-RUN mkdir -p /data/backups /data/diagnostics /data/versions /data/codex /data/claude /data/chat-attachments \
+RUN mkdir -p /data/backups /data/diagnostics /data/versions /data/codex /data/claude \
  && chown -R node:node /data
 
 # ------------------------------------------------- the ChatGPT subscription path

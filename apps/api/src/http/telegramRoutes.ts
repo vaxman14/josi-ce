@@ -404,7 +404,6 @@ export function mountTelegramWebhook(app: Express, ctx: TelegramRoutesCtx): void
                 history: await historyFor(db, args.threadId),
                 inbound: args.inbound,
                 connectorFetch: ctx.connectorFetch,
-                channel: 'telegram',
                 // The step-up scope is the THREAD, not a session — there is no
                 // session here. A person cannot re-authenticate over Telegram,
                 // so anything needing step-up is refused with the message the

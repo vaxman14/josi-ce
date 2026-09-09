@@ -16,7 +16,6 @@ import { cn } from '@/lib/cn';
 import { PwaPrompts } from '@/lib/pwa';
 import { Button } from '@/components/ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { HelpChat } from '@/components/HelpChat';
 
 const MEMBER_NAV = [
   { to: '/app', label: 'Home', end: true },
@@ -26,33 +25,12 @@ const MEMBER_NAV = [
   { to: '/app/conversations', label: 'Conversations' },
   { to: '/app/contacts', label: 'Contacts' },
   { to: '/app/connections', label: 'Connections' },
-  // Its own entry rather than a tab inside Connections: a pasted personal
-  // access token and an OAuth account are different enough that one page
-  // showing both teaches people the wrong thing about what they granted.
-  { to: '/app/developer-services', label: 'Developer services' },
-  // Its own entry again, and for a stronger reason than the one above: this is
-  // the only page where somebody hands the assistant tools that somebody else
-  // wrote and described. Folding it into Connections would put a discovered
-  // allowlist beside a reviewed one and imply the same thing about both.
-  { to: '/app/mcp-servers', label: 'MCP servers' },
-  // Read-only, and its own entry rather than a tab: a skill is not a connection
-  // — it has no credential, no address and no tool — and listing it beside the
-  // things that do have those would suggest it might.
-  { to: '/app/skills', label: 'Skills' },
   { to: '/app/usage', label: 'Usage' },
   { to: '/app/personalization', label: 'Personalization' },
-  { to: '/app/telegram', label: 'Telegram' },
   { to: '/app/channels', label: 'Channels' },
   { to: '/app/settings', label: 'Settings' },
   { to: '/app/apps', label: 'Apps' },
 ];
-
-/** Family is not in MEMBER_NAV, because on almost every installation the page
- * does not exist. It is appended below only when the server answers, so an
- * installation that has not bought the module shows no trace of it — and a
- * member who is neither a parent nor a managed child is not offered a page
- * about somebody else's household. */
-const FAMILY_NAV: { to: string; label: string; end?: boolean } = { to: '/app/family', label: 'Family' };
 
 const ADMIN_NAV = [
   { to: '/admin', label: 'Overview', end: true },
@@ -63,25 +41,11 @@ const ADMIN_NAV = [
   { to: '/admin/model', label: 'Model' },
   { to: '/admin/policy', label: 'Policy' },
   { to: '/admin/storage', label: 'Storage' },
-  { to: '/admin/backups', label: 'Backups' },
   { to: '/admin/connectors', label: 'Connectors' },
-  { to: '/admin/developer-services', label: 'Developer services' },
-  // Its own entry rather than a tab under Connectors: this is the only
-  // connection kind where the ASSISTANT picks which request to make, and the
-  // page is mostly the allowlist that constrains it.
-  { to: '/admin/custom-apis', label: 'Custom API' },
-  // The ceiling and the health table for the servers members connect
-  // themselves. Not a place to connect one: there is no route for that.
-  { to: '/admin/mcp-servers', label: 'MCP servers' },
-  // The library. Its own entry for the same reason the member one is: nothing
-  // installed here is a connection, and the page's whole job is reading prose
-  // before it is allowed anywhere near the assistant.
-  { to: '/admin/skills', label: 'Skills' },
-  // The paid module's licence. Under admin because buying is installation
-  // administration; the page itself is explicit that it grants no oversight.
-  { to: '/admin/parental-controls', label: 'Parental Controls' },
   { to: '/admin/telegram', label: 'Telegram' },
-  { to: '/admin/channels', label: 'Channels' },
+  { to: '/admin/backups', label: 'Backups' },
+  { to: '/admin/developer-services', label: 'Developer services' },
+  { to: '/admin/parental-controls', label: 'Parental controls' },
   { to: '/admin/workspace', label: 'Workspace' },
 ];
 
@@ -89,37 +53,18 @@ const ADMIN_NAV = [
  * the sidebar; a bottom bar with nine items is a bar with none. */
 const PHONE_NAV = MEMBER_NAV.filter((i) => ['Home', 'Talk', 'Tasks', 'Approvals', 'Usage'].includes(i.label));
 
-const HELP_ROOT = 'https://josi-ce-docs.netlify.app/';
-
-/** Link to a known documentation section when the current screen has one.
- * Unknown screens deliberately fall back to the documentation home page; a
- * plausible-looking dead anchor is less helpful than an honest index. */
-function helpUrl(pathname: string): string {
-  if (pathname.includes('/developer-services')) return `${HELP_ROOT}#developer-services`;
-  if (pathname.includes('/custom-apis')) return `${HELP_ROOT}#custom-api`;
-  return HELP_ROOT;
-}
-
 export function Shell() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [status, setStatus] = useState<LlmStatus | null>(null);
-  const [family, setFamily] = useState(false);
 
   useEffect(() => {
     void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => setStatus(null));
-    // 404 means the module is not entitled, or this person is in no family.
-    // Either way there is no page to link to, and this is not the control —
-    // every route behind it is refused server-side regardless.
-    void api.get<{ role: string }>('/parental/overview')
-      .then((res) => setFamily(res.role !== 'none'))
-      .catch(() => setFamily(false));
   }, [location.pathname]);
 
   const isAdminArea = location.pathname.startsWith('/admin');
-  const memberNav = family ? [...MEMBER_NAV, FAMILY_NAV] : MEMBER_NAV;
-  const nav = isAdminArea ? ADMIN_NAV : memberNav;
+  const nav = isAdminArea ? ADMIN_NAV : MEMBER_NAV;
 
   return (
     <div className="flex min-h-full w-full max-w-full flex-col overflow-x-hidden">
@@ -142,14 +87,6 @@ export function Shell() {
         ) : null}
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <a
-            href={helpUrl(location.pathname)}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex min-h-11 items-center rounded-md px-3 text-sm font-medium hover:bg-secondary"
-          >
-            Help
-          </a>
           {user?.role === 'super_admin' ? (
             <Link
               to={isAdminArea ? '/app' : '/admin'}
@@ -229,7 +166,6 @@ export function Shell() {
           nothing offers to install an app to somebody looking at a login form,
           and an update prompt is only meaningful to somebody using the app. */}
       <PwaPrompts />
-      <HelpChat />
     </div>
   );
 }

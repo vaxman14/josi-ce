@@ -6,14 +6,18 @@
 // approve their own bundle — but a bundle contains no content by construction
 // (M113), so this is not a privacy hole, it is the consent flow working.
 import { Router, type Request, type Response } from 'express';
-import { LIMITS, consume, type Db, type Limit } from '@josi-ce/core';
 import {
-  BackupAgentError, BackupError, DiagnosticsError, MASTER_KEY_DOC, RestoreError, SupportError, restoreBackup,
+  LIMITS, appendEvent, asSecret, consume, loadMasterKey, openSealed, seal,
+  type Db, type Limit, type LoadOptions, type MasterKey,
+} from '@josi-ce/core';
+import {
+  BACKUP_DIR, BackupError, DESTINATIONS, DiagnosticsError, MASTER_KEY_DOC, RestoreError,
+  SupportError,
+  describeDestination, endpointHost, restoreBackup, testDestination,
   TELEMETRY_DISCLOSURE, TelemetryError, acknowledgementFor, approveBundle,
   buildBundle, checkForUpdate, createBackup, describeBackup, diagnosticsRequired,
   gatewayStatus, isNewer, markInspected, passSecretScan, recordBundle,
-  scanForSecrets, sendTelemetry, setTelemetry, submitTicket, nextRun, runBackupAgent,
-  validateRepository, verifyResticSnapshot, type BackupDestination, type CommandRunner, type DestinationKind,
+  scanForSecrets, sendTelemetry, setTelemetry, submitTicket,
   type BackupWriter, type LogWindow, type TelemetrySender, type TicketCategory,
 } from '@josi-ce/ops';
 import { UnsafeEndpointError } from '@josi-ce/llm';
@@ -23,6 +27,10 @@ import { asyncRoute, param } from './async.js';
 
 export interface OpsRoutesCtx {
   db: Db;
+  /** Needed to seal and open the backup destination's credential. */
+  masterKey?: LoadOptions | false;
+  /** Injected by the suites so no test reaches a real bucket. */
+  destinationFetch?: typeof fetch;
   /** Injected. No test writes a real archive or contacts a real endpoint. */
   backupWriter?: BackupWriter;
   restoreReader?: import('@josi-ce/ops').RestoreReader;
@@ -32,9 +40,23 @@ export interface OpsRoutesCtx {
   fetchLatestVersion?: () => Promise<string | null>;
   /** Injected by the tests so no suite resolves a hostname. */
   outboundResolve?: (hostname: string) => Promise<string[]>;
-  /** Restic process seam. Tests never execute a host binary. */
-  resticRunner?: CommandRunner;
-  resticSecretRoot?: string;
+}
+
+/** The destination row as stored. `credentials_enc` is selected only by the
+ * routes that must open it, and is never part of a response. */
+interface DestinationRow {
+  kind: 's3' | 'r2' | 'b2';
+  label: string;
+  bucket: string;
+  region: string;
+  account_id: string | null;
+  endpoint: string | null;
+  object_prefix: string;
+  credentials_enc?: string | null;
+  api_key_present?: boolean;
+  last_check_at: string | null;
+  last_check_ok: boolean | null;
+  last_check_error: string | null;
 }
 
 class RouteError extends Error {
@@ -42,6 +64,24 @@ class RouteError extends Error {
 }
 
 const str = (v: unknown, max = 4000): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+
+/** The master key, or a 503 that says what an operator can do about it.
+ *
+ * A backup destination credential cannot be stored without it, and storing one
+ * in the clear instead is not a fallback worth having. */
+function requireDestinationKey(ctx: OpsRoutesCtx): MasterKey {
+  if (ctx.masterKey === false) throw new RouteError(503, 'this installation cannot store secrets right now');
+  try {
+    return loadMasterKey(ctx.masterKey ?? {});
+  } catch {
+    // The loader's message names a filesystem path. The operator gets the
+    // actionable half without it.
+    throw new RouteError(
+      503,
+      'the installation master key is missing or unusable, so nothing can be saved securely.',
+    );
+  }
+}
 
 function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
   return asyncRoute(async (req: Request, res: Response) => {
@@ -68,10 +108,6 @@ function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
         // A category, never the underlying message: an archive error quotes
         // paths and a database error quotes configuration.
         res.status(500).json({ error: 'that could not be completed', category: err.category });
-        return;
-      }
-      if (err instanceof BackupAgentError) {
-        res.status(409).json({ error: err.message, category: err.category });
         return;
       }
       throw err;
@@ -156,56 +192,6 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const [policy] = await db.query<{ clamav_enabled: boolean; ocr_enabled: boolean }>(
         `select clamav_enabled, ocr_enabled from storage_policy where id = true`,
       );
-      // Custom API connections, as COUNTS. How many are defined, how many the
-      // assistant can actually reach, and how many individual actions are
-      // switched on — which is the number a supporter needs when somebody
-      // reports "Josi called our CRM" or "Josi will not call our CRM". Never a
-      // name, never a host, never a credential: a host is somebody's internal
-      // service and a bundle goes to a third party's ticket system.
-      const [customApis] = await db.query<{ total: number; live: number }>(
-        `select count(*)::int as total,
-                count(*) filter (where enabled)::int as live
-           from custom_api_connections`,
-      );
-      const [customApiActions] = await db.query<{ live: number }>(
-        `select count(*)::int as live
-           from custom_api_endpoints e join custom_api_connections c on c.id = e.connection_id
-          where e.enabled and c.enabled`,
-      );
-
-      // External MCP servers, as COUNTS and nothing else. How many people have
-      // connected one, how many the assistant can actually reach, and how many
-      // individual tools are approved — the numbers a supporter needs when
-      // somebody reports "Josi will not use my notes server". Never a host,
-      // never a name, never a tool: on somebody's own server the tool names are
-      // a fact about them, and a bundle goes to a third party's ticket system.
-      const [mcp] = await db.query<{ total: number; live: number }>(
-        `select count(*)::int as total,
-                count(*) filter (where enabled)::int as live
-           from mcp_servers`,
-      );
-      const [mcpTools] = await db.query<{ live: number }>(
-        `select count(*)::int as live
-           from mcp_server_tools t join mcp_servers s on s.id = t.server_id
-          where t.state = 'approved' and t.available and s.enabled`,
-      );
-
-      // Installed skills, as COUNTS and nothing else. How many are installed,
-      // how many are actually switched on, and how many packages were refused —
-      // enough for a supporter to answer "is a skill making Josi behave like
-      // this?" without ever being shown a line of what one says. Never a name,
-      // never a publisher, never a word of the instructions: those are this
-      // installation's own runbooks and a bundle goes to a third party's ticket
-      // system.
-      const [skills] = await db.query<{ total: number; live: number; review: number }>(
-        `select count(*)::int as total,
-                count(*) filter (where state = 'enabled')::int as live,
-                count(*) filter (where state = 'review')::int as review
-           from skills`,
-      );
-      const [skillQuarantine] = await db.query<{ total: number }>(
-        `select count(*)::int as total from skill_quarantine`,
-      );
 
       const built = buildBundle({
         version: process.env.JOSI_VERSION ?? '0.1.0',
@@ -219,31 +205,10 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           smtp: (smtp?.n ?? 0) > 0,
           clamav: policy?.clamav_enabled ?? false,
           ocr: policy?.ocr_enabled ?? false,
-          // WHETHER, never which. A boolean answers "could this installation
-          // have called an outside API?" without naming one.
-          custom_apis: (customApis?.live ?? 0) > 0,
-          // WHETHER, never which, for the same reason.
-          mcp_servers: (mcp?.live ?? 0) > 0,
-          // WHETHER any installed instructions are in front of the assistant.
-          // The single most useful bit in this object when a reply reads oddly,
-          // and it names nothing.
-          skills: (skills?.live ?? 0) > 0,
         },
         migrations: [],
         logs: [],
-        counts: {
-          users, threads, documents,
-          custom_apis: customApis?.total ?? 0,
-          custom_apis_enabled: customApis?.live ?? 0,
-          custom_api_actions_enabled: customApiActions?.live ?? 0,
-          mcp_servers: mcp?.total ?? 0,
-          mcp_servers_enabled: mcp?.live ?? 0,
-          mcp_tools_approved: mcpTools?.live ?? 0,
-          skills_installed: skills?.total ?? 0,
-          skills_enabled: skills?.live ?? 0,
-          skills_awaiting_review: skills?.review ?? 0,
-          skills_quarantined: skillQuarantine?.total ?? 0,
-        },
+        counts: { users, threads, documents },
       });
 
       const { id } = await recordBundle(db, {
@@ -379,108 +344,346 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     }),
   );
 
-  r.get('/admin/backup-destinations', requireSuperAdmin, handle(async (_req, res) => {
-    const destinations = await db.query(
-      `select id,name,kind,repository,secret_ref,enabled,created_at,updated_at
-         from backup_destinations order by lower(name)`,
-    );
-    const schedules = await db.query(
-      `select id,destination_id,cadence,hour_utc,weekday,keep_daily,keep_weekly,
-              keep_monthly,enabled,last_enqueued_at,next_run_at
-         from backup_schedules order by next_run_at`,
-    );
-    const runs = await db.query(
-      `select id,destination_id,backup_id,operation,state,snapshot_id,error_category,
-              started_at,finished_at from backup_agent_runs order by started_at desc limit 50`,
-    );
-    return res.json({ destinations, schedules, runs, secretRoot: '/run/josi-backup-secrets' });
-  }));
+  /** The archive itself.
+   *
+   * Creating an export and listing it are not the feature; retrieving it is.
+   * Without this route a row reading "Portable export - Ready" described a file
+   * on a volume inside the container, which an operator has no way to reach —
+   * the export existed and was, in every practical sense, unavailable.
+   *
+   * Four things this must get right, and each has a failure it prevents:
+   *
+   *   - Authorization is enforced HERE, not by the row being hidden. The id is
+   *     a uuid, but an unguessable name is not an access control.
+   *   - A backup that is not complete is not offered. Sending a partially
+   *     written archive would produce a file that restores into a half
+   *     installation.
+   *   - The stored path is never returned or accepted. It is deployment detail,
+   *     and a client-supplied path is a file-read primitive.
+   *   - A row whose file has gone says so with 410, distinct from 404 for a
+   *     row that never existed. "It is not there any more" and "there is no
+   *     such export" are different facts and an operator acts on them
+   *     differently.
+   */
+  r.get(
+    '/admin/backups/:id/download',
+    requireSuperAdmin,
+    handle(async (req, res) => {
+      if (!ctx.backupWriter) throw new RouteError(503, 'backups are not available on this installation');
+      const id = param(req, 'id');
+      // Checked before it reaches the database. A backup id is a uuid, and
+      // anything else — a path, a wildcard — is simply not one, so it gets the
+      // same answer as any other id naming no backup. Handing it to Postgres
+      // instead turns a malformed request into a 500 carrying a database error.
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+        throw new RouteError(404, 'no such backup');
+      }
+      const [row] = await db.query<{
+        id: string; kind: string; state: string; stored_path: string;
+        byte_size: string | number; created_at: string;
+      }>(
+        `select id, kind, state, stored_path, byte_size, created_at from backups where id = $1`,
+        [id],
+      );
+      if (!row) throw new RouteError(404, 'no such backup');
+      if (row.state !== 'complete') {
+        throw new RouteError(
+          409,
+          row.state === 'failed'
+            ? 'that backup did not finish, so there is no archive to download'
+            : 'that backup is still being written',
+        );
+      }
 
-  r.post('/admin/backup-destinations', requireSuperAdmin, handle(async (req, res) => {
-    const kind = str(req.body?.kind, 16) as DestinationKind;
-    if (!['local', 'nas', 's3', 'r2', 'b2'].includes(kind)) throw new RouteError(400, 'choose a supported destination type');
-    const name = str(req.body?.name, 80);
-    const secretRef = str(req.body?.secretRef, 80);
-    if (!name) throw new RouteError(400, 'name the destination');
-    if (!/^[A-Za-z0-9_-]{1,80}$/.test(secretRef)) throw new RouteError(400, 'use a safe secret reference');
-    const repository = validateRepository(kind, str(req.body?.repository, 2048));
-    const [destination] = await db.query(
-      `insert into backup_destinations (name,kind,repository,secret_ref,created_by)
-       values ($1,$2,$3,$4,$5) returning id,name,kind,repository,secret_ref,enabled`,
-      [name, kind, repository, secretRef, req.user!.id],
-    );
-    return res.status(201).json({ destination });
-  }));
+      let archive: Buffer;
+      try {
+        archive = await ctx.backupWriter.read(row.stored_path);
+      } catch {
+        // The row outlived the file: a volume that was replaced, a manual
+        // deletion, a restored-from-scratch installation. Saying "not found"
+        // would suggest the operator misread the list.
+        throw new RouteError(
+          410,
+          'the archive for that backup is no longer on this server. Take a new one — the '
+          + 'record remains so you can see when the old one was made.',
+        );
+      }
 
-  r.delete('/admin/backup-destinations/:id', requireSuperAdmin, handle(async (req, res) => {
-    const [row] = await db.query<{ id: string }>(
-      `delete from backup_destinations where id=$1 and not exists
-       (select 1 from backup_agent_runs where destination_id=$1) returning id`, [param(req, 'id')],
-    );
-    if (!row) throw new RouteError(409, 'a destination with backup history cannot be deleted; disable it instead');
-    return res.json({ deleted: true });
-  }));
+      // Named for the person receiving it rather than for the filesystem: what
+      // it is, which installation date it belongs to, and an extension their
+      // operating system will honour.
+      const stamp = new Date(row.created_at).toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      const filename = `josi-${row.kind}-${stamp}.zip`;
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Length', String(archive.byteLength));
+      // `attachment` so a browser saves it instead of trying to render it, and
+      // the name quoted because it contains no quotes by construction.
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      // An archive of an installation's data must never sit in a shared cache.
+      res.setHeader('Cache-Control', 'no-store');
+      await appendEvent(db, {
+        actorUserId: req.user!.id,
+        actor: 'super_admin',
+        kind: 'backup.downloaded',
+        payload: { backupId: row.id, kind: row.kind },
+      });
+      return res.status(200).end(archive);
+    }),
+  );
 
-  r.put('/admin/backup-destinations/:id/schedule', requireSuperAdmin, handle(async (req, res) => {
-    const cadence = req.body?.cadence === 'weekly' ? 'weekly' : 'daily';
-    const hourUtc = Number(req.body?.hourUtc);
-    const weekday = cadence === 'weekly' ? Number(req.body?.weekday) : null;
-    const keepDaily = Number(req.body?.keepDaily ?? 7);
-    const keepWeekly = Number(req.body?.keepWeekly ?? 4);
-    const keepMonthly = Number(req.body?.keepMonthly ?? 6);
-    if (!Number.isInteger(hourUtc) || hourUtc < 0 || hourUtc > 23) throw new RouteError(400, 'hourUtc must be 0 through 23');
-    if (weekday !== null && (!Number.isInteger(weekday) || weekday < 0 || weekday > 6)) throw new RouteError(400, 'weekday must be 0 through 6');
-    if (![keepDaily, keepWeekly, keepMonthly].every(Number.isInteger)) throw new RouteError(400, 'retention values must be whole numbers');
-    const destinationId = param(req, 'id');
-    const [exists] = await db.query<{ id: string }>(`select id from backup_destinations where id=$1`, [destinationId]);
-    if (!exists) throw new RouteError(404, 'no such backup destination');
-    const [schedule] = await db.query(
-      `insert into backup_schedules
-         (destination_id,cadence,hour_utc,weekday,keep_daily,keep_weekly,keep_monthly,created_by,next_run_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       on conflict (destination_id) do update set cadence=excluded.cadence,hour_utc=excluded.hour_utc,
-         weekday=excluded.weekday,keep_daily=excluded.keep_daily,keep_weekly=excluded.keep_weekly,
-         keep_monthly=excluded.keep_monthly,enabled=true,next_run_at=excluded.next_run_at
-       returning *`,
-      [destinationId, cadence, hourUtc, weekday, keepDaily, keepWeekly, keepMonthly, req.user!.id,
-        nextRun(cadence, hourUtc, weekday)],
-    );
-    return res.json({ schedule });
-  }));
+  // ------------------------------------------------------------ destination
+  //
+  // Sending a backup anywhere but this container's own volume used to mean
+  // editing compose files and mounting host secret files named by a prefix the
+  // form called `primary` and never explained. That is a deployment procedure
+  // wearing a settings form, and it put the one thing that saves an
+  // installation behind the one skill most operators do not have.
 
-  r.post('/admin/backups/:id/replicate', requireSuperAdmin, handle(async (req, res) => {
-    if (!(await limited(req, res, LIMITS.backup))) return undefined;
-    const [backup] = await db.query<{ id: string; stored_path: string; state: string }>(
-      `select id,stored_path,state from backups where id=$1`, [param(req, 'id')],
-    );
-    if (!backup || backup.state !== 'complete') throw new RouteError(404, 'no such completed backup');
-    const [destination] = await db.query<BackupDestination>(
-      `select id,name,kind,repository,secret_ref,enabled from backup_destinations where id=$1`,
-      [str(req.body?.destinationId, 64)],
-    );
-    if (!destination) throw new RouteError(404, 'no such backup destination');
-    const [schedule] = await db.query<{ keep_daily:number; keep_weekly:number; keep_monthly:number }>(
-      `select keep_daily,keep_weekly,keep_monthly from backup_schedules where destination_id=$1`, [destination.id],
-    );
-    const out = await runBackupAgent(db, { destination, backupId: backup.id, archivePath: backup.stored_path,
-      actorUserId: req.user!.id, retention: { keepDaily: schedule?.keep_daily ?? 7,
-        keepWeekly: schedule?.keep_weekly ?? 4, keepMonthly: schedule?.keep_monthly ?? 6 },
-      runner: ctx.resticRunner, secretRoot: ctx.resticSecretRoot });
-    return res.json(out);
-  }));
+  /** The catalogue, the current destination, and what the last test proved.
+   *
+   * The credential is never returned in any form — not the secret, not the key
+   * id, not a masked version of either. `credentialsSet` is the only fact about
+   * it a screen needs. */
+  r.get(
+    '/admin/backups/destination',
+    requireSuperAdmin,
+    handle(async (_req, res) => {
+      const [row] = await db.query<DestinationRow>(
+        `select kind, label, bucket, region, account_id, endpoint, object_prefix,
+                api_key_present, last_check_at, last_check_ok, last_check_error
+         from (
+           select *, (credentials_enc is not null) as api_key_present
+           from backup_destination where id = true
+         ) d`,
+      );
+      return res.json({
+        // Field definitions travel with the page so the form cannot draw a
+        // provider this build would refuse, exactly as the model catalogue does.
+        catalog: DESTINATIONS.map((d) => ({
+          kind: d.kind,
+          label: d.label,
+          credentialsHelp: d.credentialsHelp,
+          docsUrl: d.docsUrl,
+          fields: d.fields.map((f) => ({
+            key: f.key,
+            label: f.label,
+            secret: f.secret,
+            required: f.required,
+            placeholder: f.placeholder ?? null,
+            help: f.help ?? null,
+          })),
+        })),
+        destination: row
+          ? {
+              kind: row.kind,
+              label: row.label,
+              bucket: row.bucket,
+              region: row.region,
+              accountId: row.account_id,
+              endpoint: row.endpoint,
+              objectPrefix: row.object_prefix,
+              credentialsSet: row.api_key_present,
+              // Where the archives actually go, assembled from the stored
+              // fields. An operator checking their bucket should not have to
+              // reconstruct this from three inputs.
+              resolvedEndpoint: `https://${endpointHost({
+                kind: row.kind,
+                bucket: row.bucket,
+                region: row.region,
+                accountId: row.account_id,
+                endpoint: row.endpoint,
+              })}`,
+              lastCheckAt: row.last_check_at,
+              lastCheckOk: row.last_check_ok,
+              lastCheckError: row.last_check_error,
+            }
+          : null,
+        // The volume is always there and is what an installation falls back to.
+        // Saying so is the difference between "no destination" and "backups are
+        // not being kept".
+        localPath: BACKUP_DIR,
+      });
+    }),
+  );
 
-  r.post('/admin/backups/:id/verify-offsite', requireSuperAdmin, handle(async (req, res) => {
-    const [backup] = await db.query<{ id:string; stored_path:string; sha256:string|null; state:string }>(
-      `select id,stored_path,sha256,state from backups where id=$1`, [param(req, 'id')],
-    );
-    if (!backup || backup.state !== 'complete' || !backup.sha256) throw new RouteError(404, 'no such completed backup');
-    const [destination] = await db.query<BackupDestination>(
-      `select id,name,kind,repository,secret_ref,enabled from backup_destinations where id=$1`, [str(req.body?.destinationId, 64)],
-    );
-    if (!destination) throw new RouteError(404, 'no such backup destination');
-    return res.json(await verifyResticSnapshot(db, { destination, backupId:backup.id, archivePath:backup.stored_path,
-      expectedSha256:backup.sha256, actorUserId:req.user!.id, runner:ctx.resticRunner, secretRoot:ctx.resticSecretRoot }));
-  }));
+  /** Store a destination.
+   *
+   * Saving ALWAYS clears the last test result. A credential that has not been
+   * tried against the bucket it was just pointed at has established nothing,
+   * and carrying the previous green tick across would be the screen vouching
+   * for a configuration nobody has checked. */
+  r.put(
+    '/admin/backups/destination',
+    requireSuperAdmin,
+    handle(async (req, res) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const kind = str(body.kind, 16);
+      const descriptor = describeDestination(kind);
+      if (!descriptor) throw new RouteError(400, 'choose where backups should be stored');
+
+      const bucket = str(body.bucket, 255);
+      if (!bucket) throw new RouteError(400, 'a bucket name is required');
+      const accountId = str(body.accountId, 128) || null;
+      if (kind === 'r2' && !accountId) {
+        throw new RouteError(400, 'Cloudflare R2 needs the account ID from your R2 endpoint');
+      }
+      // R2 signs as `auto` and has no regions of its own to ask for.
+      const region = kind === 'r2' ? 'auto' : str(body.region, 64);
+      if (!region) throw new RouteError(400, 'a region is required');
+
+      const endpoint = str(body.endpoint, 500) || null;
+      if (endpoint) {
+        if (kind !== 's3') {
+          throw new RouteError(400, 'only Amazon S3 takes a custom endpoint on this form');
+        }
+        let parsed: URL;
+        try {
+          parsed = new URL(endpoint);
+        } catch {
+          throw new RouteError(400, 'that endpoint is not a valid URL');
+        }
+        // A backup destination receives everything this installation holds, so
+        // it goes over TLS or it does not go.
+        if (parsed.protocol !== 'https:') throw new RouteError(400, 'the endpoint must be https');
+      }
+
+      const existing = await db.query<{ kind: string; credentials_enc: string | null }>(
+        `select kind, credentials_enc from backup_destination where id = true`,
+      );
+      const previous = existing[0] ?? null;
+
+      const accessKeyId = asSecret(body.accessKeyId);
+      const secretAccessKey = asSecret(body.secretAccessKey);
+      const sessionToken = asSecret(body.sessionToken);
+      const supplied = Object.entries({ accessKeyId, secretAccessKey, sessionToken })
+        .filter(([, value]) => !value.isEmpty);
+
+      // Blank fields on an edit mean "leave the credential alone" — but only
+      // while the destination still points at the same vendor. An R2 token is
+      // not an AWS key, so changing kind means entering the credential again
+      // rather than silently carrying the old one to a new endpoint.
+      const sameKind = previous?.kind === kind;
+      let sealed: string | null;
+      if (supplied.length) {
+        sealed = seal(requireDestinationKey(ctx), Object.fromEntries(supplied));
+      } else if (sameKind && previous?.credentials_enc) {
+        sealed = previous.credentials_enc;
+      } else {
+        throw new RouteError(
+          400,
+          `this destination needs ${descriptor.fields
+            .filter((f) => f.secret && f.required)
+            .map((f) => f.label)
+            .join(' and ')}`,
+        );
+      }
+
+      await db.query(
+        `insert into backup_destination
+           (id, kind, label, bucket, region, account_id, endpoint, object_prefix, credentials_enc,
+            last_check_at, last_check_ok, last_check_error, updated_at)
+         values (true, $1, $2, $3, $4, $5, $6, $7, $8, null, null, null, now())
+         on conflict (id) do update set
+           kind = excluded.kind, label = excluded.label, bucket = excluded.bucket,
+           region = excluded.region, account_id = excluded.account_id,
+           endpoint = excluded.endpoint, object_prefix = excluded.object_prefix,
+           credentials_enc = excluded.credentials_enc,
+           last_check_at = null, last_check_ok = null, last_check_error = null,
+           updated_at = now()`,
+        [
+          kind,
+          str(body.label, 120),
+          bucket,
+          region,
+          accountId,
+          endpoint,
+          str(body.objectPrefix, 200),
+          sealed,
+        ],
+      );
+
+      await appendEvent(db, {
+        actorUserId: req.user!.id,
+        actor: 'super_admin',
+        kind: 'backup.destination_configured',
+        // Where it points is configuration. The credential is not recorded in
+        // any form, not even as a hash.
+        payload: { kind, bucket, region },
+      });
+      return res.status(200).json({ ok: true, needsTest: true });
+    }),
+  );
+
+  /** Ask the bucket a real question with the stored credential.
+   *
+   * Listing one object rather than probing the host: it proves the endpoint
+   * resolves, the signature verifies AND this credential may actually use this
+   * bucket. A reachability check would call a destination working when the
+   * first real backup would fail. */
+  r.post(
+    '/admin/backups/destination/test',
+    requireSuperAdmin,
+    handle(async (req, res) => {
+      const [row] = await db.query<DestinationRow>(
+        `select kind, label, bucket, region, account_id, endpoint, object_prefix,
+                credentials_enc, last_check_at, last_check_ok, last_check_error
+         from backup_destination where id = true`,
+      );
+      if (!row || !row.credentials_enc) {
+        throw new RouteError(400, 'no backup destination has been configured yet');
+      }
+
+      const opened = openSealed<Record<string, string>>(
+        requireDestinationKey(ctx), row.credentials_enc,
+      );
+      const result = await testDestination({
+        config: {
+          kind: row.kind,
+          bucket: row.bucket,
+          region: row.region,
+          accountId: row.account_id,
+          endpoint: row.endpoint,
+        },
+        credentials: {
+          accessKeyId: opened.accessKeyId ?? '',
+          secretAccessKey: opened.secretAccessKey ?? '',
+          sessionToken: opened.sessionToken ?? null,
+        },
+        fetchImpl: ctx.destinationFetch,
+      });
+
+      // Recorded either way. A destination whose last test failed must keep
+      // saying so until somebody fixes it.
+      await db.query(
+        `update backup_destination
+         set last_check_at = now(), last_check_ok = $1, last_check_error = $2
+         where id = true`,
+        [result.ok, result.ok ? null : result.detail],
+      );
+      return res.json({
+        ok: result.ok,
+        category: result.category ?? null,
+        detail: result.detail,
+      });
+    }),
+  );
+
+  /** Stop sending backups off this machine.
+   *
+   * The credential goes with the row. Leaving it behind "in case they come
+   * back" would keep a live cloud credential in the database for a feature the
+   * operator has switched off. */
+  r.delete(
+    '/admin/backups/destination',
+    requireSuperAdmin,
+    handle(async (req, res) => {
+      await db.query(`delete from backup_destination where id = true`);
+      await appendEvent(db, {
+        actorUserId: req.user!.id, actor: 'super_admin', kind: 'backup.destination_removed',
+      });
+      return res.status(204).end();
+    }),
+  );
 
   /** What you would be told before restoring, without restoring. */
   r.get(

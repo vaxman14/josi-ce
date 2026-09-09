@@ -95,18 +95,6 @@ describe('deleting a person takes their data with them', () => {
   const OWNED = [
     'contacts', 'contact_sync_origins', 'contact_links',
     'contact_tombstones', 'contact_merge_decisions',
-    // A developer-service token that outlives its owner is a live GitHub,
-    // Netlify, Vercel or Supabase credential nobody is responsible for.
-    'developer_service_connections',
-    // A pending custom API request that outlives its owner is an outbound
-    // write nobody is answerable for — and its sealed payload is that person's
-    // data sitting in a table with nobody attached to it.
-    'custom_api_pending_calls',
-    // An external MCP server credential that outlives its owner is a live token
-    // nobody is responsible for, and a pending call against it is an outbound
-    // request nobody is answerable for.
-    'mcp_servers',
-    'mcp_pending_calls',
   ];
 
   it('declares a cascade on every owner column', () => {
@@ -163,49 +151,6 @@ describe('deleting a person takes their data with them', () => {
       await db.query(
         `insert into contact_merge_decisions (owner_user_id, contact_a, contact_b, decision)
          values ($1, $2, $3, 'keep_separate')`, [owner, a, b],
-      );
-      await db.query(
-        `insert into developer_service_connections (owner_user_id, service, credentials_enc)
-         values ($1, 'github', 'v1.aaaa.bbbb.cccc')`, [owner],
-      );
-      const [customApi] = await db.query<{ id: string }>(
-        `insert into custom_api_connections
-           (name, slug, base_url, host, auth_kind, credentials_enc)
-         values ('An API', $1, 'https://api.example.com', 'api.example.com', 'bearer',
-                 'v1.aaaa.bbbb.cccc')
-         returning id`,
-        [`api_${owner.replace(/-/g, '').slice(0, 20)}`],
-      );
-      const [customEndpoint] = await db.query<{ id: string }>(
-        `insert into custom_api_endpoints
-           (connection_id, operation_id, summary, method, path_template, capability)
-         values ($1, 'change_thing', 'Change a thing', 'POST', '/things', 'write')
-         returning id`,
-        [customApi.id],
-      );
-      await db.query(
-        `insert into custom_api_pending_calls
-           (owner_user_id, endpoint_id, summary, request_enc, payload_hash, expires_at)
-         values ($1, $2, 'Change a thing', 'v1.aaaa.bbbb.cccc', 'hash', now() + interval '1 hour')`,
-        [owner, customEndpoint.id],
-      );
-      const [mcpServer] = await db.query<{ id: string }>(
-        `insert into mcp_servers (owner_user_id, name, slug, endpoint_url, host)
-         values ($1, 'Their notes', 'notes', 'https://mcp.example.com/mcp', 'mcp.example.com')
-         returning id`,
-        [owner],
-      );
-      const [mcpTool] = await db.query<{ id: string }>(
-        `insert into mcp_server_tools (server_id, tool_name, description, definition_digest)
-         values ($1, 'search_notes', 'Search the notes', 'digest')
-         returning id`,
-        [mcpServer.id],
-      );
-      await db.query(
-        `insert into mcp_pending_calls
-           (owner_user_id, tool_id, summary, request_enc, payload_hash, expires_at)
-         values ($1, $2, 'Run search_notes', 'v1.aaaa.bbbb.cccc', 'hash', now() + interval '1 hour')`,
-        [owner, mcpTool.id],
       );
     }
 

@@ -137,32 +137,27 @@ describe('LB11.3 — copyright and trademark are stated as separate rights', () 
     }
   });
 
-  it('says plainly that a fork may be rebranded', () => {
-    expect(flat(trademark)).toMatch(/does not require retention of Josi marketing or product branding/i);
-    expect(flat(readme)).toMatch(/you may modify and rebrand the software/i);
+  it('says plainly that a fork may remove the branding', () => {
+    expect(flat(trademark)).toMatch(/remove our branding from your fork/i);
+    expect(flat(readme)).toMatch(/you may remove its branding/i);
   });
 
-  it('addresses likely confusion without declaring every reference unlawful', () => {
-    expect(flat(trademark)).toMatch(/avoid suggesting Company sponsorship, approval, or affiliation/i);
-    expect(flat(trademark)).toMatch(/does not declare every use of a Mark in a domain, title, or listing unlawful/i);
+  it('keeps the enforceable restriction — do not pass a fork off as ours', () => {
+    expect(trademark).toMatch(/do not present a modified version as the official Josi product/i);
+    expect(trademark).toMatch(/nominative use/i);
   });
 
-  it('contains the adopted effective date, contact, and no draft markers', () => {
-    expect(trademark).toMatch(/Effective date:\*\* September 5, 2026/);
-    expect(trademark).toMatch(/roman@socalreceptionist\.com/);
-    expect(trademark).not.toMatch(/DRAFT|\[REVIEW\]/);
-    expect(notice).not.toMatch(/DRAFT|NOT BEEN REVIEWED/);
+  it('is still marked as a draft needing a lawyer, and says it is not advice', () => {
+    expect(trademark).toMatch(/DRAFT — REQUIRES LEGAL REVIEW/);
+    expect(trademark).toMatch(/nothing in it is legal advice/i);
+    expect(trademark.match(/\[REVIEW\]/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+    expect(notice).toMatch(/DRAFT AND HAS NOT BEEN REVIEWED BY A LAWYER/);
   });
 
-  it('keeps copyright permission and trademark permission distinct', () => {
-    expect(flat(trademark)).toMatch(/Copyright permission to reproduce or modify artwork is distinct from permission to use that artwork as a trademark/i);
-    expect(flat(notice)).toMatch(/copyright license includes Company-owned branding artwork/i);
-  });
-
-  it('makes AGPL source access visible in the running application', () => {
-    const settings = read('apps/web/src/pages/Settings.tsx');
-    expect(settings).toMatch(/License and source code/);
-    expect(settings).toMatch(/https:\/\/github\.com\/vaxman14\/josi-ce/);
+  it('flags the withdrawal itself as the question for counsel', () => {
+    // It is a substantive weakening of the previous position, and burying that
+    // is how a business discovers it after publishing.
+    expect(trademark).toMatch(/most important question in this file/i);
   });
 });
 

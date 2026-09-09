@@ -2,12 +2,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { MasterKey, seal } from '@josi-ce/core';
-import { sha256Of, type BackupWriter, type CommandRunner, type RestoreReader, type TelemetrySender } from '@josi-ce/ops';
+import { sha256Of, type BackupWriter, type RestoreReader, type TelemetrySender } from '@josi-ce/ops';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -16,16 +16,6 @@ const keyPath = join(dir, 'master.key');
 const KEY_BYTES = Buffer.alloc(32, 23);
 writeFileSync(keyPath, KEY_BYTES.toString('base64'));
 const KEY = new MasterKey(KEY_BYTES);
-const resticSecrets = join(dir, 'backup-secrets');
-mkdirSync(resticSecrets);
-writeFileSync(join(resticSecrets, 'primary_restic_password'), 'not-a-real-password');
-const resticCalls: string[][] = [];
-const resticRunner: CommandRunner = async (_command, args) => {
-  resticCalls.push(args);
-  if (args.includes('backup')) return { code: 0, stdout: '{"message_type":"summary","snapshot_id":"abc123"}\n', stderr: '' };
-  if (args.includes('dump')) return { code: 0, stdout: Buffer.alloc(2048), stderr: '' };
-  return { code: 0, stdout: '', stderr: '' };
-};
 
 let server: Server;
 let base: string;
@@ -37,9 +27,15 @@ let sentTelemetry: Array<Record<string, unknown>> = [];
 const telemetrySender: TelemetrySender = {
   async send(_endpoint, payload) { sentTelemetry.push(payload); },
 };
+/** Turned on by the download tests to stand for a volume that lost the file
+ * while the row describing it survived. */
+let archiveMissing = false;
 const backupWriter: BackupWriter = {
   async write() { return { byteSize: 2048, sha256: sha256Of(Buffer.alloc(2048)) }; },
-  async read() { return Buffer.alloc(2048); },
+  async read() {
+    if (archiveMissing) throw new Error('ENOENT');
+    return Buffer.alloc(2048);
+  },
   async remove() {},
 };
 
@@ -65,6 +61,22 @@ async function call(
     redirect: 'manual',
   });
   return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+/** The download route answers with bytes, so the JSON helper above cannot see
+ * it. This returns the status, the headers that matter and the body length. */
+async function download(id: string, jar?: string) {
+  const headers: Record<string, string> = {};
+  if (jar) headers.cookie = jar;
+  const res = await fetch(`${base}/api/ops/admin/backups/${id}/download`, { headers });
+  const buf = Buffer.from(await res.arrayBuffer());
+  return {
+    status: res.status,
+    contentType: res.headers.get('content-type'),
+    disposition: res.headers.get('content-disposition'),
+    cacheControl: res.headers.get('cache-control'),
+    bytes: buf,
+  };
 }
 
 function mergeJar(existing: string | undefined, setCookie: string[]): string {
@@ -107,7 +119,7 @@ beforeAll(async () => {
 
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000', masterKeyCheck: { path: keyPath },
-    backupWriter, restoreReader, telemetrySender, resticRunner, resticSecretRoot: resticSecrets,
+    backupWriter, restoreReader, telemetrySender,
     // M115: no gateway by default, which is the shipped state.
     supportGatewayUrl: null,
     fetchLatestVersion: async () => '0.2.0',
@@ -130,49 +142,13 @@ beforeEach(async () => {
   await db.query(`delete from rate_limits`);
   sentTelemetry = [];
   restoresApplied = 0;
-  resticCalls.length = 0;
+  archiveMissing = false;
   await db.query(`delete from support_tickets`);
   await db.query(`delete from diagnostic_bundles`);
-  await db.query(`delete from backup_agent_runs`);
-  await db.query(`delete from backup_schedules`);
-  await db.query(`delete from backup_destinations`);
   await db.query(`delete from backups`);
   await db.query(`delete from connections`);
   await db.query(`update telemetry_state set enabled = false, endpoint = null, last_payload = null`);
   await db.query(`update update_state set current_version = '0.1.0', available_version = null`);
-});
-
-describe('the Restic backup control plane', () => {
-  it('keeps destinations admin-only and rejects unsafe host paths', async () => {
-    expect((await call('/api/ops/admin/backup-destinations', { jar: cookies.alice })).status).toBe(403);
-    const unsafe = await call('/api/ops/admin/backup-destinations', { method:'POST', jar:cookies.admin,
-      body:{ name:'Bad', kind:'local', repository:'/etc', secretRef:'primary' } });
-    expect(unsafe.status).toBe(409);
-  });
-
-  it('configures a destination and schedule, then replicates and verifies a backup', async () => {
-    const made = await call('/api/ops/admin/backup-destinations', { method:'POST', jar:cookies.admin,
-      body:{ name:'USB', kind:'local', repository:'/backup-targets/usb/josi', secretRef:'primary' } });
-    expect(made.status).toBe(201);
-    const destinationId = made.body.destination.id;
-    const scheduled = await call(`/api/ops/admin/backup-destinations/${destinationId}/schedule`, { method:'PUT', jar:cookies.admin,
-      body:{ cadence:'daily', hourUtc:3, keepDaily:7, keepWeekly:4, keepMonthly:6 } });
-    expect(scheduled.status).toBe(200);
-    const backup = await call('/api/ops/admin/backups', { method:'POST', jar:cookies.admin,
-      body:{ kind:'full', masterKeyConfirmed:true } });
-    const copied = await call(`/api/ops/admin/backups/${backup.body.backup.id}/replicate`, { method:'POST', jar:cookies.admin,
-      body:{ destinationId } });
-    expect(copied.status).toBe(200);
-    expect(copied.body.snapshotId).toBe('abc123');
-    expect(resticCalls.some((args) => args.includes('forget') && args.includes('--prune'))).toBe(true);
-    expect(resticCalls.some((args) => args.includes('check'))).toBe(true);
-    const verified = await call(`/api/ops/admin/backups/${backup.body.backup.id}/verify-offsite`, { method:'POST', jar:cookies.admin,
-      body:{ destinationId } });
-    expect(verified.body).toMatchObject({ verified:true });
-    expect(resticCalls.some((args) => args.includes('dump'))).toBe(true);
-    const status = await call('/api/ops/admin/backup-destinations', { jar:cookies.admin });
-    expect(status.body.runs[0]).toMatchObject({ state:'complete', operation:'restore_test', snapshot_id:'abc123' });
-  });
 });
 
 describe('backups are administrator-only and say what they omit — M100', () => {
@@ -208,6 +184,84 @@ describe('backups are administrator-only and say what they omit — M100', () =>
     });
     expect(res.body.backup.includesRecoveryCopies).toBe(false);
     expect(res.body.description).toContain('not intended for restoring');
+  });
+});
+
+describe('a completed export can actually be retrieved', () => {
+  // Creating the archive and listing it were never the feature. A row reading
+  // "Portable export - Ready" described a file on a volume inside the
+  // container, and the operator had no way to reach it — so the export existed
+  // and was, in practice, unavailable.
+
+  async function makePortable(): Promise<string> {
+    const res = await call('/api/ops/admin/backups', {
+      method: 'POST', jar: cookies.admin, body: { kind: 'portable' },
+    });
+    expect(res.status).toBe(201);
+    return res.body.backup.id as string;
+  }
+
+  it('hands over the archive with a name and a type a browser will honour', async () => {
+    const id = await makePortable();
+    const res = await download(id, cookies.admin);
+    expect(res.status).toBe(200);
+    expect(res.contentType).toBe('application/zip');
+    // Named for the person receiving it: what it is and when it was taken.
+    expect(res.disposition).toMatch(/^attachment; filename="josi-portable-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.zip"$/);
+    // An archive of an installation's data must not sit in a shared cache.
+    expect(res.cacheControl).toBe('no-store');
+    expect(res.bytes.byteLength).toBe(2048);
+  });
+
+  it('enforces authorization at the route, not by hiding the row', async () => {
+    const id = await makePortable();
+    // A member with a valid session, asking for an id they happen to know. The
+    // uuid is unguessable, and an unguessable name is not an access control.
+    const asMember = await download(id, cookies.alice);
+    expect(asMember.status).toBe(403);
+    const anonymous = await download(id);
+    expect(anonymous.status).toBe(401);
+  });
+
+  it('never reveals or accepts the stored path', async () => {
+    const id = await makePortable();
+    const res = await download(id, cookies.admin);
+    expect(res.disposition).not.toContain('/data/backups');
+    // A path where an id belongs is a file-read primitive, so it is simply not
+    // a backup id and gets the same answer as any other unknown one.
+    const traversal = await download(encodeURIComponent('../../etc/passwd'), cookies.admin);
+    expect([400, 404]).toContain(traversal.status);
+  });
+
+  it('tells the truth when the row outlived the file', async () => {
+    const id = await makePortable();
+    archiveMissing = true;
+    const res = await download(id, cookies.admin);
+    // 410, not 404: "it is not there any more" and "there is no such export"
+    // are different facts, and an operator acts on them differently.
+    expect(res.status).toBe(410);
+    expect(JSON.parse(res.bytes.toString()).error).toMatch(/no longer on this server/i);
+  });
+
+  it('refuses a backup that never finished', async () => {
+    const id = await makePortable();
+    await db.query(`update backups set state = 'failed' where id = $1`, [id]);
+    const res = await download(id, cookies.admin);
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.bytes.toString()).error).toMatch(/did not finish/i);
+  });
+
+  it('answers 404 for a backup that does not exist', async () => {
+    const res = await download('00000000-0000-4000-8000-000000000000', cookies.admin);
+    expect(res.status).toBe(404);
+  });
+
+  it('still says the master key is needed separately', async () => {
+    // The download must not read as "this file is your recovery". It is not:
+    // the key is stored separately and is required alongside it.
+    await makePortable();
+    const list = await call('/api/ops/admin/backups', { jar: cookies.admin });
+    expect(list.body.masterKeyGuidance).toContain('never included in a backup');
   });
 });
 

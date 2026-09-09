@@ -18,17 +18,13 @@ const MEMBER = { id: process.env.E2E_MEMBER ?? 'alice', pw: process.env.E2E_MEMB
 const WIDTHS = [320, 375, 390, 430];
 const MEMBER_PAGES = [
   '/app', '/app/talk', '/app/tasks', '/app/approvals', '/app/conversations',
-  '/app/contacts', '/app/connections', '/app/developer-services', '/app/mcp-servers',
-  '/app/skills', '/app/usage', '/app/settings', '/app/telegram', '/app/apps',
-  // Present on every installation; says honestly that the paid module is not
-  // part of this one unless a licence was activated.
-  '/app/family',
+  '/app/contacts', '/app/connections', '/app/usage', '/app/settings',
+  '/app/channels', '/app/channels/telegram',
+  '/app/apps',
 ];
 const ADMIN_PAGES = [
   '/admin', '/admin/people', '/admin/model', '/admin/policy', '/admin/connectors',
-  '/admin/developer-services', '/admin/custom-apis', '/admin/mcp-servers', '/admin/skills',
-  '/admin/parental-controls',
-  '/admin/telegram', '/admin/workspace',
+  '/admin/telegram', '/admin/backups', '/admin/developer-services', '/admin/parental-controls', '/admin/workspace',
 ];
 
 let pass = 0;

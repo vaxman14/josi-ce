@@ -20,12 +20,14 @@ import {
   recordVerification, seal, summarizeReview,
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
-import { discoverModels } from '@josi-ce/llm';
+import { describeProvider, discoverModels } from '@josi-ce/llm';
 import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
 import { DeviceLogin, codexLoginStatus, codexLogout, claudeAuthStatus } from '@josi-ce/llm';
 import { claudeSubscriptionRouter, claudeEnv } from '../http/claudeSubscriptionRoutes.js';
 import { hasCapability } from '@josi-ce/core';
-import { savableProviders, subscriptionOptions } from '../http/llmRoutes.js';
+import {
+  providerCatalog, readCredentials, revealForDiscovery, savableProviders, subscriptionOptions,
+} from '../http/llmRoutes.js';
 
 /** One login attempt at a time, for one installation.
  *
@@ -75,7 +77,7 @@ export interface SetupRoutesCtx {
  * A step and a verification are not the same thing: `domain` is a step with
  * nothing to contact, `llm` is a step whose whole point is that something
  * answered. Only the latter appear here. */
-export const VERIFIABLE_ITEMS = ['llm', 'smtp', 'connector_google', 'connector_microsoft'] as const;
+export const VERIFIABLE_ITEMS = ['llm', 'smtp'] as const;
 export type VerifiableItem = (typeof VERIFIABLE_ITEMS)[number];
 
 /** Loads the master key, or refuses the request.
@@ -126,6 +128,12 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
           ...STEP_DESCRIPTORS[id],
           done: (state.completed_steps ?? []).includes(id),
         })),
+        // The same catalogue the admin page is sent, for the same reason: the
+        // wizard must not be able to draw a provider this build would refuse to
+        // save. Without it the installer offered five hardcoded choices while
+        // the server had long since accepted twenty, so a provider was
+        // reachable after installation but not during it.
+        providerCatalog: providerCatalog(),
       });
     }),
   );
@@ -215,14 +223,22 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         return res.status(400).json({ error: 'choose a model provider' });
       }
 
-      const apiKey = asSecret(body.apiKey);
+      // Which fields this provider takes is the catalogue's answer, exactly as
+      // it is on the admin route. Asking only for `apiKey` here is why Bedrock,
+      // Vertex, ERNIE and Hunyuan could not be configured during installation:
+      // their credential is a key pair, a service account or a region, and the
+      // wizard had no way to send one.
+      const { secrets, settings } = readCredentials(provider, body);
+      const revealed = revealForDiscovery(secrets);
       const result = await discoverModels({
         provider: provider as never,
-        // Discovery happens BEFORE the step is submitted, so the key comes from
-        // the request rather than from storage. It is never written here and
-        // never echoed back — only the model list is returned.
-        apiKey: apiKey.isEmpty ? null : apiKey.reveal(),
+        // Discovery happens BEFORE the step is submitted, so the credential
+        // comes from the request rather than from storage. It is never written
+        // here and never echoed back — only the model list is returned.
+        apiKey: revealed.apiKey ?? null,
         baseUrl: str(body.baseUrl, 500) || null,
+        secrets: revealed,
+        config: settings,
         fetchImpl: ctx.llmFetch,
         resolve: ctx.llmResolve,
       });
@@ -234,6 +250,12 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         category: result.category ?? null,
         message: result.message ?? null,
         providerCode: result.providerCode ?? null,
+        // Whether the operator is looking at the provider's own list or at the
+        // one Josi ships. The wizard says which, rather than presenting both as
+        // the same kind of fact.
+        fromCatalog: !!result.fromCatalog,
+        catalogVersion: result.catalogVersion ?? null,
+        allowsCustomModel: !!result.allowsCustomModel,
       });
     }),
   );
@@ -336,54 +358,6 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
       available: async () => !(await getSetupState(db)).completed,
     }));
   }
-
-  /** Everything an administrator needs in order to register the two OAuth
-   * applications, computed rather than written down.
-   *
-   * LB5.3/LB5.4. The callback URI here is the exact string the server will
-   * accept, generated from the configured address — not an example an operator
-   * adapts, and not something they type. A redirect-URI mismatch produces the
-   * provider's own error page rather than ours, which is the single most
-   * common connector failure and the hardest to diagnose from the outside.
-   *
-   * On a LAN-only installation this says so, with the reason, instead of
-   * offering a callback no provider would ever accept. */
-  r.get(
-    '/connector-guidance',
-    asyncRoute(async (_req, res) => {
-      const state = await getSetupState(db);
-      if (state.completed) return res.status(404).json({ error: 'not found' });
-
-      const httpsBase = await publicHttpsBase(db);
-      if (!httpsBase) {
-        return res.json({
-          available: false,
-          reason:
-            'Google and Microsoft only accept an HTTPS redirect on a real domain name. This '
-            + 'installation is reachable only on your network, so there is nothing to register yet. '
-            + 'Everything else works without it, and setting a domain later makes this available '
-            + 'without reinstalling anything.',
-          providers: [],
-        });
-      }
-
-      return res.json({
-        available: true,
-        reason: null,
-        providers: (['google', 'microsoft'] as const).map((provider) => ({
-          provider,
-          callbackUri: `${httpsBase}/api/connections/${provider}/callback`,
-          // Least privilege: what an account is asked for at CONNECT time is
-          // read-only. Write access is a separate, later, explicit consent —
-          // so the application registered here does not need it either.
-          scopes: scopesFor(provider, READ_ONLY_CAPABILITIES[provider]).split(' '),
-          console: provider === 'google'
-            ? { name: 'Google Cloud console', url: 'https://console.cloud.google.com/apis/credentials' }
-            : { name: 'Microsoft Entra admin centre', url: 'https://entra.microsoft.com/' },
-        })),
-      });
-    }),
-  );
 
   /** Test one configured thing, for real, and record what happened.
    *
@@ -698,11 +672,44 @@ async function applyStep(
           'to use a hosted model provider you must acknowledge that the data needed for each request leaves this server and is processed under that provider\'s terms',
         );
       }
-      if (isExternal && !isSubscription && apiKey.isEmpty) {
-        throw new SetupError(400, 'an API key is required for this provider');
+      // Which credentials this provider needs is the catalogue's answer, the
+      // same as on the admin route. The rule this replaces asked every external
+      // provider for an "API key", which is not what Bedrock, Vertex, ERNIE or
+      // Hunyuan take — they would have been refused during installation for
+      // failing to supply a field they do not have.
+      const descriptor = describeProvider(provider);
+      if (!descriptor) throw new SetupError(400, 'choose a model provider');
+
+      const { secrets, settings, secretFields, configFields } = readCredentials(provider, body);
+      const supplied = Object.entries(secrets).filter(([, value]) => !value.isEmpty);
+
+      if (!isSubscription) {
+        const missing = [
+          ...secretFields.filter((f) => f.required && !supplied.some(([key]) => key === f.key)),
+          ...configFields.filter((f) => f.required && !settings[f.key]),
+        ];
+        if (missing.length) {
+          throw new SetupError(
+            400,
+            `this provider needs ${missing.map((f) => f.label.toLowerCase()).join(' and ')}`,
+          );
+        }
       }
-      if (provider === 'openai_compatible') {
-        if (!baseUrl) throw new SetupError(400, 'a base URL is required for a self-hosted endpoint');
+
+      if (descriptor.baseUrlMode === 'required' && !baseUrl) {
+        throw new SetupError(
+          400,
+          provider === 'openai_compatible'
+            ? 'a base URL is required for a self-hosted endpoint'
+            : 'this provider needs the address of your own endpoint',
+        );
+      }
+      if (baseUrl) {
+        if (descriptor.baseUrlMode === 'none') {
+          // A setting that would be silently ignored is worse than one refused:
+          // this provider's endpoint is derived from its own configuration.
+          throw new SetupError(400, 'this provider does not take an endpoint address');
+        }
         let parsed: URL;
         try {
           parsed = new URL(baseUrl);
@@ -725,38 +732,52 @@ async function applyStep(
       // there is nothing to look up, and asking discovery whether it offers ""
       // guarantees a refusal with a blank name in it.
       if (model || !subscriptionProvider) {
+        const revealed = revealForDiscovery(secrets);
         const offered = await assertModelIsOffered({
           provider,
           model,
-          apiKey: apiKey.isEmpty ? null : apiKey.reveal(),
-          baseUrl: provider === 'openai_compatible' ? baseUrl : null,
+          apiKey: revealed.apiKey ?? null,
+          baseUrl: descriptor.baseUrlMode === 'none' ? null : (baseUrl || null),
+          secrets: revealed,
+          config: settings,
           fetchImpl: ctx.llmFetch,
           resolve: ctx.llmResolve,
         });
         if (!offered.ok) throw new SetupError(400, offered.detail);
       }
 
-      // Sealed before it goes anywhere near the database, and only if a key is
-      // available. No key means the step fails and nothing is written.
-      const key = apiKey.isEmpty ? null : requireMasterKey(ctx);
-      const sealedKey = key ? seal(key, { apiKey }) : null;
+      // Sealed before it goes anywhere near the database, and only if there is
+      // something to seal. One envelope holds every secret field the provider
+      // takes — an AWS key pair and a session token seal together exactly as a
+      // lone API key does. `seal` unwraps each Secret itself; nothing here ever
+      // calls reveal() on the way to storage.
+      const sealedKey = supplied.length
+        ? seal(requireMasterKey(ctx), Object.fromEntries(supplied))
+        : null;
 
       await db.query(
         `insert into llm_providers
-           (role, provider, model, base_url, api_key_enc, external_acknowledged, external_acknowledged_at)
-         values ('primary', $1, $2, $3, $4, $5, $6)
+           (role, provider, model, base_url, api_key_enc, external_acknowledged, external_acknowledged_at,
+            provider_config)
+         values ('primary', $1, $2, $3, $4, $5, $6, $7)
          on conflict (role) do update set
            provider = excluded.provider, model = excluded.model, base_url = excluded.base_url,
            api_key_enc = excluded.api_key_enc,
            external_acknowledged = excluded.external_acknowledged,
-           external_acknowledged_at = excluded.external_acknowledged_at`,
+           external_acknowledged_at = excluded.external_acknowledged_at,
+           provider_config = excluded.provider_config`,
         [
           provider,
           model,
-          provider === 'openai_compatible' ? baseUrl : null,
+          // Stored for every provider the catalogue lets an operator point
+          // somewhere, and null for the ones whose endpoint is derived.
+          descriptor.baseUrlMode === 'none' ? null : (baseUrl || null),
           sealedKey,
           isExternal ? true : acknowledged,
           isExternal ? new Date().toISOString() : null,
+          // Non-secret settings only. `readCredentials` splits them by the
+          // catalogue's own `secret` flag, so a credential cannot arrive here.
+          json(settings),
         ],
       );
       return;
@@ -887,108 +908,6 @@ async function applyStep(
     }
 
     // ------------------------------------------------------------ connectors
-    case 'connectors': {
-      // Skipping writes no configuration at all: no row, no empty credential,
-      // no half-configured provider for a later phase to trip over. It does
-      // record the decision, so the review screen can say "skipped" rather than
-      // leaving two items looking unfinished.
-      if (bool(body.skip)) {
-        for (const item of ['connector_google', 'connector_microsoft'] as const) {
-          await recordVerification(db, {
-            item,
-            status: 'skipped',
-            detail: 'Skipped during setup. Nobody can connect an account for this provider until an application is registered.',
-          });
-        }
-        return;
-      }
-
-      // LB5.4/LB5.5. The callback is DERIVED from the address this
-      // installation is actually served on, never accepted from the client.
-      // A redirect URI the operator typed and a redirect URI the server will
-      // honour have to be the same string, and the only way to guarantee that
-      // is to generate it.
-      const callbackBase = await publicHttpsBase(db);
-      if (!callbackBase) {
-        throw new SetupError(
-          400,
-          'Google and Microsoft only accept an HTTPS redirect on a real domain name, so an '
-          + 'application cannot be registered from this address. Skip this step for now; set a '
-          + 'domain later and register the applications from Settings. Everything else about this '
-          + 'installation works without it.',
-        );
-      }
-
-      const providers = ['google', 'microsoft'] as const;
-      const touched = new Set<string>();
-      const [owner] = await db.query<{ id: string }>(
-        `select id from users where role = 'super_admin' limit 1`,
-      );
-
-      for (const provider of providers) {
-        const entry = (body[provider] ?? null) as Record<string, unknown> | null;
-        if (!entry) continue;
-        const clientId = str(entry.clientId, 400);
-        const clientSecret = asSecret(entry.clientSecret);
-        if (!clientId && clientSecret.isEmpty) continue;
-        if (!clientId || clientSecret.isEmpty) {
-          throw new SetupError(400, `${provider} needs both a client ID and a client secret`);
-        }
-
-        // `oauth_clients`, which is the table the connector system reads.
-        //
-        // This step previously wrote `connector_configs` — a table created in
-        // migration 0002 and read by nothing that connects an account. Phase 7
-        // introduced `oauth_clients` and every connector route uses it, so an
-        // operator who registered their applications during setup was told they
-        // were configured and then found the Connect button reporting no
-        // application at all. Setup wrote to one table and the product read
-        // from another.
-        await saveClient(db, requireMasterKey(ctx), {
-          provider,
-          clientId,
-          clientSecret: clientSecret.reveal(),
-          redirectUri: `${callbackBase}/api/connections/${provider}/callback`,
-          actorUserId: owner.id,
-        });
-        touched.add(provider);
-      }
-      if (touched.size === 0) {
-        throw new SetupError(400, 'add a provider, or choose to skip this step');
-      }
-
-      // LB4.3. Each application just registered is handshaked against the
-      // provider's real token endpoint, which is the only thing that can tell
-      // a correct client secret from a plausible one. See verifyOAuthClient for
-      // why `invalid_grant` is the passing answer.
-      const outcomes: Record<string, unknown> = {};
-      for (const provider of providers) {
-        const item = provider === 'google' ? 'connector_google' : 'connector_microsoft';
-        if (!touched.has(provider)) {
-          await recordVerification(db, {
-            item,
-            status: 'skipped',
-            detail: 'No application was registered for this provider.',
-          });
-          continue;
-        }
-        const outcome = await verifyOAuthClient({
-          db, masterKey: requireMasterKey(ctx), provider, fetchImpl: ctx.connectorFetch,
-        });
-        await recordVerification(db, {
-          item,
-          status: outcome.status,
-          category: outcome.category ?? null,
-          detail: outcome.detail,
-          target: outcome.target ?? null,
-        });
-        outcomes[provider] = outcome;
-      }
-      // No account is connected here: that is each user's own consent, and it
-      // belongs to them rather than to the administrator running setup.
-      return { verification: outcomes };
-    }
-
     // -------------------------------------------------------------- security
     case 'security': {
       // Deny-by-default is the column default. A field that is absent or
@@ -1081,18 +1000,11 @@ async function runVerification(
     return verifyLlm({ db, masterKey, fetchImpl: ctx.llmFetch });
   }
 
-  if (item === 'smtp') {
-    return verifySmtp({
-      db,
-      masterKey: requireMasterKey(ctx),
-      to: str(body.to, 320),
-      transport: ctx.mailTransport,
-    });
-  }
-
-  const provider = item === 'connector_google' ? 'google' : 'microsoft';
-  return verifyOAuthClient({
-    db, masterKey: requireMasterKey(ctx), provider, fetchImpl: ctx.connectorFetch,
+  return verifySmtp({
+    db,
+    masterKey: requireMasterKey(ctx),
+    to: str(body.to, 320),
+    transport: ctx.mailTransport,
   });
 }
 
@@ -1117,17 +1029,11 @@ async function reviewItems(ctx: SetupRoutesCtx): Promise<ReviewItemInput[]> {
   const [systemMail] = await db.query<{ host: string | null }>(
     `select host from smtp_profiles where kind = 'system'`,
   );
-  const clients = await db.query<{ provider: string }>(`select provider from oauth_clients`);
-  const configuredClients = new Set(clients.map((c) => c.provider));
-
-  // A connector needs a public HTTPS callback. On a LAN-only installation the
-  // provider will not accept one, so the item is UNAVAILABLE with the reason
-  // rather than REQUIRED — see LB5.5. Reporting it as outstanding work would
-  // make setup impossible to finish on a perfectly valid installation.
-  const lanReason = (await publicHttpsBase(db))
-    ? null
-    : 'Google and Microsoft require a public HTTPS address. This installation is reachable only on your network, so no application can be registered yet. Setting a domain later makes this available without reinstalling anything.';
-
+  // Google and Microsoft are deliberately absent. Registering an OAuth
+  // application needs a public HTTPS callback, which a LAN-only installation
+  // does not have at setup time, so the wizard used to carry two items that
+  // could only ever report themselves unavailable. They are administered after
+  // installation, once a domain exists — see the admin Connectors page.
   return [
     {
       key: 'llm',
@@ -1142,22 +1048,6 @@ async function reviewItems(ctx: SetupRoutesCtx): Promise<ReviewItemInput[]> {
       required: false,
       configured: !!systemMail,
       verification: verifications.get('smtp') ?? null,
-    },
-    {
-      key: 'connector_google',
-      label: 'Google application',
-      required: false,
-      configured: configuredClients.has('google'),
-      verification: verifications.get('connector_google') ?? null,
-      unavailableReason: lanReason,
-    },
-    {
-      key: 'connector_microsoft',
-      label: 'Microsoft application',
-      required: false,
-      configured: configuredClients.has('microsoft'),
-      verification: verifications.get('connector_microsoft') ?? null,
-      unavailableReason: lanReason,
     },
   ];
 }

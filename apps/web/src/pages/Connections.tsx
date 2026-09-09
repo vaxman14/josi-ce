@@ -9,9 +9,8 @@
 // Every write capability shows what it permits before it can be switched on.
 // A toggle labelled only "Send email" is not consent.
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote, NotYet } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, ErrorNote, Input, NotYet } from '@/components/ui';
 import { CloudFolders } from '@/components/CloudFolders';
 import { plain } from '@/lib/plainLanguage';
 
@@ -255,106 +254,182 @@ export function Connections() {
         </Card>
       ))}
 
+      <DeveloperServices />
+
       <DocumentInventory />
-
-      {/* Deliberately a pointer, not a section.
-          GitHub, Netlify, Vercel and Supabase are connected with a personal
-          access token somebody pastes — there is no consent screen and no
-          per-capability switch — so showing them among these cards would imply
-          a provider scoped that token when none did. They get their own page,
-          and this is how somebody looking in the obvious place finds it. */}
-      <Card>
-        <CardTitle>Developer services</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          GitHub, Netlify, Vercel and Supabase are connected with an access token you create
-          yourself rather than by signing in, so they live on their own page.{' '}
-          <Link className="underline" to="/app/developer-services">Open Developer services</Link>.
-        </p>
-      </Card>
-
-      {/* A pointer again, and for a stronger reason than the one above.
-          An MCP server offers TOOLS the assistant can run, described by that
-          server rather than by anybody here — so it is not a "connection" in
-          the sense the cards above use the word, and putting it among them
-          would suggest somebody on this installation reviewed what those tools
-          do. Nobody did; the person who connects one reads each tool and
-          switches it on themselves. */}
-      <Card>
-        <CardTitle>MCP servers</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          An MCP server offers tools Josi can run for you — your notes, your issue tracker, your own
-          software. You connect one yourself and approve each tool it offers, one at a time.{' '}
-          <Link className="underline" to="/app/mcp-servers">Open MCP servers</Link>.
-        </p>
-      </Card>
-
-      {/* A pointer for the third time, and this one is a pointer BECAUSE it is
-          not a connection at all. A skill has no credential, no address and no
-          tool: it is written instructions an administrator installed and read.
-          It belongs in the same neighbourhood because it is the other half of
-          the question "what has Josi been set up to do for me?", and it must
-          not sit among the cards above, because every one of those grants
-          access to something and this grants nothing. */}
-      <Card>
-        <CardTitle>Skills</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Skills are written instructions Josi follows for a kind of work — installed and read by an
-          administrator. A skill cannot give Josi access to anything; what it says it uses is checked
-          against the switches on this page every time.{' '}
-          <Link className="underline" to="/app/skills">See what Josi has been taught</Link>.
-        </p>
-      </Card>
-
-      <ConnectedApis />
     </div>
   );
 }
 
-/** What an administrator has connected on behalf of the whole installation, and
- * exactly what Josi may ask it.
+interface DeveloperServiceRow {
+  service: string;
+  label: string;
+  tokenLabel: string;
+  tokenHelp: string;
+  tokenUrl: string;
+  capability: string;
+  /** Whether an administrator permits ME to connect this. Separate from
+   * whether I have. */
+  allowed: boolean;
+  note: string | null;
+  connection: {
+    accountLabel: string | null;
+    status: string;
+    lastCheckAt: string | null;
+    lastCheckOk: boolean | null;
+    lastError: string | null;
+  } | null;
+}
+
+/** My own GitHub, Netlify, Vercel and Supabase.
  *
- * READ-ONLY, and shown to every member rather than to administrators alone. An
- * assistant that can reach an outside service in your name is something you
- * should be able to look up without having to ask somebody — so the list of
- * actions, and the one host they can reach, are here. It carries no credential
- * and nothing on it is a control. */
-function ConnectedApis() {
-  const [connections, setConnections] = useState<Array<{
-    name: string; slug: string; host: string;
-    actions: Array<{ operationId: string; summary: string; capability: string; needsApproval: boolean }>;
-  }>>([]);
-  useEffect(() => {
-    void api.get<{ connections: typeof connections }>('/custom-apis')
-      .then((r) => setConnections(r.connections)).catch(() => undefined);
+ * These are mine: my token, my account, and I can disconnect at any time. An
+ * administrator decides whether I am permitted to connect one at all, and their
+ * reason is shown here rather than leaving a control that fails — but the
+ * refusal is enforced by the server, not by this component hiding a button.
+ */
+function DeveloperServices() {
+  const [rows, setRows] = useState<DeveloperServiceRow[] | null>(null);
+  const [tokens, setTokens] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.get<{ services: DeveloperServiceRow[] }>('/connections/developer');
+      setRows(res.services);
+    } catch {
+      setRows([]);
+    }
   }, []);
-  if (!connections.length) return null;
+  useEffect(() => { void load(); }, [load]);
+
+  async function connect(service: string) {
+    setBusy(service);
+    setError('');
+    try {
+      await api.put(`/connections/developer/${service}`, { token: tokens[service] ?? '' });
+      setTokens((t) => ({ ...t, [service]: '' }));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That could not be connected');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function check(service: string) {
+    setBusy(service);
+    setError('');
+    try {
+      await api.post(`/connections/developer/${service}/check`, {});
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That check could not run');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function disconnect(service: string) {
+    setBusy(service);
+    setError('');
+    try {
+      await api.del(`/connections/developer/${service}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That could not be disconnected');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  if (!rows?.length) return null;
+
   return (
-    <Card>
-      <CardTitle>Connected APIs</CardTitle>
-      <p className="mb-3 text-sm text-muted-foreground">
-        An administrator connected these for everyone here and chose exactly what Josi may ask
-        them. Josi cannot reach any other address, and anything that changes or deletes something
-        waits for you on your Approvals page before it happens.
+    <>
+      <h2 className="pt-2 text-lg font-semibold tracking-tight">Developer services</h2>
+      <p className="text-sm text-muted-foreground">
+        Your own accounts, connected with a token you create. Nobody else here can see the token,
+        and disconnecting removes it.
       </p>
-      <ul className="space-y-3">
-        {connections.map((connection) => (
-          <li key={connection.slug} className="border-t border-border pt-3 first:border-0 first:pt-0">
-            <p className="text-sm font-medium">{connection.name}</p>
-            <p className="break-all text-xs text-muted-foreground">Requests go only to {connection.host}</p>
-            <ul className="mt-1 space-y-1">
-              {connection.actions.map((action) => (
-                <li key={action.operationId} className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
-                  <Badge tone={action.needsApproval ? 'danger' : 'muted'}>
-                    {plain('custom_api_capability', action.capability)}
-                  </Badge>
-                  <span className="min-w-0 break-words">{action.summary}</span>
-                </li>
-              ))}
-            </ul>
-          </li>
-        ))}
-      </ul>
-    </Card>
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+      {rows.map((row) => (
+        <Card key={row.service}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle>{row.label}</CardTitle>
+            {row.connection ? (
+              <Badge tone={row.connection.lastCheckOk === false ? 'danger' : 'ok'}>
+                {row.connection.lastCheckOk === false ? 'needs attention' : 'connected'}
+              </Badge>
+            ) : (
+              <Badge tone="muted">{row.allowed ? 'not connected' : 'not available'}</Badge>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">{row.capability}</p>
+
+          {/* Not permitted: the administrator's reason, and no control. A
+              disabled button that looks pressable is worse than none. */}
+          {!row.allowed && !row.connection ? (
+            <NotYet title="An administrator has not made this available">
+              {row.note ?? 'Ask your administrator if you need it.'}
+            </NotYet>
+          ) : null}
+
+          {row.connection ? (
+            <div className="mt-2 space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Connected as {row.connection.accountLabel ?? 'your account'}
+                {row.connection.lastCheckAt
+                  ? ` · checked ${new Date(row.connection.lastCheckAt).toLocaleString()}`
+                  : ''}
+              </p>
+              {row.connection.lastCheckOk === false && row.connection.lastError ? (
+                <ErrorNote>{row.connection.lastError}</ErrorNote>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" disabled={busy === row.service}
+                        onClick={() => void check(row.service)}>
+                  {busy === row.service ? 'Checking…' : 'Check it still works'}
+                </Button>
+                <Button type="button" variant="secondary" disabled={busy === row.service}
+                        onClick={() => void disconnect(row.service)}>
+                  Disconnect
+                </Button>
+              </div>
+            </div>
+          ) : row.allowed ? (
+            <form
+              className="mt-2 space-y-2"
+              onSubmit={(e) => { e.preventDefault(); void connect(row.service); }}
+            >
+              <label className="block text-sm" htmlFor={`tok-${row.service}`}>{row.tokenLabel}</label>
+              <Input
+                id={`tok-${row.service}`}
+                type="password"
+                autoComplete="off"
+                autoCapitalize="none"
+                value={tokens[row.service] ?? ''}
+                onChange={(e) => setTokens((t) => ({ ...t, [row.service]: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                {row.tokenHelp}{' '}
+                <a className="underline" href={row.tokenUrl} target="_blank" rel="noreferrer noopener">
+                  Open {row.label}
+                </a>
+              </p>
+              <Button type="submit" disabled={busy === row.service || !(tokens[row.service] ?? '').trim()}>
+                {busy === row.service ? 'Connecting…' : 'Connect'}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Josi checks the token with {row.label} before saving it, so a token that does not
+                work is never stored as though it did.
+              </p>
+            </form>
+          ) : null}
+        </Card>
+      ))}
+    </>
   );
 }
 
