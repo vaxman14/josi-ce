@@ -10,7 +10,7 @@ import { buildAuthUrl, exchangeCode, fetchIdentity, loadClient } from '@josi-ce/
 import { generateSecret, generateURI, verify } from 'otplib';
 import QRCode from 'qrcode';
 import { asyncRoute, param } from './async.js';
-import { clearSessionCookie, clientIp, issueCsrfToken, setSessionCookie } from './cookies.js';
+import { clearSessionCookie, clientIp, isNativeClient, issueCsrfToken, setSessionCookie } from './cookies.js';
 import { requireAuth } from './authz.js';
 
 export interface AuthRoutesCtx {
@@ -91,7 +91,10 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         subjectId: result.user.id,
         payload: { ip },
       });
-      return res.json({ user: publicUser(result.user) });
+      return res.json({
+        user: publicUser(result.user),
+        ...(isNativeClient(req) ? { sessionToken: token } : {}),
+      });
     }),
   );
 

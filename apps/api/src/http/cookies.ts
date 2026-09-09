@@ -27,7 +27,20 @@ export function readCookie(req: Request, name: string): string | undefined {
 }
 
 export function readSessionToken(req: Request): string | undefined {
+  if (isNativeClient(req)) {
+    const authorization = req.header('authorization');
+    const match = authorization?.match(/^Bearer\s+([^\s]+)$/i);
+    return match?.[1];
+  }
   return readCookie(req, SESSION_COOKIE);
+}
+
+/** Native apps use an explicit bearer session, so no browser can attach the
+ * credential ambiently and CSRF does not apply. Requiring both the client
+ * marker and the absence of Origin keeps this seam unavailable to browser
+ * JavaScript, including same-device WebViews. */
+export function isNativeClient(req: Request): boolean {
+  return req.header('x-josi-client') === 'native' && !req.header('origin');
 }
 
 export function clientIp(req: Request): string | null {
@@ -85,6 +98,12 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * victim then did would land in it. The client fetches a token from
  * `/api/auth/csrf` before posting credentials. */
 export function requireCsrf(req: Request, res: Response, next: NextFunction): void {
+  const nativeLogin = req.path === '/auth/login';
+  const nativeBearer = /^Bearer\s+[^\s]+$/i.test(req.header('authorization') ?? '');
+  if (isNativeClient(req) && (nativeLogin || nativeBearer)) {
+    next();
+    return;
+  }
   if (SAFE_METHODS.has(req.method)) {
     next();
     return;
