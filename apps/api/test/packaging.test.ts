@@ -131,7 +131,12 @@ describe('secrets are files, never environment variables', () => {
   it('generates the key from a CSPRNG and never prints it', () => {
     expect(installer).toMatch(/openssl rand -base64 32|head -c 32 \/dev\/urandom/);
     expect(installer).toMatch(/umask 077/);
-    expect(installer).toMatch(/chmod 600/);
+    // Repository/manual installs remain owner-readable only. The AIO wrapper
+    // explicitly opts into 0644 for file-backed Compose secrets, whose 0700
+    // parent directory still prevents access by other host users.
+    expect(installer).toMatch(/SECRET_MODE=600/);
+    expect(installer).toMatch(/JOSI_COMPOSE_SECRETS.*SECRET_MODE=644/);
+    expect(installer).toMatch(/chmod "\$SECRET_MODE" "\$MASTER_KEY"/);
     // Refuses to clobber an existing key: a new one orphans every stored
     // credential rather than rotating it.
     expect(installer).toMatch(/already exists .*leaving it alone/s);
