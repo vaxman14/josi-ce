@@ -130,6 +130,12 @@ have_random || fail "no source of secure randomness found (needs openssl or /dev
 mkdir -p "$SECRETS_DIR"
 chmod 700 "$SECRETS_DIR"
 
+# Compose file-backed secrets are bind-mounted into containers that run as a
+# non-root user. The files may be world-readable because their parent directory
+# remains owner-only (0700), so other host users still cannot traverse it.
+SECRET_MODE=600
+[[ "${JOSI_COMPOSE_SECRETS:-0}" == "1" ]] && SECRET_MODE=644
+
 say "Josi CE — generating installation secrets"
 say ""
 
@@ -141,8 +147,8 @@ if [[ -f "$MASTER_KEY" ]]; then
   say "  (regenerating it would orphan every credential already encrypted)"
 else
   generate_key > "$MASTER_KEY"
-  chmod 600 "$MASTER_KEY"
-  say "master key written to ${MASTER_KEY} (mode 600)"
+  chmod "$SECRET_MODE" "$MASTER_KEY"
+  say "master key written to ${MASTER_KEY} (mode ${SECRET_MODE})"
 fi
 
 # ----------------------------------------------------------- database password
@@ -150,8 +156,12 @@ if [[ -f "$DB_PASSWORD" ]]; then
   say "database password already exists at ${DB_PASSWORD} — leaving it alone"
 else
   generate_password > "$DB_PASSWORD"
-  chmod 600 "$DB_PASSWORD"
-  say "database password written to ${DB_PASSWORD} (mode 600)"
+  chmod "$SECRET_MODE" "$DB_PASSWORD"
+  say "database password written to ${DB_PASSWORD} (mode ${SECRET_MODE})"
+fi
+
+if [[ "$SECRET_MODE" == "644" ]]; then
+  chmod 644 "$MASTER_KEY" "$DB_PASSWORD"
 fi
 
 # The values are never printed. An operator who needs the master key for a

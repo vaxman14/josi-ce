@@ -22,10 +22,13 @@ describe('the one-shot AIO installer', () => {
     expect(installer).toContain('~/.docker/run/docker.sock');
   });
 
-  it('does not overwrite operator files or regenerate existing secrets', () => {
-    expect(installer).toMatch(/if \[\[ -e "\$target" \]\]/);
-    expect(installer).toMatch(/leaving existing \$target unchanged/);
-    expect(installer).toMatch(/bash \.\/install\.sh/);
+  it('refreshes managed files, preserves operator Caddy config, and backs up upgrades', () => {
+    expect(installer).toContain('policy="${4:-replace}"');
+    expect(installer).toContain('Caddyfile 0644 preserve');
+    expect(installer).toContain('${target}.pre-${VERSION}');
+    expect(installer).toContain('.env.pre-${VERSION}');
+    expect(installer).toContain('JOSI_COMPOSE_SECRETS=1 bash ./install.sh');
+    expect(installer).toContain('chown -R "$INSTALL_UID:$INSTALL_GID" secrets');
   });
 
   it('pins the published stack instead of silently floating on latest', () => {
