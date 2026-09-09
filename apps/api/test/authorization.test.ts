@@ -346,6 +346,31 @@ describe('CSRF', () => {
 });
 
 describe('sessions', () => {
+  it('gives native clients a bearer session without weakening browser CSRF', async () => {
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-josi-client': 'native' },
+      body: JSON.stringify({ identifier: 'alice', password: 'alice-password-123' }),
+    });
+    expect(login.status).toBe(200);
+    const payload = await login.json() as { sessionToken: string; user: { username: string } };
+    expect(payload.user.username).toBe('alice');
+    expect(payload.sessionToken).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+
+    const me = await fetch(`${base}/api/auth/me`, {
+      headers: { authorization: `Bearer ${payload.sessionToken}`, 'x-josi-client': 'native' },
+    });
+    expect(me.status).toBe(200);
+    expect((await me.json()).user.username).toBe('alice');
+
+    const browserShaped = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-josi-client': 'native', origin: 'https://hostile.test' },
+      body: JSON.stringify({ identifier: 'alice', password: 'alice-password-123' }),
+    });
+    expect(browserShaped.status).toBe(403);
+  });
+
   it('logout revokes server-side, not just in the browser', async () => {
     const jar = await signIn('bob', 'bob-password-123');
     expect((await call('/api/auth/me', { jar })).status).toBe(200);
