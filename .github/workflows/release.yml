@@ -84,6 +84,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: hotfixes/0.1.4-navfix/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           # The edition is stamped into the build, not read from the
@@ -106,6 +107,7 @@ jobs:
           sbom: true
 
       - name: Build and push one-shot AIO installer
+        if: ${{ false }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -146,7 +148,7 @@ jobs:
   dockerhub-mirror:
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ vars.DOCKERHUB_MIRROR_ENABLED == 'true' }}
+    if: ${{ false }}
     steps:
       - id: version
         run: |
