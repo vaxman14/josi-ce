@@ -12,7 +12,7 @@
 -- administrator that nobody uses a service when in fact nobody may.
 
 -- ---------- the policy: who MAY connect ----------
-create table developer_service_policy (
+create table if not exists developer_service_policy (
   service text primary key check (service in ('github', 'netlify', 'vercel', 'supabase')),
 
   -- Three states, not a boolean. "Allowed for specific users" is the whole
@@ -29,19 +29,61 @@ create table developer_service_policy (
   updated_by uuid references users(id) on delete set null
 );
 
+-- Early CE builds shipped a boolean version of this policy table before the
+-- three-state model landed in the public migration chain. Upgrade that real
+-- deployed shape in place instead of assuming every installation is fresh.
+alter table developer_service_policy
+  add column if not exists mode text,
+  add column if not exists updated_by uuid references users(id) on delete set null;
+
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'developer_service_policy'
+      and column_name = 'allowed'
+  ) then
+    execute $sql$
+      update developer_service_policy
+      set mode = case when allowed then 'everyone' else 'not_allowed' end
+      where mode is null
+    $sql$;
+  end if;
+end $$;
+
+update developer_service_policy set mode = 'not_allowed' where mode is null;
+alter table developer_service_policy
+  alter column mode set default 'not_allowed',
+  alter column mode set not null,
+  drop column if exists allowed;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'developer_service_policy'::regclass
+      and conname = 'developer_service_policy_mode_check'
+  ) then
+    alter table developer_service_policy
+      add constraint developer_service_policy_mode_check
+      check (mode in ('not_allowed', 'everyone', 'specific_users'));
+  end if;
+end $$;
+
 -- Named people, only meaningful while mode = 'specific_users'. The rows are
 -- kept when the mode changes rather than deleted: an administrator who switches
 -- to "everyone" and back has not lost the list they built.
-create table developer_service_allowed_users (
+create table if not exists developer_service_allowed_users (
   service text not null references developer_service_policy(service) on delete cascade,
   user_id uuid not null references users(id) on delete cascade,
   added_at timestamptz not null default now(),
   primary key (service, user_id)
 );
-create index developer_service_allowed_users_user on developer_service_allowed_users (user_id);
+create index if not exists developer_service_allowed_users_user on developer_service_allowed_users (user_id);
 
 -- ---------- the connection: who HAS connected ----------
-create table developer_connections (
+create table if not exists developer_connections (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references users(id) on delete cascade,
   service text not null check (service in ('github', 'netlify', 'vercel', 'supabase')),
@@ -68,10 +110,20 @@ create table developer_connections (
   -- rather than accumulating rows nobody can tell apart.
   unique (owner_user_id, service)
 );
-create index developer_connections_owner on developer_connections (owner_user_id);
-create index developer_connections_service on developer_connections (service);
-create trigger developer_connections_touch before update on developer_connections
-  for each row execute function touch_updated_at();
+create index if not exists developer_connections_owner on developer_connections (owner_user_id);
+create index if not exists developer_connections_service on developer_connections (service);
+do $$
+begin
+  if not exists (
+    select 1 from pg_trigger
+    where tgrelid = 'developer_connections'::regclass
+      and tgname = 'developer_connections_touch'
+      and not tgisinternal
+  ) then
+    create trigger developer_connections_touch before update on developer_connections
+      for each row execute function touch_updated_at();
+  end if;
+end $$;
 
 -- Every service starts refused. A developer service reaches a third party with
 -- a person's own credential, and defaulting to permitted would switch that on

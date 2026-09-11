@@ -2,10 +2,56 @@
 // database, and the columns this branch added are actually there afterwards.
 import { describe, expect, it } from 'vitest';
 import { readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { PGlite } from '@electric-sql/pglite';
 import { testDb } from '../../../packages/core/test/helpers.js';
 
 describe('a fresh database migrates cleanly', () => {
+  it('upgrades the deployed 0.1.4 boolean developer-service policy', async () => {
+    const pg = new PGlite();
+    const migrations = join(import.meta.dirname, '../../../packages/db/migrations');
+    const files = readdirSync(migrations).filter((f) => f.endsWith('.sql')).sort();
+
+    for (const file of files.filter((f) => f < '0033_developer_services.sql')) {
+      await pg.exec(readFileSync(join(migrations, file), 'utf8'));
+    }
+    await pg.exec(`
+      create table developer_service_policy (
+        service text primary key check (service in ('github', 'netlify', 'vercel', 'supabase')),
+        allowed boolean not null default true,
+        note text,
+        updated_at timestamptz not null default now()
+      );
+      create trigger developer_service_policy_touch before update on developer_service_policy
+        for each row execute function touch_updated_at();
+      insert into developer_service_policy (service, allowed, note) values
+        ('github', true, 'kept enabled'),
+        ('netlify', false, 'kept disabled');
+    `);
+
+    for (const file of files.filter((f) => f >= '0033_developer_services.sql')) {
+      await pg.exec(readFileSync(join(migrations, file), 'utf8'));
+    }
+
+    const columns = await pg.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+       where table_name = 'developer_service_policy'`,
+    );
+    expect(columns.rows.map((row) => row.column_name)).toContain('mode');
+    expect(columns.rows.map((row) => row.column_name)).not.toContain('allowed');
+
+    const policies = await pg.query<{ service: string; mode: string; note: string | null }>(
+      `select service, mode, note from developer_service_policy order by service`,
+    );
+    expect(policies.rows).toEqual([
+      { service: 'github', mode: 'everyone', note: 'kept enabled' },
+      { service: 'netlify', mode: 'not_allowed', note: 'kept disabled' },
+      { service: 'supabase', mode: 'not_allowed', note: null },
+      { service: 'vercel', mode: 'not_allowed', note: null },
+    ]);
+  });
+
   it('applies every migration and lands the provider-ecosystem schema', async () => {
     const db = await testDb();
     const [cfg] = await db.query<{ column_name: string }>(

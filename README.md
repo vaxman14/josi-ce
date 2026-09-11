@@ -125,7 +125,7 @@ mkdir josi-ce && cd josi-ce
 docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.5
+  ghcr.io/vaxman14/josi-ce-installer:0.1.6
 ```
 
 On macOS with Docker Desktop, use its user socket instead:
@@ -134,7 +134,7 @@ On macOS with Docker Desktop, use its user socket instead:
 docker run --rm \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.5
+  ghcr.io/vaxman14/josi-ce-installer:0.1.6
 ```
 
 Review `.env` before exposing the installation publicly. Set `JOSI_DOMAIN` and

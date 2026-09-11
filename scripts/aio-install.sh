@@ -10,7 +10,7 @@
 #   docker run --rm \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v "$PWD:$PWD" -w "$PWD" \
-#     ghcr.io/vaxman14/josi-ce-installer:0.1.5
+#     ghcr.io/vaxman14/josi-ce-installer:0.1.6
 #
 # Docker Desktop for Mac exposes its socket at ~/.docker/run/docker.sock. Mount
 # that source to the same /var/run/docker.sock destination shown above.
