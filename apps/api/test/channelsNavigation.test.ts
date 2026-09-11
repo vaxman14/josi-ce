@@ -1,9 +1,9 @@
 // Channels in the navigation.
 //
-// Telegram had a top-level sidebar item of its own while also being the one
+// Telegram had top-level sidebar items of its own while also being the one
 // entry in packages/channels — the first transport presented as though it were
-// a category. That is a duplicate: the same thing named twice at two different
-// levels, and it would have forced every later channel to be either another
+// a category. Those are duplicates: the same thing named twice at two different
+// levels, and they would have forced every later channel to be either another
 // top-level item or an inconsistency.
 //
 // These read the source rather than a rendered page because what is being
@@ -29,6 +29,14 @@ function memberNav(): string {
   return shell.slice(start, end);
 }
 
+/** The administrator sidebar array, as declared. */
+function adminNav(): string {
+  const start = shell.indexOf('const ADMIN_NAV');
+  const end = shell.indexOf('];', start);
+  expect(start, 'ADMIN_NAV must still be findable').toBeGreaterThan(-1);
+  return shell.slice(start, end);
+}
+
 describe('one Channels parent, not one item per transport', () => {
   it('gives the member sidebar a Channels entry', () => {
     expect(memberNav()).toContain("{ to: '/app/channels', label: 'Channels' }");
@@ -38,6 +46,12 @@ describe('one Channels parent, not one item per transport', () => {
     const nav = memberNav();
     expect(nav).not.toContain("label: 'Telegram'");
     expect(nav).not.toContain("/app/telegram");
+  });
+
+  it('does not give administrators a second top-level Telegram entry', () => {
+    const nav = adminNav();
+    expect(nav).not.toContain("label: 'Telegram'");
+    expect(nav).not.toContain('/admin/telegram');
   });
 
   it('opens the individual user\'s Telegram flow from that page', () => {
