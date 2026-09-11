@@ -20,6 +20,11 @@ on:
         description: 'Image tag to publish (e.g. 0.1.0). Also used as the version.'
         required: true
         default: '0.1.0'
+      publish_latest:
+        description: 'Also move the stable latest aliases to this version.'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -118,6 +123,19 @@ jobs:
             org.opencontainers.image.licenses=AGPL-3.0-or-later
           provenance: true
           sbom: true
+
+      # Tagged releases are the normal stable-release path and therefore move
+      # the aliases automatically. Manual republishes must opt in so rebuilding
+      # an older version cannot silently downgrade `latest`.
+      - name: Publish stable latest aliases
+        if: ${{ github.event_name == 'push' || inputs.publish_latest == true }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${{ env.REGISTRY }}/${{ steps.owner.outputs.value }}/josi-ce:latest" \
+            "${{ env.REGISTRY }}/${{ steps.owner.outputs.value }}/josi-ce:${{ steps.version.outputs.value }}"
+          docker buildx imagetools create \
+            --tag "${{ env.REGISTRY }}/${{ steps.owner.outputs.value }}/josi-ce-installer:latest" \
+            "${{ env.REGISTRY }}/${{ steps.owner.outputs.value }}/josi-ce-installer:${{ steps.version.outputs.value }}"
 
       - name: Report the digest
         run: |
