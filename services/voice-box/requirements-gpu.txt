@@ -1,0 +1,3 @@
+# Optional operator-selected target. CPU images contain neither library.
+nvidia-cublas-cu12==12.8.4.1
+nvidia-cudnn-cu12==9.8.0.87

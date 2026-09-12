@@ -16,6 +16,8 @@ dist/
 build/
 *.tsbuildinfo
 coverage/
+__pycache__/
+*.pyc
 
 # Runtime state that must never enter git
 data/

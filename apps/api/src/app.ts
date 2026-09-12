@@ -29,8 +29,10 @@ import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './htt
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
+import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
 
 export interface AppConfig {
+  voiceBoxHelper?: VoiceHelper;
   /** https in production; false lets cookies work over plain http locally. */
   cookieSecure: boolean;
   /** Public origin, used for invite/reset links. */
@@ -133,6 +135,9 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // Before the routes, after CSRF: an unconfigured installation refuses
   // everything except the wizard, and a configured one refuses the wizard.
   api.use(setupGate(db));
+  const voiceBox = voiceBoxRoutes(cfg.voiceBoxHelper ?? voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET));
+  api.use('/admin/voice-box', voiceBox.admin);
+  api.use('/voice', voiceBox.voice);
 
   api.use('/setup', setupRoutes({
     db,
@@ -256,7 +261,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
 
   // Last: the SPA and its security headers. Mounted after /api so an unknown
   // endpoint still answers with the API's JSON 404 rather than an HTML page.
-  mountWebApp(app, { dir: cfg.webDir });
+  mountWebApp(app, { dir: cfg.webDir,
+    voiceEnabled: Boolean(cfg.voiceBoxHelper || process.env.JOSI_VOICE_HELPER_SOCKET) });
 
   return app;
 }

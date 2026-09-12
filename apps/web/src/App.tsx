@@ -31,6 +31,7 @@ import { AdminBackups } from '@/pages/admin/Backups';
 import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
 import { AdminParentalControls } from '@/pages/admin/ParentalControls';
 import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
+import { AdminVoiceBox } from '@/pages/admin/VoiceBox';
 
 /** Routing is convenience, not security.
  *
@@ -152,6 +153,7 @@ export function App() {
         <Route index element={<AdminOverview />} />
         <Route path="people" element={<AdminPeople />} />
         <Route path="model" element={<AdminModel />} />
+        <Route path="voice-box" element={<AdminVoiceBox />} />
         <Route path="policy" element={<AdminPolicy />} />
         <Route path="storage" element={<AdminStorage />} />
         <Route path="connectors" element={<AdminConnectors />} />
