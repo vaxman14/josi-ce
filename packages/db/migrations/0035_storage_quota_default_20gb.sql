@@ -1,12 +1,11 @@
--- Josi CE 0031: raise the workspace storage-quota default from 2GiB to 20GiB.
+-- Josi CE 0035: raise the workspace storage-quota default from 2GiB to 20GiB.
 --
 -- 0007 set `max_total_bytes_per_user` to 2147483648 (2GiB) as a conservative,
 -- Pi-class-hardware placeholder. Real multi-provider use (item 40h) showed it
--- is far too small: one real workspace with legitimate content across three
--- cloud providers hit 63.9GB, so nearly every file after the first couple of
--- gigabytes was silently skipped with `quota_exceeded`. Roman's decision
--- (2026-09-03): 20GiB by default, and adjustable per person by an
--- administrator (0031 also ships that per-user override path — see
+-- is far too small for ordinary multi-provider use, causing files after the
+-- first couple of gigabytes to be skipped with `quota_exceeded`. The revised
+-- policy is 20GiB by default, adjustable per person by an administrator (this
+-- change also ships that per-user override path — see
 -- storage_capabilities.max_bytes, already present since 0007, now actually
 -- exposed and enforced as a real override rather than only a tighter ceiling).
 --

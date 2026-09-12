@@ -1,10 +1,10 @@
-// Migration 0031 safety: it must move the DEFAULT forward without ever
+// Migration 0035 safety: it must move the DEFAULT forward without ever
 // clobbering a value an administrator already changed.
 //
-// This is tested by applying migrations UP TO but NOT INCLUDING 0031 (so the
+// This is tested by applying migrations UP TO but NOT INCLUDING 0035 (so the
 // database is in exactly the state a real, already-running installation like
 // gate's is in today), then exercising both branches by hand before applying
-// 0031 and checking what survived:
+// 0035 and checking what survived:
 //
 //   * a row still sitting at the literal old default (2147483648) -> bumped
 //   * a row an admin already moved away from that default -> left alone
@@ -35,7 +35,7 @@ async function applyOne(pg: PGlite, file: string) {
   await pg.exec(readFileSync(join(MIGRATIONS, file), 'utf8'));
 }
 
-describe('migration 0031 — raising the storage quota default safely', () => {
+describe('migration 0035 — raising the storage quota default safely', () => {
   it('bumps a row still sitting at the literal old 2GiB default', async () => {
     const pg = new PGlite();
     await applyThrough(pg, '0030_vision_capability.sql');
@@ -45,7 +45,7 @@ describe('migration 0031 — raising the storage quota default safely', () => {
     );
     expect(Number(before.rows[0].max_total_bytes_per_user)).toBe(OLD_DEFAULT);
 
-    await applyOne(pg, '0031_storage_quota_default_20gb.sql');
+    await applyOne(pg, '0035_storage_quota_default_20gb.sql');
 
     const after = await pg.query<{ max_total_bytes_per_user: string }>(
       `select max_total_bytes_per_user from storage_policy where id = true`,
@@ -70,7 +70,7 @@ describe('migration 0031 — raising the storage quota default safely', () => {
     );
     expect(Number(before.rows[0].max_total_bytes_per_user)).toBe(adminChosenValue);
 
-    await applyOne(pg, '0031_storage_quota_default_20gb.sql');
+    await applyOne(pg, '0035_storage_quota_default_20gb.sql');
 
     // Must be EXACTLY what the admin set, completely untouched — not bumped,
     // not reset, not averaged, nothing.
@@ -87,13 +87,13 @@ describe('migration 0031 — raising the storage quota default safely', () => {
     const [user] = (await pg.query<{ id: string }>(
       `insert into users (email, username, role) values ('a@test.example', 'a', 'member') returning id`,
     )).rows;
-    const customBytes = 63945517232; // the real test user's actual usage from item 40h's diagnosis
+    const customBytes = 5 * 1024 * 1024 * 1024; // representative administrator-selected override
     await pg.exec(
       `insert into storage_capabilities (user_id, may_map_local, may_map_cloud, may_index, max_bytes, granted_by)
        values ('${user.id}', true, true, true, ${customBytes}, '${user.id}')`,
     );
 
-    await applyOne(pg, '0031_storage_quota_default_20gb.sql');
+    await applyOne(pg, '0035_storage_quota_default_20gb.sql');
 
     const row = await pg.query<{ max_bytes: string }>(
       `select max_bytes from storage_capabilities where user_id = '${user.id}'`,
@@ -101,7 +101,7 @@ describe('migration 0031 — raising the storage quota default safely', () => {
     expect(Number(row.rows[0].max_bytes)).toBe(customBytes);
   });
 
-  it('a brand-new install (0031 applied from the start, as part of the full sequence) starts at 20GiB', async () => {
+  it('a brand-new install (0035 applied from the start, as part of the full sequence) starts at 20GiB', async () => {
     const pg = new PGlite();
     for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
       await pg.exec(readFileSync(join(MIGRATIONS, file), 'utf8'));
