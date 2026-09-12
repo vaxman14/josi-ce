@@ -26,6 +26,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ApiError, type Message, type Thread, type TurnResult } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { VoiceChat } from '@/components/VoiceChat';
 
 /** "Today", "Yesterday", or the date — the label WhatsApp taught everyone. */
 function dayLabel(at: Date): string {
@@ -48,6 +49,7 @@ export function Talk() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(!cached);
   const [sending, setSending] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState('');
   const end = useRef<HTMLDivElement>(null);
@@ -106,11 +108,13 @@ export function Talk() {
     return () => vv.removeEventListener('resize', repin);
   }, []);
 
-  async function send(): Promise<void> {
+  async function send(spoken?: string): Promise<string | undefined> {
+    if (spoken === undefined && voiceActive) return;
     // Read the DOM value as well as React state: iOS can display composition
     // text before a controlled component catches up.
-    const body = (inputElement.current?.value ?? input).trim();
-    if (!thread || (!body && !files.length) || sendLock.current) return;
+    const body = (spoken ?? inputElement.current?.value ?? input).trim();
+    const attachments = spoken === undefined ? files : [];
+    if (!thread || (!body && !attachments.length) || sendLock.current) return;
     sendLock.current = true;
 
     const optimistic: Message = {
@@ -119,24 +123,24 @@ export function Talk() {
       created_at: new Date().toISOString(),
     };
     setMessages((current) => [...current, optimistic]);
-    setInput('');
+    if (spoken === undefined) setInput('');
     setSending(true);
     setError('');
 
     try {
       const attachmentIds: string[] = [];
-      for (const file of files) {
+      for (const file of attachments) {
         const form = new FormData(); form.append('file', file);
         const uploaded = await api.upload<{ attachment: { id: string; filename: string; contentType: string } }>(`/assistant/threads/${thread.id}/attachments`, form);
         attachmentIds.push(uploaded.attachment.id);
       }
-      const uploadedMeta = files.map((file, index) => ({
+      const uploadedMeta = attachments.map((file, index) => ({
         id: attachmentIds[index], filename: file.name, contentType: file.type || 'application/octet-stream',
       }));
       setMessages((current) => current.map((message) => message.id === optimistic.id
         ? { ...message, meta: { attachments: uploadedMeta } } : message));
       const result = await api.post<TurnResult>(`/assistant/threads/${thread.id}/talk`, { message: body, attachmentIds });
-      setFiles([]);
+      if (spoken === undefined) setFiles([]);
       if (result.reply !== undefined) {
         setMessages((current) => [...current, {
           id: `reply-${Math.random().toString(36).slice(2)}`,
@@ -144,6 +148,7 @@ export function Talk() {
           created_at: new Date().toISOString(),
         }]);
       }
+      return result.reply;
     } catch (err) {
       // A refusal is not a reply. The server answers 503 with the reason when
       // no model is configured, over its cap, or Local-only blocks it; that
@@ -157,7 +162,7 @@ export function Talk() {
       // recorded; only a transport failure (nothing stored) takes the bubble back.
       if (!refusal) {
         setMessages((current) => current.filter((m) => m.id !== optimistic.id));
-        setInput(body);
+        if (spoken === undefined) setInput(body);
       }
       setError(message);
     } finally {
@@ -249,6 +254,7 @@ export function Talk() {
       </section>
 
       <footer className="shrink-0 border-t border-border p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-3">
+        <VoiceChat onTurn={send} disabled={sending || loading || !thread} onActiveChange={setVoiceActive} />
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         <form
           onSubmit={(event) => { event.preventDefault(); void send(); }}
@@ -272,7 +278,7 @@ export function Talk() {
             className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
             aria-label="Message Josi"
           />
-          <Button type="submit" className="h-11 w-11 shrink-0 px-0" disabled={sending} aria-label="Send message">
+          <Button type="submit" className="h-11 w-11 shrink-0 px-0" disabled={sending || voiceActive} aria-label="Send message">
             <span aria-hidden>↑</span>
           </Button>
         </form>

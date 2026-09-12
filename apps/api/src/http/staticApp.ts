@@ -45,6 +45,7 @@ export const CONTENT_SECURITY_POLICY = [
 ].join('; ');
 
 export interface StaticAppOptions {
+  voiceEnabled?: boolean;
   /** Where the built bundle lives. Absent or missing = API-only, which is what
    * the test suite and the migration container run as. */
   dir?: string;
@@ -63,7 +64,7 @@ export function mountWebApp(app: Express, opts: StaticAppOptions = {}): boolean 
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader(
       'Permissions-Policy',
-      'geolocation=(), camera=(), microphone=(), payment=(), usb=(), interest-cohort=()',
+      `geolocation=(), camera=(), microphone=${opts.voiceEnabled ? '(self)' : '()'}, payment=(), usb=(), interest-cohort=()`,
     );
     next();
   });

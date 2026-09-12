@@ -39,6 +39,7 @@ const ADMIN_NAV = [
   { to: '/admin/launch', label: 'Getting started' },
   { to: '/admin/people', label: 'People' },
   { to: '/admin/model', label: 'Model' },
+  { to: '/admin/voice-box', label: 'Voice Box' },
   { to: '/admin/policy', label: 'Policy' },
   { to: '/admin/storage', label: 'Storage' },
   { to: '/admin/connectors', label: 'Connectors' },
@@ -141,7 +142,7 @@ export function Shell() {
 
       <nav
         aria-label="Primary"
-        className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-card pb-[env(safe-area-inset-bottom)] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 flex overflow-x-auto border-t border-border bg-card pb-[env(safe-area-inset-bottom)] lg:hidden"
       >
         {(isAdminArea ? ADMIN_NAV : PHONE_NAV).map((item) => (
           <NavLink
@@ -152,6 +153,7 @@ export function Shell() {
               cn(
                 // min-h-14 keeps the target well over 44px even with the label.
                 'flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 px-1 text-[11px] font-medium',
+                isAdminArea && 'min-w-24 flex-none',
                 isActive ? 'text-primary' : 'text-muted-foreground',
               )
             }
