@@ -228,6 +228,39 @@ describe('quota counts what is actually held — M55', () => {
     const out = await ingest({ filename: 'second.txt', relativePath: 'second.txt' });
     expect(out).toMatchObject({ kind: 'skipped', reason: 'quota_exceeded' });
   });
+
+  // item 40h-DECIDED: an administrator's per-user override is a real override,
+  // not just a tighter ceiling — it must let a person past the workspace
+  // default just as easily as it can restrict them below it.
+  it('honours a per-user override that RAISES a person above the workspace default', async () => {
+    // The fixture's workspace default is max_files_per_user = 10 (see
+    // beforeEach). Grant this one person room for 12.
+    await db.query(
+      `insert into storage_capabilities (user_id, may_map_local, may_index, max_files)
+       values ($1, true, true, 12) on conflict (user_id) do update set max_files = 12`,
+      [ids.alice],
+    );
+    for (let i = 0; i < 10; i += 1) {
+      const out = await ingest({ filename: `f${i}.txt`, relativePath: `f${i}.txt` });
+      expect(out.kind).toBe('accepted');
+    }
+    // The 11th file would be refused under the workspace default (10) but must
+    // be accepted under this person's raised override (12).
+    const eleventh = await ingest({ filename: 'f10.txt', relativePath: 'f10.txt' });
+    expect(eleventh.kind).toBe('accepted');
+  });
+});
+
+describe('the workspace default quota — item 40h-DECIDED', () => {
+  it('a fresh install starts at 20GiB, not the old 2GiB', async () => {
+    // A completely separate database from the shared fixture above (which
+    // overwrites max_total_bytes_per_user in beforeEach for its own smaller
+    // numbers) — this proves what migration 0031 actually ships as the
+    // out-of-the-box default before any test or admin touches it.
+    const fresh = await testDb();
+    const policy = await storagePolicy(fresh);
+    expect(Number(policy.max_total_bytes_per_user)).toBe(21474836480);
+  });
 });
 
 describe('per-folder status — M74', () => {

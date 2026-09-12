@@ -181,6 +181,56 @@ describe('the dual gate over the wire — M47', () => {
   });
 });
 
+describe('per-user storage quota — item 40h-DECIDED', () => {
+  it('a new person has no override: the capability list shows max_bytes null', async () => {
+    // Nobody has set anything for bob yet. The list route left-joins
+    // storage_capabilities, so a person with no row at all still appears, with
+    // max_bytes null — meaning "the workspace default (20GB) applies", not
+    // "zero".
+    const res = await call('/api/storage/admin/capabilities', { jar: cookies.admin });
+    expect(res.status).toBe(200);
+    const bob = res.body.users.find((u: any) => u.username === 'bob');
+    expect(bob).toBeTruthy();
+    expect(bob.max_bytes).toBeNull();
+  });
+
+  it('an administrator can set a custom per-user byte quota', async () => {
+    const raised = 50 * 1024 * 1024 * 1024; // 50GB, deliberately ABOVE the 20GB default
+    const put = await call(`/api/storage/admin/capabilities/${ids.bob}`, {
+      method: 'PUT', jar: cookies.admin,
+      body: { mayMapLocal: true, mayMapCloud: false, mayIndex: false, maxBytes: raised },
+    });
+    expect(put.status).toBe(200);
+
+    const res = await call('/api/storage/admin/capabilities', { jar: cookies.admin });
+    const bob = res.body.users.find((u: any) => u.username === 'bob');
+    expect(Number(bob.max_bytes)).toBe(raised);
+  });
+
+  it('a member cannot set their own quota override', async () => {
+    const res = await call(`/api/storage/admin/capabilities/${ids.alice}`, {
+      method: 'PUT', jar: cookies.alice, body: { maxBytes: 999999999999 },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('clearing the override (maxBytes: null) falls back to the workspace default', async () => {
+    await call(`/api/storage/admin/capabilities/${ids.bob}`, {
+      method: 'PUT', jar: cookies.admin,
+      body: { mayMapLocal: true, maxBytes: 5 * 1024 * 1024 * 1024 },
+    });
+    const cleared = await call(`/api/storage/admin/capabilities/${ids.bob}`, {
+      method: 'PUT', jar: cookies.admin,
+      body: { mayMapLocal: true, maxBytes: null },
+    });
+    expect(cleared.status).toBe(200);
+
+    const res = await call('/api/storage/admin/capabilities', { jar: cookies.admin });
+    const bob = res.body.users.find((u: any) => u.username === 'bob');
+    expect(bob.max_bytes).toBeNull();
+  });
+});
+
 describe('containment over the wire — M45', () => {
   beforeEach(() => enable('alice'));
 

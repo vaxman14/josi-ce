@@ -202,9 +202,16 @@ function MappingDetail({ mappingId }: { mappingId: string }) {
   );
 }
 
-/** Browse → pick → read the consent sentence → agree. The consent text comes
- * from the server because the sentence a person agrees to is a security
- * artefact, not copy the browser assembles. */
+/** Browse, then pick. Item 16b: picking a folder IS the commitment — the
+ * moment its owner presses “Use this folder”, Josi maps it, turns indexing
+ * on, and queues the first sync in the same action. No second “I agree”
+ * click, no separate “start syncing” toggle afterwards.
+ *
+ * The consent sentence has not been dropped — it is a security artefact, not
+ * copy the browser assembles, so it still comes from the server (M49/M50).
+ * What changed is when it is shown: as a receipt of what Josi just started
+ * doing, not a gate the person has to click through a second time to reach
+ * the same outcome they already chose by picking the folder. */
 function FolderPicker({
   provider, connectionId, onDone, onCancel,
 }: {
@@ -217,7 +224,7 @@ function FolderPicker({
   const [folders, setFolders] = useState<RemoteFolder[] | null>(null);
   const [error, setError] = useState('');
   const [recursive, setRecursive] = useState(true);
-  const [consent, setConsent] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const current = path[path.length - 1] ?? null;
@@ -240,41 +247,60 @@ function FolderPicker({
 
   const displayPath = `${STORAGE_LABEL[provider]}/${path.map((p) => p.name).join('/')}`;
 
-  async function preview() {
-    setBusy(true);
-    setError('');
-    try {
-      const res = await api.post<{ consent: string }>('/storage/consent-preview', {
-        displayPath, recursive, indexing: true,
-      });
-      setConsent(res.consent);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not prepare the consent text');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function agree() {
+  /** One click: map the folder, turn indexing on, queue the sync. If any step
+   * fails the mapping already exists — “could not map that folder” would be
+   * the wrong message once step one succeeded, so failures after creation are
+   * reported as what they are (indexing/sync did not start) rather than
+   * folded back into a generic mapping error. */
+  async function useThisFolder() {
     if (!current) return;
     setBusy(true);
     setError('');
     try {
-      const created = await api.post<{ mapping: { id: string } }>('/storage/mappings', {
+      const created = await api.post<{ mapping: { id: string }; consent: string }>('/storage/mappings', {
         provider: MAPPING_PROVIDER[provider],
         connectionId,
         remoteFolderId: current.id,
         displayPath,
         recursive,
       });
-      // Indexing is its own consent (M49); the sentence shown covered it, and
-      // this is the switch it covered.
-      await api.put(`/storage/mappings/${created.mapping.id}/indexing`, { enabled: true });
-      onDone();
+      const mappingId = created.mapping.id;
+      try {
+        // Indexing is its own consent (M49); the sentence the server just
+        // returned already covers it, and this is the switch it covered.
+        await api.put(`/storage/mappings/${mappingId}/indexing`, { enabled: true });
+        // Syncing is no longer a separate step the owner has to remember to
+        // press — picking the folder started it.
+        await api.post(`/storage/mappings/${mappingId}/sync`, {});
+        setReceipt(created.consent);
+      } catch (innerErr) {
+        // The folder is mapped; only the auto-start half of this click did
+        // not complete. Say that plainly — “Sync now” on the mapping card
+        // still reaches the same job.
+        setError(
+          innerErr instanceof ApiError
+            ? `The folder was mapped, but syncing did not start: ${innerErr.message}`
+            : 'The folder was mapped, but syncing did not start automatically. Use “Sync now” below.',
+        );
+        onDone();
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not map that folder');
+    } finally {
       setBusy(false);
     }
+  }
+
+  if (receipt) {
+    return (
+      <Card className="mt-3">
+        <CardTitle>Syncing started</CardTitle>
+        <p className="text-sm">{receipt}</p>
+        <div className="mt-3">
+          <Button onClick={onDone}>Done</Button>
+        </div>
+      </Card>
+    );
   }
 
   return (
@@ -282,66 +308,58 @@ function FolderPicker({
       <CardTitle>Choose a folder</CardTitle>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-      {consent ? (
-        <>
-          <p className="text-sm">{consent}</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button disabled={busy} onClick={() => void agree()}>I agree — start reading it</Button>
-            <Button variant="secondary" disabled={busy} onClick={() => setConsent(null)}>Back</Button>
-          </div>
-        </>
-      ) : (
-        <>
-          <p className="mb-2 text-sm text-muted-foreground">
-            {path.length ? displayPath : `The top of your ${STORAGE_LABEL[provider]}. Pick a folder — Josi maps one folder at a time, never the whole drive.`}
-          </p>
-          {folders === null ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
-          {folders?.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No folders inside this one.</p>
-          ) : null}
-          <ul className="space-y-1">
-            {folders?.map((f) => (
-              <li key={f.id}>
-                <Button
-                  variant="ghost"
-                  className="w-full justify-start"
-                  onClick={() => { setPath([...path, f]); void browse(f.id); }}
-                >
-                  📁 {f.name}
-                </Button>
-              </li>
-            ))}
-          </ul>
-          <label className="mt-3 flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={recursive}
-              onChange={(e) => setRecursive(e.target.checked)}
-            />
-            Include subfolders, including ones added later
-          </label>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {path.length > 0 ? (
-              <Button disabled={busy} onClick={() => void preview()}>
-                Use “{current?.name}”
-              </Button>
-            ) : null}
-            {path.length > 0 ? (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  const up = path.slice(0, -1);
-                  setPath(up);
-                  void browse(up[up.length - 1]?.id ?? null);
-                }}
-              >
-                Up one level
-              </Button>
-            ) : null}
-            <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-          </div>
-        </>
-      )}
+      <p className="mb-2 text-sm text-muted-foreground">
+        {path.length ? displayPath : `The top of your ${STORAGE_LABEL[provider]}. Pick a folder — Josi maps one folder at a time, never the whole drive.`}
+      </p>
+      {folders === null ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {folders?.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No folders inside this one.</p>
+      ) : null}
+      <ul className="space-y-1">
+        {folders?.map((f) => (
+          <li key={f.id}>
+            <Button
+              variant="ghost"
+              className="w-full justify-start"
+              onClick={() => { setPath([...path, f]); void browse(f.id); }}
+            >
+              📁 {f.name}
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <label className="mt-3 flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={recursive}
+          onChange={(e) => setRecursive(e.target.checked)}
+        />
+        Include subfolders, including ones added later
+      </label>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Josi will read it, index the text it can read, and start syncing the moment you use it below.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {path.length > 0 ? (
+          <Button disabled={busy} onClick={() => void useThisFolder()}>
+            {busy ? 'Starting…' : `Use “${current?.name}”`}
+          </Button>
+        ) : null}
+        {path.length > 0 ? (
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => {
+              const up = path.slice(0, -1);
+              setPath(up);
+              void browse(up[up.length - 1]?.id ?? null);
+            }}
+          >
+            Up one level
+          </Button>
+        ) : null}
+        <Button variant="secondary" disabled={busy} onClick={onCancel}>Cancel</Button>
+      </div>
     </Card>
   );
 }

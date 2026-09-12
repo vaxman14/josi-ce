@@ -177,34 +177,63 @@ async function connect(who: 'alice' | 'bob', capabilities: string[] = []): Promi
   return row.id;
 }
 
-describe('the storage scope is opt-in', () => {
-  it('a default connect asks for calendar, mail and contacts — never files', async () => {
+describe('storage scope: one connect, no second trip to read files (item 16b)', () => {
+  it('a default connect asks for calendar, mail, contacts AND files — never anything that writes', async () => {
     const started = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: {},
     });
     const scope = new URL(started.body.url).searchParams.get('scope')!;
     expect(scope).toContain('calendar.readonly');
-    expect(scope).not.toContain('drive');
+    expect(scope).toContain('gmail.readonly');
+    expect(scope).toContain('contacts.readonly');
+    // Item 16b: file read joins the first trip, so choosing a folder never
+    // needs a second "Approve at provider" round-trip.
+    expect(scope).toContain(DRIVE_SCOPE);
+    // Nothing that writes rides along — that half of M32 is untouched. Note
+    // "contacts.readonly" (read, included above) is a DIFFERENT scope string
+    // from bare "contacts" (write) — split-on-space is what tells them apart,
+    // since "contacts" is a substring of "contacts.readonly".
+    expect(scope.split(' ')).not.toContain('https://www.googleapis.com/auth/calendar');
+    expect(scope.split(' ')).not.toContain('https://www.googleapis.com/auth/contacts');
+    expect(scope).not.toContain('gmail.send');
   });
 
-  it('asked for by name, it is exactly what the handshake requests', async () => {
+  it('asked for by name alone, the handshake still requests exactly that (explicit capability lists still work)', async () => {
     const started = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: { capabilities: ['google.drive.read'] },
     });
     const scope = new URL(started.body.url).searchParams.get('scope')!;
     expect(scope).toContain(DRIVE_SCOPE);
-    // And nothing else piggybacks on the trip.
+    // A named request is still exactly what it names — no other read
+    // capability piggybacks just because one was mentioned.
     expect(scope).not.toContain('gmail');
     expect(scope).not.toContain('calendar');
   });
 
   it('appears on the Connections page as a capability, off until its owner turns it on', async () => {
-    await connect('alice', ['google.drive.read']);
+    // No capabilities named — the default bundle already covers drive.read
+    // per item 16b, so this proves the ordinary one-click connect reaches it.
+    await connect('alice');
     const view = await call('/api/connections', { jar: cookies.alice });
     const google = view.body.providers.find((p: any) => p.provider === 'google');
     const drive = google.capabilities.find((c: any) => c.key === 'google.drive.read');
+    // Granted by the provider, but connecting is still not consent to act:
+    // needsConsent is false (no second OAuth trip needed) and it still starts
+    // off until the owner switches it on.
+    expect(drive.needsConsent).toBe(false);
     expect(drive.state).toBe('off');
     expect(drive.kind).toBe('read');
+  });
+
+  it('a default connect no longer needs a second handshake before folders can be browsed', async () => {
+    // The whole point of item 16b: one connect, then straight to picking a
+    // folder — no "needs_consent" detour in between.
+    const id = await connect('alice');
+    const enabled = await call(`/api/connections/${id}/capabilities/google.drive.read`, {
+      method: 'PUT', jar: cookies.alice, body: { enabled: true },
+    });
+    expect(enabled.status, JSON.stringify(enabled.body)).toBe(200);
+    expect(enabled.body.capabilities.find((c: any) => c.key === 'google.drive.read').state).toBe('on');
   });
 });
 
