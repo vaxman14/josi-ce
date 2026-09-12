@@ -128,7 +128,6 @@ class Manager:
         healthy = health.get('apiReady') is True and health.get('modelsReady') is True
         return {**self.state, **health, 'healthy': healthy, 'helperAvailable': True,
                 'releaseAvailable': bool(self.catalog), 'gpuAvailable': any(x.get('gpu') for x in self.catalog),
-                'engines': next((x.get('engines', ['kokoro']) for x in self.catalog if x['image'] == self.state['current']), ['kokoro']),
                 'requirements': ['64-bit Linux, Docker Engine and Compose v2',
                                  '4 GB available RAM, 5 GB free disk, CPU with 2+ cores',
                                  'HTTPS or localhost for the browser microphone',
@@ -169,9 +168,6 @@ class Manager:
             if operation == 'settings' and body['device'] == 'cuda' and not any(
                     x.get('gpu') for x in self.catalog):
                 raise ValueError('This image does not support GPU acceleration')
-            if operation == 'settings' and not any(x['image'] == self.state['current'] and
-                    body['engine'] in x.get('engines', ['kokoro']) for x in self.catalog):
-                raise ValueError('The selected engine is not included in this image')
             self.state.update(phase='working', error=None)
             self.save()
             threading.Thread(target=self.perform, args=(operation, body), daemon=True).start()

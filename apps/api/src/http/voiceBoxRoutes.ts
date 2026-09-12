@@ -35,7 +35,7 @@ const requirements = [
   '64-bit Linux with Docker Engine, Compose v2 and the optional host helper',
   '4 GB available RAM, 5 GB free disk and at least 2 CPU cores',
   'HTTPS or localhost for browser microphone access',
-  'Kokoro neural speech is the default. Piper is an optional lighter engine.',
+  'Kokoro provides local neural speech with Heart and Bella voices.',
 ];
 
 export function voiceBoxRoutes(helper: VoiceHelper): { admin: Router; voice: Router } {

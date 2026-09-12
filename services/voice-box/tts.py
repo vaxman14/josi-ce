@@ -1,4 +1,4 @@
-"""Local neural synthesis. Only the administrator-selected engine is loaded."""
+"""Local neural synthesis. Kokoro is the sole TTS engine."""
 import io
 import json
 import re
@@ -11,34 +11,25 @@ class NeuralSpeech:
     def __init__(self, config, root='/models'):
         self.config = config
         root = Path(root)
-        if config['engine'] == 'kokoro':
-            import onnxruntime as ort
-            from misaki import en
-            options = ort.SessionOptions()
-            options.intra_op_num_threads = 4
-            options.inter_op_num_threads = 1
-            self.model = ort.InferenceSession(str(root / 'kokoro/model.onnx'), options,
-                                              providers=['CPUExecutionProvider'])
-            # Pin the English tagger in the runtime lock; never download at use.
-            import spacy
-            if not spacy.util.is_package('en_core_web_sm'):
-                raise ValueError('The pinned English pronunciation model is missing')
-            speller = en.G2P(trf=False, british=False, fallback=None)
-            self.g2p = en.G2P(trf=False, british=False,
-                             fallback=lambda token: (speller(' '.join(token.text.upper()))[0], 1))
-            self.vocab = json.loads((root / 'kokoro/config.json').read_text())['vocab']
-            self.voice = np.fromfile(root / ('kokoro/' + config['voice'] + '.bin'), dtype='<f4').reshape(-1, 1, 256)
-        else:
-            from piper import PiperVoice
-            self.model = PiperVoice.load(str(root / 'piper/en_US-ljspeech-medium.onnx'), use_cuda=False)
+        import onnxruntime as ort
+        from misaki import en
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = 4
+        options.inter_op_num_threads = 1
+        self.model = ort.InferenceSession(str(root / 'kokoro/model.onnx'), options,
+                                          providers=['CPUExecutionProvider'])
+        # Pin the English tagger in the runtime lock; never download at use.
+        import spacy
+        if not spacy.util.is_package('en_core_web_sm'):
+            raise ValueError('The pinned English pronunciation model is missing')
+        speller = en.G2P(trf=False, british=False, fallback=None)
+        self.g2p = en.G2P(trf=False, british=False,
+                         fallback=lambda token: (speller(' '.join(token.text.upper()))[0], 1))
+        self.vocab = json.loads((root / 'kokoro/config.json').read_text())['vocab']
+        self.voice = np.fromfile(root / ('kokoro/' + config['voice'] + '.bin'), dtype='<f4').reshape(-1, 1, 256)
 
     def speech(self, text):
         output = io.BytesIO()
-        if self.config['engine'] == 'piper':
-            from piper import SynthesisConfig
-            with wave.open(output, 'wb') as wav:
-                self.model.synthesize_wav(text, wav, syn_config=SynthesisConfig(length_scale=1 / self.config['speed']))
-            return output.getvalue()
         phonemes, _ = self.g2p(re.sub(r'\bJosi\b', '[Josi](/ˈʤoʊzi/)', text, flags=re.IGNORECASE))
         tokens = [self.vocab[p] for p in phonemes if p in self.vocab]
         if not tokens:

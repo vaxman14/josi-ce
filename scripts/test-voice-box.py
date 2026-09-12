@@ -56,7 +56,7 @@ def pcm16(wav):
 def main(image):
     root = Path(tempfile.mkdtemp(prefix='josi-voice-acceptance-'))
     catalog = root / 'catalog.json'
-    catalog.write_text(json.dumps({'releases': [{'image': image, 'engines': ['kokoro', 'piper']}]}))
+    catalog.write_text(json.dumps({'releases': [{'image': image}]}))
     manager = Manager(root / 'state', catalog, development=True)
     report = {'image': image, 'project': manager.project, 'checks': []}
     def check(name):
@@ -91,14 +91,24 @@ def main(image):
         audio = pcm16(wav) + bytes(16000 * 2 * 3)
         session = call(manager, '/session', {})['session']
         events = []
+        frame_seconds, backlog, maximum_backlog = 0.0, 0.0, 0.0
         for seq, start in enumerate(range(0, len(audio), 16000)):
             frame = audio[start:start + 16000].ljust(16000, b'\0')
+            frame_start = time.monotonic()
             events.extend(call(manager, '/audio', {'session': session, 'seq': seq, 'pcm': base64.b64encode(frame).decode()})['events'])
+            duration = time.monotonic() - frame_start
+            frame_seconds += duration
+            backlog = max(0, backlog + duration - 0.5)
+            maximum_backlog = max(maximum_backlog, backlog)
         assert any(e['type'] == 'speech_start' for e in events), events
         assert any(e['type'] == 'partial' for e in events), events
         final = ' '.join(e['text'] for e in events if e['type'] == 'final')
         assert 'apples' in final.lower() and 'tomorrow' in final.lower(), final
         report['transcription'] = final
+        report['frameProcessingSeconds'] = round(frame_seconds, 3)
+        report['streamAudioSeconds'] = round(len(audio) / 32000, 3)
+        report['maxSimulatedBacklogSeconds'] = round(maximum_backlog, 3)
+        assert maximum_backlog < 4, 'Streaming inference exceeded the browser capture queue budget'
         call(manager, '/close', {'session': session})
         check('real PCM frames produce VAD start, incremental transcription and final text')
         manager.start('settings', {**DEFAULTS, 'voice': 'af_bella'})
@@ -110,16 +120,15 @@ def main(image):
         wait(manager)
         assert manager.state['settings']['voice'] == 'af_heart'
         check('rollback restores previous healthy voice configuration')
-        manager.start('settings', {**DEFAULTS, 'engine': 'piper', 'voice': 'en_US-ljspeech-medium'})
+        manager.start('settings', {**DEFAULTS, 'speed': 1.2})
         wait(manager)
-        piper_audio = call(manager, '/speech', {'text': 'This is the optional lightweight neural speech engine.'})
-        with wave.open(io.BytesIO(piper_audio)) as reader:
-            assert reader.getframerate() == 22050 and reader.getnframes() > 22050
-        check('optional Piper engine loads and generates the pinned LJ Speech voice')
+        with wave.open(io.BytesIO(call(manager, '/speech', {'text': 'Neural speech remains available at the selected speaking speed.'}))) as reader:
+            assert reader.getframerate() == 24000 and reader.getnframes() > 24000
+        check('Kokoro speed adjustment loads and produces valid PCM WAV audio')
         manager.start('rollback', {})
         wait(manager)
-        assert manager.state['settings']['engine'] == 'kokoro'
-        check('engine rollback restores Kokoro and its saved voice')
+        assert manager.state['settings']['speed'] == DEFAULTS['speed']
+        check('rollback restores the previous healthy speech speed')
         manager.start('settings', {**DEFAULTS, 'model': 'tiny.en'})
         wait(manager)
         assert manager.state['settings']['model'] == 'tiny.en' and manager.status()['healthy']

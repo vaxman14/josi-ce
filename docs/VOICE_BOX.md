@@ -5,11 +5,9 @@ no database migration, and changes neither the default Compose stack nor its
 readiness checks. Existing installations continue working without it.
 
 The default voice is **Kokoro v1.0 / Heart**, with Bella also available. English
-pronunciation uses Misaki and a pinned local spaCy tagger. Piper is an explicit
-lightweight neural fallback, never an automatic quality downgrade. The CPU path
+pronunciation uses Misaki and a pinned local spaCy tagger. The CPU path
 uses int8 Whisper Base English and quantized Kokoro; Tiny English is available
-for lower-resource hosts. Only the selected TTS
-engine is loaded. Audio is transient memory; normal chat transcripts retain the
+for lower-resource hosts. Audio is transient memory; normal chat transcripts retain the
 same Josi permissions, retention and model-provider behavior as typed chat.
 
 ## Status of this branch
@@ -20,14 +18,14 @@ disabled Install button until the host helper has an approved image. An admin
 cannot supply a different registry, tag, digest, command or filesystem mount.
 Changing application code does not publish an image or upgrade an installation.
 
-See [the redistribution review](../services/voice-box/LICENSES.md) for separate
-engine, model and voice terms and remaining artifact-level release obligations.
+See [the redistribution review](../services/voice-box/LICENSES.md) for the
+engine, model and voice terms, preserved sources, and CPU artifact conclusion.
 The owner must authorize any public image, release workflow or gate upgrade.
 
 ## Host requirements and one-time opt-in
 
 - 64-bit Linux, Docker Engine and Compose v2 or newer; systemd for the supplied
-  helper provisioning script. The initial CPU target is Linux amd64.
+  helper provisioning script. CPU builds cover Linux amd64 and arm64.
 - At least 4 GB available memory and 5 GB free disk, in addition to Josi's needs.
   Real-time throughput depends on CPU load and speech length.
 - HTTPS or localhost for microphone permissions. Plain LAN HTTP cannot acquire
@@ -70,21 +68,15 @@ volumes, a read-only root filesystem, dropped capabilities, a non-root UID,
 bounded processes and a 4 GB memory ceiling. Models are already present in the
 verified image; speech use cannot make a model download or internet request.
 
-The approved image catalog records available engines per immutable image, for
-example `"engines": ["kokoro", "piper"]`. The admin page disables engines absent
-from the active image. The standard candidate includes both runtimes, but only
-the selected one is imported and loaded. Piper's internal phonemizer does not
-participate in the Kokoro path and is never exposed as a standalone voice.
-
 ## Readiness and controls
 
 The private `/health` endpoint reports API readiness and whether models have
-loaded; `/ready` returns 503 until STT, Silero VAD and the selected TTS engine
+loaded; `/ready` returns 503 until STT, Silero VAD and the Kokoro TTS
 complete warm-up inference. The helper does not unlock settings merely because
 a TCP listener or HTTP handler exists. Failed initialization remains visibly
 unready, and existing typed chat remains usable.
 
-After initial successful verification, Admin shows engine, voice, model, speech
+After initial successful verification, Admin shows voice, model, speech
 detection threshold, pause duration, speaking speed, preview, update, restart,
 rollback and uninstall. Saving restarts only Voice Box and rechecks the selected
 models. A failed change restores the previous healthy image and settings when
@@ -126,7 +118,7 @@ approved catalog entry must have `gpu: true`; a CPU-only digest cannot request
 devices. NVIDIA Container Toolkit must already be configured on the host.
 The helper requests exactly one compute-capable GPU, with no arbitrary device
 mount API. A failed GPU model check rolls back to the last healthy CPU settings.
-Kokoro/Piper TTS stay on CPU in this version; GPU acceleration applies to STT.
+Kokoro TTS stays on CPU in this version; GPU acceleration applies to STT.
 
 GPU image publication requires its own redistribution review, including the
 [CUDA runtime terms](https://docs.nvidia.com/cuda/eula/index.html) and
@@ -150,7 +142,7 @@ of `/var/lib/josi-voice-box` before deleting that private state manually.
 ## Development and verification
 
 ```sh
-docker build -t josi-voice-box:0.1.0-dev services/voice-box
+docker buildx build --platform linux/amd64 --load -t josi-voice-box:0.1.0-dev services/voice-box
 python3 scripts/test-voice-box.py "$(docker image inspect josi-voice-box:0.1.0-dev --format '{{.Id}}')"
 python3 -m unittest discover -s services/voice-box -p 'test_*.py'
 npm run typecheck
@@ -164,3 +156,23 @@ is explicitly constructed in development mode. The systemd service does not
 enable that mode. Its temporary test project is isolated from the installed
 Josi stack. Model locks check both SHA-256 and byte size, runtime locks include
 transitive dependencies and wheel hashes, and the base image uses an OCI digest.
+
+The build requires Docker Buildx/BuildKit. To build arm64 on amd64, use a
+BuildKit builder with its bundled QEMU emulator; no host-level emulation changes
+are needed with the official BuildKit release. Build locally without publishing:
+
+```sh
+docker buildx build --platform linux/arm64 --output type=oci,dest=voice-box-arm64.oci.tar services/voice-box
+```
+
+Each build verifies codec absence and exact corresponding sources, then runs a
+real Kokoro → PCM → VAD → Whisper inference check. Python build tools are pinned,
+build isolation cannot fetch unpinned tools, and the unused compressed-audio
+decoder is explicitly removed from the packaged faster-whisper variant.
+
+Required source archives and build recipes accompany the image under
+`/usr/share/voice-box/`; its source collection adds approximately 450 MB.
+See [the artifact review](../services/voice-box/LICENSES.md) for recipient rights
+and how to extract/rebuild those sources. Final SBOMs and local image identities
+are recorded in `docs/voice-box/`. The GPU target requires its own redistribution
+review; the CPU conclusion does not authorize GPU image publication.

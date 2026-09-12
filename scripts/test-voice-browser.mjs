@@ -39,11 +39,11 @@ function wav() {
   return data;
 }
 let healthy = false, phase = 'absent', frames = 0, speeches = 0, closes = 0;
-let settings = { engine: 'kokoro', voice: 'af_heart', model: 'base.en', device: 'cpu', threshold: 0.5, silenceMs: 700, speed: 1 };
+let settings = { voice: 'af_heart', model: 'base.en', device: 'cpu', threshold: 0.5, silenceMs: 700, speed: 1 };
 const voiceBoxHelper = async (path, body) => {
   let value = {};
   if (path === '/status') value = { healthy, phase, verified: healthy, apiReady: phase !== 'absent', modelsReady: healthy,
-    helperAvailable: true, releaseAvailable: true, engines: ['kokoro', 'piper'], requirements: ['4 GB available RAM', 'HTTPS or localhost'], settings };
+    helperAvailable: true, releaseAvailable: true, requirements: ['4 GB available RAM', 'HTTPS or localhost'], settings };
   else if (path === '/operation/install') { phase = 'working'; setTimeout(() => { healthy = true; phase = 'ready'; }, 700); }
   else if (path === '/operation/settings') settings = body;
   else if (path === '/session') { frames = 0; value = { session: 'a'.repeat(48) }; }
@@ -100,10 +100,10 @@ try {
   await login('owner');
   await page.goto(base + '/admin/voice-box');
   await page.getByRole('button', { name: 'Install Voice Box' }).waitFor();
-  assert.equal(await page.getByLabel('Speech engine').count(), 0);
+  assert.equal(await page.getByLabel('Voice', { exact: true }).count(), 0);
   await page.getByRole('button', { name: 'Install Voice Box' }).click();
-  await page.getByLabel('Speech engine').waitFor();
-  assert.equal(await page.getByLabel('Speech engine').inputValue(), 'kokoro');
+  await page.getByLabel('Voice', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('Voice', { exact: true }).inputValue(), 'af_heart');
   await page.getByLabel('Voice', { exact: true }).selectOption('af_bella');
   await page.getByRole('button', { name: 'Save and verify' }).click();
   await page.getByRole('button', { name: 'Preview voice' }).click();
@@ -111,7 +111,7 @@ try {
   await page.getByRole('button', { name: 'Preview voice' }).waitFor();
   assert.equal(settings.voice, 'af_bella'); assert.ok(speeches > 0);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Admin page overflows at 390px');
-  console.log('PASS admin install gate, engine/voice settings, real WAV preview and mobile layout');
+  console.log('PASS admin install gate, voice settings, real WAV preview and mobile layout');
   await context.clearCookies();
   await login('alice');
   await page.goto(base + '/app/talk');

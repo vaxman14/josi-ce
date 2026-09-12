@@ -3,12 +3,11 @@ import { api } from '@/lib/api';
 import { fetchVoiceAudio } from '@/lib/voiceAudio';
 import { Button, ErrorNote } from '@/components/ui';
 
-interface Settings { engine: 'kokoro' | 'piper'; voice: string; model: string; threshold: number; silenceMs: number; speed: number; device: 'cpu' | 'cuda' }
+interface Settings { voice: string; model: string; threshold: number; silenceMs: number; speed: number; device: 'cpu' | 'cuda' }
 interface Status {
   helperAvailable: boolean; healthy: boolean; verified: boolean; releaseAvailable: boolean; gpuAvailable?: boolean;
   phase: string; error?: string; requirements: string[]; settings?: Settings; previous?: unknown;
   apiReady?: boolean; modelsReady?: boolean;
-  engines?: string[];
 }
 export function AdminVoiceBox() {
   const [status, setStatus] = useState<Status>();
@@ -76,12 +75,8 @@ export function AdminVoiceBox() {
       </section> : settings && <section className="space-y-4 rounded border border-border p-4">
         <h2 className="font-semibold">Speech settings</h2>
         <fieldset disabled={working || !status.healthy} className="grid gap-4 sm:grid-cols-2">
-          <label>Speech engine<select aria-label="Speech engine" className={inputClass} value={settings.engine} onChange={(e) => {
-            const engine = e.target.value as Settings['engine'];
-            setSettings({ ...settings, engine, voice: engine === 'kokoro' ? 'af_heart' : 'en_US-ljspeech-medium' });
-          }}><option value="kokoro">Kokoro — default neural voice</option><option value="piper" disabled={!status.engines?.includes('piper')}>Piper — lighter CPU fallback{!status.engines?.includes('piper') ? ' (not included in this image)' : ''}</option></select></label>
           <label>Voice<select aria-label="Voice" className={inputClass} value={settings.voice} onChange={(e) => setSettings({ ...settings, voice: e.target.value })}>
-            {settings.engine === 'kokoro' ? <><option value="af_heart">Heart — US English</option><option value="af_bella">Bella — US English</option></> : <option value="en_US-ljspeech-medium">LJ Speech — US English</option>}
+            <option value="af_heart">Heart — US English</option><option value="af_bella">Bella — US English</option>
           </select></label>
           <label>Transcription model<select className={inputClass} value={settings.model} onChange={(e) => setSettings({ ...settings, model: e.target.value })}><option value="base.en">Whisper Base — English</option><option value="tiny.en">Whisper Tiny — lighter English model</option></select></label>
           <label>Transcription acceleration<select className={inputClass} value={settings.device} onChange={(e) => setSettings({ ...settings, device: e.target.value as Settings['device'] })}><option value="cpu">CPU</option><option value="cuda" disabled={!status.gpuAvailable}>NVIDIA GPU (optional)</option></select></label>
@@ -89,7 +84,7 @@ export function AdminVoiceBox() {
           <label>Pause before sending (ms)<input className={inputClass} type="number" min="300" max="1800" step="100" value={settings.silenceMs} onChange={(e) => setSettings({ ...settings, silenceMs: Number(e.target.value) })} /></label>
           <label>Speaking speed<input className={inputClass} type="number" min="0.7" max="1.4" step="0.05" value={settings.speed} onChange={(e) => setSettings({ ...settings, speed: Number(e.target.value) })} /></label>
         </fieldset>
-        <p className="text-sm text-muted-foreground">Save and wait for model verification before previewing a new engine or voice.</p>
+        <p className="text-sm text-muted-foreground">Save and wait for model verification before previewing a new voice.</p>
         <div className="flex flex-wrap gap-2">
           <Button disabled={working || !status.healthy} onClick={() => void operation('settings', settings)}>Save and verify</Button>
           <Button disabled={working || !status.healthy || previewing || JSON.stringify(settings) !== savedSettings} onClick={() => void playPreview()}>{previewing ? 'Playing preview…' : 'Preview voice'}</Button>

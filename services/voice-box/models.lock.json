@@ -99,48 +99,6 @@
       "license": "MIT"
     },
     {
-      "path": "piper/en_US-ljspeech-medium.onnx",
-      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/1162a9173d0ce503555aed757976b7a9912eae4c/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx",
-      "sha256": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
-      "size": 63531379,
-      "license": "MIT; dataset public domain"
-    },
-    {
-      "path": "piper/en_US-ljspeech-medium.onnx.json",
-      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/1162a9173d0ce503555aed757976b7a9912eae4c/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json",
-      "sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860",
-      "size": 4972,
-      "license": "MIT; dataset public domain"
-    },
-    {
-      "path": "licenses/piper-ljspeech-model.md",
-      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/1162a9173d0ce503555aed757976b7a9912eae4c/en/en_US/ljspeech/medium/MODEL_CARD",
-      "sha256": "fbee1529c89d36b3fe76d7e9f3f832dce17f44900a52d76a9bda735654766b4d",
-      "size": 517,
-      "license": "MIT; dataset public domain"
-    },
-    {
-      "path": "licenses/piper-voices-repository.md",
-      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/1162a9173d0ce503555aed757976b7a9912eae4c/README.md",
-      "sha256": "33e93643fce5180886300f9f0070eeeab8af148efb8e84361f8904def80fd9fb",
-      "size": 497,
-      "license": "MIT; dataset public domain"
-    },
-    {
-      "path": "sources/piper-1.3.0.tar.gz",
-      "url": "https://codeload.github.com/OHF-Voice/piper1-gpl/tar.gz/fee9b9cefae4ebf9e196cfe994dea418f051506c",
-      "sha256": "f1e95a55e5ff7dcf92162b51f63516a469dacc489465ef3b0a9da0a43b71e9f5",
-      "size": 4394112,
-      "license": "GPL-3.0-only"
-    },
-    {
-      "path": "sources/piper-phonemizer.tar.gz",
-      "url": "https://codeload.github.com/espeak-ng/espeak-ng/tar.gz/212928b394a96e8fd2096616bfd54e17845c48f6",
-      "sha256": "1f201cabc73e569a7cb434d40d3b30980f923010f8ecd4d1c4ae94691ac2888a",
-      "size": 17815706,
-      "license": "GPL-3.0-or-later"
-    },
-    {
       "path": "tiny.en/model.bin",
       "url": "https://huggingface.co/Systran/faster-whisper-tiny.en/resolve/0d3d19a32d3338f10357c0889762bd8d64bbdeba/model.bin",
       "sha256": "1a5afae06a4db91c975c9a9d78be5cc110ee4ea022ad57d55492e4550e936b2a",

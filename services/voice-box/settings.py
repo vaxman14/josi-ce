@@ -1,5 +1,5 @@
 """Shared, closed configuration vocabulary. No paths, commands or URLs from HTTP."""
-DEFAULTS = {"model": "base.en", "engine": "kokoro", "voice": "af_heart", "threshold": 0.5,
+DEFAULTS = {"model": "base.en", "voice": "af_heart", "threshold": 0.5,
             "silenceMs": 700, "speed": 1.0, "device": "cpu"}
 
 
@@ -8,10 +8,7 @@ def validate(value):
         raise ValueError("Provide only the supported Voice Box settings")
     if value["model"] not in ("tiny.en", "base.en"):
         raise ValueError("Unsupported transcription model")
-    if value["engine"] not in ("kokoro", "piper"):
-        raise ValueError("Unsupported speech engine")
-    voices = {"kokoro": ("af_heart", "af_bella"), "piper": ("en_US-ljspeech-medium",)}
-    if value["voice"] not in voices[value["engine"]]:
+    if value["voice"] not in ("af_heart", "af_bella"):
         raise ValueError("Unsupported voice")
     if value["device"] not in ("cpu", "cuda"):
         raise ValueError("Unsupported device")
