@@ -8,12 +8,27 @@ interface StorageGrant {
   max_files: number | null; max_bytes: number | null; mappings: number;
 }
 
+// item 40h-DECIDED: the workspace default is 20GB unless an administrator has
+// set this person's own override. Kept in sync with packages/db/migrations
+// 0007/0031's `storage_policy.max_total_bytes_per_user` default — shown here
+// only as a display fallback, never written back as if it were this person's
+// own value, so "effective 20GB" and "an admin typed 20" stay distinguishable
+// in the data even though they read the same in the UI.
+const DEFAULT_QUOTA_BYTES = 21474836480;
+const GB = 1024 * 1024 * 1024;
+const bytesToGb = (bytes: number) => Math.round((bytes / GB) * 100) / 100;
+
 export function AdminPeople() {
   const [users, setUsers] = useState<User[]>([]);
   const [invite, setInvite] = useState('');
   const [error, setError] = useState('');
   const [storage, setStorage] = useState<Record<string, StorageGrant>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  // Draft GB text per user, edited before Save is pressed. Separate from
+  // `storage` (the last-saved server state) so typing doesn't fight a
+  // half-finished number, and so Save can be disabled until it actually
+  // differs from the effective value.
+  const [quotaDraft, setQuotaDraft] = useState<Record<string, string>>({});
 
   const load = async () => {
     const [people, grants] = await Promise.all([
@@ -54,11 +69,32 @@ export function AdminPeople() {
         mayMapCloud: patch.may_map_cloud ?? current.may_map_cloud,
         mayIndex: patch.may_index ?? current.may_index,
         maxFiles: current.max_files,
-        maxBytes: current.max_bytes,
+        maxBytes: 'max_bytes' in patch ? patch.max_bytes : current.max_bytes,
       });
       await load();
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not change storage access'); }
     finally { setBusy(null); }
+  }
+
+  // item 40h-DECIDED: an admin edits the per-person storage limit in GB; we
+  // convert to bytes at the boundary because that's the unit the schema and
+  // the enforcement in packages/storage/src/gates.ts both use. An empty draft
+  // clears the override and falls back to the 20GB workspace default.
+  async function saveQuota(userId: string) {
+    const draft = (quotaDraft[userId] ?? '').trim();
+    let maxBytes: number | null;
+    if (draft === '') {
+      maxBytes = null;
+    } else {
+      const gb = Number(draft);
+      if (!Number.isFinite(gb) || gb <= 0) {
+        setError('Storage limit must be a number greater than zero, or blank for the default');
+        return;
+      }
+      maxBytes = Math.round(gb * GB);
+    }
+    await setStorageGrant(userId, { max_bytes: maxBytes });
+    setQuotaDraft((d) => { const next = { ...d }; delete next[userId]; return next; });
   }
 
   return (
@@ -116,6 +152,43 @@ export function AdminPeople() {
                     ))}
                   </div>
                   <p className="mt-2 text-xs text-muted-foreground">{storage[u.id].mappings} mapped folder(s). Turning indexing off purges derived searchable text.</p>
+
+                  <div className="mt-3 border-t border-border pt-3">
+                    <label className="mb-1 block text-xs font-medium" htmlFor={`quota-${u.id}`}>Storage limit (GB)</label>
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      {storage[u.id].max_bytes === null
+                        ? `Using the workspace default: ${bytesToGb(DEFAULT_QUOTA_BYTES)} GB`
+                        : `Custom limit set by an administrator: ${bytesToGb(storage[u.id].max_bytes as number)} GB`}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id={`quota-${u.id}`}
+                        inputMode="decimal"
+                        placeholder={String(bytesToGb(DEFAULT_QUOTA_BYTES))}
+                        value={quotaDraft[u.id] ?? ''}
+                        onChange={(e) => setQuotaDraft((d) => ({ ...d, [u.id]: e.target.value }))}
+                        className="max-w-32"
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={busy === u.id || !(u.id in quotaDraft)}
+                        onClick={() => void saveQuota(u.id)}
+                      >
+                        Save
+                      </Button>
+                      {storage[u.id].max_bytes !== null ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={busy === u.id}
+                          onClick={() => void setStorageGrant(u.id, { max_bytes: null })}
+                        >
+                          Reset to default
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
               ) : null}
             </Card>

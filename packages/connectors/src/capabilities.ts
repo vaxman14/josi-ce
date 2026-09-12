@@ -44,11 +44,17 @@ export interface CapabilitySpec {
   /** Write capabilities name what they can do to someone else's day, because
    * the consent screen should say it plainly. */
   consequence?: string;
-  /** True for capabilities that are NOT part of the default read bundle at
-   * connect time. Somebody connecting an account for calendar and mail must
-   * not be asked to grant file access as a side effect — storage is a grant
-   * they go and make deliberately, from the Connections page, and the
-   * incremental-consent handshake is how it arrives. */
+  /** Marks the storage/file capability for each provider.
+   *
+   * Historically this excluded a capability from the default connect bundle
+   * (storage was requested only by name, on a second handshake). Item 16b
+   * (2026-09-03) removed that exclusion: connecting now asks for every READ
+   * scope up front, storage included, so choosing a folder never needs a
+   * second trip through the provider. The field stays as a label for "this
+   * is a storage capability" — nothing currently branches on it, but it
+   * documents which capabilities exist so a folder can be mapped from them at
+   * all, and a future capability family with the same shape has a name to
+   * reach for instead of re-deriving it from the key string. */
   connectOptIn?: boolean;
 }
 

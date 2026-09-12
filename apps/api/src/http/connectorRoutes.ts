@@ -258,14 +258,21 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         ? (req.body.capabilities as unknown[]).map((c) => str(c, 80)).filter(Boolean)
         : [];
       const known = requested.filter((c) => capabilitySpec(c)?.provider === provider);
-      // A connect with nothing named still gets the read capabilities, which is
-      // the "read first" half of M32 — minus the opt-in ones. File access is
-      // never bundled into a connect somebody made for calendar or mail; it is
-      // asked for by name, from the Connections page, when its owner wants it.
+      // A connect with nothing named still gets every READ capability for
+      // this provider, storage included (item 16b). M32's "read first" half
+      // still holds — nothing that WRITES is ever bundled into a default
+      // connect, and a write capability still needs its own separate
+      // "Approve at provider" round-trip (item 18, untouched by this). What
+      // changed is that reading files is no longer held back as a second,
+      // opt-in trip: a person connecting to read their calendar and a person
+      // connecting to sync a folder now leave the provider with the same
+      // grant, and the Connections page decides afterwards, per capability,
+      // which of them to actually turn on (state stays 'off' until its owner
+      // switches it on — connecting is still not consent to act).
       const capabilities = known.length
         ? known
         : CAPABILITIES
-            .filter((c) => c.provider === provider && c.kind === 'read' && !c.connectOptIn)
+            .filter((c) => c.provider === provider && c.kind === 'read')
             .map((c) => c.key);
 
       const store = createStateStore(db, key);

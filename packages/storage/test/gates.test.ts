@@ -77,14 +77,32 @@ describe('the gate chain — M55', () => {
     });
   });
 
-  // M55: a per-user ceiling may only TIGHTEN. An administrator raising one
-  // person above the installation maximum is how a Pi ends up swapping.
-  it('takes the tighter of the workspace and per-user ceilings', () => {
+  // M55 / item 40h: a per-user override REPLACES the workspace default — it
+  // may tighten a person below the installation default, or (an
+  // administrator's own deliberate decision, set through the capabilities
+  // route) raise them above it. Null means "the workspace default applies".
+  it('a tighter per-user ceiling is enforced below the workspace default', () => {
     const tighter = check({}, POLICY, { files: 3, bytes: 0 }, { maxFiles: 3, maxBytes: null });
     expect(tighter).toMatchObject({ ok: false, reason: 'quota_exceeded' });
+  });
 
-    const cannotRaise = check({}, POLICY, { files: 10, bytes: 0 }, { maxFiles: 9999, maxBytes: null });
-    expect(cannotRaise).toMatchObject({ ok: false, reason: 'quota_exceeded' });
+  it('a per-user override can raise a person above the workspace default', () => {
+    // Workspace default caps file count at 10; an administrator granting this
+    // person 9999 must actually let a 10th, 11th, ... file through.
+    const raised = check({}, POLICY, { files: 10, bytes: 0 }, { maxFiles: 9999, maxBytes: null });
+    expect(raised).toMatchObject({ ok: true });
+
+    // Same for bytes: workspace default is 10000, this file would push total
+    // usage to 10100 — over the workspace default but under a raised override.
+    const raisedBytes = check(
+      { byteSize: 500 }, POLICY, { files: 1, bytes: 9600 }, { maxFiles: null, maxBytes: 50000 },
+    );
+    expect(raisedBytes).toMatchObject({ ok: true });
+  });
+
+  it('no override at all falls back to the workspace default, both directions', () => {
+    const overDefault = check({}, POLICY, { files: 10, bytes: 0 }, NO_CEILING);
+    expect(overDefault).toMatchObject({ ok: false, reason: 'quota_exceeded' });
   });
 
   it('checks quota before size, so a full quota is the reason given', () => {
