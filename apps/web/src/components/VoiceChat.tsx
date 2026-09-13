@@ -154,15 +154,45 @@ export function VoiceChat({ onTurn, disabled, onActiveChange }: { onTurn: (text:
     } finally { starting.current = false; }
   }
   if (!available) return null;
-  return <div className="space-y-1 py-2">
-    <div className="flex flex-wrap gap-2">
-      <Button type="button" disabled={disabled && !listening} onClick={() => listening ? stopRef.current() : void start()}>
-        {listening ? 'Stop voice chat' : 'Start voice chat'}
+  return (
+    <div className="relative flex shrink-0 items-center gap-1">
+      <div className="absolute bottom-[calc(100%+0.75rem)] right-0 flex max-w-[min(20rem,calc(100vw-2rem))] flex-col items-end gap-1">
+        <span className="whitespace-nowrap rounded-full border border-border bg-card/95 px-2.5 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
+          {listening ? 'Listening… pause to send' : 'Voice Box ready'}
+        </span>
+        {partial ? <p role="status" className="max-w-full truncate rounded-md bg-card px-2 py-1 text-xs shadow-sm">{partial}</p> : null}
+        {error ? <p role="alert" className="max-w-full rounded-md bg-card px-2 py-1 text-xs text-destructive shadow-sm">{error}</p> : null}
+      </div>
+      {listening ? (
+        <Button
+          type="button"
+          variant="ghost"
+          className="h-11 w-11 rounded-full px-0"
+          onClick={() => interruptRef.current()}
+          aria-label="Interrupt speech"
+          title="Interrupt speech"
+        >
+          <span aria-hidden className="h-3.5 w-3.5 rounded-sm bg-current" />
+        </Button>
+      ) : null}
+      <Button
+        type="button"
+        variant={listening ? 'secondary' : 'ghost'}
+        className="h-11 w-11 rounded-full px-0"
+        disabled={disabled && !listening}
+        onClick={() => listening ? stopRef.current() : void start()}
+        aria-label={listening ? 'Stop voice chat' : 'Start voice chat'}
+        title={listening ? 'Stop voice chat' : 'Start voice chat'}
+      >
+        {listening ? (
+          <span aria-hidden className="h-3.5 w-3.5 rounded-sm bg-destructive" />
+        ) : (
+          <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="2" width="6" height="12" rx="3" />
+            <path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8" />
+          </svg>
+        )}
       </Button>
-      {listening && <Button type="button" onClick={() => interruptRef.current()}>Interrupt speech</Button>}
     </div>
-    <p className="text-xs text-muted-foreground">{listening ? 'Microphone on. Speak naturally; pause to send. Speak again to interrupt.' : 'Audio is processed on your Voice Box. Transcripts use your configured Josi model.'}</p>
-    {partial && <p role="status" className="text-sm">{partial}</p>}
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-  </div>;
+  );
 }

@@ -181,18 +181,10 @@ export function Talk() {
       // rendered at the TOP of the screen with the history invisible (round-2
       // item 25). data-viewport-managed opts out of the global focus helper.
       data-viewport-managed
-      className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-card"
-      style={{ height: 'calc(100dvh - 10rem)' }}
+      className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden bg-background sm:rounded-lg sm:border sm:border-border sm:bg-card"
+      style={{ height: 'calc(100dvh - 8.5rem)' }}
     >
-      <header className="flex min-w-0 items-center gap-2 border-b border-border px-4 py-3">
-        <img src="/brand/josi-mark.png" alt="" width={28} height={28} className="h-7 w-7 rounded-md" />
-        <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">Josi</h1>
-          <p className="truncate text-xs text-muted-foreground">This conversation is yours</p>
-        </div>
-      </header>
-
-      <section className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4 sm:px-5" aria-live="polite">
+      <section className="min-h-0 flex-1 space-y-5 overflow-y-auto px-1 py-3 sm:px-5 sm:py-5" aria-live="polite">
         {loading ? <p className="text-sm text-muted-foreground">Opening…</p> : null}
         {!loading && messages.length === 0 ? (
           <div className="mx-auto mt-10 max-w-sm text-center">
@@ -216,12 +208,13 @@ export function Talk() {
                   </span>
                 </div>
               ) : null}
-              <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+              <div className={`flex items-end gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
+                {!mine ? <img src="/brand/josi-mark.png" alt="" width={28} height={28} className="mb-1 h-7 w-7 shrink-0 rounded-full" /> : null}
                 <div
-                  className={`max-w-[86%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm leading-6 sm:max-w-[75%] ${
+                  className={`max-w-[84%] whitespace-pre-wrap break-words rounded-3xl px-4 py-3 text-base leading-6 sm:max-w-[75%] sm:text-sm ${
                     mine
-                      ? 'rounded-br-md bg-primary text-primary-foreground'
-                      : 'rounded-bl-md border border-border bg-secondary text-secondary-foreground'
+                      ? 'rounded-br-lg bg-primary text-primary-foreground'
+                      : 'rounded-bl-lg bg-secondary text-secondary-foreground'
                   }`}
                 >
                   {message.meta?.attachments?.length ? (
@@ -253,15 +246,16 @@ export function Talk() {
         <div ref={end} />
       </section>
 
-      <footer className="shrink-0 border-t border-border p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:p-3">
-        <VoiceChat onTurn={send} disabled={sending || loading || !thread} onActiveChange={setVoiceActive} />
+      <footer className="shrink-0 px-0 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-8 sm:px-3 sm:pb-3">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         <form
           onSubmit={(event) => { event.preventDefault(); void send(); }}
-          className="flex min-w-0 items-end gap-2 rounded-lg border border-input bg-background p-1.5 focus-within:ring-2 focus-within:ring-ring"
+          className="flex min-w-0 items-end gap-1 rounded-3xl border border-input bg-card p-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring"
         >
-          <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-xl hover:bg-secondary" aria-label="Attach pictures or files">
-            <span aria-hidden>＋</span>
+          <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full hover:bg-secondary" aria-label="Attach pictures or files">
+            <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
             <input type="file" multiple className="sr-only" accept="image/*,.pdf,.doc,.docx,.rtf,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.md,.csv" onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 10))} />
           </label>
           <textarea
@@ -278,7 +272,8 @@ export function Talk() {
             className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
             aria-label="Message Josi"
           />
-          <Button type="submit" className="h-11 w-11 shrink-0 px-0" disabled={sending || voiceActive} aria-label="Send message">
+          <VoiceChat onTurn={send} disabled={sending || loading || !thread} onActiveChange={setVoiceActive} />
+          <Button type="submit" className="h-11 w-11 shrink-0 rounded-full px-0" disabled={sending || voiceActive} aria-label="Send message">
             <span aria-hidden>↑</span>
           </Button>
         </form>
