@@ -181,10 +181,10 @@ export function Talk() {
       // rendered at the TOP of the screen with the history invisible (round-2
       // item 25). data-viewport-managed opts out of the global focus helper.
       data-viewport-managed
-      className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden bg-background sm:rounded-lg sm:border sm:border-border sm:bg-card"
-      style={{ height: 'calc(100dvh - 8.5rem)' }}
+      className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_20%,hsl(var(--secondary)/0.18),transparent_52%)] lg:rounded-2xl lg:border lg:border-border lg:bg-card"
+      style={{ height: '100%' }}
     >
-      <section className="min-h-0 flex-1 space-y-5 overflow-y-auto px-1 py-3 sm:px-5 sm:py-5" aria-live="polite">
+      <section className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6" aria-live="polite">
         {loading ? <p className="text-sm text-muted-foreground">Opening…</p> : null}
         {!loading && messages.length === 0 ? (
           <div className="mx-auto mt-10 max-w-sm text-center">
@@ -208,15 +208,10 @@ export function Talk() {
                   </span>
                 </div>
               ) : null}
-              <div className={`flex items-end gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
-                {!mine ? <img src="/brand/josi-mark.png" alt="" width={28} height={28} className="mb-1 h-7 w-7 shrink-0 rounded-full" /> : null}
-                <div
-                  className={`max-w-[84%] whitespace-pre-wrap break-words rounded-3xl px-4 py-3 text-base leading-6 sm:max-w-[75%] sm:text-sm ${
-                    mine
-                      ? 'rounded-br-lg bg-primary text-primary-foreground'
-                      : 'rounded-bl-lg bg-secondary text-secondary-foreground'
-                  }`}
-                >
+              <div className={`flex items-start gap-3 ${mine ? 'justify-end' : 'justify-start'}`}>
+                {!mine ? <img src="/brand/josi-mark.png" alt="" width={40} height={40} className="mt-1 h-10 w-10 shrink-0 rounded-full" /> : null}
+                <div className={`flex max-w-[82%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                <div className={`whitespace-pre-wrap break-words rounded-[1.65rem] px-4 py-3 text-base leading-6 ${mine ? 'rounded-br-lg bg-primary text-primary-foreground' : 'rounded-bl-lg bg-secondary text-secondary-foreground'}`}>
                   {message.meta?.attachments?.length ? (
                     <div className="mb-1 space-y-1 text-xs opacity-80">
                       {message.meta.attachments.map((attachment) => attachment.contentType.startsWith('image/') ? (
@@ -232,11 +227,8 @@ export function Talk() {
                     </div>
                   ) : null}
                   {message.body}
-                  <span className={`ml-2 inline-block translate-y-0.5 select-none whitespace-nowrap text-[10px] leading-none ${
-                    mine ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                  }`}>
-                    {at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-                  </span>
+                </div>
+                <span className="mt-1.5 px-2 text-xs text-muted-foreground">{at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}{mine ? <span className="ml-2 text-primary" aria-label="Sent">✓✓</span> : null}</span>
                 </div>
               </div>
             </Fragment>
@@ -246,11 +238,11 @@ export function Talk() {
         <div ref={end} />
       </section>
 
-      <footer className="shrink-0 px-0 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-8 sm:px-3 sm:pb-3">
+      <footer className="shrink-0 px-3 pb-3 pt-14 sm:px-4">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         <form
           onSubmit={(event) => { event.preventDefault(); void send(); }}
-          className="flex min-w-0 items-end gap-1 rounded-3xl border border-input bg-card p-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring"
+          className="flex min-h-[4.5rem] min-w-0 items-center gap-1 rounded-[2.25rem] border border-input bg-card/90 p-2 shadow-lg backdrop-blur focus-within:ring-2 focus-within:ring-ring"
         >
           <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full hover:bg-secondary" aria-label="Attach pictures or files">
             <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -274,7 +266,7 @@ export function Talk() {
           />
           <VoiceChat onTurn={send} disabled={sending || loading || !thread} onActiveChange={setVoiceActive} />
           <Button type="submit" className="h-11 w-11 shrink-0 rounded-full px-0" disabled={sending || voiceActive} aria-label="Send message">
-            <span aria-hidden>↑</span>
+            <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5 -rotate-12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
           </Button>
         </form>
         {files.length ? <p className="mt-1 truncate text-xs text-muted-foreground">Attached: {files.map((file) => file.name).join(', ')}</p> : null}
