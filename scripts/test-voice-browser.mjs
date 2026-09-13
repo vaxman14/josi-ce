@@ -128,9 +128,12 @@ try {
   await page.waitForFunction(() => window.__voiceTracks.every((track) => track.readyState === 'ended'));
   await page.waitForTimeout(200);
   assert.ok(closes > 0); assert.ok(frames >= 3); assert.ok(speeches >= 2);
+  assert.equal(await page.evaluate(() => window.scrollY), 0, 'Talk must scroll its transcript, not the app shell');
+  const header = await page.locator('header').boundingBox();
+  assert.ok(header && header.y >= 0 && header.y + header.height <= 844, 'Talk header must remain visible after transcript updates');
   assert.deepEqual(errors, []);
-  console.log('PASS microphone capture, partial/final transcript, normal assistant reply, speech interruption and track cleanup');
-  await page.screenshot({ path: join(keyRoot, 'talk.png'), fullPage: true });
+  console.log('PASS microphone capture, partial/final transcript, normal assistant reply, speech interruption, track cleanup and fixed app shell');
+  await page.screenshot({ path: join(keyRoot, 'talk.png'), fullPage: false });
   console.log('Browser evidence:', keyRoot);
 } finally {
   await browser?.close();

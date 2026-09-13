@@ -79,8 +79,8 @@ export function Shell() {
   const nav = isAdminArea ? ADMIN_NAV : MEMBER_NAV;
 
   return (
-    <div className="flex min-h-full w-full max-w-full flex-col overflow-x-hidden">
-      <header className={`sticky top-0 z-30 flex min-w-0 items-center gap-3 border-b border-border bg-card px-3 pt-[max(0.5rem,env(safe-area-inset-top))] ${isTalk ? 'h-[4.75rem] pb-2' : 'py-2'}`}>
+    <div className={`flex w-full max-w-full flex-col overflow-x-hidden ${isTalk ? 'h-dvh overflow-y-hidden' : 'min-h-full'}`}>
+      <header className={`z-30 flex min-w-0 shrink-0 items-center gap-3 border-b border-border bg-card px-3 pt-[max(0.5rem,env(safe-area-inset-top))] ${isTalk ? 'h-[4.75rem] pb-2' : 'sticky top-0 py-2'}`}>
         <Link to="/app" className="flex min-h-11 min-w-0 shrink items-center gap-2" aria-label="Josi home">
           <img src="/brand/josi-mark.png" alt="" width={40} height={40} className={`${isTalk ? 'h-10 w-10 rounded-full' : 'h-8 w-8 rounded-lg'} shrink-0`} />
           <span className={`truncate font-semibold tracking-tight ${isTalk ? 'text-xl' : 'text-base'}`}>Josi</span>
