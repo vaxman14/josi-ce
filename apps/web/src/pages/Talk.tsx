@@ -53,6 +53,7 @@ export function Talk() {
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState('');
   const end = useRef<HTMLDivElement>(null);
+  const transcript = useRef<HTMLElement>(null);
   const inputElement = useRef<HTMLTextAreaElement>(null);
   const sendLock = useRef(false);
 
@@ -91,7 +92,7 @@ export function Talk() {
   // toolbar). Put the newest message in place immediately; the bubble itself is
   // the motion/feedback the user needs.
   useEffect(() => {
-    end.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior });
+    transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: 'instant' as ScrollBehavior });
   }, [messages]);
 
   // When the keyboard opens/closes the page height changes and the scrolling
@@ -103,7 +104,9 @@ export function Talk() {
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
-    const repin = () => { end.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior }); };
+    const repin = () => {
+      if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
+    };
     vv.addEventListener('resize', repin);
     return () => vv.removeEventListener('resize', repin);
   }, []);
@@ -184,7 +187,7 @@ export function Talk() {
       className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_20%,hsl(var(--secondary)/0.18),transparent_52%)] lg:rounded-2xl lg:border lg:border-border lg:bg-card"
       style={{ height: '100%' }}
     >
-      <section className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6" aria-live="polite">
+      <section ref={transcript} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6" aria-live="polite">
         {loading ? <p className="text-sm text-muted-foreground">Opening…</p> : null}
         {!loading && messages.length === 0 ? (
           <div className="mx-auto mt-10 max-w-sm text-center">
