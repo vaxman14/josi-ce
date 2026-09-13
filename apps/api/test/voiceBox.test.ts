@@ -9,10 +9,25 @@ import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 import type { VoiceHelper } from '../src/http/voiceBoxRoutes.js';
-import { speechChunks } from '../../web/src/lib/voiceAudio.js';
+import { speechChunks, takeVoiceFrame } from '../../web/src/lib/voiceAudio.js';
 import { mountWebApp } from '../src/http/staticApp.js';
 
 let db: TestDb, server: Server, base: string;
+
+describe('Voice Box capture backpressure', () => {
+  it('coalesces queued half-second frames into one gateway-sized request', () => {
+    const frames = [new Uint8Array(16_000).fill(1), new Uint8Array(16_000).fill(2), new Uint8Array(16_000).fill(3)];
+    const request = takeVoiceFrame(frames);
+    expect(request).toHaveLength(32_000);
+    expect(request[0]).toBe(1);
+    expect(request[16_000]).toBe(2);
+    expect(frames).toHaveLength(1);
+  });
+
+  it('rejects a capture frame larger than the gateway limit', () => {
+    expect(() => takeVoiceFrame([new Uint8Array(32_001)])).toThrow(/oversized/);
+  });
+});
 const jars: Record<string, string> = {};
 const calls: { path: string; body: unknown }[] = [];
 let ready = false;

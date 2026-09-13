@@ -26,3 +26,22 @@ export function speechChunks(text: string): string[] {
   }
   return chunks;
 }
+
+/** Combine captured PCM16 frames without exceeding Voice Box's one-second limit. */
+export function takeVoiceFrame(frames: Uint8Array[], maxBytes = 32_000): Uint8Array {
+  let size = 0;
+  let count = 0;
+  while (count < frames.length && size + frames[count].byteLength <= maxBytes) {
+    size += frames[count].byteLength;
+    count++;
+  }
+  if (!count) throw new Error('Voice capture produced an oversized audio frame');
+  if (count === 1) return frames.shift()!;
+  const combined = new Uint8Array(size);
+  let offset = 0;
+  for (const frame of frames.splice(0, count)) {
+    combined.set(frame, offset);
+    offset += frame.byteLength;
+  }
+  return combined;
+}
