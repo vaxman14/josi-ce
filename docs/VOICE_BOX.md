@@ -12,15 +12,16 @@ same Josi permissions, retention and model-provider behavior as typed chat.
 
 ## Status of this branch
 
-No Voice Box image has been authorized for publication. The production image
-catalog is empty on purpose; Admin shows the installation requirements and a
-disabled Install button until the host helper has an approved image. An admin
-cannot supply a different registry, tag, digest, command or filesystem mount.
-Changing application code does not publish an image or upgrade an installation.
+The reviewed CPU image is published for Linux amd64 and arm64 as
+`ghcr.io/vaxman14/josi-voice-box:0.1.0`, pinned in the production catalog to
+`sha256:dc5695386421ff02bb24b31132c1daa90569d740a4c5f5a422f491926e93c1fb`.
+An admin cannot supply a different registry, tag, digest, command or filesystem
+mount. Voice Box remains optional and off by default; publishing the image does
+not install it or upgrade an existing Josi installation.
 
 See [the redistribution review](../services/voice-box/LICENSES.md) for the
 engine, model and voice terms, preserved sources, and CPU artifact conclusion.
-The owner must authorize any public image, release workflow or gate upgrade.
+Any future image or gate upgrade still requires its own explicit authorization.
 
 ## Host requirements and one-time opt-in
 

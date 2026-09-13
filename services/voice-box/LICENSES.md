@@ -1,8 +1,10 @@
 # Voice Box redistribution review
 
-Reviewed 2026-09-12. This is a release candidate, not an authorized public image.
-The production image catalog is intentionally empty. No models are fetched by
-the running gateway, and no third-party TTS web service receives audio or text.
+Reviewed 2026-09-12 as a release candidate. Roman subsequently authorized the
+reviewed CPU build, which was published for amd64 and arm64 and entered in the
+production catalog by immutable digest. This authorization does not cover the
+GPU target or any different image. No models are fetched by the running gateway,
+and no third-party TTS web service receives audio or text.
 
 ## Engines, weights and voices
 
@@ -30,7 +32,8 @@ explicit first-install notice and a checksum-pinned download after acceptance.
 The v1 CPU builds for Linux amd64 and arm64 use Kokoro as their only TTS engine.
 The exact final image identities and SBOM hashes are recorded outside the image
 in `docs/voice-box/artifacts.json`; this avoids a circular image-digest claim.
-No publication or gate change is authorized by this review.
+The later publication authorization covers only the reviewed CPU image recorded
+there. No gate installation or upgrade is authorized merely by this review.
 
 The runtime has no PyAV dependency or compressed-audio codec libraries.
 `patch_whisper.py` checks the upstream faster-whisper 1.2.1 audio module hash,
