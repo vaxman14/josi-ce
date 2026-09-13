@@ -43,12 +43,14 @@ runtime inventories remain inside each candidate image.
 
 The reviewed CPU candidates have the required redistribution materials and pass
 the requested Voice Box checks. No remaining CPU redistribution-material blocker
-was identified in this artifact review. The production image catalog stays empty
-and publication still requires Roman's explicit authorization.
+was identified in this artifact review. Roman subsequently authorized the CPU
+image, which was published for amd64 and arm64 and added to the production
+catalog by immutable digest. That authorization does not extend to GPU artifacts.
 
 The broader Josi CE browser gate is **not green**: ten pre-existing assertions
 still fail (console policy, existing control sizes, connection/provider choices,
 admin header and branding/offline expectations). This change does not weaken
 those assertions or claim that the complete application release gate passed.
 GPU artifacts require a separate redistribution review and runtime validation.
-No merge, image publication, release, deployment or gate upgrade was performed.
+The validation pass itself performed no merge, publication, release, deployment
+or gate upgrade; the later publication is recorded in the artifact manifest.

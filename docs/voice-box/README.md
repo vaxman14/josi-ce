@@ -4,7 +4,10 @@
 configs, SPDX SBOM checksums, source-input hashes, and validation scope. Each
 architecture has a final `.spdx.json.gz`, runtime `.audit.json.gz`, and `.report.json`.
 `cpu-acceptance.json` records the real amd64 container acceptance and timings.
-These are candidate artifacts; this directory does not authorize publication.
+These are the review artifacts for the authorized CPU image published as
+`ghcr.io/vaxman14/josi-voice-box:0.1.0`; authorization and its immutable index
+digest are recorded in `artifacts.json`. This evidence does not authorize a
+different image, GPU build, or deployment.
 
 The SPDX documents combine Syft's installed-package inventory with verified
 model/voice, native-library, source-archive and notice hashes. Syft's complex
