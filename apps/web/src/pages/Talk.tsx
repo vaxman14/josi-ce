@@ -37,7 +37,7 @@ function dayLabel(at: Date): string {
   if (at.toDateString() === yesterday.toDateString()) return 'Yesterday';
   return at.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: at.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
 }
-import { Button, ErrorNote } from '@/components/ui';
+import { ErrorNote } from '@/components/ui';
 
 const talkCache = new Map<string, { thread: Thread; messages: Message[] }>();
 
@@ -245,14 +245,15 @@ export function Talk() {
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         <form
           onSubmit={(event) => { event.preventDefault(); void send(); }}
-          className="flex min-h-[4.5rem] min-w-0 items-center gap-1 rounded-[2.25rem] border border-input bg-card/90 p-2 shadow-lg backdrop-blur focus-within:ring-2 focus-within:ring-ring"
+          className="flex min-h-14 min-w-0 items-center gap-0.5 rounded-[1.75rem] border border-border bg-secondary/25 p-1.5 shadow-lg backdrop-blur"
         >
-          <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full hover:bg-secondary" aria-label="Attach pictures or files">
+          <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-secondary text-secondary-foreground hover:bg-secondary/80" aria-label="Attach pictures or files">
             <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14M5 12h14" />
             </svg>
             <input type="file" multiple className="sr-only" accept="image/*,.pdf,.doc,.docx,.rtf,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.md,.csv" onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 10))} />
           </label>
+          <span aria-hidden className="mx-1 h-8 w-px shrink-0 bg-border" />
           <textarea
             ref={inputElement}
             value={input}
@@ -264,13 +265,13 @@ export function Talk() {
             maxLength={8000}
             enterKeyHint="send"
             placeholder="Message Josi…"
-            className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
+            className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-2.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
             aria-label="Message Josi"
           />
           <VoiceChat onTurn={send} disabled={sending || loading || !thread} onActiveChange={setVoiceActive} />
-          <Button type="submit" className="h-11 w-11 shrink-0 rounded-full px-0" disabled={sending || voiceActive} aria-label="Send message">
+          <button type="submit" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50" disabled={sending || voiceActive} aria-label="Send message">
             <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5 -rotate-12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-          </Button>
+          </button>
         </form>
         {files.length ? <p className="mt-1 truncate text-xs text-muted-foreground">Attached: {files.map((file) => file.name).join(', ')}</p> : null}
       </footer>

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { fetchVoiceAudio, speechChunks, takeVoiceFrame } from '@/lib/voiceAudio';
-import { Button } from '@/components/ui';
 
 type Event = { type: 'speech_start' | 'partial' | 'final'; text?: string };
 export function VoiceChat({ onTurn, disabled, onActiveChange }: { onTurn: (text: string) => Promise<string | undefined>; disabled: boolean; onActiveChange: (active: boolean) => void }) {
@@ -156,30 +155,28 @@ export function VoiceChat({ onTurn, disabled, onActiveChange }: { onTurn: (text:
   if (!available) return null;
   return (
     <div className="relative flex shrink-0 items-center gap-1">
-      <div className="absolute bottom-[calc(100%+1.5rem)] right-10 flex max-w-[min(20rem,calc(100vw-2rem))] flex-col items-end gap-1 sm:right-0">
-        <span className="flex items-center gap-2 whitespace-nowrap rounded-full border border-primary/30 bg-card/95 px-4 py-2 text-sm font-medium text-foreground shadow-lg backdrop-blur">
-          <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5 text-primary" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 13v-2M8 17V7M12 20V4M16 16V8M20 13v-2" /></svg>
+      <div className="absolute bottom-[calc(100%+1rem)] right-8 flex max-w-[min(20rem,calc(100vw-2rem))] flex-col items-end gap-1 sm:right-0">
+        <span className="flex items-center gap-2 whitespace-nowrap rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-foreground backdrop-blur">
+          <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4 text-primary" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 13v-2M8 17V7M12 20V4M16 16V8M20 13v-2" /></svg>
           {listening ? 'Listening… pause to send' : 'Voice Box ready'}
         </span>
         {partial ? <p role="status" className="max-w-full truncate rounded-md bg-card px-2 py-1 text-xs shadow-sm">{partial}</p> : null}
         {error ? <p role="alert" className="max-w-full rounded-md bg-card px-2 py-1 text-xs text-destructive shadow-sm">{error}</p> : null}
       </div>
       {listening ? (
-        <Button
+        <button
           type="button"
-          variant="ghost"
-          className="h-11 w-11 rounded-full px-0"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-colors hover:bg-secondary/80"
           onClick={() => interruptRef.current()}
           aria-label="Interrupt speech"
           title="Interrupt speech"
         >
           <span aria-hidden className="h-3.5 w-3.5 rounded-sm bg-current" />
-        </Button>
+        </button>
       ) : null}
-      <Button
+      <button
         type="button"
-        variant={listening ? 'secondary' : 'ghost'}
-        className="h-11 w-11 rounded-full px-0"
+        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-colors hover:bg-secondary/80 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={disabled && !listening}
         onClick={() => listening ? stopRef.current() : void start()}
         aria-label={listening ? 'Stop voice chat' : 'Start voice chat'}
@@ -193,7 +190,7 @@ export function VoiceChat({ onTurn, disabled, onActiveChange }: { onTurn: (text:
             <path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8" />
           </svg>
         )}
-      </Button>
+      </button>
     </div>
   );
 }
