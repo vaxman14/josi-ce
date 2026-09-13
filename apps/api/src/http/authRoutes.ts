@@ -35,6 +35,47 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return domain ? `https://${domain}` : ctx.appUrl.replace(/\/$/, '');
   }
 
+  const NATIVE_GOOGLE_RETURN_URI = 'josi://auth/callback';
+
+  function nativeCallback(returnUri: string, params: Record<string, string>): string {
+    const url = new URL(returnUri);
+    for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
+    return url.toString();
+  }
+
+  async function startGoogle(returnUri: string | null, res: import('express').Response) {
+    if (returnUri !== null && returnUri !== NATIVE_GOOGLE_RETURN_URI) {
+      return res.status(400).json({ error: 'unsupported native redirect URI' });
+    }
+    if (ctx.masterKey === false) {
+      return returnUri
+        ? res.redirect(nativeCallback(returnUri, { error: 'google_unavailable' }))
+        : res.redirect('/login?error=google_unavailable');
+    }
+    let key; let saved;
+    try {
+      key = loadMasterKey(ctx.masterKey ?? {});
+      saved = await loadClient(db, key, 'google');
+    } catch {
+      return returnUri
+        ? res.redirect(nativeCallback(returnUri, { error: 'google_unavailable' }))
+        : res.redirect('/login?error=google_unavailable');
+    }
+    const redirectUri = `${await publicAppUrl()}/api/auth/google/callback`;
+    const state = randomBytes(32).toString('base64url');
+    const verifier = randomBytes(48).toString('base64url');
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    await db.query(
+      `insert into auth_oauth_states (state_hash, verifier, return_path, native_return_uri, expires_at)
+       values ($1, $2, '/app', $3, now() + interval '10 minutes')`,
+      [createHash('sha256').update(state).digest('hex'), seal(key, { verifier }), returnUri],
+    );
+    return res.redirect(buildAuthUrl(
+      { ...saved, redirectUri },
+      { state, scopes: 'openid email profile', codeChallenge: challenge },
+    ));
+  }
+
   /** Hands the SPA a CSRF token before it posts anything, including login. */
   r.get('/csrf', (_req, res) => {
     res.json({ csrfToken: issueCsrfToken(res, cookieOpts) });
@@ -136,28 +177,32 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return res.json({ ok: true, message: 'If that account exists and system email is configured, a reset link is on its way.' });
   }));
 
-  r.get('/google/start', asyncRoute(async (_req, res) => {
-    if (ctx.masterKey === false) return res.redirect('/login?error=google_unavailable');
-    let key; let saved;
-    try {
-      key = loadMasterKey(ctx.masterKey ?? {});
-      saved = await loadClient(db, key, 'google');
-    } catch {
-      return res.redirect('/login?error=google_unavailable');
+  r.get('/google/start', asyncRoute(async (_req, res) => startGoogle(null, res)));
+
+  r.get('/google/native/start', asyncRoute(async (req, res) => {
+    const returnUri = typeof req.query.redirect_uri === 'string' ? req.query.redirect_uri : '';
+    return startGoogle(returnUri, res);
+  }));
+
+  r.get('/native/config', asyncRoute(async (_req, res) => {
+    let googleSignIn = false;
+    if (ctx.masterKey !== false) {
+      try {
+        await loadClient(db, loadMasterKey(ctx.masterKey ?? {}), 'google');
+        googleSignIn = true;
+      } catch { /* configuration is intentionally reported only as a boolean */ }
     }
-    const redirectUri = `${await publicAppUrl()}/api/auth/google/callback`;
-    const state = randomBytes(32).toString('base64url');
-    const verifier = randomBytes(48).toString('base64url');
-    const challenge = createHash('sha256').update(verifier).digest('base64url');
-    await db.query(
-      `insert into auth_oauth_states (state_hash, verifier, return_path, expires_at)
-       values ($1, $2, '/app', now() + interval '10 minutes')`,
-      [createHash('sha256').update(state).digest('hex'), seal(key, { verifier })],
-    );
-    return res.redirect(buildAuthUrl(
-      { ...saved, redirectUri },
-      { state, scopes: 'openid email profile', codeChallenge: challenge },
-    ));
+    const appUrl = await publicAppUrl();
+    const enrollmentDeepLink = appUrl.startsWith('https://')
+      ? `josi://enroll?server=${encodeURIComponent(appUrl)}`
+      : null;
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      appUrl,
+      googleSignIn,
+      nativeGoogleStart: `${appUrl}/api/auth/google/native/start`,
+      enrollmentDeepLink,
+    });
   }));
 
   r.post('/mfa/verify-login', asyncRoute(async (req, res) => {
@@ -245,15 +290,22 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
   r.get('/google/callback', asyncRoute(async (req, res) => {
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const code = typeof req.query.code === 'string' ? req.query.code : '';
-    if (!state || !code || ctx.masterKey === false) return res.redirect('/login?error=google_signin_failed');
+    const providerError = typeof req.query.error === 'string' ? req.query.error : '';
+    if (!state || ctx.masterKey === false) return res.redirect('/login?error=google_signin_failed');
     const key = loadMasterKey(ctx.masterKey ?? {});
-    const rows = await db.query<{ verifier: string }>(
+    const rows = await db.query<{ verifier: string; native_return_uri: string | null }>(
       `update auth_oauth_states set used_at = now()
        where state_hash = $1 and used_at is null and expires_at > now()
-       returning verifier`,
+       returning verifier, native_return_uri`,
       [createHash('sha256').update(state).digest('hex')],
     );
     if (!rows.length) return res.redirect('/login?error=google_signin_expired');
+    if (providerError || !code) {
+      const error = providerError === 'access_denied' ? 'google_declined' : 'google_signin_failed';
+      return rows[0].native_return_uri
+        ? res.redirect(nativeCallback(rows[0].native_return_uri, { error, state }))
+        : res.redirect(`/login?error=${error}`);
+    }
     const verifier = openSealed<{ verifier: string }>(key, rows[0].verifier).verifier;
     const saved = await loadClient(db, key, 'google');
     const redirectUri = `${await publicAppUrl()}/api/auth/google/callback`;
@@ -272,7 +324,21 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
        limit 1`,
       [identity.accountId, identity.email],
     );
-    if (!user) return res.redirect('/login?error=google_not_linked');
+    if (!user) {
+      return rows[0].native_return_uri
+        ? res.redirect(nativeCallback(rows[0].native_return_uri, { error: 'google_not_linked', state }))
+        : res.redirect('/login?error=google_not_linked');
+    }
+    if (rows[0].native_return_uri) {
+      const nativeCode = randomBytes(32).toString('base64url');
+      await db.query(
+        `insert into auth_native_codes (code_hash, user_id, expires_at)
+         values ($1, $2, now() + interval '2 minutes')`,
+        [createHash('sha256').update(nativeCode).digest('hex'), user.id],
+      );
+      await appendEvent(db, { actorUserId: user.id, actor: 'user', kind: 'auth.google_native_code_issued', subjectType: 'user', subjectId: user.id });
+      return res.redirect(nativeCallback(rows[0].native_return_uri, { code: nativeCode, state }));
+    }
     const ttlSeconds = SESSION_TTL_SECONDS;
     const { token } = await createSession(db, {
       userId: user.id, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds,
@@ -280,6 +346,31 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     setSessionCookie(res, token, ttlSeconds, cookieOpts); issueCsrfToken(res, cookieOpts);
     await appendEvent(db, { actorUserId: user.id, actor: 'user', kind: 'auth.google_login', subjectType: 'user', subjectId: user.id });
     return res.redirect('/app');
+  }));
+
+  r.post('/google/native/exchange', asyncRoute(async (req, res) => {
+    if (!isNativeClient(req)) return res.status(403).json({ error: 'native client required' });
+    const code = typeof req.body?.code === 'string' ? req.body.code : '';
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const [redeemed] = await db.query<{
+      user_id: string; id: string; email: string; username: string; role: string; display_name: string | null;
+    }>(
+      `with claimed as (
+         update auth_native_codes set used_at = now()
+         where code_hash = $1 and used_at is null and expires_at > now()
+         returning user_id
+       )
+       select c.user_id, u.id, u.email, u.username, u.role, u.display_name
+       from claimed c join users u on u.id = c.user_id
+       where u.status = 'active'`,
+      [createHash('sha256').update(code).digest('hex')],
+    );
+    if (!redeemed) return res.status(401).json({ error: 'invalid or expired code' });
+    const { token } = await createSession(db, {
+      userId: redeemed.user_id, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds: SESSION_TTL_SECONDS,
+    });
+    await appendEvent(db, { actorUserId: redeemed.user_id, actor: 'user', kind: 'auth.google_native_login', subjectType: 'user', subjectId: redeemed.user_id });
+    return res.json({ user: publicUser(redeemed), sessionToken: token });
   }));
 
   r.get('/me', requireAuth, (req, res) => {

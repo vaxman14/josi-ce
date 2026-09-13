@@ -98,7 +98,8 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * victim then did would land in it. The client fetches a token from
  * `/api/auth/csrf` before posting credentials. */
 export function requireCsrf(req: Request, res: Response, next: NextFunction): void {
-  const nativeLogin = req.path === '/auth/login';
+  const nativeLogin = req.path === '/auth/login'
+    || req.path === '/auth/google/native/exchange';
   const nativeBearer = /^Bearer\s+[^\s]+$/i.test(req.header('authorization') ?? '');
   if (isNativeClient(req) && (nativeLogin || nativeBearer)) {
     next();
