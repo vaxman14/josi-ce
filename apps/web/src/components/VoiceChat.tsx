@@ -156,8 +156,9 @@ export function VoiceChat({ onTurn, disabled, onActiveChange }: { onTurn: (text:
   if (!available) return null;
   return (
     <div className="relative flex shrink-0 items-center gap-1">
-      <div className="absolute bottom-[calc(100%+0.75rem)] right-0 flex max-w-[min(20rem,calc(100vw-2rem))] flex-col items-end gap-1">
-        <span className="whitespace-nowrap rounded-full border border-border bg-card/95 px-2.5 py-1 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
+      <div className="absolute bottom-[calc(100%+1.5rem)] right-10 flex max-w-[min(20rem,calc(100vw-2rem))] flex-col items-end gap-1 sm:right-0">
+        <span className="flex items-center gap-2 whitespace-nowrap rounded-full border border-primary/30 bg-card/95 px-4 py-2 text-sm font-medium text-foreground shadow-lg backdrop-blur">
+          <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5 text-primary" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 13v-2M8 17V7M12 20V4M16 16V8M20 13v-2" /></svg>
           {listening ? 'Listening… pause to send' : 'Voice Box ready'}
         </span>
         {partial ? <p role="status" className="max-w-full truncate rounded-md bg-card px-2 py-1 text-xs shadow-sm">{partial}</p> : null}

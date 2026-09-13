@@ -230,6 +230,22 @@ byte-for-byte capture of the pinned version in
 
 ## Operator checklist for a hardware run
 
+## Talk mockup fidelity — 2026-09-12
+
+The mobile Talk redesign was verified at a 390×844 viewport against the
+approved mockup, using the real authenticated browser harness and microphone
+capture path. The compact Josi header, separate message timestamps, delivery
+marks, centered Voice Box status, rounded composer, and icon navigation all
+rendered in the browser. `scripts/test-voice-browser.mjs` passed microphone
+capture, partial/final transcription, assistant response, speech interruption,
+and media-track cleanup. The complete release gate passed 2,307 tests, the
+production web build and TypeScript check, zero high-severity dependency audit
+findings, and the 502-file secret scan.
+
+Browser evidence was captured at `/tmp/josi-voice-browser-x1ukoD/talk.png` on
+the test host; this path is ephemeral and records the environment rather than
+shipping an acceptance artifact.
+
 1. Start from a machine with Docker installed and **no Josi containers,
    volumes or images**. If it has been used before, `docker system prune -a` on
    a machine you are willing to prune.
