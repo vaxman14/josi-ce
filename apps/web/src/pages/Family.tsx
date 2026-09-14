@@ -84,7 +84,8 @@ export function Family() {
   if (absent) {
     return (
       <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-        <h1 className="text-xl font-semibold tracking-tight">Family</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Family <Badge tone="danger">BETA</Badge></h1>
+        <BetaWarning />
         <Empty title="Parental Controls is not part of this installation">
           It is a paid module. Until somebody activates a licence for it, nothing here exists:
           no account is managed, no conversation is visible to anybody else, and no timetable
@@ -96,7 +97,8 @@ export function Family() {
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Family</h1>
+      <h1 className="text-xl font-semibold tracking-tight">Family <Badge tone="danger">BETA</Badge></h1>
+      <BetaWarning />
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {!overview ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
       {overview?.role === 'child' && overview.child
@@ -105,6 +107,19 @@ export function Family() {
       {overview && overview.role !== 'child'
         ? <ParentView overview={overview} reload={load} />
         : null}
+    </div>
+  );
+}
+
+function BetaWarning() {
+  return (
+    <div role="alert" className="rounded-md border border-amber-500/60 bg-amber-500/10 p-3 text-sm">
+      <p className="font-semibold text-amber-200">BETA — do not rely on these controls for a child&rsquo;s safety.</p>
+      <p className="mt-1 text-amber-100/90">
+        This feature is experimental and may fail, be delayed, or behave unexpectedly. It controls only access to Josi;
+        it cannot supervise a device, block other apps or websites, provide emergency monitoring, or replace active adult supervision
+        and device-level parental controls. Verify important restrictions yourself.
+      </p>
     </div>
   );
 }

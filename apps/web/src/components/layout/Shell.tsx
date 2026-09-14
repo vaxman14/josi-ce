@@ -16,6 +16,7 @@ import { cn } from '@/lib/cn';
 import { PwaPrompts } from '@/lib/pwa';
 import { Button } from '@/components/ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { HELP_URL, LegalLinks } from '@/components/LegalLinks';
 
 const MEMBER_NAV = [
   { to: '/app', label: 'Home', end: true },
@@ -33,7 +34,7 @@ const MEMBER_NAV = [
 ];
 
 const FAMILY_NAV: { to: string; label: string; end?: boolean } = {
-  to: '/app/family', label: 'Family',
+  to: '/app/family', label: 'Family (BETA)',
 };
 
 const ADMIN_NAV = [
@@ -50,7 +51,7 @@ const ADMIN_NAV = [
   { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/backups', label: 'Backups' },
   { to: '/admin/developer-services', label: 'Developer services' },
-  { to: '/admin/parental-controls', label: 'Parental controls' },
+  { to: '/admin/parental-controls', label: 'Parental controls (BETA)' },
   { to: '/admin/workspace', label: 'Workspace' },
 ];
 
@@ -112,6 +113,14 @@ export function Shell() {
         ) : null}
 
         <div className="relative ml-auto flex shrink-0 items-center gap-1" ref={talkMenu}>
+          <a
+            href={HELP_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+            className={`inline-flex min-h-11 items-center rounded-md px-3 font-medium hover:bg-secondary ${isTalk ? 'text-base' : 'text-sm'}`}
+          >
+            Help
+          </a>
           {user?.role === 'super_admin' ? (
             <Link
               to={isAdminArea ? '/app' : '/admin'}
@@ -194,6 +203,7 @@ export function Shell() {
           nothing offers to install an app to somebody looking at a login form,
           and an update prompt is only meaningful to somebody using the app. */}
       <PwaPrompts />
+      <LegalLinks className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] right-2 z-20 hidden gap-3 rounded-md border border-border bg-card/95 px-3 py-2 text-xs text-muted-foreground shadow-sm lg:flex lg:bottom-2 [&_a]:underline" />
     </div>
   );
 }

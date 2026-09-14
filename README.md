@@ -32,6 +32,8 @@ proven and what is not.
 | [`docs/SUBSCRIPTION_AUTH.md`](docs/SUBSCRIPTION_AUTH.md) | Using a ChatGPT plan instead of an API key, why Claude cannot be used, and the edition boundary |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | Clean-install acceptance: what has actually been run, on what hardware |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Every threat with its control and the test that would fail without it |
+| [`docs/HELP.md`](docs/HELP.md) | Current feature help and links to each operator/user guide |
+| [`docs/LEGAL.md`](docs/LEGAL.md) | Terms, privacy, cookies, licences, support and security policies |
 
 Phase progress is tracked in the implementation plan. Nothing here is presented
 as working before it is.
@@ -125,7 +127,7 @@ mkdir josi-ce && cd josi-ce
 docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.6
+  ghcr.io/vaxman14/josi-ce-installer:0.1.20
 ```
 
 On macOS with Docker Desktop, use its user socket instead:
@@ -134,7 +136,7 @@ On macOS with Docker Desktop, use its user socket instead:
 docker run --rm \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.6
+  ghcr.io/vaxman14/josi-ce-installer:0.1.20
 ```
 
 Review `.env` before exposing the installation publicly. Set `JOSI_DOMAIN` and
@@ -244,6 +246,16 @@ recorded version at the old one.
   application does not by itself keep everything local.
 - **Local-only mode** blocks external LLM providers entirely and shows a
   persistent badge while active.
+- Full data categories, recipients, Family BETA handling, retention and user
+  choices are in the [`Privacy Notice`](docs/PRIVACY_NOTICE.md). Strictly
+  necessary cookies and PWA caching are in the [`Cookie Notice`](docs/COOKIE_NOTICE.md).
+
+## Terms and Family BETA
+
+Use of the official application and paid modules is governed by the
+[`Terms of Use`](docs/TERMS_OF_USE.md). **Family and Parental Controls are BETA
+and must not be relied on for a child's safety.** They control only Josi, not a
+device, other apps, websites, location, emergencies or actual screen time.
 
 ## Support
 

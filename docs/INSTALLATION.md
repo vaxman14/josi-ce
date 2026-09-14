@@ -16,9 +16,10 @@ server unless a section says otherwise.
 > - **No update has ever been applied.** The rollback path is verified against
 >   a real database, but no release has been downloaded and installed by the
 >   product, so the in-product upgrade is logic rather than a measurement.
-> - **The document pipeline does not process files.** Mapping, permissions and
->   purge are complete and proven; no parser, OCR, scanner or cloud sync runs,
->   so a mapped folder is never indexed.
+> - **Document processing is bounded, not magical.** Supported files can be
+>   extracted, scanned, indexed, searched and cited; configured cloud sources
+>   can synchronize. Unsupported, encrypted, unsafe or over-limit files are
+>   skipped with an explicit reason. OCR and ClamAV remain optional services.
 >
 > Do not treat this preview as production-ready merely because the containers
 > start.
@@ -41,7 +42,7 @@ mkdir -p /opt/josi && cd /opt/josi
 docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.6
+  ghcr.io/vaxman14/josi-ce-installer:0.1.20
 ```
 
 The version-pinned installer checks Docker, writes the reviewed release files,
@@ -1289,9 +1290,10 @@ An administrator can see that a link exists and revoke it. They cannot read
 anything sent over it: the admin surface returns no message text and not even
 the chat identifier.
 
-Files over Telegram are **off by default** and, as of this release, are recorded
-and acknowledged rather than indexed — the document pipeline that would read
-them is later work. Leave the setting off unless you want the acknowledgement.
+Files over Telegram are **off by default**. When enabled, accepted files enter
+the same bounded ingestion, scan, extraction and indexing pipeline as other
+uploads. Unsupported, encrypted, unsafe and over-limit files are skipped with
+an explicit reason.
 
 ### 17B.2 The installable app (PWA) — `docs/PWA.md`
 

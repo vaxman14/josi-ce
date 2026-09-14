@@ -3,13 +3,47 @@
 repository. It is intentionally explicit. Commands are written for a Linux
 server unless a section says otherwise.</p>
 <blockquote>
-<p><strong>Release warning</strong></p>
-<p>Josi CE 0.1 is still under construction. Phase 9 is incomplete and Phases
-10 through 12 are not implemented at the time this paragraph was written.
-In particular, the product does not yet provide its promised backup,
-restore, update, rollback, diagnostics, or identity/memory workflows. Do not
-treat this preview as production-ready merely because the containers start.</p>
+<p><strong>Community Preview warning</strong></p>
+<p>Josi CE 0.1 is beta-quality software. Features may be incomplete, unavailable,
+delayed, inaccurate or changed without notice. Do not use Josi as the sole
+system for emergencies, safety, healthcare, legal, financial, compliance,
+access control or backups. Review AI output and consequential actions yourself.</p>
 </blockquote>
+<h2 id="help">Help and current features</h2>
+<p>Josi CE currently provides one self-hosted workspace; account roles, password
+recovery and MFA; conversations, tasks and approvals; contacts; personalization
+and memory; usage and cost limits; hosted or local model providers; Google and
+Microsoft connections; contact synchronization; operational mail; document
+storage, extraction, search and citations; Telegram, Slack, WhatsApp and Signal
+channels; backups, restore, export and diagnostics; optional telemetry; system
+checkups; an installable PWA; optional Voice Box; developer-service connections;
+and licensed Family BETA controls.</p>
+<p>Administrators configure infrastructure under <strong>Admin</strong>. Members
+use their own accounts under <strong>Workspace</strong>. Every signed-in page has
+a persistent <strong>Help</strong> link back to this guide.</p>
+<h3>Family / Parental Controls BETA</h3>
+<blockquote><p><strong>BETA — do not trust or rely on these controls for a child's
+safety.</strong> They are experimental and may fail, be delayed or behave
+unexpectedly. They control only access to Josi. They do not lock a device, block
+other apps or websites, monitor location or actual screen time, contact emergency
+services, or replace active adult supervision and proven device-level controls.
+Verify important restrictions independently.</p></blockquote>
+<p>Use <strong>Admin → Parental controls (BETA)</strong> to activate or manage the
+publisher-issued licence. Use <strong>Workspace → Family (BETA)</strong> to create
+a new managed child account, set Josi-only schedules and message-minute limits,
+review usage and—through an explicit parent-child relationship—view that child's
+Josi conversations. The child sees who supervises the account, what can be seen,
+and parental access events.</p>
+<h3>Voice Box</h3>
+<p>Voice Box is an optional local speech service. The host operator must provision
+the guarded helper before the Admin install control can work. Browser microphone
+permission is required. Voice Box is not an emergency calling or recording
+service and should not be treated as one.</p>
+<h3>Backups and system checkup</h3>
+<p>Admin → Overview includes a system checkup and recommendations. It is a useful
+diagnostic snapshot, not continuous monitoring or a warranty that the system is
+safe. Backups exclude the installation master key: keep that key separately and
+test restores.</p>
 <h2>1. What the standard installation creates</h2>
 <p>The default Compose deployment creates five service roles:</p>
 <table>
@@ -98,6 +132,131 @@ and local inference change resource requirements substantially.</p>
 <li>OpenSSL, or a readable <code>/dev/urandom</code></li>
 <li><code>curl</code> for host-side verification</li>
 </ul>
+<h2 id="terms-of-use">Terms of Use</h2>
+<p><strong>Effective 14 September 2026.</strong> These Terms govern use of the
+official Josi CE application and publisher-supplied paid modules from SOCAL
+RECEPTIONIST LLC. The GNU AGPL v3 separately governs copying, modification and
+distribution of the open-source code. If you do not agree, do not use the
+official application or paid modules.</p>
+<h3>Preview, AI and reliance</h3>
+<p>Josi CE 0.1 is beta-quality Community Preview software. Features and AI output
+may be incomplete, unavailable, delayed or wrong. Do not use Josi as the sole
+system for emergencies, safety, healthcare, legal, financial, employment,
+compliance, access control or backups. Review output and approve consequential
+actions yourself.</p>
+<h3>Operator and user responsibilities</h3>
+<p>The installation operator controls the server, users, providers, retention and
+backups. Users must protect credentials and use only accounts and data they are
+authorized to use. Do not use Josi to violate law or rights, exploit or harm
+minors, send unlawful or abusive communications, distribute malware, bypass
+security, misrepresent AI authorship or access another person's data without
+authority.</p>
+<h3>Connected services</h3>
+<p>Features can send necessary data to operator-selected AI, email, Google,
+Microsoft, messaging, storage, backup, developer, telemetry or support services.
+Those services have their own terms, privacy, security, availability, retention
+and pricing. The operator and user are responsible for their configuration,
+permissions, recipients and use.</p>
+<h3>Family BETA</h3>
+<p>Family and Parental Controls must not be relied on to protect a child. They
+control only Josi and may fail. They are not device controls, web filters,
+location monitoring, emergency services or actual screen-time measurement. The
+operator and supervising adult are responsible for consent, child-privacy law,
+age-appropriate use, disclosure to the child, active supervision and independent
+device-level controls.</p>
+<h3>Data, security and backups</h3>
+<p>Users retain rights in their content. Operators are responsible for lawful
+collection, notice, access, retention, export and deletion. A compromised host
+can bypass application controls. A database backup excludes the separate master
+key; losing it may make credentials unrecoverable. Test restores and keep
+independent backups.</p>
+<h3>Paid modules</h3>
+<p>A signed licence key grants only the named feature, buyer, installation and
+term. It grants no source ownership, trademark right, support, warranty or SLA.
+Do not forge, alter, share, resell or use a key outside its issued scope. An
+expired, revoked, invalid or wrong-installation key may make the module inert.</p>
+<h3>No warranties and limitation</h3>
+<p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, JOSI, ITS DOCUMENTATION AND PAID
+MODULES ARE PROVIDED “AS IS” AND “AS AVAILABLE,” WITHOUT WARRANTIES OF
+ACCURACY, RELIABILITY, FITNESS, NON-INFRINGEMENT, SECURITY OR AVAILABILITY.
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, SOCAL RECEPTIONIST LLC WILL NOT BE
+LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY OR PUNITIVE
+DAMAGES, OR LOSS OF DATA, PROFITS, REVENUE, GOODWILL OR USE. Nothing excludes
+liability that applicable law does not permit excluding.</p>
+<p>Community Preview use carries no support entitlement, guaranteed response or
+SLA. Updated Terms may be published prospectively with a new effective date.
+Questions and reports follow the repository's public Support and Security policies.</p>
+
+<h2 id="privacy-notice">Privacy Notice</h2>
+<p><strong>Effective 14 September 2026.</strong> Josi CE is self-hosted. The
+person or organization operating an installation is normally the controller of
+its data. SOCAL RECEPTIONIST LLC does not receive installation data merely
+because the software is running.</p>
+<h3>Data categories and purposes</h3>
+<p>Depending on enabled features, Josi processes account/authentication data;
+profiles and personalization; conversations, tasks, approvals and memory;
+contacts, calendars, email and connected-account identifiers; files, extracted
+text, indexes and citations; encrypted provider credentials; usage/cost records;
+audit events; backups; channel identifiers and messages; diagnostics/support
+material; and Voice Box audio. It uses these to authenticate, provide requested
+functions, enforce policy, connect services, operate and secure the installation,
+calculate configured limits, and back up or restore data.</p>
+<h3>Family BETA data</h3>
+<p>Family BETA processes the parent-child relationship, controls, schedules,
+distinct minutes in which a child sends a message, parental access events, and
+child conversations opened by the linked adult. It is not device or screen-time
+monitoring. Ending a relationship removes schedules, controls and activity-minute
+records; ordinary conversation retention remains controlled by the installation.</p>
+<h3>Who receives data</h3>
+<p>Data stays on the installation unless a user or operator enables or uses a
+destination. Necessary data may then go to the selected AI provider; Google or
+Microsoft; configured SMTP/mail services; Telegram, Slack, WhatsApp or Signal;
+configured storage/backup providers; configured GitHub, Netlify, Vercel,
+Supabase or other developer services; an operator-selected telemetry or support
+gateway; recipients and shared users authorized by the user; and public
+documentation/Groq only when optional help chat is enabled and used. Voice Box
+is intended to run locally. Disclosures may also occur when required by law,
+needed for safety/security, or in a lawful business transfer.</p>
+<p>SOCAL RECEPTIONIST LLC does not sell installation data, use it for advertising,
+or use private content to train generalized AI models. External providers operate
+under their own policies and may process data internationally.</p>
+<h3>Telemetry, support, retention and rights</h3>
+<p>Telemetry is off by default and excludes prompts, message content, contacts,
+calendars, credentials and identifiable business data. Support bundles are made
+locally for review and are not sent until approved to a configured gateway.
+Retention and deletion are controlled by the operator and feature settings;
+third-party and backup copies may follow separate retention. Contact the
+operator for access, correction, deletion, restriction, objection or portability.
+Privacy questions follow the repository's public Support and Security policies.</p>
+<h3>Children and security</h3>
+<p>The operator and supervising adult must obtain required consent, provide
+age-appropriate notice and comply with child-privacy law. Josi uses access
+controls, encrypted stored credentials, audit events, CSRF protection and a
+restrictive browser policy, but no system is perfectly secure and a host
+operator can bypass application controls.</p>
+
+<h2 id="cookie-notice">Cookie Notice</h2>
+<p><strong>Effective 14 September 2026.</strong> The official application uses
+only strictly necessary first-party cookies: an HTTP-only authentication session
+cookie (optionally persistent when “Keep me signed in” is selected) and a CSRF
+cookie paired with a request header. They are not used for advertising,
+cross-site tracking or analytics. The Content Security Policy prevents
+third-party scripts and resources from loading.</p>
+<p>The PWA caches versioned application files and an offline page, not private API
+responses or user content. Connected providers may set their own cookies on
+their sites during OAuth or sign-in. Signing out ends the server session; browser
+settings can clear cookies and the PWA cache. Operators are responsible for
+disclosing cookies introduced by modified builds.</p>
+
+<h2 id="software-and-paid-feature-licences">Software and paid-feature licences</h2>
+<p>The Josi CE source code is licensed under GNU AGPL v3. The Josi name, marks and
+official product identity are governed separately by the trademark policy.
+Third-party notices remain applicable. A modified build must not imply publisher
+approval or support.</p>
+<p>A publisher-signed paid-feature key is a separate entitlement, not a software
+copyright licence. It activates only the feature, buyer, installation and term
+encoded in the key and is governed by the Terms above. Community Preview carries
+no support entitlement or SLA.</p>
 <p>Confirm each dependency:</p>
 <pre><code class="language-bash">git --version
 docker version
@@ -366,10 +525,11 @@ docker compose rm -f ocr
 container does not remove the named signature volume unless you deliberately
 remove volumes.</p>
 <blockquote>
-<p><strong>Current implementation limitation:</strong> Phase 9 does not yet wire the real
-OCR, ClamAV, parser, filesystem-watcher, or cloud-sync machinery into a
-complete document pipeline. Enabling a container does not make the unfinished
-feature production-ready.</p>
+<p><strong>Document-processing boundary:</strong> supported files can be extracted,
+scanned, indexed, searched and cited, and configured cloud sources can
+synchronize. Unsupported, encrypted, unsafe or over-limit files are skipped
+with an explicit reason. OCR and ClamAV remain optional services and must be
+provisioned and resourced before they are relied on.</p>
 </blockquote>
 <h2>12. Use an existing reverse proxy</h2>
 <p>Create <code>.env</code> with the real public URL and a local published port:</p>
@@ -469,33 +629,29 @@ volumes unless <code>--volumes</code> is supplied.</p>
 step.</strong> It deletes the PostgreSQL data volume and other named volumes.</p>
 <p>Do not delete <code>secrets/master.key</code>. Do not regenerate it to fix a startup
 problem. A replacement key cannot decrypt existing credentials.</p>
-<h2>15. Backup and restore status</h2>
-<p>Josi&#39;s required encrypted, restorable backup workflow belongs to Phase 10 and
-is not yet implemented. Therefore this preview cannot honestly provide the
-promised supported backup and restore commands.</p>
-<p>Before storing important data, wait for Phase 10 and its destructive
-backup-wipe-restore acceptance test to pass. A manual PostgreSQL dump is not a
-substitute for that complete workflow because it may omit application files,
-history copies, configuration, and the separately held master key.</p>
-<p>At minimum, any future complete backup set must preserve:</p>
+<h2>15. Backup and restore</h2>
+<p>Backup and restore are implemented and have passed a destructive acceptance
+test in which the schema was dropped, restored and encrypted credentials were
+proved readable with the original master key and unreadable without it. Create
+a full or portable backup under <strong>Admin → Backups</strong>, download the
+completed archive, and test restoration before relying on it.</p>
+<p>A complete backup set preserves:</p>
 <ul>
 <li>PostgreSQL data</li>
 <li>The exact <code>secrets/master.key</code></li>
 <li>Application configuration</li>
-<li>Uploads and recovery/history data when those features exist</li>
+<li>Uploads and recovery/history data included by the selected backup kind</li>
 <li>A record of the Josi release being restored</li>
 </ul>
 <p>The master key must be protected separately from the database backup. Restore
 must fail safely when the wrong key is supplied.</p>
-<h2>16. Upgrade and rollback status</h2>
-<p>The required one-click update, pre-update backup, health check, and automatic
-rollback belong to Phase 10 and are not yet implemented.</p>
-<p>Do not improvise an in-place production upgrade of this preview. Pulling new
-source and running <code>docker compose up -d --build</code> can apply irreversible
-database migrations. Without a verified pre-update backup and rollback path,
-that is not an acceptable production procedure.</p>
-<p>A supported release procedure will be documented here only after the automated
-backup/restore and failed-update rollback tests exist and pass.</p>
+<h2>16. Upgrade and rollback</h2>
+<p>Josi never updates itself. The application has a tested backup-first,
+health-check and rollback sequence, but no release download channel is configured
+in Community Preview, so there is no in-product upgrade yet. Operators must use
+a version-pinned published image, take and validate a full backup first, preserve
+the master key separately, apply migrations, verify service and public-path
+health, and retain the previous image and backup for rollback.</p>
 <h2>17. Troubleshooting</h2>
 <h3>17.1 Compose cannot read a secret file</h3>
 <p>Symptoms include <code>secrets/master.key not found</code> or <code>secrets/db_password not found</code>.</p>
@@ -611,13 +767,16 @@ resourced.</li>
 <li><input disabled="" type="checkbox"> External LLM processing is disclosed to users.</li>
 <li><input disabled="" type="checkbox"> Telemetry was explicitly chosen rather than assumed.</li>
 <li><input disabled="" type="checkbox"> <code>/health</code> and <code>/ready</code> are monitored.</li>
-<li><input disabled="" type="checkbox"> Phase 10 backup and restore acceptance has passed before important data is
-entrusted to the system.</li>
-<li><input disabled="" type="checkbox"> Phase 11 threat-model and release gates have passed before public launch.</li>
+<li><input disabled="" type="checkbox"> A current full backup and the separate master key have been restored in a test.</li>
+<li><input disabled="" type="checkbox"> Current threat-model and release gates have passed before public launch.</li>
 </ul>
 <h2>19. Collecting useful support information</h2>
-<p>The redacted diagnostics bundle is a Phase 10 feature and does not yet exist.
-Until it does, inspect logs locally and redact them before sharing. Never send:</p>
+<p>Josi creates a redacted diagnostics bundle locally. Review it before approving
+submission to an operator-configured support gateway; Community installations
+ship with no gateway. The fixed bundle schema excludes messages, emails,
+documents, prompts, database rows and credentials. Container health and logs are
+not collected because the application has no Docker socket. If you inspect logs
+yourself, redact them before sharing. Never send:</p>
 <ul>
 <li><code>secrets/master.key</code></li>
 <li><code>secrets/db_password</code></li>
@@ -644,6 +803,6 @@ docker compose ps -a
 <pre><code class="language-bash">docker compose down
 </code></pre>
 <p>Deleting named volumes or the installation directory destroys data. Before any
-permanent removal, create and verify a complete backup when Phase 10 tooling is
-available, and separately preserve the master key. This manual deliberately
+permanent removal, create and verify a complete backup, and separately preserve
+the master key. This manual deliberately
 does not provide a one-line destructive wipe command.</p>
