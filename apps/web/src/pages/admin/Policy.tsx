@@ -11,7 +11,7 @@
 //      default, and loosening it is a deliberate act that gets recorded.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Button, Card, CardTitle, CollapsibleCard, ErrorNote } from '@/components/ui';
+import { Badge, Button, Card, CollapsibleCard, ErrorNote } from '@/components/ui';
 
 interface PolicyClass {
   key: string;
@@ -148,8 +148,12 @@ export function AdminPolicy() {
             </CollapsibleCard>
           ) : null}
 
-          <Card>
-            <CardTitle>What is the loosest anyone may choose?</CardTitle>
+          <CollapsibleCard title="What is the loosest anyone may choose?"
+            summary="Administrator ceilings for every action class"
+            status={<Badge tone={data.classes.some((cls) => cls.maxLevel === 'automatic') ? 'primary' : 'ok'}>
+              {data.classes.some((cls) => cls.maxLevel === 'automatic') ? 'Review relaxed limits' : 'Approval required'}
+            </Badge>}
+            defaultOpen>
             <p className="mb-1 text-sm text-muted-foreground">
               This can only tighten. Returning the choice to each person does not switch anyone to
               automatic — somebody who asked to be consulted every time still will be.
@@ -188,7 +192,7 @@ export function AdminPolicy() {
                 </div>
               ))}
             </div>
-          </Card>
+          </CollapsibleCard>
         </>
       ) : null}
     </div>

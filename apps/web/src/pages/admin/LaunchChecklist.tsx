@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
-import { Button, Card, CardTitle, ErrorNote } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote } from '@/components/ui';
 
 type State = 'done' | 'outstanding' | 'failed' | 'dismissed' | 'unavailable';
 type Severity = 'critical' | 'important' | 'optional';
@@ -104,6 +104,11 @@ export function AdminLaunchChecklist() {
   if (!data) return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
 
   const { done, total } = data.progress;
+  const groups = [
+    { severity: 'critical' as const, title: 'Protect this installation', summary: 'Backups and required security safeguards' },
+    { severity: 'important' as const, title: 'Finish essential setup', summary: 'Checks required for dependable day-to-day use' },
+    { severity: 'optional' as const, title: 'Optional capabilities', summary: 'Useful additions that may not apply here' },
+  ].map((group) => ({ ...group, items: data.items.filter((item) => item.severity === group.severity) }));
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
@@ -138,9 +143,18 @@ export function AdminLaunchChecklist() {
         </Card>
       ) : null}
 
-      <Card>
+      {groups.filter((group) => group.items.length).map((group) => {
+        const settled = group.items.filter((item) => ['done', 'dismissed', 'unavailable'].includes(item.state)).length;
+        const needsAttention = group.items.some((item) => item.state === 'failed'
+          || (group.severity === 'critical' && item.state === 'outstanding'));
+        return <CollapsibleCard key={group.severity} title={group.title}
+          summary={`${group.summary} · ${settled} of ${group.items.length} settled`}
+          status={<Badge tone={needsAttention ? 'danger' : settled === group.items.length ? 'ok' : 'primary'}>
+            {needsAttention ? 'Needs attention' : `${settled}/${group.items.length}`}
+          </Badge>}
+          defaultOpen={needsAttention}>
         <ul className="space-y-4">
-          {data.items.map((item) => (
+          {group.items.map((item) => (
             <li key={item.key} className="border-t border-input pt-4 first:border-0 first:pt-0">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <span className="text-sm font-medium">{item.label}</span>
@@ -190,7 +204,8 @@ export function AdminLaunchChecklist() {
             </li>
           ))}
         </ul>
-      </Card>
+      </CollapsibleCard>;
+      })}
 
       <Card>
         <p className="text-sm text-muted-foreground">

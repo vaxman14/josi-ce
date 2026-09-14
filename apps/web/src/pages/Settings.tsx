@@ -1,7 +1,7 @@
 // How much Josi may do without asking, and confirming who you are.
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, CollapsibleCard, ErrorNote, Input } from '@/components/ui';
 
 const ACTION_CLASSES = [
   { key: 'email_send', label: 'Sending email on your behalf' },
@@ -49,8 +49,14 @@ export function Settings() {
       <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-      <Card>
-        <CardTitle>What Josi may do without asking</CardTitle>
+      <CollapsibleCard
+        title="What Josi may do without asking"
+        summary="Approval behavior for email, calendar, contacts, and tasks"
+        status={Object.values(levels).some((state) => state.level !== state.userChoice)
+          ? <Badge tone="primary">Admin limits apply</Badge>
+          : <Badge tone="muted">Your choices</Badge>}
+        defaultOpen
+      >
         <p className="mb-3 text-sm text-muted-foreground">
           Some actions always need approval whatever you choose here — adding someone to an existing
           conversation, sending an attachment, and anything that deletes.
@@ -83,7 +89,7 @@ export function Settings() {
             );
           })}
         </div>
-      </Card>
+      </CollapsibleCard>
 
       <StepUpCard />
       <MfaCard />
@@ -101,7 +107,10 @@ function MfaCard() {
   async function begin() { setError(''); try { setSetup(await api.post('/auth/mfa/setup')); } catch (e) { setError(e instanceof Error ? e.message : 'Could not start MFA'); } }
   async function enable() { setError(''); try { const r = await api.post<{ enabled: boolean; recoveryCodes: string[] }>('/auth/mfa/enable', { code }); setEnabled(true); setRecovery(r.recoveryCodes); setRemaining(r.recoveryCodes.length); setSetup(null); } catch (e) { setError(e instanceof Error ? e.message : 'Could not enable MFA'); } }
   async function disable() { setError(''); try { await api.post('/auth/mfa/disable', { password: disablePassword }); setEnabled(false); setRecovery([]); setRemaining(0); setDisablePassword(''); } catch (e) { setError(e instanceof Error ? e.message : 'Could not disable MFA'); } }
-  return <Card><CardTitle>Multi-factor authentication</CardTitle>
+  return <CollapsibleCard title="Multi-factor authentication"
+    summary="Require an authenticator app when signing in"
+    status={<Badge tone={enabled ? 'ok' : 'danger'}>{enabled ? `Enabled · ${remaining} codes` : 'Not enabled'}</Badge>}
+    defaultOpen={!enabled}>
     <p className="mb-3 text-sm text-muted-foreground">Use an authenticator app at sign-in. Recovery codes work once each.</p>
     {enabled ? <><p className="mb-3 text-sm text-emerald-400">Enabled · {remaining} recovery codes remain</p>
       <div className="flex gap-2"><Input type="password" autoComplete="current-password" placeholder="Confirm password to disable" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} />
@@ -113,7 +122,7 @@ function MfaCard() {
     {recovery.length ? <div className="mt-4 rounded border border-border p-3"><p className="mb-2 text-sm font-semibold">Save these recovery codes now</p>
       <pre className="whitespace-pre-wrap text-sm">{recovery.join('\n')}</pre></div> : null}
     {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}
-  </Card>;
+  </CollapsibleCard>;
 }
 
 /** Re-authentication before something that cannot be undone.
@@ -141,8 +150,9 @@ function StepUpCard() {
   }
 
   return (
-    <Card>
-      <CardTitle>Confirm it is you</CardTitle>
+    <CollapsibleCard title="Confirm it is you"
+      summary="Re-enter your password before sensitive changes"
+      status={state === 'ok' ? <Badge tone="ok">Confirmed for 15 minutes</Badge> : <Badge tone="muted">On demand</Badge>}>
       <p className="mb-3 text-sm text-muted-foreground">
         Cancelling work, changing settings and sharing something with a colleague need your password again,
         so an open session someone else is using cannot do them.
@@ -166,6 +176,6 @@ function StepUpCard() {
             : <ErrorNote>{message}</ErrorNote>
         ) : null}
       </form>
-    </Card>
+    </CollapsibleCard>
   );
 }
