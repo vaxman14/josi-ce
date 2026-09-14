@@ -14,6 +14,7 @@
 // Every response re-verifies the stored token rather than trusting the cached
 // state, so a licence that expired last night reads as expired this morning
 // without anything having to run in between.
+import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import {
   SUPPORTED_BUILD_ROUTE, appendEvent, canVerifyLicences, getInstallId, verifyLicence,
@@ -158,21 +159,55 @@ export function licenceRoutes(ctx: LicenceRoutesCtx): Router {
         throw new RouteError(status.state === 'unverifiable_build' ? 409 : 400, status.detail);
       }
 
+      const licenceId = createHash('sha256').update(token).digest('hex').slice(0, 32);
       await db.query(
-        `insert into licence (id, token, last_state, last_checked_at, subject, expires_at,
-                              activated_at, activated_by)
-         values (true, $1, $2, now(), $3, $4, now(), $5)
-         on conflict (id) do update set
-           token = excluded.token, last_state = excluded.last_state,
-           last_checked_at = now(), subject = excluded.subject,
-           expires_at = excluded.expires_at, activated_at = now(),
-           activated_by = excluded.activated_by`,
+        `with saved_licence as (
+           insert into licence (id, token, last_state, last_checked_at, subject, expires_at,
+                                activated_at, activated_by)
+           values (true, $1, $2, now(), $3, $4, now(), $5)
+           on conflict (id) do update set
+             token = excluded.token, last_state = excluded.last_state,
+             last_checked_at = now(), subject = excluded.subject,
+             expires_at = excluded.expires_at, activated_at = now(),
+             activated_by = excluded.activated_by
+           returning id
+         )
+         , saved_entitlement as (
+           insert into module_entitlements (
+             module, license_token, license_id, issued_to, bound_install_id,
+             issued_at, expires_at, activated_by, activated_at, revoked_at, revoked_by
+           )
+           select 'parental_controls', $1, $6, $3, $7, $8, $4, $5, now(), null, null
+           from saved_licence
+           where $9
+           on conflict (module) do update set
+             license_token = excluded.license_token,
+             license_id = excluded.license_id,
+             issued_to = excluded.issued_to,
+             bound_install_id = excluded.bound_install_id,
+             issued_at = excluded.issued_at,
+             expires_at = excluded.expires_at,
+             activated_by = excluded.activated_by,
+             activated_at = now(),
+             revoked_at = null,
+             revoked_by = null
+           returning module
+         )
+         update module_entitlements
+         set revoked_at = now(), revoked_by = $5
+         where module = 'parental_controls'
+           and not $9
+           and exists (select 1 from saved_licence)`,
         [
           token,
           status.state,
           status.payload?.subject ?? null,
           status.payload?.expiresAt ?? null,
           req.user!.id,
+          licenceId,
+          status.payload?.installationId ?? null,
+          status.payload?.issuedAt ?? new Date().toISOString(),
+          status.payload?.features.includes('parental_controls') ?? false,
         ],
       );
 
@@ -189,6 +224,16 @@ export function licenceRoutes(ctx: LicenceRoutesCtx): Router {
           expiresAt: status.payload?.expiresAt ?? null,
         },
       });
+      if (status.payload?.features.includes('parental_controls')) {
+        await appendEvent(db, {
+          actorUserId: req.user!.id,
+          actor: 'super_admin',
+          kind: 'entitlement.activated',
+          subjectType: 'module',
+          subjectId: 'parental_controls',
+          payload: { bound: !!status.payload.installationId, expires: !!status.payload.expiresAt },
+        });
+      }
 
       const after = await currentLicence(db, ctx.publicKey);
       return res.json(view(after));
@@ -203,9 +248,22 @@ export function licenceRoutes(ctx: LicenceRoutesCtx): Router {
   r.delete(
     '/',
     handle(async (req, res) => {
-      await db.query(`delete from licence where id = true`);
+      await db.query(
+        `with removed as (delete from licence where id = true returning id)
+         update module_entitlements
+         set revoked_at = now(), revoked_by = $1
+         where module = 'parental_controls' and exists (select 1 from removed)`,
+        [req.user!.id],
+      );
       await appendEvent(db, {
         actorUserId: req.user!.id, actor: 'super_admin', kind: 'licence.deactivated',
+      });
+      await appendEvent(db, {
+        actorUserId: req.user!.id,
+        actor: 'super_admin',
+        kind: 'entitlement.revoked',
+        subjectType: 'module',
+        subjectId: 'parental_controls',
       });
       return res.status(204).end();
     }),

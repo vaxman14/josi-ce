@@ -241,11 +241,11 @@ export function Talk() {
         <div ref={end} />
       </section>
 
-      <footer className="shrink-0 px-3 pb-3 pt-14 sm:px-4">
+      <footer className="w-full min-w-0 max-w-full shrink-0 overflow-x-clip px-2 pb-3 pt-14 sm:px-4">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         <form
           onSubmit={(event) => { event.preventDefault(); void send(); }}
-          className="flex min-h-14 min-w-0 items-center gap-0.5 rounded-[1.75rem] border border-border bg-secondary/25 p-1.5 shadow-lg backdrop-blur"
+          className="flex min-h-14 w-full min-w-0 max-w-full items-center gap-0.5 overflow-hidden rounded-[1.75rem] border border-border bg-secondary/25 p-1.5 shadow-lg backdrop-blur"
         >
           <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-secondary text-secondary-foreground hover:bg-secondary/80" aria-label="Attach pictures or files">
             <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

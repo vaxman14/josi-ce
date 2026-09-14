@@ -26,7 +26,7 @@
 
   * { @apply border-border; }
 
-  html, body, #root { height: 100%; }
+  html, body, #root { height: 100%; overflow-x: clip; max-width: 100%; }
 
   body {
     @apply bg-background text-foreground;

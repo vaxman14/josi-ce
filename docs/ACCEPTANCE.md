@@ -230,6 +230,35 @@ byte-for-byte capture of the pinned version in
 
 ## Operator checklist for a hardware run
 
+## Parental Controls integration — 2026-09-13
+
+The complete paid Parental Controls module was restored onto current public
+main after the v0.1.5 source rebuild had removed its family routes, UI,
+enforcement, and migration while leaving only the licence-management shell.
+The integrated module provides managed-child account creation, explicit
+parent/controller authority, password-plus-TOTP relationship changes,
+conversation visibility, schedules, daily limits, usage summaries, Child Mode
+disclosures, server-side turn enforcement, audit events, and unlink cleanup.
+It explicitly does not claim device, browser, or third-party-app enforcement.
+
+Evidence on Bananana (Linux, Node 26.8.1, Docker Engine 29.7.2):
+
+- TypeScript and the production build passed;
+- 2,415 tests passed across 93 files;
+- the focused parental/licence suite passed 93 tests, including cross-family
+  isolation and all-channel enforcement;
+- the current two-part signed licence format activates the parental entitlement,
+  so already-issued v0.1.16 licences remain valid;
+- all 40 migrations applied to a fresh PostgreSQL 16 database, with Parental
+  Controls assigned the non-colliding `0039_parental_controls.sql` migration;
+- `npm audit --audit-level=high` reported zero vulnerabilities;
+- the repository secret scan was clean across 527 files; and
+- diff whitespace checks passed.
+
+Published-image, clean-install, and authenticated browser evidence are recorded
+separately after a versioned multi-architecture artifact exists. They are not
+claimed by the source-level evidence above.
+
 ## Talk mockup fidelity — 2026-09-12
 
 The mobile Talk redesign was verified at a 390×844 viewport against the

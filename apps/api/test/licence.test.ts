@@ -14,7 +14,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { getInstallId, verifyLicence } from '@josi-ce/core';
+import { entitlementStatus, getInstallId, verifyLicence } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -146,6 +146,9 @@ describe('a supported build offers a way in', () => {
     expect(res.body.licence.subject).toContain('SOCAL RECEPTIONIST');
     expect(res.body.licence.features).toEqual(['parental_controls']);
     expect(res.body.licence.expiresAt).toBeNull();
+    expect(await entitlementStatus(db, 'parental_controls')).toMatchObject({
+      state: 'active', entitled: true, issuedTo: 'Roman at SOCAL RECEPTIONIST LLC',
+    });
   });
 
   it('never echoes the licence key back', async () => {
@@ -250,6 +253,19 @@ describe('replacing and deactivating', () => {
     expect(await db.query(`select * from licence`)).toHaveLength(1);
   });
 
+  it('makes Parental Controls inert when a replacement licence no longer covers it', async () => {
+    await call('/api/admin/licence', {
+      method: 'PUT', body: { token: issue(licenceFor()) },
+    });
+    const replacement = await call('/api/admin/licence', {
+      method: 'PUT', body: { token: issue(licenceFor({ features: [] })) },
+    });
+    expect(replacement.status).toBe(200);
+    expect(await entitlementStatus(db, 'parental_controls')).toMatchObject({
+      state: 'revoked', entitled: false,
+    });
+  });
+
   it('leaves a valid licence alone when a replacement is refused', async () => {
     await call('/api/admin/licence', {
       method: 'PUT', body: { token: issue(licenceFor({ subject: 'Good one' })) },
@@ -271,6 +287,9 @@ describe('replacing and deactivating', () => {
     expect(res.body.state).toBe('none');
     expect(res.body.licence).toBeNull();
     expect(await db.query(`select * from licence`)).toHaveLength(0);
+    expect(await entitlementStatus(db, 'parental_controls')).toMatchObject({
+      state: 'revoked', entitled: false,
+    });
   });
 
   it('is administrator-only throughout', async () => {
