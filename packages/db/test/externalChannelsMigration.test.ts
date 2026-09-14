@@ -23,4 +23,19 @@ describe('external channel migrations', () => {
     ]);
     await pg.close();
   });
+
+  it('is safe when an older build already created the channel tables', async () => {
+    const pg = new PGlite();
+    const files = readdirSync(migrations).filter((name) => name.endsWith('.sql')).sort();
+    for (const file of files.filter((name) => name < '0037_')) {
+      await pg.exec(readFileSync(join(migrations, file), 'utf8'));
+    }
+    await pg.exec(readFileSync(join(migrations, '0037_external_messaging_channels.sql'), 'utf8'));
+    await pg.exec(readFileSync(join(migrations, '0038_external_channel_link_codes.sql'), 'utf8'));
+    await pg.exec(readFileSync(join(migrations, '0037_external_messaging_channels.sql'), 'utf8'));
+    await pg.exec(readFileSync(join(migrations, '0038_external_channel_link_codes.sql'), 'utf8'));
+    const providers = await pg.query<{ provider: string }>('select provider from external_channel_configs order by provider');
+    expect(providers.rows.map((row) => row.provider)).toEqual(['slack', 'whatsapp']);
+    await pg.close();
+  });
 });
