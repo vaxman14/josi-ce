@@ -26,6 +26,7 @@ import { personaRoutes } from './http/personaRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './http/telegramRoutes.js';
+import { adminExternalChannelRoutes, externalChannelRoutes, mountExternalChannelWebhooks } from './http/externalChannelRoutes.js';
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
@@ -89,7 +90,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
 
   // A request body is the only unbounded input here; 1 MB is generous for JSON
   // and small enough that a hostile client cannot exhaust memory.
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({
+    limit: '1mb',
+    verify: (req, _res, buffer) => { (req as Request).rawBody = Buffer.from(buffer); },
+  }));
   app.disable('x-powered-by');
 
   // Liveness: is this process up. Deliberately consults nothing — a health
@@ -127,6 +131,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     llmResolve: cfg.llmResolve,
     connectorFetch: cfg.connectorFetch,
     retry: cfg.telegramRetry,
+  });
+  mountExternalChannelWebhooks(app, {
+    db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
+    llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   });
 
   const api = express.Router();
@@ -198,6 +206,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/telegram', adminTelegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
   }));
+  api.use('/admin/channels', adminExternalChannelRoutes({
+    db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
+    llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -210,6 +222,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/storage', storageRoutes({ db }));
   api.use('/telegram', telegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
+  }));
+  api.use('/channels', externalChannelRoutes({
+    db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
+    llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   }));
   api.use('/persona', personaRoutes({
     db,
