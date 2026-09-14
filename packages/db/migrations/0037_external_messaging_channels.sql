@@ -1,5 +1,5 @@
 -- Shared storage for WhatsApp and Slack.
-create table external_channel_configs (
+create table if not exists external_channel_configs (
   provider text primary key check (provider in ('whatsapp', 'slack')),
   enabled boolean not null default false,
   credentials_enc text,
@@ -14,7 +14,7 @@ create table external_channel_configs (
 );
 insert into external_channel_configs (provider) values ('whatsapp'), ('slack') on conflict do nothing;
 
-create table external_channel_links (
+create table if not exists external_channel_links (
   id uuid primary key default gen_random_uuid(),
   provider text not null check (provider in ('whatsapp', 'slack')),
   user_id uuid not null references users(id) on delete cascade,
@@ -28,10 +28,10 @@ create table external_channel_links (
   last_outbound_at timestamptz,
   constraint external_link_revoked_shape check ((status = 'active' and revoked_at is null) or (status = 'revoked' and revoked_at is not null))
 );
-create unique index external_channel_one_active_identity on external_channel_links(provider, external_identity) where status = 'active';
-create index external_channel_links_user on external_channel_links(user_id, provider, status);
+create unique index if not exists external_channel_one_active_identity on external_channel_links(provider, external_identity) where status = 'active';
+create index if not exists external_channel_links_user on external_channel_links(user_id, provider, status);
 
-create table external_channel_events (
+create table if not exists external_channel_events (
   provider text not null check (provider in ('whatsapp', 'slack')),
   event_id text not null,
   conversation_id text,
@@ -40,7 +40,7 @@ create table external_channel_events (
   primary key (provider, event_id)
 );
 
-create table external_channel_outbound (
+create table if not exists external_channel_outbound (
   id uuid primary key default gen_random_uuid(),
   provider text not null check (provider in ('whatsapp', 'slack')),
   user_id uuid references users(id) on delete set null,
@@ -53,7 +53,7 @@ create table external_channel_outbound (
   created_at timestamptz not null default now(),
   sent_at timestamptz
 );
-create index external_channel_outbound_state on external_channel_outbound(state, created_at);
+create index if not exists external_channel_outbound_state on external_channel_outbound(state, created_at);
 
 alter table external_channel_configs enable row level security;
 alter table external_channel_links enable row level security;
