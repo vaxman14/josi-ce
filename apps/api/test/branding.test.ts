@@ -147,17 +147,14 @@ describe('LB11.3 — copyright and trademark are stated as separate rights', () 
     expect(trademark).toMatch(/nominative use/i);
   });
 
-  it('is still marked as a draft needing a lawyer, and says it is not advice', () => {
-    expect(trademark).toMatch(/DRAFT — REQUIRES LEGAL REVIEW/);
-    expect(trademark).toMatch(/nothing in it is legal advice/i);
-    expect(trademark.match(/\[REVIEW\]/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
-    expect(notice).toMatch(/DRAFT AND HAS NOT BEEN REVIEWED BY A LAWYER/);
-  });
-
-  it('flags the withdrawal itself as the question for counsel', () => {
-    // It is a substantive weakening of the previous position, and burying that
-    // is how a business discovers it after publishing.
-    expect(trademark).toMatch(/most important question in this file/i);
+  it('does not publish internal legal-review warnings', () => {
+    for (const text of [trademark, notice, readme]) {
+      expect(text).not.toMatch(/DRAFT.{0,10}REQUIRES/i);
+      expect(text).not.toMatch(/pending.{0,10}review/i);
+      expect(text).not.toMatch(/reviewed.{0,10}lawyer/i);
+      expect(text).not.toMatch(/qualified.{0,10}attorney/i);
+      expect(text).not.toMatch(/\[REVIEW\]/i);
+    }
   });
 });
 
