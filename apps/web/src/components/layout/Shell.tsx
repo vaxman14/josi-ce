@@ -78,8 +78,11 @@ export function Shell() {
 
   useEffect(() => {
     void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => setStatus(null));
+    // A successful response means the licensed module exists. Keep Family
+    // visible even when this account has not linked its first child yet;
+    // hiding it for role="none" made the setup page impossible to reach.
     void api.get<{ role: string }>('/parental/overview')
-      .then((result) => setFamily(result.role !== 'none'))
+      .then(() => setFamily(true))
       .catch(() => setFamily(false));
   }, [location.pathname]);
 
