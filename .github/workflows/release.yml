@@ -80,6 +80,21 @@ jobs:
       - run: npm test
       - run: bash scripts/scan-secrets.sh
 
+      # Public by definition: this is the verifier embedded in supported
+      # SOCAL RECEPTIONIST LLC builds, never the private licence-signing key.
+      # Keeping it in the repository makes the exact authority reproducible
+      # and reviewable instead of depending on an invisible CI setting.
+      - id: licence-key
+        name: Validate publisher licence verification key
+        shell: bash
+        run: |
+          key="$(tr -d '\r\n' < publisher/licence-verification-key.b64)"
+          if ! [[ "$key" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+            echo "publisher licence verification key is not a raw base64 Ed25519 public key" >&2
+            exit 1
+          fi
+          echo "value=$key" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -92,6 +107,7 @@ jobs:
           build-args: |
             JOSI_EDITION=ce
             JOSI_BUILD_ID=${{ github.sha }}
+            JOSI_LICENCE_KEY=${{ steps.licence-key.outputs.value }}
           tags: |
             ${{ env.REGISTRY }}/${{ steps.owner.outputs.value }}/josi-ce:${{ steps.version.outputs.value }}
           labels: |

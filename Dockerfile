@@ -47,10 +47,15 @@ COPY scripts ./scripts
 ARG JOSI_EDITION=ce
 ARG JOSI_BUILD_ID=source
 ARG JOSI_RELEASE_KEY=none
+# The publisher's paid-feature licence verifier. This is a PUBLIC Ed25519 key,
+# never the signing key. Official SOCAL RECEPTIONIST LLC releases pass it at
+# build time; source builds default to `none` and therefore fail closed.
+ARG JOSI_LICENCE_KEY=none
 RUN node scripts/stamp-edition.mjs \
       --edition "$JOSI_EDITION" \
       --build-id "$JOSI_BUILD_ID" \
-      --release-key "$JOSI_RELEASE_KEY"
+      --release-key "$JOSI_RELEASE_KEY" \
+      --licence-key "$JOSI_LICENCE_KEY"
 
 RUN npx tsc -b
 
