@@ -32,6 +32,10 @@ const MEMBER_NAV = [
   { to: '/app/apps', label: 'Apps' },
 ];
 
+const FAMILY_NAV: { to: string; label: string; end?: boolean } = {
+  to: '/app/family', label: 'Family',
+};
+
 const ADMIN_NAV = [
   { to: '/admin', label: 'Overview', end: true },
   // First for as long as it matters. An administrator who dismissed the
@@ -69,15 +73,20 @@ export function Shell() {
   const location = useLocation();
   const [status, setStatus] = useState<LlmStatus | null>(null);
   const [talkMenuOpen, setTalkMenuOpen] = useState(false);
+  const [family, setFamily] = useState(false);
   const talkMenu = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => setStatus(null));
+    void api.get<{ role: string }>('/parental/overview')
+      .then((result) => setFamily(result.role !== 'none'))
+      .catch(() => setFamily(false));
   }, [location.pathname]);
 
   const isAdminArea = location.pathname.startsWith('/admin');
   const isTalk = location.pathname === '/app/talk';
-  const nav = isAdminArea ? ADMIN_NAV : MEMBER_NAV;
+  const memberNav = family ? [...MEMBER_NAV, FAMILY_NAV] : MEMBER_NAV;
+  const nav = isAdminArea ? ADMIN_NAV : memberNav;
 
   return (
     <div className={`flex w-full max-w-full flex-col overflow-x-hidden ${isTalk ? 'h-dvh overflow-y-hidden' : 'min-h-full'}`}>

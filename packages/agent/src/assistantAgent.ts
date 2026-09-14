@@ -23,8 +23,8 @@
 // to call tools is not offered any, because offering them produces a confident
 // description of work that never happened.
 import {
-  appendEvent, checkStepUp, listTemplates,
-  type Db,
+  appendEvent, checkChildAccess, checkStepUp, listTemplates, recordChildActivity,
+  type ActivityChannel, type Db,
 } from '@josi-ce/core';
 import {
   capabilitiesOf, chat, featureAvailable, loadStoredProvider,
@@ -69,7 +69,7 @@ export interface AgentTurnResult {
   /** Set when the turn could not run at all. The caller shows this instead of a
    * reply — it is never dressed up as something Josi said. */
   refusal?: {
-    reason: 'no_model' | 'not_probed' | 'cannot_chat' | 'capped' | 'provider_error';
+    reason: 'no_model' | 'not_probed' | 'cannot_chat' | 'capped' | 'provider_error' | 'restricted';
     message: string;
   };
 }
@@ -95,6 +95,10 @@ export interface TurnArgs {
    * tests; unset in production, where the real fetch is used. Deliberately
    * separate from the registry's fetchImpl — that one talks to the MODEL. */
   connectorFetch?: typeof fetch;
+  /** Which channel this turn arrived on. Only used to record a managed child's
+   * minute honestly — "45 minutes with Josi" should not read as "45 minutes in
+   * the web app" when half of it was Telegram. */
+  channel?: ActivityChannel;
   /** What a step-up unlock is scoped to. Defaults to the thread, so verifying
    * in one conversation does not silently unlock another. */
   sessionKey?: string;
@@ -163,6 +167,36 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   const { db, userId } = args;
   const actions: AgentTurnResult['actions'] = [];
   const sessionKey = args.sessionKey ?? args.threadId;
+
+  // ---- is this person allowed to be talking to Josi at all? --------------
+  //
+  // FIRST, before the model, the tools, the prompt or a single token. This is
+  // the one place every channel passes through — web, Telegram, WhatsApp,
+  // Slack, Signal — so a managed child's agreed hours and daily limit are
+  // enforced here rather than once per route. A route that forgot to ask (and
+  // the web one does ask, first, so a person gets a 403 instead of a refusal
+  // dressed as an answer) still cannot get past this.
+  //
+  // Everyone who is not a managed child of a bought module is allowed by one
+  // indexed query, which is the answer on essentially every turn.
+  const childAccess = await checkChildAccess(db, { userId });
+  if (!childAccess.allowed) {
+    return {
+      reply: '', actions,
+      refusal: {
+        reason: 'restricted',
+        message: childAccess.opensAgain
+          ? `${childAccess.message} Josi is back at ${childAccess.opensAgain}.`
+          : (childAccess.message ?? 'Josi is not available on this account right now.'),
+      },
+    };
+  }
+  // Counted at the START of a turn: the minute somebody spoke is the minute
+  // that was used, whatever the model does next. A turn that fails on a
+  // provider error still happened.
+  if (childAccess.managed) {
+    await recordChildActivity(db, { childUserId: userId, channel: args.channel ?? 'web' });
+  }
 
   // ---- can we run at all? ------------------------------------------------
   // Asked before anything is spent, and answered honestly. A missing or

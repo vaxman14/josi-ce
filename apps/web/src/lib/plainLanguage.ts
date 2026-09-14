@@ -269,6 +269,22 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
       revoked: 'Unlinked',
     },
   },
+
+  child_access: {
+    source: { literal: ['allowed', 'outside_schedule', 'daily_limit', 'not_managed', 'module_inert'] },
+    labels: {
+      allowed: 'Josi is available now',
+      outside_schedule: 'Outside the agreed hours',
+      daily_limit: 'Today’s time is used up',
+      not_managed: 'Not a managed account',
+      module_inert: 'Parental Controls is not active here',
+    },
+    detail: {
+      outside_schedule: 'Josi will answer again at the next time in the timetable.',
+      daily_limit: 'The daily limit has been reached. It starts again tomorrow, in this account’s own timezone.',
+      module_inert: 'Without a licence the hours and limits do not apply and nobody can see these conversations.',
+    },
+  },
 };
 
 /** The sentence for a value, or the value itself if nothing knows it.

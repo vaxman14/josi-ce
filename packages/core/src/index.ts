@@ -7,6 +7,8 @@ export {
   BUILD_EDITION, BUILD_ID, BUILD_LICENCE_PUBLIC_KEY, BUILD_RELEASE_PUBLIC_KEY,
 } from './buildStamp.js';
 export * from './licence.js';
+export * from './entitlements.js';
+export * from './parental.js';
 export * from './events.js';
 export * from './masterKey.js';
 export * from './readiness.js';

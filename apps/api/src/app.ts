@@ -19,6 +19,7 @@ import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
 import { storageRoutes } from './http/storageRoutes.js';
 import { opsRoutes } from './http/opsRoutes.js';
 import { licenceRoutes } from './http/licenceRoutes.js';
+import { adminParentalRoutes, parentalRoutes } from './http/parentalRoutes.js';
 import {
   adminDeveloperServiceRoutes, developerServiceRoutes,
 } from './http/developerServiceRoutes.js';
@@ -51,6 +52,9 @@ export interface AppConfig {
    * key stamped into the artefact is used; injected by the suites so a test can
    * stand in for a supported build without rebuilding one. */
   licencePublicKey?: string | null;
+  /** Backward-compatible test/config name used by the original complete
+   * Parental Controls module. Production uses the same stamped public key. */
+  entitlementPublicKey?: string | null;
   /** Provider HTTP and DNS, injected by the tests so no suite ever contacts a
    * real model provider. Unset in production, where the real ones are used. */
   llmFetch?: typeof fetch;
@@ -210,6 +214,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   }));
+  api.use('/admin/parental-controls', adminParentalRoutes({
+    db,
+    appUrl: cfg.appUrl,
+    masterKey: cfg.masterKeyCheck,
+    entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -234,6 +244,14 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     resolve: cfg.llmResolve,
   }));
   api.use('/admin/licence', licenceRoutes({ db, publicKey: cfg.licencePublicKey }));
+  // Family authority is deliberately separate from installation administration:
+  // a super-admin can activate the licence but gains no access to any child.
+  api.use('/parental', parentalRoutes({
+    db,
+    appUrl: cfg.appUrl,
+    masterKey: cfg.masterKeyCheck,
+    entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
+  }));
 
   api.use('/ops', opsRoutes({
     db,

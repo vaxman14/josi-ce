@@ -19,6 +19,7 @@ import { Settings } from '@/pages/Settings';
 import { Telegram } from '@/pages/Telegram';
 import { Channels } from '@/pages/Channels';
 import { Apps } from '@/pages/Apps';
+import { Family } from '@/pages/Family';
 import { AdminOverview } from '@/pages/admin/Overview';
 import { AdminPeople } from '@/pages/admin/People';
 import { AdminModel } from '@/pages/admin/Model';
@@ -148,6 +149,7 @@ export function App() {
             catch-all redirect to Home. */}
         <Route path="telegram" element={<Navigate to="/app/channels/telegram" replace />} />
         <Route path="apps" element={<Apps />} />
+        <Route path="family" element={<Family />} />
       </Route>
 
       <Route path="/admin" element={<RequireAuth admin><Shell /></RequireAuth>}>
