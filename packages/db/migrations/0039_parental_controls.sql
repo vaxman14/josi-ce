@@ -59,7 +59,7 @@
 -- as SMTP. It is NOT parental authority, and the routes are separate so that
 -- the two can never be confused: nothing an administrator can reach returns a
 -- child, a schedule, a limit, a minute or a message.
-create table module_entitlements (
+create table if not exists module_entitlements (
   module text primary key check (module in ('parental_controls')),
 
   -- The licence exactly as it was pasted. Kept so that an operator can be told
@@ -94,7 +94,7 @@ create table module_entitlements (
 --
 -- The whole authority, in one table. A row is created only by somebody who has
 -- just proved a password AND a second factor, and ending it is the same price.
-create table parental_links (
+create table if not exists parental_links (
   id uuid primary key default gen_random_uuid(),
   parent_user_id uuid not null references users(id) on delete cascade,
   child_user_id uuid not null references users(id) on delete cascade,
@@ -115,9 +115,9 @@ create table parental_links (
 -- a feature request; two adults with authority over one account and no rule
 -- about who wins is an ambiguity in an access-control decision, and this is
 -- not the table to be ambiguous in.
-create unique index parental_links_one_live_controller
+create unique index if not exists parental_links_one_live_controller
   on parental_links (child_user_id) where ended_at is null;
-create index parental_links_by_parent on parental_links (parent_user_id) where ended_at is null;
+create index if not exists parental_links_by_parent on parental_links (parent_user_id) where ended_at is null;
 
 -- ---------- what a managed child's day looks like ----------
 --
@@ -126,7 +126,7 @@ create index parental_links_by_parent on parental_links (parent_user_id) where e
 -- default-denied in this feature is AUTHORITY AND VISIBILITY, and it is. A new
 -- child account that could not talk to Josi until an adult had drawn a
 -- timetable would be a broken account, not a safe one.
-create table child_controls (
+create table if not exists child_controls (
   child_user_id uuid primary key references users(id) on delete cascade,
 
   -- Whose day it is. A limit measured in the parent's timezone would end a
@@ -147,7 +147,7 @@ create table child_controls (
   updated_by_user_id uuid references users(id) on delete set null
 );
 
-create table child_schedule_windows (
+create table if not exists child_schedule_windows (
   id uuid primary key default gen_random_uuid(),
   child_user_id uuid not null references users(id) on delete cascade,
   -- 0 = Sunday, matching JavaScript's getDay() and PostgreSQL's `dow`, so no
@@ -160,7 +160,7 @@ create table child_schedule_windows (
   constraint child_schedule_windows_ordered check (end_minute > start_minute),
   unique (child_user_id, weekday, start_minute)
 );
-create index child_schedule_windows_by_child on child_schedule_windows (child_user_id, weekday);
+create index if not exists child_schedule_windows_by_child on child_schedule_windows (child_user_id, weekday);
 
 -- ---------- how much of the day has been used ----------
 --
@@ -172,7 +172,7 @@ create index child_schedule_windows_by_child on child_schedule_windows (child_us
 -- day" here means "45 minutes in which you said something to Josi", and the
 -- screens say exactly that. A stack that cannot see a screen being looked at
 -- must not sell a screen-time limit.
-create table child_activity_minutes (
+create table if not exists child_activity_minutes (
   child_user_id uuid not null references users(id) on delete cascade,
   -- Truncated to the minute, in UTC. Days are cut in the child's own timezone
   -- at read time, so moving a child between timezones cannot rewrite history.
@@ -197,7 +197,7 @@ create table child_activity_minutes (
 -- authority to see a child's conversations is exactly the act that must cost
 -- more than one secret. A second row type would have quietly widened what that
 -- table's name promises.
-create table parental_authority_grants (
+create table if not exists parental_authority_grants (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete cascade,
   session_key text not null,
@@ -209,7 +209,7 @@ create table parental_authority_grants (
   used_for text,
   created_at timestamptz not null default now()
 );
-create index parental_authority_grants_live
+create index if not exists parental_authority_grants_live
   on parental_authority_grants (user_id, session_key, expires_at) where used_at is null;
 
 alter table module_entitlements enable row level security;
