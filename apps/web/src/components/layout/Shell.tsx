@@ -43,6 +43,7 @@ const ADMIN_NAV = [
   { to: '/admin/policy', label: 'Policy' },
   { to: '/admin/storage', label: 'Storage' },
   { to: '/admin/connectors', label: 'Connectors' },
+  { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/backups', label: 'Backups' },
   { to: '/admin/developer-services', label: 'Developer services' },
   { to: '/admin/parental-controls', label: 'Parental controls' },

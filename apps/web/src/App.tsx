@@ -32,6 +32,7 @@ import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
 import { AdminParentalControls } from '@/pages/admin/ParentalControls';
 import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
 import { AdminVoiceBox } from '@/pages/admin/VoiceBox';
+import { AdminChannels } from '@/pages/admin/Channels';
 
 /** Routing is convenience, not security.
  *
@@ -157,6 +158,7 @@ export function App() {
         <Route path="policy" element={<AdminPolicy />} />
         <Route path="storage" element={<AdminStorage />} />
         <Route path="connectors" element={<AdminConnectors />} />
+        <Route path="channels" element={<AdminChannels />} />
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />
         <Route path="backups" element={<AdminBackups />} />
