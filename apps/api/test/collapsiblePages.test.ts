@@ -18,14 +18,25 @@ describe('compact settings disclosures', () => {
   it.each([
     'pages/Connections.tsx',
     'pages/Personalization.tsx',
+    'pages/Settings.tsx',
     'pages/Usage.tsx',
     'pages/admin/Model.tsx',
     'pages/admin/ParentalControls.tsx',
     'pages/admin/Policy.tsx',
+    'pages/admin/LaunchChecklist.tsx',
     'pages/admin/Storage.tsx',
     'pages/admin/Telegram.tsx',
   ])('uses compact disclosures on %s', (page) => {
     expect(read(`apps/web/src/${page}`)).toContain('CollapsibleCard');
+  });
+
+  it('keeps checkup state and remediation visible and actionable', () => {
+    const overview = read('apps/web/src/pages/admin/Overview.tsx');
+    for (const label of ['Working', 'Needs attention', 'Unavailable', 'Not configured', 'Check again', 'Last checked']) {
+      expect(overview).toContain(label);
+    }
+    expect(overview).toContain('Recommendations');
+    expect(overview).toContain('navigate(item.href)');
   });
 
   it('preserves the established Connectors-style disclosures on Channels', () => {
