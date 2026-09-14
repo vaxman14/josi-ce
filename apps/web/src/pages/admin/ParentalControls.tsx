@@ -108,7 +108,15 @@ export function AdminParentalControls() {
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Parental controls</h1>
+      <h1 className="text-xl font-semibold tracking-tight">Parental controls <Badge tone="danger">BETA</Badge></h1>
+      <div role="alert" className="rounded-md border border-amber-500/60 bg-amber-500/10 p-3 text-sm">
+        <p className="font-semibold text-amber-200">BETA — experimental and not suitable as a safety control.</p>
+        <p className="mt-1 text-amber-100/90">
+          Do not trust or rely on this feature to protect a child. It may fail, be delayed, or behave unexpectedly and it controls
+          only Josi—not the device, other apps, websites, location, or emergencies. Use active adult supervision and proven
+          device-level controls, and verify restrictions independently.
+        </p>
+      </div>
       <p className="text-sm text-muted-foreground">
         Parental controls are a licensed feature. This page is where the licence is activated and
         managed.

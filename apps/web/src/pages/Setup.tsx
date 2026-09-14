@@ -16,6 +16,7 @@ import {
   ProviderForm, type ProviderCatalogEntry, type SubscriptionInfo,
 } from '@/components/ProviderForm';
 import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { LegalLinks } from '@/components/LegalLinks';
 
 /** The outcome of a real attempt to use something that was configured. */
 interface Verification {
@@ -228,6 +229,10 @@ export function Setup({ onDone }: { onDone: () => void }) {
           />
         </div>
       ) : null}
+      <p className="mt-5 text-center text-xs text-muted-foreground">
+        By finishing setup and using Josi, you agree to the Terms and acknowledge the Privacy and Cookie Notices.
+      </p>
+      <LegalLinks className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-2 text-xs text-primary [&_a]:underline" />
     </div>
   );
 

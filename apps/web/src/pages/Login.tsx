@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Button, Card, ErrorNote, Input } from '@/components/ui';
+import { LegalLinks } from '@/components/LegalLinks';
 
 export function Login() {
   const { signIn, finishMfa } = useAuth();
@@ -92,6 +93,10 @@ export function Login() {
         <p className="mt-6 text-center text-xs text-muted-foreground">
           Josi CE 0.1 — Community Preview. Created and published by SOCAL RECEPTIONIST LLC.
         </p>
+        <p className="mt-2 text-center text-xs text-muted-foreground">
+          By using this installation, you agree to its Terms and acknowledge its Privacy and Cookie Notices.
+        </p>
+        <LegalLinks className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-2 text-xs text-primary [&_a]:underline" />
       </div>
     </div>
   );

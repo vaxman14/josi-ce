@@ -1,5 +1,11 @@
 # Parental Controls
 
+> **BETA — do not trust or rely on this feature for a child's safety.** It is
+> experimental and may fail, be delayed or behave unexpectedly. It controls
+> only Josi. It cannot control a device, other apps, websites, location or
+> emergencies, and it does not replace active adult supervision or proven
+> device-level parental controls. Verify important restrictions independently.
+
 A paid module. It lets **one named adult** look after **one named child
 account** on this installation: read their conversations with Josi, set the
 hours Josi will answer, set a daily limit, and see how much it is being used.
