@@ -296,7 +296,8 @@ describe('a build that cannot verify says how to get one that can', () => {
     // The precise route, not "this build is unsupported" and nothing else.
     const route = res.body.supportedBuild;
     expect(route.publisher).toBe('SOCAL RECEPTIONIST LLC');
-    expect(route.image).toMatch(/^ghcr\.io\/socalreceptionist\/josi-ce/);
+    expect(route.image).toBe('ghcr.io/vaxman14/josi-ce:latest');
+    expect(route.docs).toBe('https://github.com/vaxman14/josi-ce/blob/main/docs/INSTALLATION.md');
     expect(route.steps.length).toBeGreaterThanOrEqual(3);
     expect(route.steps.join(' ')).toMatch(/docker compose/i);
     expect(route.docs).toMatch(/^https:\/\//);

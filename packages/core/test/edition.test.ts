@@ -6,7 +6,9 @@
 // an environment variable, a typo, a mutation of the exported object, or a
 // half-granted prerequisite.
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -197,5 +199,61 @@ describe('the stamp script and the module agree (L4.1)', () => {
     // Stamping after the compile would put the constant in the source and the
     // OLD constant in the bundle — the artefact would lie about itself.
     expect(stampAt).toBeLessThan(compileAt);
+  });
+
+  it('source builds fail closed while supported releases stamp the publisher licence verifier', () => {
+    const dockerfile = readFileSync(join(ROOT, 'Dockerfile'), 'utf8');
+    const workflow = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+    const publisherKey = readFileSync(
+      join(ROOT, 'publisher/licence-verification-key.b64'),
+      'utf8',
+    ).trim();
+
+    // A raw Ed25519 public key is 32 bytes. The private signing key must never
+    // be present in this public repository or passed to Docker.
+    expect(publisherKey).toMatch(/^[A-Za-z0-9+/]{43}=$/);
+    expect(Buffer.from(publisherKey, 'base64')).toHaveLength(32);
+    expect(dockerfile).toContain('ARG JOSI_LICENCE_KEY=none');
+    expect(dockerfile).toContain('--licence-key "$JOSI_LICENCE_KEY"');
+    expect(workflow).toContain('publisher/licence-verification-key.b64');
+    expect(workflow).toContain('JOSI_LICENCE_KEY=${{ steps.licence-key.outputs.value }}');
+    expect(workflow).not.toMatch(/PRIVATE[_ -]?KEY/i);
+  });
+
+  it('the packaging stamp embeds the public verifier only when explicitly supplied', () => {
+    const root = mkdtempSync(join(tmpdir(), 'josi-licence-stamp-'));
+    const target = join(root, 'packages/core/src/buildStamp.ts');
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(join(ROOT, 'scripts/stamp-edition.mjs'), join(root, 'scripts/stamp-edition.mjs'));
+    cpSync(join(ROOT, 'packages/core/src/buildStamp.ts'), target);
+    const publisherKey = readFileSync(
+      join(ROOT, 'publisher/licence-verification-key.b64'),
+      'utf8',
+    ).trim();
+
+    try {
+      execFileSync(process.execPath, [
+        join(root, 'scripts/stamp-edition.mjs'),
+        '--build-id', 'supported-test',
+        '--licence-key', publisherKey,
+      ]);
+      expect(readFileSync(target, 'utf8')).toContain(
+        `BUILD_LICENCE_PUBLIC_KEY: string | null = ${JSON.stringify(publisherKey)}`,
+      );
+
+      // Reset to the committed source stamp, then run the ordinary source-build
+      // path. Absence must mean null, never a test key or permissive fallback.
+      cpSync(join(ROOT, 'packages/core/src/buildStamp.ts'), target);
+      execFileSync(process.execPath, [
+        join(root, 'scripts/stamp-edition.mjs'),
+        '--build-id', 'source-test',
+      ]);
+      expect(readFileSync(target, 'utf8')).toContain(
+        'BUILD_LICENCE_PUBLIC_KEY: string | null = null',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
