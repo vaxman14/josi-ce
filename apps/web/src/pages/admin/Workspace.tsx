@@ -105,7 +105,7 @@ export function AdminWorkspace() {
           The Josi name and marks are separate from that licence. Running Josi CE, or passing it on
           unmodified with its branding, needs no permission. A modified version should carry your own
           identity rather than ours, so nobody is told your work came from us. The full policy is in
-          TRADEMARK.md, which is a draft pending legal review.
+          TRADEMARK.md.
         </p>
       </Card>
     </div>

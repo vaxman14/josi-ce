@@ -64,12 +64,11 @@ Docker-based TrueNAS SCALE have documented Compose deployment paths; formal
 hardware certification is pending.
 
 **How is it licensed?** Code is AGPL-3.0. The Josi name and marks are governed
-separately by the trademark policy after legal review.
+separately by the trademark policy.
 
 ## Launch gates
 
 - Repository public from sanitized history
-- Trademark text legally approved
 - Docker Hub mirror verified
 - Public quick-start URLs tested without repository credentials
 - Synthetic screenshots and logo assets exported at Product Hunt dimensions

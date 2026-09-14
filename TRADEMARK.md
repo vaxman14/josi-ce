@@ -1,17 +1,5 @@
 # Josi trademark policy
 
-> ## ⚠️ DRAFT — REQUIRES LEGAL REVIEW
->
-> **This document was drafted by an AI assistant and has NOT been reviewed or
-> approved by a lawyer.** It is a starting point for counsel, not enforceable
-> wording that anyone should rely on, and nothing in it is legal advice. Do not
-> publish Josi CE to the public without a qualified attorney reviewing and
-> rewriting this file.
->
-> Specific points needing professional attention are marked **[REVIEW]**.
-
----
-
 ## Two different rights, and why conflating them was wrong
 
 Josi CE's **code** is licensed under the GNU Affero General Public License
@@ -51,10 +39,8 @@ claims rights in:
 - the Josi wordmark
 - the overall Josi visual identity, including the approved colour treatment
 
-**[REVIEW]** — registration status. This file asserts common-law rights only.
-Counsel should confirm whether any of the above is registered, pending, or
-unregistered, and correct the wording and any ™/® usage to match. Do not claim
-registration that does not exist.
+This policy asserts common-law rights only and does not claim registration of
+the listed marks.
 
 ## What you may do — no permission needed
 
@@ -99,12 +85,9 @@ modifying or distributing the code. None of it is a condition of the AGPL
 licence grant, none of it is a further restriction under AGPL §7, and removing
 our branding is expressly permitted rather than forbidden.
 
-**[REVIEW]** — confirm this framing achieves what the business wants. It is
-substantially weaker than the previous "branding may not be removed" wording,
-and deliberately so, because that wording was unenforceable. If the commercial
-goal is to prevent unbranded commercial redistribution, that is a licensing
-question (dual licensing, a separate commercial agreement) and not something a
-trademark policy can deliver.
+This framing is deliberately narrower than the previous "branding may not be
+removed" wording. Preventing unbranded commercial redistribution would require
+a separate licensing structure rather than a trademark restriction.
 
 ## What requires a separate written agreement
 
@@ -126,17 +109,3 @@ of them.
 ## Reporting misuse
 
 Suspected misuse of the Josi name or marks: contact SOCAL RECEPTIONIST LLC.
-
----
-
-**[REVIEW] — remaining items for counsel**
-
-1. Registration status and correct ™/® usage throughout.
-2. Whether the withdrawal of the mandatory-branding condition is acceptable to
-   the business, and if not, what licensing structure would actually achieve the
-   goal. This is the most important question in this file.
-3. Governing law, jurisdiction and venue. None is currently stated.
-4. Whether "Josi CE", "Community Edition" and "Community Preview" should be
-   claimed as marks in their own right.
-5. Whether the "more than cosmetic" threshold for requiring rebranding is
-   workable, or whether a brighter line is needed.

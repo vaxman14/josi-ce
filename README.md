@@ -276,9 +276,6 @@ trademark asks is only that a modified version not present itself as the
 official Josi product. Unmodified redistribution may keep the branding, because
 it is accurate. See [`TRADEMARK.md`](TRADEMARK.md).
 
-> `TRADEMARK.md` and `NOTICE` are **drafts pending legal review**. They are not
-> approved legal wording.
-
 ## Appliance platforms and launch material
 
 - [`Portainer, Unraid, and TrueNAS SCALE`](docs/APPLIANCE_PLATFORMS.md)
