@@ -7,7 +7,7 @@
 // screen has nowhere to put it.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, CollapsibleCard, Empty, ErrorNote, Input } from '@/components/ui';
 import { plain } from '@/lib/plainLanguage';
 
 interface AdminTelegramConfig {
@@ -104,8 +104,7 @@ export function AdminTelegram() {
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {notice ? <p className="text-sm text-emerald-300">{notice}</p> : null}
 
-      <Card>
-        <CardTitle>Bot</CardTitle>
+      <CollapsibleCard title="Bot" summary={config.botUsername ? `@${config.botUsername}` : 'Bot credentials and status'} status={<Badge tone={config.enabled ? 'ok' : 'muted'}>{config.enabled ? 'On' : 'Off'}</Badge>} defaultOpen={!config.tokenSet}>
         <p className="mb-3 text-sm text-muted-foreground">
           Josi uses your own bot, created in Telegram&apos;s BotFather. Nothing sits between your
           bot and this server — there is no Josi relay and nowhere to configure one.
@@ -148,11 +147,10 @@ export function AdminTelegram() {
             Save and test
           </Button>
         </div>
-      </Card>
+      </CollapsibleCard>
 
       {config.tokenSet ? (
-        <Card>
-          <CardTitle>Delivery</CardTitle>
+        <CollapsibleCard title="Delivery" summary={config.webhookUrl ? 'Webhook registered' : 'Webhook not registered'}>
           <p className="mb-3 text-sm text-muted-foreground">
             Telegram delivers messages to this installation over HTTPS. Register the webhook after
             your public address is working; re-register it if the address changes.
@@ -187,11 +185,10 @@ export function AdminTelegram() {
               {config.enabled ? 'Turn off' : 'Turn on'}
             </Button>
           </div>
-        </Card>
+        </CollapsibleCard>
       ) : null}
 
-      <Card>
-        <CardTitle>Files</CardTitle>
+      <CollapsibleCard title="Files" summary={config.attachmentsEnabled ? 'Attachments accepted' : 'Attachments refused'}>
         <p className="mb-3 text-sm text-muted-foreground">
           Off by default. Telegram will not serve a file larger than 20 MB whatever you set here.
         </p>
@@ -213,10 +210,9 @@ export function AdminTelegram() {
             {config.attachmentsEnabled ? 'Stop accepting files' : 'Accept files'}
           </Button>
         </div>
-      </Card>
+      </CollapsibleCard>
 
-      <Card>
-        <CardTitle>Linked accounts</CardTitle>
+      <CollapsibleCard title="Linked accounts" summary={`${links.length} ${links.length === 1 ? 'account' : 'accounts'}`}>
         <p className="mb-3 text-sm text-muted-foreground">
           You can see that a link exists and remove it. You cannot read anything sent over it, and
           the chat identifier is deliberately not shown here.
@@ -257,11 +253,10 @@ export function AdminTelegram() {
             ))}
           </ul>
         )}
-      </Card>
+      </CollapsibleCard>
 
       {health ? (
-        <Card>
-          <CardTitle>Delivery health (last 7 days)</CardTitle>
+        <CollapsibleCard title="Delivery health" summary="Last 7 days">
           <p className="text-sm text-muted-foreground">
             Sent {health.outbound.sent} · failed {health.outbound.failed} · accepted{' '}
             {health.inbound.accepted ?? 0} · refused {health.inbound.refused ?? 0} · from unlinked
@@ -274,11 +269,10 @@ export function AdminTelegram() {
               ))}
             </ul>
           ) : null}
-        </Card>
+        </CollapsibleCard>
       ) : null}
 
-      <Card>
-        <CardTitle>Remove the bot</CardTitle>
+      <CollapsibleCard title="Remove the bot" summary="Disconnect Telegram from this installation">
         <p className="mb-3 text-sm text-muted-foreground">
           Deletes the stored token and the webhook registration. Existing links stay in place but
           nothing can be delivered until a bot is configured again.
@@ -290,7 +284,7 @@ export function AdminTelegram() {
         >
           Remove
         </Button>
-      </Card>
+      </CollapsibleCard>
     </div>
   );
 }

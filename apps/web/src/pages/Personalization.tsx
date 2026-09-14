@@ -7,7 +7,7 @@
 // they know it changed nothing.
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote } from '@/components/ui';
 
 type Layer = 'soul' | 'user' | 'agents_user' | 'agents_admin';
 
@@ -368,8 +368,7 @@ export function Personalization() {
       </Card>
 
       {tab === 'agents_user' && (
-        <Card>
-          <CardTitle>What is actually in force</CardTitle>
+        <CollapsibleCard title="What is actually in force" summary="Your choices after administrator policy is applied">
           <p className="text-sm text-muted-foreground">
             Your choices, after your administrator&rsquo;s policy is applied.
           </p>
@@ -385,11 +384,10 @@ export function Personalization() {
               </li>
             ))}
           </ul>
-        </Card>
+        </CollapsibleCard>
       )}
 
-      <Card>
-        <CardTitle>Memory</CardTitle>
+      <CollapsibleCard title="Memory" summary={`${memories.length} saved ${memories.length === 1 ? 'item' : 'items'}`}>
         <p className="text-sm text-muted-foreground">
           Things Josi keeps about you. Deleting one deletes it — it is not hidden.
         </p>
@@ -430,7 +428,7 @@ export function Personalization() {
             <li className="text-sm text-muted-foreground">Nothing yet.</li>
           )}
         </ul>
-      </Card>
+      </CollapsibleCard>
     </div>
   );
 }

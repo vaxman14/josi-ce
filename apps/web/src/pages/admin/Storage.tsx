@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useResource } from '@/lib/useResource';
-import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { Button, Card, CollapsibleCard, ErrorNote, Input } from '@/components/ui';
 
 interface StoragePolicy {
   max_file_bytes: number | string;
@@ -69,8 +69,7 @@ export function AdminStorage() {
 
       {resource.state === 'ready' && policy ? (
         <form onSubmit={save} className="space-y-4">
-          <Card>
-            <CardTitle>Indexing limits</CardTitle>
+          <CollapsibleCard title="Indexing limits" summary="File size, total storage, and item-count limits" defaultOpen>
             <p className="mb-4 text-sm text-muted-foreground">
               These workspace limits protect the server. A limit may cause files to be skipped; raising it can increase CPU, memory and disk use.
             </p>
@@ -79,10 +78,9 @@ export function AdminStorage() {
               <NumberField name="maxTotalMb" label="Maximum storage per person (MB)" value={toMb(policy.max_total_bytes_per_user)} />
               <NumberField name="maxFiles" label="Maximum files per person" value={policy.max_files_per_user} />
             </div>
-          </Card>
+          </CollapsibleCard>
 
-          <Card>
-            <CardTitle>Allowed file types</CardTitle>
+          <CollapsibleCard title="Allowed file types" summary={`${policy.allowed_extensions.length} extensions allowed`}>
             <p className="mb-3 text-sm text-muted-foreground">
               Enter extensions separated by commas or spaces, without dots. Executables, disk images, keys and unknown binaries should remain excluded.
             </p>
@@ -92,10 +90,9 @@ export function AdminStorage() {
               defaultValue={policy.allowed_extensions.join(', ')}
               className="min-h-28 w-full rounded-md border border-input bg-background p-3 text-base sm:text-sm"
             />
-          </Card>
+          </CollapsibleCard>
 
-          <Card>
-            <CardTitle>Archives</CardTitle>
+          <CollapsibleCard title="Archives" summary={policy.archives_enabled ? 'Archive indexing enabled' : 'Archive indexing disabled'}>
             <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
               <input name="archivesEnabled" type="checkbox" defaultChecked={policy.archives_enabled} className="h-5 w-5" />
               Index supported archives
@@ -109,7 +106,7 @@ export function AdminStorage() {
               <NumberField name="archiveMaxDepth" label="Maximum nested depth (1–3)" value={policy.archive_max_depth} max={3} />
               <NumberField name="archiveMaxSeconds" label="Maximum processing time (seconds)" value={policy.archive_max_seconds} />
             </div>
-          </Card>
+          </CollapsibleCard>
 
           {error ? <ErrorNote>{error}</ErrorNote> : null}
           <div className="flex items-center gap-3">

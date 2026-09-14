@@ -12,7 +12,7 @@
 // never a disabled button that looks pressable.
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote, Copyable } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Copyable } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 import { ClaudeSignIn } from '@/components/ClaudeSignIn';
 import {
@@ -202,28 +202,25 @@ export function AdminModel() {
       </Card>
 
       {data.disabledFeatures.length ? (
-        <Card>
-          <CardTitle>Unavailable features</CardTitle>
+        <CollapsibleCard title="Unavailable features" summary={`${data.disabledFeatures.length} ${data.disabledFeatures.length === 1 ? 'feature' : 'features'}`}>
           <ul className="space-y-2 text-sm text-muted-foreground">
             {data.disabledFeatures.map((f) => (
               <li key={f.feature}><span className="font-medium text-foreground">{f.feature === 'chat_vision' ? 'Image understanding' : f.feature.replace(/_/g, ' ')}</span> — {f.reason}</li>
             ))}
           </ul>
-        </Card>
+        </CollapsibleCard>
       ) : null}
 
-      <Card>
-        <CardTitle>Change the model</CardTitle>
+      <CollapsibleCard title="Change the model" summary="Switch provider, credentials, or model">
         <p className="mb-3 text-sm text-muted-foreground">
           The same choices as during installation — a model on your own hardware, an API key, or a
           subscription — switchable in any direction, any time. Saving replaces the primary model and
           Josi will not use the new one until it has been tested.
         </p>
         <ChangeModelForm catalog={data.providerCatalog ?? []} onSaved={() => void load()} />
-      </Card>
+      </CollapsibleCard>
 
-      <Card>
-        <CardTitle>Using a Claude or ChatGPT subscription</CardTitle>
+      <CollapsibleCard title="Using a Claude or ChatGPT subscription" summary="Subscription-based model options">
         <p className="mb-3 text-sm text-muted-foreground">
           What each provider currently permits, and nothing more optimistic than that.
           This is a <span className="font-medium text-foreground">{data.edition.edition}</span> build.
@@ -260,7 +257,7 @@ export function AdminModel() {
             </li>
           ))}
         </ul>
-      </Card>
+      </CollapsibleCard>
         </>
       ) : null}
     </div>

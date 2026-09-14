@@ -58,6 +58,43 @@ export function CardTitle({ children }: { children: ReactNode }) {
   return <h2 className="mb-1 text-base font-semibold tracking-tight">{children}</h2>;
 }
 
+/** A compact settings section using the same native disclosure pattern as
+ * Connectors. Native details/summary keeps keyboard and screen-reader behavior
+ * reliable without adding another client dependency. */
+export function CollapsibleCard({
+  title,
+  summary,
+  status,
+  defaultOpen = false,
+  children,
+  className,
+}: {
+  title: ReactNode;
+  summary?: ReactNode;
+  status?: ReactNode;
+  defaultOpen?: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <Card className={className}>
+      <details open={defaultOpen || undefined} className="group">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <span className="min-w-0">
+            <span className="block text-base font-semibold tracking-tight">{title}</span>
+            {summary ? <span className="mt-0.5 block text-sm text-muted-foreground">{summary}</span> : null}
+          </span>
+          <span className="flex shrink-0 items-center gap-2">
+            {status}
+            <span aria-hidden="true" className="text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+          </span>
+        </summary>
+        <div className="mt-3 border-t border-border pt-3">{children}</div>
+      </details>
+    </Card>
+  );
+}
+
 export function Badge({
   tone = 'muted', children,
 }: { tone?: 'muted' | 'primary' | 'danger' | 'ok'; children: ReactNode }) {

@@ -14,7 +14,7 @@
 // verifies it belongs to the publisher, is public, and is already in the image.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, Copyable, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, Copyable, ErrorNote, Input } from '@/components/ui';
 
 type LicenceState =
   | 'unverifiable_build' | 'none' | 'active' | 'expired' | 'wrong_installation' | 'invalid';
@@ -212,8 +212,7 @@ export function AdminParentalControls() {
 
       {/* The unsupported-build case: steps, not a dead end. */}
       {view?.supportedBuild ? (
-        <Card>
-          <CardTitle>Install the supported build</CardTitle>
+        <CollapsibleCard title="Install the supported build" summary="Publisher verification is required" defaultOpen>
           <p className="mt-2 text-sm text-muted-foreground">
             Licences are verified against a key that {view.supportedBuild.publisher} stamps into the
             image it publishes. This build has none, so it cannot check any licence — entering one
@@ -232,17 +231,16 @@ export function AdminParentalControls() {
               Installation guide
             </a>
           </p>
-        </Card>
+        </CollapsibleCard>
       ) : null}
 
       {licensed ? (
-        <Card>
-          <CardTitle>What this licence unlocks</CardTitle>
+        <CollapsibleCard title="What this licence unlocks" summary="Features included with Parental Controls">
           <p className="mt-2 text-sm text-muted-foreground">
             Parental controls are available on this installation. They are configured per person,
             from each account's own settings.
           </p>
-        </Card>
+        </CollapsibleCard>
       ) : null}
     </div>
   );
