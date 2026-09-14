@@ -6,7 +6,7 @@
 import { type LlmStatus } from '@/lib/api';
 import { useResource } from '@/lib/useResource';
 import { ResourceFallback } from '@/components/ResourceFallback';
-import { Badge, Card, CardTitle } from '@/components/ui';
+import { Badge, Card, CardTitle, CollapsibleCard } from '@/components/ui';
 
 export function Usage() {
   // Every outcome named — same fix as Overview.   // undefined)` made any failed fetch an infinite spinner.
@@ -47,24 +47,22 @@ export function Usage() {
       </div>
 
       {usage.selfHostedCalls > 0 ? (
-        <Card>
-          <CardTitle>Self-hosted</CardTitle>
+        <CollapsibleCard title="Self-hosted" summary={`${usage.selfHostedCalls} local ${usage.selfHostedCalls === 1 ? 'request' : 'requests'} · $0 provider charge`}>
           <p className="text-sm text-muted-foreground">
             {usage.selfHostedCalls} request{usage.selfHostedCalls === 1 ? '' : 's'} to a model on your own
             hardware — $0 provider charge. Hardware and electricity are not counted here.
           </p>
-        </Card>
+        </CollapsibleCard>
       ) : null}
 
-      <Card>
-        <CardTitle>Budget</CardTitle>
+      <CollapsibleCard title="Budget" summary={cap.message} status={<Badge tone={cap.allowed ? (cap.status === 'ok' ? 'ok' : 'primary') : 'danger'}>{cap.status.replace('_', ' ')}</Badge>}>
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={cap.allowed ? (cap.status === 'ok' ? 'ok' : 'primary') : 'danger'}>
             {cap.status.replace('_', ' ')}
           </Badge>
           <p className="min-w-0 break-words text-sm text-muted-foreground">{cap.message}</p>
         </div>
-      </Card>
+      </CollapsibleCard>
 
       {usage.notes.length ? (
         <ul className="space-y-1 text-xs text-muted-foreground">

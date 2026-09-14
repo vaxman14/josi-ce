@@ -10,7 +10,7 @@
 // A toggle labelled only "Send email" is not consent.
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote, Input, NotYet } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Input, NotYet } from '@/components/ui';
 import { CloudFolders } from '@/components/CloudFolders';
 import { plain } from '@/lib/plainLanguage';
 
@@ -166,15 +166,17 @@ export function Connections() {
       {!providers ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
       {providers?.map((view) => (
-        <Card key={view.provider}>
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-            <CardTitle>{PROVIDER_LABEL[view.provider]}</CardTitle>
-            {view.connection ? (
-              <Badge tone={view.connection.status === 'active' ? 'ok' : 'danger'}>
-                {view.connection.status === 'active' ? 'connected' : 'needs reconnecting'}
-              </Badge>
-            ) : null}
-          </div>
+        <CollapsibleCard
+          key={view.provider}
+          title={PROVIDER_LABEL[view.provider]}
+          summary={view.connection?.account ?? view.connection?.serverUrl ?? (view.available ? 'Not connected' : 'Not set up')}
+          status={view.connection ? (
+            <Badge tone={view.connection.status === 'active' ? 'ok' : 'danger'}>
+              {view.connection.status === 'active' ? 'connected' : 'needs reconnecting'}
+            </Badge>
+          ) : null}
+          defaultOpen={Boolean(view.connection && view.connection.status !== 'active')}
+        >
 
           {/* No application registered: say so, and offer nothing to press.
               Nextcloud is never "unavailable" this way — it has no application
@@ -251,7 +253,7 @@ export function Connections() {
               </div>
             </>
           )}
-        </Card>
+        </CollapsibleCard>
       ))}
 
       <DeveloperServices />

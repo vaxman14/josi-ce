@@ -11,7 +11,7 @@
 //      default, and loosening it is a deliberate act that gets recorded.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Button, Card, CardTitle, ErrorNote } from '@/components/ui';
+import { Button, Card, CardTitle, CollapsibleCard, ErrorNote } from '@/components/ui';
 
 interface PolicyClass {
   key: string;
@@ -128,8 +128,7 @@ export function AdminPolicy() {
       {state === 'ready' && data ? (
         <>
           {data.migration.length ? (
-            <Card>
-              <CardTitle>What changed when this installation was updated</CardTitle>
+            <CollapsibleCard title="What changed when this installation was updated" summary={`${data.migration.length} ${data.migration.length === 1 ? 'policy change needs' : 'policy changes need'} review`} defaultOpen>
               <p className="mb-3 text-sm text-muted-foreground">
                 These actions previously had no administrator ceiling, which meant no ceiling at all.
                 They now ask for approval. Nothing you had explicitly set was changed.
@@ -146,7 +145,7 @@ export function AdminPolicy() {
                 ))}
               </ul>
               <Button onClick={() => void acknowledge()}>I have read this</Button>
-            </Card>
+            </CollapsibleCard>
           ) : null}
 
           <Card>
