@@ -13,6 +13,7 @@
 // container. The key the operator types is their own licence; the key that
 // verifies it belongs to the publisher, is public, and is already in the image.
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, CollapsibleCard, Copyable, ErrorNote, Input } from '@/components/ui';
 
@@ -235,11 +236,17 @@ export function AdminParentalControls() {
       ) : null}
 
       {licensed ? (
-        <CollapsibleCard title="What this licence unlocks" summary="Features included with Parental Controls">
+        <CollapsibleCard title="Manage parental controls" summary="Add children, schedules, limits, and review activity" defaultOpen>
           <p className="mt-2 text-sm text-muted-foreground">
-            Parental controls are available on this installation. They are configured per person,
-            from each account's own settings.
+            The licence is active. Child accounts, schedules, daily limits, usage, and conversation
+            access are managed from the Family page in your workspace.
           </p>
+          <Link
+            to="/app/family"
+            className="mt-3 inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Open Family controls
+          </Link>
         </CollapsibleCard>
       ) : null}
     </div>

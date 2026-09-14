@@ -39,6 +39,15 @@ describe('compact settings disclosures', () => {
     expect(overview).toContain('navigate(item.href)');
   });
 
+  it('keeps licensed parental controls reachable before the first child is linked', () => {
+    const shell = read('apps/web/src/components/layout/Shell.tsx');
+    const admin = read('apps/web/src/pages/admin/ParentalControls.tsx');
+    expect(shell).toContain('.then(() => setFamily(true))');
+    expect(shell).not.toContain("setFamily(result.role !== 'none')");
+    expect(admin).toContain('to="/app/family"');
+    expect(admin).toContain('Open Family controls');
+  });
+
   it('preserves the established Connectors-style disclosures on Channels', () => {
     const channels = read('apps/web/src/pages/Channels.tsx');
     expect(channels).toContain('<details>');
