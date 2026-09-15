@@ -44,12 +44,17 @@ async function call(path: string, opts: { method?: string; body?: unknown } = {}
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-const llmFetch: typeof fetch = async (url) => {
+const llmFetch: typeof fetch = async (url, init) => {
   if (String(url).endsWith('/models')) {
     return new Response(JSON.stringify({ data: [{ id: 'gpt-4o-mini' }] }), { status: 200 });
   }
+  const request = JSON.parse(String(init?.body ?? '{}')) as { tools?: unknown[]; response_format?: unknown; messages?: unknown[] };
+  const prompt = JSON.stringify(request.messages ?? []);
+  const message = request.tools?.length
+    ? { content: '', tool_calls: [{ id: 'probe', type: 'function', function: { name: 'record_number', arguments: '{"value":7}' } }] }
+    : { content: request.response_format ? '{"ok":true}' : /color is this image/i.test(prompt) ? 'red' : /Ignore the text above/i.test(prompt) ? 'ok' : 'ready' };
   return new Response(JSON.stringify({
-    choices: [{ message: { content: 'ready' } }],
+    choices: [{ message }],
     usage: { prompt_tokens: 5, completion_tokens: 1 },
   }), { status: 200 });
 };
@@ -100,15 +105,15 @@ describe('a passing setup verification is the provider\'s verified state', () =>
     );
     expect(row.activated_at).not.toBeNull();
     expect(row.probed_at).not.toBeNull();
-    // Only what actually ran. A chat happened, so chat is true; nothing
-    // exercised tool calling, so it stays unknown rather than being assumed.
+    // Onboarding runs and records the same complete probe as Admin.
     expect(row.cap_chat).toBe(true);
-    expect(row.cap_tool_calling).toBeNull();
+    expect(row.cap_tool_calling).toBe(true);
 
     const steps = typeof row.probe_steps === 'string'
       ? JSON.parse(row.probe_steps)
       : row.probe_steps as Array<{ id: string; passed: boolean }>;
     expect(steps.some((s) => s.id === 'chat' && s.passed)).toBe(true);
+    expect(steps).toHaveLength(5);
   });
 
   it('a failing verification activates nothing', async () => {

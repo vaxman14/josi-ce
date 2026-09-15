@@ -44,7 +44,7 @@ async function call(path: string, opts: { method?: string; body?: unknown } = {}
 // with a specific category, or fail to be reached at all.
 
 let llmBehaviour: 'ok' | 'unauthorized' | 'quota' | 'empty' | 'unreachable' = 'ok';
-const llmFetch: typeof fetch = async (url) => {
+const llmFetch: typeof fetch = async (url, init) => {
   if (String(url).endsWith('/models')) {
     return new Response(JSON.stringify({ data: [{ id: 'gpt-4o-mini' }] }), { status: 200 });
   }
@@ -55,8 +55,13 @@ const llmFetch: typeof fetch = async (url) => {
   if (llmBehaviour === 'quota') {
     return new Response(JSON.stringify({ error: { code: 'insufficient_quota' } }), { status: 429 });
   }
+  const request = JSON.parse(String(init?.body ?? '{}')) as { tools?: unknown[]; response_format?: unknown; messages?: Array<{ content?: unknown }> };
+  const prompt = JSON.stringify(request.messages ?? []);
+  const message = request.tools?.length
+    ? { content: '', tool_calls: [{ id: 'probe', type: 'function', function: { name: 'record_number', arguments: '{"value":7}' } }] }
+    : { content: llmBehaviour === 'empty' ? '' : request.response_format ? '{"ok":true}' : /color is this image/i.test(prompt) ? 'red' : /Ignore the text above/i.test(prompt) ? 'ok' : 'ready' };
   return new Response(JSON.stringify({
-    choices: [{ message: { content: llmBehaviour === 'empty' ? '' : 'ready' } }],
+    choices: [{ message }],
     usage: { prompt_tokens: 5, completion_tokens: 1 },
   }), { status: 200 });
 };
@@ -135,7 +140,7 @@ describe('LB4.1 — the model step makes a real request', () => {
     // Model page then said "not tested" and asked for the same test again —
     // the product refusing to trust its own check. A passing verification is a
     // real chat that really happened, so the chat capability is recorded and
-    // the provider activated. Tool calling stays null: it was not observed.
+    // the provider activated. The complete onboarding probe records tools too.
     await wizardTo('smtp');
     await call('/api/setup/verify/llm', { method: 'POST', body: {} });
     const [row] = await db.query<{
@@ -145,7 +150,7 @@ describe('LB4.1 — the model step makes a real request', () => {
     expect(row.cap_chat).toBe(true);
     expect(row.probed_at).not.toBeNull();
     expect(row.activated_at).not.toBeNull();
-    expect(row.cap_tool_calling).toBeNull();
+    expect(row.cap_tool_calling).toBe(true);
   });
 
   it('a failing verification activates nothing', async () => {
@@ -184,7 +189,7 @@ describe('LB4.1 — the model step makes a real request', () => {
     llmBehaviour = 'empty';
     const res = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
     expect(res.body.status).toBe('failed');
-    expect(res.body.detail).toMatch(/nothing in it/i);
+    expect(res.body.detail).toMatch(/usable basic reply/i);
   });
 
   it('reports an unreachable provider as a network failure', async () => {

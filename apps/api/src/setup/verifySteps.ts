@@ -10,7 +10,8 @@
 // so in its own comments — "No message is sent", "No OAuth flow is started" —
 // and then report every step as configured.
 import {
-  LlmError, buildProvider, discoverModels, explainCategory, loadStoredProvider,
+  LlmError, buildProvider, discoverModels, explainCategory, loadStoredProvider, meteredProvider, probeProvider,
+  type ProbeResult,
   type LlmErrorCategory,
 } from '@josi-ce/llm';
 import { classifySmtpError, loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
@@ -24,17 +25,15 @@ export interface VerifyOutcome {
   detail: string;
   /** Safe metadata proving what was tested. */
   target?: string;
+  /** Full observed capabilities, stored and shown by onboarding. */
+  probe?: ProbeResult;
 }
 
 const failed = (category: string, detail: string): VerifyOutcome => ({ status: 'failed', category, detail });
 
 // ------------------------------------------------------------------ the model
 
-/** Ask the configured model to answer, and require that it does.
- *
- * One real request, deliberately tiny. It costs a fraction of a cent on a
- * hosted provider and it is the only thing that distinguishes a working
- * configuration from a plausible one. */
+/** Run the same complete capability probe used by the Admin model page. */
 export async function verifyLlm(
   opts: { db: Db; masterKey: MasterKey | null; fetchImpl?: typeof fetch; timeoutMs?: number; codexRunner?: never },
 ): Promise<VerifyOutcome> {
@@ -49,34 +48,22 @@ export async function verifyLlm(
     return failed(category, err instanceof Error ? err.message : 'The model provider could not be prepared.');
   }
 
-  try {
-    const response = await provider.chat({
-      messages: [{ role: 'user', content: 'Reply with the single word: ready' }],
-      maxTokens: 16,
-      temperature: 0,
-    });
-
-    // A 200 is not an answer. Some endpoints — misconfigured proxies in
-    // particular — return a well-formed response with no content at all, and
-    // accepting that would mean accepting a model that says nothing.
-    if (!response.text.trim()) {
-      return failed('provider_outage', 'The model answered, but with nothing in it. Josi cannot use a model that returns empty replies.');
-    }
-
-    // A subscription path may carry no model name at all — the CLI chooses.
-    // " answered a test message." with a leading blank is not a sentence.
-    const who = stored.model || "your plan's model";
+  const probe = await probeProvider(meteredProvider(opts.db, stored, 'primary', provider, { purpose: 'probe' }));
+  const who = stored.model || "your plan's model";
+  if (!probe.capabilities.chat) {
+    const category = probe.fatalCategory ?? 'provider_outage';
+    const base = explainCategory(category as LlmErrorCategory);
+    const detail = probe.fatalProviderCode ? `${base} (the provider said: ${probe.fatalProviderCode})`
+      : probe.fatal ?? 'The model did not return a usable basic reply.';
     return {
-      status: 'passed',
-      detail: `${who} answered a test message.`,
-      target: stored.model,
+      status: 'failed', category, detail, target: stored.model, probe,
     };
-  } catch (err) {
-    if (err instanceof LlmError) {
-      return failed(err.category, describeLlm(err));
-    }
-    return failed('unknown', 'The model could not be reached, and the failure was not one Josi recognises.');
   }
+  const supported = probe.steps.filter((step) => step.passed).length;
+  return {
+    status: 'passed', detail: `${who} passed ${supported} of ${probe.steps.length} capability checks.`,
+    target: stored.model, probe,
+  };
 }
 
 function describeLlm(err: LlmError): string {

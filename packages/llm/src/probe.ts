@@ -33,6 +33,8 @@ export interface ProbeResult {
   steps: ProbeStep[];
   /** Set when the probe could not run at all — bad key, unreachable endpoint. */
   fatal?: string;
+  fatalCategory?: string;
+  fatalProviderCode?: string;
   probedAt: string;
 }
 
@@ -89,7 +91,12 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
   } catch (err) {
     const message = err instanceof LlmError ? err.message : 'the model could not be reached';
     steps.push({ id: 'chat', label: 'Basic reply', passed: false, detail: message });
-    return { capabilities, steps, fatal: message, probedAt: now().toISOString() };
+    return {
+      capabilities, steps, fatal: message,
+      fatalCategory: err instanceof LlmError ? err.category : 'unknown',
+      fatalProviderCode: err instanceof LlmError ? err.providerCode : undefined,
+      probedAt: now().toISOString(),
+    };
   }
 
   // ---- 2. structured output ----------------------------------------------

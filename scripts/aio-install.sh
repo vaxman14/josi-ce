@@ -20,6 +20,9 @@ readonly ASSETS=/opt/josi-ce-release
 readonly VERSION="${JOSI_VERSION:-0.1.0}"
 readonly INSTALL_UID="$(stat -c '%u' "$PWD")"
 readonly INSTALL_GID="$(stat -c '%g' "$PWD")"
+readonly APP_GID=1000
+readonly DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+readonly INSTALLER_IMAGE="${JOSI_INSTALLER_IMAGE:-ghcr.io/vaxman14/josi-ce-installer:${VERSION}}"
 
 say()  { printf '%s\n' "$*"; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -101,6 +104,30 @@ if [[ "${JOSI_PREPARE_ONLY:-0}" == "1" ]]; then
   say 'Import docker-compose.yml into your platform UI, using this directory as the stack path.'
   exit 0
 fi
+
+# Keep Docker authority out of the Josi application. This narrow helper owns
+# the optional Voice Box lifecycle and exposes only its fixed Unix-socket API.
+install -d -m 0700 -o "$INSTALL_UID" -g "$INSTALL_GID" voice-helper-state
+install -d -m 0750 -o "$INSTALL_UID" -g "$APP_GID" voice-helper-socket
+helper_suffix="$(printf '%s' "$PWD" | openssl dgst -sha256 | awk '{print substr($2,1,12)}')"
+helper_name="josi-ce-voice-helper-${helper_suffix}"
+docker rm -f "$helper_name" >/dev/null 2>&1 || true
+docker run -d --name "$helper_name" --restart unless-stopped \
+  --read-only --network none --security-opt no-new-privileges --cap-drop ALL \
+  --user "$INSTALL_UID:$INSTALL_GID" --group-add "$DOCKER_GID" --group-add "$APP_GID" \
+  --tmpfs /tmp:size=16m,mode=1777 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/voice-helper-state:$PWD/voice-helper-state" \
+  -v "$PWD/voice-helper-socket:$PWD/voice-helper-socket" \
+  --entrypoint python3 "$INSTALLER_IMAGE" /opt/josi-voice-box/host_helper.py \
+  --state "$PWD/voice-helper-state" --socket "$PWD/voice-helper-socket/helper.sock" \
+  --runtime-uid "$INSTALL_UID" --runtime-gid "$INSTALL_GID" --socket-gid "$APP_GID" >/dev/null
+
+for _ in $(seq 1 30); do
+  [[ -S voice-helper-socket/helper.sock ]] && break
+  sleep 1
+done
+[[ -S voice-helper-socket/helper.sock ]] || fail 'the Voice Box installer helper did not start'
 
 say 'Pulling and starting the isolated Josi CE services...'
 docker compose -f "$PWD/docker-compose.yml" --project-directory "$PWD" \

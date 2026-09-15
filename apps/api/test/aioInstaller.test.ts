@@ -49,4 +49,14 @@ describe('the one-shot AIO installer', () => {
     expect(installer).not.toMatch(/POSTGRES_PASSWORD=/);
     expect(installer).not.toMatch(/cat .*secrets\//);
   });
+
+  it('provisions the narrow Voice Box helper so the install button works', () => {
+    expect(dockerfile).toContain('services/voice-box/host_helper.py');
+    expect(dockerfile).toContain('python3');
+    expect(installer).toContain('josi-ce-voice-helper-');
+    expect(installer).toContain('/opt/josi-voice-box/host_helper.py');
+    expect(installer).toContain('-v /var/run/docker.sock:/var/run/docker.sock');
+    expect(installer).toContain('--network none');
+    expect(installer).toContain('voice-helper-socket/helper.sock');
+  });
 });

@@ -25,17 +25,24 @@ from bounded_http import BoundedRequests
 from unix_http import UnixHTTPConnection
 
 
-def atomic(path, value):
+def atomic(path, value, uid=None, gid=None):
     temp = path.with_suffix('.tmp')
     with open(temp, 'w', opener=lambda p, flags: os.open(p, flags, 0o600)) as f:
         json.dump(value, f)
         f.flush()
         os.fsync(f.fileno())
+        if uid is not None and gid is not None:
+            os.fchown(f.fileno(), uid, gid)
     os.replace(temp, path)
 
 
 class Manager:
-    def __init__(self, directory, catalog, development=False):
+    def __init__(self, directory, catalog, development=False, runtime_uid=None, runtime_gid=None):
+        self.runtime_uid = os.getuid() if runtime_uid is None else runtime_uid
+        self.runtime_gid = os.getgid() if runtime_gid is None else runtime_gid
+        self.docker_path = shutil.which('docker')
+        if self.docker_path not in ('/usr/bin/docker', '/usr/local/bin/docker'):
+            raise ValueError('Docker CLI is unavailable')
         self.root = Path(directory).resolve()
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         if self.root.stat().st_mode & 0o077:
@@ -48,6 +55,7 @@ class Manager:
                     raise ValueError('Catalog requires a version and immutable image digest')
         self.lock = threading.Lock()
         (self.root / 'gateway').mkdir(mode=0o700, exist_ok=True)
+        os.chown(self.root / 'gateway', self.runtime_uid, self.runtime_gid)
         self.project = 'josi-voice-' + hashlib.sha256(str(self.root).encode()).hexdigest()[:12]
         self.statefile = self.root / 'state.json'
         self.state = json.loads(self.statefile.read_text()) if self.statefile.exists() else {
@@ -61,6 +69,7 @@ class Manager:
             fd = os.open(tokenpath, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, 'w') as f:
                 f.write(secrets.token_hex(32))
+            os.chown(tokenpath, self.runtime_uid, self.runtime_gid)
         self.token = tokenpath.read_text().strip()
 
     def save(self):
@@ -74,7 +83,7 @@ class Manager:
 
     def compose(self, image, settings):
         service = {
-            'image': image, 'restart': 'unless-stopped', 'user': f'{os.getuid()}:{os.getgid()}',
+            'image': image, 'restart': 'unless-stopped', 'user': f'{self.runtime_uid}:{self.runtime_gid}',
             'read_only': True, 'cap_drop': ['ALL'], 'security_opt': ['no-new-privileges:true'],
             'pids_limit': 128, 'mem_limit': '4g', 'cpus': min(4, os.cpu_count() or 2),
             'network_mode': 'none', 'tmpfs': ['/tmp:size=64m,mode=1777'],
@@ -90,7 +99,7 @@ class Manager:
 
     def run(self, *args):
         # No inherited COMPOSE_FILE/DOCKER_HOST/DOCKER_CONTEXT or shell expansion.
-        subprocess.run(['/usr/bin/docker', '--host', 'unix:///var/run/docker.sock', 'compose',
+        subprocess.run([self.docker_path, '--host', 'unix:///var/run/docker.sock', 'compose',
                         '--project-name', self.project, '--project-directory', str(self.root),
                         '--file', str(self.root / 'compose.json'), *args],
                        env={'PATH': '/usr/bin:/bin', 'HOME': str(self.root)},
@@ -134,7 +143,7 @@ class Manager:
                                  'Initial image download; speech processing then runs locally']}
 
     def activate(self, image, settings, pull=True):
-        atomic(self.root / 'settings.json', settings)
+        atomic(self.root / 'settings.json', settings, self.runtime_uid, self.runtime_gid)
         atomic(self.root / 'compose.json', self.compose(image, settings))
         if pull and not image.startswith('sha256:'):
             self.run('pull', 'voice-box')
@@ -279,8 +288,11 @@ if __name__ == '__main__':
     parser.add_argument('--socket', required=True)
     parser.add_argument('--catalog', default=str(Path(__file__).with_name('catalog.json')))
     parser.add_argument('--development', action='store_true')
+    parser.add_argument('--runtime-uid', type=int)
+    parser.add_argument('--runtime-gid', type=int)
+    parser.add_argument('--socket-gid', type=int)
     args = parser.parse_args()
-    manager = Manager(args.state, args.catalog, args.development)
+    manager = Manager(args.state, args.catalog, args.development, args.runtime_uid, args.runtime_gid)
     process_lock = open(manager.root / 'helper.lock', 'a')
     fcntl.flock(process_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     socket = Path(args.socket)
@@ -291,5 +303,7 @@ if __name__ == '__main__':
         socket.unlink()
     with Server(str(socket), Handler) as server:
         os.chmod(socket, 0o660)
+        if args.socket_gid is not None:
+            os.chown(socket, manager.runtime_uid, args.socket_gid)
         server.manager = manager
         server.serve_forever()

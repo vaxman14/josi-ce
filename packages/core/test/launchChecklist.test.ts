@@ -96,7 +96,8 @@ describe('LB7.3 — the checklist covers what an administrator has to decide', (
     expect(find(list, 'users').state).toBe('outstanding');
     expect(find(list, 'users').detail).toMatch(/only your own account/i);
     expect(find(list, 'master_key_backup').state).toBe('outstanding');
-    expect(find(list, 'backup_taken').state).toBe('outstanding');
+    expect(find(list, 'backup_taken').state).toBe('done');
+    expect(find(list, 'backup_taken').detail).toMatch(/optional/i);
   });
 });
 
@@ -121,10 +122,10 @@ describe('LB7.3 — every item is derived, not asserted', () => {
     expect(find(list, 'smtp').detail).toMatch(/skipped/i);
   });
 
-  it('will not call a backup done until a restore has proved it', () => {
+  it('reports backup and restore state neutrally because backups are optional', () => {
     const taken = buildChecklist(fresh({ backupCount: 3 }), false);
-    expect(find(taken, 'backup_taken').state).toBe('outstanding');
-    expect(find(taken, 'backup_taken').detail).toMatch(/none has been restored/i);
+    expect(find(taken, 'backup_taken').state).toBe('done');
+    expect(find(taken, 'backup_taken').detail).toMatch(/optional/i);
 
     const proven = buildChecklist(fresh({ backupCount: 3, restoreVerified: true }), false);
     expect(find(proven, 'backup_taken').state).toBe('done');
@@ -149,10 +150,10 @@ describe('LB7.4 — optional work can be put aside; material risk cannot', () =>
     for (const item of CHECKLIST_ITEMS) {
       expect(isDismissible(item.severity), item.key).toBe(item.severity !== 'critical');
     }
-    // The two that lose data permanently.
+    // The master key can lose data permanently; backups remain optional.
     expect(isDismissible('critical')).toBe(false);
     expect(CHECKLIST_ITEMS.find((i) => i.key === 'master_key_backup')!.severity).toBe('critical');
-    expect(CHECKLIST_ITEMS.find((i) => i.key === 'backup_taken')!.severity).toBe('critical');
+    expect(CHECKLIST_ITEMS.find((i) => i.key === 'backup_taken')!.severity).toBe('optional');
   });
 
   it('honours a dismissal of optional work', () => {
@@ -176,7 +177,7 @@ describe('LB7.4 — optional work can be put aside; material risk cannot', () =>
     const list = buildChecklist(fresh(), false);
     const keys = list.reminders.map((r) => r.key);
     expect(keys).toContain('master_key_backup');
-    expect(keys).toContain('backup_taken');
+    expect(keys).not.toContain('backup_taken');
     expect(keys).toContain('model');
     // Optional work never nags.
     expect(keys).not.toContain('connectors');
@@ -189,7 +190,7 @@ describe('LB7.4 — optional work can be put aside; material risk cannot', () =>
       false,
     );
     expect(list.progress.total).toBe(CHECKLIST_ITEMS.length);
-    expect(list.progress.done).toBe(2);
+    expect(list.progress.done).toBe(3);
     // Settled is not finished: the critical items are still outstanding.
     expect(list.complete).toBe(false);
   });
