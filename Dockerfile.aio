@@ -8,7 +8,7 @@ FROM docker:29-cli
 ARG JOSI_VERSION=0.1.0
 ENV JOSI_VERSION=$JOSI_VERSION
 
-RUN apk add --no-cache bash openssl
+RUN apk add --no-cache bash openssl python3
 
 COPY docker-compose.release.yml /opt/josi-ce-release/docker-compose.yml
 COPY Caddyfile /opt/josi-ce-release/Caddyfile
@@ -16,6 +16,7 @@ COPY .env.example /opt/josi-ce-release/.env.example
 COPY scripts/install.sh /opt/josi-ce-release/install.sh
 COPY scripts/preflight.sh /opt/josi-ce-release/preflight.sh
 COPY scripts/aio-install.sh /usr/local/bin/josi-ce-aio-install
+COPY services/voice-box/host_helper.py services/voice-box/settings.py services/voice-box/bounded_http.py services/voice-box/unix_http.py services/voice-box/catalog.json /opt/josi-voice-box/
 
 RUN chmod 0755 \
       /opt/josi-ce-release/install.sh \

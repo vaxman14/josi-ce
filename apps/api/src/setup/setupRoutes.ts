@@ -53,7 +53,7 @@ import { UserError, createUser } from '@josi-ce/auth';
 import { asyncRoute, param } from '../http/async.js';
 import { blockingFailures, runHostChecks } from './hostChecks.js';
 import { STEP_DESCRIPTORS, SETUP_STEPS, canSubmit, nextStep, type SetupStep } from './steps.js';
-import { assertModelIsOffered, verifyLlm, verifyOAuthClient, verifySmtp } from './verifySteps.js';
+import { assertModelIsOffered, verifyLlm, verifyOAuthClient, verifySmtp, type VerifyOutcome } from './verifySteps.js';
 
 export interface SetupRoutesCtx {
   db: Db;
@@ -391,26 +391,19 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         target: outcome.target ?? null,
       });
 
-      // A verification that PASSED is a real chat that really happened, and it
-      // must count everywhere — not only on the review screen. Without this,
-      // the wizard said "passed", setup completed, and the admin Model page
-      // then said "not tested" and asked the operator to test the same model
-      // again: the product refusing to trust its own check. Only what was
-      // observed is recorded — the chat capability, because a chat is what
-      // ran. Tool calling and the rest stay null (unknown) until a full probe.
-      if (item === 'llm' && outcome.status === 'passed') {
+      // Onboarding runs the same full probe as Admin and records every observed
+      // capability. A basic reply alone must never masquerade as verification.
+      if (item === 'llm' && outcome.probe) {
+        const cap = outcome.probe.capabilities;
         await db.query(
           `update llm_providers set
-             probed_at = now(), cap_chat = true,
-             activated_at = coalesce(activated_at, now()),
-             probe_steps = $1
+             probed_at = $1, cap_chat = $2, cap_structured_output = $3,
+             cap_tool_calling = $4, cap_vision = $5, cap_context_tokens = $6,
+             activated_at = case when $2 then coalesce(activated_at, now()) else null end,
+             probe_steps = $7
            where role = 'primary'`,
-          [json([{
-            id: 'chat',
-            label: 'Holds a conversation',
-            passed: true,
-            detail: outcome.detail,
-          }])],
+          [outcome.probe.probedAt, cap.chat, cap.structuredOutput, cap.toolCalling,
+            cap.vision, cap.contextTokens, json(outcome.probe.steps)],
         );
       }
       return res.json(outcome);
@@ -993,7 +986,7 @@ async function runVerification(
   ctx: SetupRoutesCtx,
   item: VerifiableItem,
   body: Record<string, unknown>,
-): Promise<{ status: 'passed' | 'failed'; category?: string; detail: string; target?: string }> {
+): Promise<VerifyOutcome> {
   const { db } = ctx;
 
   if (item === 'llm') {
@@ -1074,8 +1067,8 @@ async function buildReviewDetail(db: Db): Promise<Record<string, unknown>> {
   const [deployment] = await db.query<{ domain: string | null; tls_mode: string; acme_email: string | null; certificate_verified_at: string | null }>(
     `select domain, tls_mode, acme_email, certificate_verified_at from deployment_config where id = true`,
   );
-  const [llm] = await db.query<{ provider: string; model: string; base_url: string | null; api_key_enc: string | null; external_acknowledged: boolean; activated_at: string | null }>(
-    `select provider, model, base_url, api_key_enc, external_acknowledged, activated_at from llm_providers where role = 'primary'`,
+  const [llm] = await db.query<{ provider: string; model: string; base_url: string | null; api_key_enc: string | null; external_acknowledged: boolean; activated_at: string | null; probe_steps: unknown }>(
+    `select provider, model, base_url, api_key_enc, external_acknowledged, activated_at, probe_steps from llm_providers where role = 'primary'`,
   );
   const smtp = await db.query<{ kind: string; copy_from_system: boolean; host: string | null; port: number | null; security: string | null; username: string | null; password_enc: string | null; from_name: string | null; from_address: string | null; verified_at: string | null }>(
     `select kind, copy_from_system, host, port, security, username, password_enc, from_name, from_address, verified_at from smtp_profiles order by kind`,
@@ -1111,6 +1104,7 @@ async function buildReviewDetail(db: Db): Promise<Record<string, unknown>> {
           baseUrl: llm.base_url,
           apiKeySet: !!llm.api_key_enc,
           externalAcknowledged: llm.external_acknowledged,
+          probeSteps: Array.isArray(llm.probe_steps) ? llm.probe_steps : [],
         }
       : null,
     smtp: smtp.map((p) => ({

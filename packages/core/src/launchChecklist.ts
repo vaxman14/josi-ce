@@ -60,13 +60,10 @@ export const CHECKLIST_ITEMS: readonly ChecklistItemSpec[] = Object.freeze([
   },
   {
     key: 'backup_taken',
-    label: 'Take a backup, and check it restores',
-    why: 'A backup that has never been restored is a hope. Until one has run there is nothing to restore from.',
-    severity: 'critical',
-    href: null,
-    insteadOfScreen:
-      'There is no backup screen in this release. Backups run through the API and the procedure is '
-      + 'in INSTALLATION.md §15, including how to check that a restore actually works.',
+    label: 'Optional backups and restore checks',
+    why: 'Backups are optional. If you choose to use them, a restore check confirms the backup is usable.',
+    severity: 'optional',
+    href: '/admin/backups',
   },
   {
     key: 'model',
@@ -245,10 +242,10 @@ function evaluate(key: string, f: ChecklistFacts): { state: ChecklistState; deta
         : { state: 'outstanding', detail: 'Not confirmed. Josi cannot check this for you — the copy is somewhere it cannot see.' };
 
     case 'backup_taken':
-      if (!f.backupCount) return { state: 'outstanding', detail: 'No backup has been taken.' };
+      if (!f.backupCount) return { state: 'done', detail: 'Optional; no backup is configured.' };
       return f.restoreVerified
         ? { state: 'done', detail: `${f.backupCount} backup(s), and a restore has been verified.` }
-        : { state: 'outstanding', detail: `${f.backupCount} backup(s) taken, but none has been restored to prove it works.` };
+        : { state: 'done', detail: `${f.backupCount} backup(s) taken. A restore check is optional and has not been run.` };
 
     case 'model':
       return verification('llm');

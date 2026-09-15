@@ -45,6 +45,7 @@ interface Review {
   canComplete: boolean;
   headline: string;
   summary?: {
+    llm?: { probeSteps?: Array<{ id: string; label: string; passed: boolean; detail: string }> };
     smtp?: Array<{
       kind: string; host: string | null; port: number | null; security: string | null;
       username: string | null; passwordSet: boolean | null; fromName: string | null;
@@ -270,6 +271,17 @@ function StepForm({
 }) {
   const [checks, setChecks] = useState<HostCheck[] | null>(null);
   const [showSmtpPassword, setShowSmtpPassword] = useState(false);
+  const [smtpUsername, setSmtpUsername] = useState(smtpInitial?.username ?? '');
+  const [smtpFromAddress, setSmtpFromAddress] = useState(smtpInitial?.fromAddress ?? '');
+  const [smtpFromOverridden, setSmtpFromOverridden] = useState(
+    !!smtpInitial?.fromAddress && smtpInitial.fromAddress !== smtpInitial.username,
+  );
+
+  useEffect(() => {
+    setSmtpUsername(smtpInitial?.username ?? '');
+    setSmtpFromAddress(smtpInitial?.fromAddress ?? smtpInitial?.username ?? '');
+    setSmtpFromOverridden(!!smtpInitial?.fromAddress && smtpInitial.fromAddress !== smtpInitial.username);
+  }, [smtpInitial]);
 
   useEffect(() => {
     if (step !== 'host_checks') return;
@@ -326,7 +338,7 @@ function StepForm({
           }))}
           className="space-y-3"
         >
-          <Field id="domain" name="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" autoComplete="off" />
+          <Field id="domain" name="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" autoComplete="url" inputMode="url" />
           <div>
             <label className="mb-1 block text-sm" htmlFor="tlsMode">HTTPS</label>
             <select id="tlsMode" name="tlsMode" defaultValue="bundled_caddy"
@@ -338,7 +350,7 @@ function StepForm({
           <p className="text-xs text-muted-foreground">
             Public certificates require a domain pointing to this server. A LAN IP works over HTTP and needs no certificate email.
           </p>
-          <Field id="acmeEmail" name="acmeEmail" label="Email for certificate notices" type="email" autoComplete="off" />
+          <Field id="acmeEmail" name="acmeEmail" label="Email for certificate notices" type="email" autoComplete="email" />
           <Button type="submit" disabled={busy}>Continue</Button>
         </form>
       );
@@ -371,7 +383,12 @@ function StepForm({
               <option value="none">None</option>
             </select>
           </div>
-          <Field id="username" label="Username" defaultValue={smtpInitial?.username ?? ''} autoCapitalize="none" />
+          <Field id="username" label="Username" value={smtpUsername} autoCapitalize="none" autoComplete="username"
+                 onChange={(event) => {
+                   const next = event.currentTarget.value;
+                   if (!smtpFromOverridden) setSmtpFromAddress(next);
+                   setSmtpUsername(next);
+                 }} />
           <div>
             <label className="mb-1 block text-sm" htmlFor="password">Password</label>
             <Input id="password" name="password" type={showSmtpPassword ? 'text' : 'password'}
@@ -384,7 +401,14 @@ function StepForm({
             </label>
           </div>
           <Field id="fromName" label="From name" defaultValue={smtpInitial?.fromName ?? 'Josi'} required />
-          <Field id="fromAddress" label="From address" type="email" defaultValue={smtpInitial?.fromAddress ?? ''} required />
+          <Field id="fromAddress" label="From address" type="email" value={smtpFromAddress} required autoComplete="email"
+                 onChange={(event) => {
+                   setSmtpFromAddress(event.currentTarget.value);
+                   setSmtpFromOverridden(event.currentTarget.value !== smtpUsername);
+                 }} />
+          <p className="text-xs text-muted-foreground">
+            Defaults to the Username. Change it only for an approved alias or shared mailbox.
+          </p>
           <Field id="testTo" label="Send a test message to" type="email" required
                  placeholder="you@example.com" />
           <p className="text-xs text-muted-foreground">
@@ -514,6 +538,18 @@ function ReviewPanel({
             ) : null}
             {item.unavailableReason ? (
               <p className="mt-1 text-xs text-muted-foreground">{item.unavailableReason}</p>
+            ) : null}
+            {item.key === 'llm' && review.summary?.llm?.probeSteps?.length ? (
+              <ul className="mt-2 space-y-1 text-xs" aria-label="Model capability test results">
+                {review.summary.llm.probeSteps.map((step) => (
+                  <li key={step.id} className="flex gap-2">
+                    <span className={step.passed ? 'text-emerald-500' : 'text-amber-500'} aria-hidden>
+                      {step.passed ? '✓' : '—'}
+                    </span>
+                    <span><strong>{step.label}:</strong> {step.detail}</span>
+                  </li>
+                ))}
+              </ul>
             ) : null}
 
             {item.key === 'smtp' && (

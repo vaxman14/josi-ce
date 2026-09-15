@@ -125,6 +125,13 @@ describe('LB1.1 — the published install keeps the development stack’s securi
     expect(release.services.caddy.cap_add).toEqual(['NET_BIND_SERVICE']);
   });
 
+  it('connects the web app to the installer-managed Voice Box helper', () => {
+    expect(release.services.web.environment.JOSI_VOICE_HELPER_SOCKET).toBe('/run/josi-voice/helper.sock');
+    expect(release.services.web.volumes).toContain(
+      '${JOSI_VOICE_SOCKET_DIR:-./voice-helper-socket}:/run/josi-voice:ro',
+    );
+  });
+
   it('keeps required services off profiles and optional ones on them', () => {
     for (const name of ['web', 'worker', 'db', 'caddy', 'migrate']) {
       expect(release.services[name].profiles, `${name} must not be profile-gated`).toBeUndefined();
