@@ -269,6 +269,7 @@ function StepForm({
   onSubmit: (step: string, body: Record<string, unknown>) => Promise<void>;
 }) {
   const [checks, setChecks] = useState<HostCheck[] | null>(null);
+  const [showSmtpPassword, setShowSmtpPassword] = useState(false);
 
   useEffect(() => {
     if (step !== 'host_checks') return;
@@ -371,9 +372,17 @@ function StepForm({
             </select>
           </div>
           <Field id="username" label="Username" defaultValue={smtpInitial?.username ?? ''} autoCapitalize="none" />
-          <Field id="password" label="Password" type="password" autoComplete="new-password"
-                 required={!smtpInitial?.passwordSet}
-                 placeholder={smtpInitial?.passwordSet ? 'Leave blank to keep saved password' : undefined} />
+          <div>
+            <label className="mb-1 block text-sm" htmlFor="password">Password</label>
+            <Input id="password" name="password" type={showSmtpPassword ? 'text' : 'password'}
+                   autoComplete="new-password" required={!smtpInitial?.passwordSet}
+                   placeholder={smtpInitial?.passwordSet ? 'Leave blank to keep saved password' : undefined} />
+            <label className="mt-2 flex min-h-11 items-center gap-2 text-sm">
+              <input type="checkbox" checked={showSmtpPassword}
+                     onChange={(event) => setShowSmtpPassword(event.target.checked)} />
+              Show password
+            </label>
+          </div>
           <Field id="fromName" label="From name" defaultValue={smtpInitial?.fromName ?? 'Josi'} required />
           <Field id="fromAddress" label="From address" type="email" defaultValue={smtpInitial?.fromAddress ?? ''} required />
           <Field id="testTo" label="Send a test message to" type="email" required
