@@ -128,7 +128,7 @@ docker run --rm \
   -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.20
+  romanvaxman/josi-ce-installer:latest
 ```
 
 On macOS with Docker Desktop, use its user socket instead:
@@ -138,7 +138,7 @@ docker run --rm \
   -p 8080:8080 \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.20
+  romanvaxman/josi-ce-installer:latest
 ```
 
 Open the HTTPS LAN address printed by the container, accept its temporary local

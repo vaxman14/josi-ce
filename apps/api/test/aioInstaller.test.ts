@@ -64,6 +64,14 @@ describe('the browser-first AIO installer', () => {
     expect(installer).not.toMatch(/JOSI_TAG=latest/);
   });
 
+  it('uses the anonymously pullable Docker Hub release for nested helpers and the stack', () => {
+    expect(installer).toContain(
+      'JOSI_INSTALLER_IMAGE:-docker.io/romanvaxman/josi-ce-installer:${VERSION}',
+    );
+    expect(envExample).toMatch(/^JOSI_REGISTRY=docker\.io\/romanvaxman$/m);
+    expect(installer).not.toContain('ghcr.io/vaxman14/josi-ce-installer');
+  });
+
   it('points the default browser URL at the proxy port that is actually published', () => {
     expect(envExample).toMatch(/^JOSI_APP_URL=http:\/\/localhost$/m);
     expect(envExample).not.toMatch(/^JOSI_APP_URL=http:\/\/localhost:8080$/m);

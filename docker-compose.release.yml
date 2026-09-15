@@ -10,7 +10,7 @@
 #   docker run --rm \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v "$PWD:$PWD" -w "$PWD" \
-#     ghcr.io/vaxman14/josi-ce-installer:0.1.0
+#     romanvaxman/josi-ce-installer:latest
 #
 # Nothing above pipes a URL into a shell. Each file is on disk before it runs.
 #
@@ -32,7 +32,7 @@ name: josi-ce
 # The release, in one place. Overriding JOSI_TAG is how you pin an older version
 # or move to a newer one; nothing here floats on `latest`, because an appliance
 # that silently changes version on restart is not an appliance.
-x-image: &josi_image ${JOSI_REGISTRY:-ghcr.io/vaxman14}/${JOSI_IMAGE:-josi-ce}:${JOSI_TAG:-0.1.0}
+x-image: &josi_image ${JOSI_REGISTRY:-docker.io/romanvaxman}/${JOSI_IMAGE:-josi-ce}:${JOSI_TAG:-0.1.0}
 
 services:
   # ------------------------------------------------------------------ database
@@ -255,7 +255,7 @@ services:
 
   # ------------------------------------------------------- optional: OCR
   ocr:
-    image: ${JOSI_REGISTRY:-ghcr.io/vaxman14}/${JOSI_OCR_IMAGE:-josi-ce-ocr}:${JOSI_TAG:-0.1.0}
+    image: ${JOSI_REGISTRY:-docker.io/romanvaxman}/${JOSI_OCR_IMAGE:-josi-ce-ocr}:${JOSI_TAG:-0.1.0}
     profiles: ["ocr"]
     restart: unless-stopped
     environment:
