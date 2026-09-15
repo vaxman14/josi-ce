@@ -8,7 +8,7 @@
 //
 // Every write capability shows what it permits before it can be switched on.
 // A toggle labelled only "Send email" is not consent.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Input, NotYet } from '@/components/ui';
 import { CloudFolders } from '@/components/CloudFolders';
@@ -40,7 +40,9 @@ interface ProviderView {
     /** Nextcloud only: the server address its owner typed. Null for every
      * OAuth provider. */
     serverUrl?: string | null;
+    capabilities?: Capability[];
   } | null;
+  connections?: Array<NonNullable<ProviderView['connection']>>;
   capabilities: Capability[];
 }
 
@@ -88,11 +90,13 @@ export function Connections() {
     if (reason) setError(handshakeError(reason));
   }, [load]);
 
-  async function connect(provider: string, capabilities: string[] = []) {
+  async function connect(provider: string, capabilities: string[] = [], connectionId?: string) {
     setBusy(provider);
     setError('');
     try {
-      const res = await api.post<{ url: string }>(`/connections/${provider}/start`, { capabilities });
+      const res = await api.post<{ url: string }>(`/connections/${provider}/start`, {
+        capabilities, connectionId, returnPath: '/app/connections',
+      });
       // Leaving the app is the point: consent happens at the provider.
       window.location.assign(res.url);
     } catch (err) {
@@ -123,7 +127,7 @@ export function Connections() {
     // M32: a capability the provider never granted needs another trip through
     // consent, not a stored wish.
     if (capability.needsConsent) {
-      await connect(view.provider, [capability.key]);
+      await connect(view.provider, [capability.key], view.connection.id);
       return;
     }
     setBusy(capability.key);
@@ -155,6 +159,13 @@ export function Connections() {
     }
   }
 
+  const cards = useMemo(() => providers?.flatMap((view) => {
+    const accounts = view.connections?.filter(Boolean) ?? [];
+    return accounts.length
+      ? accounts.map((connection) => ({ ...view, connection, capabilities: connection.capabilities ?? view.capabilities }))
+      : [view];
+  }) ?? null, [providers]);
+
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
       <h1 className="text-xl font-semibold tracking-tight">Connections</h1>
@@ -163,11 +174,11 @@ export function Connections() {
         can disconnect it, but cannot read what is inside it.
       </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {!providers ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!cards ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
-      {providers?.map((view) => (
+      {cards?.map((view) => (
         <CollapsibleCard
-          key={view.provider}
+          key={`${view.provider}-${view.connection?.id ?? 'new'}`}
           title={PROVIDER_LABEL[view.provider]}
           summary={view.connection?.account ?? view.connection?.serverUrl ?? (view.available ? 'Not connected' : 'Not set up')}
           status={view.connection ? (
@@ -250,6 +261,11 @@ export function Connections() {
                 <Button variant="secondary" onClick={() => void disconnect(view)} disabled={busy === view.provider}>
                   Disconnect
                 </Button>
+                {OAUTH_PROVIDERS.includes(view.provider) ? (
+                  <Button className="ml-2" variant="secondary" onClick={() => void connect(view.provider)} disabled={busy === view.provider}>
+                    Add another {PROVIDER_LABEL[view.provider]} account
+                  </Button>
+                ) : null}
               </div>
             </>
           )}

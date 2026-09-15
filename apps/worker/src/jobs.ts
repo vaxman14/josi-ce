@@ -15,7 +15,7 @@ import {
   transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
-  accessTokenFor, can, connectionFor, dueCloudMappings, dueOrigins, loadClient,
+  accessTokenFor, can, connectionsWithCapability, dueCloudMappings, dueOrigins, loadClient,
   markAttempted, markSyncScheduled, syncCloudMapping, syncOrigin,
 } from '@josi-ce/connectors';
 
@@ -225,7 +225,7 @@ async function writeSession(db: Db, task: WritableTask, family: 'mail' | 'calend
   };
   for (const provider of ['google', 'microsoft'] as WriteProvider[]) {
     if (!(await can(db, { ownerUserId: task.owner_user_id, capability: keys[family][provider] })).allowed) continue;
-    const connection = await connectionFor(db, { ownerUserId: task.owner_user_id, provider }); if (!connection) continue;
+    const [connection] = await connectionsWithCapability(db, { ownerUserId: task.owner_user_id, capability: keys[family][provider] }); if (!connection) continue;
     const client = await loadClient(db, ctx.masterKey!, provider);
     const accessToken = await accessTokenFor(db, ctx.masterKey!, { connection, client }, { fetchImpl: ctx.connectorFetch });
     return { provider, accessToken };

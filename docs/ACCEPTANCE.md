@@ -230,6 +230,31 @@ byte-for-byte capture of the pinned version in
 
 ## Operator checklist for a hardware run
 
+## Build-list 13 central Calendar source acceptance — 2026-09-14
+
+Migration `0042` replaces the one-account-per-provider constraint with durable
+provider-account identity for Google and Microsoft while retaining the existing
+single Nextcloud contract. OAuth re-consent is bound to the selected connection
+and refuses account substitution. Workspace → Calendar discovers all calendars
+under every enabled account, preserves account/calendar names and colors,
+allows each owner to independently include or exclude calendars, aggregates
+selected events in day/week/month ranges, and supports owner-only inspection.
+Account-scoped capability checks prevent one account's switch from authorizing
+another account.
+
+Evidence on this source worktree:
+
+- 2,432 tests passed across 94 files, including HTTP selection isolation and
+  secondary-calendar aggregation;
+- TypeScript and production build passed;
+- the complete migration chain was exercised by the integration suite;
+- production dependency audit reported zero vulnerabilities;
+- secret scan passed across 535 files; and
+- Compose configuration and diff whitespace checks passed.
+
+Published multi-architecture image verification remains a release-time gate;
+this source change has not published a numbered release.
+
 ## Build-list 7–12 source acceptance — 2026-09-14
 
 Telegram is again reachable from Admin → Channels without replacing WhatsApp
