@@ -34,7 +34,7 @@ const MEMBER_NAV = [
 ];
 
 const FAMILY_NAV: { to: string; label: string; end?: boolean } = {
-  to: '/app/family', label: 'Family (BETA)',
+  to: '/app/family', label: 'Family (Coming Soon)',
 };
 
 const ADMIN_NAV = [
@@ -51,7 +51,7 @@ const ADMIN_NAV = [
   { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/backups', label: 'Backups' },
   { to: '/admin/developer-services', label: 'Developer services' },
-  { to: '/admin/parental-controls', label: 'Parental controls (BETA)' },
+  { to: '/admin/parental-controls', label: 'Parental controls (Coming Soon)' },
   { to: '/admin/workspace', label: 'Workspace' },
 ];
 
@@ -74,22 +74,15 @@ export function Shell() {
   const location = useLocation();
   const [status, setStatus] = useState<LlmStatus | null>(null);
   const [talkMenuOpen, setTalkMenuOpen] = useState(false);
-  const [family, setFamily] = useState(false);
   const talkMenu = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => setStatus(null));
-    // A successful response means the licensed module exists. Keep Family
-    // visible even when this account has not linked its first child yet;
-    // hiding it for role="none" made the setup page impossible to reach.
-    void api.get<{ role: string }>('/parental/overview')
-      .then(() => setFamily(true))
-      .catch(() => setFamily(false));
   }, [location.pathname]);
 
   const isAdminArea = location.pathname.startsWith('/admin');
   const isTalk = location.pathname === '/app/talk';
-  const memberNav = family ? [...MEMBER_NAV, FAMILY_NAV] : MEMBER_NAV;
+  const memberNav = [...MEMBER_NAV, FAMILY_NAV];
   const nav = isAdminArea ? ADMIN_NAV : memberNav;
 
   return (

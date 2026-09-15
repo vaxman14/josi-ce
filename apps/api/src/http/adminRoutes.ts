@@ -3,7 +3,7 @@
 // Everything here configures the installation. Nothing here reads a member's
 // private resource, and the tests assert that rather than trusting the comment.
 import { Router } from 'express';
-import { appendEvent, getWorkspace, listEvents, updateWorkspace, type Db } from '@josi-ce/core';
+import { appendEvent, ensureWorkspace, getWorkspace, listEvents, updateWorkspace, type Db } from '@josi-ce/core';
 import {
   UserError, createUser, generatePassword, issueAuthToken, listUsers, updateUser,
   listActiveSessions, revokeAllSessions, revokeSession,
@@ -24,6 +24,24 @@ export function adminRoutes(ctx: AdminRoutesCtx): Router {
 
   // ------------------------------------------------------------- workspace
   r.get('/workspace', asyncRoute(async (_req, res) => res.json({ workspace: await getWorkspace(db) })));
+
+  r.post('/workspace/recover', asyncRoute(async (req, res) => {
+    const existing = await getWorkspace(db);
+    if (existing) return res.json({ workspace: existing, recovered: false });
+    const [owner] = await db.query<{ username: string; display_name: string | null }>(
+      `select username, display_name from users where role = 'super_admin' limit 1`,
+    );
+    const [deployment] = await db.query<{ domain: string | null }>(
+      `select domain from deployment_config where id = true`,
+    );
+    await ensureWorkspace(db, { name: owner?.display_name || owner?.username || 'My workspace' });
+    if (deployment?.domain) await updateWorkspace(db, { settings: { publicAddress: deployment.domain } });
+    await appendEvent(db, {
+      actorUserId: req.user!.id, actor: 'super_admin', kind: 'workspace.recovered',
+      subjectType: 'workspace', payload: { source: 'existing setup data' },
+    });
+    return res.status(201).json({ workspace: await getWorkspace(db), recovered: true });
+  }));
 
   r.patch(
     '/workspace',

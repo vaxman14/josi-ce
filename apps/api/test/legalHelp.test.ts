@@ -32,14 +32,13 @@ describe('public help and legal coverage', () => {
     }
   });
 
-  it('labels every Family entry and both management pages as BETA', () => {
-    expect(shell).toContain("label: 'Family (BETA)'");
-    expect(shell).toContain("label: 'Parental controls (BETA)'");
+  it('labels every Family entry and both management pages as Coming Soon', () => {
+    expect(shell).toContain("label: 'Family (Coming Soon)'");
+    expect(shell).toContain("label: 'Parental controls (Coming Soon)'");
     for (const surface of [family, parental]) {
-      expect(surface).toContain('BETA');
-      expect(surface).toMatch(/do not (trust or )?rely/i);
-      expect(surface).toMatch(/device-level/i);
-      expect(surface).toMatch(/adult supervision/i);
+      expect(surface).toContain('Coming Soon');
+      expect(surface).toMatch(/No supervision, schedules, limits, monitoring, or child-safety enforcement/i);
+      expect(surface).toContain('roman@socalreceptionist.com');
     }
   });
 

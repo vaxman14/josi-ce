@@ -16,7 +16,8 @@
 import { isIP } from 'node:net';
 import { Router } from 'express';
 import {
-  appendEvent, asSecret, getInstallId, getSetupState, getVerifications, json, loadMasterKey,
+  appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, json, loadMasterKey,
+  updateWorkspace,
   recordVerification, seal, summarizeReview,
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
@@ -450,6 +451,21 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         return res.status(409).json({ error: 'setup cannot finish without an administrator account' });
       }
 
+      // Setup cannot close while its required singleton is absent. Rebuild it
+      // from answers already persisted by the owner and domain steps.
+      const [ownerProfile] = await db.query<{ username: string; display_name: string | null }>(
+        `select username, display_name from users where role = 'super_admin' limit 1`,
+      );
+      const [deployment] = await db.query<{ domain: string | null }>(
+        `select domain from deployment_config where id = true`,
+      );
+      await ensureWorkspace(db, {
+        name: ownerProfile?.display_name || ownerProfile?.username || 'My workspace',
+      });
+      if (deployment?.domain) {
+        await updateWorkspace(db, { settings: { publicAddress: deployment.domain } });
+      }
+
       // LB4.4 / LB6.5. A required thing that failed, or that was never tested,
       // stops this here. Checked server-side and checked again at the moment of
       // completion rather than trusted from the review screen, because the
@@ -554,6 +570,7 @@ async function applyStep(
       const email = str(body.email, 320);
       const username = str(body.username, 64);
       const displayName = str(body.displayName, 120);
+      const timezone = str(body.timezone, 80) || 'UTC';
       const password = asSecret(body.password);
 
       if (!email || !email.includes('@')) throw new SetupError(400, 'a valid email address is required');
@@ -564,6 +581,7 @@ async function applyStep(
       // request carrying {"role":"member"} or {"role":"super_admin"} changes
       // nothing at all.
       try {
+        await ensureWorkspace(db, { name: displayName || username, timezone });
         await createUser(db, {
           email,
           username,
@@ -604,6 +622,8 @@ async function applyStep(
         `update deployment_config set domain = $1, tls_mode = $2, acme_email = $3 where id = true`,
         [domain, tlsMode, acmeEmail || null],
       );
+      await ensureWorkspace(db);
+      await updateWorkspace(db, { settings: { publicAddress: domain } });
       // certificate_verified_at is untouched: no ACME challenge has happened,
       // and claiming otherwise would be a lie the UI then repeats.
       return;

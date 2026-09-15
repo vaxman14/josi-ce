@@ -230,6 +230,31 @@ byte-for-byte capture of the pinned version in
 
 ## Operator checklist for a hardware run
 
+## Build-list 7–12 source acceptance — 2026-09-14
+
+Telegram is again reachable from Admin → Channels without replacing WhatsApp
+or Slack. Backup destination selection is one controlled radio group, so its
+highlight, keyboard state, and submitted destination cannot diverge. Full
+backups can target a tested mounted NAS path under `/mnt` or `/data`; the server
+requires a real read/write probe before using it. Every Developer Service is an
+accessible disclosure that opens automatically when a connection needs
+attention. Family and Parental Controls expose only a disabled Coming Soon
+teaser with no active safety claims. Setup creates and populates the singleton
+workspace before completion, migration `0040` backfills missing rows without
+overwriting valid ones, and Admin offers an authenticated recovery action.
+
+Evidence on this source worktree:
+
+- 2,429 tests passed across 94 files;
+- TypeScript and production build passed;
+- the complete migration chain was exercised by the setup integration suite;
+- production dependency audit reported zero vulnerabilities;
+- secret scan passed across 533 files;
+- Compose configuration and diff whitespace checks passed.
+
+Published multi-architecture image verification remains a release-time gate;
+this host's Docker installation does not provide Buildx.
+
 ## Parental Controls integration — 2026-09-13
 
 The complete paid Parental Controls module was restored onto current public

@@ -22,7 +22,10 @@ import {
 } from '@josi-ce/ops';
 import { UnsafeEndpointError } from '@josi-ce/llm';
 import { requireAuth, requireSuperAdmin } from './authz.js';
-import { existsSync } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
+import { access, open, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { normalize } from 'node:path';
 import { asyncRoute, param } from './async.js';
 
 export interface OpsRoutesCtx {
@@ -45,7 +48,7 @@ export interface OpsRoutesCtx {
 /** The destination row as stored. `credentials_enc` is selected only by the
  * routes that must open it, and is never part of a response. */
 interface DestinationRow {
-  kind: 's3' | 'r2' | 'b2';
+  kind: 's3' | 'r2' | 'b2' | 'nas';
   label: string;
   bucket: string;
   region: string;
@@ -327,12 +330,17 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       if (!(await limited(req, res, LIMITS.backup))) return undefined;
       if (!ctx.backupWriter) throw new RouteError(503, 'backups are not available on this installation');
       const kind = req.body?.kind === 'portable' ? 'portable' : 'full';
+      const [destination] = kind === 'full' ? await db.query<{ kind: string; bucket: string; last_check_ok: boolean | null }>(
+        `select kind, bucket, last_check_ok from backup_destination where id = true`,
+      ) : [];
       const { backup, description } = await createBackup(db, {
         kind,
         createdBy: req.user!.id,
         masterKeyConfirmed: req.body?.masterKeyConfirmed === true,
         writer: ctx.backupWriter,
         filename: `josi-${kind}-${Date.now()}.zip`,
+        destinationDir: destination?.kind === 'nas' && destination.last_check_ok === true
+          ? destination.bucket : undefined,
       });
       return res.status(201).json({
         backup: {
@@ -486,7 +494,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
               // Where the archives actually go, assembled from the stored
               // fields. An operator checking their bucket should not have to
               // reconstruct this from three inputs.
-              resolvedEndpoint: `https://${endpointHost({
+              resolvedEndpoint: row.kind === 'nas' ? row.bucket : `https://${endpointHost({
                 kind: row.kind,
                 bucket: row.bucket,
                 region: row.region,
@@ -522,13 +530,19 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       if (!descriptor) throw new RouteError(400, 'choose where backups should be stored');
 
       const bucket = str(body.bucket, 255);
-      if (!bucket) throw new RouteError(400, 'a bucket name is required');
+      if (!bucket) throw new RouteError(400, kind === 'nas' ? 'a mounted path is required' : 'a bucket name is required');
+      if (kind === 'nas') {
+        const path = normalize(bucket);
+        if (!path.startsWith('/mnt/') && !path.startsWith('/data/')) {
+          throw new RouteError(400, 'the mounted path must be under /mnt or /data');
+        }
+      }
       const accountId = str(body.accountId, 128) || null;
       if (kind === 'r2' && !accountId) {
         throw new RouteError(400, 'Cloudflare R2 needs the account ID from your R2 endpoint');
       }
       // R2 signs as `auto` and has no regions of its own to ask for.
-      const region = kind === 'r2' ? 'auto' : str(body.region, 64);
+      const region = kind === 'r2' ? 'auto' : kind === 'nas' ? 'local' : str(body.region, 64);
       if (!region) throw new RouteError(400, 'a region is required');
 
       const endpoint = str(body.endpoint, 500) || null;
@@ -564,7 +578,9 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       // rather than silently carrying the old one to a new endpoint.
       const sameKind = previous?.kind === kind;
       let sealed: string | null;
-      if (supplied.length) {
+      if (kind === 'nas') {
+        sealed = null;
+      } else if (supplied.length) {
         sealed = seal(requireDestinationKey(ctx), Object.fromEntries(supplied));
       } else if (sameKind && previous?.credentials_enc) {
         sealed = previous.credentials_enc;
@@ -629,12 +645,29 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
                 credentials_enc, last_check_at, last_check_ok, last_check_error
          from backup_destination where id = true`,
       );
-      if (!row || !row.credentials_enc) {
+      if (!row || (row.kind !== 'nas' && !row.credentials_enc)) {
         throw new RouteError(400, 'no backup destination has been configured yet');
       }
 
+      if (row.kind === 'nas') {
+        const path = normalize(row.bucket);
+        let result: { ok: boolean; detail: string };
+        try {
+          await access(path, constants.R_OK | constants.W_OK);
+          const probe = `${path}/.josi-write-test-${randomUUID()}`;
+          const file = await open(probe, 'wx', 0o600);
+          await file.close();
+          await rm(probe);
+          result = { ok: true, detail: 'Josi can read and write this mounted network share.' };
+        } catch {
+          result = { ok: false, detail: 'Josi cannot read and write that mounted path. Check the mount and its permissions.' };
+        }
+        await db.query(`update backup_destination set last_check_at = now(), last_check_ok = $1, last_check_error = $2 where id = true`, [result.ok, result.ok ? null : result.detail]);
+        return res.json({ ...result, category: result.ok ? null : 'permission' });
+      }
+
       const opened = openSealed<Record<string, string>>(
-        requireDestinationKey(ctx), row.credentials_enc,
+        requireDestinationKey(ctx), row.credentials_enc!,
       );
       const result = await testDestination({
         config: {

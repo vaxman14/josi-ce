@@ -14,6 +14,7 @@ export function AdminWorkspace() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
     if (resource.state === 'ready' && resource.data) setWorkspace(resource.data.workspace);
@@ -35,6 +36,17 @@ export function AdminWorkspace() {
     }
   }
 
+  async function recover() {
+    setRecovering(true); setSaveError('');
+    try {
+      const r = await api.post<{ workspace: Workspace }>('/admin/workspace/recover', {});
+      setWorkspace(r.workspace);
+      resource.reload();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not recover the workspace');
+    } finally { setRecovering(false); }
+  }
+
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
       {/* The heading does not wait on a fetch: a page whose title appears only
@@ -49,10 +61,13 @@ export function AdminWorkspace() {
         <Card>
           <CardTitle>No workspace yet</CardTitle>
           <p className="text-sm text-muted-foreground">
-            This installation has no workspace record. That normally means setup did not finish.
-            Reloading may fix it; if not, check the server logs.
+            This installation has no workspace record. Recover it from the administrator and
+            deployment settings already saved here.
           </p>
-          <Button className="mt-3" onClick={resource.reload}>Check again</Button>
+          {saveError ? <ErrorNote>{saveError}</ErrorNote> : null}
+          <Button className="mt-3" disabled={recovering} onClick={() => void recover()}>
+            {recovering ? 'Recovering…' : 'Recover workspace'}
+          </Button>
         </Card>
       ) : null}
 

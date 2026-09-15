@@ -62,6 +62,24 @@ const minutesOf = (value: string): number => {
 };
 
 export function Family() {
+  return <FamilyComingSoon />;
+}
+
+function FamilyComingSoon() {
+  return (
+    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4" aria-disabled="true">
+      <h1 className="text-xl font-semibold tracking-tight">Family <Badge tone="muted">Coming Soon</Badge></h1>
+      <Card className="opacity-75">
+        <CardTitle>Parental Controls are being redesigned</CardTitle>
+        <p className="text-sm text-muted-foreground">No supervision, schedules, limits, monitoring, or child-safety enforcement are active here today.</p>
+        <p className="mt-2 text-sm text-muted-foreground">The future feature is intended to let parents or guardians create and manage child profiles, set age-appropriate access rules and schedules, review relevant Josi activity, and receive useful usage and safety information while keeping parental authority separate from ordinary administration.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Suggest features at <a className="underline" href="mailto:roman@socalreceptionist.com">roman@socalreceptionist.com</a>.</p>
+      </Card>
+    </div>
+  );
+}
+
+function FamilyImplementation() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [absent, setAbsent] = useState(false);
   const [error, setError] = useState('');
