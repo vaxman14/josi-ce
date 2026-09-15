@@ -4,6 +4,28 @@ A record of what has actually been run, on what, and when. **A profile with no
 row in the results table has not been tested**, whatever the script's existence
 might suggest.
 
+## v0.1.23 publication — 2026-09-15
+
+Release source: public `main` commit
+`78e4b5924969749fe56026e97c02f4e10982e151`, tagged `v0.1.23`.
+
+Evidence on Bananana (Linux x86_64, Docker Engine 29.7.2, Buildx 0.29.1):
+
+- TypeScript and production build passed;
+- 2,446 tests passed across 97 files;
+- dependency audit reported zero vulnerabilities;
+- secret scan passed across 548 files;
+- release and reverse-proxy Compose configurations parsed successfully;
+- the application image built locally for `linux/amd64` and `linux/arm64`;
+- the browser-installer image built locally for both architectures; and
+- the public release workflow completed successfully.
+
+Registry readback proved real `linux/amd64` and `linux/arm64` child manifests
+for application and installer tags `0.1.23` and `latest` in both GHCR and
+Docker Hub. Docker Hub uses the `romanvaxman` namespace. The numbered Docker
+Hub indexes carry the exact same child digests as GHCR; stable `latest` aliases
+were promoted from those existing indexes without rebuilding.
+
 This document exists because M97 forbids capacity claims without measurements,
 and because a script that has never been run is a plan.
 
