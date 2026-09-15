@@ -712,6 +712,19 @@ docker ps --format &#39;table {{.Names}}\t{{.Ports}}&#39;
 </code></pre>
 <p>Stop the conflicting service, choose different host ports, or use the existing
 reverse-proxy deployment shape.</p>
+<h3>17.7.1 Gmail rejects the SMTP username or password</h3>
+<p>For Gmail, use the full Gmail address as the SMTP username and a Google App
+Password created after enabling 2-Step Verification. Do not use the normal
+Google account password.</p>
+<p>Google displays an App Password as four groups of four lowercase letters. Josi
+removes spaces automatically, but must receive exactly 16 letters. Enable
+<strong>Show password</strong> before selecting <strong>Save and test</strong>
+and verify <code>4-4-4-4</code>. Google&#39;s copy action can occasionally omit the
+final character; <code>4-4-4-3</code> means the pasted value is incomplete even
+when it came directly from Google&#39;s page. Append the missing displayed
+character or generate a new App Password.</p>
+<p>Regenerate any App Password that appears in a screenshot, message, support
+ticket or log. Treat it as exposed even if the test failed.</p>
 <h3>17.8 Docker build fails</h3>
 <pre><code class="language-bash">docker compose build --pull --no-cache
 docker system df
