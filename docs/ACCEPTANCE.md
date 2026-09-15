@@ -255,6 +255,28 @@ Evidence on this source worktree:
 Published multi-architecture image verification remains a release-time gate;
 this source change has not published a numbered release.
 
+## Build-list 14 Master Vault source acceptance — 2026-09-14
+
+Migration `0043` adds one installation control plane, independently random
+per-user box keys, AEAD-encrypted items, and session-bound five-minute UI
+unlocks. The administrator-created Vault key is wrapped separately by the
+installation key and a one-time offline recovery key; only its hash and
+fingerprint persist. Setup pauses until the recovery key is confirmed saved.
+Users receive masked CRUD, integrity checking, box rotation and strict owner
+isolation. Administrators see health, lock, recovery and blocked-job metadata,
+but no endpoint enumerates or reveals another user's values. Guardian access
+requires the existing password-plus-TOTP, single-use parental authority grant.
+
+New model, OAuth application, connected-account, developer-service, SMTP and
+backup credentials use the Vault after initialization. Old sealed values stay
+readable for an upgrade but are never silently imported; re-entry or rotation
+moves them to the Vault. Locking fails Vault-backed credential resolution
+closed, clears UI unlocks, and records a metadata-only administrator alert.
+Full backup rows include the encrypted Vault but neither recovery key.
+
+Published multi-architecture image verification remains a release-time gate;
+this source change has not published a numbered release.
+
 ## Build-list 7–12 source acceptance — 2026-09-14
 
 Telegram is again reachable from Admin → Channels without replacing WhatsApp

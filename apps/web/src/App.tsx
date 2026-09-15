@@ -14,6 +14,7 @@ import { Conversations } from '@/pages/Conversations';
 import { Contacts } from '@/pages/Contacts';
 import { Connections } from '@/pages/Connections';
 import { Calendar } from '@/pages/Calendar';
+import { Vault } from '@/pages/Vault';
 import { Usage } from '@/pages/Usage';
 import { Personalization } from '@/pages/Personalization';
 import { Settings } from '@/pages/Settings';
@@ -35,6 +36,7 @@ import { AdminParentalControls } from '@/pages/admin/ParentalControls';
 import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
 import { AdminVoiceBox } from '@/pages/admin/VoiceBox';
 import { AdminChannels } from '@/pages/admin/Channels';
+import { AdminVault } from '@/pages/admin/Vault';
 
 /** Routing is convenience, not security.
  *
@@ -140,6 +142,7 @@ export function App() {
         <Route path="contacts" element={<Contacts />} />
         <Route path="connections" element={<Connections />} />
         <Route path="calendar" element={<Calendar />} />
+        <Route path="vault" element={<Vault />} />
         <Route path="usage" element={<Usage />} />
         <Route path="personalization" element={<Personalization />} />
         <Route path="settings" element={<Settings />} />
@@ -166,6 +169,7 @@ export function App() {
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />
         <Route path="backups" element={<AdminBackups />} />
+        <Route path="vault" element={<AdminVault />} />
         <Route path="developer-services" element={<AdminDeveloperServices />} />
         <Route path="parental-controls" element={<AdminParentalControls />} />
         <Route path="launch" element={<AdminLaunchChecklist />} />

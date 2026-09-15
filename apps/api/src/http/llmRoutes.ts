@@ -14,7 +14,7 @@
 // control: the next route forgets it.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, asSecret, json, loadMasterKey, openSealed, seal,
+  appendEvent, asSecret, json, loadMasterKey, openCredentialPayload, storeCredentialPayload,
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
@@ -585,11 +585,10 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         // blank ones, so changing an Azure API version does not mean retyping
         // the key. Only within the same provider, per the rule above.
         const carried: Record<string, unknown> = sameProvider && existing?.api_key_enc
-          ? openSealed<Record<string, unknown>>(masterKey, existing.api_key_enc)
+          ? await openCredentialPayload<Record<string,unknown>>(db,masterKey,{ownerUserId:req.user!.id,service:'llm',slot:role,stored:existing.api_key_enc})
           : {};
         const merged = { ...carried, ...Object.fromEntries(supplied) };
-        // `seal` unwraps each Secret itself; nothing here ever calls reveal().
-        sealedKey = seal(masterKey, merged);
+        sealedKey = await storeCredentialPayload(db,masterKey,{ownerUserId:req.user!.id,kind:'api_key',service:'llm',slot:role,label:`${role} model credentials`,payload:merged,actorUserId:req.user!.id});
         held = new Set(Object.keys(merged));
       }
 

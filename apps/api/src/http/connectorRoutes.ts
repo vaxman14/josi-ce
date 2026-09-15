@@ -227,7 +227,7 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         page = await listFolderPage(connection.provider, { accessToken, ...listArgs }, { fetchImpl: ctx.fetchImpl });
       } else {
         const key = requireKey(ctx);
-        const creds = await nextcloudCredentialsFor(key, connection);
+        const creds = await nextcloudCredentialsFor(db, key, connection);
         page = await listNextcloudFolder(creds, listArgs, { fetchImpl: ctx.fetchImpl });
       }
 

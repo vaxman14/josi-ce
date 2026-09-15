@@ -9,7 +9,7 @@
 // the message that caused it, so the server's own text never reaches a caller,
 // a response body, or the audit log — only a category an operator can act on.
 import { createTransport } from 'nodemailer';
-import { openSealed, type Db, type MasterKey } from '@josi-ce/core';
+import { openCredentialPayload, type Db, type MasterKey } from '@josi-ce/core';
 import { MailError, type SendErrorCategory, type SmtpTransport } from './send.js';
 
 export interface SmtpProfile {
@@ -53,6 +53,7 @@ export async function loadProfile(
     throw new NoProfileError(`the ${kind} mail profile is incomplete`);
   }
 
+  const [owner]=server.password_enc?await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`):[];
   return {
     kind: kind,
     host: server.host,
@@ -60,7 +61,7 @@ export async function loadProfile(
     security: (server.security ?? 'starttls') as SmtpProfile['security'],
     username: server.username,
     password: server.password_enc
-      ? openSealed<{ password: string }>(key, server.password_enc).password
+      ? (await openCredentialPayload<{password:string}>(db,key,{ownerUserId:owner?.id??'',service:'smtp',slot:server.kind,stored:server.password_enc})).password
       : null,
     fromName: row.from_name ?? 'Josi',
     fromAddress: row.from_address,

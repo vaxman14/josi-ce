@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { loadMasterKey, looksSealed, openSealed } from '@josi-ce/core';
+import { getVaultSecret, loadMasterKey, looksSealed, openSealed } from '@josi-ce/core';
 import { createApp } from '../src/app.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'josi-ce-setup-'));
@@ -105,6 +105,7 @@ async function runWizard(stopBefore?: string): Promise<void> {
     if (step === stopBefore) return;
     const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
     expect(res.status, `${step}: ${JSON.stringify(res.body)}`).toBe(200);
+    if(step==='owner')expect((await call('/api/setup/vault-recovery-confirmed',{method:'POST',body:{}})).status).toBe(200);
 
     // The model is the one REQUIRED thing that has to be shown to work, so
     // completion is refused until it has been. Tests that only want a finished
@@ -640,8 +641,9 @@ describe('the two SMTP profiles', () => {
     const [profile] = await db.query<{ password_enc: string }>(
       `select password_enc from smtp_profiles where kind = 'system'`,
     );
-    expect(openSealed<{ password: string }>(loadMasterKey({ path: keyPath }), profile.password_enc).password)
-      .toBe('abcdefghijklmnop');
+    expect(openSealed<{ vaultItemId:string }>(loadMasterKey({ path: keyPath }),profile.password_enc).vaultItemId).toBeTruthy();
+    const [owner]=await db.query<{id:string}>(`select id from users where role='super_admin'`);
+    expect((await getVaultSecret(db,loadMasterKey({path:keyPath}),{ownerUserId:owner.id,service:'smtp',slot:'system'})).reveal()).toContain('abcdefghijklmnop');
 
     const malformed = structuredClone(body);
     malformed.system.password = 'abcd efgh ijkl mno';

@@ -63,6 +63,8 @@ export async function resolveSession(db: Db, token: string | undefined): Promise
 
 export async function revokeSession(db: Db, sessionId: string): Promise<void> {
   await db.query(`update sessions set revoked_at = now() where id = $1 and revoked_at is null`, [sessionId]);
+  // A revoked login must not leave a five-minute Vault authorization alive.
+  await db.query(`delete from vault_unlocks where session_id = $1`, [sessionId]);
 }
 
 export async function revokeAllSessions(db: Db, userId: string): Promise<number> {
@@ -70,6 +72,7 @@ export async function revokeAllSessions(db: Db, userId: string): Promise<number>
     `update sessions set revoked_at = now() where user_id = $1 and revoked_at is null returning id`,
     [userId],
   );
+  await db.query(`delete from vault_unlocks where user_id = $1`, [userId]);
   return rows.length;
 }
 

@@ -12,7 +12,7 @@
 // There is no environment variable for these and no default. A CE image that
 // carried a client secret would be handing every installation the same
 // credential, and the first person to extract it could impersonate all of them.
-import { appendEvent, openSealed, seal, type Db, type MasterKey } from '@josi-ce/core';
+import { appendEvent, deleteVaultSlot, openCredentialPayload, storeCredentialPayload, type Db, type MasterKey } from '@josi-ce/core';
 import { OAUTH_PROVIDERS, type OAuthProvider } from './capabilities.js';
 import type { OAuthClient } from './providers.js';
 
@@ -58,6 +58,7 @@ export async function saveClient(
     actorUserId: string;
   },
 ): Promise<void> {
+  const stored=await storeCredentialPayload(db,key,{ownerUserId:args.actorUserId,kind:'oauth_token',service:'oauth_client',slot:args.provider,label:`${args.provider} OAuth client secret`,payload:{clientSecret:args.clientSecret},actorUserId:args.actorUserId});
   await db.query(
     `insert into oauth_clients (provider, client_id, client_secret_enc, redirect_uri, configured_by)
      values ($1, $2, $3, $4, $5)
@@ -66,7 +67,7 @@ export async function saveClient(
        client_secret_enc = excluded.client_secret_enc,
        redirect_uri = excluded.redirect_uri,
        configured_by = excluded.configured_by`,
-    [args.provider, args.clientId, seal(key, { clientSecret: args.clientSecret }), args.redirectUri, args.actorUserId],
+    [args.provider, args.clientId, stored, args.redirectUri, args.actorUserId],
   );
   await appendEvent(db, {
     actorUserId: args.actorUserId,
@@ -83,6 +84,8 @@ export async function deleteClient(
   args: { provider: OAuthProvider; actorUserId: string },
 ): Promise<void> {
   await db.query(`delete from oauth_clients where provider = $1`, [args.provider]);
+  const [owner]=await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);
+  if(owner)await deleteVaultSlot(db,{ownerUserId:owner.id,service:'oauth_client',slot:args.provider,actorUserId:args.actorUserId});
   await appendEvent(db, {
     actorUserId: args.actorUserId,
     actor: 'super_admin',
@@ -107,7 +110,7 @@ export async function loadClient(db: Db, key: MasterKey, provider: OAuthProvider
   return {
     provider,
     clientId: row.client_id,
-    clientSecret: openSealed<{ clientSecret: string }>(key, row.client_secret_enc).clientSecret,
+    clientSecret: (await (async()=>{const [owner]=await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);return openCredentialPayload<{clientSecret:string}>(db,key,{ownerUserId:owner?.id??'',service:'oauth_client',slot:provider,stored:row.client_secret_enc});})()).clientSecret,
     redirectUri: row.redirect_uri,
   };
 }

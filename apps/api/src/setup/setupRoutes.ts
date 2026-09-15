@@ -16,9 +16,9 @@
 import { isIP } from 'node:net';
 import { Router } from 'express';
 import {
-  appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, json, loadMasterKey,
+  appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, initializeVault, json, loadMasterKey,
   updateWorkspace,
-  recordVerification, seal, summarizeReview,
+  recordVerification, seal, storeCredentialPayload, summarizeReview,
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
 import { describeProvider, discoverModels } from '@josi-ce/llm';
@@ -203,6 +203,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         // configuration was stored — while what it configured did not work, and
         // the client has to be able to tell those apart.
         ...(result && 'verification' in result ? { verification: result.verification } : {}),
+        ...(result?.vaultRecovery ? { vaultRecovery: result.vaultRecovery } : {}),
       });
     }),
   );
@@ -450,6 +451,8 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         // without an administrator would lock the installation permanently.
         return res.status(409).json({ error: 'setup cannot finish without an administrator account' });
       }
+      const [vaultState]=await db.query<{recovery_confirmed_at:string|null}>(`select recovery_confirmed_at from vault_state where id=true`);
+      if(!vaultState?.recovery_confirmed_at)return res.status(409).json({error:'confirm that the one-time Vault recovery key was saved offline before finishing setup'});
 
       // Setup cannot close while its required singleton is absent. Rebuild it
       // from answers already persisted by the owner and domain steps.
@@ -498,6 +501,8 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
     }),
   );
 
+  r.post('/vault-recovery-confirmed',asyncRoute(async(_req,res)=>{const rows=await db.query(`update vault_state set recovery_confirmed_at=now(),updated_at=now() where id=true and initialized_at is not null returning id`);if(!rows.length)return res.status(409).json({error:'the Master Vault is not initialized'});return res.json({ok:true});}));
+
   return r;
 }
 
@@ -538,6 +543,7 @@ export async function sealSetupOnce(
  * it just configured works. */
 interface StepResult {
   verification?: unknown;
+  vaultRecovery?: { key:string; fingerprint:string };
 }
 
 async function applyStep(
@@ -582,13 +588,15 @@ async function applyStep(
       // nothing at all.
       try {
         await ensureWorkspace(db, { name: displayName || username, timezone });
-        await createUser(db, {
+        const owner=await createUser(db, {
           email,
           username,
           displayName: displayName || null,
           role: 'super_admin',
           password: password.reveal(),
         });
+        const vault=await initializeVault(db,requireMasterKey(ctx),owner.id);
+        return {vaultRecovery:{key:vault.recoveryKey.reveal(),fingerprint:vault.fingerprint}};
       } catch (err) {
         if (err instanceof UserError) {
           // Includes the one-super-admin constraint, which is what a concurrent
@@ -764,8 +772,9 @@ async function applyStep(
       // takes — an AWS key pair and a session token seal together exactly as a
       // lone API key does. `seal` unwraps each Secret itself; nothing here ever
       // calls reveal() on the way to storage.
+      const [vaultOwner]=await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);
       const sealedKey = supplied.length
-        ? seal(requireMasterKey(ctx), Object.fromEntries(supplied))
+        ? await storeCredentialPayload(db,requireMasterKey(ctx),{ownerUserId:vaultOwner.id,kind:'api_key',service:'llm',slot:'primary',label:'Primary model credentials',payload:Object.fromEntries(supplied),actorUserId:vaultOwner.id})
         : null;
 
       await db.query(
@@ -856,7 +865,8 @@ async function applyStep(
       }
 
       const key = sysPassword.isEmpty ? null : requireMasterKey(ctx);
-      const sysPasswordEnc = key ? seal(key, { password: sysPassword }) : null;
+      const [vaultOwner]=await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);
+      const sysPasswordEnc = key ? await storeCredentialPayload(db,key,{ownerUserId:vaultOwner.id,kind:'password',service:'smtp',slot:'system',label:'System SMTP password',payload:{password:sysPassword},actorUserId:vaultOwner.id}) : null;
 
       await db.query(
         `insert into smtp_profiles (kind, copy_from_system, host, port, security, username, password_enc, from_name, from_address)
@@ -910,7 +920,7 @@ async function applyStep(
              security = excluded.security, username = excluded.username,
              password_enc = excluded.password_enc, from_name = excluded.from_name,
              from_address = excluded.from_address`,
-          [cHost, cPort, cSecurity, cUser || null, cKey ? seal(cKey, { password: cPassword }) : null,
+          [cHost, cPort, cSecurity, cUser || null, cKey ? await storeCredentialPayload(db,cKey,{ownerUserId:vaultOwner.id,kind:'password',service:'smtp',slot:'communications',label:'Communications SMTP password',payload:{password:cPassword},actorUserId:vaultOwner.id}) : null,
            commsFromName || null, commsFromAddress],
         );
       }

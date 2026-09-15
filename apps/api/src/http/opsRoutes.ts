@@ -7,7 +7,7 @@
 // (M113), so this is not a privacy hole, it is the consent flow working.
 import { Router, type Request, type Response } from 'express';
 import {
-  LIMITS, appendEvent, asSecret, consume, loadMasterKey, openSealed, seal,
+  LIMITS, appendEvent, asSecret, consume, deleteVaultSlot, loadMasterKey, openCredentialPayload, storeCredentialPayload,
   type Db, type Limit, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
@@ -581,7 +581,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       if (kind === 'nas') {
         sealed = null;
       } else if (supplied.length) {
-        sealed = seal(requireDestinationKey(ctx), Object.fromEntries(supplied));
+        sealed = await storeCredentialPayload(db,requireDestinationKey(ctx),{ownerUserId:req.user!.id,kind:'api_key',service:'backup',slot:'destination',label:`${descriptor.label} backup credentials`,payload:Object.fromEntries(supplied),actorUserId:req.user!.id});
       } else if (sameKind && previous?.credentials_enc) {
         sealed = previous.credentials_enc;
       } else {
@@ -666,9 +666,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         return res.json({ ...result, category: result.ok ? null : 'permission' });
       }
 
-      const opened = openSealed<Record<string, string>>(
-        requireDestinationKey(ctx), row.credentials_enc!,
-      );
+      const opened = await openCredentialPayload<Record<string,string>>(db,requireDestinationKey(ctx),{ownerUserId:req.user!.id,service:'backup',slot:'destination',stored:row.credentials_enc!});
       const result = await testDestination({
         config: {
           kind: row.kind,
@@ -711,6 +709,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     requireSuperAdmin,
     handle(async (req, res) => {
       await db.query(`delete from backup_destination where id = true`);
+      await deleteVaultSlot(db,{ownerUserId:req.user!.id,service:'backup',slot:'destination',actorUserId:req.user!.id});
       await appendEvent(db, {
         actorUserId: req.user!.id, actor: 'super_admin', kind: 'backup.destination_removed',
       });

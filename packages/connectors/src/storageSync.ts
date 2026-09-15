@@ -165,7 +165,7 @@ async function openRemoteSession(
     const client = await loadClient(db, masterKey, provider);
     return oauthSession(db, masterKey, connection, client, provider);
   }
-  const creds = await nextcloudCredentialsFor(masterKey, connection);
+  const creds = await nextcloudCredentialsFor(db, masterKey, connection);
   return nextcloudSession(creds);
 }
 

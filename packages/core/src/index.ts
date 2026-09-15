@@ -13,6 +13,7 @@ export * from './events.js';
 export * from './masterKey.js';
 export * from './readiness.js';
 export * from './sealing.js';
+export * from './vault.js';
 export * from './workspace.js';
 export * from './setupVerification.js';
 export * from './launchChecklist.js';

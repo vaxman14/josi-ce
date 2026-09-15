@@ -102,6 +102,7 @@ async function wizardTo(stopBefore: string) {
     if (step === stopBefore) return;
     const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
     expect(res.status, `${step}: ${JSON.stringify(res.body)}`).toBe(200);
+    if(step==='owner')expect((await call('/api/setup/vault-recovery-confirmed',{method:'POST',body:{}})).status).toBe(200);
   }
 }
 
