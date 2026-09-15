@@ -103,4 +103,11 @@ print(json.dumps({'env':(p/'.env').read_text(), 'backups':len(list(p.glob('.env.
     expect(source).toContain('"percent": 100');
     expect(source).toContain('"totalSteps": 5');
   });
+
+  it('keeps Open Josi hidden until installation completes', () => {
+    const page = readFileSync(html, 'utf8');
+    expect(page).toContain('id="openAction" class="actions hidden"');
+    expect(page).toContain('.actions.hidden{display:none}');
+    expect(page).toMatch(/if\(p\.state==='complete'\)\{\$\('openAction'\)\.classList\.remove\('hidden'\)/);
+  });
 });
