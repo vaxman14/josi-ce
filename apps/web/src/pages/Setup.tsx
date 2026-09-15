@@ -132,7 +132,8 @@ export function Setup({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError('');
     try {
-      await api.post(`/setup/steps/${step}`, body);
+      const result=await api.post<{vaultRecovery?:{key:string;fingerprint:string}}>(`/setup/steps/${step}`, body);
+      if(result.vaultRecovery)setVaultRecovery(result.vaultRecovery);
       setRevising(null);
       await load();
     } catch (err) {
@@ -142,6 +143,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
     }
   }
 
+  const [vaultRecovery, setVaultRecovery] = useState<{key:string;fingerprint:string}|null>(null);
   async function finish() {
     setBusy(true);
     setError('');
@@ -162,6 +164,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   if (!state) {
     return <div className="p-6 text-sm text-muted-foreground">{error || 'Loading…'}</div>;
   }
+  if(vaultRecovery)return <div className="mx-auto max-w-xl p-6"><Card><CardTitle>Save your Vault recovery key</CardTitle><p className="mt-2 text-sm text-muted-foreground">This is the only copy Josi will show. Store it offline. Losing both this key and the server&rsquo;s Master Vault key makes encrypted credentials permanently unrecoverable.</p><pre className="my-4 overflow-x-auto rounded-md border border-border bg-background p-3 text-sm select-all">{vaultRecovery.key}</pre><p className="text-xs text-muted-foreground">Fingerprint: {vaultRecovery.fingerprint}</p><Button className="mt-4" onClick={()=>void api.post('/setup/vault-recovery-confirmed').then(()=>setVaultRecovery(null)).catch(e=>setError(e instanceof Error?e.message:'Could not confirm the recovery key'))}>I saved it — continue setup</Button></Card></div>;
 
   const current = state.steps.find((s) => s.id === state.nextStep);
   const revisingStep = revising ? state.steps.find((s) => s.id === revising) : undefined;

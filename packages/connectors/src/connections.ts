@@ -5,7 +5,8 @@
 // file returns a token to a caller, and nothing writes one to the audit log —
 // `appendEvent` would refuse the payload key anyway, which is the backstop
 // working rather than a reason not to be careful.
-import { appendEvent, json, openSealed, seal, type Db, type MasterKey } from '@josi-ce/core';
+import { randomUUID } from 'node:crypto';
+import { appendEvent, json, openCredentialPayload, storeCredentialPayload, type Db, type MasterKey } from '@josi-ce/core';
 import {
   CAPABILITIES, capabilitySpec, grantedCapabilities, capabilityState, effectiveCapability,
   type CapabilityState, type Provider,
@@ -118,13 +119,14 @@ export async function upsertConnection(
   let refreshToken = args.tokens.refreshToken;
   if (!refreshToken && existing?.secrets_enc) {
     try {
-      refreshToken = openSealed<SealedTokens>(key, existing.secrets_enc).refreshToken;
+      refreshToken = (await openCredentialPayload<SealedTokens>(db,key,{ownerUserId:args.ownerUserId,service:`connector.${args.provider}`,slot:existing.id,stored:existing.secrets_enc})).refreshToken;
     } catch {
       refreshToken = null;
     }
   }
 
-  const sealed = seal(key, { accessToken: args.tokens.accessToken, refreshToken } satisfies SealedTokens);
+  const connectionId=existing?.id??randomUUID();
+  const sealed = await storeCredentialPayload(db,key,{ownerUserId:args.ownerUserId,kind:'oauth_token',service:`connector.${args.provider}`,slot:connectionId,label:`${args.provider} connection`,payload:{accessToken:args.tokens.accessToken,refreshToken},actorUserId:args.ownerUserId});
   const expiresAt = args.tokens.expiresIn
     ? new Date(Date.now() + args.tokens.expiresIn * 1000).toISOString()
     : null;
@@ -139,12 +141,12 @@ export async function upsertConnection(
     )
     : await db.query<ConnectionRow>(
       `insert into connections
-       (owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
+       (id, owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
         status, last_check_at, last_check_ok, last_error_category, token_expires_at)
-     values ($1, $2, $3, $4, $5, $6, 'active', now(), true, null, $7)
+     values ($1, $2, $3, $4, $5, $6, $7, 'active', now(), true, null, $8)
      returning *`,
     [
-      args.ownerUserId, args.provider, args.accountEmail, args.providerAccountId,
+      connectionId,args.ownerUserId, args.provider, args.accountEmail, args.providerAccountId,
       grantedScopes, sealed, expiresAt,
     ],
   );
@@ -406,7 +408,7 @@ export async function accessTokenFor(
   if (!args.connection.secrets_enc) {
     throw new ConnectorError('this connection has no stored credentials', { category: 'revoked', revoked: true });
   }
-  const tokens = openSealed<SealedTokens>(key, args.connection.secrets_enc);
+  const tokens = await openCredentialPayload<SealedTokens>(db,key,{ownerUserId:args.connection.owner_user_id,service:`connector.${args.connection.provider}`,slot:args.connection.id,stored:args.connection.secrets_enc});
 
   const expiresAt = args.connection.token_expires_at
     ? new Date(args.connection.token_expires_at).getTime()
@@ -425,11 +427,11 @@ export async function accessTokenFor(
       { refreshToken: tokens.refreshToken, scopes: args.connection.granted_scopes },
       opts,
     );
-    const sealed = seal(key, {
+    const sealed = await storeCredentialPayload(db,key,{ownerUserId:args.connection.owner_user_id,kind:'oauth_token',service:`connector.${args.connection.provider}`,slot:args.connection.id,label:`${args.connection.provider} connection`,payload:{
       accessToken: refreshed.accessToken,
       // Google does not reissue one; keep what we have.
       refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
-    } satisfies SealedTokens);
+    } satisfies SealedTokens,actorUserId:args.connection.owner_user_id});
     await db.query(
       `update connections set secrets_enc = $2, token_expires_at = $3,
          status = 'active', last_check_at = now(), last_check_ok = true, last_error_category = null
@@ -463,15 +465,16 @@ export async function connectNextcloud(
   key: MasterKey,
   args: { ownerUserId: string; serverUrl: string; username: string; appPassword: string },
 ): Promise<ConnectionRow> {
-  const sealed = seal(key, {
+  const connectionId=randomUUID();
+  const sealed = await storeCredentialPayload(db,key,{ownerUserId:args.ownerUserId,kind:'password',service:'connector.nextcloud',slot:connectionId,label:'Nextcloud app password',payload:{
     serverUrl: args.serverUrl, username: args.username, appPassword: args.appPassword,
-  } satisfies NextcloudCredentials);
+  } satisfies NextcloudCredentials,actorUserId:args.ownerUserId});
 
   const rows = await db.query<ConnectionRow>(
     `insert into connections
-       (owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
+       (id,owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
         status, last_check_at, last_check_ok, last_error_category, meta)
-     values ($1, 'nextcloud', $2, null, '', $3, 'active', now(), true, null, $4)
+     values ($1,$2, 'nextcloud', $3, null, '', $4, 'active', now(), true, null, $5)
      on conflict (owner_user_id, provider) where provider = 'nextcloud' do update set
        account_email = excluded.account_email,
        secrets_enc = excluded.secrets_enc,
@@ -480,7 +483,7 @@ export async function connectNextcloud(
        meta = excluded.meta
      returning *`,
     [
-      args.ownerUserId, args.username, sealed,
+      connectionId,args.ownerUserId, args.username, sealed,
       json({ serverUrl: args.serverUrl, username: args.username }),
     ],
   );
@@ -520,13 +523,14 @@ export async function connectNextcloud(
  * is valid until its owner revokes it, and a revoked one fails at first use
  * with 401, handled by the caller exactly like an expired OAuth token. */
 export async function nextcloudCredentialsFor(
+  db:Db,
   key: MasterKey,
   connection: ConnectionRow,
 ): Promise<NextcloudCredentials> {
   if (!connection.secrets_enc) {
     throw new ConnectorError('this connection has no stored credentials', { category: 'revoked', revoked: true });
   }
-  return openSealed<NextcloudCredentials>(key, connection.secrets_enc);
+  return openCredentialPayload<NextcloudCredentials>(db,key,{ownerUserId:connection.owner_user_id,service:'connector.nextcloud',slot:connection.id,stored:connection.secrets_enc});
 }
 
 export async function markUnhealthy(db: Db, connectionId: string, category: ErrorCategory): Promise<void> {

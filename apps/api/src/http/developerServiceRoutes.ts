@@ -15,7 +15,7 @@
 //     wanted it or nobody was permitted it.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, asSecret, loadMasterKey, openSealed, seal,
+  appendEvent, asSecret, deleteVaultSlot, loadMasterKey, openCredentialPayload, storeCredentialPayload,
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
@@ -182,6 +182,10 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
         throw new RouteError(400, check.detail);
       }
 
+      const stored = await storeCredentialPayload(db, requireKey(ctx), {
+        ownerUserId:userId,kind:'api_key',service:`developer.${service}`,slot:'token',
+        label:`${describeDeveloperService(service)!.label} credential`,payload:{token:token.reveal()},actorUserId:userId,
+      });
       await db.query(
         `insert into developer_connections
            (owner_user_id, service, credentials_enc, account_label, status,
@@ -191,9 +195,8 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
            credentials_enc = excluded.credentials_enc,
            account_label = excluded.account_label,
            status = 'active', last_check_at = now(), last_check_ok = true, last_error = null`,
-        [userId, service, seal(requireKey(ctx), { token }), check.accountLabel ?? null],
+        [userId, service, stored, check.accountLabel ?? null],
       );
-
       await appendEvent(db, {
         actorUserId: userId,
         actor: 'member',
@@ -219,7 +222,7 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
       );
       if (!row?.credentials_enc) throw new RouteError(404, 'you have not connected that service');
 
-      const opened = openSealed<Record<string, string>>(requireKey(ctx), row.credentials_enc);
+      const opened = await openCredentialPayload<Record<string,string>>(db,requireKey(ctx),{ownerUserId:req.user!.id,service:`developer.${service}`,slot:'token',stored:row.credentials_enc});
       const check = await checkDeveloperToken({
         service, token: opened.token ?? '', fetchImpl: ctx.fetchImpl,
       });
@@ -251,6 +254,7 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
         `delete from developer_connections where owner_user_id = $1 and service = $2`,
         [req.user!.id, service],
       );
+      await deleteVaultSlot(db,{ownerUserId:req.user!.id,service:`developer.${service}`,slot:'token',actorUserId:req.user!.id});
       await appendEvent(db, {
         actorUserId: req.user!.id, actor: 'member',
         kind: 'developer_service.disconnected', payload: { service },

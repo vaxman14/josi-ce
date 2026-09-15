@@ -161,11 +161,13 @@ describe('the acceptance criterion: restore, with and without the key — M100',
     const unconfirmed = describeBackup('full', false);
     expect(unconfirmed).toContain('does NOT contain the installation master key');
     expect(unconfirmed).toContain('have NOT confirmed');
-    expect(unconfirmed).toContain('cannot be recovered afterwards');
+    expect(unconfirmed).toContain('offline Vault recovery key');
+    expect(unconfirmed).toContain('Neither key is included');
 
     const confirmed = describeBackup('full', true);
     expect(confirmed).toContain('does NOT contain the installation master key');
     expect(confirmed).toContain('Keep it that way');
+    expect(confirmed).toContain('offline Vault recovery key');
 
     expect(MASTER_KEY_DOC).toContain('never included in a backup');
     expect(MASTER_KEY_DOC).toContain('store it somewhere other than your database backups');

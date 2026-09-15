@@ -9,7 +9,7 @@
 //   * A fallback is used only when it was explicitly enabled AND the primary
 //     failed in a way a second attempt could fix.
 //   * Caps are checked before the call, not after.
-import { openSealed, type Db, type MasterKey } from '@josi-ce/core';
+import { openCredentialPayload, openSealed, type Db, type MasterKey } from '@josi-ce/core';
 import { anthropicProvider } from './providers/anthropic.js';
 import { codexCliProvider, isSubscriptionProvider, type SpawnRunner } from './providers/codexCli.js';
 import { claudeCliProvider } from './providers/claudeCli.js';
@@ -175,7 +175,12 @@ export async function buildProvider(
         needsReconfiguration: true,
       });
     }
-    secrets = openSealed<Record<string, string>>(opts.masterKey, stored.api_key_enc);
+    const envelope=openSealed<Record<string,string>&{vaultItemId?:string}>(opts.masterKey,stored.api_key_enc);
+    if(envelope.vaultItemId){
+      const [owner]=await opts.db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);
+      if(!owner)throw new LlmError('the Master Vault has no administrator owner',{needsReconfiguration:true});
+      secrets=await openCredentialPayload<Record<string,string>>(opts.db,opts.masterKey,{ownerUserId:owner.id,service:'llm',slot:stored.role,stored:stored.api_key_enc});
+    }else secrets=envelope;
   }
   const apiKey = secrets.apiKey ?? null;
   const config = stored.provider_config ?? {};

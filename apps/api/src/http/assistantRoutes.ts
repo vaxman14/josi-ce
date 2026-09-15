@@ -98,10 +98,12 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     '/step-up',
     handle(async (req, res) => {
       const password = typeof req.body?.password === 'string' ? req.body.password : '';
-      const sessionKey = str(req.body?.sessionKey, 200) || req.user!.session_id;
       const result = await verifyStepUp(db, {
         userId: req.user!.id,
-        sessionKey,
+        // A browser may never choose which server-side session receives the
+        // elevation. Otherwise a stolen session id can be elevated from a
+        // different authenticated browser.
+        sessionKey: req.user!.session_id,
         password,
         verifyPassword: async (userId, plain) => {
           const rows = await db.query<{ password_hash: string | null }>(

@@ -33,6 +33,7 @@ import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
 import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
+import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
 
 export interface AppConfig {
   voiceBoxHelper?: VoiceHelper;
@@ -224,6 +225,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     masterKey: cfg.masterKeyCheck,
     entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
   }));
+  api.use('/admin/vault', adminVaultRoutes({ db, masterKey: cfg.masterKeyCheck }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -256,6 +258,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     masterKey: cfg.masterKeyCheck,
     entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
   }));
+  api.use('/vault', vaultRoutes({ db, masterKey: cfg.masterKeyCheck }));
 
   api.use('/ops', opsRoutes({
     db,

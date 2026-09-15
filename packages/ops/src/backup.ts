@@ -95,12 +95,12 @@ export function describeBackup(kind: BackupKind, masterKeyConfirmed: boolean): s
   parts.push(
     masterKeyConfirmed
       ? 'You have confirmed the master key is stored separately. Keep it that way: without '
-        + 'it, restoring this backup will bring back your data but not your saved provider '
-        + 'keys, connected accounts or mail passwords.'
+      + 'it, restoring this backup can reopen the Master Vault. The offline Vault recovery '
+        + 'key is a separate recovery path and must also be kept outside this backup.'
       : 'You have NOT confirmed where the master key is stored. Back up '
         + '/run/secrets/josi_master_key separately and keep it somewhere else. Without it, '
-        + 'restoring this backup brings back your data but not your saved provider keys, '
-        + 'connected accounts or mail passwords — and they cannot be recovered afterwards.',
+        + 'restoring this backup cannot reopen saved credentials unless you kept the separate '
+        + 'offline Vault recovery key. Neither key is included here.',
   );
   return parts.join(' ');
 }
