@@ -34,7 +34,9 @@ SESSION_TTL = 15 * 60
 LOCK = threading.Lock()
 START_LOCK = threading.Lock()
 PAIR_LOCK = threading.Lock()
-PROGRESS: dict[str, object] = {"state": "ready", "message": "Ready to configure Josi", "log": []}
+PROGRESS: dict[str, object] = {
+    "state": "ready", "message": "Ready to configure Josi", "log": [], "percent": 0, "step": 0, "totalSteps": 5
+}
 
 
 def run(args: list[str], *, check: bool = True, timeout: int = 600) -> subprocess.CompletedProcess[str]:
@@ -170,8 +172,10 @@ def write_env(plan: dict[str, object], setup_token_sha256: str = "") -> None:
             os.unlink(temp_name)
 
 
-def progress(message: str) -> None:
+def progress(message: str, percent: int, step: int) -> None:
     PROGRESS["message"] = message
+    PROGRESS["percent"] = percent
+    PROGRESS["step"] = step
     log = PROGRESS.setdefault("log", [])
     assert isinstance(log, list)
     log.append({"at": int(time.time()), "message": message})
@@ -204,31 +208,34 @@ def provision_voice_helper() -> None:
 
 def install(plan: dict[str, object]) -> None:
     with LOCK:
-        PROGRESS.update({"state": "installing", "message": "Saving configuration", "log": []})
+        PROGRESS.update({"state": "installing", "message": "Saving configuration", "log": [],
+                         "percent": 8, "step": 1, "totalSteps": 5})
         try:
             setup_token = secrets.token_urlsafe(32)
             setup_token_sha256 = hashlib.sha256(setup_token.encode()).hexdigest()
             write_env(plan, setup_token_sha256)
-            progress("Preparing the isolated Voice Box controller")
+            progress("Preparing the isolated Voice Box controller", 22, 2)
             provision_voice_helper()
             compose = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml")]
             if plan["mode"] == "proxy":
                 compose += ["-f", str(ROOT / "docker-compose.noproxy.yml")]
             compose += ["--project-directory", str(ROOT), "--project-name", PROJECT]
-            progress("Pulling pinned Josi images")
+            progress("Pulling pinned Josi images", 45, 3)
             run(compose + ["pull"], timeout=1800)
-            progress("Starting Josi services")
+            progress("Starting Josi services", 72, 4)
             up = compose + ["up", "-d", "--wait", "--wait-timeout", "300"]
             if plan["mode"] == "proxy":
                 up += ["--scale", "caddy=0"]
             run(up, timeout=600)
-            progress("Josi passed its container health checks")
-            PROGRESS.update({"state": "complete", "appUrl": f"{plan['appUrl']}/#setup={setup_token}"})
+            progress("Josi passed its container health checks", 94, 5)
+            PROGRESS.update({"state": "complete", "message": "Installation complete", "percent": 100,
+                             "appUrl": f"{plan['appUrl']}/#setup={setup_token}"})
             # Give the browser enough time to receive the handoff, then remove
             # Docker authority from the running installation by exiting.
             threading.Timer(45, lambda: os._exit(0)).start()
         except Exception as exc:
-            progress("Installation failed. Review the sanitized error below.")
+            progress("Installation failed. Review the sanitized error below.",
+                     int(PROGRESS.get("percent", 0)), int(PROGRESS.get("step", 0)))
             message = str(exc)
             if isinstance(exc, subprocess.CalledProcessError):
                 detail = (exc.stderr or exc.stdout or "").strip()
@@ -340,7 +347,8 @@ class Handler(BaseHTTPRequestHandler):
                     if PROGRESS.get("state") == "installing":
                         self.send_json({"error": "Installation is already running."}, 409)
                         return
-                    PROGRESS.update({"state": "installing", "message": "Preparing installation", "log": []})
+                    PROGRESS.update({"state": "installing", "message": "Preparing installation", "log": [],
+                                     "percent": 3, "step": 1, "totalSteps": 5})
                     threading.Thread(target=install, args=(plan,), daemon=True).start()
                 self.send_json({"ok": True}, 202)
             else:

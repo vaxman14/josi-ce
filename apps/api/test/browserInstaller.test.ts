@@ -92,4 +92,15 @@ print(json.dumps({'env':(p/'.env').read_text(), 'backups':len(list(p.glob('.env.
     const source = readFileSync(controller, 'utf8');
     expect(source).toMatch(/with PAIR_LOCK:[\s\S]*TOKEN_FILE\.exists\(\)[\s\S]*TOKEN_FILE\.unlink/);
   });
+
+  it('shows accessible animated installation progress with named steps', () => {
+    const page = readFileSync(html, 'utf8');
+    const source = readFileSync(controller, 'utf8');
+    expect(page).toContain('role="progressbar"');
+    expect(page).toContain('aria-valuenow');
+    expect(page).toContain('progress-shimmer');
+    expect(page).toContain('Step ${p.step||1} of ${p.totalSteps||5}');
+    expect(source).toContain('"percent": 100');
+    expect(source).toContain('"totalSteps": 5');
+  });
 });
