@@ -135,11 +135,12 @@ describe('the form asks for what each vendor actually calls things', () => {
     const res = await call('/api/ops/admin/backups/destination');
     expect(res.status).toBe(200);
     const kinds = (res.body.catalog as Array<{ kind: string }>).map((c) => c.kind);
-    expect(kinds).toEqual(['s3', 'r2', 'b2']);
+    expect(kinds).toEqual(['nas', 's3', 'r2', 'b2']);
 
     const byKind = new Map(
       (res.body.catalog as Array<any>).map((c) => [c.kind, c]),
     );
+    expect(byKind.get('nas').fields.map((f: any) => f.label)).toContain('Mounted path');
     // Backblaze shows keyID and applicationKey. Labelling those with the
     // protocol's names sends an operator hunting their console for fields that
     // are not there.

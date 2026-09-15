@@ -143,10 +143,12 @@ export async function createBackup(
     writer: BackupWriter;
     /** Supplied by the caller so paths are deterministic in tests. */
     filename: string;
+    /** A validated mounted-share directory for full backups. */
+    destinationDir?: string;
   },
 ): Promise<{ backup: BackupRow; description: string }> {
   const contents = contentsFor(args.kind);
-  const storedPath = `${BACKUP_DIR}/${sanitiseFilename(args.filename)}`;
+  const storedPath = `${args.destinationDir ?? BACKUP_DIR}/${sanitiseFilename(args.filename)}`;
 
   const [row] = await db.query<BackupRow>(
     `insert into backups

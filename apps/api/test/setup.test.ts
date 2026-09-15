@@ -388,6 +388,12 @@ describe('concurrency and replay', () => {
     );
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
     expect(results.filter((r) => r.status === 404)).toHaveLength(4);
+    const [workspace] = await db.query<{ name: string; settings: Record<string, unknown> }>(
+      `select name, settings from workspace where id = true`,
+    );
+    expect(workspace).toBeTruthy();
+    expect(workspace.name).not.toBe('');
+    expect(workspace.settings.publicAddress).toBe('josi.example.test');
   });
 
   it('cannot be replayed into a second super admin after completion', async () => {

@@ -14,7 +14,7 @@
 // their console for fields that are not there under those names.
 import { signRequest, type AwsCredentials } from '@josi-ce/llm';
 
-export type DestinationKind = 's3' | 'r2' | 'b2';
+export type DestinationKind = 's3' | 'r2' | 'b2' | 'nas';
 
 export interface DestinationField {
   key: string;
@@ -52,6 +52,13 @@ const PREFIX: DestinationField = {
 };
 
 export const DESTINATIONS: readonly DestinationDescriptor[] = [
+  {
+    kind: 'nas',
+    label: 'Local NAS / network share',
+    credentialsHelp: 'Mount the share into this container under /mnt or /data, then choose that mounted path. Credentials stay with the host mount and never enter Josi.',
+    fields: [{ key: 'bucket', label: 'Mounted path', secret: false, required: true, placeholder: '/mnt/josi-backups', help: 'An absolute path under /mnt or /data that already exists inside the Josi container.' }],
+    docsUrl: '/help#nas-backups',
+  },
   {
     kind: 's3',
     label: 'Amazon S3',
@@ -161,6 +168,7 @@ export interface DestinationConfig {
  * which genuinely cannot be derived, accepts one.
  */
 export function endpointHost(config: DestinationConfig): string {
+  if (config.kind === 'nas') return 'local-mounted-share';
   if (config.endpoint) {
     const url = new URL(config.endpoint);
     return url.host;
@@ -249,6 +257,9 @@ export interface CheckOptions {
  */
 export async function testDestination(opts: CheckOptions): Promise<DestinationCheck> {
   const { config, credentials } = opts;
+  if (config.kind === 'nas') {
+    return { ok: false, category: 'unknown', detail: 'Mounted shares are tested by the server filesystem.' };
+  }
   const host = endpointHost(config);
   const region = signingRegion(config);
   // Path-style addressing. Virtual-hosted style would need the bucket in the

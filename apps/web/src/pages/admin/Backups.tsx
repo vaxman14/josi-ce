@@ -335,8 +335,8 @@ function BackupDestination() {
             </Badge>
           </div>
           <dl className="text-sm text-muted-foreground">
-            <div><dt className="inline font-medium">Bucket: </dt><dd className="inline">{destination.bucket}</dd></div>
-            {destination.kind !== 'r2' ? (
+            <div><dt className="inline font-medium">{destination.kind === 'nas' ? 'Mounted path: ' : 'Bucket: '}</dt><dd className="inline">{destination.bucket}</dd></div>
+            {destination.kind !== 'r2' && destination.kind !== 'nas' ? (
               <div><dt className="inline font-medium">Region: </dt><dd className="inline">{destination.region}</dd></div>
             ) : null}
             {destination.objectPrefix ? (
@@ -374,16 +374,20 @@ function BackupDestination() {
           className="mt-3 space-y-3"
           onSubmit={(e) => { e.preventDefault(); void save(); }}
         >
-          <div>
-            <label className="mb-1 block text-sm" htmlFor="destKind">Storage service</label>
-            <select
-              id="destKind" value={kind} onChange={(e) => setKind(e.target.value)}
-              className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
-            >
-              {(view?.catalog ?? []).map((c) => (
-                <option key={c.kind} value={c.kind}>{c.label}</option>
-              ))}
-            </select>
+          <fieldset>
+            <legend className="mb-1 block text-sm">Storage service</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(view?.catalog ?? []).map((c) => {
+                const selected = kind === c.kind;
+                return (
+                  <label key={c.kind} className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm ${selected ? 'border-primary bg-primary/15 text-primary' : 'border-input bg-background'}`}>
+                    <input type="radio" name="destination-kind" value={c.kind} checked={selected} onChange={() => setKind(c.kind)} />
+                    <span>{c.label}</span>
+                    {selected ? <span className="ml-auto" aria-label="Selected">✓</span> : null}
+                  </label>
+                );
+              })}
+            </div>
             {entry ? (
               <p className="mt-1 text-xs text-muted-foreground">
                 {entry.credentialsHelp}{' '}
@@ -392,7 +396,7 @@ function BackupDestination() {
                 </a>
               </p>
             ) : null}
-          </div>
+          </fieldset>
 
           <div>
             <label className="mb-1 block text-sm" htmlFor="destLabel">A name for this (optional)</label>

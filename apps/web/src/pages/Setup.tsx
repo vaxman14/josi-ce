@@ -317,6 +317,7 @@ function StepForm({
           onSubmit={(e) => handle(e, (f) => ({
             email: f.get('email'), username: f.get('username'),
             displayName: f.get('displayName'), password: f.get('password'),
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
           }))}
           className="space-y-3"
         >

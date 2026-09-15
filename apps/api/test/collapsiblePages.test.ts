@@ -39,19 +39,41 @@ describe('compact settings disclosures', () => {
     expect(overview).toContain('navigate(item.href)');
   });
 
-  it('keeps licensed parental controls reachable before the first child is linked', () => {
+  it('shows parental controls only as an honest disabled coming-soon teaser', () => {
     const shell = read('apps/web/src/components/layout/Shell.tsx');
     const admin = read('apps/web/src/pages/admin/ParentalControls.tsx');
-    expect(shell).toContain('.then(() => setFamily(true))');
-    expect(shell).not.toContain("setFamily(result.role !== 'none')");
-    expect(admin).toContain('to="/app/family"');
-    expect(admin).toContain('Open Family controls');
+    const family = read('apps/web/src/pages/Family.tsx');
+    expect(shell).toContain('Family (Coming Soon)');
+    expect(shell).toContain('Parental controls (Coming Soon)');
+    expect(admin).toContain('No supervision, schedules, limits, monitoring, or child-safety enforcement');
+    expect(family).toContain('No supervision, schedules, limits, monitoring, or child-safety enforcement');
+    expect(admin).toContain('roman@socalreceptionist.com');
+  });
+
+  it('makes every developer service an accessible disclosure', () => {
+    const page = read('apps/web/src/pages/admin/DeveloperServices.tsx');
+    expect(page).toContain('CollapsibleCard');
+    expect(page).toContain('defaultOpen={needsAttention}');
+    expect(page).toContain('Needs attention');
   });
 
   it('preserves the established Connectors-style disclosures on Channels', () => {
     const channels = read('apps/web/src/pages/Channels.tsx');
     expect(channels).toContain('<details>');
     expect(channels).toContain('<summary');
+  });
+
+  it('keeps Telegram beside every existing admin channel', () => {
+    const channels = read('apps/web/src/pages/admin/Channels.tsx');
+    expect(channels).toContain('to="/admin/telegram"');
+    expect(channels).toContain("['whatsapp','slack']");
+  });
+
+  it('binds backup destination styling and actions to one controlled selection', () => {
+    const backups = read('apps/web/src/pages/admin/Backups.tsx');
+    expect(backups).toContain('checked={selected}');
+    expect(backups).toContain('setKind(c.kind)');
+    expect(backups).toContain('aria-label="Selected"');
   });
 
   it.each([

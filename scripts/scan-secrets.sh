@@ -97,13 +97,25 @@ while IFS= read -r file; do
   # Skip anything that is not text.
   if ! grep -Iq . "$file" 2>/dev/null; then continue; fi
 
+  # The public business feedback mailbox is intentionally published in CE.
+  # Remove only that exact address for literal-domain checks; URLs, hosts and
+  # every other occurrence of the production domain remain forbidden.
+  literal_source="$file"
+  literal_tmp=""
+  if grep -Fq 'roman@socalreceptionist.com' "$file"; then
+    literal_tmp="$(mktemp)"
+    sed 's/roman@socalreceptionist\.com//g' "$file" > "$literal_tmp"
+    literal_source="$literal_tmp"
+  fi
+
   for needle in "${FORBIDDEN_LITERAL[@]}"; do
-    if grep -Fn -- "$needle" "$file" >/dev/null 2>&1; then
+    if grep -Fn -- "$needle" "$literal_source" >/dev/null 2>&1; then
       while IFS= read -r hit; do
         report "$file:${hit%%:*}  forbidden string: $needle"
-      done < <(grep -Fn -- "$needle" "$file")
+      done < <(grep -Fn -- "$needle" "$literal_source")
     fi
   done
+  [[ -z "$literal_tmp" ]] || rm -f "$literal_tmp"
 
   for pattern in "${FORBIDDEN_REGEX[@]}"; do
     if grep -En -- "$pattern" "$file" >/dev/null 2>&1; then

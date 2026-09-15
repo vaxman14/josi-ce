@@ -13,7 +13,7 @@
 // separate blocks on every card, and they are labelled as such.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, CollapsibleCard, Empty, ErrorNote, Input } from '@/components/ui';
 
 type Mode = 'not_allowed' | 'everyone' | 'specific_users';
 
@@ -148,12 +148,14 @@ function ServiceCard(
     }
   }
 
+  const needsAttention = row.connections.some((c) => c.lastCheckOk === false);
   return (
-    <Card>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <CardTitle>{row.label}</CardTitle>
-        <Badge tone={row.mode === 'not_allowed' ? 'muted' : 'ok'}>{MODE_LABEL[row.mode]}</Badge>
-      </div>
+    <CollapsibleCard
+      title={row.label}
+      summary={row.capability}
+      status={<><Badge tone={row.mode === 'not_allowed' ? 'muted' : 'ok'}>{MODE_LABEL[row.mode]}</Badge>{needsAttention ? <Badge tone="danger">Needs attention</Badge> : null}</>}
+      defaultOpen={needsAttention}
+    >
       <p className="mt-1 text-sm text-muted-foreground">{row.capability}</p>
       {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
 
@@ -264,6 +266,6 @@ function ServiceCard(
           </ul>
         )}
       </div>
-    </Card>
+    </CollapsibleCard>
   );
 }
