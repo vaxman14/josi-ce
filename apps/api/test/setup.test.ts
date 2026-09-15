@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { looksSealed } from '@josi-ce/core';
+import { loadMasterKey, looksSealed, openSealed } from '@josi-ce/core';
 import { createApp } from '../src/app.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'josi-ce-setup-'));
@@ -624,6 +624,26 @@ describe('external LLM acknowledgment', () => {
 
 // ------------------------------------------------------------------- 11
 describe('the two SMTP profiles', () => {
+  it('normalizes and validates Google app passwords before SMTP authentication', async () => {
+    await runWizard('smtp');
+    const body = structuredClone(SMTP_BODY);
+    body.system.host = 'smtp.gmail.com';
+    body.system.password = 'abcd efgh ijkl mnop';
+    const saved = await call('/api/setup/steps/smtp', { method: 'POST', body });
+    expect(saved.status).toBe(200);
+    const [profile] = await db.query<{ password_enc: string }>(
+      `select password_enc from smtp_profiles where kind = 'system'`,
+    );
+    expect(openSealed<{ password: string }>(loadMasterKey({ path: keyPath }), profile.password_enc).password)
+      .toBe('abcdefghijklmnop');
+
+    const malformed = structuredClone(body);
+    malformed.system.password = 'abcd efgh ijkl mno';
+    const rejected = await call('/api/setup/steps/smtp', { method: 'POST', body: malformed });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatch(/exactly 16/i);
+  });
+
   it('is optional and writes no placeholder configuration when skipped', async () => {
     await runWizard('smtp');
     const res = await call('/api/setup/steps/smtp', { method: 'POST', body: { skip: true } });

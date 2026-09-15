@@ -808,7 +808,12 @@ async function applyStep(
       const sysPort = Number(system.port);
       const sysSecurity = str(system.security, 16) || 'starttls';
       const sysUser = str(system.username, 320);
-      const sysPassword = asSecret(system.password);
+      const submittedPassword = asSecret(system.password);
+      // Google displays app passwords in four groups separated by spaces.
+      // SMTP AUTH expects the 16 letters without presentation whitespace.
+      const sysPassword = sysHost.trim().toLowerCase() === 'smtp.gmail.com' && !submittedPassword.isEmpty
+        ? asSecret(submittedPassword.reveal().replace(/\s/g, ''))
+        : submittedPassword;
       const sysFromName = str(system.fromName, 120);
       const sysFromAddress = str(system.fromAddress, 320);
 
@@ -833,6 +838,9 @@ async function applyStep(
       }
       if (!['none', 'starttls', 'tls'].includes(sysSecurity)) throw new SetupError(400, 'unknown connection security');
       if (!sysFromAddress.includes('@')) throw new SetupError(400, 'a valid From address is required for system mail');
+      if (sysHost.trim().toLowerCase() === 'smtp.gmail.com' && !sysPassword.isEmpty && sysPassword.length !== 16) {
+        throw new SetupError(400, 'Google App Passwords must contain exactly 16 letters. Paste all four groups; spaces are removed automatically.');
+      }
 
       const key = sysPassword.isEmpty ? null : requireMasterKey(ctx);
       const sysPasswordEnc = key ? seal(key, { password: sysPassword }) : null;
@@ -842,7 +850,7 @@ async function applyStep(
          values ('system', false, $1, $2, $3, $4, $5, $6, $7)
          on conflict (kind) do update set
            host = excluded.host, port = excluded.port, security = excluded.security,
-           username = excluded.username, password_enc = excluded.password_enc,
+           username = excluded.username, password_enc = coalesce(excluded.password_enc, smtp_profiles.password_enc),
            from_name = excluded.from_name, from_address = excluded.from_address`,
         [sysHost, sysPort, sysSecurity, sysUser || null, sysPasswordEnc, sysFromName || null, sysFromAddress],
       );
@@ -1069,8 +1077,8 @@ async function buildReviewDetail(db: Db): Promise<Record<string, unknown>> {
   const [llm] = await db.query<{ provider: string; model: string; base_url: string | null; api_key_enc: string | null; external_acknowledged: boolean; activated_at: string | null }>(
     `select provider, model, base_url, api_key_enc, external_acknowledged, activated_at from llm_providers where role = 'primary'`,
   );
-  const smtp = await db.query<{ kind: string; copy_from_system: boolean; host: string | null; port: number | null; security: string | null; password_enc: string | null; from_name: string | null; from_address: string | null; verified_at: string | null }>(
-    `select kind, copy_from_system, host, port, security, password_enc, from_name, from_address, verified_at from smtp_profiles order by kind`,
+  const smtp = await db.query<{ kind: string; copy_from_system: boolean; host: string | null; port: number | null; security: string | null; username: string | null; password_enc: string | null; from_name: string | null; from_address: string | null; verified_at: string | null }>(
+    `select kind, copy_from_system, host, port, security, username, password_enc, from_name, from_address, verified_at from smtp_profiles order by kind`,
   );
   // `oauth_clients`, not `connector_configs` — see migration 0018. Selected
   // column by column rather than with `*`, so widening the query cannot start
@@ -1111,6 +1119,7 @@ async function buildReviewDetail(db: Db): Promise<Record<string, unknown>> {
       host: p.copy_from_system ? null : p.host,
       port: p.copy_from_system ? null : p.port,
       security: p.copy_from_system ? null : p.security,
+      username: p.copy_from_system ? null : p.username,
       passwordSet: p.copy_from_system ? null : !!p.password_enc,
       fromName: p.from_name,
       fromAddress: p.from_address,

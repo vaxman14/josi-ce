@@ -44,6 +44,13 @@ interface Review {
   items: ReviewItem[];
   canComplete: boolean;
   headline: string;
+  summary?: {
+    smtp?: Array<{
+      kind: string; host: string | null; port: number | null; security: string | null;
+      username: string | null; passwordSet: boolean | null; fromName: string | null;
+      fromAddress: string | null;
+    }>;
+  };
 }
 
 /** Which setup step an item is fixed on, so "Edit" can go somewhere. */
@@ -125,6 +132,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
     setError('');
     try {
       await api.post(`/setup/steps/${step}`, body);
+      setRevising(null);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'That step could not be saved');
@@ -186,7 +194,9 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-4 text-sm text-muted-foreground">
             {revisingStep.summary} Saving this replaces what is stored and tests it again.
           </p>
-          <StepForm step={revisingStep.id} busy={busy} catalog={state.providerCatalog ?? []} onSubmit={submit} />
+          <StepForm step={revisingStep.id} busy={busy} catalog={state.providerCatalog ?? []}
+                    smtpInitial={review?.summary?.smtp?.find((profile) => profile.kind === 'system')}
+                    onSubmit={submit} />
           <div className="mt-3">
             <Button type="button" variant="secondary" disabled={busy} onClick={() => setRevising(null)}>
               Leave it as it is
@@ -249,9 +259,13 @@ export function Setup({ onDone }: { onDone: () => void }) {
 }
 
 function StepForm({
-  step, busy, catalog, onSubmit,
+  step, busy, catalog, smtpInitial, onSubmit,
 }: {
   step: string; busy: boolean; catalog: ProviderCatalogEntry[];
+  smtpInitial?: {
+    host: string | null; port: number | null; security: string | null; username: string | null;
+    passwordSet: boolean | null; fromName: string | null; fromAddress: string | null;
+  };
   onSubmit: (step: string, body: Record<string, unknown>) => Promise<void>;
 }) {
   const [checks, setChecks] = useState<HostCheck[] | null>(null);
@@ -345,21 +359,23 @@ function StepForm({
           }))}
           className="space-y-3"
         >
-          <Field id="host" label="SMTP server" required autoCapitalize="none" />
-          <Field id="port" label="Port" type="number" defaultValue="587" required />
+          <Field id="host" label="SMTP server" defaultValue={smtpInitial?.host ?? ''} required autoCapitalize="none" />
+          <Field id="port" label="Port" type="number" defaultValue={smtpInitial?.port ?? 587} required />
           <div>
             <label className="mb-1 block text-sm" htmlFor="security">Security</label>
-            <select id="security" name="security" defaultValue="starttls"
+            <select id="security" name="security" defaultValue={smtpInitial?.security ?? 'starttls'}
                     className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm">
               <option value="starttls">STARTTLS</option>
               <option value="tls">TLS</option>
               <option value="none">None</option>
             </select>
           </div>
-          <Field id="username" label="Username" autoCapitalize="none" />
-          <Field id="password" label="Password" type="password" autoComplete="new-password" />
-          <Field id="fromName" label="From name" defaultValue="Josi" required />
-          <Field id="fromAddress" label="From address" type="email" required />
+          <Field id="username" label="Username" defaultValue={smtpInitial?.username ?? ''} autoCapitalize="none" />
+          <Field id="password" label="Password" type="password" autoComplete="new-password"
+                 required={!smtpInitial?.passwordSet}
+                 placeholder={smtpInitial?.passwordSet ? 'Leave blank to keep saved password' : undefined} />
+          <Field id="fromName" label="From name" defaultValue={smtpInitial?.fromName ?? 'Josi'} required />
+          <Field id="fromAddress" label="From address" type="email" defaultValue={smtpInitial?.fromAddress ?? ''} required />
           <Field id="testTo" label="Send a test message to" type="email" required
                  placeholder="you@example.com" />
           <p className="text-xs text-muted-foreground">
@@ -369,7 +385,7 @@ function StepForm({
             send fails, so fixing a setting does not mean typing it again.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={busy}>Continue</Button>
+            <Button type="submit" disabled={busy}>{busy ? 'Testing…' : 'Save and test'}</Button>
             <Button type="button" variant="secondary" disabled={busy}
                     onClick={() => void onSubmit('smtp', { skip: true })}>
               Skip for now
