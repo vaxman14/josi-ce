@@ -307,6 +307,26 @@ describe('storing a connection', () => {
     expect(connection!.granted_scopes).toContain('gmail.readonly');
   });
 
+  it('keeps two accounts from the same provider and updates by provider identity', async () => {
+    const first = await upsertConnection(db, key, {
+      ownerUserId: alice, provider: 'google', tokens,
+      accountEmail: 'one@example.test', providerAccountId: 'google-1', requestedCapabilities: ['google.calendar.read'],
+    });
+    const second = await upsertConnection(db, key, {
+      ownerUserId: alice, provider: 'google', tokens,
+      accountEmail: 'two@example.test', providerAccountId: 'google-2', requestedCapabilities: ['google.calendar.read'],
+    });
+    expect(second.id).not.toBe(first.id);
+    expect(await db.query(`select id from connections where owner_user_id=$1 and provider='google'`, [alice])).toHaveLength(2);
+
+    const again = await upsertConnection(db, key, {
+      ownerUserId: alice, provider: 'google', tokens,
+      accountEmail: 'renamed@example.test', providerAccountId: 'google-1', requestedCapabilities: ['google.calendar.read'],
+    });
+    expect(again.id).toBe(first.id);
+    expect(await db.query(`select id from connections where owner_user_id=$1 and provider='google'`, [alice])).toHaveLength(2);
+  });
+
   it('finishes enabling an explicitly requested write capability after re-consent', async () => {
     await upsertConnection(db, key, {
       ownerUserId: alice, provider: 'google', tokens,

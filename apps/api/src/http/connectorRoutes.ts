@@ -17,7 +17,7 @@ import {
   CAPABILITIES, CapabilityError, ConnectorError, NoClientError, NEXTCLOUD_STORAGE_CAPABILITY,
   OAUTH_PROVIDERS, STORAGE_CAPABILITY, isOAuthProvider,
   accessTokenFor, buildAuthUrl, can, capabilitySpec, capabilityViews, clientStatuses, connectNextcloud,
-  connectionFor, createStateStore, deleteClient, deleteConnection, exchangeCode, fetchIdentity, getConnection,
+  connectionFor, connectionsFor, createStateStore, deleteClient, deleteConnection, exchangeCode, fetchIdentity, getConnection,
   listFolderPage, listNextcloudFolder, loadClient, nextcloudCredentialsFor, normalizeServerUrl,
   refusalReason, revokeAtProvider, safeReturnPath, saveClient, scopesFor, setCapability, upsertConnection,
   verifyWebdavCredentials,
@@ -115,7 +115,19 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
       const clients = await clientStatuses(db);
       const out = [];
       for (const provider of ALL_PROVIDERS) {
-        const connection = await connectionFor(db, { ownerUserId: req.user!.id, provider });
+        const connections = await connectionsFor(db, { ownerUserId: req.user!.id, provider });
+        const connection = connections[0] ?? null;
+        const view = async (item: typeof connection) => item ? ({
+          id: item.id,
+          account: item.account_email,
+          status: item.status,
+          lastCheckAt: item.last_check_at,
+          lastCheckOk: item.last_check_ok,
+          errorCategory: item.last_error_category,
+          createdAt: item.created_at,
+          serverUrl: item.meta?.serverUrl ?? null,
+          capabilities: await capabilityViews(db, { connection: item, provider }),
+        }) : null;
         out.push({
           provider,
           // Whether an administrator has set this installation's application up.
@@ -125,24 +137,8 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
           available: provider === 'nextcloud'
             ? true
             : clients.find((c) => c.provider === provider)?.configured ?? false,
-          connection: connection
-            ? {
-                id: connection.id,
-                // The owner may know which of their own accounts this is.
-                account: connection.account_email,
-                status: connection.status,
-                lastCheckAt: connection.last_check_at,
-                lastCheckOk: connection.last_check_ok,
-                // A category, so "reconnect" and "we are rate limited" read
-                // differently to the person who has to act.
-                errorCategory: connection.last_error_category,
-                createdAt: connection.created_at,
-                // The owner's own server address — the Nextcloud equivalent of
-                // `account` above, shown only to its owner like everything else
-                // on this route. Null for every OAuth provider.
-                serverUrl: connection.meta?.serverUrl ?? null,
-              }
-            : null,
+          connection: await view(connection),
+          connections: await Promise.all(connections.map(view)),
           capabilities: await capabilityViews(db, { connection, provider }),
         });
       }
@@ -276,6 +272,13 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
             .map((c) => c.key);
 
       const store = createStateStore(db, key);
+      const targetConnectionId = str(req.body?.connectionId, 80) || null;
+      if (targetConnectionId) {
+        const target = await getConnection(db, targetConnectionId);
+        if (!target || target.owner_user_id !== req.user!.id || target.provider !== provider) {
+          throw new RouteError(404, 'connection not found');
+        }
+      }
       const scopes = scopesFor(provider, capabilities);
       const { state, challenge } = await store.start({
         userId: req.user!.id,
@@ -284,6 +287,7 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         capabilities,
         scopes,
         returnPath: safeReturnPath(req.body?.returnPath),
+        targetConnectionId,
       });
 
       await appendEvent(db, {
@@ -374,10 +378,9 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         identity = { accountId: null, email: null };
       }
 
-      const existingConnection = await connectionFor(db, {
-        ownerUserId: handshake.userId,
-        provider,
-      });
+      const existingConnection = handshake.targetConnectionId
+        ? await getConnection(db, handshake.targetConnectionId)
+        : null;
       await upsertConnection(db, key, {
         // From the STORED handshake, never from the session on this request and
         // never from the query string.
@@ -386,6 +389,7 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         tokens,
         accountEmail: identity.email,
         providerAccountId: identity.accountId,
+        targetConnectionId: handshake.targetConnectionId,
         requestedCapabilities: handshake.capabilities,
         // An explicit incremental-consent trip from an existing connection is
         // the owner's switch-on action. First-time connections still start

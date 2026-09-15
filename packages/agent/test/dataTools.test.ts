@@ -220,7 +220,8 @@ describe('execution re-checks the switch', () => {
       'query_calendar', {},
     ) as { ok: boolean; events: Array<{ event_id: string; title: string | null }>; range: { start: string; end: string } };
     expect(result.ok).toBe(true);
-    expect(result.events[0]).toMatchObject({ event_id: 'google:ev1', title: 'standup' });
+    expect(result.events[0]).toMatchObject({ title: 'standup' });
+    expect(result.events[0].event_id).toMatch(/^google:[0-9a-f-]{36}:ev1$/);
     const days = (new Date(result.range.end).getTime() - new Date(result.range.start).getTime()) / 86_400_000;
     expect(Math.round(days)).toBe(7);
     expect(urls[0]).toContain('singleEvents=true');

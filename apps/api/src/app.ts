@@ -15,6 +15,7 @@ import { checklistRoutes } from './http/checklistRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
 import { contactSyncRoutes } from './http/contactSyncRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
+import { calendarRoutes } from './http/calendarRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
 import { storageRoutes } from './http/storageRoutes.js';
 import { opsRoutes } from './http/opsRoutes.js';
@@ -179,6 +180,9 @@ export function createApp(db: Db, cfg: AppConfig): Express {
 
   api.use('/connections', connectorRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,
+  }));
+  api.use('/calendar', calendarRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch,
   }));
   // Contact sync sits under /contacts, beside the assistant's own contact
   // routes. Every route in it resolves ownership from the origin rather than

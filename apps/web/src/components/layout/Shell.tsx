@@ -24,6 +24,7 @@ const MEMBER_NAV = [
   { to: '/app/tasks', label: 'Tasks' },
   { to: '/app/approvals', label: 'Approvals' },
   { to: '/app/conversations', label: 'Conversations' },
+  { to: '/app/calendar', label: 'Calendar' },
   { to: '/app/contacts', label: 'Contacts' },
   { to: '/app/connections', label: 'Connections' },
   { to: '/app/usage', label: 'Usage' },

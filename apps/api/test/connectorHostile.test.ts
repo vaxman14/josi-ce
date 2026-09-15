@@ -402,10 +402,7 @@ describe('token substitution', () => {
     expect(await db.query(`select id from connections`)).toHaveLength(1);
   });
 
-  it('rebinds a reconnect to the same owner even if the provider returns a different account', async () => {
-    // A provider handing back a different identity must not silently move
-    // somebody's connection to an account they did not choose to attach — the
-    // owner is Alice either way, and the account label is what changes.
+  it('keeps the existing account when the owner explicitly adds another provider account', async () => {
     const state = await startHandshake(cookies.alice);
     await callback('google', { state, code: 'x' }, cookies.alice);
 
@@ -416,10 +413,9 @@ describe('token substitution', () => {
     const rows = await db.query<{ owner_user_id: string; account_email: string }>(
       `select owner_user_id, account_email from connections`,
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].owner_user_id, 'still Alice’s connection').toBe(ids.alice);
-    // The change IS visible rather than hidden, so she can see it happened.
-    expect(rows[0].account_email).toBe('attacker@gmail.test');
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.owner_user_id === ids.alice), 'both remain Alice’s private connections').toBe(true);
+    expect(rows.map((row) => row.account_email).sort()).toEqual(['alice@gmail.test', 'attacker@gmail.test']);
   });
 
   it('refuses to start a handshake without a session at all', async () => {

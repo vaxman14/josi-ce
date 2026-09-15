@@ -23,6 +23,14 @@ export interface RemoteEvent {
   description?: string | null;
 }
 
+export interface RemoteCalendar {
+  sourceId: string;
+  name: string;
+  color: string | null;
+  primary: boolean;
+  writable: boolean;
+}
+
 /** The most events one query returns. A week of a busy calendar fits; a
  * model that wants more narrows the window. */
 export const CALENDAR_RESULT_CAP = 25;
@@ -35,6 +43,7 @@ export interface CalendarQueryArgs {
   timeMin: string;
   timeMax: string;
   limit?: number;
+  calendarId?: string;
 }
 
 export async function listEvents(
@@ -48,15 +57,26 @@ export async function listEvents(
 
 export async function getEvent(
   provider: Provider,
-  args: { accessToken: string; id: string },
+  args: { accessToken: string; id: string; calendarId?: string },
   opts: FetchOptions = {},
 ): Promise<RemoteEvent | null> {
   return provider === 'google' ? getGoogle(args, opts) : getGraph(args, opts);
 }
 
+/** Discover every calendar below one account. Provider pagination is followed
+ * to exhaustion; there is no product-imposed account/calendar count. */
+export async function listCalendars(
+  provider: Provider,
+  args: { accessToken: string },
+  opts: FetchOptions = {},
+): Promise<RemoteCalendar[]> {
+  return provider === 'google' ? listGoogleCalendars(args, opts) : listGraphCalendars(args, opts);
+}
+
 // ------------------------------------------------------------------- Google
 
-const GCAL_BASE = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+const GCAL_ROOT = 'https://www.googleapis.com/calendar/v3';
+const googleEventsUrl = (calendarId = 'primary') => `${GCAL_ROOT}/calendars/${encodeURIComponent(calendarId)}/events`;
 
 interface GoogleEvent {
   id?: unknown;
@@ -100,7 +120,7 @@ async function listGoogle(args: CalendarQueryArgs, limit: number, opts: FetchOpt
     maxResults: String(limit),
   });
   const result = await providerRequest(
-    `${GCAL_BASE}?${params}`,
+    `${googleEventsUrl(args.calendarId)}?${params}`,
     { headers: { Authorization: `Bearer ${args.accessToken}` } },
     opts,
   );
@@ -110,15 +130,36 @@ async function listGoogle(args: CalendarQueryArgs, limit: number, opts: FetchOpt
     .filter(Boolean) as RemoteEvent[];
 }
 
-async function getGoogle(args: { accessToken: string; id: string }, opts: FetchOptions): Promise<RemoteEvent | null> {
+async function getGoogle(args: { accessToken: string; id: string; calendarId?: string }, opts: FetchOptions): Promise<RemoteEvent | null> {
   const result = await providerRequest(
-    `${GCAL_BASE}/${encodeURIComponent(args.id)}`,
+    `${googleEventsUrl(args.calendarId)}/${encodeURIComponent(args.id)}`,
     { headers: { Authorization: `Bearer ${args.accessToken}` } },
     opts,
   );
   if (result.status === 404 || result.status === 410) return null;
   if (result.status < 200 || result.status >= 300) raiseProviderError(result.status, result.body);
   return fromGoogle((result.body ?? {}) as GoogleEvent, true);
+}
+
+
+async function listGoogleCalendars(args: { accessToken: string }, opts: FetchOptions): Promise<RemoteCalendar[]> {
+  const out: RemoteCalendar[] = [];
+  let token = '';
+  do {
+    const params = new URLSearchParams({ maxResults: '250' });
+    if (token) params.set('pageToken', token);
+    const result = await providerRequest(`${GCAL_ROOT}/users/me/calendarList?${params}`, {
+      headers: { Authorization: `Bearer ${args.accessToken}` },
+    }, opts);
+    if (result.status < 200 || result.status >= 300) raiseProviderError(result.status, result.body);
+    const body = (result.body ?? {}) as { items?: Array<Record<string, unknown>>; nextPageToken?: unknown };
+    for (const item of body.items ?? []) {
+      const sourceId = str(item.id); const name = str(item.summaryOverride) ?? str(item.summary);
+      if (sourceId && name) out.push({ sourceId, name, color: str(item.backgroundColor), primary: item.primary === true, writable: item.accessRole === 'owner' || item.accessRole === 'writer' });
+    }
+    token = str(body.nextPageToken) ?? '';
+  } while (token);
+  return out;
 }
 
 // ---------------------------------------------------------------- Microsoft
@@ -169,7 +210,7 @@ async function listGraph(args: CalendarQueryArgs, limit: number, opts: FetchOpti
     $select: GRAPH_EVENT_SELECT,
   });
   const result = await providerRequest(
-    `${GRAPH_BASE}/me/calendarView?${params}`,
+    `${GRAPH_BASE}/me/${args.calendarId ? `calendars/${encodeURIComponent(args.calendarId)}/` : ''}calendarView?${params}`,
     {
       headers: {
         Authorization: `Bearer ${args.accessToken}`,
@@ -186,17 +227,35 @@ async function listGraph(args: CalendarQueryArgs, limit: number, opts: FetchOpti
     .filter(Boolean) as RemoteEvent[];
 }
 
-async function getGraph(args: { accessToken: string; id: string }, opts: FetchOptions): Promise<RemoteEvent | null> {
+async function getGraph(args: { accessToken: string; id: string; calendarId?: string }, opts: FetchOptions): Promise<RemoteEvent | null> {
   if (!/^[A-Za-z0-9_=-]{1,512}$/.test(args.id)) {
     throw new ConnectorError('that is not an event id', { category: 'provider_error' });
   }
   const params = new URLSearchParams({ $select: `${GRAPH_EVENT_SELECT},bodyPreview` });
   const result = await providerRequest(
-    `${GRAPH_BASE}/me/events/${args.id}?${params}`,
+    `${GRAPH_BASE}/me/${args.calendarId ? `calendars/${encodeURIComponent(args.calendarId)}/` : ''}events/${args.id}?${params}`,
     { headers: { Authorization: `Bearer ${args.accessToken}`, Prefer: 'outlook.timezone="UTC"' } },
     opts,
   );
   if (result.status === 404) return null;
   if (result.status < 200 || result.status >= 300) raiseProviderError(result.status, result.body);
   return fromGraph((result.body ?? {}) as GraphEvent, true);
+}
+
+
+async function listGraphCalendars(args: { accessToken: string }, opts: FetchOptions): Promise<RemoteCalendar[]> {
+  const out: RemoteCalendar[] = [];
+  let url: string | null = `${GRAPH_BASE}/me/calendars?$top=100&$select=id,name,color,canEdit,isDefaultCalendar`;
+  while (url) {
+    const result = await providerRequest(url, { headers: { Authorization: `Bearer ${args.accessToken}` } }, opts);
+    if (result.status < 200 || result.status >= 300) raiseProviderError(result.status, result.body);
+    const body = (result.body ?? {}) as { value?: Array<Record<string, unknown>>; '@odata.nextLink'?: unknown };
+    for (const item of body.value ?? []) {
+      const sourceId = str(item.id); const name = str(item.name);
+      if (sourceId && name) out.push({ sourceId, name, color: str(item.color), primary: item.isDefaultCalendar === true, writable: item.canEdit === true });
+    }
+    const next = str(body['@odata.nextLink']);
+    url = next?.startsWith(`${GRAPH_BASE}/`) ? next : null;
+  }
+  return out;
 }

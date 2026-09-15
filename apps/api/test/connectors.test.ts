@@ -43,6 +43,15 @@ let providerCalls: string[] = [];
 const connectorFetch = (async (url: RequestInfo | URL) => {
   const href = String(url);
   providerCalls.push(href);
+  if (href.includes('/users/me/calendarList')) {
+    return new Response(JSON.stringify({ items: [
+      { id: 'primary@example.test', summary: 'Primary', primary: true, accessRole: 'owner', backgroundColor: '#123456' },
+      { id: 'kids@example.test', summary: 'Vaxman Kids', accessRole: 'reader', backgroundColor: '#654321' },
+    ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  if (href.includes('/calendar/v3/calendars/')) {
+    return new Response(JSON.stringify({ items: [{ id: 'event-1', summary: 'Dentist', start: { dateTime: '2026-09-15T17:00:00Z' }, end: { dateTime: '2026-09-15T18:00:00Z' } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   if (href.includes('userinfo') || href.includes('graph.microsoft.com')) {
     return new Response(JSON.stringify({ sub: 'g-account-1', email: ACCOUNT }), {
       status: 200, headers: { 'content-type': 'application/json' },
@@ -522,6 +531,27 @@ describe('disconnecting', () => {
     expect(res.status).toBe(200);
     expect(await db.query(`select 1 from connections`)).toHaveLength(0);
     expect(await db.query(`select 1 from connection_capabilities`)).toHaveLength(0);
+  });
+});
+
+describe('the central calendar', () => {
+  beforeEach(configureClient);
+
+  it('discovers secondary calendars, keeps selection owner-only, and aggregates selected events', async () => {
+    const id = await connect('alice');
+    await call(`/api/connections/${id}/capabilities/google.calendar.read`, {
+      method: 'PUT', jar: cookies.alice, body: { enabled: true },
+    });
+    const listed = await call('/api/calendar/sources?refresh=true', { jar: cookies.alice });
+    expect(listed.status, JSON.stringify(listed.body)).toBe(200);
+    expect(listed.body.sources.map((s: any) => s.name)).toEqual(['Primary', 'Vaxman Kids']);
+    const kids = listed.body.sources.find((s: any) => s.name === 'Vaxman Kids');
+    expect((await call(`/api/calendar/sources/${kids.id}`, { method: 'PUT', jar: cookies.bob, body: { selected: false } })).status).toBe(404);
+    expect((await call(`/api/calendar/sources/${kids.id}`, { method: 'PUT', jar: cookies.alice, body: { selected: false } })).status).toBe(200);
+    const events = await call('/api/calendar/events?start=2026-09-14T00%3A00%3A00Z&end=2026-09-21T00%3A00%3A00Z', { jar: cookies.alice });
+    expect(events.status, JSON.stringify(events.body)).toBe(200);
+    expect(events.body.events).toHaveLength(1);
+    expect(events.body.events[0]).toMatchObject({ title: 'Dentist', sourceName: 'Primary', account: ACCOUNT });
   });
 });
 

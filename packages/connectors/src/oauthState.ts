@@ -31,6 +31,7 @@ export interface ResolvedHandshake {
   scopes: string;
   verifier: string | null;
   returnPath: string;
+  targetConnectionId: string | null;
 }
 
 export type HandshakeFailure =
@@ -69,6 +70,7 @@ interface StateRow {
   scopes: string;
   verifier_enc: string | null;
   return_path: string;
+  target_connection_id: string | null;
   expires_at: string;
   consumed_at: string | null;
 }
@@ -81,6 +83,7 @@ export interface StateStore {
     capabilities: string[];
     scopes: string;
     returnPath?: string;
+    targetConnectionId?: string | null;
     ttlSeconds?: number;
   }): Promise<StartedHandshake>;
 
@@ -102,8 +105,9 @@ export function createStateStore(db: Db, key: MasterKey | null): StateStore {
       const state = randomBytes(32).toString('base64url');
       await db.query(
         `insert into oauth_states
-           (id, user_id, session_id, provider, capabilities, scopes, verifier_enc, return_path, expires_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(secs => $9))`,
+           (id, user_id, session_id, provider, capabilities, scopes, verifier_enc, return_path,
+            target_connection_id, expires_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + make_interval(secs => $10))`,
         [
           state,
           args.userId,
@@ -115,6 +119,7 @@ export function createStateStore(db: Db, key: MasterKey | null): StateStore {
           // not use PKCE rather than storing the verifier in the clear.
           key ? seal(key, { verifier }) : null,
           safeReturnPath(args.returnPath),
+          args.targetConnectionId ?? null,
           args.ttlSeconds ?? DEFAULT_TTL_SECONDS,
         ],
       );
@@ -166,6 +171,7 @@ export function createStateStore(db: Db, key: MasterKey | null): StateStore {
           scopes: row.scopes,
           verifier,
           returnPath: safeReturnPath(row.return_path),
+          targetConnectionId: row.target_connection_id,
         },
       };
     },

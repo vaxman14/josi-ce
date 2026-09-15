@@ -68,6 +68,8 @@ export async function upsertConnection(
     tokens: TokenSet;
     accountEmail: string | null;
     providerAccountId: string | null;
+    /** Existing account being re-authorized. Omitted when adding an account. */
+    targetConnectionId?: string | null;
     /** Which capabilities this consent was collected for. */
     requestedCapabilities: string[];
     /** The owner started this handshake by pressing an unavailable capability
@@ -75,10 +77,34 @@ export async function upsertConnection(
     enableRequestedCapabilities?: boolean;
   },
 ): Promise<ConnectionRow> {
-  const [existing] = await db.query<ConnectionRow>(
-    `select * from connections where owner_user_id = $1 and provider = $2`,
-    [args.ownerUserId, args.provider],
-  );
+  const existingRows = args.targetConnectionId
+    ? await db.query<ConnectionRow>(
+        `select * from connections where id = $1 and owner_user_id = $2 and provider = $3`,
+        [args.targetConnectionId, args.ownerUserId, args.provider],
+      )
+    : args.providerAccountId
+      ? await db.query<ConnectionRow>(
+          `select * from connections where owner_user_id = $1 and provider = $2 and provider_account_id = $3`,
+          [args.ownerUserId, args.provider, args.providerAccountId],
+        )
+      : args.accountEmail
+        ? await db.query<ConnectionRow>(
+            `select * from connections where owner_user_id = $1 and provider = $2
+             and provider_account_id is null and lower(account_email) = lower($3)`,
+            [args.ownerUserId, args.provider, args.accountEmail],
+          )
+        : await db.query<ConnectionRow>(
+            `select * from connections where owner_user_id = $1 and provider = $2
+             order by created_at limit 1`,
+            [args.ownerUserId, args.provider],
+          );
+  const existing = existingRows[0];
+  if (args.targetConnectionId && existing?.provider_account_id && args.providerAccountId
+      && existing.provider_account_id !== args.providerAccountId) {
+    throw new ConnectorError('the provider returned a different account; use Add another account instead', {
+      category: 'provider_error',
+    });
+  }
 
   const merged = new Set([
     ...(existing?.granted_scopes ?? '').split(/\s+/).filter(Boolean),
@@ -103,19 +129,19 @@ export async function upsertConnection(
     ? new Date(Date.now() + args.tokens.expiresIn * 1000).toISOString()
     : null;
 
-  const rows = await db.query<ConnectionRow>(
-    `insert into connections
+  const rows = existing
+    ? await db.query<ConnectionRow>(
+      `update connections set account_email = $2, provider_account_id = coalesce($3, provider_account_id),
+         granted_scopes = $4, secrets_enc = $5, status = 'active', last_check_at = now(),
+         last_check_ok = true, last_error_category = null, token_expires_at = $6
+       where id = $1 returning *`,
+      [existing.id, args.accountEmail ?? existing.account_email, args.providerAccountId, grantedScopes, sealed, expiresAt],
+    )
+    : await db.query<ConnectionRow>(
+      `insert into connections
        (owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
         status, last_check_at, last_check_ok, last_error_category, token_expires_at)
      values ($1, $2, $3, $4, $5, $6, 'active', now(), true, null, $7)
-     on conflict (owner_user_id, provider) do update set
-       account_email = excluded.account_email,
-       provider_account_id = excluded.provider_account_id,
-       granted_scopes = excluded.granted_scopes,
-       secrets_enc = excluded.secrets_enc,
-       status = 'active',
-       last_check_at = now(), last_check_ok = true, last_error_category = null,
-       token_expires_at = excluded.token_expires_at
      returning *`,
     [
       args.ownerUserId, args.provider, args.accountEmail, args.providerAccountId,
@@ -170,10 +196,44 @@ export async function connectionFor(
   args: { ownerUserId: string; provider: Provider },
 ): Promise<ConnectionRow | null> {
   const rows = await db.query<ConnectionRow>(
-    `select * from connections where owner_user_id = $1 and provider = $2`,
+    `select * from connections where owner_user_id = $1 and provider = $2
+     order by (status = 'active') desc, created_at asc limit 1`,
     [args.ownerUserId, args.provider],
   );
   return rows[0] ?? null;
+}
+
+export async function connectionsFor(
+  db: Db,
+  args: { ownerUserId: string; provider?: Provider },
+): Promise<ConnectionRow[]> {
+  return args.provider
+    ? db.query<ConnectionRow>(
+        `select * from connections where owner_user_id = $1 and provider = $2 order by created_at`,
+        [args.ownerUserId, args.provider],
+      )
+    : db.query<ConnectionRow>(
+        `select * from connections where owner_user_id = $1 order by provider, created_at`,
+        [args.ownerUserId],
+      );
+}
+
+/** Every concrete account on which this capability is effective. Keeping this
+ * account-scoped prevents one account's ON switch from authorizing another. */
+export async function connectionsWithCapability(
+  db: Db,
+  args: { ownerUserId: string; capability: string },
+): Promise<ConnectionRow[]> {
+  const spec = capabilitySpec(args.capability); if (!spec) return [];
+  return db.query<ConnectionRow>(
+    `select c.* from connections c
+       join connection_capabilities cc on cc.connection_id=c.id and cc.capability=$3
+       left join admin_capability_policy p on p.capability=$3
+      where c.owner_user_id=$1 and c.provider=$2 and c.status='active'
+        and cc.enabled=true and cc.scopes_granted_at is not null and coalesce(p.allowed,true)=true
+      order by c.created_at`,
+    [args.ownerUserId, spec.provider, args.capability],
+  );
 }
 
 // ------------------------------------------------------------ capabilities
@@ -244,15 +304,16 @@ export async function can(
   const spec = capabilitySpec(args.capability);
   if (!spec) return { allowed: false, state: 'needs_consent' };
 
-  const connection = await connectionFor(db, { ownerUserId: args.ownerUserId, provider: spec.provider });
-  if (!connection || connection.status === 'revoked') {
+  const connections = await connectionsFor(db, { ownerUserId: args.ownerUserId, provider: spec.provider });
+  if (!connections.some((connection) => connection.status !== 'revoked')) {
     return { allowed: false, state: 'needs_consent' };
   }
 
-  const [grant] = await db.query<{ enabled: boolean; scopes_granted_at: string | null }>(
-    `select enabled, scopes_granted_at from connection_capabilities
-     where connection_id = $1 and capability = $2`,
-    [connection.id, args.capability],
+  const grants = await db.query<{ enabled: boolean; scopes_granted_at: string | null }>(
+    `select cc.enabled, cc.scopes_granted_at from connection_capabilities cc
+     join connections c on c.id = cc.connection_id
+     where c.owner_user_id = $1 and c.provider = $2 and c.status <> 'revoked' and cc.capability = $3`,
+    [args.ownerUserId, spec.provider, args.capability],
   );
   const [policy] = await db.query<{ allowed: boolean }>(
     `select allowed from admin_capability_policy where capability = $1`,
@@ -260,9 +321,9 @@ export async function can(
   );
 
   const inputs = {
-    providerGranted: !!grant?.scopes_granted_at,
+    providerGranted: grants.some((grant) => !!grant.scopes_granted_at),
     adminAllows: policy?.allowed ?? true,
-    userEnabled: grant?.enabled ?? false,
+    userEnabled: grants.some((grant) => grant.enabled),
   };
   return { allowed: effectiveCapability(inputs), state: capabilityState(inputs) };
 }
@@ -411,7 +472,7 @@ export async function connectNextcloud(
        (owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
         status, last_check_at, last_check_ok, last_error_category, meta)
      values ($1, 'nextcloud', $2, null, '', $3, 'active', now(), true, null, $4)
-     on conflict (owner_user_id, provider) do update set
+     on conflict (owner_user_id, provider) where provider = 'nextcloud' do update set
        account_email = excluded.account_email,
        secrets_enc = excluded.secrets_enc,
        status = 'active',

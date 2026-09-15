@@ -201,6 +201,12 @@ describe('google calendar', () => {
     expect(events[0].description).toBeUndefined();
   });
 
+  it('targets a selected secondary calendar', async () => {
+    const { fetchImpl, urls } = fetchStub(() => ({ body: { items: [googleEvent] } }));
+    await listEvents('google', { accessToken: 'tok', calendarId: 'shared@example.test', timeMin: 'a', timeMax: 'b' }, { fetchImpl });
+    expect(urls[0]).toContain('/calendars/shared%40example.test/events');
+  });
+
   it('marks an all-day event and keeps its bare date', async () => {
     const { fetchImpl } = fetchStub(() => ({
       body: { items: [{ id: 'ev2', summary: 'offsite', start: { date: '2026-09-05' }, end: { date: '2026-09-06' } }] },

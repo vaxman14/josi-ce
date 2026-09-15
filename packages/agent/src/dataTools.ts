@@ -20,7 +20,7 @@
 // allows it.
 import type { Db, MasterKey } from '@josi-ce/core';
 import {
-  accessTokenFor, can, connectionFor, getEvent, listEvents, loadClient, readContactPage, readMail,
+  accessTokenFor, can, connectionFor, connectionsWithCapability, getEvent, listEvents, loadClient, readContactPage, readMail,
   refusalReason, searchMail,
   type CapabilityState, type ConnectionRow, type OAuthClient, type Provider, type RemoteEvent,
 } from '@josi-ce/connectors';
@@ -250,13 +250,14 @@ async function openSessions(
   const sessions: ProviderSession[] = [];
   const key = access.masterKey();
   for (const provider of wanted) {
-    const connection = await connectionFor(db, { ownerUserId: userId, provider });
-    if (!connection) continue;
     const client = await loadClient(db, key, provider);
-    const accessToken = await accessTokenFor(
-      db, key, { connection, client }, { fetchImpl: access.fetchImpl },
-    );
-    sessions.push({ provider, connection, client, accessToken });
+    const capability = FAMILY_CAPABILITY[family][provider];
+    for (const connection of await connectionsWithCapability(db, { ownerUserId: userId, capability })) {
+      const accessToken = await accessTokenFor(
+        db, key, { connection, client }, { fetchImpl: access.fetchImpl },
+      );
+      sessions.push({ provider, connection, client, accessToken });
+    }
   }
   const refusal = only && verdict.allowed.length && !wanted.length
     ? `Your ${only === 'google' ? 'Google' : 'Microsoft'} ${FAMILY_LABEL[family]} access is not enabled. You can turn it on on the Connections page.`
@@ -267,15 +268,18 @@ async function openSessions(
 /** Ids handed to the model carry the provider, so a later read goes back to
  * the right account without guessing. */
 const taggedId = (provider: DataProvider, id: string) => `${provider}:${id}`;
+const taggedEventId = (provider: DataProvider, connectionId: string, id: string) => `${provider}:${connectionId}:${id}`;
 
-function untagId(tagged: string): { provider: DataProvider; id: string } | null {
-  const m = /^(google|microsoft):(.+)$/.exec(tagged);
-  return m ? { provider: m[1] as DataProvider, id: m[2] } : null;
+function untagId(tagged: string): { provider: DataProvider; connectionId: string | null; id: string } | null {
+  const current = /^(google|microsoft):([0-9a-f-]{36}):(.+)$/.exec(tagged);
+  if (current) return { provider: current[1] as DataProvider, connectionId: current[2], id: current[3] };
+  const legacy = /^(google|microsoft):(.+)$/.exec(tagged);
+  return legacy ? { provider: legacy[1] as DataProvider, connectionId: null, id: legacy[2] } : null;
 }
 
-function eventView(provider: DataProvider, event: RemoteEvent) {
+function eventView(provider: DataProvider, connectionId: string, event: RemoteEvent) {
   return {
-    event_id: taggedId(provider, event.sourceId),
+    event_id: taggedEventId(provider, connectionId, event.sourceId),
     title: event.title,
     start: event.start,
     end: event.end,
@@ -363,7 +367,7 @@ export async function executeDataTool(
           { accessToken: s.accessToken, timeMin: window.start, timeMax: window.end },
           { fetchImpl: args.access.fetchImpl },
         );
-        events.push(...found.map((e) => eventView(s.provider, e)));
+        events.push(...found.map((e) => eventView(s.provider, s.connection.id, e)));
       }
       events.sort((a, b) => String(a.start ?? '').localeCompare(String(b.start ?? '')));
       return {
@@ -379,10 +383,11 @@ export async function executeDataTool(
       if (!ref) return { ok: false, error: 'not_found', message: 'There is no event with that id. Use an event_id from query_calendar.' };
       const { sessions, refusal } = await openSessions(db, args.access, args.userId, 'calendar', ref.provider);
       if (!sessions.length) return NO_ACCESS(refusal);
-      const s = sessions[0];
+      const s = ref.connectionId ? sessions.find((candidate) => candidate.connection.id === ref.connectionId) : sessions[0];
+      if (!s) return { ok: false, error: 'not_found', message: 'There is no event with that id.' };
       const event = await getEvent(s.provider, { accessToken: s.accessToken, id: ref.id }, { fetchImpl: args.access.fetchImpl });
       if (!event) return { ok: false, error: 'not_found', message: 'There is no event with that id.' };
-      return { ok: true, event: eventView(s.provider, event) };
+      return { ok: true, event: eventView(s.provider, s.connection.id, event) };
     }
 
     default:
