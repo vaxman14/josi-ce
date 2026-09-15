@@ -448,7 +448,7 @@ describe('LB1.7 — the published installer remains inspectable and pinned', () 
 
   it('runs a concrete installer image temporarily and exposes the socket explicitly', () => {
     const docs = `${read('README.md')}\n${read('docs/QUICK_START.md')}\n${read('docs/INSTALLATION.md')}`;
-    expect(docs).toContain('ghcr.io/vaxman14/josi-ce-installer:0.1.20');
+    expect(docs).toContain('romanvaxman/josi-ce-installer:latest');
     expect(docs).toContain('-v /var/run/docker.sock:/var/run/docker.sock');
     expect(docs).toMatch(/docker run --rm/);
     expect(read('services/installer/controller.py')).toContain('threading.Timer(45, lambda: os._exit(0))');

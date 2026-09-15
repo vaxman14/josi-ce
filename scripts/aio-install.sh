@@ -11,7 +11,7 @@
 #     -p 8080:8080 \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v "$PWD:$PWD" -w "$PWD" \
-#     ghcr.io/vaxman14/josi-ce-installer:0.1.6
+#     romanvaxman/josi-ce-installer:latest
 #
 # Docker Desktop for Mac exposes its socket at ~/.docker/run/docker.sock. Mount
 # that source to the same /var/run/docker.sock destination shown above.
@@ -23,7 +23,7 @@ readonly INSTALL_UID="$(stat -c '%u' "$PWD")"
 readonly INSTALL_GID="$(stat -c '%g' "$PWD")"
 readonly APP_GID=1000
 readonly DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
-readonly INSTALLER_IMAGE="${JOSI_INSTALLER_IMAGE:-ghcr.io/vaxman14/josi-ce-installer:${VERSION}}"
+readonly INSTALLER_IMAGE="${JOSI_INSTALLER_IMAGE:-docker.io/romanvaxman/josi-ce-installer:${VERSION}}"
 readonly INSTALLER_PORT="${JOSI_INSTALLER_PORT:-8080}"
 
 say()  { printf '%s\n' "$*"; }

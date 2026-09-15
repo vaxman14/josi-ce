@@ -20,7 +20,7 @@ docker run --rm \
   -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
-  ghcr.io/vaxman14/josi-ce-installer:0.1.0
+  romanvaxman/josi-ce-installer:latest
 ```
 
 Open the HTTPS LAN URL printed by the installer, accept the temporary local
