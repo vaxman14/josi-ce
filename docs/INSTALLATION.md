@@ -40,32 +40,33 @@ that path.
 ```bash
 mkdir -p /opt/josi && cd /opt/josi
 docker run --rm \
+  -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
   ghcr.io/vaxman14/josi-ce-installer:0.1.20
 ```
 
-The version-pinned installer checks Docker, writes the reviewed release files,
-creates `secrets/master.key` and `secrets/db_password` with mode 600, pulls the
-published images, starts the isolated Compose services, and exits. No
-Docker-socket controller remains running.
+The version-pinned container prints a local HTTPS URL and one-time setup code.
+Open it in a browser, accept the temporary self-signed certificate, and choose
+LAN access, automatic HTTPS, or an existing reverse proxy. The wizard detects
+usable LAN addresses, checks the requested ports, shows the exact final URL,
+and asks for confirmation before changing anything.
+
+After confirmation it atomically persists the choices in `.env`, creates
+`secrets/master.key` and `secrets/db_password`, pulls the published images,
+starts and verifies the isolated Compose services, and exits. No Docker-socket
+controller remains running.
 
 > **Back up `secrets/master.key` now, somewhere other than this server.**
 > Every credential Josi stores — provider keys, OAuth secrets, SMTP passwords —
 > is encrypted with it. A database backup alone cannot restore them. This is
 > deliberate: it is what makes a stolen database dump useless. See §15.1.
 
-Watch it come up:
-
-```bash
-docker compose ps
-curl -fsS http://localhost/health
-```
-
-Then open <http://localhost> in a browser and complete the setup wizard. If you
-configured a domain, open that HTTPS address instead. The wizard creates the
+Select **Open Josi** when the installer reports success. The application wizard creates the
 first account, which becomes the super admin, and tests each thing it configures
-rather than only saving it.
+rather than only saving it. That button carries a one-time setup handoff in the
+URL fragment; it is removed immediately and is never sent in HTTP logs. Setup
+routes return 404 in any browser that did not complete the installer pairing.
 
 ### 0.4 If you do not have a domain
 

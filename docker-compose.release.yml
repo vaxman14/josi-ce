@@ -100,6 +100,12 @@ services:
       # `https://${JOSI_DOMAIN:-localhost}` produced once the domain default
       # stopped being `localhost`.
       APP_URL: ${JOSI_APP_URL:-${JOSI_DOMAIN:+https://${JOSI_DOMAIN}}}
+      # The browser installer already collected and validated the deployment
+      # address. The application setup wizard consumes this marker so it does
+      # not ask the operator for the same address a second time.
+      JOSI_INSTALLER_CONFIGURED: ${JOSI_INSTALLER_CONFIGURED:-}
+      JOSI_ACCESS_MODE: ${JOSI_ACCESS_MODE:-}
+      JOSI_SETUP_TOKEN_SHA256: ${JOSI_SETUP_TOKEN_SHA256:-}
       # Empty means infer from APP_URL: secure for https, non-secure for LAN
       # http. Explicit true/false remains available as an advanced override.
       COOKIE_SECURE: ${JOSI_COOKIE_SECURE:-}

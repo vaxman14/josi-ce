@@ -12,18 +12,22 @@ the repository or build anything locally.
 
 ## Install
 
-Create a dedicated directory and run the temporary installer:
+Create a dedicated directory and run the temporary browser installer:
 
 ```bash
 mkdir -p ~/josi-ce && cd ~/josi-ce
 docker run --rm \
+  -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
   ghcr.io/vaxman14/josi-ce-installer:0.1.0
 ```
 
-The installer writes the release files, generates owner-only secrets, starts
-the stack, and exits. It does not leave a Docker-socket controller running.
+Open the HTTPS LAN URL printed by the installer, accept the temporary local
+certificate, and enter its one-time setup code. The browser wizard detects the
+host address, checks ports, and asks whether Josi uses LAN access, automatic
+HTTPS, or an existing reverse proxy. It writes the selected values, starts the
+stack, verifies it, and exits without leaving a Docker-socket controller.
 
 For Docker Desktop on macOS, replace the socket source with
 `$HOME/.docker/run/docker.sock`. macOS is suitable for evaluation, not a
@@ -31,24 +35,13 @@ supported production server.
 
 ## Open Josi
 
-The default local address is <http://localhost>. For public HTTPS, edit `.env`:
+When deployment passes, select **Open Josi** in the installer. The URL is the
+LAN or public address you reviewed in the browser and is stored in `.env`.
 
-```dotenv
-JOSI_DOMAIN=josi.example.com
-JOSI_APP_URL=https://josi.example.com
-```
-
-Then apply it:
-
-```bash
-docker compose up -d
-docker compose ps
-curl -fsS "${JOSI_APP_URL:-http://localhost}/health"
-```
-
-The first person through setup becomes the super admin. Back up
-`secrets/master.key` somewhere outside this server immediately; a database
-backup cannot restore encrypted credentials without it.
+The application wizard creates the super admin and initializes the Master Vault
+with its one-time offline recovery key. The installer never asks for or stores
+the administrator password. **Open Josi** also carries a one-time fragment-only
+handoff so another device on the LAN cannot claim the first administrator.
 
 ## Useful commands
 

@@ -89,6 +89,8 @@ export interface AppConfig {
   fetchLatestVersion?: () => Promise<string | null>;
   /** DNS for outbound admin-supplied URLs, injected by the tests. */
   outboundResolve?: (hostname: string) => Promise<string[]>;
+  /** Hash of the browser installer's one-time first-admin handoff token. */
+  setupTokenSha256?: string | null;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -148,7 +150,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use(requireCsrf);
   // Before the routes, after CSRF: an unconfigured installation refuses
   // everything except the wizard, and a configured one refuses the wizard.
-  api.use(setupGate(db));
+  api.use(setupGate(db, cfg.setupTokenSha256));
   const voiceBox = voiceBoxRoutes(cfg.voiceBoxHelper ?? voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET));
   api.use('/admin/voice-box', voiceBox.admin);
   api.use('/voice', voiceBox.voice);

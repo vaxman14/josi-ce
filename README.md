@@ -112,19 +112,20 @@ supported within realistic limits.
 
 For the shortest verified path, see [`docs/QUICK_START.md`](docs/QUICK_START.md).
 
-### One-shot installer (recommended for Community Preview)
+### Browser installer (recommended for Community Preview)
 
 Create an empty directory, enter it, and run the installer container. The same
 absolute directory is mounted into the container because Docker Compose passes
 the secret-file paths to the host daemon. The installer uses the Docker socket
-only while it writes the reviewed release files, generates the two local
-secrets, pulls the pinned images and starts the normal isolated services. It
-then exits; no privileged controller remains running.
+only while its local HTTPS wizard writes the reviewed release files, generates
+the two local secrets, validates the chosen address and ports, and starts the
+normal isolated services. It then exits; no privileged controller remains.
 
 ```bash
 mkdir josi-ce && cd josi-ce
 # Linux:
 docker run --rm \
+  -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
   ghcr.io/vaxman14/josi-ce-installer:0.1.20
@@ -134,13 +135,17 @@ On macOS with Docker Desktop, use its user socket instead:
 
 ```bash
 docker run --rm \
+  -p 8080:8080 \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
   ghcr.io/vaxman14/josi-ce-installer:0.1.20
 ```
 
-Review `.env` before exposing the installation publicly. Set `JOSI_DOMAIN` and
-`JOSI_APP_URL`, then run `docker compose up -d` to apply those changes.
+Open the HTTPS LAN address printed by the container, accept its temporary local
+certificate, and enter the one-time setup code. Address, domain, proxy, and
+port choices are completed in the browser and persisted to `.env`. The final
+**Open Josi** handoff binds first-admin creation to that paired browser; only a
+hash is stored and the raw token is removed from the address immediately.
 
 The socket mount is root-equivalent access to the Docker host. It is acceptable
 for this one-shot installer only because the published image is inspectable,

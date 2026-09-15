@@ -37,6 +37,7 @@ import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
 import { AdminVoiceBox } from '@/pages/admin/VoiceBox';
 import { AdminChannels } from '@/pages/admin/Channels';
 import { AdminVault } from '@/pages/admin/Vault';
+import { setupHandoffHeaders } from '@/lib/api';
 
 /** Routing is convenience, not security.
  *
@@ -105,7 +106,9 @@ function useSetupNeeded(): boolean | null {
   useEffect(() => {
     // `cache: 'no-store'` for the same reason as lib/api.ts: a cached
     // permanent redirect must not be replayed here.
-    void fetch('/api/setup/state', { credentials: 'same-origin', cache: 'no-store' })
+    void fetch('/api/setup/state', {
+      credentials: 'same-origin', cache: 'no-store', headers: setupHandoffHeaders(),
+    })
       .then(async (res) => {
         if (res.status === 404) return setNeeded(false);
         const body = await res.json().catch(() => null);
