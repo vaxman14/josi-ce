@@ -39,3 +39,22 @@ Every signed-in page includes a persistent **Help** link to the public guide.
 The login page includes public legal links. If Help is absent after an upgrade,
 hard-refresh once; if it remains absent, the running image is not the expected
 release and the operator should compare its image digest and revision label.
+
+## Gmail SMTP and App Passwords
+
+Gmail SMTP normally uses `smtp.gmail.com`, TLS on port `465` (or STARTTLS on
+port `587`), and the full Gmail address as the username. Google accounts with
+2-Step Verification use a Google App Password rather than the normal account
+password.
+
+Google displays an App Password as four groups of four lowercase letters. Josi
+removes spaces automatically, but must receive exactly 16 letters. Before
+selecting **Save and test**, enable **Show password** and confirm that all four
+groups contain four letters. Google's copy action can occasionally omit the
+final character; if the field shows `4-4-4-3`, append the missing final letter
+from Google's display or generate a new App Password.
+
+If Gmail reports that it rejected the username or password, first confirm the
+full Gmail address and all 16 App Password letters. Do not keep retrying a
+15-letter value. Regenerate any App Password that appears in a screenshot,
+message, ticket, log, or other shared location.
