@@ -199,7 +199,7 @@ export async function verifySmtp(
     // `smtpTransport` already classified it and dropped the server's own words.
     // `classifySmtpError` is the fallback for anything thrown before that.
     const category = (err as { category?: string }).category ?? classifySmtpError(err);
-    return failed(category, describeSmtp(category, profile.host));
+    return { ...failed(category, describeSmtp(category, profile.host)), target: to };
   }
 }
 
