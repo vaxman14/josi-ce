@@ -87,7 +87,7 @@ whether the task will return, remain incomplete, or be disabled.
 
 **Required:**
 
-- Replace **Not for this installation** with two explicit actions:
+- Replace the old ambiguous deferral label with two explicit actions:
   **Skip once** and **Remind me later**.
 - **Skip once** bypasses the item for the current setup pass only. It remains
   visibly incomplete on the admin launch checklist and can be resumed at any
