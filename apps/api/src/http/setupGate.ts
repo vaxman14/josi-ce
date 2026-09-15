@@ -16,6 +16,7 @@
 // boot, so a process that started mid-setup and a process that started after it
 // behave identically.
 import type { NextFunction, Request, Response } from 'express';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { getSetupState, type Db } from '@josi-ce/core';
 
 /** Paths that must answer regardless of setup state.
@@ -34,7 +35,13 @@ function isSetupPath(path: string): boolean {
   return SETUP_EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
-export function setupGate(db: Db) {
+export function setupGate(db: Db, setupTokenSha256?: string | null) {
+  const expected = setupTokenSha256
+    ? Buffer.from(setupTokenSha256, 'hex')
+    : null;
+  if (setupTokenSha256 && (!/^[a-f0-9]{64}$/.test(setupTokenSha256) || expected?.length !== 32)) {
+    throw new Error('JOSI_SETUP_TOKEN_SHA256 must be a lowercase SHA-256 digest');
+  }
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     let completed: boolean;
     try {
@@ -56,6 +63,14 @@ export function setupGate(db: Db) {
 
     if (!completed) {
       if (setupPath) {
+        if (expected) {
+          const supplied = req.get('x-josi-setup-token') ?? '';
+          const actual = createHash('sha256').update(supplied).digest();
+          if (!timingSafeEqual(actual, expected)) {
+            res.status(404).json({ error: 'not found' });
+            return;
+          }
+        }
         next();
         return;
       }

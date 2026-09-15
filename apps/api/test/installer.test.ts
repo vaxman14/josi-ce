@@ -451,7 +451,7 @@ describe('LB1.7 — the published installer remains inspectable and pinned', () 
     expect(docs).toContain('ghcr.io/vaxman14/josi-ce-installer:0.1.20');
     expect(docs).toContain('-v /var/run/docker.sock:/var/run/docker.sock');
     expect(docs).toMatch(/docker run --rm/);
-    expect(read('scripts/aio-install.sh')).toContain('The installer container has exited');
+    expect(read('services/installer/controller.py')).toContain('threading.Timer(45, lambda: os._exit(0))');
   });
 });
 

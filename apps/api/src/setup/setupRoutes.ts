@@ -111,6 +111,42 @@ class SetupError extends Error {
 const str = (v: unknown, max = 500): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const bool = (v: unknown): boolean => v === true;
 
+/** Import the deployment choice made by the temporary browser installer.
+ *
+ * The marker is written only after the operator reviews the installer plan.
+ * Values are parsed again here rather than trusted, and an invalid bootstrap
+ * simply leaves the normal Address step in place. This is idempotent so both
+ * GET and POST routes can enforce the same state-machine boundary. */
+async function applyInstallerDeployment(db: Db): Promise<void> {
+  if (process.env.JOSI_INSTALLER_CONFIGURED !== '1') return;
+  const mode = process.env.JOSI_ACCESS_MODE;
+  if (!['lan', 'domain', 'proxy'].includes(mode ?? '')) return;
+  let address: URL;
+  try {
+    address = new URL(process.env.APP_URL ?? '');
+  } catch {
+    return;
+  }
+  if (!['http:', 'https:'].includes(address.protocol) || !address.hostname
+      || address.username || address.password || (address.pathname !== '/' && address.pathname !== '')
+      || address.search || address.hash) return;
+  if (mode === 'domain' && address.protocol !== 'https:') return;
+  if (mode === 'proxy' && address.protocol !== 'https:') return;
+  if (mode === 'lan' && isIP(address.hostname) === 0) return;
+
+  await db.query(
+    `update deployment_config
+     set domain = $1, tls_mode = $2, acme_email = null
+     where id = true`,
+    [address.hostname.toLowerCase(), mode === 'proxy' ? 'external_proxy' : 'bundled_caddy'],
+  );
+  await db.query(
+    `update setup_state
+     set completed_steps = array_append(completed_steps, 'domain'), current_step = 'domain'
+     where id = true and completed = false and not ('domain' = any(completed_steps))`,
+  );
+}
+
 export function setupRoutes(ctx: SetupRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
@@ -119,6 +155,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
   r.get(
     '/state',
     asyncRoute(async (_req, res) => {
+      await applyInstallerDeployment(db);
       const state = await getSetupState(db);
       const next = nextStep(state.completed_steps ?? []);
       return res.json({
@@ -154,6 +191,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
     '/steps/:step',
     asyncRoute(async (req, res) => {
       const step = param(req, 'step');
+      await applyInstallerDeployment(db);
       const state = await getSetupState(db);
 
       if (state.completed) {

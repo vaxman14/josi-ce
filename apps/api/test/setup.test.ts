@@ -11,6 +11,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { getVaultSecret, loadMasterKey, looksSealed, openSealed } from '@josi-ce/core';
 import { createApp } from '../src/app.js';
@@ -29,13 +30,14 @@ interface Res { status: number; body: any }
 /** A browser-shaped client. Setup routes are unauthenticated but still behind
  * CSRF, so the token is fetched and echoed exactly as the real client must. */
 let jar = '';
-async function call(path: string, opts: { method?: string; body?: unknown; csrf?: string | null } = {}): Promise<Res> {
+async function call(path: string, opts: { method?: string; body?: unknown; csrf?: string | null; setupToken?: string } = {}): Promise<Res> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (jar) headers.cookie = jar;
   if (opts.csrf !== null) {
     const token = opts.csrf ?? /josi_csrf=([^;]+)/.exec(jar)?.[1];
     if (token) headers['x-josi-csrf'] = decodeURIComponent(token);
   }
+  if (opts.setupToken) headers['x-josi-setup-token'] = opts.setupToken;
   const method = opts.method ?? 'GET';
   // fetch refuses a body on GET/HEAD. Callers pass one uniformly when sweeping
   // a mixed list of routes, so it is dropped here rather than at every site.
@@ -183,6 +185,53 @@ describe('an unconfigured installation exposes only the wizard', () => {
     expect(state.status).toBe(200);
     expect(state.body.completed).toBe(false);
     expect(state.body.nextStep).toBe('host_checks');
+  });
+
+  it('binds first-admin setup to the installer handoff token', async () => {
+    const handoff = 'browser-installer-handoff-token-1234567890';
+    await stopServer();
+    const app = createApp(db, {
+      cookieSecure: false, appUrl: 'http://localhost', masterKeyCheck: { path: keyPath },
+      llmFetch, llmResolve, mailTransport, connectorFetch,
+      setupTokenSha256: createHash('sha256').update(handoff).digest('hex'),
+    });
+    await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    expect((await call('/api/setup/state')).status).toBe(404);
+    expect((await call('/api/setup/state', { setupToken: 'wrong-token' })).status).toBe(404);
+    expect((await call('/api/setup/state', { setupToken: handoff })).status).toBe(200);
+    expect((await call('/api/setup/steps/owner', {
+      method: 'POST', body: OWNER, setupToken: handoff,
+    })).status).toBe(409); // host checks remain mandatory; the token grants no shortcut.
+  });
+
+  it('imports the browser installer address and does not ask for it twice', async () => {
+    const previous = {
+      configured: process.env.JOSI_INSTALLER_CONFIGURED,
+      mode: process.env.JOSI_ACCESS_MODE,
+      appUrl: process.env.APP_URL,
+    };
+    process.env.JOSI_INSTALLER_CONFIGURED = '1';
+    process.env.JOSI_ACCESS_MODE = 'lan';
+    process.env.APP_URL = 'http://192.168.50.20:8088';
+    try {
+      const state = await call('/api/setup/state');
+      expect(state.status).toBe(200);
+      expect(state.body.completedSteps).toContain('domain');
+      expect(state.body.nextStep).toBe('host_checks');
+      const [deployment] = await db.query<{ domain: string; tls_mode: string }>(
+        `select domain, tls_mode from deployment_config where id = true`,
+      );
+      expect(deployment).toEqual({ domain: '192.168.50.20', tls_mode: 'bundled_caddy' });
+    } finally {
+      if (previous.configured === undefined) delete process.env.JOSI_INSTALLER_CONFIGURED;
+      else process.env.JOSI_INSTALLER_CONFIGURED = previous.configured;
+      if (previous.mode === undefined) delete process.env.JOSI_ACCESS_MODE;
+      else process.env.JOSI_ACCESS_MODE = previous.mode;
+      if (previous.appUrl === undefined) delete process.env.APP_URL;
+      else process.env.APP_URL = previous.appUrl;
+    }
   });
 
   it('refuses every non-setup API route', async () => {

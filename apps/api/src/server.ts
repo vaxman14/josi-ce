@@ -53,6 +53,7 @@ const app = createApp(db, {
   restoreReader: pgRestoreReader(pgConn),
   // M115: no gateway ships. An operator who wants one sets it.
   supportGatewayUrl: process.env.JOSI_SUPPORT_GATEWAY || null,
+  setupTokenSha256: process.env.JOSI_SETUP_TOKEN_SHA256 || null,
 });
 
 const server = app.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));

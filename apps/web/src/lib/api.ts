@@ -13,13 +13,34 @@ export class ApiError extends Error {
   }
 }
 
+const SETUP_HANDOFF_KEY = 'josi_setup_handoff';
+
+function setupHandoffToken(): string | null {
+  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const incoming = fragment.get('setup');
+  if (incoming && /^[A-Za-z0-9_-]{40,80}$/.test(incoming)) {
+    sessionStorage.setItem(SETUP_HANDOFF_KEY, incoming);
+    history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+  }
+  return sessionStorage.getItem(SETUP_HANDOFF_KEY);
+}
+
+export function setupHandoffHeaders(): Record<string, string> {
+  const token = setupHandoffToken();
+  return token ? { 'x-josi-setup-token': token } : {};
+}
+
+export function clearSetupHandoff(): void {
+  sessionStorage.removeItem(SETUP_HANDOFF_KEY);
+}
+
 function csrfToken(): string | null {
   const match = /(?:^|;\s*)josi_csrf=([^;]+)/.exec(document.cookie);
   return match ? decodeURIComponent(match[1]) : null;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = setupHandoffHeaders();
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const token = csrfToken();
   if (token) headers['x-josi-csrf'] = token;
@@ -50,7 +71,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 async function upload<T>(path: string, body: FormData): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = setupHandoffHeaders();
   const token = csrfToken(); if (token) headers['x-josi-csrf'] = token;
   const res = await fetch(`/api${path}`, { method: 'POST', headers, body, credentials: 'same-origin', cache: 'no-store' });
   const parsed = await res.json().catch(() => null);

@@ -7,12 +7,16 @@ const dockerfile = readFileSync(join(root, 'Dockerfile.aio'), 'utf8');
 const installer = readFileSync(join(root, 'scripts/aio-install.sh'), 'utf8');
 const envExample = readFileSync(join(root, '.env.example'), 'utf8');
 
-describe('the one-shot AIO installer', () => {
-  it('is a bootstrapper, not a permanent privileged service', () => {
+describe('the browser-first AIO installer', () => {
+  it('runs a temporary TLS browser controller and exits after handoff', () => {
     expect(dockerfile).toMatch(/^FROM docker:29-cli$/m);
     expect(dockerfile).toMatch(/ENTRYPOINT \["\/usr\/local\/bin\/josi-ce-aio-install"\]/);
-    expect(installer).toMatch(/docker compose .* up -d --wait/s);
-    expect(installer).toMatch(/installer container has exited/);
+    expect(dockerfile).toContain('services/installer/controller.py');
+    expect(dockerfile).toContain('services/installer/index.html');
+    expect(installer).toContain('exec python3 /opt/josi-installer/controller.py');
+    const controller = readFileSync(join(root, 'services/installer/controller.py'), 'utf8');
+    expect(controller).toContain('ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)');
+    expect(controller).toContain('threading.Timer(45, lambda: os._exit(0))');
   });
 
   it('requires an explicit Docker socket and proves the host path mapping', () => {
@@ -20,6 +24,27 @@ describe('the one-shot AIO installer', () => {
     expect(installer).toMatch(/docker run --rm -v "\$PWD:\/josi-install:ro"/);
     expect(installer).toContain('-v "$PWD:$PWD" -w "$PWD"');
     expect(installer).toContain('~/.docker/run/docker.sock');
+  });
+
+  it('moves all interactive choices into the browser', () => {
+    const page = readFileSync(join(root, 'services/installer/index.html'), 'utf8');
+    expect(page).toContain('How will you open Josi?');
+    expect(page).toContain('On this local network');
+    expect(page).toContain('Public domain with automatic HTTPS');
+    expect(page).toContain('Existing reverse proxy');
+    expect(page).toContain('Review installation');
+    expect(page).not.toContain('.innerHTML');
+    expect(page).toContain('replaceChildren');
+    expect(installer).not.toMatch(/\bread\s+-[rp]/);
+  });
+
+  it('protects the LAN setup UI with TLS and a one-time high-entropy code', () => {
+    const controller = readFileSync(join(root, 'services/installer/controller.py'), 'utf8');
+    expect(installer).toContain('openssl rand -hex 16');
+    expect(installer).toContain('https://${host_ip}:${INSTALLER_PORT}');
+    expect(controller).toContain('hmac.compare_digest');
+    expect(controller).toContain('HttpOnly; Secure; SameSite=Strict');
+    expect(controller).toContain('X-Josi-Installer');
   });
 
   it('refreshes managed files, preserves operator Caddy config, and backs up upgrades', () => {
@@ -50,13 +75,14 @@ describe('the one-shot AIO installer', () => {
     expect(installer).not.toMatch(/cat .*secrets\//);
   });
 
-  it('provisions the narrow Voice Box helper so the install button works', () => {
+  it('lets only the installer controller provision the narrow Voice Box helper', () => {
     expect(dockerfile).toContain('services/voice-box/host_helper.py');
     expect(dockerfile).toContain('python3');
-    expect(installer).toContain('josi-ce-voice-helper-');
-    expect(installer).toContain('/opt/josi-voice-box/host_helper.py');
-    expect(installer).toContain('-v /var/run/docker.sock:/var/run/docker.sock');
-    expect(installer).toContain('--network none');
-    expect(installer).toContain('voice-helper-socket/helper.sock');
+    const controller = readFileSync(join(root, 'services/installer/controller.py'), 'utf8');
+    expect(controller).toContain('josi-ce-voice-helper-');
+    expect(controller).toContain('/opt/josi-voice-box/host_helper.py');
+    expect(controller).toContain('/var/run/docker.sock:/var/run/docker.sock');
+    expect(controller).toContain('"--network", "none"');
+    expect(controller).toContain('voice-helper-socket/helper.sock');
   });
 });

@@ -11,7 +11,7 @@
 // the server and are sealed with the installation master key before they touch
 // PostgreSQL. Nothing is kept in component state after the step is submitted.
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, primeCsrf } from '@/lib/api';
+import { api, ApiError, clearSetupHandoff, primeCsrf } from '@/lib/api';
 import {
   ProviderForm, type ProviderCatalogEntry, type SubscriptionInfo,
 } from '@/components/ProviderForm';
@@ -105,7 +105,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const load = useCallback(async () => {
     const next = await api.get<SetupState>('/setup/state');
     setState(next);
-    if (next.completed) { onDone(); return; }
+    if (next.completed) { clearSetupHandoff(); onDone(); return; }
     // Only once there is something to summarise. Before the model step there
     // is nothing to say, and an empty summary reads like a broken one.
     if (next.completedSteps.includes('llm')) {
@@ -149,6 +149,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
     setError('');
     try {
       await api.post('/setup/complete');
+      clearSetupHandoff();
       onDone();
     } catch (err) {
       // The server refuses while anything required is failing and says which.

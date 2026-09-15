@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Josi CE one-shot AIO installer.
+# Josi CE browser-first AIO installer controller.
 #
 # The current directory MUST be bind-mounted at the same absolute path inside
 # this container. Compose sends absolute bind paths to the host daemon; using a
@@ -8,6 +8,7 @@
 # Example (from an empty directory):
 #   # Linux
 #   docker run --rm \
+#     -p 8080:8080 \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v "$PWD:$PWD" -w "$PWD" \
 #     ghcr.io/vaxman14/josi-ce-installer:0.1.6
@@ -23,6 +24,7 @@ readonly INSTALL_GID="$(stat -c '%g' "$PWD")"
 readonly APP_GID=1000
 readonly DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 readonly INSTALLER_IMAGE="${JOSI_INSTALLER_IMAGE:-ghcr.io/vaxman14/josi-ce-installer:${VERSION}}"
+readonly INSTALLER_PORT="${JOSI_INSTALLER_PORT:-8080}"
 
 say()  { printf '%s\n' "$*"; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -46,8 +48,11 @@ if ! docker run --rm -v "$PWD:/josi-install:ro" alpine:3.22 \
 fi
 rm -f "$probe"
 
-say "Josi CE ${VERSION} — one-shot installer"
-say "The Docker socket is used only by this temporary installer container."
+say "Josi CE ${VERSION} — browser installer"
+say "Docker authority remains isolated inside this installer controller."
+
+EXISTING_INSTALL=0
+[[ -f .env || -d secrets ]] && EXISTING_INSTALL=1
 
 install_asset() {
   local source="$1" target="$2" mode="$3" policy="${4:-replace}"
@@ -67,6 +72,7 @@ install_asset() {
 }
 
 install_asset "$ASSETS/docker-compose.yml" docker-compose.yml 0644
+install_asset "$ASSETS/docker-compose.noproxy.yml" docker-compose.noproxy.yml 0644
 install_asset "$ASSETS/Caddyfile" Caddyfile 0644 preserve
 install_asset "$ASSETS/.env.example" .env.example 0644
 install_asset "$ASSETS/install.sh" install.sh 0755
@@ -105,37 +111,30 @@ if [[ "${JOSI_PREPARE_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
 
-# Keep Docker authority out of the Josi application. This narrow helper owns
-# the optional Voice Box lifecycle and exposes only its fixed Unix-socket API.
-install -d -m 0700 -o "$INSTALL_UID" -g "$INSTALL_GID" voice-helper-state
-install -d -m 0750 -o "$INSTALL_UID" -g "$APP_GID" voice-helper-socket
-helper_suffix="$(printf '%s' "$PWD" | openssl dgst -sha256 | awk '{print substr($2,1,12)}')"
-helper_name="josi-ce-voice-helper-${helper_suffix}"
-docker rm -f "$helper_name" >/dev/null 2>&1 || true
-docker run -d --name "$helper_name" --restart unless-stopped \
-  --read-only --network none --security-opt no-new-privileges --cap-drop ALL \
-  --user "$INSTALL_UID:$INSTALL_GID" --group-add "$DOCKER_GID" --group-add "$APP_GID" \
-  --tmpfs /tmp:size=16m,mode=1777 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/voice-helper-state:$PWD/voice-helper-state" \
-  -v "$PWD/voice-helper-socket:$PWD/voice-helper-socket" \
-  --entrypoint python3 "$INSTALLER_IMAGE" /opt/josi-voice-box/host_helper.py \
-  --state "$PWD/voice-helper-state" --socket "$PWD/voice-helper-socket/helper.sock" \
-  --runtime-uid "$INSTALL_UID" --runtime-gid "$INSTALL_GID" --socket-gid "$APP_GID" >/dev/null
+install -d -m 0700 -o "$INSTALL_UID" -g "$INSTALL_GID" installer-state
+if [[ ! -f installer-state/bootstrap-token ]]; then
+  umask 077
+  openssl rand -hex 16 > installer-state/bootstrap-token
+  chown "$INSTALL_UID:$INSTALL_GID" installer-state/bootstrap-token
+fi
+if [[ ! -f installer-state/tls.key || ! -f installer-state/tls.crt ]] \
+   || ! openssl x509 -checkend 86400 -noout -in installer-state/tls.crt >/dev/null 2>&1; then
+  umask 077
+  openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+    -subj '/CN=Josi Local Installer' \
+    -keyout installer-state/tls.key -out installer-state/tls.crt >/dev/null 2>&1
+  chown "$INSTALL_UID:$INSTALL_GID" installer-state/tls.key installer-state/tls.crt
+fi
 
-for _ in $(seq 1 30); do
-  [[ -S voice-helper-socket/helper.sock ]] && break
-  sleep 1
-done
-[[ -S voice-helper-socket/helper.sock ]] || fail 'the Voice Box installer helper did not start'
-
-say 'Pulling and starting the isolated Josi CE services...'
-docker compose -f "$PWD/docker-compose.yml" --project-directory "$PWD" \
-  --project-name josi-ce pull
-docker compose -f "$PWD/docker-compose.yml" --project-directory "$PWD" \
-  --project-name josi-ce up -d --wait --wait-timeout 300
-
+host_ip="${JOSI_HOST_IP:-$({ docker run --rm --network host alpine:3.22 sh -c 'ip -4 route get 1.1.1.1 2>/dev/null' || true; } | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}')}"
+[[ -n "$host_ip" ]] || host_ip='<server-lan-ip>'
 say ''
-say 'Josi CE is running.'
-say 'Open the address configured as JOSI_APP_URL in .env.'
-say 'The installer container has exited; it is not part of the running stack.'
+say "Open Josi Setup: https://${host_ip}:${INSTALLER_PORT}"
+say "Setup code: $(tr -d '\r\n' < installer-state/bootstrap-token)"
+say 'All remaining installation questions are answered in the browser.'
+say 'Your browser will warn about the temporary self-signed local certificate.'
+
+export JOSI_INSTALL_ROOT="$PWD" JOSI_INSTALL_UID="$INSTALL_UID" JOSI_INSTALL_GID="$INSTALL_GID"
+export JOSI_APP_GID="$APP_GID" JOSI_DOCKER_GID="$DOCKER_GID" JOSI_INSTALLER_IMAGE="$INSTALLER_IMAGE"
+export JOSI_EXISTING_INSTALL="$EXISTING_INSTALL"
+exec python3 /opt/josi-installer/controller.py

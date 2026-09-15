@@ -27,10 +27,13 @@ Entries are written as *what the attacker does*, not as a feature that exists.
 **Attacker:** anyone who can reach a freshly deployed installation before its
 owner does.
 **Impact:** they become the super admin of somebody else's installation.
-**Control:** `packages/db/migrations/0002_setup.sql` — a single-row `setup_state`
-with a completion timestamp; the wizard refuses once it is set, so setup is a
-one-shot rather than a route that stays open.
-**Test:** refuses replaying a completed step
+**Control:** `scripts/aio-install.sh` — the temporary TLS installer creates a
+high-entropy one-time code before it deploys the application; the
+authenticated installer browser receives a separate one-time handoff token in
+the URL fragment. Only its SHA-256 hash reaches the application environment;
+setup routes return 404 without the matching token. The application then uses
+a single-row `setup_state` and refuses setup replay.
+**Test:** binds first-admin setup to the installer handoff token
 
 ### T-02 The master key is read out of the image, the database, or a log
 **Attacker:** anyone holding a database dump, an image layer, or log output.
