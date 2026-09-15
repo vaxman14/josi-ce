@@ -735,6 +735,7 @@ describe('the two SMTP profiles', () => {
     const review = (await call('/api/setup/review')).body;
     const smtp = review.items.find((i: any) => i.key === 'smtp');
     expect(smtp.status).toBe('configured_but_failed');
+    expect(smtp.verification.target).toBe('owner@example.test');
     // Optional, so it does not stop the installation being finished.
     expect(smtp.blocking).toBe(false);
   });

@@ -105,11 +105,11 @@ export function Setup({ onDone }: { onDone: () => void }) {
     }
   }, [onDone]);
 
-  async function retest(item: string) {
+  async function retest(item: string, body: Record<string, unknown> = {}) {
     setBusy(true);
     setError('');
     try {
-      await api.post(`/setup/verify/${item}`, {});
+      await api.post(`/setup/verify/${item}`, body);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'That test could not be run');
@@ -224,7 +224,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <ReviewPanel
             review={review}
             busy={busy}
-            onRetest={(item) => void retest(item)}
+            onRetest={(item, body) => void retest(item, body)}
             onEdit={(step) => void reopen(step)}
           />
         </div>
@@ -465,9 +465,11 @@ function ReviewPanel({
 }: {
   review: Review;
   busy: boolean;
-  onRetest: (item: string) => void;
+  onRetest: (item: string, body?: Record<string, unknown>) => void;
   onEdit: (step: string) => void;
 }) {
+  const [smtpTestTo, setSmtpTestTo] = useState<string | null>(null);
+
   return (
     <Card>
       <CardTitle>What is set up</CardTitle>
@@ -488,6 +490,25 @@ function ReviewPanel({
             {item.unavailableReason ? (
               <p className="mt-1 text-xs text-muted-foreground">{item.unavailableReason}</p>
             ) : null}
+
+            {item.key === 'smtp' && (
+              item.status === 'configured_but_failed'
+              || item.status === 'configured_and_tested'
+              || (item.status === 'required' && !item.verification)
+            ) ? (
+              <div className="mt-2 max-w-sm">
+                <Field
+                  id="smtpRetestTo"
+                  label="Send test message to"
+                  type="email"
+                  required
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  value={smtpTestTo ?? item.verification?.target ?? ''}
+                  onChange={(event) => setSmtpTestTo(event.currentTarget.value)}
+                />
+              </div>
+            ) : null}
             {item.status === 'required' && !item.verification ? (
               <p className="mt-1 text-xs text-muted-foreground">
                 {item.blocking
@@ -505,8 +526,12 @@ function ReviewPanel({
                   </Button>
                 ) : null}
                 {item.status === 'configured_but_failed' || item.status === 'configured_and_tested' ? (
-                  <Button type="button" variant="secondary" disabled={busy}
-                          onClick={() => onRetest(item.key)}>
+                  <Button type="button" variant="secondary"
+                          disabled={busy || (item.key === 'smtp'
+                            && !(smtpTestTo ?? item.verification?.target ?? '').includes('@'))}
+                          onClick={() => onRetest(item.key, item.key === 'smtp'
+                            ? { to: smtpTestTo ?? item.verification?.target ?? '' }
+                            : {})}>
                     Test again
                   </Button>
                 ) : null}
@@ -515,8 +540,8 @@ function ReviewPanel({
                     server refuses to finish until a test passes, and the screen
                     provided no way to run one. */}
                 {item.status === 'required' && !item.verification && ITEM_STEP[item.key] ? (
-                  <Button type="button" disabled={busy}
-                          onClick={() => onRetest(item.key)}>
+                  <Button type="button" disabled={busy || (item.key === 'smtp' && !(smtpTestTo ?? '').includes('@'))}
+                          onClick={() => onRetest(item.key, item.key === 'smtp' ? { to: smtpTestTo ?? '' } : {})}>
                     Test
                   </Button>
                 ) : null}
