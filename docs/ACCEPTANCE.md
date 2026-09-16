@@ -272,6 +272,34 @@ ChatGPT subscription. The parsing of the CLI's output is covered against a
 byte-for-byte capture of the pinned version in
 `packages/llm/test/codexLogin.test.ts`.
 
+## v0.1.26 publication — 2026-09-15
+
+Release `v0.1.26` publishes the sixteen Test List 6 changes merged through
+public `main` commit `5a719f69748d81db539bbb4f0cd89ff408155855`.
+
+- Exact-source TypeScript, production build, Compose, shell/Python syntax,
+  dependency audit and secret scan passed on Bananana.
+- The complete suite passed: **2,601 tests across 103 files**.
+- Bananana built both the application and one-shot installer for
+  `linux/amd64` and `linux/arm64` before publication.
+- GitHub Actions release run `35048754065` repeated the complete gate and
+  published both numbered OCI indexes to GHCR, then mirrored the exact indexes
+  to Docker Hub.
+- Numbered `0.1.26` and stable `latest` aliases on both registries resolve to
+  the same two architecture-child digests for both images. Provenance/SBOM
+  attestations were excluded from architecture counting.
+- GitHub release: https://github.com/vaxman14/josi-ce/releases/tag/v0.1.26
+
+Application children:
+
+- `linux/amd64`: `sha256:6aaf93c928bc007a8d0190718aa1da5fc50300780a95f1c9bdcf7a57f5b0cf78`
+- `linux/arm64`: `sha256:558a5671402db6b32253aecfc99bb9f00c200b23fedece740c0139d7e621c8dd`
+
+Installer children:
+
+- `linux/amd64`: `sha256:78a3f8519ea559071e73d7174bf6aeef7807e735c8874543cb9a945935fe3608`
+- `linux/arm64`: `sha256:4de1592d71456604a55cab0b6fee724219395e12ec0d521cdfd6c796386b18a1`
+
 ## Operator checklist for a hardware run
 
 ## Build-list 13 central Calendar source acceptance — 2026-09-14
