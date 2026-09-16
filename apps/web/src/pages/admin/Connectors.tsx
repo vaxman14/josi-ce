@@ -31,6 +31,7 @@ interface PolicyRow {
 interface RegistrationState {
   available: boolean;
   publicHttpsBase: string | null;
+  detectedOrigin: string;
   reason: string | null;
 }
 
@@ -137,12 +138,15 @@ export function AdminConnectors() {
         <Card>
           <CardTitle>A public address is needed first</CardTitle>
           <p className="mt-2 text-sm text-muted-foreground">{view.registration.reason}</p>
+          <p className="mt-2 break-all text-sm text-muted-foreground">Currently detected address: <strong>{view.registration.detectedOrigin}</strong></p>
           <p className="mt-2 text-sm text-muted-foreground">
             Set one in <a className="underline" href="/admin/workspace">Workspace</a>, then come back
             here. Nothing else about this installation depends on it, and no data is affected.
           </p>
         </Card>
       ) : null}
+
+      {view?.registration.available ? <p className="text-sm text-muted-foreground">Public origin: <strong>{view.registration.publicHttpsBase}</strong></p> : null}
 
       {view?.registration.available ? view.clients.map((client) => {
         const suggestion = view.suggestedRedirectUris.find((u) => u.provider === client.provider);

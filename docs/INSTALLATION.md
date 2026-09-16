@@ -77,6 +77,18 @@ LAN, automatic-HTTPS, reverse-proxy, and port changes; progress survives the nor
 If the new origin does not become healthy, the controller restores the previous configuration and
 recreates the previous stack automatically. The one-time setup code expires with that session.
 
+The password field is a genuine reauthentication prompt: enter the current **Admin password**. Josi
+does not save it. The supervisor binds the temporary controller to the host's LAN interface, proves
+its HTTPS health endpoint is ready, and only then opens the one-time LAN URL. If port 8080 is occupied
+or the controller exits, Josi stays on the current page and reports the startup failure instead of
+opening a dead tab. The controller is never routed through Josi's public domain.
+
+After a successful restart, Josi treats `APP_URL` as the canonical browser-facing origin and repairs
+older `deployment_config` and Workspace public-address metadata to match it atomically. The Connectors
+page shows the detected origin and builds OAuth callbacks from that same value, including external
+proxy and Cloudflare Tunnel installations. A failed controller verification rolls the files and stack
+back before this reconciliation can run.
+
 Password managers remain available on genuine login, password-confirmation, and password-reset
 fields. Configuration secrets (Vault entries, SMTP, backup credentials, and integration tokens)
 explicitly opt out of login autofill so extensions such as 1Password do not repeatedly open sign-in
