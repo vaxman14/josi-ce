@@ -296,6 +296,9 @@ interface DeveloperServiceRow {
   tokenHelp: string;
   tokenUrl: string;
   capability: string;
+  usernameLabel: string | null;
+  emailLabel: string | null;
+  baseUrlLabel: string | null;
   /** Whether an administrator permits ME to connect this. Separate from
    * whether I have. */
   allowed: boolean;
@@ -306,6 +309,7 @@ interface DeveloperServiceRow {
     lastCheckAt: string | null;
     lastCheckOk: boolean | null;
     lastError: string | null;
+    lastUsedAt: string | null;
   } | null;
 }
 
@@ -319,6 +323,7 @@ interface DeveloperServiceRow {
 function DeveloperServices() {
   const [rows, setRows] = useState<DeveloperServiceRow[] | null>(null);
   const [tokens, setTokens] = useState<Record<string, string>>({});
+  const [details, setDetails] = useState<Record<string, {username?:string;email?:string;baseUrl?:string}>>({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
@@ -336,7 +341,7 @@ function DeveloperServices() {
     setBusy(service);
     setError('');
     try {
-      await api.put(`/connections/developer/${service}`, { token: tokens[service] ?? '' });
+      await api.put(`/connections/developer/${service}`, { token: tokens[service] ?? '', ...(details[service] ?? {}) });
       setTokens((t) => ({ ...t, [service]: '' }));
       await load();
     } catch (err) {
@@ -411,6 +416,9 @@ function DeveloperServices() {
                 {row.connection.lastCheckAt
                   ? ` · checked ${new Date(row.connection.lastCheckAt).toLocaleString()}`
                   : ''}
+                {row.connection.lastUsedAt
+                  ? ` · last used ${new Date(row.connection.lastUsedAt).toLocaleString()}`
+                  : ''}
               </p>
               {row.connection.lastCheckOk === false && row.connection.lastError ? (
                 <ErrorNote>{row.connection.lastError}</ErrorNote>
@@ -432,6 +440,9 @@ function DeveloperServices() {
               onSubmit={(e) => { e.preventDefault(); void connect(row.service); }}
             >
               <label className="block text-sm" htmlFor={`tok-${row.service}`}>{row.tokenLabel}</label>
+              {row.usernameLabel ? <><label className="block text-sm" htmlFor={`username-${row.service}`}>{row.usernameLabel}</label><Input id={`username-${row.service}`} autoComplete="username" value={details[row.service]?.username??''} onChange={(e)=>setDetails((d)=>({...d,[row.service]:{...d[row.service],username:e.target.value}}))}/></> : null}
+              {row.emailLabel ? <><label className="block text-sm" htmlFor={`email-${row.service}`}>{row.emailLabel}</label><Input id={`email-${row.service}`} type="email" autoComplete="email" value={details[row.service]?.email??''} onChange={(e)=>setDetails((d)=>({...d,[row.service]:{...d[row.service],email:e.target.value}}))}/></> : null}
+              {row.baseUrlLabel ? <><label className="block text-sm" htmlFor={`url-${row.service}`}>{row.baseUrlLabel}</label><Input id={`url-${row.service}`} type="url" inputMode="url" placeholder="https://your-site.atlassian.net" value={details[row.service]?.baseUrl??''} onChange={(e)=>setDetails((d)=>({...d,[row.service]:{...d[row.service],baseUrl:e.target.value}}))}/></> : null}
               <Input
                 id={`tok-${row.service}`}
                 type="password"
@@ -446,7 +457,7 @@ function DeveloperServices() {
                   Open {row.label}
                 </a>
               </p>
-              <Button type="submit" disabled={busy === row.service || !(tokens[row.service] ?? '').trim()}>
+              <Button type="submit" disabled={busy === row.service || !(tokens[row.service] ?? '').trim() || (row.usernameLabel ? !(details[row.service]?.username??'').trim() : false) || (row.emailLabel ? !(details[row.service]?.email??'').trim() : false) || (row.baseUrlLabel ? !(details[row.service]?.baseUrl??'').trim() : false)}>
                 {busy === row.service ? 'Connecting…' : 'Connect'}
               </Button>
               <p className="text-xs text-muted-foreground">

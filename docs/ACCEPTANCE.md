@@ -4,6 +4,31 @@ A record of what has actually been run, on what, and when. **A profile with no
 row in the results table has not been tested**, whatever the script's existence
 might suggest.
 
+## Test List 7 items 1–6 — 2026-09-16
+
+Evidence on Bananana (Linux x86_64, Docker Engine 29.7.2, Compose 5.5.1,
+Buildx 0.29.1):
+
+- 198 focused tests passed across the network-maintenance, public-address,
+  connector, workflow-hub, native developer-service, assistant-tool, storage,
+  setup, and hostile-input suites;
+- the final complete suite passed **2,655 tests across 112 files**;
+- all 48 database migrations passed from a fresh database, including native
+  workflow hubs and the native developer-connector catalog;
+- the clean-install acceptance run built and booted an isolated stack and
+  finished with **45 passed, 0 failed, 5 credential-dependent skips**;
+- the maintenance helper created its one-time certificate, launched the
+  controller as the invoking non-root user with only Docker group access, and
+  returned a LAN-reachable HTTPS URL whose `/health` endpoint answered;
+- TypeScript, the production web build, dependency audit, secret scan, Python
+  compilation, Compose validation, and diff hygiene passed; and
+- fresh application and installer OCI builds contained real `linux/amd64` and
+  `linux/arm64` manifests (plus their attestations), without publication.
+
+The five clean-install skips are the existing post-setup checks that require a
+real third-party model credential. The run positively verified that an untested
+fixture model cannot finish setup; it did not bypass that safety gate.
+
 ## Test List 6 items 1–5 — 2026-09-15
 
 Evidence on Bananana (Linux x86_64):
@@ -449,6 +474,30 @@ shipping an acceptance artifact.
   the assumption a real run has to confirm.
 
 ## Connector settings and account consent
+
+- Zapier, n8n, and Make are native workflow providers, not labels applied to a
+  Custom API connection. Zapier uses the official Streamable HTTP MCP endpoint
+  (`mcp.zapier.com/api/v1/connect`) and connection-token Bearer authentication;
+  the retired NLA/AI Actions endpoints are never used. n8n uses its public API
+  key to discover active workflows, then requires an administrator to register
+  that workflow's production `/webhook/…` path because n8n has no public
+  run-workflow API. Make uses `Authorization: Token`, a selected team or
+  organization ID, scenario discovery, and the official responsive scenario-run
+  input envelope. Provider account/workspace identity and connection status are
+  shown in administration; disconnect removes the stored credential and hides
+  every exposed automation until a tested reconnect.
+  Every execution is pinned to the exact discovered workflow and input, waits
+  for its owner's approval, and appears in that owner's run history.
+- Provider completion callbacks are authenticated with the integration-specific
+  HMAC secret, a five-minute timestamp window, and a unique event id; forged,
+  stale, replayed, and unknown-run callbacks are rejected. Credentials are
+  tested before storage, structured inputs are validated and previewable, and
+  every execution still needs fresh owner approval. Discovered automations are
+  private until an administrator explicitly exposes each one to Josi. Pending
+  approvals expire after 15 minutes and sanitized history is bounded to 30 days.
+  Self-hosted n8n permits LAN endpoints only through a deliberate administrator
+  switch; hosted endpoints are checked against private DNS/address ranges.
+  Custom API remains the explicit fallback for services without a native integration.
 
 - OAuth application forms are controlled forms. Save is disabled while pristine,
   invalid, or submitting; a successful server write/readback clears the dirty

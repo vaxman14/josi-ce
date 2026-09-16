@@ -177,8 +177,8 @@ async function connect(who: 'alice' | 'bob', capabilities: string[] = []): Promi
   return row.id;
 }
 
-describe('storage scope: one connect, no second trip to read files (item 16b)', () => {
-  it('a default connect asks for calendar, mail, contacts AND files — never anything that writes', async () => {
+describe('storage scope: one provider consent bundle (Test List 7 item 6)', () => {
+  it('a default connect asks once for every supported Google capability', async () => {
     const started = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: {},
     });
@@ -189,25 +189,19 @@ describe('storage scope: one connect, no second trip to read files (item 16b)', 
     // Item 16b: file read joins the first trip, so choosing a folder never
     // needs a second "Approve at provider" round-trip.
     expect(scope).toContain(DRIVE_SCOPE);
-    // Nothing that writes rides along — that half of M32 is untouched. Note
-    // "contacts.readonly" (read, included above) is a DIFFERENT scope string
-    // from bare "contacts" (write) — split-on-space is what tells them apart,
-    // since "contacts" is a substring of "contacts.readonly".
-    expect(scope.split(' ')).not.toContain('https://www.googleapis.com/auth/calendar');
-    expect(scope.split(' ')).not.toContain('https://www.googleapis.com/auth/contacts');
-    expect(scope).not.toContain('gmail.send');
+    expect(scope.split(' ')).toContain('https://www.googleapis.com/auth/calendar');
+    expect(scope.split(' ')).toContain('https://www.googleapis.com/auth/contacts');
+    expect(scope).toContain('gmail.send');
   });
 
-  it('asked for by name alone, the handshake still requests exactly that (explicit capability lists still work)', async () => {
+  it('ignores legacy per-capability requests and still requests the account bundle', async () => {
     const started = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: { capabilities: ['google.drive.read'] },
     });
     const scope = new URL(started.body.url).searchParams.get('scope')!;
     expect(scope).toContain(DRIVE_SCOPE);
-    // A named request is still exactly what it names — no other read
-    // capability piggybacks just because one was mentioned.
-    expect(scope).not.toContain('gmail');
-    expect(scope).not.toContain('calendar');
+    expect(scope).toContain('gmail.send');
+    expect(scope).toContain('calendar');
   });
 
   it('appears on the Connections page as a capability, off until its owner turns it on', async () => {

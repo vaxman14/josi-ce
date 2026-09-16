@@ -67,20 +67,6 @@ async function canonicalDeployment(db: Db, fallback: string): Promise<{ origin: 
   } catch { /* malformed APP_URL falls back to the stored installation state */ }
   if (parsed?.protocol === 'https:' && parsed.hostname !== 'localhost' && !/^\d{1,3}(\.\d{1,3}){3}$/.test(parsed.hostname)) {
     publicOrigin = parsed.origin;
-    const tlsMode = process.env.JOSI_ACCESS_MODE === 'proxy' ? 'external_proxy' : 'bundled_caddy';
-    // One statement keeps the deployment singleton and the workspace-facing
-    // address in lockstep. This also repairs installations upgraded from a
-    // release that left the old LAN address in deployment_config. Database
-    // failure is not swallowed: callers must not claim readiness after only
-    // half of the canonical state was repaired.
-    await db.query(
-      `with changed as (
-         update deployment_config set domain=$1, tls_mode=$2 where id=true returning domain
-       )
-       update workspace set settings=jsonb_set(settings, '{publicAddress}', to_jsonb((select domain from changed)), true)
-       where id=true`,
-      [parsed.hostname.toLowerCase(), tlsMode],
-    );
   }
   const [deployment] = await db.query<{ domain: string }>(
     `select domain from deployment_config where id = true`,

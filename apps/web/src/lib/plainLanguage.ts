@@ -302,6 +302,21 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     source: { migrationTable: 'custom_api_pending_calls', column: 'status' },
     labels: { pending: 'Waiting for you', approved: 'Approved', denied: 'Declined', expired: 'Expired', executed: 'Sent', failed: 'Did not go through' },
   },
+  workflow_provider: {
+    source: { literal: ['zapier', 'n8n', 'make'] },
+    labels: { zapier: 'Zapier', n8n: 'n8n automation', make: 'Make' },
+  },
+  workflow_run_status: {
+    source: { literal: ['pending', 'approved', 'running', 'succeeded', 'failed', 'denied', 'expired'] },
+    labels: {
+      pending: 'Waiting for approval', approved: 'Approved', running: 'Running',
+      succeeded: 'Completed', failed: 'Failed', denied: 'Declined', expired: 'Expired',
+    },
+  },
+  workflow_integration_status: {
+    source: { migrationTable: 'workflow_integrations', column: 'status' },
+    labels: { active: 'Connected', error: 'Needs attention', disconnected: 'Disconnected' },
+  },
 };
 
 /** The sentence for a value, or the value itself if nothing knows it.

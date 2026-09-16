@@ -37,6 +37,7 @@ import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRo
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
 import { nasController } from './http/nasController.js';
 import { maintenanceRoutes } from './http/maintenanceRoutes.js';
+import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
 
 export interface AppConfig {
   voiceBoxHelper?: VoiceHelper;
@@ -150,6 +151,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   });
+  mountWorkflowCallbacks(app, { db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch });
 
   const api = express.Router();
   api.use(attachUser({ db }));
@@ -239,6 +241,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,
     resolve: cfg.outboundResolve,
   }));
+  api.use('/admin/workflows', adminWorkflowRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch }));
   api.use('/admin/maintenance', maintenanceRoutes({ db }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
@@ -277,6 +280,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,
     resolve: cfg.outboundResolve,
   }));
+  api.use('/workflows', workflowRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch }));
 
   api.use('/ops', opsRoutes({
     db,

@@ -83,11 +83,19 @@ its HTTPS health endpoint is ready, and only then opens the one-time LAN URL. If
 or the controller exits, Josi stays on the current page and reports the startup failure instead of
 opening a dead tab. The controller is never routed through Josi's public domain.
 
-After a successful restart, Josi treats `APP_URL` as the canonical browser-facing origin and repairs
-older `deployment_config` and Workspace public-address metadata to match it atomically. The Connectors
-page shows the detected origin and builds OAuth callbacks from that same value, including external
-proxy and Cloudflare Tunnel installations. A failed controller verification rolls the files and stack
-back before this reconciliation can run.
+Before the changed API becomes ready, Josi treats `APP_URL` as the canonical browser-facing origin
+and atomically repairs `deployment_config`, Workspace public-address metadata, configured OAuth
+callback URLs, and the stored Telegram webhook URL. A changed certificate is no longer reported as
+verified, and a moved Telegram webhook is shown as needing registration rather than falsely showing
+the old registration time. The Connectors page builds new callbacks from that same origin, including
+external-proxy and Cloudflare Tunnel installations.
+
+API readiness is the transaction boundary for a network change. If metadata synchronization, Caddy,
+the external-proxy Compose shape, or another health check fails, the controller restores the previous
+`.env` and Compose overrides and recreates the previous stack. That stack starts with the previous
+`APP_URL` and atomically restores the previous deployment, Workspace, OAuth, and webhook metadata.
+Josi does not contact Telegram during startup: after DNS and TLS work at the new address, use
+**Admin → Telegram → Register the webhook** to commit the remote provider-side change.
 
 Password managers remain available on genuine login, password-confirmation, and password-reset
 fields. Configuration secrets (Vault entries, SMTP, backup credentials, and integration tokens)

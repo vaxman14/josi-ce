@@ -7,6 +7,8 @@
 import type { ToolDefinition } from '@josi-ce/llm';
 import { CUSTOM_API_TOOLS } from './customApiTools.js';
 import { DATA_TOOLS } from './dataTools.js';
+import { WORKFLOW_TOOLS } from './workflowTools.js';
+import { DEVELOPER_INTEGRATION_TOOLS } from './developerIntegrationTools.js';
 
 /** Everything the assistant can do that changes something.
  *
@@ -189,7 +191,13 @@ export const TASK_TOOLS: ToolSpec[] = [
  * the MCP server intersects with a turn's offering. A tool that can be offered
  * and cannot be found is a tool the model is handed and then told does not
  * exist. */
-export const ALL_TOOLS: ToolSpec[] = [...TASK_TOOLS, ...DATA_TOOLS, ...CUSTOM_API_TOOLS];
+export const ALL_TOOLS: ToolSpec[] = [
+  ...TASK_TOOLS,
+  ...DATA_TOOLS,
+  ...CUSTOM_API_TOOLS,
+  ...WORKFLOW_TOOLS,
+  ...DEVELOPER_INTEGRATION_TOOLS,
+];
 
 /** Names that map to the step-up gate. The gate keys on the tool name, so
  * adding a destructive tool later means adding it to SENSITIVE_ACTIONS in core

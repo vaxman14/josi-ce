@@ -16,6 +16,8 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +43,25 @@ PROGRESS: dict[str, object] = {
 
 def run(args: list[str], *, check: bool = True, timeout: int = 600) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, cwd=ROOT, text=True, capture_output=True, check=check, timeout=timeout)
+
+
+def verify_public_origin(origin: str, timeout: int = 90) -> None:
+    """Prove the browser-facing origin before committing a network change."""
+    health = f"{origin.rstrip('/')}/health"
+    deadline = time.monotonic() + timeout
+    last_error = "public origin did not become reachable"
+    while time.monotonic() < deadline:
+        try:
+            request = urllib.request.Request(health, headers={"User-Agent": "josi-ce-installer-readiness/1"})
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read(4096))
+                if response.status == 200 and payload.get("ok") is True:
+                    return
+                last_error = f"public origin health returned HTTP {response.status}"
+        except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError):
+            last_error = "public origin DNS, TLS, or routing is not ready"
+        time.sleep(1)
+    raise RuntimeError(f"{last_error}; the previous network configuration was restored")
 
 
 def detected_addresses() -> list[str]:
@@ -302,7 +323,8 @@ def install(plan: dict[str, object]) -> None:
             if plan["mode"] == "proxy":
                 up += ["--scale", "caddy=0"]
             run(up, timeout=600)
-            progress("Josi passed its container health checks", 94, 5)
+            progress("Verifying the browser-facing Josi address", 94, 5)
+            verify_public_origin(str(plan["appUrl"]))
             PROGRESS.update({"state": "complete", "message": "Installation complete", "percent": 100,
                              "appUrl": f"{plan['appUrl']}/#setup={setup_token}"})
             # Give the browser enough time to receive the handoff, then remove
@@ -318,9 +340,12 @@ def install(plan: dict[str, object]) -> None:
                     else: path.write_bytes(data)
                 rollback = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml")]
                 if (ROOT / "docker-compose.workspace.yml").exists(): rollback += ["-f", str(ROOT / "docker-compose.workspace.yml")]
-                if (ROOT / ".env").exists() and "JOSI_ACCESS_MODE=proxy" in (ROOT / ".env").read_text(errors="replace"):
+                previous_proxy = (ROOT / ".env").exists() and "JOSI_ACCESS_MODE=proxy" in (ROOT / ".env").read_text(errors="replace")
+                if previous_proxy:
                     rollback += ["-f", str(ROOT / "docker-compose.noproxy.yml")]
                 rollback += ["--project-directory", str(ROOT), "--project-name", PROJECT, "up", "-d", "--wait", "--wait-timeout", "300"]
+                if previous_proxy:
+                    rollback += ["--scale", "caddy=0"]
                 run(rollback, timeout=600)
             except Exception:
                 pass
