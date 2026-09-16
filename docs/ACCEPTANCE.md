@@ -522,3 +522,6 @@ They do not claim a live 1Password vault, physical screen reader, or second-devi
 LAN session. Public-domain ACME issuance and external OAuth allowlist/Telegram
 registration require operator-owned public DNS and provider accounts. Those are
 separate external acceptance checks, not proof supplied by a local mock.
+
+The dated results and explicit external acceptance gaps are recorded in
+[TEST_LIST_7_VERIFICATION.md](TEST_LIST_7_VERIFICATION.md).
