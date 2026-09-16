@@ -40,7 +40,10 @@ async function request(path: string, init: RequestInit = {}) {
 beforeAll(async () => {
   db = await testDb();
   await ensureWorkspace(db);
-  await db.query(`update deployment_config set domain = 'native.ce.test' where id = true`);
+  // APP_URL is the authoritative browser origin. Keep a deliberately stale
+  // deployment_config value here so native enrollment cannot regress to the
+  // legacy domain-only reconstruction used by password-reset links.
+  await db.query(`update deployment_config set domain = 'stale-native.ce.test' where id = true`);
   userId = (await createUser(db, {
     email: 'member@ce.test', username: 'member', role: 'member', password: 'member-password-123',
   })).id;
@@ -55,7 +58,7 @@ beforeAll(async () => {
     redirectUri: 'http://localhost:3000/api/auth/google/callback',
   });
   const app = createApp(db, {
-    cookieSecure: false, appUrl: 'http://localhost:3000', masterKeyCheck: { path: keyPath }, connectorFetch,
+    cookieSecure: false, appUrl: 'https://native.ce.test', masterKeyCheck: { path: keyPath }, connectorFetch,
   });
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

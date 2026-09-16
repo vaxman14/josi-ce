@@ -50,11 +50,11 @@ export interface ChecklistItemSpec {
 export const CHECKLIST_ITEMS: readonly ChecklistItemSpec[] = Object.freeze([
   {
     key: 'master_key_backup',
-    label: 'Store both recovery keys somewhere else',
+    label: 'Recovery keys are stored safely',
     why:
       'Every credential Josi stores depends on the installation key or the one-time offline Vault '
-      + 'recovery key. A database backup contains neither. Losing both makes the Vault permanently '
-      + 'unrecoverable. This is the only item nobody else can do for you.',
+      + 'recovery key. Setup already records the Vault-key acknowledgement; this safeguard is complete '
+      + 'when that acknowledgement or the later administrator confirmation exists.',
     severity: 'critical',
     href: '/admin/vault',
   },

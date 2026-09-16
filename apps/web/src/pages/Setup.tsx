@@ -134,6 +134,9 @@ export function Setup({ onDone }: { onDone: () => void }) {
     try {
       const result=await api.post<{vaultRecovery?:{key:string;fingerprint:string}}>(`/setup/steps/${step}`, body);
       if(result.vaultRecovery)setVaultRecovery(result.vaultRecovery);
+      if (step === 'llm') {
+        await api.post('/setup/verify/llm', {});
+      }
       setRevising(null);
       await load();
     } catch (err) {
@@ -165,14 +168,14 @@ export function Setup({ onDone }: { onDone: () => void }) {
   if (!state) {
     return <div className="p-6 text-sm text-muted-foreground">{error || 'Loading…'}</div>;
   }
-  if(vaultRecovery)return <div className="mx-auto max-w-xl p-6"><Card><CardTitle>Save your Vault recovery key</CardTitle><p className="mt-2 text-sm text-muted-foreground">This is the only copy Josi will show. Store it offline. Losing both this key and the server&rsquo;s Master Vault key makes encrypted credentials permanently unrecoverable.</p><pre className="my-4 overflow-x-auto rounded-md border border-border bg-background p-3 text-sm select-all">{vaultRecovery.key}</pre><p className="text-xs text-muted-foreground">Fingerprint: {vaultRecovery.fingerprint}</p><Button className="mt-4" onClick={()=>void api.post('/setup/vault-recovery-confirmed').then(()=>setVaultRecovery(null)).catch(e=>setError(e instanceof Error?e.message:'Could not confirm the recovery key'))}>I saved it — continue setup</Button></Card></div>;
+  if(vaultRecovery)return <RecoveryKeyStep recovery={vaultRecovery} onConfirmed={()=>setVaultRecovery(null)} onError={setError}/>;
 
   const current = state.steps.find((s) => s.id === state.nextStep);
   const revisingStep = revising ? state.steps.find((s) => s.id === revising) : undefined;
   const position = state.completedSteps.length + 1;
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-xl p-4">
+    <div className="mx-auto w-full min-w-0 max-w-3xl p-5 text-[1.02rem] sm:p-8">
       <div className="mb-6 flex flex-col items-center text-center">
         <img src="/brand/josi-wordmark.png" alt="Josi" width={200} height={93}
              className="mb-2 h-auto w-40 max-w-full" />
@@ -234,7 +237,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
         </Card>
       )}
 
-      {review ? (
+      {review && (!current || current.id === 'review') ? (
         <div className="mt-4">
           <ReviewPanel
             review={review}
@@ -503,8 +506,57 @@ function LlmStep({
       }}
       loadSubscriptionInfo={() => api.get<SubscriptionInfo>('/setup/subscription').catch(() => null)}
       onSubmit={(body) => onSubmit('llm', body)}
+      submitLabel="Save and run the five-part test"
     />
   );
+}
+
+function RecoveryKeyStep({
+  recovery, onConfirmed, onError,
+}: {
+  recovery: { key: string; fingerprint: string };
+  onConfirmed: () => void;
+  onError: (message: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const suffix = recovery.key.slice(-4);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(recovery.key);
+      setCopied(true);
+    } catch {
+      onError('The browser could not copy the recovery key. Use Download instead.');
+    }
+  }
+
+  function download() {
+    const blob = new Blob([
+      `Josi Vault recovery key\n\n${recovery.key}\n\nFingerprint: ${recovery.fingerprint}\n`,
+    ], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `josi-vault-recovery-${recovery.fingerprint}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  return <div className="mx-auto max-w-3xl p-5 sm:p-8"><Card>
+    <CardTitle>Save your Vault recovery key</CardTitle>
+    <p className="mt-2 text-sm text-muted-foreground">This is the only copy Josi will provide. Store it offline. Losing both this key and the server&rsquo;s Master Vault key makes encrypted credentials permanently unrecoverable.</p>
+    <div className="my-5 rounded-md border border-border bg-background p-4 font-mono text-base" aria-label={`Recovery key ending in ${suffix}`}>
+      <span aria-hidden>•••• •••• •••• •••• •••• •••• •••• {suffix}</span>
+    </div>
+    <p className="text-xs text-muted-foreground">Fingerprint: {recovery.fingerprint}</p>
+    <div className="mt-4 flex flex-wrap gap-2">
+      <Button type="button" variant="secondary" onClick={()=>void copy()}>{copied ? 'Copied' : 'Copy key'}</Button>
+      <Button type="button" variant="secondary" onClick={download}>Download key</Button>
+    </div>
+    <Button className="mt-4" onClick={()=>void api.post('/setup/vault-recovery-confirmed').then(onConfirmed).catch(e=>onError(e instanceof Error?e.message:'Could not confirm the recovery key'))}>I saved it — continue setup</Button>
+  </Card></div>;
 }
 
 /** Everything setup decided, and what was actually established about each.

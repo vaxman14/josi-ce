@@ -187,6 +187,25 @@ describe('an unconfigured installation exposes only the wizard', () => {
     expect(state.body.nextStep).toBe('host_checks');
   });
 
+  it('keeps the model step current until its five-part verification passes', async () => {
+    await runWizard('llm');
+    const saved = await call('/api/setup/steps/llm', {
+      method: 'POST',
+      body: { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-llm-key-DO-NOT-USE-0001', externalAcknowledged: true },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.nextStep).toBe('llm');
+    const state = await call('/api/setup/state');
+    expect(state.body.nextStep).toBe('llm');
+    expect(state.body.completedSteps).not.toContain('llm');
+    const skipped = await call('/api/setup/steps/smtp', { method: 'POST', body: { skip: true } });
+    expect(skipped.status).toBe(409);
+    expect(skipped.body.expected).toBe('llm');
+
+    expect((await call('/api/setup/verify/llm', { method: 'POST', body: {} })).status).toBe(200);
+    expect((await call('/api/setup/state')).body.nextStep).toBe('smtp');
+  });
+
   it('binds first-admin setup to the installer handoff token', async () => {
     const handoff = 'browser-installer-handoff-token-1234567890';
     await stopServer();

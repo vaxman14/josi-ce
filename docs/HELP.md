@@ -58,3 +58,32 @@ If Gmail reports that it rejected the username or password, first confirm the
 full Gmail address and all 16 App Password letters. Do not keep retrying a
 15-letter value. Regenerate any App Password that appears in a screenshot,
 message, ticket, log, or other shared location.
+
+## First-run recovery key and model test
+
+The setup wizard shows the Vault recovery key once. Its on-screen preview is
+masked except for the final four characters; use **Copy key** or **Download
+key**, store it offline, then acknowledge it. The later launch checklist reuses
+that acknowledgement and does not ask for the same key again.
+
+The model is saved and put through the full five-part capability test on the
+**Language model** step. Setup does not advance until that test passes. Other
+configuration summaries appear only on **Review and finish**, not on unrelated
+privacy or security screens.
+
+## Developer workspace
+
+The browser installer can optionally mount one host project folder at
+`/workspace`. Skip this unless Josi's coding connectors need local files.
+Read-only access supports inspection; read/write supports editing, tests and
+Git. The installer validates the selected capability and refuses system,
+credential, secret, and Josi installation paths. Normal application containers
+do not receive the Docker socket.
+
+## Password recovery
+
+Reset emails use the exact browser-facing origin approved by the installer,
+including LAN HTTP and non-default ports. If email is unavailable, run
+`./reset-password.sh USERNAME_OR_EMAIL` from the installation directory. The
+command accepts the new password through a hidden prompt, replaces only one
+active account, and invalidates its sessions and unused reset links.

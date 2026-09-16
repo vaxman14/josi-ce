@@ -807,7 +807,26 @@ docker version
 docker compose version
 docker compose ps -a
 </code></pre>
-<h2>20. Uninstallation</h2>
+<h2 id="offline-password-recovery">Offline password recovery</h2>
+<p>If reset email is unavailable, run <code>./reset-password.sh USERNAME_OR_EMAIL</code>
+from the installation directory. The command accepts the new password through a
+hidden prompt, changes exactly one active account, and invalidates its existing
+sessions and unused reset links. Reset-email links use the exact browser-facing
+origin selected in the installer, including LAN HTTP and non-default ports.</p>
+<h2 id="developer-workspace">Optional developer workspace</h2>
+<p>The browser installer can optionally bind one host project folder into Josi at
+<code>/workspace</code>. Skip it unless coding connectors need local files. Choose
+read-only access for inspection or read/write for editing, tests, and Git. The
+installer validates the requested capability and refuses system, credential,
+secret, and Josi installation paths. Normal Josi containers never receive the
+Docker socket.</p>
+<h2 id="setup-recovery-key">Setup recovery key and model test</h2>
+<p>The Vault key is displayed only as a masked preview ending in its true final
+four characters. Use the explicit Copy or Download action and store it offline.
+The launch checklist reuses that acknowledgement. The Language Model step saves
+the configuration and runs the full five-part capability test before setup may
+advance.</p>
+<h2 id="uninstallation">20. Uninstallation</h2>
 <p>There is no supported uninstall-and-preserve-data wizard yet.</p>
 <p>Stopping the installation is reversible:</p>
 <pre><code class="language-bash">docker compose stop
