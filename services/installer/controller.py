@@ -132,8 +132,47 @@ def validate(payload: dict[str, object]) -> dict[str, object]:
     used = occupied_ports()
     needed = [web_port] if mode == "proxy" else [http_port, https_port]
     conflicts = [{"port": p, "container": used[p]} for p in needed if p in used and not used[p].startswith(PROJECT)]
+    workspace_enabled = payload.get("workspaceEnabled") is True
+    workspace_path = str(payload.get("workspacePath", "")).strip()
+    workspace_mode = str(payload.get("workspaceMode", "ro"))
+    if workspace_mode not in {"ro", "rw"}:
+        raise ValueError("Developer workspace access must be read-only or read/write.")
+    if workspace_enabled:
+        if not workspace_path.startswith("/") or "\x00" in workspace_path:
+            raise ValueError("Choose an absolute host folder for the developer workspace.")
+        resolved = str(Path(workspace_path).resolve())
+        forbidden = (
+            "/", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root",
+            "/run", "/sbin", "/sys", "/usr", "/var/lib/containerd", "/var/lib/docker", "/var/log",
+            "/var/run",
+        )
+        if resolved in forbidden or any(resolved.startswith(f"{path}/") for path in forbidden if path != "/"):
+            raise ValueError("That system folder cannot be used as a developer workspace.")
+        lowered = resolved.lower()
+        sensitive_parts = {
+            ".aws", ".docker", ".gnupg", ".kube", ".ssh", "credentials", "secrets",
+        }
+        if any(part in lowered.split("/") for part in sensitive_parts):
+            raise ValueError("Credential and secret folders cannot be used as a developer workspace.")
+        if resolved == str(ROOT) or str(ROOT).startswith(f"{resolved}/") or resolved.startswith(f"{ROOT}/"):
+            raise ValueError("The Josi installation folder cannot also be the developer workspace.")
+        probe = ["docker", "run", "--rm", "--mount",
+                 f"type=bind,source={resolved},target=/workspace-probe"
+                 + (",readonly" if workspace_mode == "ro" else ""), "alpine:3.22", "sh", "-c"]
+        command = "test -d /workspace-probe && test -r /workspace-probe"
+        if workspace_mode == "rw":
+            command += " && p=/workspace-probe/.josi-write-probe-$$ && : > \"$p\" && rm -f \"$p\""
+        tested = run(probe + [command], check=False, timeout=30)
+        if tested.returncode != 0:
+            capability = "read and write" if workspace_mode == "rw" else "read"
+            raise ValueError(f"Docker could not {capability} that host folder.")
+        workspace_path = resolved
+    else:
+        workspace_path = ""
     return {"mode": mode, "appUrl": app_url, "domain": domain, "httpPort": http_port,
-            "httpsPort": https_port, "webPort": web_port, "conflicts": conflicts}
+            "httpsPort": https_port, "webPort": web_port, "conflicts": conflicts,
+            "workspaceEnabled": workspace_enabled, "workspacePath": workspace_path,
+            "workspaceMode": workspace_mode}
 
 
 def write_env(plan: dict[str, object], setup_token_sha256: str = "") -> None:
@@ -156,6 +195,9 @@ def write_env(plan: dict[str, object], setup_token_sha256: str = "") -> None:
         "JOSI_ACCESS_MODE": str(plan["mode"]),
         "JOSI_INSTALLER_CONFIGURED": "1",
         "JOSI_SETUP_TOKEN_SHA256": setup_token_sha256,
+        "JOSI_WORKSPACE_ENABLED": "1" if plan.get("workspaceEnabled") else "0",
+        "JOSI_WORKSPACE_HOST_PATH": str(plan.get("workspacePath", "")),
+        "JOSI_WORKSPACE_MODE": str(plan.get("workspaceMode", "ro")),
     })
     lines = [f"{key}={value}" for key, value in sorted(values.items())]
     fd, temp_name = tempfile.mkstemp(prefix=".env.", dir=ROOT, text=True)
@@ -214,9 +256,12 @@ def install(plan: dict[str, object]) -> None:
             setup_token = secrets.token_urlsafe(32)
             setup_token_sha256 = hashlib.sha256(setup_token.encode()).hexdigest()
             write_env(plan, setup_token_sha256)
+            write_workspace_override(plan)
             progress("Preparing the isolated Voice Box controller", 22, 2)
             provision_voice_helper()
             compose = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml")]
+            if (ROOT / "docker-compose.workspace.yml").exists():
+                compose += ["-f", str(ROOT / "docker-compose.workspace.yml")]
             if plan["mode"] == "proxy":
                 compose += ["-f", str(ROOT / "docker-compose.noproxy.yml")]
             compose += ["--project-directory", str(ROOT), "--project-name", PROJECT]
@@ -243,6 +288,42 @@ def install(plan: dict[str, object]) -> None:
                     message = f"{message}\n{detail}"
             message = re.sub(r"(?i)(password|token|secret|key)=\S+", r"\1=[redacted]", message)
             PROGRESS.update({"state": "failed", "error": message[-2000:]})
+
+
+def write_workspace_override(plan: dict[str, object]) -> None:
+    target = ROOT / "docker-compose.workspace.yml"
+    if not plan.get("workspaceEnabled"):
+        target.unlink(missing_ok=True)
+        return
+    source = str(plan["workspacePath"])
+    read_only = "true" if plan.get("workspaceMode") == "ro" else "false"
+    content = (
+        "services:\n"
+        "  web:\n"
+        "    volumes:\n"
+        "      - type: bind\n"
+        f"        source: {json.dumps(source)}\n"
+        "        target: /workspace\n"
+        f"        read_only: {read_only}\n"
+        "  worker:\n"
+        "    volumes:\n"
+        "      - type: bind\n"
+        f"        source: {json.dumps(source)}\n"
+        "        target: /workspace\n"
+        f"        read_only: {read_only}\n"
+    )
+    fd, temp_name = tempfile.mkstemp(prefix="docker-compose.workspace.", dir=ROOT, text=True)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, 0o600)
+        os.replace(temp_name, target)
+        os.chown(target, int(os.environ["JOSI_INSTALL_UID"]), int(os.environ["JOSI_INSTALL_GID"]))
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 
 class Handler(BaseHTTPRequestHandler):

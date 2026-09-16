@@ -110,4 +110,65 @@ print(json.dumps({'env':(p/'.env').read_text(), 'backups':len(list(p.glob('.env.
     expect(page).toContain('.actions.hidden{display:none}');
     expect(page).toMatch(/if\(p\.state==='complete'\)\{\$\('openAction'\)\.classList\.remove\('hidden'\)/);
   });
+
+  it('validates an optional developer workspace and writes a least-privilege compose override', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'josi-workspace-'));
+    try {
+      const result = python(`
+import importlib.util, json, pathlib
+s=importlib.util.spec_from_file_location('c', ${JSON.stringify(controller)})
+m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
+m.occupied_ports=lambda: {}
+m.run=lambda args, **kwargs: type('R', (), {'returncode':0,'stdout':'','stderr':''})()
+p=m.validate({'mode':'lan','lanAddress':'192.168.50.20','httpPort':80,'httpsPort':443,'webPort':8081,'workspaceEnabled':True,'workspacePath':${JSON.stringify(workspace)},'workspaceMode':'rw'})
+m.write_workspace_override(p)
+print(json.dumps({'plan':p,'override':pathlib.Path(${JSON.stringify(dir)},'docker-compose.workspace.yml').read_text()}))
+`, dir);
+      expect(result.status, result.stderr).toBe(0);
+      const value = JSON.parse(result.stdout);
+      expect(value.plan).toMatchObject({ workspaceEnabled: true, workspacePath: workspace, workspaceMode: 'rw' });
+      expect(value.override).toContain(`source: "${workspace}"`);
+      expect(value.override).toContain('target: /workspace');
+      expect(value.override).toContain('read_only: false');
+      expect(value.override).toContain('web:');
+      expect(value.override).toContain('worker:');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses dangerous developer workspace paths and keeps the feature optional', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
+    try {
+      const result = python(`
+import importlib.util, json
+s=importlib.util.spec_from_file_location('c', ${JSON.stringify(controller)})
+m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
+m.occupied_ports=lambda: {}
+base={'mode':'lan','lanAddress':'192.168.50.20','httpPort':80,'httpsPort':443,'webPort':8081}
+skipped=m.validate(base)
+bad=[]
+for path in ['/', '/etc', '/home/example/credentials', '/home/example/.aws', '/var/lib/docker', ${JSON.stringify(dir)}]:
+ try: m.validate({**base,'workspaceEnabled':True,'workspacePath':path,'workspaceMode':'rw'})
+ except ValueError: bad.append(path)
+print(json.dumps({'skipped':skipped['workspaceEnabled'],'bad':bad}))
+`, dir);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        skipped: false,
+        bad: ['/', '/etc', '/home/example/credentials', '/home/example/.aws', '/var/lib/docker', dir],
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('offers the optional workspace in the browser and includes it in review', () => {
+    const page = readFileSync(html, 'utf8');
+    expect(page).toContain('Developer workspace');
+    expect(page).toContain('id="workspaceEnabled"');
+    expect(page).toContain('id="workspacePath"');
+    expect(page).toContain('workspaceMode');
+    expect(page).toContain('Developer workspace: ${workspace}');
+  });
 });

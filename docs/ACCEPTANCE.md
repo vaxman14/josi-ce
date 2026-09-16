@@ -4,6 +4,28 @@ A record of what has actually been run, on what, and when. **A profile with no
 row in the results table has not been tested**, whatever the script's existence
 might suggest.
 
+## Test List 6 items 1–5 — 2026-09-15
+
+Evidence on Bananana (Linux x86_64):
+
+- 2,459 tests passed across 98 files;
+- TypeScript type checking and both the root and production web builds passed;
+- all 43 database migrations passed from a fresh database;
+- focused setup, installer, authentication, and native-enrollment coverage passed
+  138 tests after the final canonical-URL compatibility correction;
+- the release Compose configuration parsed successfully;
+- dependency audit reported zero vulnerabilities;
+- secret scan passed across 549 files; and
+- the completed diff received a security review with no open findings.
+
+The covered changes are the masked/copyable/downloadable one-time Vault
+recovery key, a larger responsive setup workspace, model verification on the
+model configuration step, canonical password-reset links plus the offline
+password-reset command, and the optional `/workspace` developer bind mount.
+The developer mount was additionally reviewed for host-path traversal,
+sensitive-directory exposure, Docker-socket exposure, and fail-open write
+probes.
+
 ## v0.1.23 publication — 2026-09-15
 
 Release source: public `main` commit

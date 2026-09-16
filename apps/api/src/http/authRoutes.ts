@@ -28,11 +28,10 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
   const cookieOpts = { secure: ctx.cookieSecure };
 
   async function publicAppUrl(): Promise<string> {
-    const [deployment] = await db.query<{ domain: string | null }>(
-      `select domain from deployment_config where id = true`,
-    );
-    const domain = deployment?.domain?.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
-    return domain ? `https://${domain}` : ctx.appUrl.replace(/\/$/, '');
+    // APP_URL is the canonical browser-facing origin chosen by the installer.
+    // Reconstructing it from deployment_config.domain discarded LAN HTTP and
+    // non-default ports, producing unusable https://<LAN-IP>/set-password links.
+    return ctx.appUrl.replace(/\/$/, '');
   }
 
   const NATIVE_GOOGLE_RETURN_URI = 'josi://auth/callback';

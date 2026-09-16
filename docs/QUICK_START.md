@@ -56,3 +56,10 @@ docker compose down
 
 For DNS, reverse proxies, LAN-only use, optional OCR/ClamAV, backups, restores,
 and troubleshooting, read [INSTALLATION.md](INSTALLATION.md).
+The browser installer may optionally expose one host project folder inside Josi
+as `/workspace`. Skip it unless you want the coding connectors to work on local
+files. Read-only and read/write access are explicit, validated choices.
+
+If SMTP is unavailable, an operator can replace an account password from the
+installation directory with `./reset-password.sh USERNAME_OR_EMAIL`; input is
+masked and existing sessions and reset links are invalidated.

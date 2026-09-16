@@ -203,6 +203,16 @@ describe('role separation', () => {
     }
   });
 
+  it('reuses the setup Vault-recovery acknowledgement in the launch checklist', async () => {
+    await db.query(`update vault_state set recovery_confirmed_at = now() where id = true`);
+    const res = await call('/api/admin/launch-checklist', { jar: cookies.admin });
+    expect(res.status).toBe(200);
+    expect(res.body.items.find((item: { key: string }) => item.key === 'master_key_backup')).toMatchObject({
+      state: 'done',
+      label: 'Recovery keys are stored safely',
+    });
+  });
+
   it('a member cannot create a user or change the workspace', async () => {
     const created = await call('/api/admin/users', {
       method: 'POST', jar: cookies.alice,

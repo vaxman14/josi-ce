@@ -23,6 +23,9 @@ export function checklistRoutes(db: Db): Router {
     const [state] = await db.query<{ seen_at: string | null; master_key_backup_confirmed_at: string | null }>(
       `select seen_at, master_key_backup_confirmed_at from admin_checklist_state where id = true`,
     );
+    const [vault] = await db.query<{ recovery_confirmed_at: string | null }>(
+      `select recovery_confirmed_at from vault_state where id = true`,
+    );
     const [backups] = await db.query<{ n: string }>(`select count(*)::text as n from backups`);
     const [restores] = await db.query<{ n: string }>(
       `select count(*)::text as n from restore_attempts where state = 'complete'`,
@@ -51,7 +54,7 @@ export function checklistRoutes(db: Db): Router {
     );
 
     return {
-      masterKeyBackupConfirmed: !!state?.master_key_backup_confirmed_at,
+      masterKeyBackupConfirmed: !!state?.master_key_backup_confirmed_at || !!vault?.recovery_confirmed_at,
       backupCount: Number(backups?.n ?? 0),
       restoreVerified: Number(restores?.n ?? 0) > 0,
       verifications,

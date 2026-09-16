@@ -147,6 +147,16 @@ async function applyInstallerDeployment(db: Db): Promise<void> {
   );
 }
 
+/** Saving a model is not completing the model step. The five-part probe is the
+ * acceptance gate, and until it passes the server continues to report `llm` as
+ * the current step even after a refresh or a hostile direct POST to SMTP. */
+async function expectedSetupStep(db: Db, completed: readonly string[]): Promise<SetupStep | null> {
+  const ordinary = nextStep(completed);
+  if (!completed.includes('llm')) return ordinary;
+  const verification = (await getVerifications(db)).get('llm');
+  return verification?.status === 'passed' ? ordinary : 'llm';
+}
+
 export function setupRoutes(ctx: SetupRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
@@ -157,14 +167,17 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
     asyncRoute(async (_req, res) => {
       await applyInstallerDeployment(db);
       const state = await getSetupState(db);
-      const next = nextStep(state.completed_steps ?? []);
+      const next = await expectedSetupStep(db, state.completed_steps ?? []);
+      const visibleCompleted = next === 'llm'
+        ? (state.completed_steps ?? []).filter((id) => id !== 'llm')
+        : (state.completed_steps ?? []);
       return res.json({
         completed: state.completed,
-        completedSteps: state.completed_steps ?? [],
+        completedSteps: visibleCompleted,
         nextStep: next,
         steps: SETUP_STEPS.map((id) => ({
           ...STEP_DESCRIPTORS[id],
-          done: (state.completed_steps ?? []).includes(id),
+          done: visibleCompleted.includes(id),
         })),
         // The same catalogue the admin page is sent, for the same reason: the
         // wizard must not be able to draw a provider this build would refuse to
@@ -211,6 +224,10 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
           expected: verdict.expected,
         });
       }
+      const expected = await expectedSetupStep(db, state.completed_steps ?? []);
+      if (expected === 'llm' && step !== 'llm') {
+        return res.status(409).json({ error: 'test the language model before continuing', expected: 'llm' });
+      }
 
       let result: StepResult | void;
       try {
@@ -236,7 +253,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
       return res.json({
         ok: true,
         completedSteps: after.completed_steps ?? [],
-        nextStep: nextStep(after.completed_steps ?? []),
+        nextStep: await expectedSetupStep(db, after.completed_steps ?? []),
         // Present for steps that contacted something. A step can succeed — the
         // configuration was stored — while what it configured did not work, and
         // the client has to be able to tell those apart.
@@ -469,7 +486,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
       const state = await getSetupState(db);
       if (state.completed) return res.status(404).json({ error: 'not found' });
 
-      const remaining = nextStep(state.completed_steps ?? []);
+      const remaining = await expectedSetupStep(db, state.completed_steps ?? []);
       if (remaining !== null && remaining !== 'review') {
         return res.status(409).json({ error: 'setup is not finished', expected: remaining });
       }
@@ -815,6 +832,10 @@ async function applyStep(
         ? await storeCredentialPayload(db,requireMasterKey(ctx),{ownerUserId:vaultOwner.id,kind:'api_key',service:'llm',slot:'primary',label:'Primary model credentials',payload:Object.fromEntries(supplied),actorUserId:vaultOwner.id})
         : null;
 
+      // A passing probe belongs to the exact provider configuration that was
+      // tested. Invalidate first: if the following write ever fails, setup
+      // demands a harmless re-test instead of trusting a stale receipt.
+      await db.query(`delete from setup_verifications where item = 'llm'`);
       await db.query(
         `insert into llm_providers
            (role, provider, model, base_url, api_key_enc, external_acknowledged, external_acknowledged_at,

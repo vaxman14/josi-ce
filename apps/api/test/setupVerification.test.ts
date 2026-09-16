@@ -103,6 +103,15 @@ async function wizardTo(stopBefore: string) {
     const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
     expect(res.status, `${step}: ${JSON.stringify(res.body)}`).toBe(200);
     if(step==='owner')expect((await call('/api/setup/vault-recovery-confirmed',{method:'POST',body:{}})).status).toBe(200);
+    // The model page now owns its test. A helper that continues beyond it has
+    // to prove the model there, just like a real browser. Tests that stop at
+    // SMTP deliberately retain the unverified state so they can exercise the
+    // verification endpoint itself.
+    if (step === 'llm' && stopBefore !== 'smtp') {
+      const verified = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+      expect(verified.status, JSON.stringify(verified.body)).toBe(200);
+      expect(verified.body.status).toBe('passed');
+    }
   }
 }
 
@@ -203,10 +212,13 @@ describe('LB4.1 — the model step makes a real request', () => {
 
 describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
   it('refuses to finish while the model has never been tested', async () => {
-    await wizardTo('__none__');   // the whole wizard, no verification
+    await wizardTo('smtp');
+    const next = await call('/api/setup/steps/smtp', { method: 'POST', body: { skip: true } });
+    expect(next.status).toBe(409);
+    expect(next.body.expected).toBe('llm');
     const res = await call('/api/setup/complete', { method: 'POST', body: {} });
     expect(res.status).toBe(409);
-    expect(res.body.blocking.map((b: any) => b.key)).toContain('llm');
+    expect(res.body.expected).toBe('llm');
     // And setup is still open, not half-closed.
     expect((await call('/api/setup/state')).body.completed).toBe(false);
   });
@@ -217,7 +229,9 @@ describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
     await call('/api/setup/verify/llm', { method: 'POST', body: {} });
     const res = await call('/api/setup/complete', { method: 'POST', body: {} });
     expect(res.status).toBe(409);
-    expect(res.body.blocking[0].status).toBe('configured_but_failed');
+    expect(res.body.expected).toBe('llm');
+    const review = await call('/api/setup/review');
+    expect(review.body.blocking[0].status).toBe('configured_but_failed');
   });
 
   it('finishes once it passes — the same installation, one test later', async () => {
@@ -236,6 +250,7 @@ describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
 
   it('does not let an optional failure block anything', async () => {
     await wizardTo('smtp');
+    expect((await call('/api/setup/verify/llm', { method: 'POST', body: {} })).body.status).toBe('passed');
     mailFails = true;
     const smtp = await call('/api/setup/steps/smtp', {
       method: 'POST',
@@ -340,6 +355,10 @@ describe('LB6.4 — a step holding configuration can be corrected', () => {
     ] as const) {
       const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
       expect(res.status, step).toBe(200);
+      if (step === 'llm') {
+        const verified = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+        expect(verified.body.status).toBe('passed');
+      }
     }
   });
 

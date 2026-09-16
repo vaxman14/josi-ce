@@ -1453,6 +1453,31 @@ docker compose version
 docker compose ps -a
 ```
 
+### 19.1 Reset an account password without email
+
+From the Josi installation directory, run:
+
+```bash
+./reset-password.sh USERNAME_OR_EMAIL
+```
+
+The command prompts twice using hidden terminal input, requires at least 12
+characters, replaces the password only when exactly one active account matches,
+and invalidates that account's existing sessions and unused reset links. It
+prints neither the password nor its hash. Exit codes `64`–`69` distinguish bad
+usage, invalid input, a missing installation, no matching account, unavailable
+services, and other recovery failures.
+
+### 19.2 Optional developer workspace
+
+The browser installer can bind one host folder into Josi at `/workspace` for
+coding-agent workflows. It is skipped by default. Choose read-only access for
+inspection, or read/write access when Josi must create code, run tools, and use
+Git. The installer tests the requested capability through Docker before saving
+the configuration and rejects system, credential, secret, and Josi installation
+paths. Normal Josi containers receive only this bind mount; they never receive
+the Docker socket.
+
 ## 20. Uninstallation
 
 There is no supported uninstall-and-preserve-data wizard yet.
