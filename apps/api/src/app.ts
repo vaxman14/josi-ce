@@ -36,6 +36,7 @@ import { mountWebApp } from './http/staticApp.js';
 import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
 import { nasController } from './http/nasController.js';
+import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 
 export interface AppConfig {
   voiceBoxHelper?: VoiceHelper;
@@ -238,6 +239,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,
     resolve: cfg.outboundResolve,
   }));
+  api.use('/admin/maintenance', maintenanceRoutes({ db }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));

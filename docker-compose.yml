@@ -85,6 +85,7 @@ services:
       JOSI_INSTALLER_CONFIGURED: ${JOSI_INSTALLER_CONFIGURED:-}
       JOSI_ACCESS_MODE: ${JOSI_ACCESS_MODE:-}
       JOSI_SETUP_TOKEN_SHA256: ${JOSI_SETUP_TOKEN_SHA256:-}
+      JOSI_MAINTENANCE_HELPER_SOCKET: /run/josi-maintenance/helper.sock
       # Empty means infer from APP_URL: secure for https, non-secure for LAN
       # http. Explicit true/false remains available as an advanced override.
       COOKIE_SECURE: ${JOSI_COOKIE_SECURE:-}
@@ -130,6 +131,7 @@ services:
       # removing it is a deliberate act separate from removing the database.
       - josi_codex:/data/codex
       - josi_claude:/data/claude
+      - ${JOSI_MAINTENANCE_SOCKET_DIR:-./maintenance-helper-socket}:/run/josi-maintenance:ro
       # Shared folders (M45). Deny-by-default: nothing is mounted here unless an
       # operator writes it, and mounting alone grants nothing — a root must also
       # be registered before Josi will touch it.

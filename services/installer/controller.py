@@ -260,11 +260,26 @@ def provision_storage_helper() -> None:
          "--entrypoint","python3",image,"/opt/josi-installer/storage_helper.py","--root",str(ROOT),"--state",f"{ROOT}/storage-helper-state",
          "--socket",f"{ROOT}/storage-helper-socket/helper.sock","--image",image,"--socket-gid",app_gid],timeout=60)
 
+def provision_maintenance_helper() -> None:
+    uid, gid = os.environ["JOSI_INSTALL_UID"], os.environ["JOSI_INSTALL_GID"]
+    app_gid, docker_gid, image = os.environ["JOSI_APP_GID"], os.environ["JOSI_DOCKER_GID"], os.environ["JOSI_INSTALLER_IMAGE"]
+    path = ROOT / "maintenance-helper-socket"; path.mkdir(exist_ok=True); os.chmod(path, 0o750); os.chown(path, int(uid), int(gid))
+    name = f"josi-ce-maintenance-helper-{hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]}"
+    run(["docker","rm","-f",name],check=False,timeout=30)
+    run(["docker","run","-d","--name",name,"--restart","unless-stopped","--read-only","--network","none",
+         "--security-opt","no-new-privileges","--cap-drop","ALL","--user",f"{uid}:{gid}","--group-add",docker_gid,"--group-add",app_gid,
+         "--tmpfs","/tmp:size=16m,mode=1777","-v","/var/run/docker.sock:/var/run/docker.sock","-v",f"{ROOT}:{ROOT}",
+         "--entrypoint","python3",image,"/opt/josi-installer/maintenance_helper.py","--root",str(ROOT),
+         "--socket",f"{ROOT}/maintenance-helper-socket/helper.sock","--image",image,"--uid",uid,"--gid",gid,
+         "--docker-gid",docker_gid,"--socket-gid",app_gid],timeout=60)
+
 
 def install(plan: dict[str, object]) -> None:
     with LOCK:
         PROGRESS.update({"state": "installing", "message": "Saving configuration", "log": [],
                          "percent": 8, "step": 1, "totalSteps": 5})
+        snapshots = {path: path.read_bytes() if path.exists() else None for path in (
+            ROOT / '.env', ROOT / 'docker-compose.workspace.yml', ROOT / 'docker-compose.noproxy.yml')}
         try:
             setup_token = secrets.token_urlsafe(32)
             setup_token_sha256 = hashlib.sha256(setup_token.encode()).hexdigest()
@@ -273,6 +288,7 @@ def install(plan: dict[str, object]) -> None:
             progress("Preparing the isolated Voice Box controller", 22, 2)
             provision_voice_helper()
             provision_storage_helper()
+            provision_maintenance_helper()
             compose = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml")]
             if (ROOT / "docker-compose.workspace.yml").exists():
                 compose += ["-f", str(ROOT / "docker-compose.workspace.yml")]
@@ -293,6 +309,21 @@ def install(plan: dict[str, object]) -> None:
             # Docker authority from the running installation by exiting.
             threading.Timer(45, lambda: os._exit(0)).start()
         except Exception as exc:
+            # Network changes can make the old browser origin disappear before
+            # the new one is healthy. Restore the reviewed files and recreate
+            # the previous stack before reporting failure.
+            try:
+                for path, data in snapshots.items():
+                    if data is None: path.unlink(missing_ok=True)
+                    else: path.write_bytes(data)
+                rollback = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml")]
+                if (ROOT / "docker-compose.workspace.yml").exists(): rollback += ["-f", str(ROOT / "docker-compose.workspace.yml")]
+                if (ROOT / ".env").exists() and "JOSI_ACCESS_MODE=proxy" in (ROOT / ".env").read_text(errors="replace"):
+                    rollback += ["-f", str(ROOT / "docker-compose.noproxy.yml")]
+                rollback += ["--project-directory", str(ROOT), "--project-name", PROJECT, "up", "-d", "--wait", "--wait-timeout", "300"]
+                run(rollback, timeout=600)
+            except Exception:
+                pass
             progress("Installation failed. Review the sanitized error below.",
                      int(PROGRESS.get("percent", 0)), int(PROGRESS.get("step", 0)))
             message = str(exc)
