@@ -447,3 +447,81 @@ shipping an acceptance artifact.
   a timing taken with swap thrashing is not a measurement of Josi.
 - `@node-rs/argon2` ships an arm64 prebuild, so no compiler is needed. That is
   the assumption a real run has to confirm.
+
+## Connector settings and account consent
+
+- Zapier, n8n, and Make are native workflow providers, not labels applied to a
+  Custom API connection. Zapier uses the official Streamable HTTP MCP endpoint
+  (`mcp.zapier.com/api/v1/connect`) and connection-token Bearer authentication;
+  the retired NLA/AI Actions endpoints are never used. n8n uses its public API
+  key to discover active workflows, then requires an administrator to register
+  that workflow's production `/webhook/…` path because n8n has no public
+  run-workflow API. Make uses `Authorization: Token`, a selected team or
+  organization ID, scenario discovery, and the official responsive scenario-run
+  input envelope. Provider account/workspace identity and connection status are
+  shown in administration; disconnect removes the stored credential and hides
+  every exposed automation until a tested reconnect.
+  Every execution is pinned to the exact discovered workflow and input, waits
+  for its owner's approval, and appears in that owner's run history.
+- Provider completion callbacks are authenticated with the integration-specific
+  HMAC secret, a five-minute timestamp window, and a unique event id; forged,
+  stale, replayed, and unknown-run callbacks are rejected. Credentials are
+  tested before storage, structured inputs are validated and previewable, and
+  every execution still needs fresh owner approval. Discovered automations are
+  private until an administrator explicitly exposes each one to Josi. Pending
+  approvals expire after 15 minutes and sanitized history is bounded to 30 days.
+  Self-hosted n8n permits LAN endpoints only through a deliberate administrator
+  switch; hosted endpoints are checked against private DNS/address ranges.
+  Custom API remains the explicit fallback for services without a native integration.
+
+- OAuth application forms are controlled forms. Save is disabled while pristine,
+  invalid, or submitting; a successful server write/readback clears the dirty
+  state and announces which provider application was saved without echoing its
+  secret. Failures retain safe unsaved input and do not announce success.
+- Dirty connector forms warn before browser navigation and before their provider
+  disclosure is collapsed.
+- Google, Microsoft, Dropbox, and Box request their complete currently supported
+  scope bundle during initial account connection. Provider scopes and local Josi
+  capability switches remain separate: every local capability starts off.
+- A legacy partial grant exposes one account-level **Upgrade permissions /
+  Reconnect** action. Missing-scope capabilities never render per-capability
+  provider approval buttons.
+
+## Test List 7 source validation on Bananana
+
+The completion branch preserves the interrupted worktree and starts from
+`origin/main` at `a025123`, incorporating the reconciled network and consent
+commits `aaf0779` and `3ecd086`. No production branch, image publication, release,
+or gate upgrade is part of this validation.
+
+Reproducible additional checks:
+
+- `python3 scripts/acceptance/test-list-7-maintenance.py`: real Docker supervisor
+  with no network, private LAN HTTPS `/health`, rejected unauthenticated/wrong-code
+  requests, one-time pairing and replay rejection.
+- `node scripts/acceptance/test-list-7-browser.mjs`: rendered desktop/mobile
+  password semantics, accessible label, keyboard submission, disabled empty
+  action, error feedback, and 200% zoom.
+- `node scripts/acceptance/test-list-7-save-browser.mjs`: rendered workflow save
+  states, delayed response, failure/retry, and confirmed readback.
+- `node scripts/acceptance/test-list-7-oauth-save-browser.mjs`: failed OAuth saved-state
+  readback retains edits, retry confirms persistence, and another open provider
+  section keeps its unsaved input.
+- `python3 -m unittest discover -s services/installer -p test_network_rollback.py`:
+  54 previous-mode/target-mode/failure combinations plus explicit failed-recovery reporting.
+- `scripts/acceptance/test-list-7-public-address.mjs`: run inside the isolated web
+  container after a fresh PostgreSQL migration; verifies domain/domain-port,
+  proxy, LAN transitions and exact metadata restoration.
+- `python3 scripts/acceptance/test-list-7-network-runtime.py`: only the isolated
+  `josi-list7-validation` Compose project; proves actual Caddy/runtime application,
+  failed public health, restored files/metadata/timestamp, and old-origin health.
+
+The browser tests use synthetic authentication/provider responses; separate API
+and real-controller tests exercise password verification and controller startup.
+They do not claim a live 1Password vault, physical screen reader, or second-device
+LAN session. Public-domain ACME issuance and external OAuth allowlist/Telegram
+registration require operator-owned public DNS and provider accounts. Those are
+separate external acceptance checks, not proof supplied by a local mock.
+
+The dated results and explicit external acceptance gaps are recorded in
+[TEST_LIST_7_VERIFICATION.md](TEST_LIST_7_VERIFICATION.md).

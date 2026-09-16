@@ -800,6 +800,15 @@ An out-of-memory kill appears in container state and host kernel logs.</p>
 connector features members are allowed to enable for their own accounts.
 Allowing a permission does not turn it on for anyone or grant access by itself;
 each member must still connect their own account and enable the feature.</p>
+<p>Google, Microsoft, Dropbox, and Box show one provider consent screen for the
+complete set of features Josi currently supports. Those provider permissions do
+not turn features on inside Josi: members still use the local On/Off controls.
+Older connections with partial permissions show one account-level
+<strong>Upgrade permissions / Reconnect</strong> action instead of approval buttons
+beside individual features.</p>
+<p>OAuth application forms only enable <strong>Save</strong> after a valid change.
+Wait for the named saved confirmation before leaving the page; secrets remain
+masked and are never shown again.</p>
 <h2>18. Security checklist</h2>
 <p>Before considering an installation reachable by other people, confirm:</p>
 <ul>

@@ -43,6 +43,8 @@ import {
   type DataToolReceipt,
 } from './dataClaimGuard.js';
 import { customApiToolAvailability, type CustomApiAvailability } from './customApiTools.js';
+import { workflowToolAvailability } from './workflowTools.js';
+import { developerIntegrationToolAvailability } from './developerIntegrationTools.js';
 import { dataToolAvailability, type DataToolAvailability } from './dataTools.js';
 import { executeAssistantTool } from './execute.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
@@ -249,6 +251,8 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     }
   }
   let customApis: CustomApiAvailability = { specs: [], connectionNames: [] };
+  let workflowTools = [] as import('./tools.js').ToolSpec[];
+  let developerIntegrationTools = [] as import('./tools.js').ToolSpec[];
   if (capabilities.toolCalling) {
     try {
       customApis = await customApiToolAvailability(db);
@@ -256,8 +260,14 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       console.error('custom api tool availability check failed', (err as Error).message);
     }
   }
+  if (capabilities.toolCalling) {
+    try { workflowTools = await workflowToolAvailability(db); }
+    catch (err) { console.error('native workflow availability check failed', (err as Error).message); }
+    try { developerIntegrationTools = await developerIntegrationToolAvailability(db,userId); }
+    catch (err) { console.error('native integration availability check failed', (err as Error).message); }
+  }
   const tools = capabilities.toolCalling
-    ? [...TASK_TOOLS, ...data.specs, ...customApis.specs].map((t) => t.def)
+    ? [...TASK_TOOLS, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools].map((t) => t.def)
     : undefined;
 
   let recalled = '';

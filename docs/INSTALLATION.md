@@ -77,6 +77,26 @@ LAN, automatic-HTTPS, reverse-proxy, and port changes; progress survives the nor
 If the new origin does not become healthy, the controller restores the previous configuration and
 recreates the previous stack automatically. The one-time setup code expires with that session.
 
+The password field is a genuine reauthentication prompt: enter the current **Admin password**. Josi
+does not save it. The supervisor binds the temporary controller to the host's LAN interface, proves
+its HTTPS health endpoint is ready, and only then opens the one-time LAN URL. If port 8080 is occupied
+or the controller exits, Josi stays on the current page and reports the startup failure instead of
+opening a dead tab. The controller is never routed through Josi's public domain.
+
+Before the changed API becomes ready, Josi treats `APP_URL` as the canonical browser-facing origin
+and atomically repairs `deployment_config`, Workspace public-address metadata, configured OAuth
+callback URLs, and the stored Telegram webhook URL. A changed certificate is no longer reported as
+verified, and a moved Telegram webhook is shown as needing registration rather than falsely showing
+the old registration time. The Connectors page builds new callbacks from that same origin, including
+external-proxy and Cloudflare Tunnel installations.
+
+API readiness is the transaction boundary for a network change. If metadata synchronization, Caddy,
+the external-proxy Compose shape, or another health check fails, the controller restores the previous
+`.env` and Compose overrides and recreates the previous stack. That stack starts with the previous
+`APP_URL` and atomically restores the previous deployment, Workspace, OAuth, and webhook metadata.
+Josi does not contact Telegram during startup: after DNS and TLS work at the new address, use
+**Admin → Telegram → Register the webhook** to commit the remote provider-side change.
+
 Password managers remain available on genuine login, password-confirmation, and password-reset
 fields. Configuration secrets (Vault entries, SMTP, backup credentials, and integration tokens)
 explicitly opt out of login autofill so extensions such as 1Password do not repeatedly open sign-in
@@ -1513,3 +1533,37 @@ permanent removal, take a `full` backup, copy it off the host, verify it by
 restoring it somewhere else, and separately preserve the master key — a backup
 you have never restored is not a backup you know you have. This manual
 deliberately does not provide a one-line destructive wipe command.
+
+### Network maintenance verification and recovery
+
+The protected Network & address page requires the current administrator
+password. Its labelled, masked field uses `current-password` autocomplete;
+failed reauthentication never launches a controller.
+
+The supervisor remains isolated with `--network none`. It uses Docker to discover
+the workstation's private LAN interface, binds the temporary controller to that
+interface on port 8080, and probes HTTPS health inside the controller namespace
+before returning a URL. It does not advertise the application's public domain,
+a container bridge address, or the supervisor's loopback address. Reach it from
+the LAN. The temporary self-signed certificate requires the browser's local
+certificate exception; this does not alter the application's public TLS setup.
+The one-time pairing code is consumed on use, sessions expire after 15 minutes,
+and the controller exits after completion or expiry. Docker removes it on exit.
+
+If it fails to open, check that the appliance has a private LAN route, port 8080
+is free, and the supervisor's UID and supplemental Docker group can access the
+socket. A public reverse proxy or tunnel does not provide access to this separate
+LAN controller. Keep a LAN recovery path available when changing public DNS.
+
+Maintenance preserves the installed image tag and does not pull or upgrade
+images. It snapshots the environment, workspace/proxy overrides, and canonical
+address metadata. It recreates the selected Compose topology, verifies the
+browser-facing health endpoint, then records successful verification. Failed
+application restores the old files and runtime, then the exact previous address,
+OAuth callback, webhook, and verification metadata. Runtime recovery failures
+are reported explicitly; they are never presented as successful rollback.
+OAuth providers may also require their external application redirect allowlists
+to be updated by the operator. An already-registered Telegram webhook is moved only after new-origin health
+passes; failure restores the prior registration and local verification metadata.
+Disconnect Telegram's registered webhook before switching to LAN HTTP, which
+cannot receive Telegram delivery. An unregistered webhook remains unregistered.

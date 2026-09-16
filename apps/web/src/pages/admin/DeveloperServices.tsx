@@ -1,3 +1,5 @@
+import { ObsidianVaults } from '@/components/ObsidianVaults';
+import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 // Who is permitted to connect a developer service.
 //
 // The one thing this page governs is PERMISSION. GitHub, Netlify, Vercel and
@@ -32,6 +34,7 @@ interface ConnectionHealth {
   lastCheckAt: string | null;
   lastCheckOk: boolean | null;
   lastError: string | null;
+  lastUsedAt: string | null;
 }
 
 interface ServiceRow {
@@ -50,12 +53,24 @@ interface AdminView {
   services: ServiceRow[];
 }
 
-const INTEGRATION_CATALOG = [
-  ['Code & deployment', ['GitHub', 'GitLab', 'Cloudflare', 'Netlify', 'Vercel', 'Docker Hub / GHCR', 'Railway / Render', 'npm']],
-  ['Data & monitoring', ['Supabase', 'Neon', 'Sentry']],
-  ['Knowledge', ['Notion', 'Obsidian']],
-  ['Project management', ['Linear', 'Jira']],
+type CatalogStatus = 'native' | 'coming_soon' | 'workspace';
+const INTEGRATION_CATALOG: ReadonlyArray<readonly [string, ReadonlyArray<readonly [string, CatalogStatus]>]> = [
+  ['Code & deployment', [
+    ['GitHub', 'native'], ['GitLab', 'native'], ['Cloudflare', 'native'],
+    ['Netlify', 'native'], ['Vercel', 'native'], ['Docker Hub', 'native'],
+    ['GitHub Container Registry', 'native'], ['Railway', 'native'],
+    ['Render', 'native'], ['npm', 'native'],
+  ]],
+  ['Data & monitoring', [['Supabase', 'native'], ['Neon', 'native'], ['Sentry', 'native']]],
+  ['Knowledge', [['Notion', 'native'], ['Obsidian', 'workspace']]],
+  ['Project management', [['Linear', 'native'], ['Jira', 'native']]],
 ] as const;
+
+const CATALOG_STATUS: Record<CatalogStatus, string> = {
+  native: 'Native',
+  coming_soon: 'Native · coming soon',
+  workspace: 'Native workspace',
+};
 
 const MODE_LABEL: Record<Mode, string> = {
   not_allowed: 'Not allowed',
@@ -72,9 +87,10 @@ export function AdminDeveloperServices() {
       setView(await api.get<AdminView>('/admin/developer-services'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not read developer services');
+      throw err;
     }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load().catch(()=>undefined); }, [load]);
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
@@ -84,7 +100,7 @@ export function AdminDeveloperServices() {
         <a className="underline" href="mailto:roman@socalreceptionist.com">Email us at roman@socalreceptionist.com</a>.
       </div>
       <p className="text-sm text-muted-foreground">
-        Each person connects their own GitHub, Netlify, Vercel or Supabase account from their
+        Each person connects their own available native account from their
         Workspace, with their own token. What you decide here is who is permitted to do that.
         You never enter a credential for anybody, and you cannot see one.
       </p>
@@ -99,16 +115,17 @@ export function AdminDeveloperServices() {
           <section key={category} className="rounded-lg border border-border p-3">
             <h2 className="text-sm font-medium">{category}</h2>
             <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
-              {services.map((service) => (
+              {services.map(([service, status]) => (
                 <li key={service} className="flex items-center justify-between gap-2">
                   <span>{service}</span>
-                  <span className="text-xs">{service === 'Obsidian' ? 'Uses /workspace' : ['GitHub', 'Netlify', 'Vercel', 'Supabase'].includes(service) ? 'Native' : 'Custom API'}</span>
+                  <span className="text-right text-xs">{CATALOG_STATUS[status]}</span>
                 </li>
               ))}
             </ul>
           </section>
         ))}
       </div>
+      <ObsidianVaults />
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
@@ -128,15 +145,9 @@ function ServiceCard(
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
 
-  // The server's state is the truth; a reload after saving must not be masked
-  // by whatever this component was last holding.
-  useEffect(() => {
-    setMode(row.mode);
-    setSelected(row.allowedUserIds);
-    setNote(row.note ?? '');
-  }, [row.mode, row.allowedUserIds, row.note]);
-
+  // Preserve edits in other open provider sections when one section refreshes.
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return people;
@@ -166,7 +177,10 @@ function ServiceCard(
     || note !== (row.note ?? '')
     || selected.join(',') !== row.allowedUserIds.join(',');
 
+  useUnsavedChanges(dirty);
   async function save() {
+    if(busy || !dirty)return;
+    setSaved(false);
     setBusy(true);
     setError('');
     try {
@@ -174,6 +188,7 @@ function ServiceCard(
         mode, note, userIds: mode === 'specific_users' ? selected : [],
       });
       await onSaved();
+      setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That could not be saved');
     } finally {
@@ -265,6 +280,7 @@ function ServiceCard(
         <Button type="button" disabled={busy || !dirty} onClick={() => void save()}>
           {busy ? 'Saving…' : 'Save who may connect'}
         </Button>
+        {saved && !dirty ? <p role="status">{row.label} permissions saved.</p> : null}
       </div>
 
       {/* ---- health, deliberately separate ---- */}
@@ -286,6 +302,7 @@ function ServiceCard(
                   <span className="block text-xs text-muted-foreground">
                     {c.accountLabel ?? 'account not named'}
                     {c.lastCheckAt ? ` · checked ${new Date(c.lastCheckAt).toLocaleString()}` : ''}
+                    {c.lastUsedAt ? ` · used ${new Date(c.lastUsedAt).toLocaleString()}` : ''}
                   </span>
                   {c.lastCheckOk === false && c.lastError ? (
                     <span className="block text-xs text-red-600 dark:text-red-400">{c.lastError}</span>

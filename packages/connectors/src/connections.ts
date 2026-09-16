@@ -100,7 +100,7 @@ export async function upsertConnection(
             [args.ownerUserId, args.provider],
           );
   const existing = existingRows[0];
-  if (args.targetConnectionId && existing?.provider_account_id && args.providerAccountId
+  if (args.targetConnectionId && existing?.provider_account_id
       && existing.provider_account_id !== args.providerAccountId) {
     throw new ConnectorError('the provider returned a different account; use Add another account instead', {
       category: 'provider_error',
@@ -108,7 +108,6 @@ export async function upsertConnection(
   }
 
   const merged = new Set([
-    ...(existing?.granted_scopes ?? '').split(/\s+/).filter(Boolean),
     ...args.tokens.grantedScopes.split(/\s+/).filter(Boolean),
   ]);
   const grantedScopes = [...merged].join(' ');
@@ -160,6 +159,7 @@ export async function upsertConnection(
   // Otherwise the UI sends them through consent and then leaves the switch off,
   // which was the live Calendar-write failure reproduced on 2026-09-04.
   const covered = grantedCapabilities(args.provider, grantedScopes);
+  await db.query(`update connection_capabilities set enabled=false,scopes_granted_at=null where connection_id=$1 and not(capability=any($2::text[]))`,[connection.id,covered]);
   for (const capability of covered) {
     const spec = capabilitySpec(capability);
     const enableAfterExplicitConsent = args.enableRequestedCapabilities === true
@@ -558,7 +558,10 @@ export async function deleteConnection(
   db: Db,
   args: { connectionId: string; actorUserId: string; actor: 'user' | 'super_admin' },
 ): Promise<void> {
-  await db.query(`delete from connections where id = $1`, [args.connectionId]);
+  await db.query(`with removed as (
+    delete from connections where id=$1 returning id,owner_user_id,provider
+  ) delete from vault_items v using removed r where v.owner_user_id=r.owner_user_id
+    and v.service='connector.' || r.provider and v.slot=r.id::text`, [args.connectionId]);
   await appendEvent(db, {
     actorUserId: args.actorUserId,
     actor: args.actor,
