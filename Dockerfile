@@ -104,7 +104,8 @@ WORKDIR /app
 # daemon as root:root 0755, the application runs as `node`, and every backup
 # fails with a permission error on a real installation — which is exactly what
 # the first runtime run found while every unit test passed.
-RUN mkdir -p /data/backups /data/diagnostics /data/versions /data/codex /data/claude \
+RUN mkdir -p /data/backups /data/diagnostics /data/versions /data/codex /data/claude /data/chat-attachments \
+ && chmod 0700 /data/chat-attachments \
  && chown -R node:node /data
 
 # ------------------------------------------------- the ChatGPT subscription path

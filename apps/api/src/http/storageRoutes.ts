@@ -503,6 +503,7 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
                 coalesce(c.may_map_local, false) as may_map_local,
                 coalesce(c.may_map_cloud, false) as may_map_cloud,
                 coalesce(c.may_index, false) as may_index,
+                coalesce(c.coding_enabled, false) as coding_enabled,
                 c.max_files, c.max_bytes,
                 (select count(*)::int from folder_mappings m where m.owner_user_id = u.id) as mappings
          from users u

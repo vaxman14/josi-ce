@@ -47,6 +47,7 @@ import { workflowToolAvailability } from './workflowTools.js';
 import { developerIntegrationToolAvailability } from './developerIntegrationTools.js';
 import { dataToolAvailability, type DataToolAvailability } from './dataTools.js';
 import { executeAssistantTool } from './execute.js';
+import { workspaceToolNames } from './workspaceTools.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
 
 /** Recall over the user's own history, injected by the caller. A function
@@ -127,6 +128,7 @@ function systemPrompt(args: {
     'Be brief and direct: lead with the answer, no filler, no preamble.',
     'Plain text only — no markdown, no asterisks, no headings.',
     'You do work through tasks. Fill every required slot BEFORE anything is attempted; if a required slot is missing, ask for it. Never start work with a hole in it.',
+    'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn and cite its receipt and observation time. Never infer runtime state from prior chat. A status record is not a live provider health probe.',
     'Never invent a name, number, address or time. If you do not know something, ask or say you do not know.',
     `The current date and time is ${new Date().toISOString()}. When a date omits its year, use the next occurrence that is not in the past. Use the person's configured timezone when their profile supplies one; do not ask them to repeat it. Ask only for scheduling details that are genuinely missing, such as duration when no end time or duration was given.`,
     args.templateNames.length
@@ -266,8 +268,10 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     try { developerIntegrationTools = await developerIntegrationToolAvailability(db,userId); }
     catch (err) { console.error('native integration availability check failed', (err as Error).message); }
   }
+  const workspaceNames = capabilities.toolCalling ? await workspaceToolNames(db,userId) : new Set<string>();
+  const availableTaskTools = TASK_TOOLS.filter(t=>!t.def.name.startsWith('workspace_') || workspaceNames.has(t.def.name));
   const tools = capabilities.toolCalling
-    ? [...TASK_TOOLS, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools].map((t) => t.def)
+    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools].map((t) => t.def)
     : undefined;
 
   let recalled = '';

@@ -35,6 +35,21 @@ name: josi-ce
 x-image: &josi_image ${JOSI_REGISTRY:-docker.io/romanvaxman}/${JOSI_IMAGE:-josi-ce}:${JOSI_TAG:-0.1.0}
 
 services:
+  # One-shot ownership repair also covers volumes created by older versions.
+  # Only this dedicated volume is mounted; no secrets, network or host paths.
+  attachment-init:
+    image: *josi_image
+    user: "0:0"
+    command: ["node", "-e", "const f=require('node:fs');const p='/data/chat-attachments';const s=f.lstatSync(p);if(!s.isDirectory()||s.isSymbolicLink())throw Error('Unsafe attachment volume');f.chmodSync(p,0o700);f.chownSync(p,1000,1000)"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - josi_chat_attachments:/data/chat-attachments
+
   # ------------------------------------------------------------------ database
   db:
     image: postgres:16-alpine
@@ -128,6 +143,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      attachment-init:
+        condition: service_completed_successfully
     networks:
       - data
       - edge
@@ -145,6 +162,7 @@ services:
       - josi_diagnostics:/data/diagnostics
       - josi_codex:/data/codex
       - josi_claude:/data/claude
+      - josi_chat_attachments:/data/chat-attachments
       - ${JOSI_VOICE_SOCKET_DIR:-./voice-helper-socket}:/run/josi-voice:ro
       - ${JOSI_STORAGE_SOCKET_DIR:-./storage-helper-socket}:/run/josi-storage:ro
       # Shared folders. Deny-by-default: nothing is mounted here unless an
@@ -187,6 +205,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      attachment-init:
+        condition: service_completed_successfully
     # Not on `edge`: the worker has no business being reachable from the proxy.
     networks:
       - data
@@ -202,6 +222,7 @@ services:
       - josi_diagnostics:/data/diagnostics
       - josi_codex:/data/codex
       - josi_claude:/data/claude
+      - josi_chat_attachments:/data/chat-attachments
       #   - /srv/documents:/data/roots/documents:ro
     security_opt:
       - no-new-privileges:true
@@ -321,6 +342,7 @@ volumes:
   # a deliberate, separate act from removing the database.
   josi_codex:
   josi_claude:
+  josi_chat_attachments:
   caddy_data:
   caddy_config:
   clamav_data:

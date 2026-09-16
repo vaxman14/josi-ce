@@ -5,6 +5,7 @@
 // checking and least-privilege networking against — and because adding it later
 // would mean revisiting all three.
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
+import { cleanupAttachments, probeAttachmentStorage } from '@josi-ce/storage';
 import { processQueue } from './jobs.js';
 import { writeFileSync } from 'node:fs';
 
@@ -38,12 +39,23 @@ function heartbeat(): void {
 
 const WORKER_ID = `worker-${process.pid}`;
 
+let lastCleanup = 0;
+let ticking = false;
 async function tick(): Promise<void> {
+  if (ticking) return;
+  ticking = true;
+  try {
+  const storage = await probeAttachmentStorage();
+  if (!storage.ok) { console.error(`josi-ce worker: ${storage.code}: ${storage.message}`); return; }
+  if (Date.now() - lastCleanup > 3600000) {
+    await cleanupAttachments(db); lastCleanup = Date.now();
+  }
   const outcome = await processQueue(db, WORKER_ID, 5, { masterKey });
   if (outcome.claimed) {
     console.log(`josi-ce worker: ${outcome.done} done, ${outcome.failed} failed`);
   }
   heartbeat();
+  } finally { ticking = false; }
 }
 
 heartbeat();

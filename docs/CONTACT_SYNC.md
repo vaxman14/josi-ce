@@ -118,3 +118,31 @@ Written down here rather than left for somebody to discover:
   to be sent, and no provider has been observed rejecting a stale one.
 - **Rate-limit behaviour is tested, not measured.** Retry and backoff honour
   `Retry-After`; no provider has actually rate-limited this code.
+
+## Automatic enrollment and safety (Test List 7)
+
+Enable **Read contacts** on the exact Google or Microsoft account in Connections.
+The worker discovers that opt-in within two minutes and creates an import-only
+origin. Provider OAuth consent alone does not enable background access. Existing
+origins retain their mode, interval and explicit stop choice. Restart a stopped
+origin from Contacts after reconnecting; restarting defaults to import-only.
+Other current providers are storage/workflow integrations, not contact providers.
+
+The Contacts panel refreshes status every 15 seconds. Sync now, interval and stop
+controls remain available. Bounded runs preserve the page checkpoint and do not
+publish a successful sync timestamp until the final page. Concurrent attempts
+claim the origin before reading. Local edits preserve the previous agreement
+fingerprint: later remote edits or deletes become conflicts, never silent local
+data loss. Provider Retry-After seconds govern transient retries, capped at five
+minutes. Only the exact origin connection's enabled grant and administrator
+policy authorize reading or two-way writing.
+
+A claim abandoned by a crashed worker is recovered after three hours, retaining
+its page checkpoint. This exceeds the bounded default run's timeout and retry
+budget. A new contact and its source link are inserted atomically so a crash
+cannot leave an unlinked duplicate behind. Runtime acceptance for Test List 7
+uses `scripts/acceptance/test-list-7-contact-runtime.mjs` against a disposable
+PostgreSQL 16 database and the production postgres.js adapter. Its provider HTTP
+responses are synthetic; this does not substitute for real Google/Microsoft
+account acceptance. `test-list-7-contact-browser.mjs` exercises desktop/mobile
+sync controls against explicitly synthetic API fixtures.

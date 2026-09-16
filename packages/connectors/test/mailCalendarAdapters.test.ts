@@ -6,7 +6,7 @@
 // error SENTENCE never travels — only a code-shaped identifier.
 import { describe, expect, it } from 'vitest';
 import {
-  CALENDAR_RESULT_CAP, ConnectorError, MAIL_BODY_CAP, MAIL_SEARCH_CAP,
+  ConnectorError, MAIL_BODY_CAP, MAIL_SEARCH_CAP,
   getEvent, listEvents, readMail, searchMail,
 } from '../src/index.js';
 
@@ -193,7 +193,7 @@ describe('google calendar', () => {
     }, { fetchImpl });
     expect(urls[0]).toContain('singleEvents=true');
     expect(urls[0]).toContain('orderBy=startTime');
-    expect(urls[0]).toContain(`maxResults=${CALENDAR_RESULT_CAP}`);
+    expect(urls[0]).toContain('maxResults=250');
     expect(events[0]).toMatchObject({
       sourceId: 'ev1', title: 'standup', allDay: false, organizer: 'boss@example.test',
     });
@@ -259,4 +259,20 @@ describe('graph calendar', () => {
       .rejects.toBeInstanceOf(ConnectorError);
     expect(urls).toHaveLength(0);
   });
+});
+
+describe('complete calendar windows',()=>{
+ it('follows Google pages and retains recurrence instance IDs',async()=>{
+  let calls=0;const {fetchImpl,urls}=fetchStub(()=>({body:++calls===1?{items:[{id:'series_20260308',start:{dateTime:'2026-03-08T09:00:00Z'}}],nextPageToken:'next'}:{items:[{id:'series_20260309',start:{dateTime:'2026-03-09T09:00:00Z'}}]}}));
+  const events=await listEvents('google',{accessToken:'tok',calendarId:'chosen',timeMin:'a',timeMax:'b',limit:1000},{fetchImpl});expect(events.map(e=>e.sourceId)).toEqual(['series_20260308','series_20260309']);expect(urls[1]).toContain('pageToken=next');expect(urls.every(u=>u.includes('/calendars/chosen/'))).toBe(true);
+ });
+ it('refuses busy windows instead of returning a misleading partial calendar',async()=>{
+  const {fetchImpl}=fetchStub(()=>({body:{items:[{id:'a'}],nextPageToken:'more'}}));await expect(listEvents('google',{accessToken:'tok',timeMin:'a',timeMax:'b',limit:1},{fetchImpl})).rejects.toThrow('shorter range');
+ });
+ it('marks Graph UTC instants and keeps all-day dates civil',async()=>{
+  const {fetchImpl}=fetchStub(()=>({body:{value:[{id:'timed',start:{dateTime:'2026-03-08T10:00:00.0000000'},end:{dateTime:'2026-03-08T11:00:00.0000000'}},{id:'all-day',isAllDay:true,start:{dateTime:'2026-03-08T00:00:00.0000000'},end:{dateTime:'2026-03-09T00:00:00.0000000'}}]}}));const rows=await listEvents('microsoft',{accessToken:'tok',timeMin:'a',timeMax:'b'},{fetchImpl});expect(rows[0].start).toBe('2026-03-08T10:00:00.0000000Z');expect(rows[1]).toMatchObject({start:'2026-03-08',end:'2026-03-09',allDay:true});
+ });
+ it('does not forward authorization to a hostile Graph pagination host',async()=>{
+  const {fetchImpl,urls}=fetchStub(()=>({body:{value:[],'@odata.nextLink':'https://attacker.test/page'}}));await expect(listEvents('microsoft',{accessToken:'tok',timeMin:'a',timeMax:'b'},{fetchImpl})).rejects.toThrow();expect(urls).toHaveLength(1);
+ });
 });

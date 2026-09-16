@@ -14,6 +14,21 @@
 name: josi-ce
 
 services:
+  # One-shot ownership repair also covers volumes created by older versions.
+  # Only this dedicated volume is mounted; no secrets, network or host paths.
+  attachment-init:
+    image: ${JOSI_IMAGE:-josi-ce}:${JOSI_TAG:-local}
+    user: "0:0"
+    command: ["node", "-e", "const f=require('node:fs');const p='/data/chat-attachments';const s=f.lstatSync(p);if(!s.isDirectory()||s.isSymbolicLink())throw Error('Unsafe attachment volume');f.chmodSync(p,0o700);f.chownSync(p,1000,1000)"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - josi_chat_attachments:/data/chat-attachments
+
   # ------------------------------------------------------------------ database
   db:
     image: postgres:16-alpine
@@ -105,6 +120,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      attachment-init:
+        condition: service_completed_successfully
     networks:
       - data
       - edge
@@ -176,6 +193,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      attachment-init:
         condition: service_completed_successfully
     # Not on `edge`: the worker has no business being reachable from the proxy.
     networks:

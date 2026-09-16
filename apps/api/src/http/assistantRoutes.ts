@@ -8,10 +8,8 @@
 //     confirm a colleague has one.
 //   * The super admin gets nothing here. Not a thread, not a task, not a
 //     message. Their surface is `/api/admin/assistant`, which returns counts.
-import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { extname, join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
@@ -29,7 +27,8 @@ import type { LoadOptions } from '@josi-ce/core';
 import { loadMasterKey } from '@josi-ce/core';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import {
-  IMAGE_MEDIA_TYPES, extractRichSegments, isExtractableExtension, looksLikeCredentialFile,
+  IMAGE_MEDIA_TYPES, extractRichSegments, AttachmentError, attachmentFailure, attachmentRoot,
+  validateAttachment, writeAttachment, readAttachment, removeAttachment, CHAT_FILE_BYTES,
 } from '@josi-ce/storage';
 import { asyncRoute, param } from './async.js';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
@@ -77,14 +76,15 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
   r.use(requireAuth);
-  const uploadDir = process.env.JOSI_UPLOAD_DIR ?? (process.env.NODE_ENV === 'test' ? join(tmpdir(), 'josi-chat-attachments') : '/data/chat-attachments');
-  const receive = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
+  const uploadDir = attachmentRoot();
+  const receive = multer({ storage: multer.memoryStorage(), limits: { fileSize: CHAT_FILE_BYTES, files: 1, fields: 0, parts: 2 } });
 
   const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
     asyncRoute(async (req: Request, res: Response) => {
       try {
         return await fn(req, res);
       } catch (err: unknown) {
+        if (err instanceof AttachmentError) return res.status(err.status).json({ error: err.message, code: err.code });
         if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
         throw err;
       }
@@ -129,54 +129,81 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       res.json({ threads: await listThreadsFor(db, { ownerUserId: req.user!.id }) })),
   );
 
-  r.post('/threads/:id/attachments', requireOwnership({ db }, { type: 'thread', need: 'write' }), receive.single('file'),
+  r.post('/threads/:id/attachments', requireOwnership({ db }, { type: 'thread', need: 'write' }),
+    // Upload ownership is narrower than thread sharing: sharing a conversation
+    // never grants permission to spend another person's storage quota.
     handle(async (req, res) => {
+      const thread = await getThread(db, param(req, 'id'));
+      if (!thread || thread.owner_user_id !== req.user!.id) throw new RouteError(404, 'not found');
+      await new Promise<void>((resolve, reject) => receive.single('file')(req, res, error => error ? reject(error) : resolve())).catch(error => {
+        if (error instanceof multer.MulterError) throw new AttachmentError(413, error.code,
+          error.code === 'LIMIT_FILE_SIZE' ? 'Choose a file no larger than 20 MB.' : 'Upload one file at a time without additional fields.');
+        throw new AttachmentError(400, 'invalid_upload', 'The upload could not be read. Choose a file and retry.');
+      });
       if (!req.file) throw new RouteError(400, 'choose a file first');
-      const filename = req.file.originalname.slice(0, 240);
-      if (looksLikeCredentialFile(filename, req.file.mimetype.startsWith('text/') ? req.file.buffer.toString('utf8') : '')) {
-        throw new RouteError(400, 'That looks like a password, key, token, or recovery-code file. Josi will not upload it.');
+      let originalname = req.file.originalname;
+      // Multipart headers conventionally arrive as Latin-1; recover UTF-8
+      // names without accepting invalid byte sequences.
+      try { originalname = new TextDecoder('utf-8', {fatal:true}).decode(Buffer.from(originalname,'latin1')); } catch { /* retain the supplied name */ }
+      const { filename, contentType, extension } = validateAttachment(originalname, req.file.mimetype, req.file.buffer);
+      const id = randomUUID();
+      // Reserve counts/bytes in one database statement before writing bytes.
+      // Database triggers serialize concurrent upload/delete quota changes.
+      try {
+        await db.query(`insert into chat_attachments
+          (id,owner_user_id,thread_id,filename,content_type,byte_size,storage_path,storage_state)
+          values($1,$2,$3,$4,$5,$6,$7,'pending')`,
+          [id,req.user!.id,thread.id,filename,contentType,req.file.size,join(uploadDir,id)]);
+      } catch (error) {
+        const message = (error as Error).message;
+        if (message.includes('attachment_thread_quota')) throw new AttachmentError(413, 'thread_quota', 'This conversation has reached its 100-file limit. Delete an unused attachment or start another conversation.');
+        if (message.includes('attachment_user_quota')) throw new AttachmentError(413, 'user_quota', 'Your attachments have reached the 200 MB or 1,000-file limit. Delete unused attachments.');
+        if (message.includes('attachment_tenant_quota')) throw new AttachmentError(413, 'tenant_quota', 'Installation attachments have reached the 2 GB or 10,000-file limit. Ask the administrator to review storage retention.');
+        throw error;
       }
-      const extension = extname(filename).replace(/^\./, '').toLowerCase();
-      if (!isExtractableExtension(extension)) {
-        throw new RouteError(400, 'Josi cannot read that file type yet. Choose an image, PDF, Office document, or text file.');
+      try {
+        await writeAttachment(id, req.file.buffer, uploadDir);
+        const segments = await extractRichSegments({ extension, bytes: req.file.buffer }).catch(() => null);
+        await db.query(`update chat_attachments set storage_state='ready',extracted_text=$2 where id=$1`,
+          [id,segments?.map(s => s.content).join('\n').slice(0,100_000) || null]);
+      } catch (error) {
+        await db.query(`delete from chat_attachments where id=$1 and storage_state='pending'`, [id]);
+        await removeAttachment(id, uploadDir).catch(() => undefined);
+        throw attachmentFailure(error);
       }
-      const [usage] = await db.query<{ bytes: number }>(
-        `select coalesce(sum(byte_size), 0)::bigint as bytes from chat_attachments where owner_user_id = $1`,
-        [req.user!.id],
-      );
-      if (Number(usage?.bytes ?? 0) + req.file.size > 200 * 1024 * 1024) {
-        throw new RouteError(413, 'Your chat attachments have reached the 200 MB limit. Remove old conversations before uploading more.');
-      }
-      // Images deliberately get `ocrImages` left at its default (false) here:
-      // this is the chat composer's attach button, not the document-ingestion
-      // pipeline. An attached photo is not run through OCR and stamped into
-      // `extracted_text` as if recognized text were a description of the
-      // picture — that was the bug (a portrait producing "AW BR Ge / SADIE /
-      // HAGA"). `extracted_text` stays null for an image; the /talk route
-      // decides at question time whether the model can actually see it.
-      const segments = await extractRichSegments({ extension, bytes: req.file.buffer }).catch(() => null);
-      const id = randomUUID(); const storagePath = join(uploadDir, id);
-      mkdirSync(uploadDir, { recursive: true, mode: 0o700 });
-      await import('node:fs/promises').then((fs) => fs.writeFile(storagePath, req.file!.buffer, { mode: 0o600 }));
-      await db.query(
-        `insert into chat_attachments (id, owner_user_id, thread_id, filename, content_type, byte_size, storage_path, extracted_text)
-         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [id, req.user!.id, param(req, 'id'), filename, req.file.mimetype || 'application/octet-stream', req.file.size,
-          storagePath, segments?.map((s) => s.content).join('\n').slice(0, 100_000) || null],
-      );
-      return res.status(201).json({ attachment: { id, filename, contentType: req.file.mimetype, byteSize: req.file.size } });
+      await appendEvent(db,{actorUserId:req.user!.id,actor:'user',kind:'attachment.uploaded',subjectType:'thread',subjectId:thread.id,payload:{attachmentId:id,bytes:req.file.size}});
+      return res.status(201).json({ attachment: { id, filename, contentType, byteSize: req.file.size } });
     }));
 
   r.get('/attachments/:attachmentId', handle(async (req, res) => {
-    const [attachment] = await db.query<{ filename: string; content_type: string; storage_path: string }>(
-      `select filename, content_type, storage_path from chat_attachments where id = $1 and owner_user_id = $2`,
-      [param(req, 'attachmentId'), req.user!.id],
-    );
-    if (!attachment) throw new RouteError(404, 'not found');
+    const [attachment] = await db.query<{ id:string; filename:string; content_type:string }>(
+      `select a.id,a.filename,a.content_type from chat_attachments a join threads t on t.id=a.thread_id
+       where a.id=$1 and a.owner_user_id=$2 and t.owner_user_id=$2 and a.storage_state='ready'`,
+      [param(req,'attachmentId'),req.user!.id]);
+    if (!attachment) throw new RouteError(404,'not found');
+    const bytes = await readAttachment(attachment.id,uploadDir);
     res.type(attachment.content_type);
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`);
-    return res.sendFile(attachment.storage_path, { dotfiles: 'deny' });
+    res.setHeader('Cache-Control','private, no-store');
+    res.setHeader('X-Content-Type-Options','nosniff');
+    res.setHeader('Content-Security-Policy',"sandbox; default-src 'none'");
+    res.setHeader('Content-Disposition',`attachment; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`);
+    return res.send(bytes);
+  }));
+
+  r.delete('/attachments/:attachmentId', handle(async (req,res) => {
+    const [attachment] = await db.query<{ id:string; referenced:boolean }>(
+      `select a.id,(a.referenced_at is not null or exists(select 1 from messages m
+        where m.thread_id=a.thread_id and m.meta->'attachments' @> jsonb_build_array(jsonb_build_object('id',a.id::text)))) as referenced
+       from chat_attachments a join threads t on t.id=a.thread_id
+       where a.id=$1 and a.owner_user_id=$2 and t.owner_user_id=$2`,[param(req,'attachmentId'),req.user!.id]);
+    if (!attachment) throw new RouteError(404,'not found');
+    if (attachment.referenced) throw new RouteError(409,'This attachment is referenced by a conversation and is retained with it.');
+    // Mark unavailable atomically with reference checking before removing bytes.
+    const deleted = await db.query(`delete from chat_attachments where id=$1 and referenced_at is null returning id`,[attachment.id]);
+    if (!deleted.length) throw new RouteError(409,'This attachment is now referenced by a conversation.');
+    await removeAttachment(attachment.id,uploadDir);
+    await appendEvent(db,{actorUserId:req.user!.id,actor:'user',kind:'attachment.deleted',payload:{attachmentId:attachment.id}});
+    return res.json({deleted:true});
   }));
 
   r.post(
@@ -212,8 +239,10 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     handle(async (req, res) => {
       const threadId = param(req, 'id');
       const inbound = str(req.body?.message, 8000);
+      if (Array.isArray(req.body?.attachmentIds) && req.body.attachmentIds.length > 10) throw new AttachmentError(413,'attachment_count','Attach no more than 10 files per message.');
       const attachmentIds = Array.isArray(req.body?.attachmentIds)
         ? req.body.attachmentIds.map((id: unknown) => str(id, 80)).filter(Boolean).slice(0, 10) : [];
+      if (attachmentIds.some((id:string) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) || new Set(attachmentIds).size !== attachmentIds.length) throw new RouteError(400,'Choose valid, distinct attachments.');
       if (!inbound && !attachmentIds.length) throw new RouteError(400, 'say something or attach a file');
 
       const thread = await getThread(db, threadId);
@@ -246,10 +275,16 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         id: string; filename: string; content_type: string; extracted_text: string | null; storage_path: string;
       }>(
         `select id, filename, content_type, extracted_text, storage_path from chat_attachments
-         where id = any($1::uuid[]) and thread_id = $2 and owner_user_id = $3`,
+         where id = any($1::uuid[]) and thread_id = $2 and owner_user_id = $3 and storage_state = 'ready'`,
         [attachmentIds, threadId, thread.owner_user_id],
       ) : [];
       if (attachments.length !== attachmentIds.length) throw new RouteError(404, 'one of those attachments is not available');
+
+      if (attachments.length) {
+        const pinned = await db.query(`update chat_attachments set referenced_at=coalesce(referenced_at,now())
+          where id=any($1::uuid[]) and thread_id=$2 and owner_user_id=$3 and storage_state='ready' returning id`, [attachmentIds,threadId,thread.owner_user_id]);
+        if (pinned.length !== attachments.length) throw new RouteError(404,'one of those attachments is no longer available');
+      }
 
       // Whether THIS turn's model can actually be shown a picture. Read once,
       // up front, so every attachment this turn is judged against the same
@@ -275,17 +310,16 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       // (built inside `runAssistantTurn`) tells the model to say so honestly.
       let images: Array<{ mediaType: string; base64: string }> | undefined;
       if (imageAttachments.length && hasVision) {
-        const fs = await import('node:fs/promises');
         images = [];
         for (const a of imageAttachments) {
           try {
-            const bytes = await fs.readFile(a.storage_path);
+            const bytes = await readAttachment(a.id, uploadDir);
             images.push({ mediaType: IMAGE_MEDIA_TYPES[extensionOf(a.filename)], base64: bytes.toString('base64') });
           } catch (err) {
             // A file that vanished from disk between upload and this turn is
             // an infrastructure fault, not a reason to fail the whole turn —
             // it is simply not attached to the model call.
-            console.error('could not read chat attachment bytes', (err as Error).message);
+            throw attachmentFailure(err);
           }
         }
       }

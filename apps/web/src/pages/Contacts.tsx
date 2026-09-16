@@ -11,7 +11,7 @@ export function Contacts() {
   const load = () =>
     api.get<{ contacts: Contact[] }>('/assistant/contacts').then((r) => setContacts(r.contacts)).catch(() => undefined);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 15000); return () => window.clearInterval(timer); }, []);
 
   async function create(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -94,6 +94,7 @@ export function Contacts() {
 
 interface Origin {
   id: string;
+  connectionId: string;
   provider: 'google' | 'microsoft';
   sourceAccount: string;
   syncMode: 'import_only' | 'two_way';
@@ -129,9 +130,9 @@ function ContactSyncPanel({ onChanged }: { onChanged: () => void }) {
   const load = () =>
     api.get<{ origins: Origin[] }>('/contacts/sync')
       .then((r) => setOrigins(r.origins))
-      .catch(() => setOrigins([]));
+      .catch(() => setError('Could not load contact synchronization status. Try again.'));
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 15000); return () => window.clearInterval(timer); }, []);
 
   async function act(path: string, id: string) {
     setBusy(id);
@@ -148,7 +149,7 @@ function ContactSyncPanel({ onChanged }: { onChanged: () => void }) {
     }
   }
 
-  if (!origins || origins.length === 0) return null;
+  if (!origins || origins.length === 0) return <Card><p className="text-sm">Contact sync starts automatically after you enable contact read access in Connections. Imported contacts stay when you stop syncing.</p>{error ? <ErrorNote>{error}</ErrorNote> : null}</Card>;
 
   return (
     <Card>
@@ -204,6 +205,7 @@ function ContactSyncPanel({ onChanged }: { onChanged: () => void }) {
             ) : (
               <p className="mt-1 text-xs text-muted-foreground">
                 {plain('contact_sync_status', 'disconnected')}. {plainDetail('contact_sync_status', 'disconnected')}
+                <Button type="button" disabled={!!busy} onClick={() => { setBusy(o.id); void api.put(`/contacts/sync/${o.connectionId}`, { mode: 'import_only' }).then(load).catch((err) => setError(err instanceof Error ? err.message : 'Reconnect this account in Connections.')).finally(() => setBusy('')); }}>Restart import sync</Button>
               </p>
             )}
           </li>

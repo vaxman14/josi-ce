@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { WorkspaceCodingAdmin } from '@/components/WorkspaceCodingAdmin';
 import { api } from '@/lib/api';
 import { useResource } from '@/lib/useResource';
 import { Button, Card, CollapsibleCard, ErrorNote, Input } from '@/components/ui';
@@ -62,6 +63,7 @@ export function AdminStorage() {
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
       <h1 className="text-xl font-semibold tracking-tight">Storage</h1>
+      <WorkspaceCodingAdmin />
       {resource.state === 'loading' ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
       {resource.state === 'error' || resource.state === 'timeout' ? (
         <Card><ErrorNote>{resource.message}</ErrorNote><Button className="mt-3" onClick={resource.reload}>Try again</Button></Card>

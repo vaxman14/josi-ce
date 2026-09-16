@@ -44,7 +44,7 @@
  * misquote — the mail/calendar/contacts family (item 17) plus the document
  * tools (search_documents/list_documents, storage-providers-phase2). */
 export const DATA_CLAIM_TOOLS = new Set([
-  'search_documents', 'list_documents',
+  'search_documents', 'list_documents', 'get_provider_status',
   'search_email', 'read_email',
   'query_calendar', 'get_event',
   'search_contacts',
@@ -388,6 +388,18 @@ export function checkNarratedSearchWithoutTool(
   const reasons: string[] = [];
   if (!reply) return { fabricated: false, reasons };
 
+  // Runtime connectivity is volatile. File search receipts and old chat cannot
+  // substantiate a current connection/indexing assertion.
+  const statusClaim = /\b(?:(?:your|the)\s+)?(?:google drive|onedrive|dropbox|box|nextcloud|storage|nas|local workspace|provider|account|folders?)\b[^.!?\n]{0,60}\b(?:is|are|has|have)\s+(?:currently\s+)?(?:connected|disconnected|indexed|synced|available|healthy|offline|online)\b/i.test(reply);
+  if (statusClaim && !HONEST_SEARCH_MARKERS.some((p) => p.test(reply))) {
+    const current = receipts.find((r) => r.tool === 'get_provider_status' &&
+      r.result && typeof r.result === 'object' && (r.result as {ok?: boolean}).ok);
+    const receipt = current ? (current.result as {receipt?: string}).receipt : undefined;
+    if (!receipt || !reply.includes(receipt)) {
+      return { fabricated: true, reasons: ['runtime provider/storage claim requires a cited current get_provider_status receipt'] };
+    }
+  }
+
   // Any attempted data-tool call this turn — success or failure — means a
   // real tool call exists for checkDataClaims to reason about; this function
   // only covers the case where NOTHING was called at all.
@@ -411,7 +423,8 @@ export function checkNarratedSearchWithoutTool(
  * or admit plainly that nothing was searched yet. */
 export const NARRATED_SEARCH_GUARD_REPROMPT =
   '[system integrity check] Your previous reply described running a search or lookup and reported '
-  + 'specific results, but you did not call any tool this turn — nothing was actually searched. Either '
+  + 'specific results, but you did not call any tool this turn — nothing was actually searched. '
+  + 'Runtime connectivity/indexing claims require get_provider_status this turn and an explicit citation of its receipt UUID. Either '
   + 'call the appropriate tool NOW to really search, or rewrite your reply to say honestly that you have '
   + 'not searched yet. Never report file names, passages, counts, or other specifics from a search that '
   + 'did not happen.';

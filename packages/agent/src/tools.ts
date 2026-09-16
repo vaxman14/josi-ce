@@ -4,6 +4,7 @@
 // engine's rule and it is the one that keeps the assistant honest: a model with
 // a `book_appointment` tool and no calendar will promise a booking, because the
 // tool's existence is the promise. Absent tool, absent promise.
+import { WORKSPACE_TOOLS } from './workspaceTools.js';
 import type { ToolDefinition } from '@josi-ce/llm';
 import { CUSTOM_API_TOOLS } from './customApiTools.js';
 import { DATA_TOOLS } from './dataTools.js';
@@ -25,6 +26,8 @@ export interface ToolSpec {
 }
 
 export const TASK_TOOLS: ToolSpec[] = [
+  ...WORKSPACE_TOOLS,
+  { def: { name: 'get_provider_status', description: 'Read current owner-scoped connection, capability, mapped storage, index/queue and contact-sync metadata. Use for connectivity or available-file claims. Cite the returned receipt and observation time; connection status is not proof of provider reachability or indexed files.', parameters: { type: 'object', properties: {}, additionalProperties: false } }, actionClass: null },
   {
     def: {
       name: 'create_task',
@@ -105,6 +108,7 @@ export const TASK_TOOLS: ToolSpec[] = [
         type: 'object',
         properties: {
           message: { type: 'string', description: 'What to say when the reminder fires.' },
+          calendar_event_id: { type: 'string', description: 'For a calendar-related reminder, copy the exact event_id from query_calendar. The original calendar/account source is verified and retained.' },
           in_minutes: { type: 'number', description: 'Deliver this many minutes from now. Use for "in 5 minutes".' },
           due_at: { type: 'string', description: 'Exact delivery time, ISO 8601 with timezone. Use for "at 3pm".' },
         },
@@ -171,7 +175,7 @@ export const TASK_TOOLS: ToolSpec[] = [
   },
   {
     def: { name: 'draft_calendar_event', description: 'Prepare a calendar event creation or edit for the user to approve.', parameters: {
-      type: 'object', properties: { event_id: { type: 'string' }, title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' }, attendees: { type: 'array', items: { type: 'string' } } },
+      type: 'object', properties: { source_id: { type: 'string', description: 'Exact source_id from a calendar receipt; required when more than one calendar is selected.' }, event_id: { type: 'string', description: 'Exact event_id receipt for an edit.' }, title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' }, attendees: { type: 'array', items: { type: 'string' } } },
       required: ['title', 'start', 'end'],
     } }, actionClass: 'calendar_write', requiresCapability: 'calendar_write',
   },

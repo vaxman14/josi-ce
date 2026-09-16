@@ -21,8 +21,9 @@ export class ConnectorError extends Error {
   /** The grant is gone — reconnecting fixes it, retrying does not. */
   revoked = false;
   status?: number;
+  retryAfterSeconds?: number;
 
-  constructor(message: string, init: Partial<Pick<ConnectorError, 'category' | 'revoked' | 'status'>> = {}) {
+  constructor(message: string, init: Partial<Pick<ConnectorError, 'category' | 'revoked' | 'status' | 'retryAfterSeconds'>> = {}) {
     super(message);
     Object.assign(this, init);
   }

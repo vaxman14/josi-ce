@@ -109,3 +109,8 @@ Consequential actions still require their own local confirmation.
 
 Native workflow discovery, exact-input approvals, callbacks, and Obsidian access
 are covered in [Integrations](DEVELOPER_SERVICE_CONNECTIONS.md).
+
+## Persistent chat attachments
+
+See [Chat attachments](CHAT_ATTACHMENTS.md) for supported formats, storage limits,
+privacy, retention, installation/upgrade volume provisioning and troubleshooting.

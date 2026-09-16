@@ -14,6 +14,7 @@ import { Conversations } from '@/pages/Conversations';
 import { Contacts } from '@/pages/Contacts';
 import { Connections } from '@/pages/Connections';
 import { Workflows } from '@/pages/Workflows';
+import { LocalWorkspace } from '@/pages/LocalWorkspace';
 import { Calendar } from '@/pages/Calendar';
 import { Vault } from '@/pages/Vault';
 import { Usage } from '@/pages/Usage';
@@ -150,6 +151,7 @@ export function App() {
         <Route path="connections" element={<Connections />} />
         <Route path="workflows" element={<Workflows />} />
         <Route path="calendar" element={<Calendar />} />
+        <Route path="workspace" element={<LocalWorkspace />} />
         <Route path="vault" element={<Vault />} />
         <Route path="usage" element={<Usage />} />
         <Route path="personalization" element={<Personalization />} />

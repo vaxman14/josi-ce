@@ -108,10 +108,11 @@ export const DATA_TOOLS: ToolSpec[] = [
       description:
         "Use only when the user explicitly asks about their calendar/schedule or clearly continues such a request. Never use for ordinary conversation or a bare word such as 'test'. List events on the user's connected calendar in a time range. Read-only. Defaults to the "
         + 'next 7 days when no range is given; use ISO 8601 times for start and end. Good for '
-        + '"what\'s my day/week". Use get_event with an event_id for full details.',
+        + '"what\'s my day/week". Honor Calendar-page selections. Keep provider, account, calendar and event_id in citations and all follow-up actions or reminders. Use get_event with an event_id for full details.',
       parameters: {
         type: 'object',
         properties: {
+          source_id: { type: 'string', description: 'Exact calendar source ID from a prior receipt. Otherwise use only calendars selected on the Calendar page.' },
           start: { type: 'string', description: 'Range start, ISO 8601. Defaults to now.' },
           end: { type: 'string', description: 'Range end, ISO 8601. Defaults to 7 days after start.' },
         },
@@ -253,6 +254,7 @@ async function openSessions(
   userId: string,
   family: Family,
   only?: DataProvider,
+  onlyConnections?: string[],
 ): Promise<{ sessions: ProviderSession[]; refusal: string }> {
   const verdict = await familyAccess(db, userId, family);
   const wanted = only ? verdict.allowed.filter((p) => p === only) : verdict.allowed;
@@ -262,6 +264,7 @@ async function openSessions(
     const client = await loadClient(db, key, provider);
     const capability = FAMILY_CAPABILITY[family][provider];
     for (const connection of await connectionsWithCapability(db, { ownerUserId: userId, capability })) {
+      if (onlyConnections && !onlyConnections.includes(connection.id)) continue;
       const accessToken = await accessTokenFor(
         db, key, { connection, client }, { fetchImpl: access.fetchImpl },
       );
@@ -277,7 +280,6 @@ async function openSessions(
 /** Ids handed to the model carry the provider, so a later read goes back to
  * the right account without guessing. */
 const taggedId = (provider: DataProvider, id: string) => `${provider}:${id}`;
-const taggedEventId = (provider: DataProvider, connectionId: string, id: string) => `${provider}:${connectionId}:${id}`;
 
 function untagId(tagged: string): { provider: DataProvider; connectionId: string | null; id: string } | null {
   const current = /^(google|microsoft):([0-9a-f-]{36}):(.+)$/.exec(tagged);
@@ -286,18 +288,20 @@ function untagId(tagged: string): { provider: DataProvider; connectionId: string
   return legacy ? { provider: legacy[1] as DataProvider, connectionId: null, id: legacy[2] } : null;
 }
 
-function eventView(provider: DataProvider, connectionId: string, event: RemoteEvent) {
+interface CalendarSource { id:string; connection_id:string; provider_calendar_id:string; name:string; provider:DataProvider; account:string|null }
+export async function selectedCalendars(db:Db,userId:string,sourceId?:string):Promise<CalendarSource[]> {
+  return db.query<CalendarSource>(`select s.id,s.connection_id,s.provider_calendar_id,s.name,c.provider,c.account_email account
+    from calendar_sources s join connections c on c.id=s.connection_id
+    where s.owner_user_id=$1 and c.owner_user_id=$1 and ($2::text is null and s.selected=true or s.id::text=$2) order by s.id`,[userId,sourceId??null]);
+}
+function eventView(source:CalendarSource,event:RemoteEvent) {
   return {
-    event_id: taggedEventId(provider, connectionId, event.sourceId),
-    title: event.title,
-    start: event.start,
-    end: event.end,
-    all_day: event.allDay,
-    location: event.location,
-    organizer: event.organizer,
-    attendees: event.attendees,
-    status: event.status,
-    ...(event.description !== undefined ? { description: event.description } : {}),
+    event_id: `calendar:${source.id}:${Buffer.from(event.sourceId).toString('base64url')}`,
+    source_id:source.id, provider:source.provider, account_id:source.connection_id, account:source.account,
+    calendar_id:source.provider_calendar_id, calendar_name:source.name, provider_event_id:event.sourceId,
+    title:event.title, start:event.start, end:event.end, all_day:event.allDay, location:event.location,
+    organizer:event.organizer, attendees:event.attendees, status:event.status,
+    ...(event.description !== undefined ? {description:event.description}:{}),
   };
 }
 
@@ -367,20 +371,21 @@ export async function executeDataTool(
       if (!window) {
         return { ok: false, error: 'bad_time', message: 'Give start and end as ISO 8601 times, with start before end and a range of at most 92 days.' };
       }
-      const { sessions, refusal } = await openSessions(db, args.access, args.userId, 'calendar');
+      const sources = await selectedCalendars(db,args.userId,typeof input.source_id === 'string' ? input.source_id : undefined);
+      if (!sources.length) return NO_ACCESS('No selected calendar is available. Open Calendar, refresh calendars, and select the exact calendar to query.');
+      const { sessions, refusal } = await openSessions(db, args.access, args.userId, 'calendar',undefined,sources.map(s=>s.connection_id));
       if (!sessions.length) return NO_ACCESS(refusal);
       const events = [];
-      for (const s of sessions) {
-        const found = await listEvents(
-          s.provider,
-          { accessToken: s.accessToken, timeMin: window.start, timeMax: window.end },
-          { fetchImpl: args.access.fetchImpl },
-        );
-        events.push(...found.map((e) => eventView(s.provider, s.connection.id, e)));
+      for (const source of sources) {
+        const s = sessions.find(session=>session.connection.id===source.connection_id);
+        if(!s) return NO_ACCESS(`Selected calendar ${source.name} is unavailable or permission was lost. Reconnect its account; no other calendar was substituted.`);
+        const found = await listEvents(s.provider, {accessToken:s.accessToken, calendarId:source.provider_calendar_id,timeMin:window.start,timeMax:window.end,limit:1000},{fetchImpl:args.access.fetchImpl});
+        events.push(...found.map(e=>eventView(source,e)));
       }
       events.sort((a, b) => String(a.start ?? '').localeCompare(String(b.start ?? '')));
       return {
         ok: true,
+        sources: sources.map(s=>({source_id:s.id,provider:s.provider,account_id:s.connection_id,account:s.account,calendar_id:s.provider_calendar_id,calendar_name:s.name})),
         range: { start: window.start, end: window.end },
         events,
         ...(events.length ? {} : { message: 'The calendar has no events in that range.' }),
@@ -388,15 +393,16 @@ export async function executeDataTool(
     }
 
     case 'get_event': {
-      const ref = untagId(String(input.event_id ?? ''));
-      if (!ref) return { ok: false, error: 'not_found', message: 'There is no event with that id. Use an event_id from query_calendar.' };
-      const { sessions, refusal } = await openSessions(db, args.access, args.userId, 'calendar', ref.provider);
-      if (!sessions.length) return NO_ACCESS(refusal);
-      const s = ref.connectionId ? sessions.find((candidate) => candidate.connection.id === ref.connectionId) : sessions[0];
-      if (!s) return { ok: false, error: 'not_found', message: 'There is no event with that id.' };
-      const event = await getEvent(s.provider, { accessToken: s.accessToken, id: ref.id }, { fetchImpl: args.access.fetchImpl });
-      if (!event) return { ok: false, error: 'not_found', message: 'There is no event with that id.' };
-      return { ok: true, event: eventView(s.provider, s.connection.id, event) };
+      const ref = /^calendar:([0-9a-f-]{36}):([A-Za-z0-9_-]+)$/.exec(String(input.event_id ?? ''));
+      if (!ref) return {ok:false,error:'not_found',message:'Use an exact event_id from a fresh query_calendar receipt; older IDs do not identify a calendar safely.'};
+      const [source] = await selectedCalendars(db,args.userId,ref[1]);
+      if(!source) return NO_ACCESS('The selected calendar is unavailable. Refresh calendars; no default calendar was substituted.');
+      const {sessions,refusal}=await openSessions(db,args.access,args.userId,'calendar',source.provider,[source.connection_id]);
+      const session=sessions.find(s=>s.connection.id===source.connection_id);
+      if(!session) return NO_ACCESS(refusal);
+      const event=await getEvent(source.provider,{accessToken:session.accessToken,calendarId:source.provider_calendar_id,id:Buffer.from(ref[2],'base64url').toString('utf8')},{fetchImpl:args.access.fetchImpl});
+      if(!event) return {ok:false,error:'not_found',message:'The event is unavailable in its original calendar.'};
+      return {ok:true,event:eventView(source,event)};
     }
 
     default:
@@ -413,6 +419,7 @@ function calendarWindow(input: Record<string, unknown>): { start: string; end: s
     const d = new Date(s);
     return Number.isNaN(d.getTime()) ? null : d;
   };
+  if ((input.start !== undefined && !parse(input.start)) || (input.end !== undefined && !parse(input.end))) return null;
   const start = parse(input.start) ?? new Date();
   const end = parse(input.end) ?? new Date(start.getTime() + 7 * 86_400_000);
   if (end.getTime() <= start.getTime()) return null;

@@ -17,7 +17,10 @@ import {
   type Db,
 } from '@josi-ce/core';
 import { citationLabel, folderSyncHealthFor, searchDocuments, type FolderSyncHealth } from '@josi-ce/storage';
-import { DATA_TOOL_FAMILY, executeDataTool, type ConnectorAccess } from './dataTools.js';
+import { executeWorkspaceTool, WORKSPACE_TOOLS } from './workspaceTools.js';
+import { connectionsWithCapability } from '@josi-ce/connectors';
+import { providerStatus } from './providerStatus.js';
+import { DATA_TOOL_FAMILY, executeDataTool, selectedCalendars, type ConnectorAccess } from './dataTools.js';
 import { executeCustomApiTool, isCustomApiTool } from './customApiTools.js';
 import { executeWorkflowTool, WORKFLOW_TOOL_NAMES } from './workflowTools.js';
 import { executeObsidianTool, DEVELOPER_INTEGRATION_TOOL, executeDeveloperIntegrationTool, executeDeveloperResourceTool } from './developerIntegrationTools.js';
@@ -42,6 +45,8 @@ export async function executeAssistantTool(
   input: Record<string, unknown>,
 ): Promise<unknown> {
   const { userId } = ctx;
+  if (WORKSPACE_TOOLS.some(t=>t.def.name===name)) return executeWorkspaceTool(db,userId,name,input);
+  if (name === 'get_provider_status') return providerStatus(db, userId);
 
   // Connected-data reads live in their own module; every one of them
   // re-checks the person's capability switches at this moment, not at the
@@ -79,7 +84,24 @@ export async function executeAssistantTool(
     case 'draft_calendar_event':
     case 'draft_contact_update': {
       const templateKey = name === 'draft_email' ? 'send_message' : name === 'draft_calendar_event' ? 'schedule_appointment' : 'update_contact';
-      const task = await createTask(db, { ownerUserId: userId, templateKey, slots: input, threadId: ctx.threadId ?? undefined });
+      let draftSlots = input;
+      if (name === 'draft_calendar_event') {
+        if (input.event_id !== undefined) {
+          const receipt = await executeDataTool(db,{userId,access:ctx.connectors ?? null},'get_event',{event_id:input.event_id}) as {ok:boolean;event?:Record<string,unknown>};
+          if (!receipt.ok || !receipt.event) return receipt;
+          const event=receipt.event;
+          if (input.source_id !== undefined && input.source_id !== event.source_id) return {ok:false,error:'source_mismatch',message:'The event belongs to a different calendar. Use its original source.'};
+          draftSlots={...input,calendar_source:{source_id:event.source_id,provider:event.provider,account_id:event.account_id,account:event.account,calendar_id:event.calendar_id,calendar_name:event.calendar_name,event_id:event.event_id}};
+        } else {
+          const sources=await selectedCalendars(db,userId,typeof input.source_id === 'string'?input.source_id:undefined);
+          if(sources.length!==1) return {ok:false,error:'select_calendar',message:'Choose one exact calendar source before drafting an event.'};
+          const source=sources[0];
+          const allowed=await connectionsWithCapability(db,{ownerUserId:userId,capability:`${source.provider}.calendar.read`});
+          if(!allowed.some(connection=>connection.id===source.connection_id)) return {ok:false,error:'source_unavailable',message:'That exact calendar account is unavailable or its permission was withdrawn.'};
+          draftSlots={...input,calendar_source:{source_id:source.id,provider:source.provider,account_id:source.connection_id,account:source.account,calendar_id:source.provider_calendar_id,calendar_name:source.name}};
+        }
+      }
+      const task = await createTask(db, { ownerUserId: userId, templateKey, slots: draftSlots, threadId: ctx.threadId ?? undefined });
       await transition(db, task.id, 'awaiting_approval', { actor: 'agent', actorUserId: userId });
       return { ok: true, task_id: task.id, state: 'awaiting_approval', message: 'Prepared, but not carried out. Ask the user to approve this exact task before calling approve_task.' };
     }
@@ -173,13 +195,23 @@ export async function executeAssistantTool(
     }
 
     case 'schedule_reminder': {
-      const message = String(input.message ?? '').trim();
+      let message = String(input.message ?? '').trim();
       const dueAt = reminderDueAt(input);
       if (!dueAt) {
         return {
           ok: false, error: 'bad_time',
           message: 'Say when: pass in_minutes (a positive number) or due_at (an ISO 8601 time in the future).',
         };
+      }
+      let calendarSource: Record<string, unknown> | undefined;
+      if (input.calendar_event_id !== undefined) {
+        const receipt = await executeDataTool(db, {userId, access:ctx.connectors ?? null}, 'get_event', {event_id:input.calendar_event_id}) as {ok:boolean;event?:Record<string,unknown>};
+        if (!receipt.ok || !receipt.event) return receipt;
+        const event=receipt.event;
+        calendarSource={event_id:event.event_id,source_id:event.source_id,provider:event.provider,account_id:event.account_id,account:event.account,calendar_id:event.calendar_id,calendar_name:event.calendar_name,provider_event_id:event.provider_event_id};
+        // Keep provenance in durable reminder content; delivery and list_reminders
+        // both preserve it, without storing provider credentials or event bodies.
+        message += `\nCalendar source: ${JSON.stringify(calendarSource)}`;
       }
       let reminder;
       try {
@@ -195,6 +227,7 @@ export async function executeAssistantTool(
       return {
         ok: true,
         reminder_id: reminder.id,
+        ...(calendarSource ? {calendar_source:calendarSource}:{}),
         due_at: reminder.due_at,
         // Stated so the model does not promise more than delivery: the message
         // comes back, it is not an autonomous action.
