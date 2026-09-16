@@ -26,7 +26,6 @@ import {
 import { openSealed } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
-import { publicHttpsBase } from '../setup/setupRoutes.js';
 
 export interface ConnectorRoutesCtx {
   db: Db;
@@ -59,12 +58,37 @@ function storageCapabilityFor(provider: Provider): string {
   return isOAuthProvider(provider) ? STORAGE_CAPABILITY[provider] : NEXTCLOUD_STORAGE_CAPABILITY;
 }
 
-async function publicAppUrl(db: Db, fallback: string): Promise<string> {
+async function canonicalDeployment(db: Db, fallback: string): Promise<{ origin: string; publicHttpsBase: string | null }> {
+  const configured = fallback.replace(/\/$/, '');
+  let publicOrigin: string | null = null;
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(configured);
+  } catch { /* malformed APP_URL falls back to the stored installation state */ }
+  if (parsed?.protocol === 'https:' && parsed.hostname !== 'localhost' && !/^\d{1,3}(\.\d{1,3}){3}$/.test(parsed.hostname)) {
+    publicOrigin = parsed.origin;
+    const tlsMode = process.env.JOSI_ACCESS_MODE === 'proxy' ? 'external_proxy' : 'bundled_caddy';
+    // One statement keeps the deployment singleton and the workspace-facing
+    // address in lockstep. This also repairs installations upgraded from a
+    // release that left the old LAN address in deployment_config. Database
+    // failure is not swallowed: callers must not claim readiness after only
+    // half of the canonical state was repaired.
+    await db.query(
+      `with changed as (
+         update deployment_config set domain=$1, tls_mode=$2 where id=true returning domain
+       )
+       update workspace set settings=jsonb_set(settings, '{publicAddress}', to_jsonb((select domain from changed)), true)
+       where id=true`,
+      [parsed.hostname.toLowerCase(), tlsMode],
+    );
+  }
   const [deployment] = await db.query<{ domain: string }>(
     `select domain from deployment_config where id = true`,
   );
   const domain = deployment?.domain?.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
-  return domain ? `https://${domain}` : fallback.replace(/\/$/, '');
+  const origin = publicOrigin ?? (domain ? `https://${domain}` : configured);
+  const publicHttpsBase = publicOrigin ?? (domain && domain !== 'localhost' && !/^\d{1,3}(\.\d{1,3}){3}$/.test(domain) ? `https://${domain}` : null);
+  return { origin, publicHttpsBase };
 }
 
 /** For the handshake routes only — /start and /callback exist for OAuth
@@ -533,13 +557,14 @@ export function adminConnectorRoutes(ctx: ConnectorRoutesCtx): Router {
   r.get(
     '/',
     handle(async (_req, res) => {
-      const appUrl = await publicAppUrl(db, ctx.appUrl);
+      const deployment = await canonicalDeployment(db, ctx.appUrl);
+      const appUrl = deployment.origin;
       // Google and Microsoft only accept an HTTPS redirect on a real domain
       // name. This used to be discovered inside the setup wizard, which offered
       // the registration as step 6 on installations that could never complete
       // it; the wizard no longer asks, and this page is where the answer
       // belongs. A base means an application can be registered right now.
-      const httpsBase = await publicHttpsBase(db);
+      const httpsBase = deployment.publicHttpsBase;
       const policy = await db.query<{ capability: string; allowed: boolean; note: string | null }>(
         `select capability, allowed, note from admin_capability_policy`,
       );
@@ -552,6 +577,7 @@ export function adminConnectorRoutes(ctx: ConnectorRoutesCtx): Router {
         registration: {
           available: !!httpsBase,
           publicHttpsBase: httpsBase,
+          detectedOrigin: appUrl,
           reason: httpsBase
             ? null
             : 'Google and Microsoft only accept an HTTPS redirect on a real domain name. This '

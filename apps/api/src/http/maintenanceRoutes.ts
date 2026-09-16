@@ -21,10 +21,12 @@ export function maintenanceRoutes(ctx:{db:Db;launch?:(host:string)=>Promise<Laun
   r.post('/network/launch',asyncRoute(async(req,res)=>{
     const password=typeof req.body?.password==='string'?req.body.password:'';
     const [user]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
-    if(!user?.password_hash||!(await verifyPassword(user.password_hash,password)))return res.status(401).json({error:'That password did not match.'});
+    if(!password)return res.status(400).json({error:'Enter your current administrator password.'});
+    if(!user?.password_hash||!(await verifyPassword(user.password_hash,password)))return res.status(401).json({error:'The administrator password was incorrect. No maintenance controller was started.'});
     const launch=ctx.launch??supervisor();if(!launch)return res.status(503).json({error:'Maintenance controller is unavailable. Rerun the installer once to provision it.'});
     const host=String(req.body?.host??'').trim();if(!/^[A-Za-z0-9.-]{1,253}$/.test(host))return res.status(400).json({error:'Browser host is invalid.'});
-    return res.status(201).json(await launch(host));
+    try{return res.status(201).json(await launch(host));}
+    catch{return res.status(503).json({error:'The protected maintenance controller could not start or pass its readiness check. Check that port 8080 is available, then try again.'});}
   }));
   return r;
 }
