@@ -127,6 +127,7 @@ describe('LB1.1 — the published install keeps the development stack’s securi
 
   it('connects the web app to the installer-managed Voice Box helper', () => {
     expect(release.services.web.environment.JOSI_VOICE_HELPER_SOCKET).toBe('/run/josi-voice/helper.sock');
+    expect(release.services.web.environment.JOSI_STORAGE_HELPER_SOCKET).toBe('/run/josi-storage/helper.sock');
     expect(release.services.web.volumes).toContain(
       '${JOSI_VOICE_SOCKET_DIR:-./voice-helper-socket}:/run/josi-voice:ro',
     );

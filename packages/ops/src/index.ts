@@ -6,9 +6,9 @@ export {
   type RestoreOutcome, type RestoreReader,
 } from './backup.js';
 export {
-  DESTINATIONS, describeDestination, endpointHost, signingRegion, testDestination,
+  DESTINATIONS, describeDestination, encryptBackupContents, endpointHost, signingRegion, testDestination, uploadBackup,
   type CheckOptions, type DestinationCheck, type DestinationConfig, type DestinationDescriptor,
-  type DestinationFailure, type DestinationField, type DestinationKind,
+  type DestinationFailure, type DestinationField, type DestinationKind, type UploadOptions,
 } from './destination.js';
 export {
   DEFAULT_LOG_WINDOW, DIAGNOSTICS_DIR, DiagnosticsError, LOG_WINDOW_HOURS,

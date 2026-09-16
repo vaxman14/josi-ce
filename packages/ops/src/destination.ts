@@ -12,7 +12,10 @@
 // Backblaze shows you; calling them "Access key ID" and "Secret access key"
 // because that is what the protocol calls them would leave an operator hunting
 // their console for fields that are not there under those names.
-import { signRequest, type AwsCredentials } from '@josi-ce/llm';
+import { signRequest, validateEndpoint, type AwsCredentials } from '@josi-ce/llm';
+import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { isIP } from 'node:net';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 export type DestinationKind = 's3' | 'r2' | 'b2' | 'nas';
 
@@ -54,9 +57,15 @@ const PREFIX: DestinationField = {
 export const DESTINATIONS: readonly DestinationDescriptor[] = [
   {
     kind: 'nas',
-    label: 'Local NAS / network share',
-    credentialsHelp: 'Mount the share into this container under /mnt or /data, then choose that mounted path. Credentials stay with the host mount and never enter Josi.',
-    fields: [{ key: 'bucket', label: 'Mounted path', secret: false, required: true, placeholder: '/mnt/josi-backups', help: 'An absolute path under /mnt or /data that already exists inside the Josi container.' }],
+    label: 'NAS / network share',
+    credentialsHelp: 'Enter the NAS address and authenticate. Josi mounts the selected folder through its restricted storage controller; there is no Docker path to configure.',
+    fields: [
+      { key: 'shareHost', label: 'NAS address', secret: false, required: true, placeholder: '192.168.1.20', help: 'An IP address or hostname reachable from this server.' },
+      { key: 'shareName', label: 'Share or export', secret: false, required: true, placeholder: 'backups' },
+      { key: 'username', label: 'Username', secret: true, required: false, help: 'Required for most SMB shares; NFS commonly uses host permissions instead.' },
+      { key: 'password', label: 'Password', secret: true, required: false },
+      { key: 'folder', label: 'Folder on the share', secret: false, required: false, placeholder: 'josi', help: 'Use Browse after authentication to choose an existing folder.' },
+    ],
     docsUrl: '/help#nas-backups',
   },
   {
@@ -246,6 +255,31 @@ export interface CheckOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   now?: Date;
+  resolve?: (hostname: string) => Promise<string[]>;
+}
+
+async function storageRequest(
+  url: string,
+  init: RequestInit,
+  opts: Pick<CheckOptions, 'fetchImpl' | 'resolve'>,
+): Promise<{ response: Response; close: () => Promise<void> }> {
+  if (opts.fetchImpl) {
+    return { response: await opts.fetchImpl(url, { ...init, redirect: 'manual' }), close: async () => undefined };
+  }
+  const approved = await validateEndpoint(url, { resolve: opts.resolve });
+  const dispatcher = new Agent({
+    connect: {
+      lookup: (_hostname, _options, callback) => callback(null, approved.addresses[0], isIP(approved.addresses[0])),
+    },
+  });
+  try {
+    const response = await undiciFetch(url, { ...init, redirect: 'manual', dispatcher } as Parameters<typeof undiciFetch>[1]) as unknown as Response;
+    if (response.status >= 300 && response.status < 400) throw new Error('the storage endpoint redirected');
+    return { response, close: async () => { await dispatcher.close(); } };
+  } catch (error) {
+    await dispatcher.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 /** Ask the bucket a real question, with the credential just entered.
@@ -286,11 +320,12 @@ export async function testDestination(opts: CheckOptions): Promise<DestinationCh
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 15_000);
   try {
-    const res = await doFetch(url, {
+    const { response: res, close } = await storageRequest(url, {
       method: 'GET',
       headers: signed.headers,
       signal: controller.signal,
-    });
+    }, opts);
+    await close();
     if (res.status >= 200 && res.status < 300) {
       return { ok: true, detail: 'Josi listed this bucket successfully.' };
     }
@@ -306,4 +341,47 @@ export async function testDestination(opts: CheckOptions): Promise<DestinationCh
   } finally {
     clearTimeout(timer);
   }
+}
+
+export interface UploadOptions extends CheckOptions {
+  objectKey: string;
+  contents: Buffer;
+  encryptionKey?: Buffer;
+}
+
+export function encryptBackupContents(contents: Buffer, key: Buffer): Buffer {
+  if (key.byteLength !== 32) throw new Error('backup encryption key is invalid');
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, nonce);
+  const encrypted = Buffer.concat([cipher.update(contents), cipher.final()]);
+  return Buffer.concat([Buffer.from('JOSI1'), nonce, cipher.getAuthTag(), encrypted]);
+}
+
+/** Upload and then verify one archive. Encrypted objects use a tiny versioned
+ * envelope: `JOSI1`, a 12-byte nonce, a 16-byte GCM tag, then ciphertext. */
+export async function uploadBackup(opts: UploadOptions): Promise<{ byteSize: number; sha256: string }> {
+  if (opts.config.kind === 'nas') throw new Error('network shares are copied through the storage controller');
+  let body = opts.contents;
+  if (opts.encryptionKey) body = encryptBackupContents(body, opts.encryptionKey);
+  const host = endpointHost(opts.config);
+  const key = `${opts.config.objectPrefix?.replace(/^\/+|\/+$/g, '') || ''}/${opts.objectKey}`.replace(/^\//, '');
+  const path = `/${opts.config.bucket}/${key.split('/').map(encodeURIComponent).join('/')}`;
+  const signed = signRequest({ method: 'PUT', host, path, headers: { 'content-type': 'application/octet-stream' }, body: new Uint8Array(body), region: signingRegion(opts.config), service: 's3', credentials: opts.credentials, now: opts.now });
+  const put = await storageRequest(`https://${host}${path}`, { method: 'PUT', headers: signed.headers, body: new Uint8Array(body) }, opts);
+  const response = put.response;
+  await put.close();
+  if (!response.ok) throw new Error(explain(response.status, await response.text().catch(() => '')).detail);
+  const verify = signRequest({
+    method: 'HEAD', host, path, headers: {}, body: '', region: signingRegion(opts.config),
+    service: 's3', credentials: opts.credentials, now: opts.now,
+  });
+  const head = await storageRequest(`https://${host}${path}`, { method: 'HEAD', headers: verify.headers }, opts);
+  const verified = head.response;
+  await head.close();
+  if (!verified.ok) throw new Error('The upload finished, but Josi could not verify the remote object.');
+  const remoteSize = Number(verified.headers.get('content-length'));
+  if (!Number.isFinite(remoteSize) || remoteSize !== body.byteLength) {
+    throw new Error('The uploaded object did not match the expected backup size.');
+  }
+  return { byteSize: body.byteLength, sha256: createHash('sha256').update(body).digest('hex') };
 }

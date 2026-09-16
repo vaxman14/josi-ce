@@ -18,12 +18,16 @@ interface BackupRow {
   id: string;
   kind: 'full' | 'portable';
   byte_size: string | number;
-  state: 'pending' | 'complete' | 'failed';
+  state: 'running' | 'complete' | 'failed';
   error_category: string | null;
   includes_recovery_copies: boolean;
   master_key_confirmed: boolean;
   created_at: string;
   completed_at: string | null;
+  progress_percent: number;
+  progress_phase: string;
+  progress_step: number;
+  progress_steps: number;
 }
 
 interface BackupsView {
@@ -61,6 +65,10 @@ interface Destination {
   lastCheckAt: string | null;
   lastCheckOk: boolean | null;
   lastCheckError: string | null;
+  shareProtocol: 'smb' | 'nfs' | null;
+  shareHost: string | null;
+  shareName: string | null;
+  encryptionEnabled: boolean;
 }
 
 interface DestinationView {
@@ -77,7 +85,7 @@ const KIND_LABEL: Record<BackupRow['kind'], string> = {
 /** What each state means to the person looking at the row, rather than the
  * enum value. "Ready" is only ever said about an archive that can be had. */
 const STATE_LABEL: Record<BackupRow['state'], string> = {
-  pending: 'Still being written',
+  running: 'Still being written',
   complete: 'Ready',
   failed: 'Did not finish',
 };
@@ -95,6 +103,7 @@ export function AdminBackups() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
+  const [, setClock] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -104,6 +113,17 @@ export function AdminBackups() {
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  const activeBackup = view?.backups.find((b) => b.state === 'running');
+  useEffect(() => {
+    if (!busy && !activeBackup) return;
+    const timer = window.setInterval(() => { void load(); }, 1000);
+    return () => window.clearInterval(timer);
+  }, [busy, activeBackup?.id, load]);
+  useEffect(() => {
+    if (!activeBackup) return;
+    const timer = window.setInterval(() => setClock((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [activeBackup?.id]);
 
   async function take(kind: 'full' | 'portable') {
     setBusy(true);
@@ -132,13 +152,24 @@ export function AdminBackups() {
       <Card>
         <CardTitle>Take one now</CardTitle>
         <div className="mt-2 flex flex-wrap gap-2">
-          <Button type="button" disabled={busy} onClick={() => void take('full')}>
-            {busy ? 'Working…' : 'Full backup'}
+          <Button type="button" disabled={busy || !!activeBackup} onClick={() => void take('full')}>
+            {busy || activeBackup ? 'Backing up…' : 'Back up now'}
           </Button>
           <Button type="button" variant="secondary" disabled={busy} onClick={() => void take('portable')}>
             Portable export
           </Button>
         </div>
+        {activeBackup ? (
+          <div className="mt-3" role="status" aria-live="polite">
+            <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+              <span>
+                {activeBackup.progress_phase} · {Math.max(0, Math.floor((Date.now() - new Date(activeBackup.created_at).getTime()) / 1000))}s elapsed
+              </span>
+              <span>Step {activeBackup.progress_step} of {activeBackup.progress_steps} · {activeBackup.progress_percent}%</span>
+            </div>
+            <progress className="h-2 w-full accent-primary" max={100} value={activeBackup.progress_percent} aria-label="Backup progress" />
+          </div>
+        ) : null}
         {note ? <p className="mt-2 text-sm text-muted-foreground">{note}</p> : null}
       </Card>
 
@@ -223,6 +254,8 @@ function BackupDestination() {
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [recoveryKey, setRecoveryKey] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -262,7 +295,8 @@ function BackupDestination() {
     setError('');
     setResult(null);
     try {
-      await api.put('/ops/admin/backups/destination', { kind, ...values });
+      const saved = await api.put<{ recoveryKey?: string | null }>('/ops/admin/backups/destination', { kind, ...values, encryptionEnabled: values.encryptionEnabled !== 'false' });
+      if (saved.recoveryKey) setRecoveryKey(saved.recoveryKey);
       setEditing(false);
       setValues({});
       await load();
@@ -271,6 +305,17 @@ function BackupDestination() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function browseNas() {
+    setTesting(true);
+    setError('');
+    try {
+      const found = await api.post<{ folders: string[] }>('/ops/admin/backups/destination/nas/browse', { ...values, shareProtocol: values.shareProtocol ?? 'smb' });
+      setFolders(found.folders);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The NAS could not be browsed');
+    } finally { setTesting(false); }
   }
 
   /** Runs only from the button. Nothing here tests on open: a test is a real
@@ -293,6 +338,7 @@ function BackupDestination() {
   }
 
   async function remove() {
+    if (!window.confirm('Remove this backup destination? Existing backups are not deleted.')) return;
     setBusy(true);
     setError('');
     try {
@@ -311,6 +357,17 @@ function BackupDestination() {
     <Card>
       <CardTitle>Where backups are kept</CardTitle>
       {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
+      {recoveryKey ? (
+        <div className="mt-2 rounded-md border border-amber-500/40 p-3">
+          <p className="text-sm font-medium">Save the backup recovery key now</p>
+          <p className="mt-1 text-xs text-muted-foreground">This is the only visible copy. Keep it somewhere other than the backup destination.</p>
+          <code className="mt-2 block break-all text-sm">••••••••••••{recoveryKey.slice(-4)}</code>
+          <div className="mt-2 flex gap-2">
+            <Button type="button" variant="secondary" onClick={() => void navigator.clipboard.writeText(recoveryKey)}>Copy</Button>
+            <Button type="button" variant="secondary" onClick={() => { const blob = new Blob([`${recoveryKey}\n`], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'josi-backup-recovery-key.txt'; a.click(); URL.revokeObjectURL(a.href); }}>Download</Button>
+          </div>
+        </div>
+      ) : null}
 
       {/* The volume is always there. Saying so is the difference between "no
           destination configured" and "backups are not being kept anywhere". */}
@@ -335,7 +392,7 @@ function BackupDestination() {
             </Badge>
           </div>
           <dl className="text-sm text-muted-foreground">
-            <div><dt className="inline font-medium">{destination.kind === 'nas' ? 'Mounted path: ' : 'Bucket: '}</dt><dd className="inline">{destination.bucket}</dd></div>
+            <div><dt className="inline font-medium">{destination.kind === 'nas' ? 'NAS: ' : 'Bucket: '}</dt><dd className="inline">{destination.kind === 'nas' ? `${destination.shareProtocol?.toUpperCase()} · ${destination.shareHost}/${destination.shareName}` : destination.bucket}</dd></div>
             {destination.kind !== 'r2' && destination.kind !== 'nas' ? (
               <div><dt className="inline font-medium">Region: </dt><dd className="inline">{destination.region}</dd></div>
             ) : null}
@@ -344,7 +401,7 @@ function BackupDestination() {
             ) : null}
             {/* Assembled by the server from the stored fields, so an operator
                 checking their bucket does not have to reconstruct it. */}
-            <div><dt className="inline font-medium">Address: </dt><dd className="inline break-all">{destination.resolvedEndpoint}</dd></div>
+            {destination.kind !== 'nas' ? <div><dt className="inline font-medium">Address: </dt><dd className="inline break-all">{destination.resolvedEndpoint}</dd></div> : null}
           </dl>
           {destination.lastCheckOk === false && destination.lastCheckError ? (
             <ErrorNote>{destination.lastCheckError}</ErrorNote>
@@ -359,11 +416,27 @@ function BackupDestination() {
               {testing ? 'Testing…' : destination.lastCheckOk === true ? 'Test again' : 'Test connection'}
             </Button>
             <Button type="button" variant="secondary" disabled={busy || testing}
-                    onClick={() => { setEditing(true); setResult(null); }}>
+                    onClick={() => {
+                      setKind(destination.kind);
+                      setValues({
+                        label: destination.label,
+                        bucket: destination.bucket,
+                        region: destination.region,
+                        accountId: destination.accountId ?? '',
+                        endpoint: destination.endpoint ?? '',
+                        objectPrefix: destination.objectPrefix,
+                        shareProtocol: destination.shareProtocol ?? 'smb',
+                        shareHost: destination.shareHost ?? '',
+                        shareName: destination.shareName ?? '',
+                        encryptionEnabled: String(destination.encryptionEnabled),
+                      });
+                      setEditing(true);
+                      setResult(null);
+                    }}>
               Change
             </Button>
             <Button type="button" variant="secondary" disabled={busy || testing} onClick={() => void remove()}>
-              Stop copying off this server
+              Remove destination
             </Button>
           </div>
         </div>
@@ -398,6 +471,15 @@ function BackupDestination() {
             ) : null}
           </fieldset>
 
+          {kind === 'nas' ? (
+            <fieldset>
+              <legend className="mb-1 text-sm">Share type</legend>
+              <div className="flex gap-4 text-sm">
+                {(['smb', 'nfs'] as const).map((protocol) => <label key={protocol} className="flex items-center gap-2"><input type="radio" name="nas-protocol" checked={(values.shareProtocol ?? 'smb') === protocol} onChange={() => setField('shareProtocol', protocol)} />{protocol.toUpperCase()}</label>)}
+              </div>
+            </fieldset>
+          ) : null}
+
           <div>
             <label className="mb-1 block text-sm" htmlFor="destLabel">A name for this (optional)</label>
             <Input id="destLabel" name="label" value={values.label ?? ''}
@@ -428,6 +510,18 @@ function BackupDestination() {
               ) : null}
             </div>
           ))}
+
+          {kind === 'nas' ? (
+            <div>
+              <Button type="button" variant="secondary" disabled={testing || !values.shareHost || !values.shareName} onClick={() => void browseNas()}>{testing ? 'Connecting…' : 'Connect and browse'}</Button>
+              {folders.length ? <select className="mt-2 min-h-11 w-full rounded-md border border-input bg-background px-3" value={values.folder ?? ''} onChange={(e) => setField('folder', e.target.value)}><option value="">Share root</option>{folders.map((folder) => <option key={folder} value={folder}>{folder}</option>)}</select> : null}
+            </div>
+          ) : null}
+
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" checked={values.encryptionEnabled !== 'false'} onChange={(e) => setField('encryptionEnabled', String(e.target.checked))} />
+            <span><strong>Encrypt off-site backups</strong> (recommended). Turning this off means anyone with storage access can read the archive.</span>
+          </label>
 
           <p className="text-xs text-muted-foreground">
             These are stored encrypted with this installation's master key. Josi never asks you to

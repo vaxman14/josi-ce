@@ -42,6 +42,7 @@ import {
   NARRATED_SEARCH_GUARD_FALLBACK, NARRATED_SEARCH_GUARD_REPROMPT, checkNarratedSearchWithoutTool,
   type DataToolReceipt,
 } from './dataClaimGuard.js';
+import { customApiToolAvailability, type CustomApiAvailability } from './customApiTools.js';
 import { dataToolAvailability, type DataToolAvailability } from './dataTools.js';
 import { executeAssistantTool } from './execute.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
@@ -95,6 +96,8 @@ export interface TurnArgs {
    * tests; unset in production, where the real fetch is used. Deliberately
    * separate from the registry's fetchImpl — that one talks to the MODEL. */
   connectorFetch?: typeof fetch;
+  customApiFetch?: typeof fetch;
+  outboundResolve?: (hostname: string) => Promise<string[]>;
   /** Which channel this turn arrived on. Only used to record a managed child's
    * minute honestly — "45 minutes with Josi" should not read as "45 minutes in
    * the web app" when half of it was Telegram. */
@@ -113,6 +116,7 @@ function systemPrompt(args: {
   hasRecall: boolean;
   unavailable: string[];
   data?: DataToolAvailability;
+  customApis?: string[];
   imagesAttached?: boolean;
 }): string {
   return [
@@ -144,6 +148,9 @@ function systemPrompt(args: {
       : '',
     args.capabilities.toolCalling && args.data?.denied.length
       ? `You currently have no access to: ${args.data.denied.map((d) => d.what).join(', ')}. If asked about one of these, say so and pass on the fix: ${args.data.denied.map((d) => `${d.what} — ${d.hint}`).join(' ')}`
+      : '',
+    args.capabilities.toolCalling && args.customApis?.length
+      ? `An administrator has connected these external services and chosen exactly which actions you may use on each: ${args.customApis.join(', ')}. Use call_custom_api only for those actions. You cannot reach any other address. Actions that change or delete something wait for the person to approve on their Approvals page; never say they are done before approval and execution.`
       : '',
     args.hasRecall
       ? 'You can search this person\'s own history. Do that before saying you do not know.'
@@ -241,8 +248,16 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       console.error('data tool availability check failed', (err as Error).message);
     }
   }
+  let customApis: CustomApiAvailability = { specs: [], connectionNames: [] };
+  if (capabilities.toolCalling) {
+    try {
+      customApis = await customApiToolAvailability(db);
+    } catch (err) {
+      console.error('custom api tool availability check failed', (err as Error).message);
+    }
+  }
   const tools = capabilities.toolCalling
-    ? [...TASK_TOOLS, ...data.specs].map((t) => t.def)
+    ? [...TASK_TOOLS, ...data.specs, ...customApis.specs].map((t) => t.def)
     : undefined;
 
   let recalled = '';
@@ -265,6 +280,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     hasRecall: !!args.recall && !!recalled,
     unavailable,
     data,
+    customApis: customApis.connectionNames,
     imagesAttached,
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '');
 
@@ -565,6 +581,11 @@ async function execTool(
     threadId: args.threadId,
     // The registry already holds the installation key when there is one; the
     // data tools open sealed tokens with it at the moment of use.
-    connectors: masterKey ? { masterKey: () => masterKey, fetchImpl: args.connectorFetch } : null,
+    connectors: masterKey ? {
+      masterKey: () => masterKey,
+      fetchImpl: args.connectorFetch,
+      customApiFetch: args.customApiFetch,
+      resolve: args.outboundResolve,
+    } : null,
   }, name, input);
 }

@@ -74,6 +74,15 @@ service and should not be treated as one.</p>
 diagnostic snapshot, not continuous monitoring or a warranty that the system is
 safe. Backups exclude the installation master key: keep that key separately and
 test restores.</p>
+<p>Admin → Backups provides a persistent progress display and guided SMB/NFS setup. Enter the NAS
+address and share, authenticate, browse to a folder, and let the restricted storage controller
+manage the Docker mount. Off-site encryption is enabled by default; save its one-time recovery key
+away from the backup destination. “Change” preserves saved settings until Save succeeds, while
+removal is a separate confirmed action.</p>
+<h3>Integrations</h3>
+<p>Admin → Integrations groups code, deployment, data, monitoring, knowledge, and project-management
+connections. Custom API connects unsupported HTTPS REST services through an explicit endpoint
+allowlist. Credentials remain in the Master Vault; writes and deletes require approval.</p>
 <h2>1. What the standard installation creates</h2>
 <p>The default Compose deployment creates five service roles:</p>
 <table>

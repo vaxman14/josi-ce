@@ -13,7 +13,7 @@ import {
 import {
   BACKUP_DIR, BackupError, DESTINATIONS, DiagnosticsError, MASTER_KEY_DOC, RestoreError,
   SupportError,
-  describeDestination, endpointHost, restoreBackup, testDestination,
+  describeDestination, encryptBackupContents, endpointHost, restoreBackup, testDestination, uploadBackup,
   TELEMETRY_DISCLOSURE, TelemetryError, acknowledgementFor, approveBundle,
   buildBundle, checkForUpdate, createBackup, describeBackup, diagnosticsRequired,
   gatewayStatus, isNewer, markInspected, passSecretScan, recordBundle,
@@ -24,9 +24,10 @@ import { UnsafeEndpointError } from '@josi-ce/llm';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { constants, existsSync } from 'node:fs';
 import { access, open, rm } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { normalize } from 'node:path';
 import { asyncRoute, param } from './async.js';
+import type { NasController } from './nasController.js';
 
 export interface OpsRoutesCtx {
   db: Db;
@@ -43,6 +44,7 @@ export interface OpsRoutesCtx {
   fetchLatestVersion?: () => Promise<string | null>;
   /** Injected by the tests so no suite resolves a hostname. */
   outboundResolve?: (hostname: string) => Promise<string[]>;
+  nasController?: NasController | null;
 }
 
 /** The destination row as stored. `credentials_enc` is selected only by the
@@ -60,6 +62,11 @@ interface DestinationRow {
   last_check_at: string | null;
   last_check_ok: boolean | null;
   last_check_error: string | null;
+  share_protocol?: 'smb' | 'nfs' | null;
+  share_host?: string | null;
+  share_name?: string | null;
+  encryption_enabled?: boolean;
+  encryption_key_ref?: string | null;
 }
 
 class RouteError extends Error {
@@ -195,6 +202,22 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const [policy] = await db.query<{ clamav_enabled: boolean; ocr_enabled: boolean }>(
         `select clamav_enabled, ocr_enabled from storage_policy where id = true`,
       );
+      // Custom API connections, as COUNTS. How many are defined, how many the
+      // assistant can actually reach, and how many individual actions are
+      // switched on — which is the number a supporter needs when somebody
+      // reports "Josi called our CRM" or "Josi will not call our CRM". Never a
+      // name, never a host, never a credential: a host is somebody's internal
+      // service and a bundle goes to a third party's ticket system.
+      const [customApis] = await db.query<{ total: number; live: number }>(
+        `select count(*)::int as total,
+                count(*) filter (where enabled)::int as live
+           from custom_api_connections`,
+      );
+      const [customApiActions] = await db.query<{ live: number }>(
+        `select count(*)::int as live
+           from custom_api_endpoints e join custom_api_connections c on c.id = e.connection_id
+          where e.enabled and c.enabled`,
+      );
 
       const built = buildBundle({
         version: process.env.JOSI_VERSION ?? '0.1.0',
@@ -208,10 +231,18 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           smtp: (smtp?.n ?? 0) > 0,
           clamav: policy?.clamav_enabled ?? false,
           ocr: policy?.ocr_enabled ?? false,
+          // WHETHER, never which. A boolean answers "could this installation
+          // have called an outside API?" without naming one.
+          custom_apis: (customApis?.live ?? 0) > 0,
         },
         migrations: [],
         logs: [],
-        counts: { users, threads, documents },
+        counts: {
+          users, threads, documents,
+          custom_apis: customApis?.total ?? 0,
+          custom_apis_enabled: customApis?.live ?? 0,
+          custom_api_actions_enabled: customApiActions?.live ?? 0,
+        },
       });
 
       const { id } = await recordBundle(db, {
@@ -314,7 +345,8 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     handle(async (_req, res) => {
       const backups = await db.query(
         `select id, kind, byte_size, state, error_category, includes_recovery_copies,
-                master_key_confirmed, created_at, completed_at
+                master_key_confirmed, progress_percent, progress_phase, progress_step,
+                progress_steps, created_at, completed_at
          from backups order by created_at desc limit 50`,
       );
       // The path is deployment detail and is deliberately not returned.
@@ -329,9 +361,13 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       // pg_dump against the whole database.
       if (!(await limited(req, res, LIMITS.backup))) return undefined;
       if (!ctx.backupWriter) throw new RouteError(503, 'backups are not available on this installation');
+      const [active] = await db.query<{ id: string }>(
+        `select id from backups where state = 'running' order by created_at desc limit 1`,
+      );
+      if (active) throw new RouteError(409, 'a backup is already running');
       const kind = req.body?.kind === 'portable' ? 'portable' : 'full';
-      const [destination] = kind === 'full' ? await db.query<{ kind: string; bucket: string; last_check_ok: boolean | null }>(
-        `select kind, bucket, last_check_ok from backup_destination where id = true`,
+      const [destination] = kind === 'full' ? await db.query<DestinationRow>(
+        `select * from backup_destination where id = true`,
       ) : [];
       const { backup, description } = await createBackup(db, {
         kind,
@@ -339,13 +375,44 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         masterKeyConfirmed: req.body?.masterKeyConfirmed === true,
         writer: ctx.backupWriter,
         filename: `josi-${kind}-${Date.now()}.zip`,
-        destinationDir: destination?.kind === 'nas' && destination.last_check_ok === true
-          ? destination.bucket : undefined,
+        deferCompletion: kind === 'full' && destination?.last_check_ok === true,
       });
+      if (kind === 'full' && destination?.last_check_ok === true) {
+        try {
+          const archive = await ctx.backupWriter.read(backup.stored_path);
+          await db.query(`update backups set progress_percent = 70, progress_phase = 'uploading off-site copy', progress_step = 4 where id = $1`, [backup.id]);
+          if (destination.kind === 'nas') {
+            if (destination.encryption_enabled) {
+              if (!destination.encryption_key_ref) throw new Error('backup encryption key unavailable');
+              const opened = await openCredentialPayload<{ key: string }>(db, requireDestinationKey(ctx), { ownerUserId: req.user!.id, service: 'backup', slot: 'encryption', stored: destination.encryption_key_ref });
+              const { writeFile } = await import('node:fs/promises');
+              await writeFile(`${destination.bucket}/${backup.id}.zip.enc`, encryptBackupContents(archive, Buffer.from(opened.key, 'base64url')), { mode: 0o600 });
+            } else {
+              const { copyFile } = await import('node:fs/promises');
+              await copyFile(backup.stored_path, `${destination.bucket}/${backup.id}.zip`);
+            }
+          } else if (destination.credentials_enc) {
+            const credentials = await openCredentialPayload<Record<string,string>>(db, requireDestinationKey(ctx), { ownerUserId: req.user!.id, service: 'backup', slot: 'destination', stored: destination.credentials_enc });
+            let encryptionKey: Buffer | undefined;
+            if (destination.encryption_enabled) {
+              if (!destination.encryption_key_ref) throw new Error('backup encryption key unavailable');
+              const opened = await openCredentialPayload<{ key: string }>(db, requireDestinationKey(ctx), { ownerUserId: req.user!.id, service: 'backup', slot: 'encryption', stored: destination.encryption_key_ref });
+              encryptionKey = Buffer.from(opened.key, 'base64url');
+            }
+            await uploadBackup({ config: { kind: destination.kind, bucket: destination.bucket, region: destination.region, accountId: destination.account_id, endpoint: destination.endpoint, objectPrefix: destination.object_prefix }, credentials: { accessKeyId: credentials.accessKeyId ?? '', secretAccessKey: credentials.secretAccessKey ?? '', sessionToken: credentials.sessionToken ?? null }, objectKey: `${backup.id}.zip${encryptionKey ? '.enc' : ''}`, contents: archive, encryptionKey, fetchImpl: ctx.destinationFetch, resolve: ctx.outboundResolve });
+          }
+          await db.query(`update backups set state = 'complete', progress_percent = 100, progress_phase = 'off-site copy verified', progress_step = progress_steps, completed_at = now() where id = $1`, [backup.id]);
+          await appendEvent(db, { actorUserId: req.user!.id, actor: 'super_admin', kind: 'backup.created', subjectType: 'backup', subjectId: backup.id, payload: { kind, byteSize: backup.byte_size, offsite: destination.kind } });
+        } catch {
+          await db.query(`update backups set state = 'failed', error_category = 'unknown', progress_phase = 'off-site copy failed', completed_at = now() where id = $1`, [backup.id]);
+          throw new BackupError('the off-site copy could not be verified');
+        }
+      }
       return res.status(201).json({
         backup: {
           id: backup.id, kind: backup.kind, byteSize: backup.byte_size,
-          state: backup.state, includesRecoveryCopies: backup.includes_recovery_copies,
+          state: kind === 'full' && destination?.last_check_ok === true ? 'complete' : backup.state,
+          includesRecoveryCopies: backup.includes_recovery_copies,
         },
         description,
       });
@@ -458,6 +525,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     handle(async (_req, res) => {
       const [row] = await db.query<DestinationRow>(
         `select kind, label, bucket, region, account_id, endpoint, object_prefix,
+                share_protocol, share_host, share_name, encryption_enabled,
                 api_key_present, last_check_at, last_check_ok, last_check_error
          from (
            select *, (credentials_enc is not null) as api_key_present
@@ -490,6 +558,10 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
               accountId: row.account_id,
               endpoint: row.endpoint,
               objectPrefix: row.object_prefix,
+              shareProtocol: row.share_protocol,
+              shareHost: row.share_host,
+              shareName: row.share_name,
+              encryptionEnabled: row.encryption_enabled,
               credentialsSet: row.api_key_present,
               // Where the archives actually go, assembled from the stored
               // fields. An operator checking their bucket should not have to
@@ -514,6 +586,27 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     }),
   );
 
+  r.post(
+    '/admin/backups/destination/nas/browse',
+    requireSuperAdmin,
+    handle(async (req, res) => {
+      if (!ctx.nasController) throw new RouteError(503, 'the restricted storage controller is unavailable');
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const host = str(body.shareHost, 253);
+      const share = str(body.shareName, 255);
+      if (!host || !share) throw new RouteError(400, 'enter the NAS address and share name');
+      const folders = await ctx.nasController.browse({
+        protocol: body.shareProtocol === 'nfs' ? 'nfs' : 'smb',
+        host,
+        share,
+        username: str(body.username, 255),
+        password: str(body.password, 1000),
+        readOnly: true,
+      });
+      return res.json({ folders });
+    }),
+  );
+
   /** Store a destination.
    *
    * Saving ALWAYS clears the last test result. A credential that has not been
@@ -528,14 +621,21 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const kind = str(body.kind, 16);
       const descriptor = describeDestination(kind);
       if (!descriptor) throw new RouteError(400, 'choose where backups should be stored');
+      const existing = await db.query<{ kind: string; credentials_enc: string | null; encryption_key_ref: string | null }>(
+        `select kind, credentials_enc, encryption_key_ref from backup_destination where id = true`,
+      );
+      const previous = existing[0] ?? null;
 
-      const bucket = str(body.bucket, 255);
-      if (!bucket) throw new RouteError(400, kind === 'nas' ? 'a mounted path is required' : 'a bucket name is required');
+      let bucket = str(body.bucket, 255);
+      if (!bucket && kind !== 'nas') throw new RouteError(400, 'a bucket name is required');
       if (kind === 'nas') {
-        const path = normalize(bucket);
-        if (!path.startsWith('/mnt/') && !path.startsWith('/data/')) {
-          throw new RouteError(400, 'the mounted path must be under /mnt or /data');
-        }
+        const protocol = body.shareProtocol === 'nfs' ? 'nfs' : 'smb';
+        const host = str(body.shareHost, 253);
+        const share = str(body.shareName, 255);
+        if (!host || !share) throw new RouteError(400, 'enter the NAS address and share name');
+        if (!ctx.nasController) throw new RouteError(503, 'the restricted storage controller is unavailable');
+        const mounted = await ctx.nasController.configure({ protocol, host, share, folder: str(body.folder, 500), username: str(body.username, 255), password: str(body.password, 1000), readOnly: false });
+        bucket = mounted.mountedPath;
       }
       const accountId = str(body.accountId, 128) || null;
       if (kind === 'r2' && !accountId) {
@@ -561,11 +661,6 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         if (parsed.protocol !== 'https:') throw new RouteError(400, 'the endpoint must be https');
       }
 
-      const existing = await db.query<{ kind: string; credentials_enc: string | null }>(
-        `select kind, credentials_enc from backup_destination where id = true`,
-      );
-      const previous = existing[0] ?? null;
-
       const accessKeyId = asSecret(body.accessKeyId);
       const secretAccessKey = asSecret(body.secretAccessKey);
       const sessionToken = asSecret(body.sessionToken);
@@ -579,7 +674,15 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const sameKind = previous?.kind === kind;
       let sealed: string | null;
       if (kind === 'nas') {
-        sealed = null;
+        const username = asSecret(body.username);
+        const password = asSecret(body.password);
+        if (!username.isEmpty || !password.isEmpty) {
+          sealed = await storeCredentialPayload(db, requireDestinationKey(ctx), { ownerUserId: req.user!.id, kind: 'password', service: 'backup', slot: 'destination', label: 'NAS backup credentials', payload: { username: username.reveal(), password: password.reveal() }, actorUserId: req.user!.id });
+        } else if (sameKind && previous?.credentials_enc) {
+          sealed = previous.credentials_enc;
+        } else {
+          sealed = null; // NFS and guest SMB legitimately have no credential.
+        }
       } else if (supplied.length) {
         sealed = await storeCredentialPayload(db,requireDestinationKey(ctx),{ownerUserId:req.user!.id,kind:'api_key',service:'backup',slot:'destination',label:`${descriptor.label} backup credentials`,payload:Object.fromEntries(supplied),actorUserId:req.user!.id});
       } else if (sameKind && previous?.credentials_enc) {
@@ -594,16 +697,41 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         );
       }
 
+      // Older API clients did not send this field. The current UI sends an
+      // explicit true by default; omission remains compatible with those
+      // clients instead of unexpectedly creating a recovery key mid-edit.
+      const encryptionEnabled = body.encryptionEnabled === true;
+      let recoveryKey: string | null = null;
+      let encryptionKeyRef = previous?.encryption_key_ref ?? null;
+      if (encryptionEnabled) {
+        if (!encryptionKeyRef) {
+          recoveryKey = randomBytes(32).toString('base64url');
+          encryptionKeyRef = await storeCredentialPayload(db, requireDestinationKey(ctx), { ownerUserId: req.user!.id, kind: 'api_key', service: 'backup', slot: 'encryption', label: 'Backup encryption key', payload: { key: recoveryKey }, actorUserId: req.user!.id });
+        }
+      }
+
+      // Moving away from a NAS destination must also remove the privileged
+      // Docker mount. Keeping an unused share attached would preserve host
+      // access the administrator explicitly removed from Josi.
+      if (previous?.kind === 'nas' && kind !== 'nas') {
+        if (!ctx.nasController) throw new RouteError(503, 'the restricted storage controller is unavailable');
+        await ctx.nasController.remove();
+      }
+
       await db.query(
         `insert into backup_destination
            (id, kind, label, bucket, region, account_id, endpoint, object_prefix, credentials_enc,
+            share_protocol, share_host, share_name, encryption_enabled, encryption_key_ref,
             last_check_at, last_check_ok, last_check_error, updated_at)
-         values (true, $1, $2, $3, $4, $5, $6, $7, $8, null, null, null, now())
+         values (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, null, null, null, now())
          on conflict (id) do update set
            kind = excluded.kind, label = excluded.label, bucket = excluded.bucket,
            region = excluded.region, account_id = excluded.account_id,
            endpoint = excluded.endpoint, object_prefix = excluded.object_prefix,
            credentials_enc = excluded.credentials_enc,
+           share_protocol = excluded.share_protocol, share_host = excluded.share_host,
+           share_name = excluded.share_name, encryption_enabled = excluded.encryption_enabled,
+           encryption_key_ref = excluded.encryption_key_ref,
            last_check_at = null, last_check_ok = null, last_check_error = null,
            updated_at = now()`,
         [
@@ -615,6 +743,11 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           endpoint,
           str(body.objectPrefix, 200),
           sealed,
+          kind === 'nas' ? (body.shareProtocol === 'nfs' ? 'nfs' : 'smb') : null,
+          kind === 'nas' ? str(body.shareHost, 253) : null,
+          kind === 'nas' ? str(body.shareName, 255) : null,
+          encryptionEnabled,
+          encryptionEnabled ? encryptionKeyRef : null,
         ],
       );
 
@@ -626,7 +759,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         // any form, not even as a hash.
         payload: { kind, bucket, region },
       });
-      return res.status(200).json({ ok: true, needsTest: true });
+      return res.status(200).json({ ok: true, needsTest: true, recoveryKey });
     }),
   );
 
@@ -681,6 +814,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           sessionToken: opened.sessionToken ?? null,
         },
         fetchImpl: ctx.destinationFetch,
+        resolve: ctx.outboundResolve,
       });
 
       // Recorded either way. A destination whose last test failed must keep
@@ -708,8 +842,11 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     '/admin/backups/destination',
     requireSuperAdmin,
     handle(async (req, res) => {
+      const [existing] = await db.query<{ kind: string }>(`select kind from backup_destination where id = true`);
+      if (existing?.kind === 'nas') await ctx.nasController?.remove();
       await db.query(`delete from backup_destination where id = true`);
       await deleteVaultSlot(db,{ownerUserId:req.user!.id,service:'backup',slot:'destination',actorUserId:req.user!.id});
+      await deleteVaultSlot(db,{ownerUserId:req.user!.id,service:'backup',slot:'encryption',actorUserId:req.user!.id});
       await appendEvent(db, {
         actorUserId: req.user!.id, actor: 'super_admin', kind: 'backup.destination_removed',
       });

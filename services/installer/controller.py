@@ -247,6 +247,19 @@ def provision_voice_helper() -> None:
          "--socket", f"{ROOT}/voice-helper-socket/helper.sock", "--runtime-uid", uid,
          "--runtime-gid", gid, "--socket-gid", app_gid], timeout=60)
 
+def provision_storage_helper() -> None:
+    uid, gid = os.environ["JOSI_INSTALL_UID"], os.environ["JOSI_INSTALL_GID"]
+    app_gid, docker_gid, image = os.environ["JOSI_APP_GID"], os.environ["JOSI_DOCKER_GID"], os.environ["JOSI_INSTALLER_IMAGE"]
+    for path, mode in ((ROOT / "storage-helper-state", 0o700), (ROOT / "storage-helper-socket", 0o750)):
+        path.mkdir(exist_ok=True); os.chmod(path, mode); os.chown(path, int(uid), int(gid))
+    name = f"josi-ce-storage-helper-{hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]}"
+    run(["docker","rm","-f",name],check=False,timeout=30)
+    run(["docker","run","-d","--name",name,"--restart","unless-stopped","--read-only","--network","none",
+         "--security-opt","no-new-privileges","--cap-drop","ALL","--user",f"{uid}:{gid}","--group-add",docker_gid,"--group-add",app_gid,
+         "--tmpfs","/tmp:size=16m,mode=1777","-v","/var/run/docker.sock:/var/run/docker.sock","-v",f"{ROOT}:{ROOT}",
+         "--entrypoint","python3",image,"/opt/josi-installer/storage_helper.py","--root",str(ROOT),"--state",f"{ROOT}/storage-helper-state",
+         "--socket",f"{ROOT}/storage-helper-socket/helper.sock","--image",image,"--socket-gid",app_gid],timeout=60)
+
 
 def install(plan: dict[str, object]) -> None:
     with LOCK:
@@ -259,6 +272,7 @@ def install(plan: dict[str, object]) -> None:
             write_workspace_override(plan)
             progress("Preparing the isolated Voice Box controller", 22, 2)
             provision_voice_helper()
+            provision_storage_helper()
             compose = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml")]
             if (ROOT / "docker-compose.workspace.yml").exists():
                 compose += ["-f", str(ROOT / "docker-compose.workspace.yml")]

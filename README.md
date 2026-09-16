@@ -31,6 +31,8 @@ proven and what is not.
 | [`docs/PWA.md`](docs/PWA.md) | Installing Josi on a phone or desktop, and exactly what is cached |
 | [`docs/SUBSCRIPTION_AUTH.md`](docs/SUBSCRIPTION_AUTH.md) | Using a ChatGPT plan instead of an API key, why Claude cannot be used, and the edition boundary |
 | [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | Clean-install acceptance: what has actually been run, on what hardware |
+| [`docs/DEVELOPER_SERVICE_CONNECTIONS.md`](docs/DEVELOPER_SERVICE_CONNECTIONS.md) | Connecting your own GitHub, Netlify, Vercel or Supabase account |
+| [`docs/CUSTOM_API_CONNECTIONS.md`](docs/CUSTOM_API_CONNECTIONS.md) | Letting Josi call an external API, one reviewed action at a time |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Every threat with its control and the test that would fail without it |
 | [`docs/HELP.md`](docs/HELP.md) | Current feature help and links to each operator/user guide |
 | [`docs/LEGAL.md`](docs/LEGAL.md) | Terms, privacy, cookies, licences, support and security policies |
@@ -171,6 +173,9 @@ docker compose up -d
 ```
 
 ## Backups and the master key
+
+The Backups page includes a persistent **Back up now** progress display, guided SMB/NFS setup,
+off-site encryption, and non-destructive destination editing. See [the backup guide](docs/BACKUPS.md).
 
 Runtime credentials — LLM keys, OAuth secrets, SMTP passwords — are encrypted in
 PostgreSQL using an installation master key that is stored **outside the

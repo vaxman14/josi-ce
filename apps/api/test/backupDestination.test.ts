@@ -28,6 +28,7 @@ writeFileSync(keyPath, Buffer.alloc(32, 11).toString('base64'));
 let server: Server;
 let base: string;
 let db: TestDb;
+const nasCalls: Array<{ operation: string; body?: unknown }> = [];
 
 // Not credential-shaped on purpose: the pre-commit scanner rejects anything
 // that looks real, and what matters here is only that distinct secret fields
@@ -103,9 +104,15 @@ beforeEach(async () => {
   db = await testDb();
   requests.length = 0;
   bucketReply = { status: 200, body: '<ListBucketResult/>' };
+  nasCalls.length = 0;
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost', masterKeyCheck: { path: keyPath },
     destinationFetch,
+    nasController: {
+      async browse(body) { nasCalls.push({ operation: 'browse', body }); return ['daily', 'offsite']; },
+      async configure(body) { nasCalls.push({ operation: 'configure', body }); return { mountedPath: '/mnt/josi-nas/offsite' }; },
+      async remove() { nasCalls.push({ operation: 'remove' }); },
+    },
   });
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -140,7 +147,9 @@ describe('the form asks for what each vendor actually calls things', () => {
     const byKind = new Map(
       (res.body.catalog as Array<any>).map((c) => [c.kind, c]),
     );
-    expect(byKind.get('nas').fields.map((f: any) => f.label)).toContain('Mounted path');
+    expect(byKind.get('nas').fields.map((f: any) => f.label)).toEqual(expect.arrayContaining([
+      'NAS address', 'Share or export', 'Username', 'Password', 'Folder on the share',
+    ]));
     // Backblaze shows keyID and applicationKey. Labelling those with the
     // protocol's names sends an operator hunting their console for fields that
     // are not there.
@@ -179,6 +188,17 @@ describe('the form asks for what each vendor actually calls things', () => {
 });
 
 describe('the credential is managed, not mounted', () => {
+  it('authenticates, browses, and mounts an SMB share through the restricted controller', async () => {
+    const browsed = await call('/api/ops/admin/backups/destination/nas/browse', { method: 'POST', body: { shareProtocol: 'smb', shareHost: '10.0.0.8', shareName: 'backup', username: 'roman', password: 'test-only-password' } });
+    expect(browsed.status).toBe(200);
+    expect(browsed.body.folders).toEqual(['daily', 'offsite']);
+    const saved = await call('/api/ops/admin/backups/destination', { method: 'PUT', body: { kind: 'nas', shareProtocol: 'smb', shareHost: '10.0.0.8', shareName: 'backup', folder: 'offsite', username: 'roman', password: 'test-only-password', encryptionEnabled: false } });
+    expect(saved.status).toBe(200);
+    const view = await call('/api/ops/admin/backups/destination');
+    expect(view.body.destination).toMatchObject({ shareProtocol: 'smb', shareHost: '10.0.0.8', shareName: 'backup' });
+    expect(JSON.stringify(view.body)).not.toContain('test-only-password');
+    expect(nasCalls.map((c) => c.operation)).toEqual(['browse', 'configure']);
+  });
   it('seals what was typed and never returns it', async () => {
     const saved = await call('/api/ops/admin/backups/destination', { method: 'PUT', body: S3 });
     expect(saved.status, JSON.stringify(saved.body)).toBe(200);

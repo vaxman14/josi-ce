@@ -24,6 +24,7 @@ import { adminParentalRoutes, parentalRoutes } from './http/parentalRoutes.js';
 import {
   adminDeveloperServiceRoutes, developerServiceRoutes,
 } from './http/developerServiceRoutes.js';
+import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
 import { personaRoutes } from './http/personaRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
@@ -34,9 +35,11 @@ import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
 import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
+import { nasController } from './http/nasController.js';
 
 export interface AppConfig {
   voiceBoxHelper?: VoiceHelper;
+  nasController?: import('./http/nasController.js').NasController | null;
   /** https in production; false lets cookies work over plain http locally. */
   cookieSecure: boolean;
   /** Public origin, used for invite/reset links. */
@@ -50,6 +53,8 @@ export interface AppConfig {
   /** Developer-service HTTP, injected by the suites so no test reaches GitHub,
    * Netlify, Vercel or Supabase. */
   developerServiceFetch?: typeof fetch;
+  /** HTTP for administrator-defined REST integrations. */
+  customApiFetch?: typeof fetch;
   /** The publisher's licence verification key. Unset in production, where the
    * key stamped into the artefact is used; injected by the suites so a test can
    * stand in for a supported build without rebuilding one. */
@@ -200,6 +205,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/assistant', assistantRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
     codexRunner: cfg.codexRunner, connectorFetch: cfg.connectorFetch,
+    customApiFetch: cfg.customApiFetch, outboundResolve: cfg.outboundResolve,
   }));
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({
@@ -228,6 +234,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
   }));
   api.use('/admin/vault', adminVaultRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  api.use('/admin/custom-apis', adminCustomApiRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,
+    resolve: cfg.outboundResolve,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
@@ -261,6 +271,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
   }));
   api.use('/vault', vaultRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  api.use('/custom-apis', customApiRoutes({
+    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,
+    resolve: cfg.outboundResolve,
+  }));
 
   api.use('/ops', opsRoutes({
     db,
@@ -272,6 +286,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     supportGatewayUrl: cfg.supportGatewayUrl ?? null,
     fetchLatestVersion: cfg.fetchLatestVersion,
     outboundResolve: cfg.outboundResolve,
+    nasController: cfg.nasController ?? nasController(),
   }));
 
   api.use((_req, res) => res.status(404).json({ error: 'no such endpoint' }));

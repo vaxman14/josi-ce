@@ -19,6 +19,9 @@ connections, and licensed Family BETA controls.
 * [Voice Box](VOICE_BOX.md)
 * [Parental Controls BETA](PARENTAL_CONTROLS.md)
 * [Backups, restore, updates and diagnostics](PHASE_10_EVIDENCE.md)
+* [Backups: progress, SMB/NFS, encryption, and recovery](BACKUPS.md)
+* [Integrations and per-user developer accounts](DEVELOPER_SERVICE_CONNECTIONS.md)
+* [Custom REST APIs](CUSTOM_API_CONNECTIONS.md)
 * [Security model](THREAT_MODEL.md)
 * [Legal and policy index](LEGAL.md)
 

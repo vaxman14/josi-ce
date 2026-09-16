@@ -31,7 +31,7 @@ export interface SignArgs {
   /** Already-encoded query pairs, or empty. */
   query?: Record<string, string>;
   headers: Record<string, string>;
-  body: string;
+  body: string | Uint8Array;
   region: string;
   service: string;
   credentials: AwsCredentials;
@@ -41,8 +41,8 @@ export interface SignArgs {
 
 const ALGORITHM = 'AWS4-HMAC-SHA256';
 
-function sha256Hex(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex');
+function sha256Hex(value: string | Uint8Array): string {
+  return createHash('sha256').update(typeof value === 'string' ? value : Buffer.from(value)).digest('hex');
 }
 
 function hmac(key: Buffer | string, value: string): Buffer {

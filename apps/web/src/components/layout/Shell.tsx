@@ -53,7 +53,7 @@ const ADMIN_NAV = [
   { to: '/admin/channels', label: 'Channels' },
   { to: '/admin/backups', label: 'Backups' },
   { to: '/admin/vault', label: 'Master Vault' },
-  { to: '/admin/developer-services', label: 'Developer services' },
+  { to: '/admin/integrations', label: 'Integrations' },
   { to: '/admin/parental-controls', label: 'Parental controls (Coming Soon)' },
   { to: '/admin/workspace', label: 'Workspace' },
 ];
