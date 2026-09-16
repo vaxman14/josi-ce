@@ -19,6 +19,7 @@ COPY scripts/preflight.sh /opt/josi-ce-release/preflight.sh
 COPY scripts/reset-password.sh /opt/josi-ce-release/reset-password.sh
 COPY scripts/aio-install.sh /usr/local/bin/josi-ce-aio-install
 COPY services/installer/controller.py /opt/josi-installer/controller.py
+COPY services/installer/coding_helper.py /opt/josi-installer/coding_helper.py
 COPY services/installer/storage_helper.py /opt/josi-installer/storage_helper.py
 COPY services/installer/maintenance_helper.py /opt/josi-installer/maintenance_helper.py
 COPY services/installer/index.html /opt/josi-installer/index.html

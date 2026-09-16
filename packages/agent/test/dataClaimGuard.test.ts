@@ -32,7 +32,7 @@ const NINE_DOCS = Array.from({ length: 9 }, (_, i) => ({
 describe('DATA_CLAIM_TOOLS', () => {
   it('covers the document tools and the item-17 read tools', () => {
     expect([...DATA_CLAIM_TOOLS].sort()).toEqual([
-      'get_event', 'list_documents', 'query_calendar', 'read_email',
+      'get_event', 'get_provider_status', 'list_documents', 'query_calendar', 'read_email',
       'search_contacts', 'search_documents', 'search_email',
     ].sort());
   });

@@ -51,7 +51,7 @@ export async function listEvents(
   args: CalendarQueryArgs,
   opts: FetchOptions = {},
 ): Promise<RemoteEvent[]> {
-  const limit = Math.max(1, Math.min(args.limit ?? CALENDAR_RESULT_CAP, CALENDAR_RESULT_CAP));
+  const limit = Math.max(1, Math.min(args.limit ?? CALENDAR_RESULT_CAP, 1000));
   return provider === 'google' ? listGoogle(args, limit, opts) : listGraph(args, limit, opts);
 }
 
@@ -119,15 +119,22 @@ async function listGoogle(args: CalendarQueryArgs, limit: number, opts: FetchOpt
     orderBy: 'startTime',
     maxResults: String(limit),
   });
-  const result = await providerRequest(
-    `${googleEventsUrl(args.calendarId)}?${params}`,
-    { headers: { Authorization: `Bearer ${args.accessToken}` } },
-    opts,
-  );
-  if (result.status < 200 || result.status >= 300) raiseProviderError(result.status, result.body);
-  return (((result.body as { items?: GoogleEvent[] } | null)?.items) ?? [])
-    .map((e) => fromGoogle(e, false))
-    .filter(Boolean) as RemoteEvent[];
+  const out: RemoteEvent[] = [];
+  let token = '';
+  const seen = new Set<string>();
+  do {
+    if (token) params.set('pageToken', token);
+    params.set('maxResults', String(Math.min(250, limit-out.length)));
+    const result = await providerRequest(`${googleEventsUrl(args.calendarId)}?${params}`, { headers: { Authorization: `Bearer ${args.accessToken}` } }, opts);
+    if (result.status < 200 || result.status >= 300) raiseProviderError(result.status, result.body);
+    const body = (result.body ?? {}) as { items?: GoogleEvent[]; nextPageToken?: string };
+    out.push(...(body.items ?? []).map(e=>fromGoogle(e,false)).filter((e):e is RemoteEvent=>!!e));
+    token = body.nextPageToken ?? '';
+    if (token && (seen.has(token) || out.length >= limit)) throw new ConnectorError('Calendar range is too busy. Choose a shorter range to retrieve all events.', {category:'provider_error'});
+    seen.add(token);
+  } while (token);
+  return out;
+
 }
 
 async function getGoogle(args: { accessToken: string; id: string; calendarId?: string }, opts: FetchOptions): Promise<RemoteEvent | null> {
@@ -180,14 +187,21 @@ interface GraphEvent {
   bodyPreview?: unknown;
 }
 
+// Graph returns UTC wall times without a suffix even with the UTC preference.
+function graphTime(value: unknown, allDay: boolean): string | null {
+  const date = str(value); if (!date) return null;
+  if (allDay) return date.slice(0,10);
+  return /(?:Z|[+-]\d{2}:\d{2})$/i.test(date) ? date : `${date}Z`;
+}
+
 function fromGraph(event: GraphEvent, withDescription: boolean): RemoteEvent | null {
   const sourceId = str(event.id);
   if (!sourceId) return null;
   const out: RemoteEvent = {
     sourceId,
     title: str(event.subject),
-    start: str(event.start?.dateTime),
-    end: str(event.end?.dateTime),
+    start: graphTime(event.start?.dateTime, event.isAllDay === true),
+    end: graphTime(event.end?.dateTime, event.isAllDay === true),
     allDay: event.isAllDay === true,
     location: str(event.location?.displayName),
     organizer: str(event.organizer?.emailAddress?.address),
@@ -209,22 +223,21 @@ async function listGraph(args: CalendarQueryArgs, limit: number, opts: FetchOpti
     $top: String(limit),
     $select: GRAPH_EVENT_SELECT,
   });
-  const result = await providerRequest(
-    `${GRAPH_BASE}/me/${args.calendarId ? `calendars/${encodeURIComponent(args.calendarId)}/` : ''}calendarView?${params}`,
-    {
-      headers: {
-        Authorization: `Bearer ${args.accessToken}`,
-        // Times come back in one known zone rather than the mailbox's; the
-        // tool layer talks ISO/UTC and lets the model phrase it for a person.
-        Prefer: 'outlook.timezone="UTC"',
-      },
-    },
-    opts,
-  );
-  if (result.status < 200 || result.status >= 300) raiseProviderError(result.status, result.body);
-  return (((result.body as { value?: GraphEvent[] } | null)?.value) ?? [])
-    .map((e) => fromGraph(e, false))
-    .filter(Boolean) as RemoteEvent[];
+  let url: string | null = `${GRAPH_BASE}/me/${args.calendarId ? `calendars/${encodeURIComponent(args.calendarId)}/` : ''}calendarView?${params}`;
+  const out: RemoteEvent[] = []; const seen = new Set<string>();
+  while (url) {
+    if (seen.has(url)) throw new ConnectorError('Calendar pagination did not advance. Retry with a shorter range.', {category:'provider_error'});
+    seen.add(url);
+    const result = await providerRequest(url, {headers:{Authorization:`Bearer ${args.accessToken}`,Prefer:'outlook.timezone="UTC"'}}, opts);
+    if (result.status < 200 || result.status >= 300) raiseProviderError(result.status,result.body);
+    const body = (result.body ?? {}) as {value?:GraphEvent[]; '@odata.nextLink'?:string};
+    out.push(...(body.value ?? []).map(e=>fromGraph(e,false)).filter((e):e is RemoteEvent=>!!e));
+    const next = body['@odata.nextLink'];
+    if(next && (!next.startsWith(`${GRAPH_BASE}/`) || out.length >= limit)) throw new ConnectorError('Calendar range is too busy. Choose a shorter range to retrieve all events.', {category:'provider_error'});
+    url = next ?? null;
+  }
+  return out;
+
 }
 
 async function getGraph(args: { accessToken: string; id: string; calendarId?: string }, opts: FetchOptions): Promise<RemoteEvent | null> {

@@ -7,6 +7,7 @@
 // without a matching token.
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { checkReadiness, type Db, type LoadOptions } from '@josi-ce/core';
+import { probeAttachmentStorage } from '@josi-ce/storage';
 import { attachUser } from './http/authz.js';
 import { requireCsrf } from './http/cookies.js';
 import { authRoutes } from './http/authRoutes.js';
@@ -17,6 +18,7 @@ import { contactSyncRoutes } from './http/contactSyncRoutes.js';
 import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js';
 import { calendarRoutes } from './http/calendarRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
+import { localWorkspaceRoutes } from './http/localWorkspaceRoutes.js';
 import { storageRoutes } from './http/storageRoutes.js';
 import { opsRoutes } from './http/opsRoutes.js';
 import { licenceRoutes } from './http/licenceRoutes.js';
@@ -40,6 +42,8 @@ import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
 
 export interface AppConfig {
+  /** Production enables a real persistent-volume readiness probe. */
+  attachmentStorageRoot?: string;
   voiceBoxHelper?: VoiceHelper;
   nasController?: import('./http/nasController.js').NasController | null;
   /** https in production; false lets cookies work over plain http locally. */
@@ -125,7 +129,9 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     void (async () => {
       const result = await checkReadiness(db, { masterKey: cfg.masterKeyCheck });
       res.set('Cache-Control', 'no-store');
-      res.status(result.ready ? 200 : 503).json(result);
+      const storage = cfg.attachmentStorageRoot ? await probeAttachmentStorage(cfg.attachmentStorageRoot) : {ok: true};
+      const blockers = [...result.blockers, ...(storage.ok ? [] : ['attachment_storage'])];
+      res.status(blockers.length ? 503 : 200).json({ready: blockers.length === 0, blockers});
     })();
   });
 
@@ -253,6 +259,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   api.use('/admin/connections', adminConnectionRoutes({ db }));
   api.use('/storage', storageRoutes({ db }));
+  api.use('/workspace', localWorkspaceRoutes({ db }));
   api.use('/telegram', telegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
   }));

@@ -30,6 +30,11 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     labels: { whatsapp: 'WhatsApp', slack: 'Slack' },
   },
 
+  calendar_provider: {
+    source: { literal: ['google', 'microsoft'] },
+    labels: { google: 'Google Calendar', microsoft: 'Microsoft Outlook' },
+  },
+
   connection_status: {
     source: { migrationTable: 'connections', column: 'status' },
     labels: {

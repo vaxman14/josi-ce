@@ -778,3 +778,90 @@ describe('what gets recorded', () => {
     }
   });
 });
+
+describe('automatic synchronization regression coverage', () => {
+  it('automatically enrolls enabled contact reads and preserves explicit stop', async () => {
+    const connection = await connect({ user: alice });
+    const due = await dueOrigins(db);
+    expect(due).toHaveLength(1);
+    const [origin] = await listOrigins(db, alice);
+    expect(origin.connection_id).toBe(connection.id);
+    expect(origin.sync_mode).toBe('import_only');
+    await stopSync(db, { originId: origin.id, ownerUserId: alice });
+    expect(await dueOrigins(db)).toHaveLength(0);
+  });
+
+  it('does not borrow enabled permission from another connected account', async () => {
+    const connection = await connect({ user: alice });
+    const origin = await startSync(connection);
+    await setCapability(db, { connection, capability: 'google.contacts.read', enabled: false, actorUserId: alice });
+    const second = await upsertConnection(db, key, { ownerUserId: alice, provider: 'google',
+      tokens: { accessToken: 'other', refreshToken: 'other-refresh', expiresIn: 3600,
+        grantedScopes: 'https://www.googleapis.com/auth/contacts.readonly' },
+      accountEmail: 'second@example.test', providerAccountId: 'second-account', requestedCapabilities: ['google.contacts.read'] });
+    await setCapability(db, { connection: second, capability: 'google.contacts.read', enabled: true, actorUserId: alice });
+    const result = await syncOrigin(db, origin.id, { masterKey: key, fetchImpl: async () => { throw new Error('must not request'); } });
+    expect(result.status).toBe('error');
+    expect((await listOrigins(db, alice))[0].last_error_category).toBe('insufficient_scope');
+  });
+
+  it('retains the agreement baseline when local-only edits are encountered repeatedly', async () => {
+    const origin = await startSync(await connect({ user: alice }));
+    await syncOrigin(db, origin.id, { masterKey: key, fetchImpl: provider([googlePage([person()])]) });
+    await db.query(`update contacts set name='Local edit' where owner_user_id=$1`, [alice]);
+    await syncOrigin(db, origin.id, { masterKey: key, fetchImpl: provider([googlePage([person()])]) });
+    await syncOrigin(db, origin.id, { masterKey: key, fetchImpl: provider([googlePage([person({ names: [{ displayName: 'Remote edit' }] })])]) });
+    const [row] = await db.query<{name: string; conflict_state: string}>(`select name, conflict_state from contacts where owner_user_id=$1`, [alice]);
+    expect(row.name).toBe('Local edit');
+    expect(row.conflict_state).toBe('both_changed');
+  });
+
+  it('retains a bounded page checkpoint instead of publishing partial success', async () => {
+    const origin = await startSync(await connect({ user: alice }));
+    await syncOrigin(db, origin.id, { masterKey: key, maxPages: 1,
+      fetchImpl: provider([new Response(JSON.stringify({connections:[person()], nextPageToken:'next-page'}))]) });
+    const [row] = await listOrigins(db, alice);
+    expect(row.page_cursor).toBe('next-page');
+    expect(row.last_sync_at).toBeNull();
+    await syncOrigin(db, origin.id, { masterKey: key, fetchImpl: provider([googlePage([])]) });
+    expect((await listOrigins(db, alice))[0].page_cursor).toBeNull();
+  });
+});
+
+it('recovers an abandoned sync claim while preserving its checkpoint', async () => {
+  const origin = await startSync(await connect({ user: alice }));
+  await db.exec(`alter table contact_sync_origins disable trigger contact_sync_origins_touch`);
+  await db.query(`update contact_sync_origins set status='syncing', page_cursor='resume', updated_at=now()-interval '4 hours' where id=$1`, [origin.id]);
+  await db.exec(`alter table contact_sync_origins enable trigger contact_sync_origins_touch`);
+  expect(await dueOrigins(db)).toHaveLength(1);
+  expect((await listOrigins(db, alice))[0].page_cursor).toBe('resume');
+});
+
+it('preserves locally edited contacts when the provider deletes them', async () => {
+  const origin = await startSync(await connect({ user: alice }));
+  await syncOrigin(db, origin.id, { masterKey:key, fetchImpl:provider([googlePage([person()])]) });
+  await db.query(`update contacts set name='Keep my edit' where owner_user_id=$1`, [alice]);
+  const result = await syncOrigin(db, origin.id, { masterKey:key, fetchImpl:provider([googlePage([person({metadata:{deleted:true}})])]) });
+  expect(result.counts.conflicts).toBe(1);
+  const [row] = await db.query<{name:string}>(`select name from contacts where owner_user_id=$1`, [alice]);
+  expect(row.name).toBe('Keep my edit');
+});
+
+it('honors provider Retry-After during automatic sync without logging response bodies', async () => {
+  const origin = await startSync(await connect({ user: alice }));
+  const waits: number[] = [];
+  const result = await syncOrigin(db, origin.id, {masterKey:key, sleep:async ms=>{waits.push(ms);},
+    fetchImpl:provider([new Response('{}',{status:429,headers:{'Retry-After':'17'}}),googlePage([])])});
+  expect(result.status).toBe('idle');
+  expect(waits).toEqual([17000]);
+});
+
+it('preserves user-authored notes when the provider deletes an otherwise unchanged contact', async () => {
+  const origin = await startSync(await connect({ user: alice }));
+  await syncOrigin(db, origin.id, { masterKey:key, fetchImpl:provider([googlePage([person()])]) });
+  await db.query(`update contacts set notes='{"text":"User-authored private note"}' where owner_user_id=$1`, [alice]);
+  const result = await syncOrigin(db, origin.id, { masterKey:key, fetchImpl:provider([googlePage([person({metadata:{deleted:true}})])]) });
+  expect(result.counts.conflicts).toBe(1);
+  const [row] = await db.query<{notes:string}>(`select notes from contacts where owner_user_id=$1`, [alice]);
+  expect(row.notes).toEqual({text:'User-authored private note'});
+});

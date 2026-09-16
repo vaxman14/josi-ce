@@ -79,3 +79,8 @@ Josi uses access controls, encryption for stored provider secrets, audit events,
 CSRF protection and restrictive browser policies, but no system is perfectly
 secure. Operators control hosting location. Enabling an external provider may
 transfer data to countries where that provider operates.
+
+## Persistent chat attachments
+
+See [Chat attachments](CHAT_ATTACHMENTS.md) for supported formats, storage limits,
+privacy, retention, installation/upgrade volume provisioning and troubleshooting.

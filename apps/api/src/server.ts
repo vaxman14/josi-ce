@@ -2,8 +2,12 @@
 import { readFileSync } from 'node:fs';
 import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
+import { attachmentRoot, probeAttachmentStorage } from '@josi-ce/storage';
 import { createApp } from './app.js';
 import { publicAddressFromEnvironment, reconcilePublicAddress } from './setup/publicAddress.js';
+
+const attachmentStorage = await probeAttachmentStorage();
+if (!attachmentStorage.ok) console.error(`josi-ce: ${attachmentStorage.code}: ${attachmentStorage.message}`);
 
 const PORT = Number(process.env.PORT ?? 8080);
 
@@ -48,6 +52,7 @@ const cookieSecure = process.env.COOKIE_SECURE === 'true'
     : new URL(appUrl).protocol === 'https:';
 
 const app = createApp(db, {
+  attachmentStorageRoot: attachmentRoot(),
   // Empty/unset follows APP_URL. This keeps first-run LAN HTTP usable without
   // weakening cookies on a public HTTPS installation. An explicit value is an
   // advanced override, not something the normal installer should require.

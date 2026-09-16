@@ -27,6 +27,7 @@ const MEMBER_NAV = [
   { to: '/app/calendar', label: 'Calendar' },
   { to: '/app/contacts', label: 'Contacts' },
   { to: '/app/connections', label: 'Connections' },
+  { to: '/app/workspace', label: 'Local Workspace' },
   { to: '/app/workflows', label: 'Workflows' },
   { to: '/app/vault', label: 'Vault' },
   { to: '/app/usage', label: 'Usage' },

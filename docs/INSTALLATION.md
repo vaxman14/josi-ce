@@ -1567,3 +1567,8 @@ to be updated by the operator. An already-registered Telegram webhook is moved o
 passes; failure restores the prior registration and local verification metadata.
 Disconnect Telegram's registered webhook before switching to LAN HTTP, which
 cannot receive Telegram delivery. An unregistered webhook remains unregistered.
+
+## Persistent chat attachments
+
+See [Chat attachments](CHAT_ATTACHMENTS.md) for supported formats, storage limits,
+privacy, retention, installation/upgrade volume provisioning and troubleshooting.

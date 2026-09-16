@@ -33,7 +33,7 @@ import {
 import { createHash } from 'node:crypto';
 import type { Provider } from './capabilities.js';
 import { contactCapabilityFor } from './capabilities.js';
-import { accessTokenFor, can, getConnection, type ConnectionRow } from './connections.js';
+import { accessTokenFor, getConnection, type ConnectionRow } from './connections.js';
 import { loadClient } from './oauthClients.js';
 import { ConnectorError, type ErrorCategory, type FetchOptions } from './providers.js';
 import {
@@ -72,6 +72,7 @@ export interface LocalContact {
   emails: string[];
   phones: string[];
   source: string;
+  notes?: Record<string, unknown> | null;
   source_account: string | null;
   conflict_state: string | null;
   updated_at: string;
@@ -82,6 +83,15 @@ export class SyncError extends Error {
   constructor(message: string, readonly category: ErrorCategory = 'provider_error') {
     super(message);
   }
+}
+
+/** Permission belongs to the exact origin connection, never another account. */
+async function originAllowed(db: Db, connection: ConnectionRow, capability: string): Promise<boolean> {
+  const [grant] = await db.query<{ allowed: boolean }>(
+    `select (cc.enabled and cc.scopes_granted_at is not null and coalesce(p.allowed, true)) as allowed
+     from connection_capabilities cc left join admin_capability_policy p on p.capability = cc.capability
+     where cc.connection_id = $1 and cc.capability = $2`, [connection.id, capability]);
+  return connection.status === 'active' && !!grant?.allowed;
 }
 
 // ---------------------------------------------------------------- fingerprint
@@ -147,6 +157,10 @@ export function decideApply(args: {
     if (!linked) {
       return { action: 'delete_ignored_tombstoned', reason: 'Already gone here.' };
     }
+    if (linked.source === 'josi' || (linked.notes != null && Object.keys(linked.notes).length > 0) ||
+        (args.lastLocalFingerprint !== null && localFingerprint(linked) !== args.lastLocalFingerprint)) {
+      return { action: 'conflict', reason: 'Deleted at the provider but edited here. The local edit was preserved.' };
+    }
     return { action: 'deleted', reason: 'Deleted at the provider.' };
   }
 
@@ -205,7 +219,7 @@ async function loadOrigin(db: Db, originId: string): Promise<SyncOrigin | null> 
 
 async function loadContact(db: Db, contactId: string): Promise<LocalContact | null> {
   const [row] = await db.query<LocalContact>(
-    `select id, owner_user_id, name, email, phone, emails, phones, source, source_account,
+    `select id, owner_user_id, name, email, phone, emails, phones, source, notes, source_account,
             conflict_state, updated_at, synced_at
      from contacts where id = $1`,
     [contactId],
@@ -295,7 +309,7 @@ export async function syncOrigin(
   }
 
   const connection = await getConnection(db, origin.connection_id);
-  if (!connection || connection.status !== 'active') {
+  if (!connection || connection.status !== 'active' || connection.owner_user_id !== origin.owner_user_id || connection.provider !== origin.provider) {
     // LB8.9. A revoked connection stops sync. It deletes nothing.
     await failOrigin(db, origin, 'revoked', 'disconnected');
     return { counts: emptyCounts(), needsReview: [], wasFullResync: false, status: 'disconnected' };
@@ -305,13 +319,15 @@ export async function syncOrigin(
   // when the mode was chosen. A scope removed at the provider since then must
   // stop the sync, not be discovered halfway through it.
   const needed = contactCapabilityFor(origin.provider, origin.sync_mode);
-  const allowed = await can(db, { ownerUserId: origin.owner_user_id, capability: needed });
-  if (!allowed.allowed) {
+  const allowed = await originAllowed(db, connection, needed);
+  if (!allowed) {
     await failOrigin(db, origin, 'insufficient_scope', 'error');
     return { counts: emptyCounts(), needsReview: [], wasFullResync: false, status: 'error' };
   }
 
-  await db.query(`update contact_sync_origins set status = 'syncing' where id = $1`, [origin.id]);
+  const claimed = await db.query<{ id: string }>(`update contact_sync_origins set status = 'syncing'
+    where id = $1 and status in ('idle', 'error') returning id`, [origin.id]);
+  if (!claimed.length) return { counts: emptyCounts(), needsReview: [], wasFullResync: false, status: origin.status };
 
   const counts = emptyCounts();
   const touched: string[] = [];
@@ -364,6 +380,13 @@ export async function syncOrigin(
 
       if (result.nextDeltaCursor) deltaCursor = result.nextDeltaCursor;
       break;
+    }
+
+    if (pageCursor) {
+      // A bounded run is unfinished. Preserve its checkpoint and do not publish success.
+      await db.query(`update contact_sync_origins set status = 'idle', page_cursor = $2, last_sync_counts = $3 where id = $1`,
+        [origin.id, pageCursor, json(counts)]);
+      return { counts, needsReview: [], wasFullResync, status: 'idle' };
     }
 
     if (origin.sync_mode === 'two_way') {
@@ -433,7 +456,7 @@ async function withRetry<T>(
       const category = err instanceof ConnectorError ? err.category : 'provider_error';
       const retryable = category === 'rate_limited' || category === 'network' || category === 'provider_error';
       if (!retryable || attempt === attempts) throw err;
-      await sleep(backoffMs(attempt));
+      await sleep(backoffMs(attempt, err instanceof ConnectorError ? err.retryAfterSeconds : undefined));
     }
   }
   throw lastError;
@@ -496,35 +519,27 @@ async function applyRemote(
     case 'unchanged':
       counts.unchanged++;
       // The fingerprints still move forward, so "agreed" stays current.
-      if (link) await touchLink(db, link.id, remote, linked);
+      if (link && linked && fingerprint(remote) === localFingerprint(linked)) {
+        await touchLink(db, link.id, remote, linked);
+      }
       return linked?.id ?? null;
 
     case 'created': {
+      // The contact and provenance link commit as one statement. A crash must
+      // never leave an unlinked contact that the next page replay duplicates.
       const [created] = await db.query<{ id: string }>(
-        `insert into contacts
-           (owner_user_id, name, email, phone, emails, phones, source, source_account, conflict_state, synced_at)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, 'none', now())
-         returning id`,
-        [
-          origin.owner_user_id,
-          remote.displayName,
-          remote.emails[0] ?? null,
-          remote.phones[0] ?? null,
-          json(remote.emails),
-          json(remote.phones),
-          origin.provider,
-          origin.source_account,
-        ],
-      );
-      await db.query(
-        `insert into contact_links
-           (origin_id, contact_id, owner_user_id, source_id, remote_etag, remote_updated_at,
-            remote_fingerprint, local_fingerprint)
-         values ($1, $2, $3, $4, $5, $6, $7, $7)`,
-        [
-          origin.id, created.id, origin.owner_user_id, remote.sourceId,
-          remote.etag, remote.updatedAt, fingerprint(remote),
-        ],
+        `with created as (
+          insert into contacts (owner_user_id, name, email, phone, emails, phones,
+            source, source_account, conflict_state, synced_at)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, 'none', now()) returning id
+        ), linked as (
+          insert into contact_links (origin_id, contact_id, owner_user_id, source_id,
+            remote_etag, remote_updated_at, remote_fingerprint, local_fingerprint)
+          select $9, id, $1, $10, $11, $12, $13, $13 from created returning contact_id
+        ) select contact_id as id from linked`,
+        [origin.owner_user_id, remote.displayName, remote.emails[0] ?? null,
+          remote.phones[0] ?? null, json(remote.emails), json(remote.phones), origin.provider,
+          origin.source_account, origin.id, remote.sourceId, remote.etag, remote.updatedAt, fingerprint(remote)],
       );
       counts.created++;
       return created.id;
@@ -791,8 +806,8 @@ export async function setSyncMode(
   }
 
   const needed = contactCapabilityFor(connection.provider, args.mode);
-  const allowed = await can(db, { ownerUserId: connection.owner_user_id, capability: needed });
-  if (!allowed.allowed) {
+  const allowed = await originAllowed(db, connection, needed);
+  if (!allowed) {
     throw new SyncError(
       args.mode === 'two_way'
         ? 'two-way sync needs permission to change contacts at the provider, which has to be granted separately'
@@ -869,6 +884,20 @@ export async function stopSync(
  * `paused` and `disconnected` are excluded here as well as inside `syncOrigin`.
  * Two checks, because this one decides what the worker even wakes up for. */
 export async function dueOrigins(db: Db, limit = 20): Promise<Array<{ id: string; owner_user_id: string }>> {
+  // A crashed worker cannot strand an origin forever. Three hours exceeds the
+  // bounded 50-page run, including request timeouts and capped retry sleeps.
+  await db.query(`update contact_sync_origins set status = 'error', last_error_category = 'network'
+    where status = 'syncing' and updated_at < now() - interval '3 hours'`);
+  // Opted-in contact read capabilities automatically get an import-only origin.
+  // Existing stopped origins remain stopped; reconnect never overrides that choice.
+  await db.query(`insert into contact_sync_origins (connection_id, owner_user_id, provider, source_account)
+    select c.id, c.owner_user_id, c.provider, coalesce(c.account_email, c.provider_account_id, 'unknown')
+    from connections c join connection_capabilities cc on cc.connection_id = c.id
+    left join admin_capability_policy p on p.capability = cc.capability
+    where c.status = 'active' and c.provider in ('google', 'microsoft')
+      and cc.capability = c.provider || '.contacts.read' and cc.enabled
+      and cc.scopes_granted_at is not null and coalesce(p.allowed, true)
+    on conflict (connection_id) do nothing`);
   return db.query<{ id: string; owner_user_id: string }>(
     `select id, owner_user_id from contact_sync_origins
      where status in ('idle', 'error')

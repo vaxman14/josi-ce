@@ -91,29 +91,29 @@ export function calendarRoutes(ctx: Ctx): Router {
     const sources = await ctx.db.query<{ id:string; connection_id:string; provider_calendar_id:string; name:string; color:string|null; provider:OAuthProvider; account:string|null }>(
       `select s.id,s.connection_id,s.provider_calendar_id,s.name,s.color,c.provider,c.account_email account
        from calendar_sources s join connections c on c.id=s.connection_id
-       where s.owner_user_id=$1 and s.selected=true and c.status='active' order by s.name`, [req.user!.id]);
+       where s.owner_user_id=$1 and s.selected=true order by s.name`, [req.user!.id]);
     const events: unknown[] = []; const sourceErrors: Array<{ sourceId:string; error:string }> = [];
     for (const source of sources) {
       try {
-        if (!(await calendarAccess(ctx.db, source.connection_id))) continue;
-        const connection = await getConnection(ctx.db, source.connection_id); if (!connection) continue;
+        if (!(await calendarAccess(ctx.db, source.connection_id))) throw new HttpError(403, 'Calendar access is disabled.');
+        const connection = await getConnection(ctx.db, source.connection_id); if (!connection || connection.status !== 'active') throw new HttpError(403, 'Calendar account is unavailable.');
         const client = await loadClient(ctx.db, key(ctx), source.provider);
         const accessToken = await accessTokenFor(ctx.db, key(ctx), { connection, client }, { fetchImpl: ctx.fetchImpl });
-        const found = await listEvents(source.provider, { accessToken, calendarId: source.provider_calendar_id, timeMin:start.toISOString(), timeMax:end.toISOString(), limit:100 }, { fetchImpl:ctx.fetchImpl });
-        events.push(...found.map(event => ({ ...event, eventId:event.sourceId, sourceId:source.id, sourceName:source.name, sourceColor:source.color, provider:source.provider, account:source.account })));
-      } catch { sourceErrors.push({ sourceId: source.id, error: 'This calendar could not be loaded. Check its account connection.' }); }
+        const found = await listEvents(source.provider, { accessToken, calendarId: source.provider_calendar_id, timeMin:start.toISOString(), timeMax:end.toISOString(), limit:1000 }, { fetchImpl:ctx.fetchImpl });
+        events.push(...found.map(event => ({ ...event, eventId:event.sourceId, sourceId:source.id, sourceName:source.name, connectionId:source.connection_id, providerCalendarId:source.provider_calendar_id, sourceColor:source.color, provider:source.provider, account:source.account })));
+      } catch { sourceErrors.push({ sourceId: source.id, error: `Calendar ${source.name} could not be loaded. Check its account connection and permissions, or choose a shorter range.` }); }
     }
     events.sort((a:any,b:any)=>String(a.start??'').localeCompare(String(b.start??'')));
     return res.json({ events, sourceErrors });
   }));
   r.get('/events/:sourceId/:eventId', handle(async (req, res) => {
-    const [source] = await ctx.db.query<{ connection_id:string; provider_calendar_id:string; provider:OAuthProvider }>(
-      `select s.connection_id,s.provider_calendar_id,c.provider from calendar_sources s join connections c on c.id=s.connection_id where s.id=$1 and s.owner_user_id=$2`, [param(req,'sourceId'), req.user!.id]);
+    const [source] = await ctx.db.query<{ connection_id:string; provider_calendar_id:string; provider:OAuthProvider; name:string; color:string|null; account:string|null }>(
+      `select s.connection_id,s.provider_calendar_id,s.name,s.color,c.provider,c.account_email account from calendar_sources s join connections c on c.id=s.connection_id where s.id=$1 and s.owner_user_id=$2`, [param(req,'sourceId'), req.user!.id]);
     if (!source || !(await calendarAccess(ctx.db,source.connection_id))) throw new HttpError(404,'event not found');
-    const connection=await getConnection(ctx.db,source.connection_id); if(!connection) throw new HttpError(404,'event not found');
+    const connection=await getConnection(ctx.db,source.connection_id); if(!connection || connection.status !== 'active') throw new HttpError(404,'event not found');
     const client=await loadClient(ctx.db,key(ctx),source.provider); const accessToken=await accessTokenFor(ctx.db,key(ctx),{connection,client},{fetchImpl:ctx.fetchImpl});
     const event=await getEvent(source.provider,{accessToken,calendarId:source.provider_calendar_id,id:param(req,'eventId')},{fetchImpl:ctx.fetchImpl});
-    if(!event) throw new HttpError(404,'event not found'); return res.json({event});
+    if(!event) throw new HttpError(404,'event not found'); return res.json({event:{...event,eventId:event.sourceId,sourceId:param(req,'sourceId'),connectionId:source.connection_id,providerCalendarId:source.provider_calendar_id,sourceName:source.name,sourceColor:source.color,provider:source.provider,account:source.account}});
   }));
   return r;
 }

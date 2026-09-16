@@ -128,13 +128,14 @@ function classify(status: number, code: string | null): { category: ErrorCategor
 
 export class ExpiredCursor extends Error {}
 
-function raise(status: number, body: unknown): never {
+function raise(status: number, body: unknown, retryAfter?: number | null): never {
   const code = safeCode(body);
   const { category, revoked } = classify(status, code);
   const err = new ConnectorError(
     code ? `the provider refused the request (${code})` : 'the provider refused the request',
     { category, revoked, status },
   );
+  err.retryAfterSeconds = retryAfter ?? undefined;
   throw err;
 }
 
@@ -209,7 +210,7 @@ async function readGoogle(args: ReadArgs, opts: FetchOptions): Promise<ContactPa
   );
 
   if (isExpiredCursor(result.status, result.body)) throw new ExpiredCursor('syncToken expired');
-  if (result.status < 200 || result.status >= 300) raise(result.status, result.body);
+  if (result.status < 200 || result.status >= 300) raise(result.status, result.body, result.retryAfter);
 
   const body = result.body as {
     connections?: GooglePerson[];
@@ -294,7 +295,7 @@ async function readMicrosoft(args: ReadArgs, opts: FetchOptions): Promise<Contac
   );
 
   if (isExpiredCursor(result.status, result.body)) throw new ExpiredCursor('deltaLink expired');
-  if (result.status < 200 || result.status >= 300) raise(result.status, result.body);
+  if (result.status < 200 || result.status >= 300) raise(result.status, result.body, result.retryAfter);
 
   const body = result.body as {
     value?: GraphContact[];
@@ -382,7 +383,7 @@ async function writeGoogle(args: WriteArgs, opts: FetchOptions): Promise<RemoteC
     body: JSON.stringify(person),
   }, opts);
 
-  if (result.status < 200 || result.status >= 300) raise(result.status, result.body);
+  if (result.status < 200 || result.status >= 300) raise(result.status, result.body, result.retryAfter);
   const written = fromGoogle((result.body ?? {}) as GooglePerson);
   if (!written) throw new ConnectorError('the provider accepted the write but returned no contact', { category: 'provider_error' });
   return written;
@@ -416,7 +417,7 @@ async function writeMicrosoft(args: WriteArgs, opts: FetchOptions): Promise<Remo
       category: 'provider_error', status: 412,
     });
   }
-  if (result.status < 200 || result.status >= 300) raise(result.status, result.body);
+  if (result.status < 200 || result.status >= 300) raise(result.status, result.body, result.retryAfter);
   const written = fromGraph((result.body ?? {}) as GraphContact);
   if (!written) throw new ConnectorError('the provider accepted the write but returned no contact', { category: 'provider_error' });
   return written;
