@@ -41,6 +41,7 @@ interface ProviderView {
      * OAuth provider. */
     serverUrl?: string | null;
     capabilities?: Capability[];
+    needsPermissionUpgrade?: boolean;
   } | null;
   connections?: Array<NonNullable<ProviderView['connection']>>;
   capabilities: Capability[];
@@ -90,12 +91,12 @@ export function Connections() {
     if (reason) setError(handshakeError(reason));
   }, [load]);
 
-  async function connect(provider: string, capabilities: string[] = [], connectionId?: string) {
+  async function connect(provider: string, connectionId?: string) {
     setBusy(provider);
     setError('');
     try {
       const res = await api.post<{ url: string }>(`/connections/${provider}/start`, {
-        capabilities, connectionId, returnPath: '/app/connections',
+        connectionId, returnPath: '/app/connections',
       });
       // Leaving the app is the point: consent happens at the provider.
       window.location.assign(res.url);
@@ -124,12 +125,9 @@ export function Connections() {
 
   async function toggle(view: ProviderView, capability: Capability) {
     if (!view.connection) return;
-    // M32: a capability the provider never granted needs another trip through
-    // consent, not a stored wish.
-    if (capability.needsConsent) {
-      await connect(view.provider, [capability.key], view.connection.id);
-      return;
-    }
+    // Provider permissions are upgraded once at account level. A capability
+    // with a missing scope cannot be toggled until that upgrade completes.
+    if (capability.needsConsent) return;
     setBusy(capability.key);
     setError('');
     try {
@@ -202,8 +200,8 @@ export function Connections() {
           ) : !view.connection ? (
             <>
               <p className="mb-3 text-sm text-muted-foreground">
-                Connecting starts read-only. Anything that writes is a separate permission you turn on
-                afterwards, and Josi asks {PROVIDER_LABEL[view.provider]} for it then.
+                {PROVIDER_LABEL[view.provider]} asks once for Josi's supported permission bundle. Every
+                capability stays off in Josi until you choose to turn it on here.
               </p>
               <Button onClick={() => void connect(view.provider)} disabled={busy === view.provider}>
                 {busy === view.provider ? 'Starting…' : `Connect ${PROVIDER_LABEL[view.provider]}`}
@@ -221,6 +219,18 @@ export function Connections() {
                 <p className="mt-1 text-sm text-destructive">
                   {ERROR_TEXT[view.connection.errorCategory] ?? 'Something went wrong with this connection.'}
                 </p>
+              ) : null}
+
+              {view.connection.needsPermissionUpgrade ? (
+                <div className="mt-3 rounded-md border border-border p-3">
+                  <p className="mb-2 text-sm text-muted-foreground">
+                    This account was connected before Josi requested its current permission bundle. Upgrade once;
+                    afterwards every available capability is controlled locally with the On/Off buttons below.
+                  </p>
+                  <Button variant="secondary" onClick={() => void connect(view.provider, view.connection!.id)} disabled={busy === view.provider}>
+                    {busy === view.provider ? 'Starting…' : `Upgrade permissions / Reconnect ${PROVIDER_LABEL[view.provider]}`}
+                  </Button>
+                </div>
               ) : null}
 
               <ul className="mt-3 space-y-3">
@@ -541,11 +551,7 @@ function CapabilityControl({
     return <Badge>switched off by an administrator</Badge>;
   }
   if (capability.needsConsent) {
-    return (
-      <Button variant="secondary" onClick={onToggle} disabled={busy}>
-        {busy ? 'Starting…' : 'Approve at provider'}
-      </Button>
-    );
+    return <Badge>available after account permission upgrade</Badge>;
   }
   return (
     <Button

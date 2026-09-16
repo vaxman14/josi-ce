@@ -447,3 +447,18 @@ shipping an acceptance artifact.
   a timing taken with swap thrashing is not a measurement of Josi.
 - `@node-rs/argon2` ships an arm64 prebuild, so no compiler is needed. That is
   the assumption a real run has to confirm.
+
+## Connector settings and account consent
+
+- OAuth application forms are controlled forms. Save is disabled while pristine,
+  invalid, or submitting; a successful server write/readback clears the dirty
+  state and announces which provider application was saved without echoing its
+  secret. Failures retain safe unsaved input and do not announce success.
+- Dirty connector forms warn before browser navigation and before their provider
+  disclosure is collapsed.
+- Google, Microsoft, Dropbox, and Box request their complete currently supported
+  scope bundle during initial account connection. Provider scopes and local Josi
+  capability switches remain separate: every local capability starts off.
+- A legacy partial grant exposes one account-level **Upgrade permissions /
+  Reconnect** action. Missing-scope capabilities never render per-capability
+  provider approval buttons.
