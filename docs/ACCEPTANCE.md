@@ -504,6 +504,9 @@ Reproducible additional checks:
   action, error feedback, and 200% zoom.
 - `node scripts/acceptance/test-list-7-save-browser.mjs`: rendered workflow save
   states, delayed response, failure/retry, and confirmed readback.
+- `node scripts/acceptance/test-list-7-oauth-save-browser.mjs`: failed OAuth saved-state
+  readback retains edits, retry confirms persistence, and another open provider
+  section keeps its unsaved input.
 - `python3 -m unittest discover -s services/installer -p test_network_rollback.py`:
   54 previous-mode/target-mode/failure combinations plus explicit failed-recovery reporting.
 - `scripts/acceptance/test-list-7-public-address.mjs`: run inside the isolated web

@@ -155,10 +155,11 @@ export function AdminConnectors() {
       setHealth((await api.get<{ connections: HealthRow[] }>('/admin/connectors/connections')).connections);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load connector settings');
+      throw err;
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load().catch(() => undefined); }, [load]);
 
   async function saveClient(provider: string, values: { clientId: string; clientSecret: string; redirectUri: string }) {
     setError('');
