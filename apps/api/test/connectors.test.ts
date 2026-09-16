@@ -229,16 +229,17 @@ describe('the operator OAuth application', () => {
 describe('connecting an account', () => {
   beforeEach(configureClient);
 
-  it('asks only for read scopes by default — M32', async () => {
+  it('asks once for the complete provider bundle while local capabilities remain off', async () => {
     const started = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: {},
     });
     const scope = new URL(started.body.url).searchParams.get('scope')!;
     expect(scope).toContain('calendar.readonly');
     expect(scope).toContain('gmail.readonly');
-    // Nothing that can write.
-    expect(scope).not.toContain('gmail.send');
-    expect(scope.split(' ')).not.toContain('https://www.googleapis.com/auth/calendar');
+    expect(scope).toContain('gmail.send');
+    expect(scope.split(' ')).toContain('https://www.googleapis.com/auth/calendar');
+    expect(scope).toContain('contacts');
+    expect(scope).toContain('drive.readonly');
   });
 
   it('stores the tokens sealed, and never returns them', async () => {
@@ -368,7 +369,7 @@ describe('a member cannot act on another member connection', () => {
   });
 });
 
-describe('enabling a write capability forces re-consent — M32', () => {
+describe('legacy partial grants use one account-level permission upgrade', () => {
   beforeEach(configureClient);
 
   it('refuses when the provider granted only read', async () => {
@@ -379,16 +380,21 @@ describe('enabling a write capability forces re-consent — M32', () => {
     expect(res.status).toBe(409);
     expect(res.body.state).toBe('needs_consent');
     expect(res.body.error).toMatch(/reconnect/i);
+    const mine = await call('/api/connections', { jar: cookies.alice });
+    const google = mine.body.providers.find((p: any) => p.provider === 'google');
+    expect(google.connections[0].needsPermissionUpgrade).toBe(true);
   });
 
   it('succeeds after a second handshake that grants the scope', async () => {
     await connect('alice');
-    // The second consent asks for the write scope specifically.
+    // The account-level upgrade asks for the complete current bundle, even if
+    // an old client still submits a per-capability request body.
     const started = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: { capabilities: ['google.mail.send'] },
     });
     const scope = new URL(started.body.url).searchParams.get('scope')!;
     expect(scope).toContain('gmail.send');
+    expect(scope).toContain('drive.readonly');
 
     tokenResponse = { scope: 'https://www.googleapis.com/auth/gmail.send' };
     const state = new URL(started.body.url).searchParams.get('state')!;

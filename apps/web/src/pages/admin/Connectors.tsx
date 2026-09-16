@@ -70,10 +70,91 @@ const APPLICATION_HELP: Record<OAuthProvider, string> = {
   box: 'Used for read-only access to Box folders people choose.',
 };
 
+function OAuthClientForm({
+  client, suggested, onSave,
+}: {
+  client: ClientStatus;
+  suggested: string;
+  onSave: (provider: string, values: { clientId: string; clientSecret: string; redirectUri: string }) => Promise<boolean>;
+}) {
+  const initialId = client.clientId ?? '';
+  const initialUri = client.redirectUri ?? suggested;
+  const [clientId, setClientId] = useState(initialId);
+  const [clientSecret, setClientSecret] = useState('');
+  const [redirectUri, setRedirectUri] = useState(initialUri);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const dirty = clientId !== initialId || redirectUri !== initialUri || clientSecret.length > 0;
+  const valid = clientId.trim().length > 0 && clientSecret.length > 0 && /^https?:\/\//.test(redirectUri.trim());
+  const canSave = dirty && valid && !saving;
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  return (
+    <form
+      data-dirty={dirty ? 'true' : 'false'}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!canSave) return;
+        setSaving(true);
+        setSaved(false);
+        void onSave(client.provider, {
+          clientId: clientId.trim(), clientSecret, redirectUri: redirectUri.trim(),
+        }).then((ok) => {
+          if (ok) {
+            setClientSecret('');
+            setSaved(true);
+          }
+        }).finally(() => setSaving(false));
+      }}
+      className="space-y-3"
+    >
+      <div>
+        <label className="mb-1 block text-sm" htmlFor={`cid-${client.provider}`}>Client ID</label>
+        <Input id={`cid-${client.provider}`} name="clientId" value={clientId}
+               onChange={(event) => { setClientId(event.target.value); setSaved(false); }} required />
+      </div>
+      <div>
+        <label className="mb-1 block text-sm" htmlFor={`csec-${client.provider}`}>Client secret</label>
+        <Input id={`csec-${client.provider}`} name="clientSecret" type="password" value={clientSecret}
+               onChange={(event) => { setClientSecret(event.target.value); setSaved(false); }}
+               autoComplete="new-password" required
+               placeholder={client.configured ? 'stored — enter a new one to replace it' : ''} />
+      </div>
+      <details className="text-sm">
+        <summary className="cursor-pointer text-muted-foreground">Advanced — override the redirect URL</summary>
+        <div className="mt-2">
+          <label className="mb-1 block text-sm" htmlFor={`uri-${client.provider}`}>Redirect URL</label>
+          <Input id={`uri-${client.provider}`} name="redirectUri" value={redirectUri}
+                 onChange={(event) => { setRedirectUri(event.target.value); setSaved(false); }} required />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Only change this if a proxy in front of Josi rewrites the path. It must match what
+            you registered with the provider exactly.
+          </p>
+        </div>
+      </details>
+      <div className="flex items-center gap-3">
+        <Button type="submit" disabled={!canSave}>{saving ? 'Saving…' : 'Save'}</Button>
+        {saved ? <p className="text-sm text-emerald-400" role="status">{LABEL[client.provider]} application saved.</p> : null}
+      </div>
+    </form>
+  );
+}
+
 export function AdminConnectors() {
   const [view, setView] = useState<AdminView | null>(null);
   const [health, setHealth] = useState<HealthRow[]>([]);
   const [error, setError] = useState('');
+  const [policyBusy, setPolicyBusy] = useState<string | null>(null);
+  const [policySaved, setPolicySaved] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -86,27 +167,33 @@ export function AdminConnectors() {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function saveClient(provider: string, form: FormData) {
+  async function saveClient(provider: string, values: { clientId: string; clientSecret: string; redirectUri: string }) {
     setError('');
     try {
       await api.put(`/admin/connectors/clients/${provider}`, {
-        clientId: form.get('clientId'),
-        clientSecret: form.get('clientSecret'),
-        redirectUri: form.get('redirectUri'),
+        ...values,
       });
       await load();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save that');
+      return false;
     }
   }
 
   async function setPolicy(capability: string, allowed: boolean) {
+    if (policyBusy) return;
+    setPolicyBusy(capability);
+    setPolicySaved(null);
     setError('');
     try {
       await api.put(`/admin/connectors/policy/${capability}`, { allowed });
       await load();
+      setPolicySaved(capability);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save that');
+    } finally {
+      setPolicyBusy(null);
     }
   }
 
@@ -153,7 +240,11 @@ export function AdminConnectors() {
         const suggested = suggestion?.uri ?? '';
         return (
           <Card key={client.provider}>
-            <details>
+            <details onToggle={(event) => {
+              const details = event.currentTarget;
+              if (!details.open && details.querySelector('[data-dirty="true"]')
+                && !window.confirm('Discard unsaved connector changes?')) details.open = true;
+            }}>
               <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                 <CardTitle>{LABEL[client.provider]} application</CardTitle>
                 <span className="flex shrink-0 items-center gap-2">
@@ -204,40 +295,7 @@ export function AdminConnectors() {
                 {suggestion?.additionalUris?.map((uri) => (
                   <Copyable key={uri} label="Also register this URL for Sign in with Google" value={uri} />
                 ))}
-                <form
-                  onSubmit={(e) => { e.preventDefault(); void saveClient(client.provider, new FormData(e.currentTarget)); }}
-                  className="space-y-3"
-                >
-                  <div>
-                    <label className="mb-1 block text-sm" htmlFor={`cid-${client.provider}`}>Client ID</label>
-                    <Input id={`cid-${client.provider}`} name="clientId" defaultValue={client.clientId ?? ''} required />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm" htmlFor={`csec-${client.provider}`}>Client secret</label>
-                    <Input id={`csec-${client.provider}`} name="clientSecret" type="password"
-                           autoComplete="off" required
-                           placeholder={client.configured ? 'stored — enter a new one to replace it' : ''} />
-                  </div>
-                  {/* Behind a disclosure: almost nobody changes this, and the
-                      generated value above is the one that works. It stays
-                      editable because an installation behind a proxy that rewrites
-                      paths genuinely needs to. */}
-                  <details className="text-sm">
-                    <summary className="cursor-pointer text-muted-foreground">
-                      Advanced — override the redirect URL
-                    </summary>
-                    <div className="mt-2">
-                      <label className="mb-1 block text-sm" htmlFor={`uri-${client.provider}`}>Redirect URL</label>
-                      <Input id={`uri-${client.provider}`} name="redirectUri"
-                             defaultValue={client.redirectUri ?? suggested} required />
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Only change this if a proxy in front of Josi rewrites the path. It must match what
-                        you registered with the provider exactly.
-                      </p>
-                    </div>
-                  </details>
-                  <Button type="submit">Save</Button>
-                </form>
+                <OAuthClientForm client={client} suggested={suggested} onSave={saveClient} />
               </div>
             </details>
           </Card>
@@ -282,10 +340,12 @@ export function AdminConnectors() {
                   <Button
                     variant={row.allowed ? 'secondary' : 'danger'}
                     onClick={() => void setPolicy(row.key, !row.allowed)}
+                    disabled={policyBusy !== null}
                     aria-pressed={!row.allowed}
                   >
-                    {row.allowed ? 'Allowed' : 'Switched off'}
+                    {policyBusy === row.key ? 'Saving…' : row.allowed ? 'Allowed' : 'Switched off'}
                   </Button>
+                  {policySaved === row.key ? <span className="sr-only" role="status">Member permission saved.</span> : null}
                 </li>
               ))}
             </ul>
