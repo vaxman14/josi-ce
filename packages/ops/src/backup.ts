@@ -117,6 +117,10 @@ export interface BackupRow {
   master_key_confirmed: boolean;
   state: 'running' | 'complete' | 'failed';
   error_category: BackupErrorCategory | null;
+  progress_percent: number;
+  progress_phase: string;
+  progress_step: number;
+  progress_steps: number;
 }
 
 /** How the bytes are actually produced. Injected so the suite can drive the
@@ -145,6 +149,8 @@ export async function createBackup(
     filename: string;
     /** A validated mounted-share directory for full backups. */
     destinationDir?: string;
+    /** Keep the row running while the caller writes and verifies an off-site copy. */
+    deferCompletion?: boolean;
   },
 ): Promise<{ backup: BackupRow; description: string }> {
   const contents = contentsFor(args.kind);
@@ -163,15 +169,23 @@ export async function createBackup(
   );
 
   try {
+    await db.query(
+      `update backups set progress_percent = 15, progress_phase = 'exporting database', progress_step = 1 where id = $1`,
+      [row.id],
+    );
     const { byteSize, sha256 } = await args.writer.write({
       kind: args.kind, contents, destination: storedPath,
     });
     const [done] = await db.query<BackupRow>(
-      `update backups set state = 'complete', byte_size = $2, sha256 = $3, completed_at = now()
+      `update backups set state = $4, byte_size = $2, sha256 = $3,
+          completed_at = case when $4 = 'complete' then now() else null end,
+          progress_percent = case when $4 = 'complete' then 100 else 60 end,
+          progress_phase = case when $4 = 'complete' then 'verified' else 'local archive ready' end,
+          progress_step = case when $4 = 'complete' then progress_steps else 3 end
        where id = $1 returning *`,
-      [row.id, byteSize, sha256],
+      [row.id, byteSize, sha256, args.deferCompletion ? 'running' : 'complete'],
     );
-    await appendEvent(db, {
+    if (!args.deferCompletion) await appendEvent(db, {
       actorUserId: args.createdBy,
       actor: 'super_admin',
       kind: 'backup.created',
@@ -185,7 +199,7 @@ export async function createBackup(
   } catch (err) {
     const category = err instanceof BackupError ? err.category : 'unknown';
     await db.query(
-      `update backups set state = 'failed', error_category = $2, completed_at = now() where id = $1`,
+      `update backups set state = 'failed', error_category = $2, completed_at = now(), progress_phase = 'failed' where id = $1`,
       [row.id, category],
     );
     await appendEvent(db, {

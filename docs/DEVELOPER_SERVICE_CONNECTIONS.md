@@ -1,7 +1,17 @@
-# Developer service connections — design and ownership decision
+# Integrations — design and ownership decision
 
-GitHub, Netlify, Vercel and Supabase, connected from **Workspace → Developer
-services**. This document records the decisions the code enforces, so a later
+The administration page is named **Integrations**. It groups code and deployment, data and
+monitoring, knowledge, and project-management services in one place. GitHub, Netlify, Vercel, and
+Supabase retain their per-user token flow. The catalog also identifies GitLab, Cloudflare, Docker
+Hub/GHCR, Railway/Render, npm, Neon, Sentry, Notion, Obsidian, Linear, and Jira. Obsidian uses the
+optional `/workspace` filesystem mount rather than a cloud credential.
+
+Unsupported REST services use **Custom API**, with Vault-protected credentials, an explicit
+endpoint/method allowlist, read-only defaults, approval for writes/deletes, SSRF protection, and
+redacted audit records.
+
+GitHub, Netlify, Vercel and Supabase, connected from **Workspace → Integrations**.
+This document records the decisions the code enforces, so a later
 change that contradicts one of them is visibly a change rather than a drift.
 
 ## The ownership decision: user-scoped

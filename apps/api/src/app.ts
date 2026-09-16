@@ -35,9 +35,11 @@ import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
 import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
+import { nasController } from './http/nasController.js';
 
 export interface AppConfig {
   voiceBoxHelper?: VoiceHelper;
+  nasController?: import('./http/nasController.js').NasController | null;
   /** https in production; false lets cookies work over plain http locally. */
   cookieSecure: boolean;
   /** Public origin, used for invite/reset links. */
@@ -284,6 +286,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     supportGatewayUrl: cfg.supportGatewayUrl ?? null,
     fetchLatestVersion: cfg.fetchLatestVersion,
     outboundResolve: cfg.outboundResolve,
+    nasController: cfg.nasController ?? nasController(),
   }));
 
   api.use((_req, res) => res.status(404).json({ error: 'no such endpoint' }));

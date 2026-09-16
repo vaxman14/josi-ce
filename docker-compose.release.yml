@@ -119,6 +119,7 @@ services:
       # operator out.
       CLAUDE_CONFIG_DIR: /data/claude
       JOSI_VOICE_HELPER_SOCKET: /run/josi-voice/helper.sock
+      JOSI_STORAGE_HELPER_SOCKET: /run/josi-storage/helper.sock
     secrets:
       - josi_master_key
       - josi_db_password
@@ -145,6 +146,7 @@ services:
       - josi_codex:/data/codex
       - josi_claude:/data/claude
       - ${JOSI_VOICE_SOCKET_DIR:-./voice-helper-socket}:/run/josi-voice:ro
+      - ${JOSI_STORAGE_SOCKET_DIR:-./storage-helper-socket}:/run/josi-storage:ro
       # Shared folders. Deny-by-default: nothing is mounted here unless an
       # operator writes it, and mounting alone grants nothing — a root must also
       # be registered inside Josi before it will touch anything.

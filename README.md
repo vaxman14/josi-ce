@@ -174,6 +174,9 @@ docker compose up -d
 
 ## Backups and the master key
 
+The Backups page includes a persistent **Back up now** progress display, guided SMB/NFS setup,
+off-site encryption, and non-destructive destination editing. See [the backup guide](docs/BACKUPS.md).
+
 Runtime credentials — LLM keys, OAuth secrets, SMTP passwords — are encrypted in
 PostgreSQL using an installation master key that is stored **outside the
 database**, as a Docker secret.

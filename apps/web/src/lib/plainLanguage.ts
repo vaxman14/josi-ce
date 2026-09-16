@@ -285,6 +285,23 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
       module_inert: 'Without a licence the hours and limits do not apply and nobody can see these conversations.',
     },
   },
+  custom_api_status: {
+    source: { migrationTable: 'custom_api_connections', column: 'status' },
+    labels: { unverified: 'Not tested yet', active: 'Working', needs_attention: 'Needs attention' },
+    detail: { needs_attention: 'The service or its credential changed and must be tested again before Josi can use it.' },
+  },
+  custom_api_capability: {
+    source: { migrationTable: 'custom_api_endpoints', column: 'capability' },
+    labels: { read: 'Reads only', write: 'Changes something', delete: 'Deletes something' },
+  },
+  custom_api_endpoint_source: {
+    source: { migrationTable: 'custom_api_endpoints', column: 'source' },
+    labels: { manual: 'Added by hand', openapi: 'Imported from a specification' },
+  },
+  custom_api_call_status: {
+    source: { migrationTable: 'custom_api_pending_calls', column: 'status' },
+    labels: { pending: 'Waiting for you', approved: 'Approved', denied: 'Declined', expired: 'Expired', executed: 'Sent', failed: 'Did not go through' },
+  },
 };
 
 /** The sentence for a value, or the value itself if nothing knows it.

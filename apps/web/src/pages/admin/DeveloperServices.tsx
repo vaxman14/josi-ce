@@ -50,6 +50,13 @@ interface AdminView {
   services: ServiceRow[];
 }
 
+const INTEGRATION_CATALOG = [
+  ['Code & deployment', ['GitHub', 'GitLab', 'Cloudflare', 'Netlify', 'Vercel', 'Docker Hub / GHCR', 'Railway / Render', 'npm']],
+  ['Data & monitoring', ['Supabase', 'Neon', 'Sentry']],
+  ['Knowledge', ['Notion', 'Obsidian']],
+  ['Project management', ['Linear', 'Jira']],
+] as const;
+
 const MODE_LABEL: Record<Mode, string> = {
   not_allowed: 'Not allowed',
   everyone: 'Allowed for everyone',
@@ -85,6 +92,22 @@ export function AdminDeveloperServices() {
         <p className="font-medium">Custom API</p>
         <p className="mt-1 text-sm text-muted-foreground">Connect a REST API through an explicit endpoint allowlist. Read actions can run directly; write and delete actions require approval.</p>
         <Link className="mt-2 inline-block text-sm underline" to="/admin/custom-apis">Manage Custom APIs</Link>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {INTEGRATION_CATALOG.map(([category, services]) => (
+          <section key={category} className="rounded-lg border border-border p-3">
+            <h2 className="text-sm font-medium">{category}</h2>
+            <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
+              {services.map((service) => (
+                <li key={service} className="flex items-center justify-between gap-2">
+                  <span>{service}</span>
+                  <span className="text-xs">{service === 'Obsidian' ? 'Uses /workspace' : ['GitHub', 'Netlify', 'Vercel', 'Supabase'].includes(service) ? 'Native' : 'Custom API'}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
       </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}

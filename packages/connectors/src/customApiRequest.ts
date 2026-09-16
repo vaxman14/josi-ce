@@ -39,7 +39,7 @@
 //     A SUCCESSFUL read's body does go back to the assistant, which is the
 //     point of the feature, capped and never logged.
 import { isIP } from 'node:net';
-import { nonPublicReason } from './devServiceProbe.js';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { ConnectorError, type ErrorCategory } from './providers.js';
 import {
   CustomApiInputError,
@@ -81,6 +81,34 @@ const MAX_ARGUMENT_CHARS = 1_000;
 
 /** The largest JSON body an action may send. */
 const MAX_REQUEST_BODY_BYTES = 64 * 1024;
+
+function nonPublicReason(address: string): string | null {
+  const normal = address.toLowerCase().replace(/^\[|\]$/g, '');
+  const mapped = /^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normal);
+  if (mapped) {
+    const high = Number.parseInt(mapped[1], 16);
+    const low = Number.parseInt(mapped[2], 16);
+    return nonPublicReason([high >> 8, high & 255, low >> 8, low & 255].join('.'));
+  }
+  const dottedMapped = /^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/.exec(normal);
+  if (dottedMapped) return nonPublicReason(dottedMapped[1]);
+  if (isIP(normal) === 4) {
+    const bytes = normal.split('.').map(Number);
+    if (bytes[0] === 10 || bytes[0] === 127 || bytes[0] === 0
+      || (bytes[0] === 169 && bytes[1] === 254)
+      || (bytes[0] === 172 && bytes[1] >= 16 && bytes[1] <= 31)
+      || (bytes[0] === 192 && bytes[1] === 168)
+      || (bytes[0] === 100 && bytes[1] >= 64 && bytes[1] <= 127)
+      || bytes[0] >= 224) return 'a non-public address';
+    return null;
+  }
+  if (isIP(normal) === 6) {
+    if (normal === '::' || normal === '::1' || /^f[cd]/.test(normal)
+      || normal.startsWith('fe80') || normal.startsWith('ff')) return 'a non-public address';
+    return null;
+  }
+  return 'not an address';
+}
 
 // --------------------------------------------------------------- arguments
 
@@ -413,7 +441,7 @@ export async function customApiFetch(
     );
   }
 
-  await assertPublicHost(connection.host, opts);
+  const approvedAddresses = await assertPublicHost(connection.host, opts);
 
   const headers: Record<string, string> = {
     accept: 'application/json',
@@ -429,8 +457,19 @@ export async function customApiFetch(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   let res: Response;
+  // Production requests pin the socket lookup to an address that passed the
+  // public-IP check above. Resolving once for validation and again inside fetch
+  // would leave a DNS-rebinding window between those two operations.
+  const dispatcher = opts.fetchImpl ? undefined : new Agent({
+    connect: {
+      lookup: (_hostname, _options, callback) => {
+        const address = approvedAddresses[0];
+        callback(null, address, isIP(address));
+      },
+    },
+  });
   try {
-    res = await (opts.fetchImpl ?? fetch)(request.url, {
+    const requestInit = {
       method: request.method,
       headers,
       body: request.body === null || request.body === undefined
@@ -439,17 +478,22 @@ export async function customApiFetch(
       // Validating a URL and then chasing a 302 checks the wrong URL.
       redirect: 'manual',
       signal: controller.signal,
-    });
+    } as const;
+    res = opts.fetchImpl
+      ? await opts.fetchImpl(request.url, requestInit)
+      : await undiciFetch(request.url, { ...requestInit, dispatcher }) as unknown as Response;
   } catch {
+    clearTimeout(timer);
+    await dispatcher?.close().catch(() => undefined);
     // Deliberately not `err.message`: an undici error can carry the request
     // URL, and the habit of interpolating fetch errors is how a header ends up
     // in a log.
     throw new CustomApiError(`Josi could not reach ${connection.name}`, { category: 'network' });
-  } finally {
-    clearTimeout(timer);
   }
 
   if (res.status >= 300 && res.status < 400) {
+    clearTimeout(timer);
+    await dispatcher?.close().catch(() => undefined);
     throw new CustomApiError(
       `${connection.name} answered with a redirect, which Josi does not follow. If that API has `
       + 'moved, update its address on the Custom API page.',
@@ -459,6 +503,8 @@ export async function customApiFetch(
 
   const contentType = res.headers.get('content-type');
   const { text, truncated: capped } = await readCapped(res).catch(() => ({ text: '', truncated: false }));
+  clearTimeout(timer);
+  await dispatcher?.close();
 
   let body: unknown = null;
   let truncated = capped;

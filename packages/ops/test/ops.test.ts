@@ -18,6 +18,7 @@ import {
   type BundleInput,
 } from '../src/diagnostics.js';
 import { checkForUpdate, isNewer, runUpdate, type UpdateSteps } from '../src/update.js';
+import { encryptBackupContents, uploadBackup } from '../src/destination.js';
 import {
   ALLOWED_FIELDS, SupportError, TELEMETRY_DISCLOSURE, TelemetryError,
   acknowledgementFor, buildPayload, diagnosticsRequired, gatewayStatus,
@@ -28,6 +29,32 @@ let db: TestDb;
 const ids: Record<string, string> = {};
 const KEY = new MasterKey(Buffer.alloc(32, 7));
 const WRONG_KEY = new MasterKey(Buffer.alloc(32, 9));
+
+it('encrypts off-site backup bytes with a versioned authenticated envelope', () => {
+  const plain = Buffer.from('database archive contents');
+  const encrypted = encryptBackupContents(plain, Buffer.alloc(32, 4));
+  expect(encrypted.subarray(0, 5).toString()).toBe('JOSI1');
+  expect(encrypted.includes(plain)).toBe(false);
+  expect(encrypted.length).toBeGreaterThan(plain.length + 30);
+});
+
+it('does not call an off-site upload complete until a remote HEAD verifies its size', async () => {
+  const methods: string[] = [];
+  const fetchImpl: typeof fetch = async (_input, init) => {
+    methods.push(init?.method ?? 'GET');
+    if (init?.method === 'HEAD') {
+      return new Response(null, { status: 200, headers: { 'content-length': '7' } });
+    }
+    return new Response('', { status: 200 });
+  };
+  await expect(uploadBackup({
+    config: { kind: 's3', bucket: 'backup-test', region: 'us-east-1' },
+    credentials: { accessKeyId: 'test-key', secretAccessKey: 'test-secret' },
+    objectKey: 'one.zip', contents: Buffer.from('1234567'), fetchImpl,
+    now: new Date('2026-09-15T00:00:00Z'),
+  })).resolves.toMatchObject({ byteSize: 7 });
+  expect(methods).toEqual(['PUT', 'HEAD']);
+});
 
 beforeAll(async () => {
   db = await testDb();
