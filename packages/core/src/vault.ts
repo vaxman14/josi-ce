@@ -13,6 +13,23 @@ export type VaultKind = 'api_key'|'oauth_token'|'password'|'secure_note'|'recove
 export interface VaultItemView { id:string; ownerUserId:string; kind:VaultKind; service:string; slot:string; label:string; lastFour:string|null; status:'active'|'revoked'; createdAt:string; updatedAt:string; rotatedAt:string|null; metadata:Record<string,unknown> }
 
 const digest=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
+/** Credentials imported from subsystems are stored as JSON payloads.  A raw
+ * `slice(-4)` therefore previews JSON punctuation (usually `"}`) rather than
+ * the credential. Prefer explicitly sensitive fields, then the final scalar
+ * string in the payload. The value never leaves this module. */
+export function vaultSecretSuffix(raw:string):string|null{
+  const suffix=(value:unknown)=>typeof value==='string'&&value.length>=4?value.slice(-4):null;
+  try{
+    const parsed=JSON.parse(raw) as unknown;
+    if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){
+      const record=parsed as Record<string,unknown>;
+      const preferred=['password','secretAccessKey','apiKey','accessToken','refreshToken','clientSecret','token','privateKey','key'];
+      for(const name of preferred){const found=suffix(record[name]);if(found)return found;}
+      for(const value of Object.values(record).reverse()){const found=suffix(value);if(found)return found;}
+    }
+  }catch{/* ordinary non-JSON secret */}
+  return suffix(raw);
+}
 function keyFromBase64url(value:string):MasterKey { const bytes=Buffer.from(value,'base64url'); return new MasterKey(bytes); }
 
 export async function initializeVault(db:Db, masterKey:MasterKey, actorUserId:string):Promise<{recoveryKey:Secret;fingerprint:string}> {
@@ -67,7 +84,7 @@ export async function putVaultItem(db:Db,masterKey:MasterKey,args:{ownerUserId:s
   if(!args.service.trim()||!args.slot.trim()||!args.label.trim())throw new VaultError('service, slot, and label are required');
   const key=await boxKey(db,masterKey,args.ownerUserId,true);
   const [existing]=await db.query<{id:string}>(`select id from vault_items where owner_user_id=$1 and service=$2 and slot=$3`,[args.ownerUserId,args.service,args.slot]);
-  const id=existing?.id??randomBytes(16).toString('hex').replace(/^(........)(....)(....)(....)(............)$/,'$1-$2-$3-$4-$5');const raw=args.value.reveal();const lastFour=raw.length>=4?raw.slice(-4):null;
+  const id=existing?.id??randomBytes(16).toString('hex').replace(/^(........)(....)(....)(....)(............)$/,'$1-$2-$3-$4-$5');const raw=args.value.reveal();const lastFour=vaultSecretSuffix(raw);
   const [row]=await db.query<any>(`insert into vault_items(id,owner_user_id,kind,service,slot,label,value_enc,last_four,metadata) values($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict(owner_user_id,service,slot) do update set kind=excluded.kind,label=excluded.label,value_enc=excluded.value_enc,last_four=excluded.last_four,metadata=excluded.metadata,status='active',updated_at=now(),rotated_at=now() returning *`,[id,args.ownerUserId,args.kind,args.service,args.slot,args.label,seal(key,{value:raw,ownerUserId:args.ownerUserId,service:args.service,slot:args.slot}),lastFour,json(args.metadata)]);
   await appendEvent(db,{actorUserId:args.actorUserId??args.ownerUserId,actor:args.actorUserId&&args.actorUserId!==args.ownerUserId?'guardian':'user',kind:'vault.item_stored',subjectType:'vault_item',subjectId:row.id,payload:{ownerUserId:args.ownerUserId,kind:args.kind,service:args.service}});return view(row);
 }
@@ -79,7 +96,18 @@ export async function getVaultSecret(db:Db,masterKey:MasterKey,args:{ownerUserId
  * silently imported. */
 export async function storeCredentialPayload(db:Db,installKey:MasterKey,args:{ownerUserId:string;kind:VaultKind;service:string;slot:string;label:string;payload:Record<string,unknown>;actorUserId?:string}):Promise<string>{const status=await vaultStatus(db);if(!status.initialized)return seal(installKey,args.payload);const item=await putVaultItem(db,installKey,{ownerUserId:args.ownerUserId,kind:args.kind,service:args.service,slot:args.slot,label:args.label,value:new Secret(JSON.stringify(unwrapSecrets(args.payload))),actorUserId:args.actorUserId});return seal(installKey,{vaultItemId:item.id});}
 export async function openCredentialPayload<T extends object>(db:Db,installKey:MasterKey,args:{ownerUserId:string;service:string;slot:string;stored:string}):Promise<T>{const pointer=openSealed<T&{vaultItemId?:string}>(installKey,args.stored);if(!pointer.vaultItemId)return pointer;const raw=await getVaultSecret(db,installKey,{ownerUserId:args.ownerUserId,service:args.service,slot:args.slot});let parsed:unknown;try{parsed=JSON.parse(raw.reveal());}catch{throw new VaultError('stored credential payload is invalid');}if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new VaultError('stored credential payload is invalid');return parsed as T;}
-export async function listVaultItems(db:Db,ownerUserId:string):Promise<VaultItemView[]>{return (await db.query<any>(`select id,owner_user_id,kind,service,slot,label,last_four,metadata,status,created_at,updated_at,rotated_at from vault_items where owner_user_id=$1 order by service,label`,[ownerUserId])).map(view);}
+export async function listVaultItems(db:Db,ownerUserId:string,masterKey?:MasterKey):Promise<VaultItemView[]>{
+  const rows=await db.query<any>(`select id,owner_user_id,kind,service,slot,label,value_enc,last_four,metadata,status,created_at,updated_at,rotated_at from vault_items where owner_user_id=$1 order by service,label`,[ownerUserId]);
+  if(masterKey&&rows.length){
+    const key=await boxKey(db,masterKey,ownerUserId);
+    for(const row of rows){
+      const opened=openSealed<{value:string;ownerUserId:string;service:string;slot:string}>(key,row.value_enc);
+      const corrected=vaultSecretSuffix(opened.value);
+      if(corrected!==row.last_four){await db.query(`update vault_items set last_four=$2 where id=$1`,[row.id,corrected]);row.last_four=corrected;}
+    }
+  }
+  return rows.map(view);
+}
 export async function deleteVaultItem(db:Db,args:{ownerUserId:string;itemId:string;actorUserId:string}):Promise<boolean>{const rows=await db.query<{id:string}>(`delete from vault_items where id=$1 and owner_user_id=$2 returning id`,[args.itemId,args.ownerUserId]);if(rows.length)await appendEvent(db,{actorUserId:args.actorUserId,actor:args.actorUserId===args.ownerUserId?'user':'guardian',kind:'vault.item_deleted',subjectType:'vault_item',subjectId:args.itemId,payload:{ownerUserId:args.ownerUserId}});return rows.length>0;}
 export async function deleteVaultSlot(db:Db,args:{ownerUserId:string;service:string;slot:string;actorUserId:string}):Promise<boolean>{const rows=await db.query<{id:string}>(`delete from vault_items where owner_user_id=$1 and service=$2 and slot=$3 returning id`,[args.ownerUserId,args.service,args.slot]);if(rows[0])await appendEvent(db,{actorUserId:args.actorUserId,actor:args.actorUserId===args.ownerUserId?'user':'guardian',kind:'vault.item_deleted',subjectType:'vault_item',subjectId:rows[0].id,payload:{ownerUserId:args.ownerUserId}});return !!rows[0];}
 export async function checkVaultItem(db:Db,masterKey:MasterKey,args:{ownerUserId:string;itemId:string}):Promise<boolean>{const key=await boxKey(db,masterKey,args.ownerUserId);const [row]=await db.query<{value_enc:string;service:string;slot:string}>(`select value_enc,service,slot from vault_items where id=$1 and owner_user_id=$2`,[args.itemId,args.ownerUserId]);if(!row)return false;const opened=openSealed<{ownerUserId:string;service:string;slot:string}>(key,row.value_enc);return opened.ownerUserId===args.ownerUserId&&opened.service===row.service&&opened.slot===row.slot;}

@@ -68,6 +68,20 @@ rather than only saving it. That button carries a one-time setup handoff in the
 URL fragment; it is removed immediately and is never sent in HTTP logs. Setup
 routes return 404 in any browser that did not complete the installer pairing.
 
+### 0.2 Change the address later
+
+Open **Admin → Network & address**. After fresh administrator-password confirmation, Josi asks its
+narrow maintenance supervisor to launch a short-lived browser controller on port 8080. The normal
+web container never receives the Docker socket or access to the host `.env`. The controller previews
+LAN, automatic-HTTPS, reverse-proxy, and port changes; progress survives the normal origin restarting.
+If the new origin does not become healthy, the controller restores the previous configuration and
+recreates the previous stack automatically. The one-time setup code expires with that session.
+
+Password managers remain available on genuine login, password-confirmation, and password-reset
+fields. Configuration secrets (Vault entries, SMTP, backup credentials, and integration tokens)
+explicitly opt out of login autofill so extensions such as 1Password do not repeatedly open sign-in
+prompts while an administrator edits settings.
+
 ### 0.4 If you do not have a domain
 
 Josi still installs, but two things change and both are worth understanding

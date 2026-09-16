@@ -34,8 +34,10 @@ export function Button({
 }
 
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  const ignoresPasswordManagers = props.autoComplete === 'off';
   return (
     <input
+      {...(ignoresPasswordManagers ? { 'data-1p-ignore': true, 'data-lpignore': 'true', 'data-form-type': 'other' } : {})}
       {...props}
       className={cn(
         // text-base is load-bearing on iOS: anything smaller makes Safari zoom

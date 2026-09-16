@@ -54,6 +54,7 @@ const ADMIN_NAV = [
   { to: '/admin/backups', label: 'Backups' },
   { to: '/admin/vault', label: 'Master Vault' },
   { to: '/admin/integrations', label: 'Integrations' },
+  { to: '/admin/network', label: 'Network & address' },
   { to: '/admin/parental-controls', label: 'Parental controls (Coming Soon)' },
   { to: '/admin/workspace', label: 'Workspace' },
 ];
@@ -89,7 +90,7 @@ export function Shell() {
   const nav = isAdminArea ? ADMIN_NAV : memberNav;
 
   return (
-    <div className={`flex w-full max-w-full flex-col overflow-x-hidden ${isTalk ? 'h-dvh overflow-y-hidden' : 'min-h-full'}`}>
+    <div className={`flex h-dvh w-full max-w-full flex-col overflow-hidden ${isTalk ? 'overflow-y-hidden' : ''}`}>
       <header className={`z-30 flex min-w-0 shrink-0 items-center gap-3 border-b border-border bg-card px-3 pt-[max(0.5rem,env(safe-area-inset-top))] ${isTalk ? 'h-[4.75rem] pb-2' : 'sticky top-0 py-2'}`}>
         <Link to="/app" className="flex min-h-11 min-w-0 shrink items-center gap-2" aria-label="Josi home">
           <img src="/brand/josi-mark.png" alt="" width={40} height={40} className={`${isTalk ? 'h-10 w-10 rounded-full' : 'h-8 w-8 rounded-lg'} shrink-0`} />
@@ -134,10 +135,10 @@ export function Shell() {
         </div>
       </header>
 
-      <div className="flex min-h-0 w-full max-w-full flex-1">
+      <div className="flex min-h-0 w-full max-w-full flex-1 overflow-hidden">
         <nav
           aria-label="Main"
-          className="hidden w-56 shrink-0 border-r border-border p-3 lg:block"
+          className="hidden h-full w-56 shrink-0 overflow-y-auto overscroll-contain border-r border-border p-3 lg:block"
         >
           <ul className="space-y-1">
             {nav.map((item) => (
@@ -161,7 +162,7 @@ export function Shell() {
 
         {/* min-w-0 is what stops a long word or a wide table from pushing the
             whole page sideways. Without it flex children refuse to shrink. */}
-        <main className={`min-h-0 w-full min-w-0 flex-1 ${isTalk ? 'p-0 pb-[5.25rem] lg:p-5' : 'p-3 pb-24 sm:p-5 lg:pb-5'}`}>
+        <main className={`min-h-0 w-full min-w-0 flex-1 overflow-y-auto overscroll-contain ${isTalk ? 'p-0 pb-[5.25rem] lg:p-5' : 'p-3 pb-24 sm:p-5 lg:pb-5'}`}>
           {/* Keyed on the path so a failure on one page does not wedge every
               page behind it. */}
           <ErrorBoundary key={location.pathname}>

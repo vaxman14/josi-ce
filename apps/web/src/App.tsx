@@ -38,6 +38,7 @@ import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
 import { AdminVoiceBox } from '@/pages/admin/VoiceBox';
 import { AdminChannels } from '@/pages/admin/Channels';
 import { AdminVault } from '@/pages/admin/Vault';
+import { AdminNetwork } from '@/pages/admin/Network';
 import { setupHandoffHeaders } from '@/lib/api';
 
 /** Routing is convenience, not security.
@@ -174,6 +175,7 @@ export function App() {
         <Route path="telegram" element={<AdminTelegram />} />
         <Route path="backups" element={<AdminBackups />} />
         <Route path="vault" element={<AdminVault />} />
+        <Route path="network" element={<AdminNetwork />} />
         <Route path="developer-services" element={<Navigate to="/admin/integrations" replace />} />
         <Route path="integrations" element={<AdminDeveloperServices />} />
         <Route path="custom-apis" element={<AdminCustomApis />} />
