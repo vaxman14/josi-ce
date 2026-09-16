@@ -31,9 +31,12 @@ describe('Test List 6 items 6–11 UI contracts', () => {
 
   it('uses one Integrations hub with the requested catalog and request banner', () => {
     const page = read('apps/web/src/pages/admin/DeveloperServices.tsx');
-    for (const label of ['Integrations', 'GitLab', 'Cloudflare', 'Docker Hub / GHCR', 'Sentry', 'Notion', 'Obsidian', 'Linear', 'Jira', 'Custom API']) {
+    for (const label of ['Integrations', 'GitLab', 'Cloudflare', 'Docker Hub', 'GitHub Container Registry', 'Railway', 'Render', 'Sentry', 'Notion', 'Obsidian', 'Linear', 'Jira', 'Custom API']) {
       expect(page).toContain(label);
     }
+    // A catalog logo is not an implementation. Unsupported named providers
+    // must be described as planned native work, never routed through Custom API.
+    expect(page).toContain("coming_soon: 'Native · coming soon'");
     expect(page).toContain('roman@socalreceptionist.com');
   });
 });

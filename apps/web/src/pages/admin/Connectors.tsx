@@ -7,6 +7,7 @@
 // is and whether it works.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 import { Badge, Button, Card, CardTitle, Copyable, ErrorNote, Input } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 
@@ -88,15 +89,7 @@ function OAuthClientForm({
   const valid = clientId.trim().length > 0 && clientSecret.length > 0 && /^https?:\/\//.test(redirectUri.trim());
   const canSave = dirty && valid && !saving;
 
-  useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => {
-      if (!dirty) return;
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  useUnsavedChanges(dirty);
 
   return (
     <form
@@ -119,12 +112,12 @@ function OAuthClientForm({
     >
       <div>
         <label className="mb-1 block text-sm" htmlFor={`cid-${client.provider}`}>Client ID</label>
-        <Input id={`cid-${client.provider}`} name="clientId" value={clientId}
+        <Input disabled={saving} id={`cid-${client.provider}`} name="clientId" value={clientId}
                onChange={(event) => { setClientId(event.target.value); setSaved(false); }} required />
       </div>
       <div>
         <label className="mb-1 block text-sm" htmlFor={`csec-${client.provider}`}>Client secret</label>
-        <Input id={`csec-${client.provider}`} name="clientSecret" type="password" value={clientSecret}
+        <Input disabled={saving} id={`csec-${client.provider}`} name="clientSecret" type="password" value={clientSecret}
                onChange={(event) => { setClientSecret(event.target.value); setSaved(false); }}
                autoComplete="new-password" required
                placeholder={client.configured ? 'stored — enter a new one to replace it' : ''} />
@@ -133,7 +126,7 @@ function OAuthClientForm({
         <summary className="cursor-pointer text-muted-foreground">Advanced — override the redirect URL</summary>
         <div className="mt-2">
           <label className="mb-1 block text-sm" htmlFor={`uri-${client.provider}`}>Redirect URL</label>
-          <Input id={`uri-${client.provider}`} name="redirectUri" value={redirectUri}
+          <Input disabled={saving} id={`uri-${client.provider}`} name="redirectUri" value={redirectUri}
                  onChange={(event) => { setRedirectUri(event.target.value); setSaved(false); }} required />
           <p className="mt-1 text-xs text-muted-foreground">
             Only change this if a proxy in front of Josi rewrites the path. It must match what

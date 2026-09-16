@@ -1,3 +1,4 @@
+import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 // Connected accounts.
 //
 // Phase 6 shipped this page saying plainly that connecting was not available.
@@ -296,6 +297,9 @@ interface DeveloperServiceRow {
   tokenHelp: string;
   tokenUrl: string;
   capability: string;
+  usernameLabel: string | null;
+  emailLabel: string | null;
+  baseUrlLabel: string | null;
   /** Whether an administrator permits ME to connect this. Separate from
    * whether I have. */
   allowed: boolean;
@@ -306,6 +310,7 @@ interface DeveloperServiceRow {
     lastCheckAt: string | null;
     lastCheckOk: boolean | null;
     lastError: string | null;
+    lastUsedAt: string | null;
   } | null;
 }
 
@@ -319,26 +324,32 @@ interface DeveloperServiceRow {
 function DeveloperServices() {
   const [rows, setRows] = useState<DeveloperServiceRow[] | null>(null);
   const [tokens, setTokens] = useState<Record<string, string>>({});
+  const [details, setDetails] = useState<Record<string, {username?:string;email?:string;baseUrl?:string}>>({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [saved,setSaved]=useState('');
+  useUnsavedChanges(Object.values(tokens).some(Boolean));
 
   const load = useCallback(async () => {
     try {
       const res = await api.get<{ services: DeveloperServiceRow[] }>('/connections/developer');
       setRows(res.services);
-    } catch {
-      setRows([]);
+    } catch(e) {
+      setError('Could not read saved provider state. Retry without discarding your edits.');throw e;
     }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load().catch(()=>undefined); }, [load]);
 
   async function connect(service: string) {
+    if(busy)return;
+    setSaved('');
     setBusy(service);
     setError('');
     try {
-      await api.put(`/connections/developer/${service}`, { token: tokens[service] ?? '' });
-      setTokens((t) => ({ ...t, [service]: '' }));
+      await api.put(`/connections/developer/${service}`, { token: tokens[service] ?? '', ...(details[service] ?? {}) });
       await load();
+      setTokens((t) => ({ ...t, [service]: '' }));
+      setSaved(`${service} connection saved.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That could not be connected');
     } finally {
@@ -347,6 +358,8 @@ function DeveloperServices() {
   }
 
   async function check(service: string) {
+    if(busy)return;
+    setSaved('');
     setBusy(service);
     setError('');
     try {
@@ -360,6 +373,8 @@ function DeveloperServices() {
   }
 
   async function disconnect(service: string) {
+    if(busy)return;
+    setSaved('');
     setBusy(service);
     setError('');
     try {
@@ -382,6 +397,7 @@ function DeveloperServices() {
         and disconnecting removes it.
       </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
+      {saved ? <p role="status">{saved}</p> : null}
       {rows.map((row) => (
         <Card key={row.service}>
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -411,6 +427,9 @@ function DeveloperServices() {
                 {row.connection.lastCheckAt
                   ? ` · checked ${new Date(row.connection.lastCheckAt).toLocaleString()}`
                   : ''}
+                {row.connection.lastUsedAt
+                  ? ` · last used ${new Date(row.connection.lastUsedAt).toLocaleString()}`
+                  : ''}
               </p>
               {row.connection.lastCheckOk === false && row.connection.lastError ? (
                 <ErrorNote>{row.connection.lastError}</ErrorNote>
@@ -432,6 +451,9 @@ function DeveloperServices() {
               onSubmit={(e) => { e.preventDefault(); void connect(row.service); }}
             >
               <label className="block text-sm" htmlFor={`tok-${row.service}`}>{row.tokenLabel}</label>
+              {row.usernameLabel ? <><label className="block text-sm" htmlFor={`username-${row.service}`}>{row.usernameLabel}</label><Input id={`username-${row.service}`} autoComplete="username" value={details[row.service]?.username??''} onChange={(e)=>setDetails((d)=>({...d,[row.service]:{...d[row.service],username:e.target.value}}))}/></> : null}
+              {row.emailLabel ? <><label className="block text-sm" htmlFor={`email-${row.service}`}>{row.emailLabel}</label><Input id={`email-${row.service}`} type="email" autoComplete="email" value={details[row.service]?.email??''} onChange={(e)=>setDetails((d)=>({...d,[row.service]:{...d[row.service],email:e.target.value}}))}/></> : null}
+              {row.baseUrlLabel ? <><label className="block text-sm" htmlFor={`url-${row.service}`}>{row.baseUrlLabel}</label><Input id={`url-${row.service}`} type="url" inputMode="url" placeholder="https://your-site.atlassian.net" value={details[row.service]?.baseUrl??''} onChange={(e)=>setDetails((d)=>({...d,[row.service]:{...d[row.service],baseUrl:e.target.value}}))}/></> : null}
               <Input
                 id={`tok-${row.service}`}
                 type="password"
@@ -446,7 +468,7 @@ function DeveloperServices() {
                   Open {row.label}
                 </a>
               </p>
-              <Button type="submit" disabled={busy === row.service || !(tokens[row.service] ?? '').trim()}>
+              <Button type="submit" disabled={busy === row.service || !(tokens[row.service] ?? '').trim() || (row.usernameLabel ? !(details[row.service]?.username??'').trim() : false) || (row.emailLabel ? !(details[row.service]?.email??'').trim() : false) || (row.baseUrlLabel ? !(details[row.service]?.baseUrl??'').trim() : false)}>
                 {busy === row.service ? 'Connecting…' : 'Connect'}
               </Button>
               <p className="text-xs text-muted-foreground">
@@ -490,6 +512,7 @@ function NextcloudConnectForm({
   const [username, setUsername] = useState('');
   const [appPassword, setAppPassword] = useState('');
 
+  useUnsavedChanges(!!(serverUrl || username || appPassword));
   const canSubmit = serverUrl.trim() && username.trim() && appPassword.trim() && !busy;
 
   return (

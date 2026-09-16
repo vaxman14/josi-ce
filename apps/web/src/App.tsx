@@ -13,6 +13,7 @@ import { Approvals } from '@/pages/Approvals';
 import { Conversations } from '@/pages/Conversations';
 import { Contacts } from '@/pages/Contacts';
 import { Connections } from '@/pages/Connections';
+import { Workflows } from '@/pages/Workflows';
 import { Calendar } from '@/pages/Calendar';
 import { Vault } from '@/pages/Vault';
 import { Usage } from '@/pages/Usage';
@@ -28,6 +29,7 @@ import { AdminModel } from '@/pages/admin/Model';
 import { AdminPolicy } from '@/pages/admin/Policy';
 import { AdminStorage } from '@/pages/admin/Storage';
 import { AdminConnectors } from '@/pages/admin/Connectors';
+import { AdminWorkflows } from '@/pages/admin/Workflows';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
 import { AdminBackups } from '@/pages/admin/Backups';
@@ -146,6 +148,7 @@ export function App() {
         <Route path="conversations" element={<Conversations />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="connections" element={<Connections />} />
+        <Route path="workflows" element={<Workflows />} />
         <Route path="calendar" element={<Calendar />} />
         <Route path="vault" element={<Vault />} />
         <Route path="usage" element={<Usage />} />
@@ -170,6 +173,7 @@ export function App() {
         <Route path="policy" element={<AdminPolicy />} />
         <Route path="storage" element={<AdminStorage />} />
         <Route path="connectors" element={<AdminConnectors />} />
+        <Route path="workflows" element={<AdminWorkflows />} />
         <Route path="channels" element={<AdminChannels />} />
         <Route path="workspace" element={<AdminWorkspace />} />
         <Route path="telegram" element={<AdminTelegram />} />

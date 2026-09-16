@@ -23,6 +23,55 @@ function python(source: string, installRoot: string) {
 }
 
 describe('browser installer controller', () => {
+  it('commits only after the browser-facing origin passes health verification', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
+    try {
+      const result = python(`
+import importlib.util, json
+s=importlib.util.spec_from_file_location('c', ${JSON.stringify(controller)})
+m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
+class Response:
+ status=200
+ def __enter__(self): return self
+ def __exit__(self,*_): pass
+ def read(self,_): return b'{"ok":true}'
+seen=[]
+def open_ok(request,timeout):
+ seen.append({'url':request.full_url,'timeout':timeout,'agent':request.headers.get('User-agent')})
+ return Response()
+m.urllib.request.urlopen=open_ok
+m.verify_public_origin('https://ce.example.test')
+print(json.dumps(seen))
+`, dir);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([{
+        url: 'https://ce.example.test/health', timeout: 5, agent: 'josi-ce-installer-readiness/1',
+      }]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('fails a public-origin transition when DNS, TLS, or routing never becomes ready', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
+    try {
+      const result = python(`
+import importlib.util
+s=importlib.util.spec_from_file_location('c', ${JSON.stringify(controller)})
+m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
+m.urllib.request.urlopen=lambda *_args,**_kwargs: (_ for _ in ()).throw(OSError('private detail'))
+ticks=iter([0,.5,2])
+m.time.monotonic=lambda: next(ticks)
+m.time.sleep=lambda _: None
+try: m.verify_public_origin('https://ce.example.test',timeout=1)
+except RuntimeError as exc:
+ assert 'DNS, TLS, or routing' in str(exc)
+ assert 'private detail' not in str(exc)
+ print('rolled-back')
+`, dir);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe('rolled-back');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('accepts only safe LAN, domain, and reverse-proxy addresses', () => {
     const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
     try {

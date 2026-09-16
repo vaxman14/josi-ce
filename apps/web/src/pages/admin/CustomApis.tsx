@@ -1,3 +1,4 @@
+import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 // Custom API connections — the administrator's side.
 //
 // This is the page where somebody grants Josi the ability to reach a service
@@ -87,19 +88,21 @@ export function AdminCustomApis() {
       setConnections(res.connections);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load custom API connections');
+      throw err;
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load().catch(()=>undefined); }, [load]);
 
   async function run(key: string, work: () => Promise<string | void>) {
+    if(busy)return;
     setBusy(key);
     setError('');
     setNotice('');
     try {
       const message = await work();
-      if (message) setNotice(message);
       await load();
+      if (message) setNotice(message);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'That did not work');
     } finally {
@@ -295,6 +298,7 @@ function ConnectionCard({
             onSubmit={async (body) => {
               await run(connection.id, async () => {
                 await api.patch(`/admin/custom-apis/${connection.id}`, body);
+                await api.get('/admin/custom-apis');
                 setEditing(false);
                 return 'Saved. Changing the address or the credential means testing it again.';
               });
@@ -458,6 +462,10 @@ function ConnectionForm({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [testPath, setTestPath] = useState(existing?.testPath ?? '/');
+  const dirty = name !== (existing?.name??'') || slug !== (existing?.slug??'') || baseUrl !== (existing?.baseUrl??'https://') || authKind !== (existing?.authKind??'bearer') || authHeader !== (existing?.authHeader??'X-API-Key') || testPath !== (existing?.testPath??'/') || !!(secret||username||password);
+  const valid = !!name.trim() && /^https:\/\//.test(baseUrl);
+  useUnsavedChanges(dirty);
+
 
   return (
     <Card>
@@ -466,6 +474,7 @@ function ConnectionForm({
         className="mt-2 space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
+          if(busy || !dirty || !valid)return;
           const body: ConnectionBody = { name, baseUrl, authKind, testPath };
           if (!existing) body.slug = slug;
           if (authKind === 'api_key') body.authHeader = authHeader;
@@ -566,8 +575,8 @@ function ConnectionForm({
         </Field>
 
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={busy}>{existing ? 'Save' : 'Add connection'}</Button>
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button type="submit" disabled={busy || !dirty || !valid}>{existing ? 'Save' : 'Add connection'}</Button>
+          <Button type="button" variant="ghost" onClick={() => { if (!dirty || window.confirm('Discard unsaved changes?')) onCancel(); }} disabled={busy}>Cancel</Button>
         </div>
       </form>
     </Card>
@@ -597,6 +606,9 @@ function EndpointForm({
   const [query, setQuery] = useState('');
   const [acceptsBody, setAcceptsBody] = useState(false);
   const read = method === 'GET' || method === 'HEAD';
+  const dirty = !!(operationId || summary || query || acceptsBody || method !== 'GET' || pathTemplate !== '/');
+  const valid = /^[a-z][a-z0-9_]*$/.test(operationId) && !!summary.trim() && pathTemplate.startsWith('/') && !pathTemplate.startsWith('//');
+  useUnsavedChanges(dirty);
 
   return (
     <Card>
@@ -609,6 +621,7 @@ function EndpointForm({
         className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
+          if (busy || !valid) return;
           // Path placeholders become required path parameters; the named query
           // parameters are the ONLY ones the assistant may ever set.
           const placeholders = [...pathTemplate.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)].map((m) => m[1]);
@@ -650,8 +663,8 @@ function EndpointForm({
           </label>
         ) : null}
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={busy}>Add, switched off</Button>
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button type="submit" disabled={busy || !valid}>Add, switched off</Button>
+          <Button type="button" variant="ghost" onClick={() => { if (!dirty || window.confirm('Discard unsaved changes?')) onCancel(); }} disabled={busy}>Cancel</Button>
         </div>
       </form>
     </Card>

@@ -90,3 +90,22 @@ including LAN HTTP and non-default ports. If email is unavailable, run
 `./reset-password.sh USERNAME_OR_EMAIL` from the installation directory. The
 command accepts the new password through a hidden prompt, replaces only one
 active account, and invalidates its sessions and unused reset links.
+
+## Connection saves and consent
+
+A settings Save control is disabled until there is a valid unsaved change and
+while a request is pending. A saved announcement follows confirmed persistence
+and readback; an error retains unsaved input for retry. Editing multiple provider
+sections does not discard the other sections when one is saved. Browser exits
+and navigation warn about pending credential or permission edits.
+
+Google, Microsoft, Dropbox, and Box request their supported scope bundle during
+account connection. Older partial grants have one account-level permission
+upgrade. Provider consent never enables local write switches automatically;
+turn the desired capabilities on separately. The latest granted scopes replace
+old grants, so removed provider permissions cannot remain authorized locally.
+Disconnect withdraws local access before attempting remote token revocation.
+Consequential actions still require their own local confirmation.
+
+Native workflow discovery, exact-input approvals, callbacks, and Obsidian access
+are covered in [Integrations](DEVELOPER_SERVICE_CONNECTIONS.md).

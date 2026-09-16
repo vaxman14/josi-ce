@@ -307,11 +307,12 @@ export async function revokeAtProvider(
     };
   }
   try {
-    await (opts.fetchImpl ?? fetch)(endpoint, {
-      method: 'POST',
+    const response = await (opts.fetchImpl ?? fetch)(endpoint, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ token: refreshToken }).toString(),
     });
+    if (!response.ok) throw new Error('Provider refused revocation');
     return { revokedRemotely: true };
   } catch {
     // The local copy is deleted regardless. A provider we could not reach must

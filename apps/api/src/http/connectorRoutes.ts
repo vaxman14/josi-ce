@@ -23,7 +23,7 @@ import {
   verifyWebdavCredentials,
   type EntryPage, type OAuthProvider, type Provider,
 } from '@josi-ce/connectors';
-import { openSealed } from '@josi-ce/core';
+import { openCredentialPayload } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 
@@ -67,20 +67,6 @@ async function canonicalDeployment(db: Db, fallback: string): Promise<{ origin: 
   } catch { /* malformed APP_URL falls back to the stored installation state */ }
   if (parsed?.protocol === 'https:' && parsed.hostname !== 'localhost' && !/^\d{1,3}(\.\d{1,3}){3}$/.test(parsed.hostname)) {
     publicOrigin = parsed.origin;
-    const tlsMode = process.env.JOSI_ACCESS_MODE === 'proxy' ? 'external_proxy' : 'bundled_caddy';
-    // One statement keeps the deployment singleton and the workspace-facing
-    // address in lockstep. This also repairs installations upgraded from a
-    // release that left the old LAN address in deployment_config. Database
-    // failure is not swallowed: callers must not claim readiness after only
-    // half of the canonical state was repaired.
-    await db.query(
-      `with changed as (
-         update deployment_config set domain=$1, tls_mode=$2 where id=true returning domain
-       )
-       update workspace set settings=jsonb_set(settings, '{publicAddress}', to_jsonb((select domain from changed)), true)
-       where id=true`,
-      [parsed.hostname.toLowerCase(), tlsMode],
-    );
   }
   const [deployment] = await db.query<{ domain: string }>(
     `select domain from deployment_config where id = true`,
@@ -407,10 +393,8 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         providerAccountId: identity.accountId,
         targetConnectionId: handshake.targetConnectionId,
         requestedCapabilities: handshake.capabilities,
-        // An explicit incremental-consent trip from an existing connection is
-        // the owner's switch-on action. First-time connections still start
-        // with capabilities off.
-        enableRequestedCapabilities: !!existingConnection,
+        // Provider consent never enables additional local write capabilities.
+        enableRequestedCapabilities: false,
       });
 
       return res.redirect(handshake.returnPath);
@@ -444,6 +428,8 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         throw new RouteError(404, 'not found');
       }
 
+      // Withdraw local authority before awaiting a remote revocation request.
+      await db.query(`update connections set status='revoked' where id=$1`,[connection.id]);
       let note: string | undefined;
       // Nextcloud has no OAuth revoke endpoint to call — there is no client to
       // load and no token to revoke, only a WebDAV app password whose owner
@@ -454,7 +440,7 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         try {
           const key = requireKey(ctx);
           const client = await loadClient(db, key, connection.provider);
-          const secrets = openSealed<{ refreshToken: string | null }>(key, connection.secrets_enc);
+          const secrets = await openCredentialPayload<{ refreshToken: string | null }>(db,key,{ownerUserId:connection.owner_user_id,service:`connector.${connection.provider}`,slot:connection.id,stored:connection.secrets_enc});
           if (secrets.refreshToken) {
             const result = await revokeAtProvider(client, secrets.refreshToken, { fetchImpl: ctx.fetchImpl });
             note = result.note;

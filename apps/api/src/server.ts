@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import { createApp } from './app.js';
+import { publicAddressFromEnvironment, reconcilePublicAddress } from './setup/publicAddress.js';
 
 const PORT = Number(process.env.PORT ?? 8080);
 
@@ -36,6 +37,10 @@ const pgConn = {
 };
 
 const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '') || 'http://localhost:8080';
+// Readiness is the network controller's commit boundary.  Reconcile all
+// persisted address derivatives before listening so a failure rolls the whole
+// runtime change back instead of leaving Caddy and the database disagreeing.
+await reconcilePublicAddress(db, publicAddressFromEnvironment(appUrl));
 const cookieSecure = process.env.COOKIE_SECURE === 'true'
   ? true
   : process.env.COOKIE_SECURE === 'false'

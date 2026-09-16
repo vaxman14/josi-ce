@@ -20,6 +20,7 @@ import {
 } from '@josi-ce/core';
 import {
   DEVELOPER_SERVICES, DEVELOPER_SERVICE_CATALOG, checkDeveloperToken, describeDeveloperService,
+  discoverObsidianVaults, readObsidianNote,
   isDeveloperService, isPermissionMode, mayConnect, summarizeScope,
   type DeveloperService, type EffectiveScope, type PermissionMode,
 } from '@josi-ce/connectors';
@@ -101,8 +102,9 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
       const mine = await db.query<{
         service: DeveloperService; account_label: string | null; status: string;
         last_check_at: string | null; last_check_ok: boolean | null; last_error: string | null;
+        last_used_at: string | null;
       }>(
-        `select service, account_label, status, last_check_at, last_check_ok, last_error
+        `select service, account_label, status, last_check_at, last_check_ok, last_error, last_used_at
          from developer_connections where owner_user_id = $1`,
         [userId],
       );
@@ -118,6 +120,9 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
             tokenHelp: d.tokenHelp,
             tokenUrl: d.tokenUrl,
             capability: d.capability,
+            usernameLabel: d.usernameLabel ?? null,
+            emailLabel: d.emailLabel ?? null,
+            baseUrlLabel: d.baseUrlLabel ?? null,
             // Whether I MAY, kept separate from whether I HAVE.
             allowed: mayConnect(scope, userId),
             // The administrator's own words when they refused it, so a person
@@ -131,6 +136,7 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
                   lastCheckAt: connection.last_check_at,
                   lastCheckOk: connection.last_check_ok,
                   lastError: connection.last_error,
+                  lastUsedAt: connection.last_used_at,
                 }
               : null,
           };
@@ -138,6 +144,21 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
       });
     }),
   );
+
+  /** Obsidian is native filesystem discovery, never a Sync credential. */
+  r.get('/obsidian-vaults', requireSuperAdmin, handle(async (_req, res) => {
+    try {
+      const vaults = await discoverObsidianVaults(process.env.JOSI_WORKSPACE_ROOT || '/workspace');
+      return res.json({ available: true, vaults });
+    } catch {
+      return res.json({ available: false, vaults: [], detail: 'The Local Workspace mount is not available.' });
+    }
+  }));
+
+  r.get('/obsidian-note', requireSuperAdmin, handle(async(req,res)=>{
+    try{return res.json(await readObsidianNote(process.env.JOSI_WORKSPACE_ROOT||'/workspace',String(req.query.vault??''),String(req.query.note??'')));}
+    catch{throw new RouteError(400,'That Markdown note is unavailable inside the selected vault.');}
+  }));
 
   /** Connect, with my own token.
    *
@@ -176,6 +197,9 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
         // Revealed for this one request and nothing else: not stored in the
         // clear, not logged, not echoed back.
         token: token.reveal(),
+        username: str(req.body?.username, 200),
+        email: str(req.body?.email, 320),
+        baseUrl: str(req.body?.baseUrl, 500),
         fetchImpl: ctx.fetchImpl,
       });
       if (!check.ok) {
@@ -184,7 +208,7 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
 
       const stored = await storeCredentialPayload(db, requireKey(ctx), {
         ownerUserId:userId,kind:'api_key',service:`developer.${service}`,slot:'token',
-        label:`${describeDeveloperService(service)!.label} credential`,payload:{token:token.reveal()},actorUserId:userId,
+        label:`${describeDeveloperService(service)!.label} credential`,payload:{token:token.reveal(),username:str(req.body?.username,200),email:str(req.body?.email,320),baseUrl:str(req.body?.baseUrl,500)},actorUserId:userId,
       });
       await db.query(
         `insert into developer_connections
@@ -224,7 +248,8 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
 
       const opened = await openCredentialPayload<Record<string,string>>(db,requireKey(ctx),{ownerUserId:req.user!.id,service:`developer.${service}`,slot:'token',stored:row.credentials_enc});
       const check = await checkDeveloperToken({
-        service, token: opened.token ?? '', fetchImpl: ctx.fetchImpl,
+        service, token: opened.token ?? '', username:opened.username, email:opened.email,
+        baseUrl:opened.baseUrl, fetchImpl: ctx.fetchImpl,
       });
       await db.query(
         `update developer_connections
@@ -291,9 +316,10 @@ export function adminDeveloperServiceRoutes(ctx: DeveloperServiceCtx): Router {
         service: DeveloperService; owner_user_id: string; username: string;
         account_label: string | null; status: string;
         last_check_at: string | null; last_check_ok: boolean | null; last_error: string | null;
+        last_used_at: string | null;
       }>(
         `select c.service, c.owner_user_id, u.username, c.account_label, c.status,
-                c.last_check_at, c.last_check_ok, c.last_error
+                c.last_check_at, c.last_check_ok, c.last_error, c.last_used_at
          from developer_connections c
          join users u on u.id = c.owner_user_id
          order by c.service, u.username`,
@@ -331,6 +357,7 @@ export function adminDeveloperServiceRoutes(ctx: DeveloperServiceCtx): Router {
               lastCheckAt: c.last_check_at,
               lastCheckOk: c.last_check_ok,
               lastError: c.last_error,
+              lastUsedAt: c.last_used_at,
             })),
           };
         }),

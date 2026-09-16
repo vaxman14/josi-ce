@@ -24,7 +24,7 @@ export function AdminNetwork() {
 
   return <div className="mx-auto max-w-3xl space-y-4">
     <div><h1 className="text-2xl font-semibold">Network &amp; address</h1><p className="text-sm text-muted-foreground">Change LAN, public-domain, reverse-proxy, and port settings without reinstalling Josi.</p></div>
-    {error ? <div role="alert"><ErrorNote>{error}</ErrorNote></div> : null}
+    {error ? <ErrorNote>{error}</ErrorNote> : null}
     <Card>
       <CardTitle>Open protected maintenance</CardTitle>
       <p className="mb-3 text-sm text-muted-foreground">Josi briefly opens a separate local controller because this page becomes unavailable while its address changes. The controller previews the change, verifies health at the new address, and restores the previous configuration if it fails.</p>
