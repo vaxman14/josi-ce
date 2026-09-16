@@ -19,6 +19,8 @@ import {
 import { citationLabel, folderSyncHealthFor, searchDocuments, type FolderSyncHealth } from '@josi-ce/storage';
 import { DATA_TOOL_FAMILY, executeDataTool, type ConnectorAccess } from './dataTools.js';
 import { executeCustomApiTool, isCustomApiTool } from './customApiTools.js';
+import { executeWorkflowTool, WORKFLOW_TOOL_NAMES } from './workflowTools.js';
+import { executeObsidianTool, DEVELOPER_INTEGRATION_TOOL, executeDeveloperIntegrationTool, executeDeveloperResourceTool } from './developerIntegrationTools.js';
 
 export interface ToolExecutionContext {
   /** Whose work this is. Everything created belongs to them. Never a value
@@ -60,6 +62,16 @@ export async function executeAssistantTool(
       name,
       input,
     );
+  }
+  if (WORKFLOW_TOOL_NAMES.has(name)) {
+    if (!ctx.connectors) return { ok: false, message: 'Native workflow credentials are unavailable.' };
+    return executeWorkflowTool(db, { userId, threadId: ctx.threadId, masterKey: ctx.connectors.masterKey }, name, input);
+  }
+  if(name==='list_obsidian_vaults'||name==='read_obsidian_note')return executeObsidianTool(db,userId,name,input);
+  if(name===DEVELOPER_INTEGRATION_TOOL)return executeDeveloperIntegrationTool(db,userId);
+  if(name==='list_native_resources'){
+    if(!ctx.connectors)return {ok:false,message:'Native integration credentials are unavailable.'};
+    return executeDeveloperResourceTool(db,userId,input,{masterKey:ctx.connectors.masterKey,fetchImpl:ctx.connectors.fetchImpl});
   }
 
   switch (name) {

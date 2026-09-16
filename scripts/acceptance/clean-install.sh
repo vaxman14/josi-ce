@@ -323,7 +323,7 @@ step "generating installation secrets"
 if [[ -f secrets/master.key && -f secrets/db_password ]]; then
   ok "secrets already exist (left alone — install.sh refuses to overwrite a key)"
 else
-  bash scripts/install.sh >/dev/null 2>&1 \
+  JOSI_COMPOSE_SECRETS=1 bash scripts/install.sh >/dev/null 2>&1 \
     && ok "install.sh generated the secrets" \
     || bad "install.sh could not generate the secrets"
 fi
@@ -333,7 +333,8 @@ fi
 # check compared `?p` against "600" on every Linux host it has ever run on.
 perms=$(stat -c '%a' secrets/master.key 2>/dev/null || stat -f '%Lp' secrets/master.key 2>/dev/null)
 case "$perms" in '' | *[!0-7]*) perms="unknown" ;; esac
-[[ "$perms" == "600" || "$perms" == "400" ]] && ok "master.key is not world-readable ($perms)" \
+directory_perms=$(stat -c '%a' secrets 2>/dev/null || stat -f '%Lp' secrets 2>/dev/null)
+[[ "$directory_perms" == "700" && ( "$perms" == "600" || "$perms" == "400" || "$perms" == "644" ) ]] && ok "master.key is protected by the owner-only secrets directory ($perms)" \
   || bad "master.key permissions are $perms"
 
 step "building the image"
@@ -452,6 +453,13 @@ for entry in "${STEPS[@]}"; do
   name="${entry%%|*}"; payload="${entry#*|}"
   code=$(api POST "/api/setup/steps/$name" "$payload")
   [[ "$code" == "200" ]] && ok "wizard step $name" || bad "wizard step $name returned $code: $(body)"
+  # An untested fixture key deliberately leaves the wizard parked on the LLM
+  # step. Do not cascade that expected gate into bogus failures for every
+  # later step; those steps are covered only when a real acceptance key is
+  # supplied.
+  if [[ $LLM_REAL -eq 0 && "$name" == "llm" ]]; then
+    break
+  fi
 done
 code=$(api POST /api/setup/complete '{}')
 if [[ $LLM_REAL -eq 1 ]]; then
@@ -461,7 +469,7 @@ else
   # LB4.4, asserted rather than worked around. An installation that would let
   # itself be declared finished with a model nobody ever called successfully is
   # the exact failure the blocker describes, so the refusal is a PASS here.
-  if [[ "$code" == "409" ]] && grep -q '"key":"llm"' /tmp/josi-acc-body 2>/dev/null; then
+  if [[ "$code" == "409" ]] && grep -Eq '"(key|expected)":"llm"' /tmp/josi-acc-body 2>/dev/null; then
     ok "setup refuses to finish with an untested model, and names it ($code)"
   else
     bad "setup completion returned $code with an untested model, expected a 409 naming llm: $(body)"
@@ -491,22 +499,21 @@ esac
 # rather than an assignment — so process.env.ENC was undefined, openSealed got
 # undefined, and the check reported "Cannot read properties of undefined" as if
 # the stored credential were wrong.
-opened=$("${COMPOSE[@]}" exec -T -e ENC="$enc" web node -e "
-  const fs = require('node:fs');
-  Promise.all([
-    import('/app/packages/core/dist/masterKey.js'),
-    import('/app/packages/core/dist/sealing.js'),
-  ]).then(([mk, sealing]) => {
-    const key = mk.loadMasterKey();
-    process.stdout.write(sealing.openSealed(key, process.env.ENC).apiKey ?? '');
-  }).catch((e) => process.stdout.write('ERROR:' + e.message));
-" 2>/dev/null </dev/null | tr -d '\r')
-if [[ "$opened" == "$LLM_KEY" ]]; then
+opened=$("${COMPOSE[@]}" exec -T web node --input-type=module -e "
+  import {readFileSync} from 'node:fs';
+  import {connectFromEnv,loadMasterKey,openCredentialPayload} from '@josi-ce/core';
+  const {db,close}=await connectFromEnv();
+  try {
+    const [row]=await db.query('select api_key_enc from llm_providers where role=\'primary\'');
+    const [owner]=await db.query(\"select id from users where role='super_admin' order by created_at limit 1\");
+    const opened=await openCredentialPayload(db,loadMasterKey(),{ownerUserId:owner.id,service:'llm',slot:'primary',stored:row.api_key_enc});
+    process.stdout.write(opened.apiKey===readFileSync(0,'utf8').trim()?'match':'mismatch');
+  } finally {await close();}
+" 2>/dev/null <<< "$LLM_KEY" | tr -d '\r')
+if [[ "$opened" == "match" ]]; then
   ok "the stored key opens to exactly what was submitted"
-elif [[ "$opened" == "[secret redacted]" ]]; then
-  bad "REGRESSION: the redaction marker was sealed instead of the credential"
 else
-  bad "the stored key did not open to what was submitted (got: ${opened:0:24})"
+  bad "the stored key did not match the submitted credential (values withheld)"
 fi
 
 step "signing in"

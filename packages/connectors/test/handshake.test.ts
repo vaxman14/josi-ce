@@ -290,12 +290,12 @@ describe('storing a connection', () => {
     expect((await can(db, { ownerUserId: alice, capability: 'google.calendar.read' })).allowed).toBe(false);
   });
 
-  it('accumulates scopes across an incremental re-consent', async () => {
+  it('uses the latest token scopes and removes withdrawn grants', async () => {
     await upsertConnection(db, key, {
       ownerUserId: alice, provider: 'google', tokens,
       accountEmail: null, providerAccountId: null, requestedCapabilities: ['google.calendar.read'],
     });
-    // A second consent covering only the new scope must not narrow the first.
+    // A provider response describes the new token; never retain withdrawn scopes.
     await upsertConnection(db, key, {
       ownerUserId: alice, provider: 'google',
       tokens: { ...tokens, grantedScopes: 'https://www.googleapis.com/auth/gmail.readonly' },
@@ -303,7 +303,7 @@ describe('storing a connection', () => {
     });
 
     const connection = await connectionFor(db, { ownerUserId: alice, provider: 'google' });
-    expect(connection!.granted_scopes).toContain('calendar.readonly');
+    expect(connection!.granted_scopes).not.toContain('calendar.readonly');
     expect(connection!.granted_scopes).toContain('gmail.readonly');
   });
 

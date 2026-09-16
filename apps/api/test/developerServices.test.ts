@@ -133,7 +133,11 @@ describe('every service starts refused', () => {
     const res = await call('/api/connections/developer', { jar: jars.alice });
     expect(res.status).toBe(200);
     const services = res.body.services as Array<{ service: string; allowed: boolean }>;
-    expect(services.map((s) => s.service)).toEqual(['github', 'netlify', 'vercel', 'supabase']);
+    expect(services.map((s) => s.service)).toEqual([
+      'github', 'netlify', 'vercel', 'supabase',
+      'gitlab', 'cloudflare', 'sentry', 'render', 'railway', 'linear',
+      'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
+    ]);
     // A developer service reaches a third party with a person's own credential.
     // Defaulting to permitted would switch that on for every installation that
     // upgrades without anybody choosing it.
@@ -355,7 +359,7 @@ describe('permission and connection are reported separately', () => {
     // The account's own name is what the owner already sees. Nothing else from
     // the account is carried.
     expect(Object.keys(github.connections[0]).sort()).toEqual([
-      'accountLabel', 'lastCheckAt', 'lastCheckOk', 'lastError', 'status', 'userId', 'username',
+      'accountLabel', 'lastCheckAt', 'lastCheckOk', 'lastError', 'lastUsedAt', 'status', 'userId', 'username',
     ]);
   });
 
@@ -376,13 +380,13 @@ describe('permission and connection are reported separately', () => {
   });
 });
 
-describe('the services are the four named ones', () => {
+describe('only catalogued native services are accepted', () => {
   it('refuses anything else', async () => {
-    expect((await call('/api/admin/developer-services/gitlab', {
+    expect((await call('/api/admin/developer-services/bitbucket', {
       method: 'PUT', body: { mode: 'everyone' },
     })).status).toBe(404);
     await permit('github', 'everyone');
-    expect((await call('/api/connections/developer/gitlab', {
+    expect((await call('/api/connections/developer/bitbucket', {
       method: 'PUT', jar: jars.alice, body: { token: TOKEN },
     })).status).toBe(404);
   });

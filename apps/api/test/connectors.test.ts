@@ -15,7 +15,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { MasterKey, seal } from '@josi-ce/core';
+import { MasterKey, seal, initializeVault } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -39,10 +39,12 @@ const ACCOUNT = 'alices.private.mailbox@gmail.test';
 /** What the stubbed provider returns next. */
 let tokenResponse: { scope: string } = { scope: 'https://www.googleapis.com/auth/calendar.readonly' };
 let providerCalls: string[] = [];
+let onRevoke: (()=>Promise<void>) | undefined;
 
 const connectorFetch = (async (url: RequestInfo | URL) => {
   const href = String(url);
   providerCalls.push(href);
+  if(href.includes("/revoke") && onRevoke) await onRevoke();
   if (href.includes('/users/me/calendarList')) {
     return new Response(JSON.stringify({ items: [
       { id: 'primary@example.test', summary: 'Primary', primary: true, accessRole: 'owner', backgroundColor: '#123456' },
@@ -136,6 +138,7 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); });
 
 beforeEach(async () => {
+  onRevoke=undefined;
   providerCalls = [];
   tokenResponse = { scope: 'https://www.googleapis.com/auth/calendar.readonly' };
   await db.query(`delete from connection_capabilities`);
@@ -229,16 +232,17 @@ describe('the operator OAuth application', () => {
 describe('connecting an account', () => {
   beforeEach(configureClient);
 
-  it('asks only for read scopes by default — M32', async () => {
+  it('asks once for the complete provider bundle while local capabilities remain off', async () => {
     const started = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: {},
     });
     const scope = new URL(started.body.url).searchParams.get('scope')!;
     expect(scope).toContain('calendar.readonly');
     expect(scope).toContain('gmail.readonly');
-    // Nothing that can write.
-    expect(scope).not.toContain('gmail.send');
-    expect(scope.split(' ')).not.toContain('https://www.googleapis.com/auth/calendar');
+    expect(scope).toContain('gmail.send');
+    expect(scope.split(' ')).toContain('https://www.googleapis.com/auth/calendar');
+    expect(scope).toContain('contacts');
+    expect(scope).toContain('drive.readonly');
   });
 
   it('stores the tokens sealed, and never returns them', async () => {
@@ -368,7 +372,7 @@ describe('a member cannot act on another member connection', () => {
   });
 });
 
-describe('enabling a write capability forces re-consent — M32', () => {
+describe('legacy partial grants use one account-level permission upgrade', () => {
   beforeEach(configureClient);
 
   it('refuses when the provider granted only read', async () => {
@@ -379,16 +383,21 @@ describe('enabling a write capability forces re-consent — M32', () => {
     expect(res.status).toBe(409);
     expect(res.body.state).toBe('needs_consent');
     expect(res.body.error).toMatch(/reconnect/i);
+    const mine = await call('/api/connections', { jar: cookies.alice });
+    const google = mine.body.providers.find((p: any) => p.provider === 'google');
+    expect(google.connections[0].needsPermissionUpgrade).toBe(true);
   });
 
   it('succeeds after a second handshake that grants the scope', async () => {
     await connect('alice');
-    // The second consent asks for the write scope specifically.
+    // The account-level upgrade asks for the complete current bundle, even if
+    // an old client still submits a per-capability request body.
     const started = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: { capabilities: ['google.mail.send'] },
     });
     const scope = new URL(started.body.url).searchParams.get('scope')!;
     expect(scope).toContain('gmail.send');
+    expect(scope).toContain('drive.readonly');
 
     tokenResponse = { scope: 'https://www.googleapis.com/auth/gmail.send' };
     const state = new URL(started.body.url).searchParams.get('state')!;
@@ -399,8 +408,8 @@ describe('enabling a write capability forces re-consent — M32', () => {
     const [conn] = await db.query<{ id: string; granted_scopes: string }>(
       `select id, granted_scopes from connections where owner_user_id = $1`, [ids.alice],
     );
-    // The first consent's scopes survive the second.
-    expect(conn.granted_scopes).toContain('calendar.readonly');
+    // The latest token is authoritative; withdrawn grants must not survive.
+    expect(conn.granted_scopes).not.toContain('calendar.readonly');
     expect(conn.granted_scopes).toContain('gmail.send');
 
     const res = await call(`/api/connections/${conn.id}/capabilities/google.mail.send`, {
@@ -521,14 +530,20 @@ describe('the admin sees health, never content', () => {
 describe('disconnecting', () => {
   beforeEach(configureClient);
 
-  it('removes the tokens and the capability grants', async () => {
+  it('removes the Vault tokens and capability grants after immediately withdrawing local authority', async () => {
+    await initializeVault(db,key,ids.admin);
     const id = await connect('alice', ['google.mail.send'], 'https://www.googleapis.com/auth/gmail.send');
     await call(`/api/connections/${id}/capabilities/google.mail.send`, {
       method: 'PUT', jar: cookies.alice, body: { enabled: true },
     });
 
+    expect(await db.query(`select 1 from vault_items where service='connector.google' and slot=$1`,[id])).toHaveLength(1);
+    let revoked=false;
+    onRevoke=async()=>{ revoked=true;expect((await db.query(`select status from connections where id=$1`,[id]))[0].status).toBe('revoked'); };
     const res = await call(`/api/connections/${id}`, { method: 'DELETE', jar: cookies.alice });
     expect(res.status).toBe(200);
+    expect(revoked).toBe(true);
+    expect(await db.query(`select 1 from vault_items where service='connector.google' and slot=$1`,[id])).toHaveLength(0);
     expect(await db.query(`select 1 from connections`)).toHaveLength(0);
     expect(await db.query(`select 1 from connection_capabilities`)).toHaveLength(0);
   });

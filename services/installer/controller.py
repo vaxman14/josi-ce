@@ -16,6 +16,8 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +43,25 @@ PROGRESS: dict[str, object] = {
 
 def run(args: list[str], *, check: bool = True, timeout: int = 600) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, cwd=ROOT, text=True, capture_output=True, check=check, timeout=timeout)
+
+
+def verify_public_origin(origin: str, timeout: int = 90) -> None:
+    """Prove the browser-facing origin before committing a network change."""
+    health = f"{origin.rstrip('/')}/health"
+    deadline = time.monotonic() + timeout
+    last_error = "public origin did not become reachable"
+    while time.monotonic() < deadline:
+        try:
+            request = urllib.request.Request(health, headers={"User-Agent": "josi-ce-installer-readiness/1"})
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read(4096))
+                if response.status == 200 and payload.get("ok") is True:
+                    return
+                last_error = f"public origin health returned HTTP {response.status}"
+        except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError):
+            last_error = "public origin DNS, TLS, or routing is not ready"
+        time.sleep(1)
+    raise RuntimeError(f"{last_error}; the previous network configuration was restored")
 
 
 def detected_addresses() -> list[str]:
@@ -186,7 +207,7 @@ def write_env(plan: dict[str, object], setup_token_sha256: str = "") -> None:
         backup = ROOT / f".env.pre-browser-{int(time.time())}"
         shutil.copy2(target, backup)
     values.update({
-        "JOSI_TAG": VERSION,
+        "JOSI_TAG": values.get("JOSI_TAG", VERSION) if os.environ.get("JOSI_EXISTING_INSTALL") == "1" else VERSION,
         "JOSI_DOMAIN": str(plan["domain"] if plan["mode"] == "domain" else ""),
         "JOSI_APP_URL": str(plan["appUrl"]),
         "JOSI_HTTP_PORT": str(plan["httpPort"]),
@@ -274,21 +295,44 @@ def provision_maintenance_helper() -> None:
          "--docker-gid",docker_gid,"--socket-gid",app_gid],timeout=60)
 
 
+def address_metadata(action: str, snapshot=None):
+    # Execute with the existing runtime's file-backed DB credential. Only the
+    # narrowly selected public metadata travels over stdout/stdin.
+    prefix = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml"),
+              "--project-directory", str(ROOT), "--project-name", PROJECT,
+              "exec", "-T", "web", "node", "--input-type=module", "-e"]
+    code = "import {connectFromEnv,loadMasterKey} from '@josi-ce/core'; import {snapshotPublicAddress,restorePublicAddress,verifyPublicAddress,restoreRemotePublicAddress} from './apps/api/dist/setup/publicAddress.js'; const {db,close}=await connectFromEnv(); try {"
+    if action == "snapshot":
+        code += "console.log(JSON.stringify(await snapshotPublicAddress(db)));"
+    elif action == "restore":
+        code += "let s='';for await(const c of process.stdin)s+=c;const previous=JSON.parse(s);try{await restoreRemotePublicAddress(db,loadMasterKey(),previous);}finally{await restorePublicAddress(db,previous);}"
+    else:
+        code += "let s='';for await(const c of process.stdin)s+=c;await verifyPublicAddress(db,loadMasterKey(),process.env.APP_URL,s?JSON.parse(s):null);"
+    code += "}finally{await close();}"
+    result = subprocess.run(prefix + [code], cwd=ROOT, input=json.dumps(snapshot) if snapshot else None,
+                            text=True,capture_output=True,check=True,timeout=30)
+    return json.loads(result.stdout) if action == "snapshot" else None
+
+
 def install(plan: dict[str, object]) -> None:
     with LOCK:
         PROGRESS.update({"state": "installing", "message": "Saving configuration", "log": [],
                          "percent": 8, "step": 1, "totalSteps": 5})
         snapshots = {path: path.read_bytes() if path.exists() else None for path in (
             ROOT / '.env', ROOT / 'docker-compose.workspace.yml', ROOT / 'docker-compose.noproxy.yml')}
+        metadata = None
         try:
+            if os.environ.get("JOSI_EXISTING_INSTALL") == "1":
+                metadata = address_metadata("snapshot")
             setup_token = secrets.token_urlsafe(32)
             setup_token_sha256 = hashlib.sha256(setup_token.encode()).hexdigest()
             write_env(plan, setup_token_sha256)
             write_workspace_override(plan)
             progress("Preparing the isolated Voice Box controller", 22, 2)
-            provision_voice_helper()
-            provision_storage_helper()
-            provision_maintenance_helper()
+            if os.environ.get("JOSI_EXISTING_INSTALL") != "1":
+                provision_voice_helper()
+                provision_storage_helper()
+                provision_maintenance_helper()
             compose = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml")]
             if (ROOT / "docker-compose.workspace.yml").exists():
                 compose += ["-f", str(ROOT / "docker-compose.workspace.yml")]
@@ -296,13 +340,16 @@ def install(plan: dict[str, object]) -> None:
                 compose += ["-f", str(ROOT / "docker-compose.noproxy.yml")]
             compose += ["--project-directory", str(ROOT), "--project-name", PROJECT]
             progress("Pulling pinned Josi images", 45, 3)
-            run(compose + ["pull"], timeout=1800)
+            if os.environ.get("JOSI_EXISTING_INSTALL") != "1":
+                run(compose + ["pull"], timeout=1800)
             progress("Starting Josi services", 72, 4)
             up = compose + ["up", "-d", "--wait", "--wait-timeout", "300"]
             if plan["mode"] == "proxy":
                 up += ["--scale", "caddy=0"]
             run(up, timeout=600)
-            progress("Josi passed its container health checks", 94, 5)
+            progress("Verifying the browser-facing Josi address", 94, 5)
+            verify_public_origin(str(plan["appUrl"]))
+            address_metadata("verify", metadata)
             PROGRESS.update({"state": "complete", "message": "Installation complete", "percent": 100,
                              "appUrl": f"{plan['appUrl']}/#setup={setup_token}"})
             # Give the browser enough time to receive the handoff, then remove
@@ -312,27 +359,33 @@ def install(plan: dict[str, object]) -> None:
             # Network changes can make the old browser origin disappear before
             # the new one is healthy. Restore the reviewed files and recreate
             # the previous stack before reporting failure.
+            rollback_ok = False
             try:
                 for path, data in snapshots.items():
                     if data is None: path.unlink(missing_ok=True)
                     else: path.write_bytes(data)
                 rollback = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml")]
                 if (ROOT / "docker-compose.workspace.yml").exists(): rollback += ["-f", str(ROOT / "docker-compose.workspace.yml")]
-                if (ROOT / ".env").exists() and "JOSI_ACCESS_MODE=proxy" in (ROOT / ".env").read_text(errors="replace"):
+                previous_proxy = (ROOT / ".env").exists() and "JOSI_ACCESS_MODE=proxy" in (ROOT / ".env").read_text(errors="replace")
+                if previous_proxy:
                     rollback += ["-f", str(ROOT / "docker-compose.noproxy.yml")]
                 rollback += ["--project-directory", str(ROOT), "--project-name", PROJECT, "up", "-d", "--wait", "--wait-timeout", "300"]
+                if previous_proxy:
+                    rollback += ["--scale", "caddy=0"]
                 run(rollback, timeout=600)
+                if metadata is not None:
+                    address_metadata("restore", metadata)
+                rollback_ok = True
             except Exception:
-                pass
+                rollback_ok = False
             progress("Installation failed. Review the sanitized error below.",
                      int(PROGRESS.get("percent", 0)), int(PROGRESS.get("step", 0)))
-            message = str(exc)
-            if isinstance(exc, subprocess.CalledProcessError):
-                detail = (exc.stderr or exc.stdout or "").strip()
-                if detail:
-                    message = f"{message}\n{detail}"
-            message = re.sub(r"(?i)(password|token|secret|key)=\S+", r"\1=[redacted]", message)
-            PROGRESS.update({"state": "failed", "error": message[-2000:]})
+            message = ("The change failed; the previous configuration and runtime were restored."
+                       if rollback_ok else
+                       "The change failed. Configuration files were restored, but runtime recovery failed. "
+                       "Use the local installer to recover the previous stack; do not retry an address change yet.")
+            PROGRESS.update({"state": "failed", "error": message, "rollbackComplete": rollback_ok})
+
 
 
 def write_workspace_override(plan: dict[str, object]) -> None:
@@ -488,4 +541,11 @@ if __name__ == "__main__":
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(STATE / "tls.crt", STATE / "tls.key")
     server.socket = context.wrap_socket(server.socket, server_side=True)
+    def expire():
+        if PROGRESS.get("state") == "installing":
+            threading.Timer(30, expire).start()
+        else:
+            TOKEN_FILE.unlink(missing_ok=True)
+            server.shutdown()
+    threading.Timer(SESSION_TTL, expire).start()
     server.serve_forever()

@@ -23,10 +23,9 @@ import {
   verifyWebdavCredentials,
   type EntryPage, type OAuthProvider, type Provider,
 } from '@josi-ce/connectors';
-import { openSealed } from '@josi-ce/core';
+import { openCredentialPayload } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
-import { publicHttpsBase } from '../setup/setupRoutes.js';
 
 export interface ConnectorRoutesCtx {
   db: Db;
@@ -59,12 +58,23 @@ function storageCapabilityFor(provider: Provider): string {
   return isOAuthProvider(provider) ? STORAGE_CAPABILITY[provider] : NEXTCLOUD_STORAGE_CAPABILITY;
 }
 
-async function publicAppUrl(db: Db, fallback: string): Promise<string> {
+async function canonicalDeployment(db: Db, fallback: string): Promise<{ origin: string; publicHttpsBase: string | null }> {
+  const configured = fallback.replace(/\/$/, '');
+  let publicOrigin: string | null = null;
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(configured);
+  } catch { /* malformed APP_URL falls back to the stored installation state */ }
+  if (parsed?.protocol === 'https:' && parsed.hostname !== 'localhost' && !/^\d{1,3}(\.\d{1,3}){3}$/.test(parsed.hostname)) {
+    publicOrigin = parsed.origin;
+  }
   const [deployment] = await db.query<{ domain: string }>(
     `select domain from deployment_config where id = true`,
   );
   const domain = deployment?.domain?.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
-  return domain ? `https://${domain}` : fallback.replace(/\/$/, '');
+  const origin = publicOrigin ?? (domain ? `https://${domain}` : configured);
+  const publicHttpsBase = publicOrigin ?? (domain && domain !== 'localhost' && !/^\d{1,3}(\.\d{1,3}){3}$/.test(domain) ? `https://${domain}` : null);
+  return { origin, publicHttpsBase };
 }
 
 /** For the handshake routes only — /start and /callback exist for OAuth
@@ -117,17 +127,24 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
       for (const provider of ALL_PROVIDERS) {
         const connections = await connectionsFor(db, { ownerUserId: req.user!.id, provider });
         const connection = connections[0] ?? null;
-        const view = async (item: typeof connection) => item ? ({
-          id: item.id,
-          account: item.account_email,
-          status: item.status,
-          lastCheckAt: item.last_check_at,
-          lastCheckOk: item.last_check_ok,
-          errorCategory: item.last_error_category,
-          createdAt: item.created_at,
-          serverUrl: item.meta?.serverUrl ?? null,
-          capabilities: await capabilityViews(db, { connection: item, provider }),
-        }) : null;
+        const view = async (item: typeof connection) => {
+          if (!item) return null;
+          const capabilities = await capabilityViews(db, { connection: item, provider });
+          return {
+            id: item.id,
+            account: item.account_email,
+            status: item.status,
+            lastCheckAt: item.last_check_at,
+            lastCheckOk: item.last_check_ok,
+            errorCategory: item.last_error_category,
+            createdAt: item.created_at,
+            serverUrl: item.meta?.serverUrl ?? null,
+            capabilities,
+            needsPermissionUpgrade: isOAuthProvider(provider)
+              ? capabilities.some((capability) => capability.needsConsent)
+              : false,
+          };
+        };
         out.push({
           provider,
           // Whether an administrator has set this installation's application up.
@@ -248,28 +265,13 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
       const key = requireKey(ctx);
       const client = await loadClient(db, key, provider);
 
-      // What is being asked for THIS time. Incremental by construction: a
-      // second handshake asks for the new capability, not for everything.
-      const requested = Array.isArray(req.body?.capabilities)
-        ? (req.body.capabilities as unknown[]).map((c) => str(c, 80)).filter(Boolean)
-        : [];
-      const known = requested.filter((c) => capabilitySpec(c)?.provider === provider);
-      // A connect with nothing named still gets every READ capability for
-      // this provider, storage included (item 16b). M32's "read first" half
-      // still holds — nothing that WRITES is ever bundled into a default
-      // connect, and a write capability still needs its own separate
-      // "Approve at provider" round-trip (item 18, untouched by this). What
-      // changed is that reading files is no longer held back as a second,
-      // opt-in trip: a person connecting to read their calendar and a person
-      // connecting to sync a folder now leave the provider with the same
-      // grant, and the Connections page decides afterwards, per capability,
-      // which of them to actually turn on (state stays 'off' until its owner
-      // switches it on — connecting is still not consent to act).
-      const capabilities = known.length
-        ? known
-        : CAPABILITIES
-            .filter((c) => c.provider === provider && c.kind === 'read')
-            .map((c) => c.key);
+      // OAuth consent is account-level. New connections and legacy upgrades
+      // request the complete bundle supported by this provider once. Local
+      // capability switches remain off until their owner enables them, so a
+      // broad provider grant is not permission for Josi to act.
+      const capabilities = CAPABILITIES
+        .filter((c) => c.provider === provider)
+        .map((c) => c.key);
 
       const store = createStateStore(db, key);
       const targetConnectionId = str(req.body?.connectionId, 80) || null;
@@ -391,10 +393,8 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         providerAccountId: identity.accountId,
         targetConnectionId: handshake.targetConnectionId,
         requestedCapabilities: handshake.capabilities,
-        // An explicit incremental-consent trip from an existing connection is
-        // the owner's switch-on action. First-time connections still start
-        // with capabilities off.
-        enableRequestedCapabilities: !!existingConnection,
+        // Provider consent never enables additional local write capabilities.
+        enableRequestedCapabilities: false,
       });
 
       return res.redirect(handshake.returnPath);
@@ -428,6 +428,8 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         throw new RouteError(404, 'not found');
       }
 
+      // Withdraw local authority before awaiting a remote revocation request.
+      await db.query(`update connections set status='revoked' where id=$1`,[connection.id]);
       let note: string | undefined;
       // Nextcloud has no OAuth revoke endpoint to call — there is no client to
       // load and no token to revoke, only a WebDAV app password whose owner
@@ -438,7 +440,7 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         try {
           const key = requireKey(ctx);
           const client = await loadClient(db, key, connection.provider);
-          const secrets = openSealed<{ refreshToken: string | null }>(key, connection.secrets_enc);
+          const secrets = await openCredentialPayload<{ refreshToken: string | null }>(db,key,{ownerUserId:connection.owner_user_id,service:`connector.${connection.provider}`,slot:connection.id,stored:connection.secrets_enc});
           if (secrets.refreshToken) {
             const result = await revokeAtProvider(client, secrets.refreshToken, { fetchImpl: ctx.fetchImpl });
             note = result.note;
@@ -533,13 +535,14 @@ export function adminConnectorRoutes(ctx: ConnectorRoutesCtx): Router {
   r.get(
     '/',
     handle(async (_req, res) => {
-      const appUrl = await publicAppUrl(db, ctx.appUrl);
+      const deployment = await canonicalDeployment(db, ctx.appUrl);
+      const appUrl = deployment.origin;
       // Google and Microsoft only accept an HTTPS redirect on a real domain
       // name. This used to be discovered inside the setup wizard, which offered
       // the registration as step 6 on installations that could never complete
       // it; the wizard no longer asks, and this page is where the answer
       // belongs. A base means an application can be registered right now.
-      const httpsBase = await publicHttpsBase(db);
+      const httpsBase = deployment.publicHttpsBase;
       const policy = await db.query<{ capability: string; allowed: boolean; note: string | null }>(
         `select capability, allowed, note from admin_capability_policy`,
       );
@@ -552,6 +555,7 @@ export function adminConnectorRoutes(ctx: ConnectorRoutesCtx): Router {
         registration: {
           available: !!httpsBase,
           publicHttpsBase: httpsBase,
+          detectedOrigin: appUrl,
           reason: httpsBase
             ? null
             : 'Google and Microsoft only accept an HTTPS redirect on a real domain name. This '

@@ -216,7 +216,7 @@ describe('LB5.6 — Connect, status, scopes, re-consent, revoke, recovery', () =
     expect(write.state).toBe('needs_consent');
   });
 
-  it('forces a second consent before a write capability can be enabled', async () => {
+  it('uses one account-level permission upgrade before a write capability can be enabled', async () => {
     const state = await startHandshake(cookies.alice);
     await callback('google', { state, code: 'auth-code' }, cookies.alice);
     const view = await call('/api/connections', { jar: cookies.alice });
@@ -229,12 +229,17 @@ describe('LB5.6 — Connect, status, scopes, re-consent, revoke, recovery', () =
     });
     expect(early.status).toBe(409);
 
-    // Re-consent asks for exactly the new capability, not for everything.
+    // Legacy partial grants use one upgrade for the provider's complete current
+    // bundle, so enabling the next capability never causes another consent loop.
     const again = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: { capabilities: ['google.calendar.write'] },
     });
     expect(again.status).toBe(200);
-    expect(again.body.capabilities).toEqual(['google.calendar.write']);
+    expect(again.body.capabilities).toEqual(expect.arrayContaining([
+      'google.calendar.read', 'google.calendar.write', 'google.mail.read',
+      'google.mail.send', 'google.contacts.read', 'google.contacts.write',
+      'google.drive.read',
+    ]));
     const url = new URL(again.body.url);
     expect(url.searchParams.get('scope')).toContain('auth/calendar');
     // Incremental: Google is asked to keep what it already granted.
