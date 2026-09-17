@@ -64,6 +64,66 @@ async function discover(ctx: Ctx, ownerUserId: string) {
 
 export function calendarRoutes(ctx: Ctx): Router {
   const r = Router(); r.use(requireAuth);
+  r.get('/internal/calendars', handle(async (req, res) => {
+    const calendars = await ctx.db.query(
+      `select c.id, c.name, c.color, c.is_default as "isDefault",
+              o.id as "originId", o.provider, o.provider_calendar_id as "providerCalendarId",
+              o.sync_mode as "syncMode", o.status as "syncStatus",
+              o.last_sync_at as "lastSyncAt", o.last_error_category as "lastError",
+              cn.account_email as account
+         from calendars c
+         left join calendar_sync_origins o on o.calendar_id=c.id and o.owner_user_id=$1
+         left join connections cn on cn.id=o.connection_id
+        where c.owner_user_id=$1
+        order by c.is_default desc, c.name, o.created_at`,
+      [req.user!.id],
+    );
+    return res.json({ calendars });
+  }));
+  r.get('/internal/events', handle(async (req, res) => {
+    const start = new Date(String(req.query.start ?? '')); const end = new Date(String(req.query.end ?? ''));
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start || end.getTime()-start.getTime()>92*86400000) throw new HttpError(400, 'choose a valid range of at most 92 days');
+    const events = await ctx.db.query(
+      `select e.id, e.calendar_id as "calendarId", e.title, e.description, e.location,
+              e.starts_at as "startsAt", e.ends_at as "endsAt",
+              e.start_date as "startDate", e.end_date as "endDate", e.all_day as "allDay",
+              e.timezone, e.status, e.organizer, e.attendees, e.recurrence,
+              e.recurring_event_id as "recurringEventId", e.original_start as "originalStart",
+              e.sync_state as "syncState", e.sync_error as "syncError", e.updated_at as "updatedAt",
+              c.name as "calendarName", c.color as "calendarColor",
+              o.provider, o.last_sync_at as "lastSyncAt", cn.account_email as account
+         from calendar_events e
+         join calendars c on c.id=e.calendar_id and c.owner_user_id=e.owner_user_id
+         left join calendar_sync_origins o on o.calendar_id=e.calendar_id and o.owner_user_id=e.owner_user_id
+         left join connections cn on cn.id=o.connection_id
+        where e.owner_user_id=$1 and e.deleted_at is null
+          and ((not e.all_day and e.starts_at<$3 and e.ends_at>$2)
+            or (e.all_day and e.start_date<$3::date and e.end_date>$2::date))
+        order by coalesce(e.starts_at,e.start_date::timestamptz),e.id`,
+      [req.user!.id, start.toISOString(), end.toISOString()],
+    );
+    return res.json({ events });
+  }));
+  r.get('/internal/events/:id', handle(async (req, res) => {
+    const [event] = await ctx.db.query(
+      `select e.id, e.calendar_id as "calendarId", e.title, e.description, e.location,
+              e.starts_at as "startsAt", e.ends_at as "endsAt",
+              e.start_date as "startDate", e.end_date as "endDate", e.all_day as "allDay",
+              e.timezone, e.status, e.organizer, e.attendees, e.recurrence,
+              e.recurring_event_id as "recurringEventId", e.original_start as "originalStart",
+              e.sync_state as "syncState", e.sync_error as "syncError", e.updated_at as "updatedAt",
+              c.name as "calendarName", c.color as "calendarColor",
+              o.provider, o.last_sync_at as "lastSyncAt", cn.account_email as account
+         from calendar_events e
+         join calendars c on c.id=e.calendar_id and c.owner_user_id=e.owner_user_id
+         left join calendar_sync_origins o on o.calendar_id=e.calendar_id and o.owner_user_id=e.owner_user_id
+         left join connections cn on cn.id=o.connection_id
+        where e.id=$1 and e.owner_user_id=$2 and e.deleted_at is null`,
+      [param(req, 'id'), req.user!.id],
+    );
+    if (!event) throw new HttpError(404, 'event not found');
+    return res.json({ event });
+  }));
   r.get('/sources', handle(async (req, res) => {
     const [count] = await ctx.db.query<{ n: number }>(`select count(*)::int n from calendar_sources where owner_user_id=$1`, [req.user!.id]);
     const discoveryErrors = (count?.n ?? 0) === 0 || req.query.refresh === 'true' ? await discover(ctx, req.user!.id) : [];
