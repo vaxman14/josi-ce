@@ -31,7 +31,9 @@ const ids: Record<string, string> = {};
 const cookies: Record<string, string> = {};
 
 let replies: Array<{ content?: string | null; tool_calls?: unknown[] }> = [];
-const llmFetch = (async () => {
+let llmRequests: any[] = [];
+const llmFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+  llmRequests.push(JSON.parse(String(init?.body ?? '{}')));
   const next = replies.shift() ?? { content: 'ok' };
   return new Response(
     JSON.stringify({ choices: [{ message: next }], usage: { prompt_tokens: 3, completion_tokens: 1 } }),
@@ -106,6 +108,7 @@ afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); 
 
 beforeEach(async () => {
   replies = [];
+  llmRequests = [];
   await db.query(`delete from approvals`);
   await db.query(`delete from reminders`);
   await db.query(`delete from tasks`);
@@ -338,6 +341,34 @@ describe('talking to Josi', () => {
     );
     expect(messages.map((m) => m.body)).toContain('hi there');
     expect(messages.map((m) => m.body)).toContain('Hello Alice.');
+  });
+
+  it('carries verified calendar receipts into a follow-up without exposing them in chat', async () => {
+    await configureModel();
+    const t = await threadWith('alice');
+    const receipt = {
+      tool: 'query_calendar',
+      result: {
+        ok: true,
+        events: [{ title: 'EDD call', event_id: 'calendar:source:event', source_id: 'source', calendar_name: 'Roman' }],
+      },
+    };
+    await db.query(
+      `insert into messages(thread_id,direction,channel,body,meta) values($1,'out','web',$2,$3::jsonb)`,
+      [t, 'Should I replace the EDD call or create a separate event?', JSON.stringify({ calendar_receipts: [receipt] })],
+    );
+    replies = [{ content: 'I will move EDD, not LexisNexis.' }];
+    await call(`/api/assistant/threads/${t}/talk`, {
+      method: 'POST', jar: cookies.alice, body: { message: 'Push the EDD call by 30 minutes' },
+    });
+
+    const sent = JSON.stringify(llmRequests.at(-1)?.messages ?? []);
+    expect(sent).toContain('Verified calendar receipts from this prior turn');
+    expect(sent).toContain('calendar:source:event');
+    expect(sent).toContain('Push the EDD call by 30 minutes');
+
+    const visible = await call(`/api/assistant/threads/${t}`, { jar: cookies.alice });
+    expect(JSON.stringify(visible.body)).not.toContain('Verified calendar receipts from this prior turn');
   });
 
   it('never writes the conversation into the audit log', async () => {

@@ -160,6 +160,8 @@ describe('capability gating', () => {
     expect(system).toMatch(/next occurrence that is not in the past/i);
     expect(system).toMatch(/configured timezone/i);
     expect(system).toMatch(/duration when no end time/i);
+    expect(system).toMatch(/Move\/push the EDD call.*modifies the EDD event/i);
+    expect(system).toMatch(/original calendar/i);
   });
 });
 

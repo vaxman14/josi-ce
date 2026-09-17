@@ -73,6 +73,22 @@ function registryOptions(ctx: AssistantRoutesCtx) {
   };
 }
 
+const CALENDAR_CONTINUITY_TOOLS = new Set(['query_calendar', 'get_event', 'draft_calendar_event']);
+
+/** Preserve only verified calendar receipts needed to resolve a follow-up.
+ * They stay in owner-scoped message metadata and are shown only to the model,
+ * never appended to the visible chat body. */
+function calendarContinuity(actions: Array<{ tool: string; result: unknown }>): Array<{ tool: string; result: unknown }> {
+  return actions.filter((action) => CALENDAR_CONTINUITY_TOOLS.has(action.tool)).slice(-6);
+}
+
+function historyContent(message: { direction: 'in' | 'out'; body: string; meta: Record<string, unknown> }): string {
+  if (message.direction !== 'out' || !Array.isArray(message.meta?.calendar_receipts) || !message.meta.calendar_receipts.length) {
+    return message.body;
+  }
+  return `${message.body}\n\n[Verified calendar receipts from this prior turn. Preserve the named event, event_id, source_id, account, and calendar in follow-up actions; do not transfer a requested edit to another event.]\n${JSON.stringify(message.meta.calendar_receipts).slice(0, 12_000)}`;
+}
+
 export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
@@ -299,7 +315,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       // used to make Josi act under someone else's name.
       const history = (await listMessages(db, { threadId, limit: 40 })).map((m) => ({
         role: m.direction === 'in' ? ('user' as const) : ('assistant' as const),
-        content: m.body,
+        content: historyContent(m),
       }));
 
       const attachments = attachmentIds.length ? await db.query<{
@@ -385,7 +401,9 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       }
 
       await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
-      await addMessage(db, { threadId, direction: 'out', body: result.reply });
+      const calendarReceipts = calendarContinuity(result.actions);
+      await addMessage(db, { threadId, direction: 'out', body: result.reply,
+        meta: calendarReceipts.length ? { calendar_receipts: calendarReceipts } : undefined });
       await appendEvent(db, { actorUserId: thread.owner_user_id, actor: 'user', kind: 'thread.exchange',
         subjectType: 'thread', subjectId: threadId,
         payload: { channel: 'web', inboundChars: inbound.length, attachmentCount: attachments.length, replyChars: result.reply.length } });
