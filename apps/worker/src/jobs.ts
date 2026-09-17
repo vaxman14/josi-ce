@@ -15,8 +15,9 @@ import {
   transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
-  accessTokenFor, can, connectionsWithCapability, dueCloudMappings, dueOrigins, expireCustomApiCalls, loadClient,
-  markAttempted, markSyncScheduled, syncCloudMapping, syncOrigin,
+  accessTokenFor, can, connectionsWithCapability, createInternalEvent, dueCalendarOrigins, dueCloudMappings, dueOrigins, expireCustomApiCalls,
+  ensureInternalCalendar, loadClient, markAttempted, markCalendarAttempted, markSyncScheduled, provisionCalendarOrigins,
+  processCalendarOutbox, syncCalendarOrigin, syncCloudMapping, syncOrigin, updateInternalEvent,
 } from '@josi-ce/connectors';
 
 // Write-action tasks (send a message, schedule an appointment, add a contact)
@@ -123,6 +124,29 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
         masterKey: ctx.masterKey,
         fetchImpl: ctx.connectorFetch,
       });
+      return;
+    }
+
+    case 'calendar.sync_due': {
+      await provisionCalendarOrigins(db);
+      for (const origin of await dueCalendarOrigins(db)) {
+        await markCalendarAttempted(db, origin.id);
+        await enqueue(db, { kind: 'calendar.sync', payload: { originId: origin.id } });
+      }
+      return;
+    }
+
+    case 'calendar.sync': {
+      const originId = String((job.payload as { originId?: unknown }).originId ?? '');
+      if (!originId) throw new Error('calendar.sync without an originId');
+      if (!ctx.masterKey) throw new Error('calendar.sync needs the installation master key');
+      await syncCalendarOrigin(db, originId, { masterKey: ctx.masterKey, fetchImpl: ctx.connectorFetch });
+      return;
+    }
+
+    case 'calendar.outbox_due': {
+      if (!ctx.masterKey) throw new Error('calendar.outbox_due needs the installation master key');
+      await processCalendarOutbox(db, { masterKey: ctx.masterKey, fetchImpl: ctx.connectorFetch });
       return;
     }
 
@@ -273,14 +297,21 @@ async function executeWriteTask(db: Db, task: WritableTask, ctx: WorkerContext):
     if (!source || typeof source.calendar_id !== 'string' || !source.calendar_id) {
       throw new Error('The approved task has no exact calendar source. Draft it again and choose a calendar.');
     }
-    const session = await writeSession(db, task, 'calendar', ctx, source); const eventId = textSlot(task, 'event_id');
-    const googleBody = { summary: textSlot(task, 'title'), description: textSlot(task, 'description'), location: textSlot(task, 'location'),
-      start: { dateTime: textSlot(task, 'start') }, end: { dateTime: textSlot(task, 'end') }, attendees: listSlot(task, 'attendees').map((email) => ({ email })) };
-    const graphBody = { subject: textSlot(task, 'title'), body: { contentType: 'Text', content: textSlot(task, 'description') }, location: { displayName: textSlot(task, 'location') },
-      start: { dateTime: textSlot(task, 'start'), timeZone: 'UTC' }, end: { dateTime: textSlot(task, 'end'), timeZone: 'UTC' },
-      attendees: listSlot(task, 'attendees').map((address) => ({ emailAddress: { address }, type: 'required' })) };
-    const url = calendarEventUrl(session.provider, source.calendar_id, eventId);
-    await providerFetch(ctx, url, session.accessToken, { method: eventId ? 'PATCH' : 'POST', body: JSON.stringify(session.provider === 'google' ? googleBody : graphBody) }); return;
+    const provider = source.provider === 'google' || source.provider === 'microsoft' ? source.provider : null;
+    if (!provider) throw new Error('The approved task has an invalid calendar provider.');
+    const connections = await connectionsWithCapability(db, { ownerUserId: task.owner_user_id, capability: `${provider}.calendar.write` });
+    const connection = connections.find((candidate) => candidate.id === source.account_id);
+    if (!connection) throw new Error('The selected calendar account is unavailable or permission was lost.');
+    const event = { title: textSlot(task, 'title'), description: textSlot(task, 'description'), location: textSlot(task, 'location'),
+      start: textSlot(task, 'start'), end: textSlot(task, 'end'), attendees: listSlot(task, 'attendees') };
+    const eventId = textSlot(task, 'event_id');
+    if (eventId && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(eventId)) {
+      await updateInternalEvent(db, { ownerUserId: task.owner_user_id, eventId, changes: event });
+    } else {
+      const origin = await ensureInternalCalendar(db, { ownerUserId: task.owner_user_id, connectionId: connection.id, provider, providerCalendarId: source.calendar_id });
+      await createInternalEvent(db, { ownerUserId: task.owner_user_id, originId: origin.id, event });
+    }
+    return;
   }
   if (task.template_key === 'update_contact') {
     const session = await writeSession(db, task, 'contacts', ctx); const contactId = textSlot(task, 'contact_id');
