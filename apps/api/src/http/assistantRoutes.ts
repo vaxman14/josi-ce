@@ -180,7 +180,21 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       }
       try {
         await writeAttachment(id, bytes, uploadDir);
-        const segments = await extractRichSegments({ extension, bytes }).catch(() => null);
+        let segments;
+        try {
+          segments = await extractRichSegments({ extension, bytes });
+        } catch (error) {
+          // A broken parser/runtime is not the same thing as a valid file with
+          // no text layer. Keep the underlying detail in server logs and give
+          // the person an honest, retryable error instead of telling the model
+          // that a readable document contained no text.
+          console.error('chat attachment extraction failed', {
+            extension,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw new AttachmentError(422, 'extraction_failed',
+            'Josi could not process this file because its document parser failed. Retry once; if it fails again, ask the administrator to check the application logs.');
+        }
         await db.query(`update chat_attachments set storage_state='ready',extracted_text=$2 where id=$1`,
           [id,segments?.map(s => s.content).join('\n').slice(0,100_000) || null]);
       } catch (error) {

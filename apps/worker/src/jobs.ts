@@ -205,6 +205,14 @@ function googlePersonPath(value: string): string {
   return value;
 }
 
+export function calendarEventUrl(provider: WriteProvider, calendarId: string, eventId = ''): string {
+  const encodedCalendar = encodeURIComponent(calendarId);
+  const encodedEvent = eventId ? `/${encodeURIComponent(eventId)}` : '';
+  return provider === 'google'
+    ? `https://www.googleapis.com/calendar/v3/calendars/${encodedCalendar}/events${encodedEvent}`
+    : `https://graph.microsoft.com/v1.0/me/calendars/${encodedCalendar}/events${encodedEvent}`;
+}
+
 async function taskWriteEnabled(db: Db, task: WritableTask): Promise<boolean> {
   const family = task.template_key === 'send_message' ? 'mail' : task.template_key === 'schedule_appointment' ? 'calendar' : 'contacts';
   const keys: Record<string, Record<WriteProvider, string>> = {
@@ -218,15 +226,21 @@ async function taskWriteEnabled(db: Db, task: WritableTask): Promise<boolean> {
   return false;
 }
 
-async function writeSession(db: Db, task: WritableTask, family: 'mail' | 'calendar' | 'contacts', ctx: WorkerContext) {
+async function writeSession(db: Db, task: WritableTask, family: 'mail' | 'calendar' | 'contacts', ctx: WorkerContext,
+  requested?: { provider?: unknown; account_id?: unknown }) {
   const keys: Record<typeof family, Record<WriteProvider, string>> = {
     mail: { google: 'google.mail.send', microsoft: 'microsoft.mail.send' },
     calendar: { google: 'google.calendar.write', microsoft: 'microsoft.calendar.write' },
     contacts: { google: 'google.contacts.write', microsoft: 'microsoft.contacts.write' },
   };
   for (const provider of ['google', 'microsoft'] as WriteProvider[]) {
+    if (requested?.provider !== undefined && requested.provider !== provider) continue;
     if (!(await can(db, { ownerUserId: task.owner_user_id, capability: keys[family][provider] })).allowed) continue;
-    const [connection] = await connectionsWithCapability(db, { ownerUserId: task.owner_user_id, capability: keys[family][provider] }); if (!connection) continue;
+    const connections = await connectionsWithCapability(db, { ownerUserId: task.owner_user_id, capability: keys[family][provider] });
+    const connection = requested?.account_id === undefined
+      ? connections[0]
+      : connections.find((candidate) => candidate.id === requested.account_id);
+    if (!connection) continue;
     const client = await loadClient(db, ctx.masterKey!, provider);
     const accessToken = await accessTokenFor(db, ctx.masterKey!, { connection, client }, { fetchImpl: ctx.connectorFetch });
     return { provider, accessToken };
@@ -253,15 +267,19 @@ async function executeWriteTask(db: Db, task: WritableTask, ctx: WorkerContext):
     return;
   }
   if (task.template_key === 'schedule_appointment') {
-    const session = await writeSession(db, task, 'calendar', ctx); const eventId = textSlot(task, 'event_id');
+    const source = task.slots.calendar_source && typeof task.slots.calendar_source === 'object'
+      ? task.slots.calendar_source as { provider?: unknown; account_id?: unknown; calendar_id?: unknown }
+      : undefined;
+    if (!source || typeof source.calendar_id !== 'string' || !source.calendar_id) {
+      throw new Error('The approved task has no exact calendar source. Draft it again and choose a calendar.');
+    }
+    const session = await writeSession(db, task, 'calendar', ctx, source); const eventId = textSlot(task, 'event_id');
     const googleBody = { summary: textSlot(task, 'title'), description: textSlot(task, 'description'), location: textSlot(task, 'location'),
       start: { dateTime: textSlot(task, 'start') }, end: { dateTime: textSlot(task, 'end') }, attendees: listSlot(task, 'attendees').map((email) => ({ email })) };
     const graphBody = { subject: textSlot(task, 'title'), body: { contentType: 'Text', content: textSlot(task, 'description') }, location: { displayName: textSlot(task, 'location') },
       start: { dateTime: textSlot(task, 'start'), timeZone: 'UTC' }, end: { dateTime: textSlot(task, 'end'), timeZone: 'UTC' },
       attendees: listSlot(task, 'attendees').map((address) => ({ emailAddress: { address }, type: 'required' })) };
-    const url = session.provider === 'google'
-      ? `https://www.googleapis.com/calendar/v3/calendars/primary/events${eventId ? `/${encodeURIComponent(eventId)}` : ''}`
-      : `https://graph.microsoft.com/v1.0/me/events${eventId ? `/${encodeURIComponent(eventId)}` : ''}`;
+    const url = calendarEventUrl(session.provider, source.calendar_id, eventId);
     await providerFetch(ctx, url, session.accessToken, { method: eventId ? 'PATCH' : 'POST', body: JSON.stringify(session.provider === 'google' ? googleBody : graphBody) }); return;
   }
   if (task.template_key === 'update_contact') {
