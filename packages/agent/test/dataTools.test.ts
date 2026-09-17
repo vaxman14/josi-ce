@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
-import { MasterKey } from '@josi-ce/core';
+import { addMessage, markActionsPresented, MasterKey } from '@josi-ce/core';
 import {
   createInternalEvent, ensureInternalCalendar, saveClient, setCapability, upsertConnection, type ConnectionRow,
 } from '@josi-ce/connectors';
@@ -360,11 +360,16 @@ describe('live mailbox availability',()=>{
 });
 
 describe('multi-turn consequential action drafts',()=>{
+  async function present(threadId:string,result:{task_id?:unknown},body:string){
+    const message=await addMessage(db,{threadId,direction:'out',body});
+    if(typeof result.task_id==='string')await markActionsPresented(db,{ownerUserId:alice,threadId,taskIds:[result.task_id],messageId:message.id});
+  }
   it('retains the exact email fields across follow-up completion and retries idempotently',async()=>{
     const thread=(await db.query<{id:string}>(`insert into threads(owner_user_id,title) values($1,'Email exact repro') returning id`,[alice]))[0].id;
     const ctx={userId:alice,threadId:thread,turnId:null,connectors:null};
     const first=await executeAssistantTool(db,ctx,'draft_email',{recipient:'romanvaxman14@gmail.com',body:'testing the connection'}) as any;
     expect(first).toMatchObject({ok:true,state:'collecting',missing_slots:['subject']});
+    await present(thread,first,'What subject should I use?');
     const second=await executeAssistantTool(db,ctx,'draft_email',{subject:'testing the coonection'}) as any;
     expect(second).toMatchObject({ok:true,state:'prepared'});
     expect(second.summary).toContain('To: romanvaxman14@gmail.com');
@@ -388,6 +393,7 @@ describe('multi-turn consequential action drafts',()=>{
     expect(await db.query(`select c.id from connections c join connection_capabilities cc on cc.connection_id=c.id where c.id=$1 and cc.capability='google.calendar.read' and cc.enabled and cc.scopes_granted_at is not null`,[c.id])).toHaveLength(1);
     const first=await executeAssistantTool(db,ctx,'draft_calendar_event',{title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00'}) as any;
     expect(first).toMatchObject({error:'select_calendar',state:'collecting'});
+    await present(thread,first,'Which calendar should I use?');
     const second=await executeAssistantTool(db,ctx,'draft_calendar_event',{calendar:'the main one'}) as any;
     expect(second,JSON.stringify(second)).toMatchObject({ok:true,state:'prepared'});
     const [task]=await db.query<{slots:any}>(`select slots from tasks where id=$1`,[second.task_id]);
