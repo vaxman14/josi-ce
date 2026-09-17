@@ -112,7 +112,12 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         return res.status(202).json({ mfaRequired: true, challenge });
       }
 
-      const ttlSeconds = rememberMe ? SESSION_TTL_SECONDS : 60 * 60 * 12;
+      // Native clients keep their bearer token in the OS secure store and do
+      // not present a browser-style "remember me" checkbox. Treat an omitted
+      // value as persistent for native clients; an explicit false still opts
+      // into the short session.
+      const persistent = rememberMe === true || (isNativeClient(req) && rememberMe !== false);
+      const ttlSeconds = persistent ? SESSION_TTL_SECONDS : 60 * 60 * 12;
       const { token } = await createSession(db, {
         userId: result.user.id,
         ip,

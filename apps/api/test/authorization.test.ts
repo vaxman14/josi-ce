@@ -11,6 +11,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { createHash } from 'node:crypto';
 import { testDb } from '../../../packages/core/test/helpers.js';
 import type { Db } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
@@ -366,6 +367,13 @@ describe('sessions', () => {
     const payload = await login.json() as { sessionToken: string; user: { username: string } };
     expect(payload.user.username).toBe('alice');
     expect(payload.sessionToken).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+
+    const [session] = await db.query<{ lifetime_seconds: number }>(
+      `select extract(epoch from (expires_at - created_at))::int as lifetime_seconds
+         from sessions where token_hash = $1`,
+      [createHash('sha256').update(payload.sessionToken).digest('hex')],
+    );
+    expect(session.lifetime_seconds).toBe(60 * 60 * 24 * 14);
 
     const me = await fetch(`${base}/api/auth/me`, {
       headers: { authorization: `Bearer ${payload.sessionToken}`, 'x-josi-client': 'native' },
