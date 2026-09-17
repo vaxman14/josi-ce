@@ -29,4 +29,16 @@ describe('calendar route source boundaries',()=>{
  it('reports selected revoked or disabled sources instead of silently omitting them',async()=>{await setCapability(db,{connection,capability:'google.calendar.read',enabled:false,actorUserId:owner});const result=await get(range);expect(result.body.events).toEqual([]);expect(result.body.sourceErrors).toHaveLength(1);expect(urls).toEqual([]);await db.query(`update connections set status='revoked' where id=$1`,[connection.id]);expect((await get(range)).body.sourceErrors).toHaveLength(1);});
  it('denies cross-owner details, selection mutation, and anonymous reads',async()=>{expect((await get(`/calendar/events/${source}/instance`,other)).status).toBe(404);const r=await fetch(`${base}/calendar/sources/${source}`,{method:'PUT',headers:{'x-test-user':other,'content-type':'application/json'},body:JSON.stringify({selected:false})});expect(r.status).toBe(404);expect((await get(range,other)).body.events).toEqual([]);expect((await get(range,'')).status).toBe(401);expect(urls).toEqual([]);});
  it('bounds malformed and excessive ranges before contacting any account',async()=>{expect((await get('/calendar/events?start=no&end=no')).status).toBe(400);expect((await get('/calendar/events?start=2026-01-01&end=2027-01-01')).status).toBe(400);expect(urls).toEqual([]);});
+ it('serves the synchronized internal calendar without contacting Google',async()=>{
+   const [calendar]=await db.query<{id:string}>(`insert into calendars(owner_user_id,name,is_default) values($1,'Internal calendar',true) returning id`,[owner]);
+   await db.query(`insert into calendar_sync_origins(calendar_id,connection_id,owner_user_id,provider,provider_account_id,provider_calendar_id,last_sync_at) values($1,$2,$3,'google','fixture-calendar','primary',now())`,[calendar.id,connection.id,owner]);
+   const [event]=await db.query<{id:string}>(`insert into calendar_events(owner_user_id,calendar_id,title,starts_at,ends_at,timezone,sync_state) values($1,$2,'Internal event','2026-09-01T15:00:00Z','2026-09-01T15:30:00Z','America/Los_Angeles','synced') returning id`,[owner,calendar.id]);
+   const calendars=await get('/calendar/internal/calendars');
+   expect(calendars.body.calendars[0]).toMatchObject({id:calendar.id,name:'Internal calendar',provider:'google',account:'calendar@fixture.test',syncStatus:'idle'});
+   const listed=await get('/calendar/internal/events?start=2026-09-01T00:00:00Z&end=2026-09-02T00:00:00Z');
+   expect(listed.body.events[0]).toMatchObject({id:event.id,title:'Internal event',calendarId:calendar.id,calendarName:'Internal calendar',syncState:'synced'});
+   expect((await get(`/calendar/internal/events/${event.id}`)).body.event.id).toBe(event.id);
+   expect((await get(`/calendar/internal/events/${event.id}`,other)).status).toBe(404);
+   expect(urls).toEqual([]);
+ });
 });
