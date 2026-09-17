@@ -89,6 +89,13 @@ export async function addMessage(
     meta?: Record<string, unknown>;
   },
 ): Promise<Message> {
+  // Only the immediately preceding assistant turn may receive a bare yes/no.
+  // Clear presentation bindings before every new outbound message; the caller
+  // that is actually presenting a prepared action re-binds its task after the
+  // message is inserted. This is deterministic even when database timestamps
+  // have the same resolution.
+  if(args.direction==='out')await db.query(`update assistant_action_states set presented_turn_id=null
+    where thread_id=$1 and status='prepared' and presented_turn_id is not null`,[args.threadId]);
   const rows = await db.query<Message>(
     `insert into messages (thread_id, direction, channel, body, meta)
      values ($1, $2, $3, $4, $5) returning *`,
@@ -109,10 +116,11 @@ export async function recordExchange(
     channel?: string;
     inbound: string;
     reply: string;
+    outboundMeta?: Record<string, unknown>;
   },
-): Promise<void> {
-  await addMessage(db, { threadId: args.threadId, direction: 'in', body: args.inbound, channel: args.channel });
-  await addMessage(db, { threadId: args.threadId, direction: 'out', body: args.reply, channel: args.channel });
+): Promise<{ inbound: Message; outbound: Message }> {
+  const inbound = await addMessage(db, { threadId: args.threadId, direction: 'in', body: args.inbound, channel: args.channel });
+  const outbound = await addMessage(db, { threadId: args.threadId, direction: 'out', body: args.reply, channel: args.channel, meta: args.outboundMeta });
   await appendEvent(db, {
     actorUserId: args.ownerUserId,
     actor: 'user',
@@ -125,6 +133,7 @@ export async function recordExchange(
       replyChars: args.reply.length,
     },
   });
+  return { inbound, outbound };
 }
 
 // ---------- contacts ----------

@@ -168,15 +168,15 @@ export const TASK_TOOLS: ToolSpec[] = [
     actionClass: 'task_management',
   },
   {
-    def: { name: 'draft_email', description: 'Prepare an email for the user to approve before it is sent.', parameters: {
+    def: { name: 'draft_email', description: 'Create or continue the current email draft. Supply only facts the user gave; omitted fields are preserved only from the active email-send action in this conversation.', parameters: {
       type: 'object', properties: { recipient: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' }, cc: { type: 'array', items: { type: 'string' } } },
-      required: ['recipient', 'subject', 'body'],
+      required: [],
     } }, actionClass: 'email_send', requiresCapability: 'email_send',
   },
   {
-    def: { name: 'draft_calendar_event', description: 'Prepare a calendar event creation or edit for the user to approve.', parameters: {
-      type: 'object', properties: { source_id: { type: 'string', description: 'Exact source_id from a calendar receipt; required when more than one calendar is selected.' }, event_id: { type: 'string', description: 'Exact event_id receipt for an edit.' }, title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' }, attendees: { type: 'array', items: { type: 'string' } } },
-      required: ['title', 'start', 'end'],
+    def: { name: 'draft_calendar_event', description: 'Create or continue the current calendar draft. Omitted fields are preserved only from the active calendar operation in this conversation. Use event_id only for an explicit edit/replacement; a new event remains separate.', parameters: {
+      type: 'object', properties: { source_id: { type: 'string', description: 'Exact source_id from a calendar receipt.' }, calendar: {type:'string',description:'The user\'s calendar choice, such as “the main one”; the server resolves it only against primary/default metadata.'}, event_id: { type: 'string', description: 'Exact event_id receipt for an explicit edit.' }, title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' }, attendees: { type: 'array', items: { type: 'string' } } },
+      required: [],
     } }, actionClass: 'calendar_write', requiresCapability: 'calendar_write',
   },
   {

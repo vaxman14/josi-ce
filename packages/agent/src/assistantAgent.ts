@@ -23,7 +23,7 @@
 // to call tools is not offered any, because offering them produces a confident
 // description of work that never happened.
 import {
-  appendEvent, checkChildAccess, checkStepUp, listTemplates, recordChildActivity,
+  appendEvent, checkChildAccess, checkStepUp, listTemplates, recordChildActivity, resolveConversationalAction,
   type ActivityChannel, type Db,
 } from '@josi-ce/core';
 import {
@@ -86,6 +86,8 @@ export interface TurnArgs {
    * whose personalization is loaded. Never a value from a request body. */
   userId: string;
   threadId: string;
+  /** Persisted inbound message id for action-state turn scoping. */
+  inboundMessageId?: string;
   history: ChatMessage[];
   inbound: string;
   /** Images attached to THIS turn, already read off disk as bytes by the
@@ -129,7 +131,7 @@ function systemPrompt(args: {
     'Be brief and direct: lead with the answer, no filler, no preamble.',
     'Plain text only — no markdown, no asterisks, no headings.',
     'You do work through tasks. Fill every required slot BEFORE anything is attempted; if a required slot is missing, ask for it. Never start work with a hole in it.',
-    'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn. Use its evidence internally, but never show receipts, observation timestamps, account metadata, internal identifiers, or raw status records. Summarize only the useful human-facing answer and source/provider name. Never infer runtime state from prior chat. A status record is not a live provider health probe.',
+    'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn. Email availability is stricter: call check_email_availability and claim availability only when its live provider request succeeds; connection metadata is never live proof. Use evidence internally, but never show receipts, observation timestamps, account metadata, internal identifiers, or raw status records. Summarize only the useful human-facing answer and source/provider name. Never infer runtime state from prior chat.',
     'Never invent a name, number, address or time. If you do not know something, ask or say you do not know.',
     `The current date and time is ${new Date().toISOString()}. When a date omits its year, use the next occurrence that is not in the past. Use the person's configured timezone when their profile supplies one; do not ask them to repeat it. Ask only for scheduling details that are genuinely missing, such as duration when no end time or duration was given.`,
     'For calendar follow-ups, preserve the exact named subject and verified event receipt from the prior turn. “Move/push the EDD call” modifies the EDD event, never the newly proposed event. Keep the existing event on its original calendar and inherit the verified/default calendar for a new event instead of asking again when the receipt already identifies it.',
@@ -209,6 +211,15 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // provider error still happened.
   if (childAccess.managed) {
     await recordChildActivity(db, { childUserId: userId, channel: args.channel ?? 'web' });
+  }
+
+  // Short approvals, denials and execution-status questions are resolved from
+  // durable action state before a model is consulted. A bare "yes" can only
+  // bind to one action prepared in the immediately preceding presented turn;
+  // provider names and old calendar subjects in model history are irrelevant.
+  const deterministic=await resolveConversationalAction(db,{ownerUserId:userId,threadId:args.threadId,inbound:args.inbound});
+  if(deterministic.handled){
+    return {reply:deterministic.reply??'',actions:deterministic.action?[{tool:'assistant_action_state',result:{ok:true,domain:deterministic.action.domain,status:deterministic.action.status,task_id:deterministic.action.task_id}}]:[]};
   }
 
   // ---- can we run at all? ------------------------------------------------
@@ -500,6 +511,10 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       // Presentation happens only after those checks, once, at the shared
       // agent boundary used by web and every external channel.
       reply = presentToolBackedReply(reply, actions);
+      const prepared=actions.map(action=>action.result).filter((result):result is {state:string;summary:string}=>
+        !!result&&typeof result==='object'&&(result as {state?:unknown}).state==='prepared'&&typeof (result as {summary?:unknown}).summary==='string');
+      if(prepared.length===1)reply=`${prepared[0].summary}\n\nApprove this exact action? Reply yes or no.`;
+      else if(prepared.length>1)reply='More than one consequential action was prepared together. Name which one you want to review; a bare yes will not approve either.';
       return { reply, actions, memoriesUsed, learned, imagesDroppedNoVision };
     }
 
@@ -607,6 +622,7 @@ async function execTool(
   return executeAssistantTool(args.db, {
     userId: args.userId,
     threadId: args.threadId,
+    turnId: args.inboundMessageId,
     // The registry already holds the installation key when there is one; the
     // data tools open sealed tokens with it at the moment of use.
     connectors: masterKey ? {

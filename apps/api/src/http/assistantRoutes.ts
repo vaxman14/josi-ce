@@ -13,7 +13,7 @@ import { extname, join } from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
-  addMessage, appendEvent, createContact, createTask, createThread, decideApproval,
+  addMessage, appendEvent, createContact, createTask, createThread, decideActionApproval, markActionsPresented,
   getTask, getTemplate, getThread, listContactsFor, listMessages, listPendingApprovals,
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
@@ -380,6 +380,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
 
       const modelInbound = [inbound, attachmentContext].filter(Boolean).join('\n\n');
       const attachmentMeta = attachments.map((a) => ({ id: a.id, filename: a.filename, contentType: a.content_type }));
+      const inboundMessage=await addMessage(db,{threadId,direction:'in',body:inbound||'Sent an attachment',meta:{attachments:attachmentMeta}});
       const result = await runAssistantTurn({
         db,
         registry: registryOptions(ctx),
@@ -387,6 +388,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         threadId,
         history,
         inbound: modelInbound,
+        inboundMessageId: inboundMessage.id,
         images,
         recall: ctx.recall,
         connectorFetch: ctx.connectorFetch,
@@ -397,9 +399,6 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       });
 
       if (result.refusal) {
-        // Recorded as an inbound message so the conversation is not silently
-        // missing what the person said, but no reply is fabricated.
-        await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
         // A refusal because somebody is outside their agreed hours is the
         // server saying no, not the server being broken. 503 would have it
         // read as an outage on the one screen where that would be a lie.
@@ -407,10 +406,16 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
           .json({ refusal: result.refusal });
       }
 
-      await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
       const calendarReceipts = calendarContinuity(result.actions);
-      await addMessage(db, { threadId, direction: 'out', body: result.reply,
-        meta: calendarReceipts.length ? { calendar_receipts: calendarReceipts } : undefined });
+      const actionStatusDomain=result.actions.find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
+      const outboundMeta:Record<string,unknown>={};
+      if(calendarReceipts.length)outboundMeta.calendar_receipts=calendarReceipts;
+      if(actionStatusDomain?.domain==='email'||actionStatusDomain?.domain==='calendar')outboundMeta.action_status_domain=actionStatusDomain.domain;
+      const outboundMessage=await addMessage(db, { threadId, direction: 'out', body: result.reply,
+        meta: Object.keys(outboundMeta).length ? outboundMeta : undefined });
+      const preparedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>
+        !!value&&typeof value==='object'&&(value as {state?:unknown}).state==='prepared'&&typeof (value as {task_id?:unknown}).task_id==='string').map(value=>value.task_id);
+      await markActionsPresented(db,{ownerUserId:thread.owner_user_id,threadId,taskIds:preparedTaskIds,messageId:outboundMessage.id});
       await appendEvent(db, { actorUserId: thread.owner_user_id, actor: 'user', kind: 'thread.exchange',
         subjectType: 'thread', subjectId: threadId,
         payload: { channel: 'web', inboundChars: inbound.length, attachmentCount: attachments.length, replyChars: result.reply.length } });
@@ -520,7 +525,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     '/approvals/:id/decide',
     handle(async (req, res) => {
       try {
-        const approval = await decideApproval(db, {
+        const {approval} = await decideActionApproval(db, {
           approvalId: param(req, 'id'),
           decidedBy: req.user!.id,
           approve: req.body?.approve === true,

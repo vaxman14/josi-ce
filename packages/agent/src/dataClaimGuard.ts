@@ -45,7 +45,7 @@
  * tools (search_documents/list_documents, storage-providers-phase2). */
 export const DATA_CLAIM_TOOLS = new Set([
   'search_documents', 'list_documents', 'get_provider_status',
-  'search_email', 'read_email',
+  'check_email_availability', 'search_email', 'read_email',
   'query_calendar', 'get_event',
   'search_contacts',
 ]);
@@ -387,6 +387,15 @@ export function checkNarratedSearchWithoutTool(
 ): DataClaimVerdict {
   const reasons: string[] = [];
   if (!reply) return { fabricated: false, reasons };
+
+  // Mailbox reachability is volatile and stricter than stored connection
+  // status: only the dedicated live probe can substantiate availability.
+  const emailAvailable = /\b(?:email|mail|gmail|outlook|mailbox)\b[^.!?\n]{0,50}\b(?:is|are|looks?|seems?)\s+(?:currently\s+)?(?:available|connected|working|online|ready)\b|\bI\s+(?:can|am able to)\s+(?:see|access|read|reach)\s+(?:your\s+)?(?:emails?|mail|gmail|outlook|mailbox)\b/i.test(reply);
+  if (emailAvailable && !HONEST_SEARCH_MARKERS.some((p) => p.test(reply))) {
+    const live = receipts.find((r) => r.tool === 'check_email_availability' && r.result && typeof r.result === 'object'
+      && (r.result as {ok?:boolean;available?:boolean}).ok === true && (r.result as {available?:boolean}).available === true);
+    if (!live) return { fabricated: true, reasons: ['email availability requires a successful live mailbox check this turn'] };
+  }
 
   // Runtime connectivity is volatile. File search receipts and old chat cannot
   // substantiate a current connection/indexing assertion.

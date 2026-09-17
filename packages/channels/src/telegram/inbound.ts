@@ -18,7 +18,7 @@
 // whoever sent it, and it is used for exactly two things — a display handle and
 // an audit note — neither of which is a permission.
 import {
-  LIMITS, addMessage, appendEvent, consume, createThread, listMessages, recordExchange,
+  LIMITS, addMessage, appendEvent, consume, createThread, listMessages, markActionsPresented, recordExchange,
   type Db,
 } from '@josi-ce/core';
 import { timingSafeEqual } from 'node:crypto';
@@ -37,7 +37,7 @@ export interface InboundDeps {
    * depend on the agent package, and so a routing test needs no model. */
   runTurn: (args: {
     userId: string; threadId: string; inbound: string;
-  }) => Promise<{ reply: string; refusal?: { message: string } }>;
+  }) => Promise<{ reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }> }>;
   /** M41's disclosure, read from the mail policy so the wording an operator
    * customised once applies to every channel. */
   disclosure: string;
@@ -274,7 +274,7 @@ export async function handleUpdate(
   const threadId = await threadFor(db, link);
   await db.query(`update telegram_links set last_inbound_at = now() where id = $1`, [link.id]);
 
-  let result: { reply: string; refusal?: { message: string } };
+  let result: { reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }> };
   try {
     result = await deps.runTurn({ userId: link.user_id, threadId, inbound: text });
   } catch (err) {
@@ -295,13 +295,21 @@ export async function handleUpdate(
     return finish('refused');
   }
 
-  await recordExchange(db, {
+  const actionState=(result.actions??[]).find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
+  const exchange = await recordExchange(db, {
     ownerUserId: link.user_id,
     threadId,
     channel: 'telegram',
     inbound: text,
     reply: result.reply,
+    outboundMeta: actionState?.domain==='email'||actionState?.domain==='calendar'?{action_status_domain:actionState.domain}:undefined,
   });
+  const preparedTaskIds = (result.actions ?? []).map((action) => action.result)
+    .filter((value): value is { state: string; task_id: string } => !!value && typeof value === 'object'
+      && (value as { state?: unknown }).state === 'prepared'
+      && typeof (value as { task_id?: unknown }).task_id === 'string')
+    .map((value) => value.task_id);
+  await markActionsPresented(db, { ownerUserId: link.user_id, threadId, taskIds: preparedTaskIds, messageId: exchange.outbound.id });
 
   for (const chunk of prepareOutbound({ body: result.reply, disclosure: deps.disclosure })) {
     await deps.send({ chatId, text: chunk, kind: 'reply' });

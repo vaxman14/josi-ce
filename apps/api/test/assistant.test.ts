@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createReminder, seal, MasterKey } from '@josi-ce/core';
+import { saveClient, setCapability, upsertConnection } from '@josi-ce/connectors';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -41,6 +42,7 @@ const llmFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
   );
 }) as unknown as typeof fetch;
 const llmResolve = async () => ['203.0.113.5'];
+const connectorFetch = (async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
 
 interface Res { status: number; body: any; setCookie: string[] }
 
@@ -94,7 +96,7 @@ beforeAll(async () => {
 
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000',
-    masterKeyCheck: { path: keyPath }, llmFetch, llmResolve,
+    masterKeyCheck: { path: keyPath }, llmFetch, llmResolve, connectorFetch,
   });
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -607,5 +609,62 @@ describe('metrics', () => {
     await db.query(`insert into tasks (owner_user_id, template_key) values ($1,'follow_up')`, [ids.alice]);
     expect((await call('/api/assistant/metrics', { jar: cookies.alice })).body.metrics.tasks).toBe(1);
     expect((await call('/api/assistant/metrics', { jar: cookies.bob })).body.metrics.tasks).toBe(0);
+  });
+});
+
+describe('transactional conversational writes over HTTP',()=>{
+  const tc=(name:string,args:unknown,id='tc')=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
+
+  it('keeps the exact partial email, asks explicit approval, and a retry cannot enqueue twice',async()=>{
+    await configureModel();
+    const key=new MasterKey(KEY_BYTES);
+    await saveClient(db,key,{provider:'google',clientId:'cid',clientSecret:'secret',redirectUri:'https://example.test/callback',actorUserId:ids.admin});
+    const connection=await upsertConnection(db,key,{ownerUserId:ids.alice,provider:'google',providerAccountId:'http-mail',accountEmail:'alice-mail@example.test',
+      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly'},requestedCapabilities:['google.mail.read','google.mail.send']});
+    await setCapability(db,{connection,capability:'google.mail.read',enabled:true,actorUserId:ids.alice});
+    await setCapability(db,{connection,capability:'google.mail.send',enabled:true,actorUserId:ids.alice});
+    const t=await threadWith('alice');
+
+    replies=[{content:null,tool_calls:[tc('check_email_availability',{})]},{content:'Gmail answered a live mailbox check, so I can reach it now.'}];
+    const visibility=await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'you see my emails?'}});
+    expect(visibility.body.reply).toMatch(/answered a live mailbox check/i);
+
+    replies=[{content:null,tool_calls:[tc('draft_email',{recipient:'romanvaxman14@gmail.com',body:'testing the connection'})]},{content:'What subject should I use?'}];
+    expect((await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'send email to romanvaxman14@gmail.com body testing the connection'}})).body.reply).toMatch(/subject/i);
+
+    replies=[{content:null,tool_calls:[tc('draft_email',{subject:'testing the coonection'})]},{content:'model text must not replace the authoritative preview'}];
+    const draft=await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'testing the coonection in the topic is just fine'}});
+    expect(draft.body.reply).toBe('Send email\nTo: romanvaxman14@gmail.com\nSubject: testing the coonection\nBody: testing the connection\n\nApprove this exact action? Reply yes or no.');
+
+    const before=llmRequests.length;
+    expect((await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'yes'}})).body.reply).toMatch(/queued the exact email/i);
+    expect(llmRequests).toHaveLength(before);
+    expect((await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'yes'}})).body.reply).toMatch(/do not have one/i);
+    const [emailTask]=await db.query<{id:string}>(`select id from tasks where template_key='send_message' order by created_at desc limit 1`);
+    expect(await db.query(`select id from job_queue where kind='task.wake' and payload->>'taskId'=$1`,[emailTask.id])).toHaveLength(1);
+    expect((await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'was it sent?'}})).body.reply).toMatch(/email.*queued.*not confirmed sent/i);
+    expect((await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'why?'}})).body.reply).toMatch(/email.*queued.*not confirmed sent/i);
+  });
+
+  it('creates the separate EDD draft on the one primary calendar without stale-name drift',async()=>{
+    await configureModel();
+    const key=new MasterKey(KEY_BYTES);
+    const connection=await upsertConnection(db,key,{ownerUserId:ids.alice,provider:'google',providerAccountId:'http-calendar',accountEmail:'alice-calendar@example.test',
+      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar'},requestedCapabilities:['google.calendar.read','google.calendar.write']});
+    await setCapability(db,{connection,capability:'google.calendar.write',enabled:true,actorUserId:ids.alice});
+    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable)
+      values($1,$2,'primary','Main calendar',true,true),($1,$2,'lexis','LexisNexis',false,true)`,[ids.alice,connection.id]);
+    const t=await threadWith('alice');
+    replies=[{content:null,tool_calls:[tc('draft_calendar_event',{title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00'})]},{content:'Which calendar?'}];
+    expect((await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:"create tomorrow 3pm PT 30m 'Phone call with EDD' (they call me)"}})).body.reply).toMatch(/calendar/i);
+    replies=[{content:null,tool_calls:[tc('draft_calendar_event',{calendar:'the main one'})]},{content:'wrong old LexisNexis'}];
+    const prepared=await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'the main one'}});
+    expect(prepared.body.reply).toContain('Calendar: Main calendar');
+    expect(prepared.body.reply).toContain('Title: Phone call with EDD');
+    expect(prepared.body.reply).not.toContain('LexisNexis');
+    await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'yes'}});
+    const [task]=await db.query<{slots:Record<string,unknown>}>(`select slots from tasks where template_key='schedule_appointment' order by created_at desc limit 1`);
+    expect(task.slots).not.toHaveProperty('event_id');
+    expect(task.slots.calendar_source).toMatchObject({calendar_id:'primary',calendar_name:'Main calendar'});
   });
 });

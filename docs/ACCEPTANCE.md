@@ -575,3 +575,22 @@ The dated results and explicit external acceptance gaps are recorded in
 - Verified on Bananana with 54 focused tests, TypeScript/build, the complete
   2,763-test suite, dependency audit, secret scan, Compose validation, and
   diff hygiene.
+
+## Transactional conversational action state — 2026-09-17
+
+- Consequential email/calendar drafts are durable owner/thread/domain/operation
+  records linked to one task, one exact payload hash, and one approval. Partial
+  fields merge only into that namespace; unrelated history is not action state.
+- A prepared action is bound to the assistant turn that displayed its exact
+  preview. Plain “yes” or “no” is deterministic only when that turn contains
+  exactly one prepared action. Duplicate approvals, denial, expiry, and retry
+  cannot enqueue a second execution.
+- Calendar creation resolves “the main one” only from a single provider-marked
+  primary source. Event edits require an explicit verified event id, so an old
+  LexisNexis receipt cannot turn a new EDD call into a replacement.
+- Worker execution compare-and-sets `ready` to `attempting`, revalidates the
+  pinned approval payload, and records domain-specific success/failure state.
+  Email status questions therefore cannot report calendar state.
+- Provider status remains metadata evidence and explicitly does not claim a
+  live mailbox probe. Live reachability is established only by the actual
+  read/send path.

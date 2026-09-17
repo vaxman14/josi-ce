@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
-import { MasterKey, createTask, enqueue, placeHold, requestApproval, transition } from '@josi-ce/core';
+import { MasterKey, addMessage, attachCollectingAction, createTask, createThread, enqueue, markActionsPresented, placeHold, prepareAction, requestApproval, resolveConversationalAction, transition } from '@josi-ce/core';
 import { saveClient, setCapability, setSyncMode, upsertConnection } from '@josi-ce/connectors';
 import { processQueue } from '../../worker/src/jobs.js';
 
@@ -118,6 +118,48 @@ describe('the worker drains the queue', () => {
     await enqueue(db, { kind: 'task.wake', payload: { taskId: task.id } });
     const dump = JSON.stringify(await db.query(`select * from job_queue`));
     expect(dump).not.toContain('PRIVATE-SLOT');
+  });
+});
+
+describe('approved conversational email execution',()=>{
+  const key=new MasterKey(Buffer.alloc(32,12));
+  async function approvedEmail(){
+    await saveClient(db,key,{provider:'google',clientId:'cid',clientSecret:'secret',redirectUri:'https://example.test/callback',actorUserId:owner});
+    const connection=await upsertConnection(db,key,{ownerUserId:owner,provider:'google',providerAccountId:'mail-worker',accountEmail:'worker@example.test',
+      tokens:{accessToken:'mail-access',refreshToken:'mail-refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/gmail.send'},requestedCapabilities:['google.mail.send']});
+    await setCapability(db,{connection,capability:'google.mail.send',enabled:true,actorUserId:owner});
+    const thread=(await createThread(db,{ownerUserId:owner})).id;
+    const slots={recipient:'romanvaxman14@gmail.com',subject:'testing the coonection',body:'testing the connection',body_brief:'testing the connection'};
+    const task=await createTask(db,{ownerUserId:owner,threadId:thread,templateKey:'send_message',slots});
+    const action=await attachCollectingAction(db,{ownerUserId:owner,threadId:thread,domain:'email',operation:'send',taskId:task.id});
+    await prepareAction(db,{actionState:action,task,summary:'exact email',actionClass:'email_send',action:'send'});
+    const out=(await addMessage(db,{threadId:thread,direction:'out',body:'review'})).id;
+    await markActionsPresented(db,{ownerUserId:owner,threadId:thread,taskIds:[task.id],messageId:out});
+    await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes'});
+    return {thread,task};
+  }
+
+  it('sends the pinned payload once even with a duplicate wake',async()=>{
+    const {task}=await approvedEmail();
+    await enqueue(db,{kind:'task.wake',payload:{taskId:task.id}});
+    let sends=0;
+    const fetchImpl=(async(url:RequestInfo|URL)=>{if(String(url).includes('/messages/send'))sends++;return new Response('{}',{status:200});}) as typeof fetch;
+    await processQueue(db,'mail-one',20,{masterKey:key,connectorFetch:fetchImpl});
+    await processQueue(db,'mail-two',20,{masterKey:key,connectorFetch:fetchImpl});
+    expect(sends).toBe(1);
+    expect((await db.query<{status:string}>(`select status from assistant_action_states where task_id=$1`,[task.id]))[0].status).toBe('succeeded');
+  });
+
+  it('records provider refusal as email-specific failure without retrying the send',async()=>{
+    const {thread,task}=await approvedEmail();
+    let sends=0;
+    const fetchImpl=(async(url:RequestInfo|URL)=>{if(String(url).includes('/messages/send'))sends++;return new Response('{}',{status:503});}) as typeof fetch;
+    await processQueue(db,'mail-fail',20,{masterKey:key,connectorFetch:fetchImpl});
+    expect(sends).toBe(1);
+    await addMessage(db,{threadId:thread,direction:'out',body:'The email failed.',meta:{action_status_domain:'email'}});
+    const status=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'why?'});
+    expect(status.reply).toMatch(/email was not sent.*attempt failed/i);
+    expect((await db.query<{state:string}>(`select state from tasks where id=$1`,[task.id]))[0].state).toBe('failed');
   });
 });
 
