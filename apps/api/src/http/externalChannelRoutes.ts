@@ -150,9 +150,9 @@ async function processInbound(ctx: ExternalChannelCtx, secrets: Record<string, s
   const actionState=result.actions.find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
   const exchange=await recordExchange(ctx.db, { ownerUserId: link.user_id, threadId, channel: message.channel, inbound: message.text, reply,
     outboundMeta: actionState?.domain==='email'||actionState?.domain==='calendar'?{action_status_domain:actionState.domain}:undefined });
-  const preparedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>
-    !!value&&typeof value==='object'&&(value as {state?:unknown}).state==='prepared'&&typeof (value as {task_id?:unknown}).task_id==='string').map(value=>value.task_id);
-  await markActionsPresented(ctx.db,{ownerUserId:link.user_id,threadId,taskIds:preparedTaskIds,messageId:exchange.outbound.id});
+  const presentedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>
+    !!value&&typeof value==='object'&&['collecting','prepared'].includes(String((value as {state?:unknown}).state))&&typeof (value as {task_id?:unknown}).task_id==='string').map(value=>value.task_id);
+  await markActionsPresented(ctx.db,{ownerUserId:link.user_id,threadId,taskIds:presentedTaskIds,messageId:exchange.outbound.id});
   const disclosure = (await mailPolicy(ctx.db)).disclosure.replace('{user}', 'you');
   await sendExternal(ctx, secrets, message, `${reply}\n\n${disclosure}`);
   await ctx.db.query('update external_channel_links set last_inbound_at=now(),last_outbound_at=now() where id=$1', [link.id]);

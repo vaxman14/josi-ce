@@ -304,12 +304,12 @@ export async function handleUpdate(
     reply: result.reply,
     outboundMeta: actionState?.domain==='email'||actionState?.domain==='calendar'?{action_status_domain:actionState.domain}:undefined,
   });
-  const preparedTaskIds = (result.actions ?? []).map((action) => action.result)
+  const presentedTaskIds = (result.actions ?? []).map((action) => action.result)
     .filter((value): value is { state: string; task_id: string } => !!value && typeof value === 'object'
-      && (value as { state?: unknown }).state === 'prepared'
+      && ['collecting', 'prepared'].includes(String((value as { state?: unknown }).state))
       && typeof (value as { task_id?: unknown }).task_id === 'string')
     .map((value) => value.task_id);
-  await markActionsPresented(db, { ownerUserId: link.user_id, threadId, taskIds: preparedTaskIds, messageId: exchange.outbound.id });
+  await markActionsPresented(db, { ownerUserId: link.user_id, threadId, taskIds: presentedTaskIds, messageId: exchange.outbound.id });
 
   for (const chunk of prepareOutbound({ body: result.reply, disclosure: deps.disclosure })) {
     await deps.send({ chatId, text: chunk, kind: 'reply' });

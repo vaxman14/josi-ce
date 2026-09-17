@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb } from './helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import {
-  addMessage, attachCollectingAction, createTask, getTask, markActionsPresented, prepareAction,
+  activeCollectingAction, addMessage, attachCollectingAction, createTask, getTask, markActionsPresented, prepareAction,
   resolveConversationalAction, type AssistantActionState, type Db, type Task,
 } from '../src/index.js';
 
@@ -97,5 +97,18 @@ describe('transactional conversational action state',()=>{
     const result=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes'});
     expect(result.reply).toMatch(/do not have one immediately preceding/i);
     expect((await getTask(db,email.task.id)).state).toBe('awaiting_approval');
+  });
+
+  it('continues a partial draft only from its immediately preceding presented turn',async()=>{
+    const task=await createTask(db,{ownerUserId:owner,threadId:thread,templateKey:'send_message',slots:{recipient:'first@example.test'}});
+    const state=await attachCollectingAction(db,{ownerUserId:owner,threadId:thread,domain:'email',operation:'send',taskId:task.id});
+    const prompt=await addMessage(db,{threadId:thread,direction:'out',body:'What subject and body should I use?'});
+    await markActionsPresented(db,{ownerUserId:owner,threadId:thread,taskIds:[task.id],messageId:prompt.id});
+    expect((await activeCollectingAction(db,{ownerUserId:owner,threadId:thread,domain:'email',operation:'send'}))?.id).toBe(state.id);
+
+    await addMessage(db,{threadId:thread,direction:'out',body:'An unrelated answer interrupted the draft.'});
+    expect(await activeCollectingAction(db,{ownerUserId:owner,threadId:thread,domain:'email',operation:'send'})).toBeNull();
+    expect((await db.query<{status:string}>(`select status from assistant_action_states where id=$1`,[state.id]))[0].status).toBe('superseded');
+    expect((await getTask(db,task.id)).state).toBe('cancelled');
   });
 });

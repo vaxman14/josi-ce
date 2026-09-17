@@ -100,7 +100,7 @@ export async function executeAssistantTool(
       if (!ctx.threadId) return {ok:false,error:'conversation_required',message:'Prepare consequential actions inside a conversation.'};
       const domain = name === 'draft_email' ? 'email' : name === 'draft_calendar_event' ? 'calendar' : 'contacts';
       const operation = name === 'draft_email' ? 'send' : (input.event_id ? 'update' : 'create');
-      let action = await activeCollectingAction(db,{ownerUserId:userId,threadId:ctx.threadId,domain,operation});
+      let action = await activeCollectingAction(db,{ownerUserId:userId,threadId:ctx.threadId,domain,operation,sourceTurnId:ctx.turnId});
       let task = action ? await getTask(db,action.task_id) : null;
       let draftSlots = Object.fromEntries(Object.entries(input).filter(([,value])=>value!==undefined));
       if(!action){

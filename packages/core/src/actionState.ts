@@ -15,11 +15,27 @@ export interface AssistantActionState {
   created_at:string; updated_at:string;
 }
 
-export async function activeCollectingAction(db:Db,args:{ownerUserId:string;threadId:string;domain:ActionDomain;operation:ActionOperation}) {
+export async function activeCollectingAction(db:Db,args:{ownerUserId:string;threadId:string;domain:ActionDomain;operation:ActionOperation;sourceTurnId?:string|null}) {
   const [row]=await db.query<AssistantActionState>(`select * from assistant_action_states
     where owner_user_id=$1 and thread_id=$2 and domain=$3 and operation=$4 and status='collecting'
     order by created_at desc limit 1`,[args.ownerUserId,args.threadId,args.domain,args.operation]);
-  return row??null;
+  if(!row)return null;
+  // Multiple tool calls while handling one persisted inbound turn belong to
+  // the same transaction even though no assistant message exists yet.
+  if(args.sourceTurnId&&row.source_turn_id===args.sourceTurnId)return row;
+  const [lastOutbound]=await db.query<{id:string}>(`select id from messages
+    where thread_id=$1 and direction='out' order by created_at desc limit 1`,[args.threadId]);
+  // A partial draft may continue only from the immediately preceding assistant
+  // turn which presented it. Domain scoping alone is not enough: without this
+  // turn boundary, a later email could silently inherit an old recipient/body.
+  if(!lastOutbound||row.presented_turn_id!==lastOutbound.id){
+    await db.query(`update assistant_action_states set status='superseded'
+      where id=$1 and status='collecting'`,[row.id]);
+    const task=await getTask(db,row.task_id);
+    if(task.state==='drafting')await transition(db,task.id,'cancelled',{actor:'system'});
+    return null;
+  }
+  return row;
 }
 
 export async function attachCollectingAction(db:Db,args:{ownerUserId:string;threadId:string;domain:ActionDomain;operation:ActionOperation;taskId:string;sourceTurnId?:string|null}) {
@@ -49,7 +65,7 @@ export async function prepareAction(db:Db,args:{actionState:AssistantActionState
 export async function markActionsPresented(db:Db,args:{ownerUserId:string;threadId:string;taskIds:string[];messageId:string}) {
   if(!args.taskIds.length)return;
   await db.query(`update assistant_action_states set presented_turn_id=$4
-    where owner_user_id=$1 and thread_id=$2 and task_id=any($3::uuid[]) and status='prepared'`,
+    where owner_user_id=$1 and thread_id=$2 and task_id=any($3::uuid[]) and status in ('collecting','prepared')`,
     [args.ownerUserId,args.threadId,args.taskIds,args.messageId]);
 }
 

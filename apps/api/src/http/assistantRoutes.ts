@@ -413,9 +413,9 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       if(actionStatusDomain?.domain==='email'||actionStatusDomain?.domain==='calendar')outboundMeta.action_status_domain=actionStatusDomain.domain;
       const outboundMessage=await addMessage(db, { threadId, direction: 'out', body: result.reply,
         meta: Object.keys(outboundMeta).length ? outboundMeta : undefined });
-      const preparedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>
-        !!value&&typeof value==='object'&&(value as {state?:unknown}).state==='prepared'&&typeof (value as {task_id?:unknown}).task_id==='string').map(value=>value.task_id);
-      await markActionsPresented(db,{ownerUserId:thread.owner_user_id,threadId,taskIds:preparedTaskIds,messageId:outboundMessage.id});
+      const presentedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>
+        !!value&&typeof value==='object'&&['collecting','prepared'].includes(String((value as {state?:unknown}).state))&&typeof (value as {task_id?:unknown}).task_id==='string').map(value=>value.task_id);
+      await markActionsPresented(db,{ownerUserId:thread.owner_user_id,threadId,taskIds:presentedTaskIds,messageId:outboundMessage.id});
       await appendEvent(db, { actorUserId: thread.owner_user_id, actor: 'user', kind: 'thread.exchange',
         subjectType: 'thread', subjectId: threadId,
         payload: { channel: 'web', inboundChars: inbound.length, attachmentCount: attachments.length, replyChars: result.reply.length } });
