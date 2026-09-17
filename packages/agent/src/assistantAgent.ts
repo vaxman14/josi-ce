@@ -131,6 +131,7 @@ function systemPrompt(args: {
     'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn and cite its receipt and observation time. Never infer runtime state from prior chat. A status record is not a live provider health probe.',
     'Never invent a name, number, address or time. If you do not know something, ask or say you do not know.',
     `The current date and time is ${new Date().toISOString()}. When a date omits its year, use the next occurrence that is not in the past. Use the person's configured timezone when their profile supplies one; do not ask them to repeat it. Ask only for scheduling details that are genuinely missing, such as duration when no end time or duration was given.`,
+    'For calendar follow-ups, preserve the exact named subject and verified event receipt from the prior turn. “Move/push the EDD call” modifies the EDD event, never the newly proposed event. Keep the existing event on its original calendar and inherit the verified/default calendar for a new event instead of asking again when the receipt already identifies it.',
     args.templateNames.length
       ? `The kinds of work you can start: ${args.templateNames.join(', ')}.`
       : 'No kinds of work are enabled on this installation, so you cannot start a task.',

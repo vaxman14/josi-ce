@@ -540,3 +540,16 @@ separate external acceptance checks, not proof supplied by a local mock.
 
 The dated results and explicit external acceptance gaps are recorded in
 [TEST_LIST_7_VERIFICATION.md](TEST_LIST_7_VERIFICATION.md).
+
+## Calendar follow-up continuity — 2026-09-17
+
+- Calendar query, event-detail, and calendar-draft receipts are retained in the
+  owner-scoped outbound message metadata and restored only into the model's
+  private history on the next turn. The receipt context is not rendered in the
+  visible conversation.
+- A follow-up such as “Push the EDD call by 30 minutes” keeps EDD as the edit
+  target, preserves its verified event and source calendar, and does not move a
+  separately proposed LexisNexis event instead.
+- Verified on Bananana with 54 focused tests, TypeScript/build, the complete
+  2,763-test suite, dependency audit, secret scan, Compose validation, and
+  diff hygiene.
