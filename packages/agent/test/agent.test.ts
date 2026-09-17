@@ -8,6 +8,7 @@ import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { MasterKey, createThread, seal, verifyStepUp, listTasksFor, createTask } from '@josi-ce/core';
 import { runAssistantTurn } from '../src/index.js';
+import { setCapability, upsertConnection } from '@josi-ce/connectors';
 
 let db: TestDb;
 let alice: string;
@@ -127,6 +128,27 @@ describe('capability gating', () => {
     // Phase 5 ships no executors. The model must not imply anything was sent.
     expect(system).toMatch(/WAIT rather than happen/);
     expect(system).toMatch(/calendar_write|email_send/);
+  });
+
+  it('offers calendar writing and removes the false warning when the live grant is on', async () => {
+    await configureModel();
+    const connection = await upsertConnection(db, key, {
+      ownerUserId: alice,
+      provider: 'google',
+      tokens: {
+        accessToken: 'access', refreshToken: 'refresh', expiresIn: 3600,
+        grantedScopes: 'https://www.googleapis.com/auth/calendar',
+      },
+      accountEmail: 'alice@example.test',
+      providerAccountId: 'acct-calendar-write',
+      requestedCapabilities: ['google.calendar.read', 'google.calendar.write'],
+    });
+    await setCapability(db, { connection, capability: 'google.calendar.write', enabled: true, actorUserId: alice });
+    replies = [{ content: 'ok' }];
+    await turn();
+    const request = requests[0];
+    expect(request.tools.map((t: any) => t.function.name)).toContain('draft_calendar_event');
+    expect(request.messages[0].content).not.toMatch(/not connected yet[^.]*calendar_write/);
   });
 
   it('supplies scheduling defaults instead of making the model ask for known context', async () => {

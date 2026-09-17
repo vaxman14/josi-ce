@@ -20,7 +20,7 @@ import { citationLabel, folderSyncHealthFor, searchDocuments, type FolderSyncHea
 import { executeWorkspaceTool, WORKSPACE_TOOLS } from './workspaceTools.js';
 import { connectionsWithCapability } from '@josi-ce/connectors';
 import { providerStatus } from './providerStatus.js';
-import { DATA_TOOL_FAMILY, executeDataTool, selectedCalendars, type ConnectorAccess } from './dataTools.js';
+import { DATA_TOOL_FAMILY, executeDataTool, selectedCalendars, writeActionCapabilities, type ConnectorAccess } from './dataTools.js';
 import { executeCustomApiTool, isCustomApiTool } from './customApiTools.js';
 import { executeWorkflowTool, WORKFLOW_TOOL_NAMES } from './workflowTools.js';
 import { executeObsidianTool, DEVELOPER_INTEGRATION_TOOL, executeDeveloperIntegrationTool, executeDeveloperResourceTool } from './developerIntegrationTools.js';
@@ -107,6 +107,7 @@ export async function executeAssistantTool(
     }
     case 'list_task_types': {
       const templates = await listTemplates(db);
+      const available = await writeActionCapabilities(db, userId);
       return {
         ok: true,
         types: templates.map((t) => ({
@@ -115,8 +116,8 @@ export async function executeAssistantTool(
           required_slots: t.contract.slots.required,
           // Stated per type, so the model cannot claim one kind of work is
           // possible because another one was.
-          can_be_carried_out: t.requiresCapability === null,
-          waiting_on: t.requiresCapability,
+          can_be_carried_out: t.requiresCapability === null || available.has(t.requiresCapability),
+          waiting_on: t.requiresCapability && !available.has(t.requiresCapability) ? t.requiresCapability : null,
         })),
       };
     }

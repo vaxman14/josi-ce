@@ -45,7 +45,7 @@ import {
 import { customApiToolAvailability, type CustomApiAvailability } from './customApiTools.js';
 import { workflowToolAvailability } from './workflowTools.js';
 import { developerIntegrationToolAvailability } from './developerIntegrationTools.js';
-import { dataToolAvailability, type DataToolAvailability } from './dataTools.js';
+import { dataToolAvailability, writeActionCapabilities, type DataToolAvailability } from './dataTools.js';
 import { executeAssistantTool } from './execute.js';
 import { workspaceToolNames } from './workspaceTools.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
@@ -237,7 +237,13 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // Tools only if the model was PROVEN to call them. Not "probably supports",
   // not inferred from the model name.
   const templates = await listTemplates(db);
-  const unavailable = [...new Set(templates.map((t) => t.requiresCapability).filter(Boolean))] as string[];
+  let writeCapabilities = new Set<string>();
+  if (capabilities.toolCalling) {
+    try { writeCapabilities = await writeActionCapabilities(db, userId); }
+    catch (err) { console.error('write capability availability check failed', (err as Error).message); }
+  }
+  const unavailable = [...new Set(templates.map((t) => t.requiresCapability)
+    .filter((capability): capability is string => !!capability && !writeCapabilities.has(capability)))];
 
   // Which connected-data tools THIS person's switches allow, right now. The
   // offering is per turn: flip a switch off between turns and the tool is
@@ -269,7 +275,9 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     catch (err) { console.error('native integration availability check failed', (err as Error).message); }
   }
   const workspaceNames = capabilities.toolCalling ? await workspaceToolNames(db,userId) : new Set<string>();
-  const availableTaskTools = TASK_TOOLS.filter(t=>!t.def.name.startsWith('workspace_') || workspaceNames.has(t.def.name));
+  const availableTaskTools = TASK_TOOLS.filter((t) =>
+    (!t.def.name.startsWith('workspace_') || workspaceNames.has(t.def.name))
+    && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
   const tools = capabilities.toolCalling
     ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools].map((t) => t.def)
     : undefined;

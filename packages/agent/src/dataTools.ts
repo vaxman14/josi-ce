@@ -46,6 +46,14 @@ export interface ConnectorAccess {
 
 type Family = 'mail' | 'calendar' | 'contacts';
 
+export type WriteCapability = 'email_send' | 'calendar_write' | 'contacts_write';
+
+const WRITE_CAPABILITY: Record<WriteCapability, Record<DataProvider, string>> = {
+  email_send: { google: 'google.mail.send', microsoft: 'microsoft.mail.send' },
+  calendar_write: { google: 'google.calendar.write', microsoft: 'microsoft.calendar.write' },
+  contacts_write: { google: 'google.contacts.write', microsoft: 'microsoft.contacts.write' },
+};
+
 // Mail, calendar and contacts only ever meant Google and Microsoft. Dropbox,
 // Box and Nextcloud are storage-only providers with no mailbox, calendar or
 // address book — narrower than `Provider` on purpose, the same choice
@@ -232,6 +240,22 @@ export async function dataToolAvailability(db: Db, userId: string): Promise<Data
     }
   }
   return { specs, granted, denied };
+}
+
+/** Abstract task capabilities backed by a real connected account whose write
+ * switch is ON for this person right now. Task templates store the abstract
+ * names; provider connections store the concrete Google/Microsoft grants. */
+export async function writeActionCapabilities(db: Db, userId: string): Promise<Set<string>> {
+  const available = new Set<string>();
+  for (const capability of Object.keys(WRITE_CAPABILITY) as WriteCapability[]) {
+    for (const provider of PROVIDERS) {
+      if ((await can(db, { ownerUserId: userId, capability: WRITE_CAPABILITY[capability][provider] })).allowed) {
+        available.add(capability);
+        break;
+      }
+    }
+  }
+  return available;
 }
 
 // ---------------------------------------------------------------- execution
