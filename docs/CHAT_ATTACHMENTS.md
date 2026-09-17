@@ -21,6 +21,13 @@ files are refused. This validation is not a claim of antivirus certification.
 Uploaded content is never executed. Downloads use attachment disposition,
 `nosniff` and a sandbox content policy, including HTML files.
 
+Native `.heic` and `.heif` photos are also accepted. Josi verifies the
+ISO-BMFF/HEIF signature rather than trusting the filename or MIME type, converts
+the primary image to JPEG in an isolated worker, and stores the JPEG for previews
+and vision-capable model providers. Original HEIC bytes are not retained. Corrupt
+or disguised files, timed-out conversions, and images exceeding 20 MB after
+conversion are rejected with an actionable message.
+
 Only the conversation owner can upload, retrieve or delete attachments. Model
 selection checks both owner and conversation. A file is unavailable until its
 write succeeds. Image bytes are supplied only to a model with verified vision
