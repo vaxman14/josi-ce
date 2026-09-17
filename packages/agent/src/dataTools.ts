@@ -20,7 +20,7 @@
 // allows it.
 import type { Db, MasterKey } from '@josi-ce/core';
 import {
-  accessTokenFor, can, connectionFor, connectionsWithCapability, getEvent, listEvents, loadClient, readContactPage, readMail,
+  accessTokenFor, can, connectionFor, connectionsWithCapability, getInternalEvent, listInternalEvents, loadClient, readContactPage, readMail,
   refusalReason, searchMail,
   type CapabilityState, type ConnectionRow, type OAuthClient, type Provider, type RemoteEvent,
 } from '@josi-ce/connectors';
@@ -225,6 +225,12 @@ export async function dataToolAvailability(db: Db, userId: string): Promise<Data
   for (const family of ['mail', 'calendar', 'contacts'] as Family[]) {
     const access = await familyAccess(db, userId, family);
     let available = access.allowed.length > 0;
+    if (!available && family === 'calendar') {
+      const [row] = await db.query<{ n: number }>(
+        `select count(*)::int as n from calendars where owner_user_id = $1`, [userId],
+      );
+      available = (row?.n ?? 0) > 0;
+    }
     if (!available && family === 'contacts') {
       const [row] = await db.query<{ n: number }>(
         `select count(*)::int as n from contacts where owner_user_id = $1`,
@@ -343,7 +349,7 @@ export async function executeDataTool(
   // Contacts read the local store before they need any provider at all.
   if (name === 'search_contacts') return searchContacts(db, args, input);
 
-  if (!args.access) {
+  if (!args.access && family !== 'calendar') {
     return { ok: false, error: 'unavailable', message: 'Connected accounts cannot be reached right now. Tell the user their data connections are unavailable at the moment.' };
   }
 
@@ -351,12 +357,12 @@ export async function executeDataTool(
     case 'search_email': {
       const query = String(input.query ?? '').trim();
       if (!query) return { ok: false, error: 'bad_query', message: 'Say what to search for.' };
-      const { sessions, refusal } = await openSessions(db, args.access, args.userId, 'mail');
+      const { sessions, refusal } = await openSessions(db, args.access!, args.userId, 'mail');
       if (!sessions.length) return NO_ACCESS(refusal);
       const limit = Number.isFinite(Number(input.limit)) ? Number(input.limit) : undefined;
       const emails = [];
       for (const s of sessions) {
-        const found = await searchMail(s.provider, { accessToken: s.accessToken, query, limit }, { fetchImpl: args.access.fetchImpl });
+        const found = await searchMail(s.provider, { accessToken: s.accessToken, query, limit }, { fetchImpl: args.access!.fetchImpl });
         emails.push(...found.map((e) => ({
           email_id: taggedId(s.provider, e.sourceId),
           from: e.from, to: e.to, subject: e.subject, date: e.date, snippet: e.snippet,
@@ -372,10 +378,10 @@ export async function executeDataTool(
     case 'read_email': {
       const ref = untagId(String(input.email_id ?? ''));
       if (!ref) return { ok: false, error: 'not_found', message: 'There is no email with that id. Use an email_id from search_email.' };
-      const { sessions, refusal } = await openSessions(db, args.access, args.userId, 'mail', ref.provider);
+      const { sessions, refusal } = await openSessions(db, args.access!, args.userId, 'mail', ref.provider);
       if (!sessions.length) return NO_ACCESS(refusal);
       const s = sessions[0];
-      const email = await readMail(s.provider, { accessToken: s.accessToken, id: ref.id }, { fetchImpl: args.access.fetchImpl });
+      const email = await readMail(s.provider, { accessToken: s.accessToken, id: ref.id }, { fetchImpl: args.access!.fetchImpl });
       if (!email) return { ok: false, error: 'not_found', message: 'There is no email with that id.' };
       return {
         ok: true,
@@ -397,14 +403,21 @@ export async function executeDataTool(
       }
       const sources = await selectedCalendars(db,args.userId,typeof input.source_id === 'string' ? input.source_id : undefined);
       if (!sources.length) return NO_ACCESS('No selected calendar is available. Open Calendar, refresh calendars, and select the exact calendar to query.');
-      const { sessions, refusal } = await openSessions(db, args.access, args.userId, 'calendar',undefined,sources.map(s=>s.connection_id));
-      if (!sessions.length) return NO_ACCESS(refusal);
-      const events = [];
+      const calendarIds = new Set<string>();
+      const sourceByCalendar = new Map<string,CalendarSource>();
       for (const source of sources) {
-        const s = sessions.find(session=>session.connection.id===source.connection_id);
-        if(!s) return NO_ACCESS(`Selected calendar ${source.name} is unavailable or permission was lost. Reconnect its account; no other calendar was substituted.`);
-        const found = await listEvents(s.provider, {accessToken:s.accessToken, calendarId:source.provider_calendar_id,timeMin:window.start,timeMax:window.end,limit:1000},{fetchImpl:args.access.fetchImpl});
-        events.push(...found.map(e=>eventView(source,e)));
+        const [origin] = await db.query<{calendar_id:string}>(`select calendar_id from calendar_sync_origins where connection_id=$1 and provider_calendar_id=$2`,[source.connection_id,source.provider_calendar_id]);
+        if (origin) { calendarIds.add(origin.calendar_id); sourceByCalendar.set(origin.calendar_id,source); }
+      }
+      const found = await listInternalEvents(db, { ownerUserId: args.userId, start: window.start, end: window.end });
+      const events=[];
+      for(const e of found.filter((candidate)=>calendarIds.has(candidate.calendar_id))){
+        const source=sourceByCalendar.get(e.calendar_id)!;
+        const [link]=await db.query<{provider_event_id:string}>(`select l.provider_event_id from calendar_event_links l join calendar_sync_origins o on o.id=l.origin_id where l.event_id=$1 and o.calendar_id=$2`,[e.id,e.calendar_id]);
+        events.push({ event_id: e.id, source_id:source.id, provider:source.provider, account_id:source.connection_id,account:source.account,
+          calendar_id:source.provider_calendar_id,calendar_name:source.name,provider_event_id:link?.provider_event_id??null,title:e.title,
+          start:e.all_day?e.start_date:e.starts_at,end:e.all_day?e.end_date:e.ends_at,all_day:e.all_day,location:e.location,
+          organizer:e.organizer,attendees:e.attendees,status:e.status,sync_state:e.sync_state });
       }
       events.sort((a, b) => String(a.start ?? '').localeCompare(String(b.start ?? '')));
       return {
@@ -417,16 +430,19 @@ export async function executeDataTool(
     }
 
     case 'get_event': {
-      const ref = /^calendar:([0-9a-f-]{36}):([A-Za-z0-9_-]+)$/.exec(String(input.event_id ?? ''));
-      if (!ref) return {ok:false,error:'not_found',message:'Use an exact event_id from a fresh query_calendar receipt; older IDs do not identify a calendar safely.'};
-      const [source] = await selectedCalendars(db,args.userId,ref[1]);
-      if(!source) return NO_ACCESS('The selected calendar is unavailable. Refresh calendars; no default calendar was substituted.');
-      const {sessions,refusal}=await openSessions(db,args.access,args.userId,'calendar',source.provider,[source.connection_id]);
-      const session=sessions.find(s=>s.connection.id===source.connection_id);
-      if(!session) return NO_ACCESS(refusal);
-      const event=await getEvent(source.provider,{accessToken:session.accessToken,calendarId:source.provider_calendar_id,id:Buffer.from(ref[2],'base64url').toString('utf8')},{fetchImpl:args.access.fetchImpl});
-      if(!event) return {ok:false,error:'not_found',message:'The event is unavailable in its original calendar.'};
-      return {ok:true,event:eventView(source,event)};
+      const event = await getInternalEvent(db, { ownerUserId: args.userId, eventId: String(input.event_id ?? '') });
+      if (!event) return { ok: false, error: 'not_found', message: 'There is no event with that id.' };
+      const [source]=await db.query<CalendarSource>(`select s.id,s.connection_id,s.provider_calendar_id,s.name,c.provider,c.account_email account
+        from calendar_sync_origins o join calendar_sources s on s.connection_id=o.connection_id and s.provider_calendar_id=o.provider_calendar_id
+        join connections c on c.id=s.connection_id where o.calendar_id=$1 and s.owner_user_id=$2 and s.selected=true`,[event.calendar_id,args.userId]);
+      if(!source||!(await can(db,{ownerUserId:args.userId,capability:FAMILY_CAPABILITY.calendar[source.provider]})).allowed)return NO_ACCESS('The event\'s original calendar is unavailable or permission was removed. No other calendar was substituted.');
+      const [link]=await db.query<{provider_event_id:string}>(`select provider_event_id from calendar_event_links where event_id=$1`,[event.id]);
+      return { ok: true, event: { event_id: event.id, source_id:source.id,provider:source.provider,account_id:source.connection_id,account:source.account,
+        calendar_id:source.provider_calendar_id,calendar_name:source.name,provider_event_id:link?.provider_event_id??null,title: event.title,
+        start: event.all_day ? event.start_date : event.starts_at, end: event.all_day ? event.end_date : event.ends_at,
+        all_day: event.all_day, location: event.location, organizer: event.organizer,
+        attendees: event.attendees, status: event.status, description: event.description,
+        recurrence: event.recurrence, sync_state: event.sync_state, sync_error: event.sync_error } };
     }
 
     default:

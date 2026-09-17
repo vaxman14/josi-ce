@@ -32,6 +32,7 @@ import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './http/telegramRoutes.js';
 import { adminExternalChannelRoutes, externalChannelRoutes, mountExternalChannelWebhooks } from './http/externalChannelRoutes.js';
+import { mountCalendarWebhook } from './http/calendarWebhook.js';
 import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
@@ -158,6 +159,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   });
   mountWorkflowCallbacks(app, { db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch });
+  mountCalendarWebhook(app, db);
 
   const api = express.Router();
   api.use(attachUser({ db }));

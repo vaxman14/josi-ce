@@ -10,7 +10,7 @@ import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { MasterKey } from '@josi-ce/core';
 import {
-  saveClient, setCapability, upsertConnection, type ConnectionRow,
+  createInternalEvent, ensureInternalCalendar, saveClient, setCapability, upsertConnection, type ConnectionRow,
 } from '@josi-ce/connectors';
 import { executeAssistantTool } from '../src/execute.js';
 import { dataToolAvailability } from '../src/dataTools.js';
@@ -216,17 +216,18 @@ describe('execution re-checks the switch', () => {
   it('lists calendar events for the default week window', async () => {
     const connection = await connectGoogle(alice);
     await enable(connection, 'google.calendar.read');
-    const { fetchImpl, urls } = providerFetch();
+    const origin = await ensureInternalCalendar(db, { ownerUserId: alice, connectionId: connection.id, provider: 'google' });
+    const start = new Date(Date.now() + 3_600_000); const end = new Date(start.getTime() + 900_000);
+    const saved = await createInternalEvent(db, { ownerUserId: alice, originId: origin.id,
+      event: { title: 'standup', start: start.toISOString(), end: end.toISOString() } });
     const result = await executeAssistantTool(
-      db, { userId: alice, threadId: null, connectors: access(fetchImpl) },
+      db, { userId: alice, threadId: null, connectors: null },
       'query_calendar', {},
     ) as { ok: boolean; events: Array<{ event_id: string; title: string | null }>; range: { start: string; end: string } };
     expect(result.ok).toBe(true);
-    expect(result.events[0]).toMatchObject({ title: 'standup' });
-    expect(result.events[0].event_id).toMatch(/^calendar:[0-9a-f-]{36}:ZXYx$/);
+    expect(result.events[0]).toMatchObject({ event_id: saved.id, title: 'standup' });
     const days = (new Date(result.range.end).getTime() - new Date(result.range.start).getTime()) / 86_400_000;
     expect(Math.round(days)).toBe(7);
-    expect(urls[0]).toContain('singleEvents=true');
   });
 
   it('reports an empty calendar as empty, never invented', async () => {
@@ -350,9 +351,11 @@ describe('exact calendar source receipts',()=>{
   it('queries only the selected secondary calendar, reuses its source for details and durable reminders',async()=>{
     const c=await connectGoogle(alice);await enable(c,'google.calendar.read');
     await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,selected) values($1,$2,'primary','Not selected',false)`,[alice,c.id]);
-    const urls:string[]=[];
-    const fetchImpl=(async(url:RequestInfo|URL)=>{urls.push(String(url));const event={id:'same-event',summary:'Shared meeting',start:{dateTime:'2026-09-04T09:00:00Z'},end:{dateTime:'2026-09-04T10:00:00Z'}};return new Response(JSON.stringify(String(url).includes('/events?')?{items:[event]}:event),{headers:{'content-type':'application/json'}});}) as typeof fetch;
-    const ctx={userId:alice,threadId:null,connectors:access(fetchImpl)};
+    const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google',providerCalendarId:'selected@example.test',name:'Selected calendar'});
+    const starts=new Date(Date.now()+3_600_000),ends=new Date(Date.now()+7_200_000);
+    const local=await createInternalEvent(db,{ownerUserId:alice,originId:origin.id,event:{title:'Shared meeting',start:starts.toISOString(),end:ends.toISOString()}});
+    await db.query(`insert into calendar_event_links(origin_id,event_id,provider_event_id) values($1,$2,'same-event')`,[origin.id,local.id]);
+    const ctx={userId:alice,threadId:null,connectors:null};
     const receipt=await executeAssistantTool(db,ctx,'query_calendar',{}) as any;
     expect(receipt.events[0]).toMatchObject({provider:'google',account_id:c.id,account:'a@gmail.test',calendar_id:'selected@example.test',calendar_name:'Selected calendar',provider_event_id:'same-event'});
     const detail=await executeAssistantTool(db,ctx,'get_event',{event_id:receipt.events[0].event_id}) as any;
@@ -361,30 +364,31 @@ describe('exact calendar source receipts',()=>{
     expect(reminder.calendar_source.calendar_id).toBe('selected@example.test');
     const [saved]=await db.query<{body:string}>(`select body from reminders where id=$1`,[reminder.reminder_id]);
     expect(saved.body).toContain(receipt.events[0].event_id);
-    expect(urls.every(url=>url.includes('/calendars/selected%40example.test/events'))).toBe(true);
   });
   it('does not fall back after deselection, revocation, a forged source or cross-user request',async()=>{
-    const c=await connectGoogle(alice);await enable(c,'google.calendar.read');const {fetchImpl,urls}=providerFetch();const ctx={userId:alice,threadId:null,connectors:access(fetchImpl)};
-    const receipt=await executeAssistantTool(db,ctx,'query_calendar',{}) as any;urls.length=0;
+    const c=await connectGoogle(alice);await enable(c,'google.calendar.read');const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google',providerCalendarId:'selected@example.test'});const start=new Date(Date.now()+3_600_000),end=new Date(Date.now()+7_200_000);await createInternalEvent(db,{ownerUserId:alice,originId:origin.id,event:{title:'Meeting',start:start.toISOString(),end:end.toISOString()}});const ctx={userId:alice,threadId:null,connectors:null};
+    const receipt=await executeAssistantTool(db,ctx,'query_calendar',{}) as any;
     expect(await executeAssistantTool(db,{...ctx,userId:bob},'get_event',{event_id:receipt.events[0].event_id})).toMatchObject({ok:false});
     expect(await executeAssistantTool(db,ctx,'query_calendar',{source_id:'00000000-0000-0000-0000-000000000000'})).toMatchObject({ok:false});
     await db.query(`update calendar_sources set selected=false where owner_user_id=$1`,[alice]);
     expect(await executeAssistantTool(db,ctx,'query_calendar',{})).toMatchObject({ok:false});
     await setCapability(db,{connection:c,capability:'google.calendar.read',enabled:false,actorUserId:alice});
     expect(await executeAssistantTool(db,ctx,'get_event',{event_id:receipt.events[0].event_id})).toMatchObject({ok:false});
-    expect(urls).toEqual([]);
   });
   it('keeps identical event IDs in two accounts distinct and never fetches the other account on follow-up',async()=>{
     const first=await connectGoogle(alice);await enable(first,'google.calendar.read');
     const second=await upsertConnection(db,key,{ownerUserId:alice,provider:'google',providerAccountId:'acct-2',accountEmail:'second@example.test',tokens:{accessToken:'second-access',refreshToken:'second-refresh',expiresIn:3600,grantedScopes:GOOGLE_READ_SCOPES},requestedCapabilities:['google.calendar.read']});await enable(second,'google.calendar.read');
     await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name) values($1,$2,'second-calendar','Second calendar')`,[alice,second.id]);
-    const requests:Array<{url:string;auth:string}>=[];
-    const fetchImpl=(async(url:RequestInfo|URL,init?:RequestInit)=>{requests.push({url:String(url),auth:new Headers(init?.headers).get('authorization')??''});const e={id:'same-event',summary:'Meeting',start:{date:'2026-09-04'},end:{date:'2026-09-05'}};return new Response(JSON.stringify(String(url).includes('/events?')?{items:[e]}:e),{headers:{'content-type':'application/json'}});}) as typeof fetch;
-    const ctx={userId:alice,threadId:null,connectors:access(fetchImpl)};const receipt=await executeAssistantTool(db,ctx,'query_calendar',{}) as any;
+    const firstOrigin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:first.id,provider:'google',providerCalendarId:'selected@example.test'});
+    const secondOrigin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:second.id,provider:'google',providerCalendarId:'second-calendar'});
+    const start=new Date(Date.now()+3_600_000),end=new Date(Date.now()+7_200_000);
+    const one=await createInternalEvent(db,{ownerUserId:alice,originId:firstOrigin.id,event:{title:'Meeting',start:start.toISOString(),end:end.toISOString()}});const two=await createInternalEvent(db,{ownerUserId:alice,originId:secondOrigin.id,event:{title:'Meeting',start:start.toISOString(),end:end.toISOString()}});
+    await db.query(`insert into calendar_event_links(origin_id,event_id,provider_event_id) values($1,$2,'same-event'),($3,$4,'same-event')`,[firstOrigin.id,one.id,secondOrigin.id,two.id]);
+    const ctx={userId:alice,threadId:null,connectors:null};const receipt=await executeAssistantTool(db,ctx,'query_calendar',{}) as any;
     expect(receipt.events).toHaveLength(2);expect(new Set(receipt.events.map((e:any)=>e.event_id)).size).toBe(2);
-    const secondEvent=receipt.events.find((e:any)=>e.account_id===second.id);requests.length=0;
+    const secondEvent=receipt.events.find((e:any)=>e.account_id===second.id);
     const detail=await executeAssistantTool(db,ctx,'get_event',{event_id:secondEvent.event_id}) as any;
-    expect(detail.event.account).toBe('second@example.test');expect(requests).toHaveLength(1);expect(requests[0]).toMatchObject({auth:'Bearer second-access'});expect(requests[0].url).toContain('/calendars/second-calendar/events/same-event');
-    requests.length=0;await executeAssistantTool(db,ctx,'query_calendar',{source_id:secondEvent.source_id});expect(requests).toHaveLength(1);expect(requests[0].auth).toBe('Bearer second-access');
+    expect(detail.event.account).toBe('second@example.test');
+    expect((await executeAssistantTool(db,ctx,'query_calendar',{source_id:secondEvent.source_id}) as any).events).toHaveLength(1);
   });
 });

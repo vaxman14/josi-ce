@@ -1,5 +1,14 @@
 # Clean-install acceptance
 
+## Authoritative internal calendar sync
+
+- Conversational calendar reads and approved writes use `calendar_events` and stable internal UUIDs; they make no provider request.
+- `calendar_outbox` pushes create/update/delete asynchronously with a stable Google event id, ETag preconditions, retry backoff, and crash-after-create recovery.
+- Google incremental pulls persist sync tokens, restart with a full reconciliation after HTTP 410, process cancellations/tombstones, preserve recurrence metadata, and refuse concurrent local/remote overwrites as conflicts.
+- Google push notifications authenticate by channel/resource pair and enqueue one deduplicated origin sync; the periodic scheduler remains the missed-webhook safety net.
+- Calendar origins preserve the exact connected account and provider calendar selected by the user. Reads and details refuse deselected, revoked, forged, and cross-user sources rather than substituting another calendar.
+- Focused proof: `calendarSync.test.ts`, `dataTools.test.ts`, `worker.test.ts`, and `freshDbMigration.test.ts` pass against the real migrated PostgreSQL-compatible test database.
+
 ## HEIC/HEIF chat attachments (v0.1.30)
 
 - A real HEIC fixture is detected by content and converted to JPEG in an

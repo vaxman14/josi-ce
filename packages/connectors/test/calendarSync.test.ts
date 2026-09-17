@@ -1,0 +1,87 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { createUser } from '../../auth/src/users.js';
+import { MasterKey } from '@josi-ce/core';
+import {
+  createInternalEvent, enqueueCalendarWebhook, ensureInternalCalendar, getInternalEvent, listInternalEvents,
+  processCalendarOutbox, saveClient, setCapability, syncCalendarOrigin,
+  updateInternalEvent, upsertConnection,
+} from '../src/index.js';
+
+let db: TestDb; let alice: string; let bob: string;
+const key = new MasterKey(Buffer.alloc(32, 4));
+
+beforeEach(async () => {
+  db = await testDb();
+  alice = (await createUser(db,{email:'alice@calendar.test',username:'alice',role:'super_admin'})).id;
+  bob = (await createUser(db,{email:'bob@calendar.test',username:'bob',role:'member'})).id;
+  await saveClient(db,key,{provider:'google',clientId:'client',clientSecret:'calendar-CLIENT-SECRET',redirectUri:'https://example.test/callback',actorUserId:alice});
+});
+
+async function connected(user=alice){
+  const c=await upsertConnection(db,key,{ownerUserId:user,provider:'google',tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar'},accountEmail:'a@example.test',providerAccountId:`acct-${user}`,requestedCapabilities:['google.calendar.write'],enableRequestedCapabilities:true});
+  await setCapability(db,{connection:c,capability:'google.calendar.write',enabled:true,actorUserId:user});
+  return c;
+}
+
+describe('internal calendar is authoritative',()=>{
+  it('persists immediately, reads locally, and queues exactly one provider write',async()=>{
+    const c=await connected(); const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google'});
+    const event=await createInternalEvent(db,{ownerUserId:alice,originId:origin.id,event:{title:'EDD call',start:'2026-09-18T22:30:00Z',end:'2026-09-18T23:00:00Z'}});
+    expect(event.sync_state).toBe('pending');
+    expect((await listInternalEvents(db,{ownerUserId:alice,start:'2026-09-18T00:00:00Z',end:'2026-09-19T00:00:00Z'})).map(e=>e.id)).toEqual([event.id]);
+    expect(await listInternalEvents(db,{ownerUserId:bob,start:'2026-09-18T00:00:00Z',end:'2026-09-19T00:00:00Z'})).toEqual([]);
+    const rows=await db.query<{n:number}>(`select count(*)::int n from calendar_outbox where event_id=$1`,[event.id]); expect(rows[0].n).toBe(1);
+  });
+
+  it('uses one idempotent outbox row and records the provider mapping',async()=>{
+    const c=await connected(); const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google'});
+    const event=await createInternalEvent(db,{ownerUserId:alice,originId:origin.id,event:{title:'LexisNexis',start:'2026-09-18T22:00:00Z',end:'2026-09-18T22:30:00Z'}});
+    await updateInternalEvent(db,{ownerUserId:alice,eventId:event.id,changes:{title:'LexisNexis call'}});
+    const calls:string[]=[]; const fetchImpl:typeof fetch=async(url,init)=>{calls.push(`${init?.method} ${url}`);return new Response(JSON.stringify({id:'g-1',iCalUID:'uid-1',etag:'"e1"',updated:'2026-09-17T10:00:00Z'}),{status:200});};
+    expect(await processCalendarOutbox(db,{masterKey:key,fetchImpl})).toBe(1);
+    expect(calls).toHaveLength(1); expect(calls[0]).toContain('POST');
+    const stored=await getInternalEvent(db,{ownerUserId:alice,eventId:event.id}); expect(stored?.sync_state).toBe('synced');
+    const [link]=await db.query<any>(`select provider_event_id,ical_uid from calendar_event_links where event_id=$1`,[event.id]); expect(link).toMatchObject({provider_event_id:'g-1',ical_uid:'uid-1'});
+  });
+
+  it('recovers after a crash-after-create without duplicating the Google event',async()=>{
+    const c=await connected(); const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google'});
+    const event=await createInternalEvent(db,{ownerUserId:alice,originId:origin.id,event:{title:'One event',start:'2026-09-18T20:00:00Z',end:'2026-09-18T20:30:00Z'}});
+    let calls=0; const stable=event.id.replace(/-/g,'');
+    const fetchImpl:typeof fetch=async(url)=>{calls++; if(calls===1)return new Response('{}',{status:409}); expect(String(url)).toContain(stable); return new Response(JSON.stringify({id:stable,etag:'"ok"'}),{status:200});};
+    await processCalendarOutbox(db,{masterKey:key,fetchImpl});
+    expect(calls).toBe(2); expect((await getInternalEvent(db,{ownerUserId:alice,eventId:event.id}))?.sync_state).toBe('synced');
+  });
+
+  it('incrementally imports Google events and an expired cursor repairs with a full pull',async()=>{
+    const c=await connected(); const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google'});
+    await db.query(`update calendar_sync_origins set sync_cursor='expired' where id=$1`,[origin.id]); let n=0;
+    const fetchImpl:typeof fetch=async()=>{n++; if(n===1)return new Response('{}',{status:410}); return new Response(JSON.stringify({items:[{id:'remote-1',summary:'Remote call',etag:'"r1"',updated:'2026-09-17T10:00:00Z',start:{dateTime:'2026-09-19T17:00:00Z'},end:{dateTime:'2026-09-19T17:30:00Z'}}],nextSyncToken:'fresh'}),{status:200});};
+    await syncCalendarOrigin(db,origin.id,{masterKey:key,fetchImpl});
+    expect((await listInternalEvents(db,{ownerUserId:alice,start:'2026-09-19T00:00:00Z',end:'2026-09-20T00:00:00Z'}))[0].title).toBe('Remote call');
+    const [saved]=await db.query<any>(`select sync_cursor,status from calendar_sync_origins where id=$1`,[origin.id]); expect(saved).toMatchObject({sync_cursor:'fresh',status:'idle'});
+  });
+
+  it('surfaces a concurrent local/remote edit instead of overwriting either',async()=>{
+    const c=await connected(); const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google'});
+    const first:typeof fetch=async()=>new Response(JSON.stringify({items:[{id:'r1',summary:'Original',etag:'"1"',start:{dateTime:'2026-09-20T10:00:00Z'},end:{dateTime:'2026-09-20T11:00:00Z'}}],nextSyncToken:'s1'}),{status:200});
+    await syncCalendarOrigin(db,origin.id,{masterKey:key,fetchImpl:first}); const [event]=await listInternalEvents(db,{ownerUserId:alice,start:'2026-09-20T00:00:00Z',end:'2026-09-21T00:00:00Z'});
+    await updateInternalEvent(db,{ownerUserId:alice,eventId:event.id,changes:{title:'Local edit'}});
+    const second:typeof fetch=async()=>new Response(JSON.stringify({items:[{id:'r1',summary:'Remote edit',etag:'"2"',start:{dateTime:'2026-09-20T10:00:00Z'},end:{dateTime:'2026-09-20T11:00:00Z'}}],nextSyncToken:'s2'}),{status:200});
+    await syncCalendarOrigin(db,origin.id,{masterKey:key,fetchImpl:second}); const saved=await getInternalEvent(db,{ownerUserId:alice,eventId:event.id});
+    expect(saved?.title).toBe('Local edit'); expect(saved?.sync_state).toBe('conflict');
+  });
+
+  it('keeps multiple calendars distinct and deduplicates webhook jobs',async()=>{
+    const c=await connected();
+    const primary=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google',providerCalendarId:'primary'});
+    const work=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google',providerCalendarId:'work@example.test',name:'Work'});
+    expect(primary.id).not.toBe(work.id);
+    await db.query(`update calendar_sync_origins set webhook_channel_id='channel',webhook_resource_id='resource' where id=$1`,[work.id]);
+    expect(await enqueueCalendarWebhook(db,{channelId:'channel',resourceId:'resource'})).toBe(true);
+    expect(await enqueueCalendarWebhook(db,{channelId:'channel',resourceId:'resource'})).toBe(true);
+    const [jobs]=await db.query<{n:number}>(`select count(*)::int n from job_queue where kind='calendar.sync'`); expect(jobs.n).toBe(1);
+    expect(await enqueueCalendarWebhook(db,{channelId:'wrong',resourceId:'resource'})).toBe(false);
+  });
+});

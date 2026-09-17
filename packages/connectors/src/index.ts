@@ -9,6 +9,7 @@ export * from './providers/files.js';
 export * from './providers/webdav.js';
 export * from './storageSync.js';
 export * from './contactSync.js';
+export * from './calendarSync.js';
 export * from './oauthClients.js';
 export * from './developerServices.js';
 export * from './customApi.js';
