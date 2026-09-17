@@ -9,8 +9,10 @@ sync timestamps and cursor presence. No credential is opened. Cursor contents,
 absolute host paths, contact contents and provider error bodies are omitted.
 
 Every result has a receipt UUID and UTC observation time; the audit log records
-that receipt and counts only. Assistant answers must cite the receipt from this
-turn. A connection record is not proof of live provider reachability. A folder
+that receipt and counts only. Those fields are internal grounding evidence and
+must not be rendered in assistant replies or returned in the public talk API.
+The assistant may name the human-facing provider/source and summarize useful
+status. A connection record is not proof of live provider reachability. A folder
 mapping is not proof of indexing. Missing timestamps mean no successful sync has
 been recorded, not an empty provider account. Local/NAS folders have no remote
 delta cursor. Counts cover local indexed metadata, not all remote files.

@@ -49,6 +49,7 @@ import { dataToolAvailability, writeActionCapabilities, type DataToolAvailabilit
 import { executeAssistantTool } from './execute.js';
 import { workspaceToolNames } from './workspaceTools.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
+import { presentToolBackedReply } from './presentation.js';
 
 /** Recall over the user's own history, injected by the caller. A function
  * rather than a package dependency: the agent does not care whether recall is
@@ -128,7 +129,7 @@ function systemPrompt(args: {
     'Be brief and direct: lead with the answer, no filler, no preamble.',
     'Plain text only — no markdown, no asterisks, no headings.',
     'You do work through tasks. Fill every required slot BEFORE anything is attempted; if a required slot is missing, ask for it. Never start work with a hole in it.',
-    'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn and cite its receipt and observation time. Never infer runtime state from prior chat. A status record is not a live provider health probe.',
+    'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn. Use its evidence internally, but never show receipts, observation timestamps, account metadata, internal identifiers, or raw status records. Summarize only the useful human-facing answer and source/provider name. Never infer runtime state from prior chat. A status record is not a live provider health probe.',
     'Never invent a name, number, address or time. If you do not know something, ask or say you do not know.',
     `The current date and time is ${new Date().toISOString()}. When a date omits its year, use the next occurrence that is not in the past. Use the person's configured timezone when their profile supplies one; do not ask them to repeat it. Ask only for scheduling details that are genuinely missing, such as duration when no end time or duration was given.`,
     'For calendar follow-ups, preserve the exact named subject and verified event receipt from the prior turn. “Move/push the EDD call” modifies the EDD event, never the newly proposed event. Keep the existing event on its original calendar and inherit the verified/default calendar for a new event instead of asking again when the receipt already identifies it.',
@@ -495,6 +496,10 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       // A completed exchange, so there is something to learn from — and only
       // ever from what the PERSON wrote. Never the reply, never tool output.
       const learned = await learnFromTurn(db, { userId, inbound: args.inbound });
+      // Guards inspect the original model text against intact receipts above.
+      // Presentation happens only after those checks, once, at the shared
+      // agent boundary used by web and every external channel.
+      reply = presentToolBackedReply(reply, actions);
       return { reply, actions, memoriesUsed, learned, imagesDroppedNoVision };
     }
 

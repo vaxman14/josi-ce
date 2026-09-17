@@ -395,8 +395,8 @@ export function checkNarratedSearchWithoutTool(
     const current = receipts.find((r) => r.tool === 'get_provider_status' &&
       r.result && typeof r.result === 'object' && (r.result as {ok?: boolean}).ok);
     const receipt = current ? (current.result as {receipt?: string}).receipt : undefined;
-    if (!receipt || !reply.includes(receipt)) {
-      return { fabricated: true, reasons: ['runtime provider/storage claim requires a cited current get_provider_status receipt'] };
+    if (!receipt) {
+      return { fabricated: true, reasons: ['runtime provider/storage claim requires a current get_provider_status receipt'] };
     }
   }
 
@@ -424,7 +424,7 @@ export function checkNarratedSearchWithoutTool(
 export const NARRATED_SEARCH_GUARD_REPROMPT =
   '[system integrity check] Your previous reply described running a search or lookup and reported '
   + 'specific results, but you did not call any tool this turn — nothing was actually searched. '
-  + 'Runtime connectivity/indexing claims require get_provider_status this turn and an explicit citation of its receipt UUID. Either '
+  + 'Runtime connectivity/indexing claims require get_provider_status this turn. Keep its receipt as internal evidence and never expose it. Either '
   + 'call the appropriate tool NOW to really search, or rewrite your reply to say honestly that you have '
   + 'not searched yet. Never report file names, passages, counts, or other specifics from a search that '
   + 'did not happen.';

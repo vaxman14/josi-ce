@@ -89,6 +89,13 @@ function historyContent(message: { direction: 'in' | 'out'; body: string; meta: 
   return `${message.body}\n\n[Verified calendar receipts from this prior turn. Preserve the named event, event_id, source_id, account, and calendar in follow-up actions; do not transfer a requested edit to another event.]\n${JSON.stringify(message.meta.calendar_receipts).slice(0, 12_000)}`;
 }
 
+/** Public message shape. Metadata is private by default: only fields the chat
+ * UI deliberately renders cross the HTTP presentation boundary. */
+function presentMessage<T extends { meta: Record<string, unknown> }>(message: T): T {
+  const attachments = Array.isArray(message.meta?.attachments) ? message.meta.attachments : undefined;
+  return { ...message, meta: attachments ? { attachments } : {} };
+}
+
 export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
@@ -271,7 +278,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       const threadId = param(req, 'id');
       return res.json({
         thread: await getThread(db, threadId),
-        messages: await listMessages(db, { threadId }),
+        messages: (await listMessages(db, { threadId })).map(presentMessage),
       });
     }),
   );
@@ -397,7 +404,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         // server saying no, not the server being broken. 503 would have it
         // read as an outage on the one screen where that would be a lie.
         return res.status(result.refusal.reason === 'restricted' ? 403 : 503)
-          .json({ refusal: result.refusal, actions: result.actions });
+          .json({ refusal: result.refusal });
       }
 
       await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
@@ -407,7 +414,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       await appendEvent(db, { actorUserId: thread.owner_user_id, actor: 'user', kind: 'thread.exchange',
         subjectType: 'thread', subjectId: threadId,
         payload: { channel: 'web', inboundChars: inbound.length, attachmentCount: attachments.length, replyChars: result.reply.length } });
-      return res.json({ reply: result.reply, actions: result.actions });
+      return res.json({ reply: result.reply });
     }),
   );
 

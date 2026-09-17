@@ -22,8 +22,8 @@ it('reports real empty state with an auditable receipt, without borrowing anothe
 });
 
 import { checkNarratedSearchWithoutTool } from '../src/dataClaimGuard.js';
-it('rejects uncited or stale connectivity claims even after a file search', () => {
+it('requires current internal status evidence without requiring it in visible prose', () => {
   expect(checkNarratedSearchWithoutTool('Your Google Drive is connected.', []).fabricated).toBe(true);
   expect(checkNarratedSearchWithoutTool('Your storage is indexed.', [{ tool:'list_documents', result:{ok:true,documents:[]} }]).fabricated).toBe(true);
-  expect(checkNarratedSearchWithoutTool('Your Google Drive is connected. Receipt proof-123.', [{ tool:'get_provider_status', result:{ok:true,receipt:'proof-123'} }]).fabricated).toBe(false);
+  expect(checkNarratedSearchWithoutTool('Your Google Drive is connected.', [{ tool:'get_provider_status', result:{ok:true,receipt:'proof-123'} }]).fabricated).toBe(false);
 });

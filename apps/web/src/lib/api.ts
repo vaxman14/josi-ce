@@ -187,6 +187,5 @@ export interface LlmStatus {
 
 export interface TurnResult {
   reply?: string;
-  actions?: Array<{ tool: string; result: unknown }>;
   refusal?: { reason: string; message: string };
 }

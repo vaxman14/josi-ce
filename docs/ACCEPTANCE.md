@@ -550,6 +550,19 @@ separate external acceptance checks, not proof supplied by a local mock.
 The dated results and explicit external acceptance gaps are recorded in
 [TEST_LIST_7_VERIFICATION.md](TEST_LIST_7_VERIFICATION.md).
 
+## Tool-backed reply presentation boundary — 2026-09-17
+
+- Every tool-backed assistant reply crosses one shared deterministic presentation
+  boundary after grounding/fabrication guards and before web or external-channel
+  delivery. Internal receipts, account metadata, timestamps, authorization
+  evidence, and identifiers remain available to backend actions and audit paths
+  but are removed from visible prose.
+- The public talk response contains only the presented reply or refusal; raw
+  action results never cross that HTTP boundary. Human-facing provider/source
+  names and useful answer content remain available.
+- The boundary covers accumulated results from multiple calls and retries,
+  successful and failed tools, and is independent of channel delivery shape.
+
 ## Calendar follow-up continuity — 2026-09-17
 
 - Calendar query, event-detail, and calendar-draft receipts are retained in the

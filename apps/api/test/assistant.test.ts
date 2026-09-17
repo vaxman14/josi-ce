@@ -336,11 +336,32 @@ describe('talking to Josi', () => {
       method: 'POST', jar: cookies.alice, body: { message: 'hi there' },
     });
     expect(res.body.reply).toBe('Hello Alice.');
+    expect(res.body).not.toHaveProperty('actions');
     const messages = await db.query<{ direction: string; body: string }>(
       `select direction, body from messages where thread_id = $1 order by created_at`, [t],
     );
     expect(messages.map((m) => m.body)).toContain('hi there');
     expect(messages.map((m) => m.body)).toContain('Hello Alice.');
+  });
+
+  it('presents tool-backed replies without exposing actions or internal identifiers', async () => {
+    await configureModel();
+    const t = await threadWith('alice');
+    const [task] = await db.query<{ id: string }>(
+      `insert into tasks(owner_user_id,template_key,slots) values($1,'follow_up','{"what":"call back"}') returning id`,
+      [ids.alice],
+    );
+    replies = [
+      { content: null, tool_calls: [{ id: 'tool-1', type: 'function', function: { name: 'list_open_tasks', arguments: '{}' } }] },
+      { content: `You have one open follow-up. Task ID: ${task.id}` },
+    ];
+    const res = await call(`/api/assistant/threads/${t}/talk`, {
+      method: 'POST', jar: cookies.alice, body: { message: 'What is open?' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ reply: 'You have one open follow-up.' });
+    expect(JSON.stringify(res.body)).not.toContain(task.id);
+    expect((await db.query(`select id from tasks where id=$1`, [task.id]))).toHaveLength(1);
   });
 
   it('carries verified calendar receipts into a follow-up without exposing them in chat', async () => {
@@ -368,7 +389,16 @@ describe('talking to Josi', () => {
     expect(sent).toContain('Push the EDD call by 30 minutes');
 
     const visible = await call(`/api/assistant/threads/${t}`, { jar: cookies.alice });
-    expect(JSON.stringify(visible.body)).not.toContain('Verified calendar receipts from this prior turn');
+    const rendered = JSON.stringify(visible.body);
+    expect(rendered).not.toContain('Verified calendar receipts from this prior turn');
+    expect(rendered).not.toContain('calendar:source:event');
+    expect(rendered).not.toContain('calendar_receipts');
+
+    const [stored] = await db.query<{ meta: Record<string, unknown> }>(
+      `select meta from messages where thread_id=$1 and direction='out' and meta ? 'calendar_receipts' order by created_at desc limit 1`,
+      [t],
+    );
+    expect(JSON.stringify(stored.meta)).toContain('calendar:source:event');
   });
 
   it('never writes the conversation into the audit log', async () => {
