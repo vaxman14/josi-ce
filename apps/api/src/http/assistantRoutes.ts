@@ -27,8 +27,9 @@ import type { LoadOptions } from '@josi-ce/core';
 import { loadMasterKey } from '@josi-ce/core';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import {
-  IMAGE_MEDIA_TYPES, extractRichSegments, AttachmentError, attachmentFailure, attachmentRoot,
-  validateAttachment, writeAttachment, readAttachment, removeAttachment, CHAT_FILE_BYTES,
+  ChatImageError, IMAGE_MEDIA_TYPES, extractRichSegments, AttachmentError,
+  attachmentFailure, attachmentRoot, normalizeChatImage, validateAttachment,
+  writeAttachment, readAttachment, removeAttachment, CHAT_FILE_BYTES,
 } from '@josi-ce/storage';
 import { asyncRoute, param } from './async.js';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
@@ -145,7 +146,23 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       // Multipart headers conventionally arrive as Latin-1; recover UTF-8
       // names without accepting invalid byte sequences.
       try { originalname = new TextDecoder('utf-8', {fatal:true}).decode(Buffer.from(originalname,'latin1')); } catch { /* retain the supplied name */ }
-      const { filename, contentType, extension } = validateAttachment(originalname, req.file.mimetype, req.file.buffer);
+      let normalized;
+      try {
+        normalized = await normalizeChatImage({
+          filename: originalname,
+          declaredContentType: req.file.mimetype || 'application/octet-stream',
+          bytes: req.file.buffer,
+        });
+      } catch (error) {
+        if (error instanceof ChatImageError) throw new AttachmentError(400, 'invalid_heic', error.message);
+        throw error;
+      }
+      const { bytes } = normalized;
+      const { filename, contentType, extension } = validateAttachment(
+        normalized.filename,
+        normalized.contentType,
+        bytes,
+      );
       const id = randomUUID();
       // Reserve counts/bytes in one database statement before writing bytes.
       // Database triggers serialize concurrent upload/delete quota changes.
@@ -153,7 +170,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         await db.query(`insert into chat_attachments
           (id,owner_user_id,thread_id,filename,content_type,byte_size,storage_path,storage_state)
           values($1,$2,$3,$4,$5,$6,$7,'pending')`,
-          [id,req.user!.id,thread.id,filename,contentType,req.file.size,join(uploadDir,id)]);
+          [id,req.user!.id,thread.id,filename,contentType,bytes.length,join(uploadDir,id)]);
       } catch (error) {
         const message = (error as Error).message;
         if (message.includes('attachment_thread_quota')) throw new AttachmentError(413, 'thread_quota', 'This conversation has reached its 100-file limit. Delete an unused attachment or start another conversation.');
@@ -162,8 +179,8 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         throw error;
       }
       try {
-        await writeAttachment(id, req.file.buffer, uploadDir);
-        const segments = await extractRichSegments({ extension, bytes: req.file.buffer }).catch(() => null);
+        await writeAttachment(id, bytes, uploadDir);
+        const segments = await extractRichSegments({ extension, bytes }).catch(() => null);
         await db.query(`update chat_attachments set storage_state='ready',extracted_text=$2 where id=$1`,
           [id,segments?.map(s => s.content).join('\n').slice(0,100_000) || null]);
       } catch (error) {
@@ -171,8 +188,8 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         await removeAttachment(id, uploadDir).catch(() => undefined);
         throw attachmentFailure(error);
       }
-      await appendEvent(db,{actorUserId:req.user!.id,actor:'user',kind:'attachment.uploaded',subjectType:'thread',subjectId:thread.id,payload:{attachmentId:id,bytes:req.file.size}});
-      return res.status(201).json({ attachment: { id, filename, contentType, byteSize: req.file.size } });
+      await appendEvent(db,{actorUserId:req.user!.id,actor:'user',kind:'attachment.uploaded',subjectType:'thread',subjectId:thread.id,payload:{attachmentId:id,bytes:bytes.length}});
+      return res.status(201).json({ attachment: { id, filename, contentType, byteSize: bytes.length } });
     }));
 
   r.get('/attachments/:attachmentId', handle(async (req, res) => {

@@ -1,5 +1,20 @@
 # Clean-install acceptance
 
+## HEIC/HEIF chat attachments (v0.1.30)
+
+- A real HEIC fixture is detected by content and converted to JPEG in an
+  isolated worker before persistence or model delivery.
+- Uppercase `.HEIC`, generic MIME types, and HEIF-compatible brands are
+  accepted; disguised or corrupt files are rejected without trusting the
+  extension.
+- Converted output is checked for a complete JPEG signature and the 20 MB
+  post-conversion ceiling.
+- Unit coverage exercises detection, conversion metadata, generic MIME input,
+  disguised files, invalid converter output, and unchanged non-HEIC images.
+- TypeScript, production build, dependency audit, secret scan, full Linux test
+  suite, and multi-architecture release verification must pass before gate is
+  upgraded.
+
 A record of what has actually been run, on what, and when. **A profile with no
 row in the results table has not been tested**, whatever the script's existence
 might suggest.
