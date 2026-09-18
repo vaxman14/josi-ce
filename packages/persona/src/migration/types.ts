@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { memoryFingerprint } from '../memory.js';
 
 export const LIMITS = Object.freeze({
   uploadBytes: 8 * 1024 * 1024, expandedBytes: 16 * 1024 * 1024,
@@ -48,7 +49,7 @@ export function hash(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 export function memoryKey(content: string): string {
-  return hash(content.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase());
+  return memoryFingerprint(content);
 }
 export function selectable(item: MigrationItem): boolean {
   return item.classification === 'imported unchanged' || item.classification === 'transformed';

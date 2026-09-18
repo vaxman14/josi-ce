@@ -132,7 +132,7 @@ export function AssistantMigration() {
       <p className="text-sm">For individual MEMORY.md or USER.md files, choose the source explicitly. Hermes supports its memories files and flat JSONL session export; OpenClaw supports workspace Markdown and Pi session JSONL v3. Other formats will be reported.</p>
       <label htmlFor="migration-files" className="block text-sm font-medium">Choose your ZIP, Markdown, JSON or JSONL files</label>
       <input ref={input} id="migration-files" className={fieldClass} type="file" multiple accept=".zip,.md,.json,.jsonl" disabled={!!busy} onChange={event => setFiles(Array.from(event.target.files ?? []))} aria-describedby="migration-limits" />
-      <p id="migration-limits" className="text-xs text-muted-foreground">One ZIP or up to 100 individual files; 8 MiB upload total, 200 ZIP entries, 1 MiB per expanded file, 16 MiB expanded total. Files are processed in memory; raw archives are not retained. Previews expire after 10 minutes or a server restart.</p>
+      <p id="migration-limits" className="text-xs text-muted-foreground">One ZIP or up to 100 individual files; 8 MiB upload total, 200 ZIP entries, 1 MiB per expanded file, 16 MiB expanded total. Raw archives are processed in memory and not retained. Sanitized previews are kept briefly in the installation database and expire after 10 minutes.</p>
       <Button disabled={!!busy || !files.length} onClick={() => void scan()}>Scan and preview</Button>
     </div>}
     {(step === 'select' || step === 'review') && shown && <div className="space-y-4">
@@ -151,8 +151,8 @@ export function AssistantMigration() {
         <div className="flex flex-wrap items-start justify-between gap-2"><p className="break-all text-sm font-medium">{item.provenance.path} · {item.provenance.locator}</p>
           <span className="text-xs font-semibold">{item.classification}</span></div>
         <p className="text-xs text-muted-foreground">{item.provenance.source} · {item.provenance.format}</p><p className="text-sm">{item.reason}</p>
-        {step === 'select' && (canImport(item) || editable(item)) && <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={selected.has(item.id)} disabled={!!busy} onChange={event => toggle(item.id, event.target.checked)} />Select this item</label>}
-        {step === 'select' && editable(item) ? <label className="block text-sm">Proposed memory — edit or redact<textarea className={`${fieldClass} min-h-24`} maxLength={2000} value={edits[item.id] ?? item.content} disabled={!!busy}
+        {step === 'select' && (canImport(item) || editable(item)) && <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" aria-label={`Select ${item.provenance.path} ${item.provenance.locator}`} checked={selected.has(item.id)} disabled={!!busy} onChange={event => toggle(item.id, event.target.checked)} />Select this item</label>}
+        {step === 'select' && editable(item) ? <label className="block text-sm">Proposed memory — edit or redact<textarea aria-label={`Edit proposed memory from ${item.provenance.path} ${item.provenance.locator}`} className={`${fieldClass} min-h-24`} maxLength={2000} value={edits[item.id] ?? item.content} disabled={!!busy}
           onChange={event => { setEdits(previous => ({ ...previous, [item.id]: event.target.value })); toggle(item.id, true); }} /></label>
           : item.content && <details><summary className="min-h-11 cursor-pointer py-2 text-sm">View proposed content</summary><pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-sm">{item.content}</pre></details>}
       </article>)}</div>

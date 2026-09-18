@@ -16,7 +16,7 @@ import { Router, type Request, type Response } from 'express';
 import { loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import { capabilitiesOf, chat, featureAvailable, loadStoredProvider } from '@josi-ce/llm';
 import {
-  CAUTION_ORDER, FIELDS, assembleSystemContext, MemoryError, ProfileError, ProfileTooLarge,
+  CAUTION_ORDER, FIELDS, assembleSystemContext, MemoryError, MigrationError, ProfileError, ProfileTooLarge,
   addMemory, assemblePrompt, confirmMemory, decideSuggestion, deleteMemory,
   exportProfiles, getProfile, importProfiles, listMemories, listVersions,
   SOUL_PRESETS, loadAll, narrowPolicy, parseProfile, presetContent,
@@ -463,7 +463,8 @@ export function personaRoutes(ctx: PersonaRoutesCtx): Router {
         });
       } catch (error) {
         if (error instanceof ProfileError) throw error;
-        return res.status(400).json({ error: 'Import could not be completed. Use Data & Backup migration to scan and review the bundle.' });
+        if (error instanceof MigrationError) return res.status(error.status).json({ error: error.message });
+        return res.status(500).json({ error: 'Import could not be completed. No partial import was saved. Try again.' });
       }
       const ignored = Object.entries(result.profiles).flatMap(([layer, parsed]) =>
         parsed.ignored.map((i) => ({ layer, ...i })));

@@ -113,16 +113,21 @@ function validateItem(item: MigrationItem): void {
  * sent through a pool, no compensating deletes, and no overwrite/upsert. */
 export async function commitMigration(db: Db, scope: MigrationScope, reviewed: MigrationManifest, batchId: string = randomUUID()): Promise<MigrationReceipt> {
   if (!db.transaction) throw new MigrationError('Atomic transactions are unavailable; nothing was imported.', 503);
-  if (!UUID.test(batchId) || reviewed.version !== 1 || reviewed.items.length > LIMITS.items) throw new MigrationError('Invalid migration review.');
-  return db.transaction(async tx => {
-    await assertScope(tx, scope, true);
-    const [existing] = await tx.query<{ receipt: MigrationReceipt; rolled_back_at: string | null }>(
+  return db.transaction(tx => commitMigrationInTransaction(tx, scope, reviewed, batchId));
+}
+
+/** Commit on a transaction already pinned by the caller. This exists so the
+ * durable preview row and imported data can be locked/committed atomically. */
+export async function commitMigrationInTransaction(db: Db, scope: MigrationScope, reviewed: MigrationManifest, batchId: string): Promise<MigrationReceipt> {
+    if (!UUID.test(batchId) || reviewed.version !== 1 || reviewed.items.length > LIMITS.items) throw new MigrationError('Invalid migration review.');
+    await assertScope(db, scope, true);
+    const [existing] = await db.query<{ receipt: MigrationReceipt; rolled_back_at: string | null }>(
       'select receipt, rolled_back_at from migration_batches where id = $1 and owner_user_id = $2 and installation_id = $3',
       [batchId, scope.ownerUserId, scope.installationId]);
     if (existing?.rolled_back_at) throw new MigrationError('This batch has already been rolled back.', 409);
     if (existing) return existing.receipt; // safe response retry; never import twice
     // Recheck races. If state changed since final review, commit nothing.
-    const checked = await previewMigration(tx, scope, reviewed);
+    const checked = await previewMigration(db, scope, reviewed);
     if (checked.items.some((item, i) => item.classification !== reviewed.items[i].classification)) {
       throw new MigrationError('Your data changed since review. Review the selection again before importing.', 409);
     }
@@ -131,27 +136,26 @@ export async function commitMigration(db: Db, scope: MigrationScope, reviewed: M
     for (const item of checked.items) counts[item.classification]++;
     const receipt: MigrationReceipt = { batchId, created: 0, counts,
       items: checked.items.map(({ id, category, classification, reason, provenance }) => ({ id, category, classification, reason, provenance })) };
-    await tx.query('insert into migration_batches(id, owner_user_id, installation_id, manifest_version) values ($1,$2,$3,1)', [batchId, scope.ownerUserId, scope.installationId]);
+    await db.query('insert into migration_batches(id, owner_user_id, installation_id, manifest_version) values ($1,$2,$3,1)', [batchId, scope.ownerUserId, scope.installationId]);
     for (const item of checked.items.filter(selectable)) {
       if (item.profileKind) {
-        await tx.query(`insert into persona_profiles(owner_user_id,kind,content,parsed,ignored,migration_batch_id,source_provenance)
+        await db.query(`insert into persona_profiles(owner_user_id,kind,content,parsed,ignored,migration_batch_id,source_provenance)
           values ($1,$2,$3,$4,$5,$6,$7)`, [scope.ownerUserId, item.profileKind, item.content, json(item.values), json([]), batchId, json(item.provenance)]);
       } else if (item.category === 'memory') {
-        await tx.query(`insert into memories(owner_user_id,content,provenance,pinned,confirmed_at,created_at,migration_batch_id,source_provenance)
-          values ($1,$2,$3,$4,now(),clock_timestamp(),$5,$6)`, [scope.ownerUserId, item.content,
-          item.memoryProvenance ?? `Imported from ${item.provenance.source}`, item.pinned ?? false, batchId, json(item.provenance)]);
+        await db.query(`insert into memories(owner_user_id,content,provenance,pinned,confirmed_at,created_at,migration_batch_id,source_provenance,content_fingerprint)
+          values ($1,$2,$3,$4,now(),clock_timestamp(),$5,$6,$7)`, [scope.ownerUserId, item.content,
+          item.memoryProvenance ?? `Imported from ${item.provenance.source}`, item.pinned ?? false, batchId, json(item.provenance), memoryKey(item.content!)]);
       } else {
-        await tx.query(`insert into migration_archives(owner_user_id,migration_batch_id,source_provenance,content,fingerprint)
+        await db.query(`insert into migration_archives(owner_user_id,migration_batch_id,source_provenance,content,fingerprint)
           values ($1,$2,$3,$4,$5)`, [scope.ownerUserId, batchId, json(item.provenance), item.content, hash(item.content!)]);
       }
       receipt.created++;
     }
-    await tx.query('update migration_batches set receipt = $1 where id = $2 and owner_user_id = $3 and installation_id = $4',
+    await db.query('update migration_batches set receipt = $1 where id = $2 and owner_user_id = $3 and installation_id = $4',
       [json(receipt), batchId, scope.ownerUserId, scope.installationId]);
-    await appendEvent(tx, { actorUserId: scope.ownerUserId, actor: 'user', kind: 'migration.committed', subjectType: 'migration_batch', subjectId: batchId,
+    await appendEvent(db, { actorUserId: scope.ownerUserId, actor: 'user', kind: 'migration.committed', subjectType: 'migration_batch', subjectId: batchId,
       payload: { created: receipt.created, counts } });
     return receipt;
-  });
 }
 
 export async function listMigrationBatches(db: Db, scope: MigrationScope, offset = 0) {
@@ -174,26 +178,29 @@ export async function readMigrationBatch(db: Db, scope: MigrationScope, id: stri
 }
 
 export async function rollbackMigration(db: Db, scope: MigrationScope, batchId: string): Promise<{ removed: number }> {
-  if (!UUID.test(batchId)) throw new MigrationError('Not found.', 404);
   if (!db.transaction) throw new MigrationError('Atomic transactions are unavailable.', 503);
-  return db.transaction(async tx => {
-    await assertScope(tx, scope, true);
-    const [batch] = await tx.query<{ rolled_back_at: string | null }>(
+  return db.transaction(tx => rollbackMigrationInTransaction(tx, scope, batchId));
+}
+
+/** Roll back on a transaction already pinned by the caller. */
+export async function rollbackMigrationInTransaction(db: Db, scope: MigrationScope, batchId: string): Promise<{ removed: number }> {
+    if (!UUID.test(batchId)) throw new MigrationError('Not found.', 404);
+    await assertScope(db, scope, true);
+    const [batch] = await db.query<{ rolled_back_at: string | null }>(
       `select rolled_back_at from migration_batches where id = $1 and owner_user_id = $2 and installation_id = $3 for update`,
       [batchId, scope.ownerUserId, scope.installationId]);
     if (!batch) throw new MigrationError('Not found.', 404);
     if (batch.rolled_back_at) return { removed: 0 };
     let removed = 0;
     for (const table of ['migration_archives', 'memories', 'persona_profiles'] as const) {
-      const rows = await tx.query(`delete from ${table} where migration_batch_id = $1 and owner_user_id = $2 returning id`, [batchId, scope.ownerUserId]);
+      const rows = await db.query(`delete from ${table} where migration_batch_id = $1 and owner_user_id = $2 returning id`, [batchId, scope.ownerUserId]);
       removed += rows.length;
     }
     // The receipt contains no imported text. Keep it so rollback is accountable.
-    await tx.query('update migration_batches set rolled_back_at = now() where id = $1 and owner_user_id = $2 and installation_id = $3',
+    await db.query('update migration_batches set rolled_back_at = now() where id = $1 and owner_user_id = $2 and installation_id = $3',
       [batchId, scope.ownerUserId, scope.installationId]);
-    await appendEvent(tx, { actorUserId: scope.ownerUserId, actor: 'user', kind: 'migration.rolled_back', subjectType: 'migration_batch', subjectId: batchId, payload: { removed } });
+    await appendEvent(db, { actorUserId: scope.ownerUserId, actor: 'user', kind: 'migration.rolled_back', subjectType: 'migration_batch', subjectId: batchId, payload: { removed } });
     return { removed };
-  });
 }
 
 export async function searchMigrationArchives(db: Db, scope: MigrationScope, query = '', offset = 0) {

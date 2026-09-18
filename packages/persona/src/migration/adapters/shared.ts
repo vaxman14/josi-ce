@@ -23,6 +23,8 @@ export function note(ctx: AdapterContext, format: string, locator: string, categ
 export function memory(ctx: AdapterContext, format: string, locator: string, content: string, pinned = false, provenance?: string): void {
   if (!content.trim()) return note(ctx, format, locator, 'memory', 'Empty memory.', 'ignored');
   if (content.length > 2000) return note(ctx, format, locator, 'memory', 'Memory exceeds 2,000 characters; shorten it in the source and scan again.');
+  if (findAuthorityAttempts('memory', content).length) return note(ctx, format, locator, 'memory',
+    'Instruction-like authority or approval-bypass language is quarantined; rewrite it as a plain personal fact before import.', 'sensitive/refused');
   ctx.emit(format, locator, { category: 'memory', classification: 'imported unchanged', content, pinned,
     memoryProvenance: provenance, reason: 'Separate owner-scoped fact; review before saving. No instruction authority.' });
 }

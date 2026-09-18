@@ -1,25 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
-import type { Db } from '@josi-ce/core';
+import { json, type Db } from '@josi-ce/core';
 import {
-  LIMITS, MigrationError, commitMigration, listMigrationBatches, migrationScope,
-  previewMigration, readMigrationArchive, readMigrationBatch, rollbackMigration, scanMigration,
+  LIMITS, MigrationError, commitMigrationInTransaction, listMigrationBatches, migrationScope,
+  previewMigration, readMigrationArchive, readMigrationBatch, rollbackMigrationInTransaction, scanMigration,
   searchMigrationArchives, selectable, selectMigration, unpackUploads,
   type MigrationManifest, type MigrationReceipt, type MigrationScope, type MigrationSource,
 } from '@josi-ce/persona';
 import { requireAuth } from './authz.js';
 import { param } from './async.js';
 
-interface Preview {
-  scope: MigrationScope;
-  expires: number;
-  scanned?: MigrationManifest;
-  reviewed?: MigrationManifest;
-  revision?: string;
-  receipt?: MigrationReceipt;
-  busy: boolean;
-  size: number;
+interface PreviewRow {
+  id: string;
+  owner_user_id: string;
+  installation_id: string;
+  scanned: MigrationManifest | null;
+  reviewed: MigrationManifest | null;
+  revision: string | null;
+  receipt: MigrationReceipt | null;
+  expires_at: string | Date;
 }
 
 /** Aggregate limit enforced WHILE streaming, not after memoryStorage has
@@ -48,14 +48,7 @@ function receiveUpload() {
 
 export function migrationRoutes(db: Db): Router {
   const router = Router();
-  const previews = new Map<string, Preview>();
   const uploads = new Set<string>();
-  // Bounded, expiring process memory. Restarts discard previews; no raw archive,
-  // plaintext staging table or client-supplied manifest is ever authoritative.
-  const clean = () => { for (const [id, preview] of previews) if (!preview.busy && preview.expires <= Date.now()) previews.delete(id); };
-  const timer = setInterval(clean, 30_000); timer.unref();
-  const memorySize = () => [...previews.values()].reduce((sum, preview) => sum + preview.size, 0);
-  const fit = () => { if (previews.size >= 20 || memorySize() > 32 * 1024 * 1024) throw new MigrationError('Migration preview capacity is full. Close another preview or try again shortly.', 429); };
   router.use(requireAuth, (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   const handle = (fn: (req: Request, res: Response, scope: MigrationScope) => Promise<unknown>) => async (req: Request, res: Response) => {
     try { await fn(req, res, await migrationScope(db, req.user!.id)); }
@@ -65,13 +58,15 @@ export function migrationRoutes(db: Db): Router {
       if (!res.headersSent) res.status(known ? error.status : 500).json({ error: known ? error.message : 'Migration could not be completed. No partial import was saved. Try again.' });
     }
   };
-  const get = (id: string, scope: MigrationScope) => {
-    clean();
-    const preview = previews.get(id);
-    if (!preview || preview.scope.ownerUserId !== scope.ownerUserId || preview.scope.installationId !== scope.installationId) {
+  const prune = () => db.query('delete from migration_previews where expires_at <= $1 and receipt is null', [new Date(Date.now())]);
+  const load = async (conn: Db, id: string, scope: MigrationScope, lock = false) => {
+    const [preview] = await conn.query<PreviewRow>(
+      `select id,owner_user_id,installation_id,scanned,reviewed,revision,receipt,expires_at
+       from migration_previews where id = $1 and owner_user_id = $2 and installation_id = $3${lock ? ' for update' : ''}`,
+      [id, scope.ownerUserId, scope.installationId]);
+    if (!preview || (!preview.receipt && new Date(preview.expires_at).getTime() <= Date.now())) {
       throw new MigrationError('Preview not found or expired. Scan your files again.', 404);
     }
-    if (preview.busy) throw new MigrationError('This migration is already being committed.', 409);
     return preview;
   };
   const offset = (req: Request) => {
@@ -82,7 +77,6 @@ export function migrationRoutes(db: Db): Router {
   router.post('/scan', handle(async (req, res, scope) => {
     const source = (req.query.source ?? 'auto') as MigrationSource | 'auto';
     if (!['auto', 'openclaw', 'hermes', 'josi'].includes(source)) throw new MigrationError('Choose a supported source.');
-    clean(); fit();
     if (uploads.has(scope.ownerUserId) || uploads.size >= 2) throw new MigrationError('Another scan is in progress. Try again shortly.', 429);
     uploads.add(scope.ownerUserId);
     try {
@@ -95,48 +89,98 @@ export function migrationRoutes(db: Db): Router {
       try { scanned = scanMigration(unpacked, source); } finally { unpacked.forEach(file => file.bytes.fill(0)); }
       const report = await previewMigration(db, scope, scanned);
       const size = Buffer.byteLength(JSON.stringify(scanned));
-      if (memorySize() + size > 32 * 1024 * 1024) throw new MigrationError('Preview capacity exceeded. Use a smaller export.', 413);
-      // Only one unfinished preview per owner. An old tab gets a clear expiry.
-      for (const [id, preview] of previews) if (preview.scope.ownerUserId === scope.ownerUserId && !preview.busy && !preview.receipt) previews.delete(id);
-      const id = randomUUID(), expires = Date.now() + LIMITS.previewMs;
-      previews.set(id, { scope, expires, scanned, size, busy: false });
-      res.json({ previewId: id, expiresAt: new Date(expires).toISOString(), manifest: report, limits: LIMITS });
+      if (size > 16 * 1024 * 1024) throw new MigrationError('Preview capacity exceeded. Use a smaller export.', 413);
+      if (!db.transaction) throw new MigrationError('Durable previews are unavailable.', 503);
+      const id = randomUUID(), expires = new Date(Date.now() + LIMITS.previewMs);
+      await db.transaction(async tx => {
+        // Shared installation lock makes capacity and one-preview-per-owner
+        // enforcement deterministic across API replicas.
+        await tx.query('select install_id from install_identity where id = true for update');
+        await tx.query('delete from migration_previews where expires_at <= $1 and receipt is null', [new Date(Date.now())]);
+        const [capacity] = await tx.query<{ count: string; bytes: string }>(
+          `select count(*)::text as count, coalesce(sum(pg_column_size(scanned) + coalesce(pg_column_size(reviewed),0)),0)::text as bytes from migration_previews where receipt is null`);
+        if (Number(capacity.count) >= 20 || Number(capacity.bytes) + size > 32 * 1024 * 1024) throw new MigrationError('Migration preview capacity is full. Close another preview or try again shortly.', 429);
+        await tx.query('delete from migration_previews where owner_user_id = $1 and installation_id = $2 and receipt is null', [scope.ownerUserId, scope.installationId]);
+        await tx.query(`insert into migration_previews(id,owner_user_id,installation_id,scanned,expires_at) values($1,$2,$3,$4,$5)`,
+          [id, scope.ownerUserId, scope.installationId, json(scanned), expires]);
+      });
+      res.json({ previewId: id, expiresAt: expires.toISOString(), manifest: report, limits: LIMITS });
     } finally {
       (req.files as Express.Multer.File[] | undefined)?.forEach(file => file.buffer?.fill(0));
       uploads.delete(scope.ownerUserId);
     }
   }));
   router.post('/:id/review', handle(async (req, res, scope) => {
-    const preview = get(param(req, 'id'), scope);
-    if (!preview.scanned || preview.receipt) throw new MigrationError('Migration is already committed.', 409);
-    preview.busy = true;
-    try {
-      const reviewed = await previewMigration(db, scope, selectMigration(preview.scanned, req.body?.selections));
+    if (!db.transaction) throw new MigrationError('Durable previews are unavailable.', 503);
+    await prune();
+    const result = await db.transaction(async tx => {
+      await tx.query('select install_id from install_identity where id = true for update');
+      const preview = await load(tx, param(req, 'id'), scope, true);
+      if (!preview.scanned || preview.receipt) throw new MigrationError('Migration is already committed.', 409);
+      const reviewed = await previewMigration(tx, scope, selectMigration(preview.scanned, req.body?.selections));
       const size = Buffer.byteLength(JSON.stringify(preview.scanned)) + Buffer.byteLength(JSON.stringify(reviewed));
-      if (memorySize() - preview.size + size > 32 * 1024 * 1024) throw new MigrationError('Preview capacity exceeded. Use a smaller selection.', 413);
-      preview.size = size; preview.reviewed = reviewed; preview.revision = randomUUID();
-      res.json({ revision: preview.revision, manifest: reviewed });
-    } finally { preview.busy = false; }
+      if (size > 32 * 1024 * 1024) throw new MigrationError('Preview capacity exceeded. Use a smaller selection.', 413);
+      const [capacity] = await tx.query<{ bytes: string }>(
+        `select coalesce(sum(pg_column_size(scanned) + coalesce(pg_column_size(reviewed),0)),0)::text as bytes
+         from migration_previews where receipt is null and id <> $1`, [preview.id]);
+      if (Number(capacity.bytes) + size > 32 * 1024 * 1024) throw new MigrationError('Migration preview capacity is full. Close another preview or try again shortly.', 429);
+      const revision = randomUUID();
+      await tx.query(`update migration_previews set reviewed=$1,revision=$2 where id=$3 and owner_user_id=$4 and installation_id=$5`,
+        [json(reviewed), revision, preview.id, scope.ownerUserId, scope.installationId]);
+      return { revision, manifest: reviewed };
+    });
+    res.json(result);
   }));
   router.post('/:id/commit', handle(async (req, res, scope) => {
-    const id = param(req, 'id'), preview = get(id, scope);
-    if (preview.receipt) return res.json({ receipt: preview.receipt });
-    if (!preview.reviewed || req.body?.revision !== preview.revision || req.body?.confirm !== 'import') throw new MigrationError('Review this selection before importing.', 409);
-    if (!preview.reviewed.items.some(selectable)) throw new MigrationError('There are no selected supported items to import.');
-    preview.busy = true;
+    if (!db.transaction) throw new MigrationError('Atomic transactions are unavailable; nothing was imported.', 503);
+    await prune();
+    let result: MigrationReceipt;
     try {
-      preview.receipt = await commitMigration(db, scope, preview.reviewed, id);
-      delete preview.scanned; delete preview.reviewed; preview.size = Buffer.byteLength(JSON.stringify(preview.receipt));
-      res.json({ receipt: preview.receipt });
-    } finally { preview.busy = false; }
+      result = await db.transaction(async tx => {
+        const preview = await load(tx, param(req, 'id'), scope, true);
+        if (preview.receipt) {
+          const [batch] = await tx.query<{ rolled_back_at: string | null }>(
+            'select rolled_back_at from migration_batches where id=$1 and owner_user_id=$2 and installation_id=$3',
+            [preview.id, scope.ownerUserId, scope.installationId]);
+          if (!batch || batch.rolled_back_at) throw new MigrationError('This batch has already been rolled back.', 409);
+          return preview.receipt;
+        }
+        if (!preview.reviewed || req.body?.revision !== preview.revision || req.body?.confirm !== 'import') throw new MigrationError('Review this selection before importing.', 409);
+        if (!preview.reviewed.items.some(selectable)) throw new MigrationError('There are no selected supported items to import.');
+        const receipt = await commitMigrationInTransaction(tx, scope, preview.reviewed, preview.id);
+        await tx.query(`update migration_previews set scanned=null,reviewed=null,revision=null,receipt=$1 where id=$2 and owner_user_id=$3 and installation_id=$4`,
+          [json(receipt), preview.id, scope.ownerUserId, scope.installationId]);
+        return receipt;
+      });
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {
+        throw new MigrationError('Your data changed since review. Review the selection again before importing.', 409);
+      }
+      throw error;
+    }
+    res.json({ receipt: result });
   }));
-  router.delete('/previews/:id', handle(async (req, res, scope) => { get(param(req, 'id'), scope); previews.delete(param(req, 'id')); res.json({ discarded: true }); }));
+  router.delete('/previews/:id', handle(async (req, res, scope) => {
+    if (!db.transaction) throw new MigrationError('Durable previews are unavailable.', 503);
+    await db.transaction(async tx => {
+      const preview = await load(tx, param(req, 'id'), scope, true);
+      if (preview.receipt) throw new MigrationError('Committed migrations are retained in batch history.', 409);
+      await tx.query('delete from migration_previews where id=$1 and owner_user_id=$2 and installation_id=$3', [preview.id, scope.ownerUserId, scope.installationId]);
+    });
+    res.json({ discarded: true });
+  }));
   router.get('/batches', handle(async (req, res, scope) => res.json({ batches: await listMigrationBatches(db, scope, offset(req)) })));
   router.get('/batches/:id', handle(async (req, res, scope) => res.json(await readMigrationBatch(db, scope, param(req, 'id')))));
   router.post('/batches/:id/rollback', handle(async (req, res, scope) => {
     if (req.body?.confirm !== 'rollback') throw new MigrationError('Confirm rollback of this batch.');
-    const result = await rollbackMigration(db, scope, param(req, 'id'));
-    previews.delete(param(req, 'id'));
+    if (!db.transaction) throw new MigrationError('Atomic transactions are unavailable.', 503);
+    const id = param(req, 'id');
+    const result = await db.transaction(async tx => {
+      await tx.query('select id from migration_previews where id=$1 and owner_user_id=$2 and installation_id=$3 for update', [id, scope.ownerUserId, scope.installationId]);
+      const rolledBack = await rollbackMigrationInTransaction(tx, scope, id);
+      await tx.query('delete from migration_previews where id=$1 and owner_user_id=$2 and installation_id=$3', [id, scope.ownerUserId, scope.installationId]);
+      return rolledBack;
+    });
     res.json(result);
   }));
   router.get('/archives', handle(async (req, res, scope) => {

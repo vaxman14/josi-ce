@@ -17,6 +17,7 @@
 //      a document purges what was learned from it — otherwise "I revoked that"
 //      and "it can still tell you what was in it" are both true, which is the
 //      worst possible combination.
+import { createHash } from 'node:crypto';
 import { appendEvent, type Db } from '@josi-ce/core';
 
 export type SourceKind = 'manual' | 'conversation' | 'document' | 'email' | 'contact' | 'calendar';
@@ -67,6 +68,11 @@ export function refuseSecret(content: string): string | null {
   return null;
 }
 
+/** Stable owner-scoped duplicate key shared with migration imports. */
+export function memoryFingerprint(content: string): string {
+  return createHash('sha256').update(content.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase()).digest('hex');
+}
+
 export async function addMemory(
   db: Db,
   args: {
@@ -92,14 +98,14 @@ export async function addMemory(
 
   const [row] = await db.query<Memory>(
     `insert into memories
-       (owner_user_id, content, source_kind, source_id, provenance, confidence, confirmed_at)
-     values ($1, $2, $3, $4, $5, $6, case when $3 = 'manual' then now() else null end)
+       (owner_user_id, content, source_kind, source_id, provenance, confidence, confirmed_at, content_fingerprint)
+     values ($1, $2, $3, $4, $5, $6, case when $3 = 'manual' then now() else null end, $7)
      returning *`,
     [
       args.ownerUserId, content, args.sourceKind ?? 'manual',
       args.sourceKind === 'manual' || !args.sourceKind ? null : args.sourceId ?? null,
       args.provenance ?? 'You added this',
-      Math.min(1, Math.max(0, args.confidence ?? 1)),
+      Math.min(1, Math.max(0, args.confidence ?? 1)), memoryFingerprint(content),
     ],
   );
 
@@ -197,10 +203,12 @@ export async function updateMemory(
   const [row] = await db.query<Memory>(
     `update memories set
        content = coalesce($3, content),
-       pinned = coalesce($4, pinned)
+       pinned = coalesce($4, pinned),
+       content_fingerprint = case when $3 is null then content_fingerprint else $5 end
      where id = $1 and owner_user_id = $2
      returning *`,
-    [args.id, args.ownerUserId, args.content ?? null, args.pinned ?? null],
+    [args.id, args.ownerUserId, args.content ?? null, args.pinned ?? null,
+      args.content === undefined ? null : memoryFingerprint(args.content)],
   );
   // 404, not 403 — the Phase 1 rule. Somebody else's memory is not theirs to
   // know exists.

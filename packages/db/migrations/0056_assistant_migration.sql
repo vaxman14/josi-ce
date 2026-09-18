@@ -12,13 +12,35 @@ create table migration_batches (
 );
 create index migration_batches_owner on migration_batches (installation_id, owner_user_id, created_at desc);
 
+-- Sanitized preview manifests live in PostgreSQL so scan/review/commit work
+-- across API replicas without request affinity. They expire quickly and raw
+-- uploaded bytes are never stored.
+create table migration_previews (
+  id uuid primary key,
+  owner_user_id uuid not null references users(id) on delete cascade,
+  installation_id uuid not null,
+  scanned jsonb,
+  reviewed jsonb,
+  revision uuid,
+  receipt jsonb,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  check (scanned is not null or receipt is not null),
+  check ((reviewed is null) = (revision is null))
+);
+create index migration_previews_owner on migration_previews (installation_id, owner_user_id, created_at desc);
+create index migration_previews_expiry on migration_previews (expires_at);
+
 alter table memories add column migration_batch_id uuid;
 alter table memories add column source_provenance jsonb;
+alter table memories add column content_fingerprint text;
 alter table memories add constraint memory_migration_owner
   foreign key (migration_batch_id, owner_user_id) references migration_batches(id, owner_user_id);
 alter table memories add constraint memory_migration_provenance
   check ((migration_batch_id is null) = (source_provenance is null));
 create index memories_migration on memories(migration_batch_id, owner_user_id) where migration_batch_id is not null;
+create unique index memories_owner_content_fingerprint
+  on memories(owner_user_id, content_fingerprint) where content_fingerprint is not null;
 
 alter table persona_profiles add column migration_batch_id uuid;
 alter table persona_profiles add column source_provenance jsonb;
@@ -45,4 +67,5 @@ create index migration_archives_search on migration_archives using gin (to_tsvec
 create index migration_archives_owner on migration_archives(owner_user_id, created_at desc, id);
 
 alter table migration_batches enable row level security;
+alter table migration_previews enable row level security;
 alter table migration_archives enable row level security;

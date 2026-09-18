@@ -9,9 +9,10 @@ export function migrationSecret(text: string): string | null {
   }
   if (refuseSecret(normalized)) return 'Likely credentials, private keys or payment data; file refused.';
   const patterns = [
-    /\b(?:password|passwd|passphrase|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|client[_ -]?secret|secret(?:[_ -]?key)?|session[_ -]?(?:key|token)|authorization|cookie|set-cookie)\b["']?\s*[:=]\s*["']?\S+/i,
+    /\b(?:password|passwd|passphrase|credential(?:s)?|api[_ .-]?key|access[_ .-]?token|refresh[_ .-]?token|id[_ .-]?token|client[_ .-]?secret|secret(?:[_ .-]?(?:access[_ .-]?key|key))?|session[_ .-]?(?:key|token)|authorization|cookie|set-cookie)\b["']?\s*[:=]\s*["']?\S+/i,
+    /\b(?:aws_secret_access_key|azure_client_secret|npm_auth_token|_authToken)\s*=\s*\S+/i,
     /\b(?:password|token|credential|cookie|api key|secret)\s+(?:is|was)\s+\S+/i,
-    /\b(?:sk-|xai-|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{16,}/,
+    /\b(?:sk-|xai-|gh[pousr]_|github_pat_|glpat-|xox[baprs]-)[A-Za-z0-9_-]{16,}/,
     /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/,
     /\bAIza[0-9A-Za-z_-]{35}\b/,
     /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,

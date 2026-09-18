@@ -92,11 +92,12 @@ names, keeping AGENTS a closed enum vocabulary.
 - Migration SQL verifies that owner is active and the installation matches.
   Imported rows reference `migration_batches` with a composite batch/owner FK.
   Reads/deletes use owner predicates; archives join the installation-scoped batch.
-- Scan/review has no database writes, network calls, model calls, command execution
-  or filesystem extraction. The client cannot submit a manifest for commit.
-  Revisions bind commit to the server's reviewed selection. Per-preview exclusion
-  prevents simultaneous review/commit races; the database owner lock and final
-  duplicate check protect commits across API processes.
+- Scan/review has no model calls, network calls, command execution or filesystem
+  extraction. Raw uploaded bytes are never persisted. Sanitized manifests are
+  stored briefly in owner/installation-scoped PostgreSQL rows so review and commit
+  work across API replicas. The client cannot submit a manifest for commit.
+  Revisions bind commit to the server's reviewed selection; row locks serialize
+  review/commit, and the database owner lock plus final duplicate check protect commits.
 - `Db.transaction` uses postgres.js `begin` (one reserved connection) and PGlite's
   transaction callback. There is no pooled `BEGIN`/`COMMIT` emulation. Batch rows,
   imported rows, provenance, receipt and content-free audit event commit together.
@@ -135,14 +136,15 @@ names, keeping AGENTS a closed enum vocabulary.
   memories**; other categories can be imported separately above that limit.
 - At most two concurrent uploads per API process, one per owner. One unfinished
   preview per owner, up to 20 retained previews and 32 MiB of manifest/receipt data
-  per process. Raw uploaded buffers are released/cleared after scanning. Pending
-  previews expire after ten minutes (cleanup within 30 seconds), on discard or on
-  restart. Expiry is checked before use. Committed data remains until deleted or
-  rolled back; raw archives are never saved and encrypted archive retention is not
-  offered by this feature.
-- Pending preview state lives in API process memory. CE's single API process works
-  directly; multiple replicas need request affinity. Losing a process requires a
-  new scan. After an uncertain commit response, consult batch history first.
+  per installation. Raw uploaded buffers are released/cleared after scanning.
+  Sanitized preview manifests live in PostgreSQL and expire after ten minutes, on
+  discard, or opportunistic cleanup. Expiry is checked before use. Committed data
+  remains until deleted or rolled back; raw archives are never saved and encrypted
+  archive retention is not offered by this feature.
+- Preview rows and commit locks are shared through PostgreSQL, so multiple API
+  replicas do not require request affinity. A commit response can be retried on
+  another replica while its retained preview receipt remains valid; batch history
+  is also authoritative after an uncertain response.
 - Full receipts are fetched individually; batch/archive lists return 20 records
   per page. No background migration, automatic external action or live source
   connection is created.

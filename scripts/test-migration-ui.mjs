@@ -24,9 +24,13 @@ try {
   const edge = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
   browser = await chromium.launch({ headless: true, ...(existsSync(chromium.executablePath()) ? {} : existsSync(edge) ? { executablePath: edge } : {}) });
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await db.query('delete from migration_previews where owner_user_id = $1', [user.id]);
     await db.query('delete from memories where owner_user_id = $1', [user.id]);
+    await db.query('delete from persona_versions where profile_id in (select id from persona_profiles where owner_user_id = $1)', [user.id]);
+    await db.query('delete from persona_profiles where owner_user_id = $1', [user.id]);
     await db.query('delete from migration_batches where owner_user_id = $1', [user.id]);
-    const context = await browser.newContext({ viewport });
+    const mobile = viewport.width < 500;
+    const context = await browser.newContext({ viewport, isMobile: mobile, hasTouch: mobile });
     const page = await context.newPage(); const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await context.request.get(`${base}/api/auth/csrf`);
@@ -41,8 +45,8 @@ try {
     await page.getByRole('button', { name: 'Scan and preview', exact: true }).click();
     await page.getByText('Dry run: nothing has been saved.', { exact: false }).waitFor();
     assert.equal((await db.query('select id from memories')).length, 0);
-    await page.getByLabel('Proposed memory — edit or redact').first().fill('Synthetic edited sailing preference');
-    await page.getByRole('checkbox', { name: 'Select this item', exact: true }).last().check();
+    await page.getByLabel(/Edit proposed memory from MEMORY\.md/).first().fill('Synthetic edited sailing preference');
+    await page.getByRole('checkbox', { name: /Select MEMORY\.md/ }).last().check();
     assert.equal(await page.evaluate(() => window.migrationUnsafe), undefined);
     await page.screenshot({ path: `${output}/${viewport.width}-preview.png`, fullPage: true });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'No horizontal overflow');
@@ -58,9 +62,22 @@ try {
     await page.getByRole('button', { name: 'Confirm rollback', exact: true }).click();
     await page.getByText('Rollback completed. 2 rows removed.', { exact: true }).waitFor();
     assert.equal((await db.query('select id from memories')).length, 0);
+
+    // An occupied profile layer is an explicit, non-overwriting conflict.
+    await page.getByRole('button', { name: 'Start another migration', exact: true }).click();
+    await db.query(`insert into persona_profiles(owner_user_id,kind,content,parsed,ignored) values($1,'soul','tone: formal',$2,$3)`,
+      [user.id, JSON.stringify({ tone: 'formal' }), JSON.stringify([])]);
+    await page.getByLabel('Source assistant').selectOption('openclaw');
+    await page.getByLabel('Choose your ZIP, Markdown, JSON or JSONL files').setInputFiles({ name: 'SOUL.md', mimeType: 'text/markdown', buffer: Buffer.from('tone: brief') });
+    await page.getByRole('button', { name: 'Scan and preview', exact: true }).click();
+    await page.getByText('A profile for this layer already exists', { exact: false }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Review 0 selected items', exact: true }).isDisabled(), true);
+    assert.equal((await db.query('select content from persona_profiles where owner_user_id=$1 and kind=\'soul\'', [user.id]))[0].content, 'tone: formal');
+    await page.getByRole('button', { name: 'Discard preview', exact: true }).click();
+
     assert.deepEqual(errors, []);
     await context.close();
-    console.log(`PASS ${viewport.width}px: upload, escaped preview, memory edit, review, commit, receipt, rollback, no overflow or page errors`);
+    console.log(`PASS ${mobile ? 'mobile emulation' : 'desktop'} ${viewport.width}px: upload, escaped preview, memory edit, review, commit, receipt, rollback, profile conflict, no overflow or page errors`);
   }
 } finally {
   await browser?.close();
