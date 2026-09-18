@@ -1,3 +1,4 @@
+import { EmailTemplates } from './pages/EmailTemplates';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
@@ -151,6 +152,7 @@ export function App() {
         <Route path="connections" element={<Connections />} />
         <Route path="workflows" element={<Workflows />} />
         <Route path="calendar" element={<Calendar />} />
+        <Route path="email/templates" element={<EmailTemplates />} />
         <Route path="workspace" element={<LocalWorkspace />} />
         <Route path="vault" element={<Vault />} />
         <Route path="usage" element={<Usage />} />

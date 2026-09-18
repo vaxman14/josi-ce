@@ -526,3 +526,40 @@ describe('the audit trail', () => {
     expect(events).toContain('mail.sent');
   });
 });
+
+describe('private Email Templates API', () => {
+  const template = {name:'API welcome',subject:'Hello {{name}}',heading:'Welcome',body:'Hello {{recipient}}',accentColor:'#2563eb',ctaLabel:'',ctaUrl:'',footer:'Team'};
+  it('requires authentication, supports CRUD and isolates owners including administrators', async () => {
+    expect((await call('/api/mail/templates')).status).toBe(401);
+    const created=await call('/api/mail/templates',{method:'POST',jar:cookies.alice,body:template});
+    expect(created.status).toBe(201);const id=created.body.template.id;
+    for(const who of ['bob','admin']) {
+      expect((await call('/api/mail/templates',{jar:cookies[who]})).body.templates).toEqual([]);
+      expect((await call(`/api/mail/templates/${id}`,{jar:cookies[who]})).status).toBe(404);
+      expect((await call(`/api/mail/templates/${id}`,{method:'PUT',jar:cookies[who],body:template})).status).toBe(404);
+      expect((await call(`/api/mail/templates/${id}`,{method:'DELETE',jar:cookies[who]})).status).toBe(404);
+      expect((await call('/api/mail/templates/draft',{method:'POST',jar:cookies[who],body:{recipient:'alex@example.test',template_id:id,merge_values:{name:'Alex'}}})).status).toBe(404);
+    }
+    expect((await call(`/api/mail/templates/${id}`,{jar:cookies.alice})).body.template.name).toBe(template.name);
+    expect((await call(`/api/mail/templates/${id}`,{method:'PUT',jar:cookies.alice,body:{...template,name:'Revised'}})).body.template.name).toBe('Revised');
+    const draft=await call('/api/mail/templates/draft',{method:'POST',jar:cookies.alice,body:{recipient:'alex@example.test',template_id:id,merge_values:{name:'Alex'}}});
+    expect(draft.status,JSON.stringify(draft.body)).toBe(201);expect(draft.body.state).toBe('prepared');
+    expect(draft.body.summary).toContain('Subject: Hello Alex');
+    const previewPath=`/api/mail/templates/approvals/${draft.body.approval_id}/preview`;
+    expect((await call(previewPath,{jar:cookies.alice})).body.html).toContain('Hello alex@example.test');
+    expect((await call(previewPath,{jar:cookies.bob})).status).toBe(404);
+    expect((await call(previewPath,{jar:cookies.admin})).status).toBe(404);
+    await db.query(`update tasks set slots=slots || '{"subject":"Tampered"}'::jsonb where id=$1`,[draft.body.task_id]);
+    expect((await call(previewPath,{jar:cookies.alice})).status).toBe(409);
+    expect(sent).toEqual([]);
+    expect((await call(`/api/mail/templates/${id}`,{method:'DELETE',jar:cookies.alice})).status).toBe(204);
+    expect((await call(`/api/mail/templates/${id}`,{jar:cookies.alice})).status).toBe(404);
+  });
+  it('rejects HTML input and returns escaped preview plus plain fallback',async()=>{
+    expect((await call('/api/mail/templates',{method:'POST',jar:cookies.alice,body:{...template,html:'<script>bad</script>'}})).status).toBe(400);
+    expect((await call('/api/mail/templates',{method:'POST',jar:cookies.alice,body:{...template,ctaLabel:'Go',ctaUrl:'javascript:alert(1)'}})).status).toBe(400);
+    const preview=await call('/api/mail/templates/preview',{method:'POST',jar:cookies.alice,body:{template:{...template,body:'{{name}}'},recipient:'alex@example.test',merge_values:{name:'<script>bad</script>'}}});
+    expect(preview.status).toBe(200);expect(preview.body.html).not.toContain('<script>');expect(preview.body.text).toContain('<script>bad</script>');
+    expect((await call('/api/mail/templates/preview',{method:'POST',jar:cookies.alice,body:{template,recipient:'alex@example.test'}})).status).toBe(400);
+  });
+});

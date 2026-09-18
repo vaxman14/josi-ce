@@ -1,3 +1,4 @@
+import { EmailTemplateError, freezeEmailTemplate } from '@josi-ce/mail';
 // Executing one assistant tool call, wherever it was asked for.
 //
 // Extracted from `assistantAgent.ts` unchanged in behaviour, because it now
@@ -28,7 +29,7 @@ import { executeObsidianTool, DEVELOPER_INTEGRATION_TOOL, executeDeveloperIntegr
 import { resolveCalendarTimeIntent, validateAbsoluteCalendarRange, type CalendarTimeResolution } from './calendarTimeIntent.js';
 
 function actionSummary(domain:string,operation:string,slots:Record<string,unknown>):string{
-  if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
+  if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}${Array.isArray(slots.cc) && slots.cc.length ? `\nCc: ${slots.cc.join(', ')}` : ''}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
   if(domain==='calendar'){
     const source=slots.calendar_source as {calendar_name?:unknown}|undefined;
     return `${operation==='update'?'Update':'Create'} calendar event\nCalendar: ${String(source?.calendar_name??'Selected calendar')}\nTitle: ${String(slots.title)}\nStart: ${String(slots.start)}\nEnd: ${String(slots.end)}`;
@@ -118,6 +119,27 @@ export async function executeAssistantTool(
         else if(calendarTime.kind==='incomplete'){
           delete draftSlots.start;delete draftSlots.end;
           draftSlots={...draftSlots,calendar_time_intent:calendarTime.intent};
+        }
+      }
+      if (name === 'draft_email') {
+        const allowed = new Set(['recipient', 'subject', 'body', 'cc', 'template_id', 'template_name', 'merge_values']);
+        if (Object.keys(input).some(key => !allowed.has(key))) return {ok:false,message:'Unsupported email draft field. Raw HTML is not accepted.'};
+        if (input.template_id !== undefined && input.template_name !== undefined) return {ok:false,message:'Supply exactly one template_id or template_name.'};
+        const combined = {...task?.slots, ...draftSlots};
+        if (input.template_id !== undefined) delete combined.template_name;
+        if (input.template_name !== undefined) delete combined.template_id;
+        if (combined.template_id !== undefined || combined.template_name !== undefined) {
+          try {
+            const address = /^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/;
+            if (combined.recipient !== undefined && (typeof combined.recipient !== 'string' || !address.test(combined.recipient))) throw new EmailTemplateError('Enter one valid recipient address.');
+            if (combined.cc !== undefined && (!Array.isArray(combined.cc) || combined.cc.length > 20 || combined.cc.some(value => typeof value !== 'string' || !address.test(value)))) throw new EmailTemplateError('CC must contain at most 20 valid email addresses.');
+            const frozen = await freezeEmailTemplate(db, userId, {id:combined.template_id, name:combined.template_name}, String(combined.recipient ?? ''), combined.merge_values);
+            if ((input.subject !== undefined && input.subject !== frozen.subject) || (input.body !== undefined && input.body !== frozen.text)) throw new EmailTemplateError('Subject and body come from the selected template. Edit the saved template, or draft without a template.');
+            draftSlots = {...draftSlots, template_id:frozen.templateId, template_name:undefined, rendered_email:frozen, subject:frozen.subject, body:frozen.text};
+          } catch (error) {
+            if (error instanceof EmailTemplateError) return {ok:false,error:'email_template',message:error.message};
+            throw error;
+          }
         }
       }
       if(!action){

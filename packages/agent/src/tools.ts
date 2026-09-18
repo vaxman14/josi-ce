@@ -168,8 +168,8 @@ export const TASK_TOOLS: ToolSpec[] = [
     actionClass: 'task_management',
   },
   {
-    def: { name: 'draft_email', description: 'Create or continue the current email draft. Supply only facts the user gave; omitted fields are preserved only from the active email-send action in this conversation.', parameters: {
-      type: 'object', properties: { recipient: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' }, cc: { type: 'array', items: { type: 'string' } } },
+    def: { name: 'draft_email', description: 'Create or continue the current email draft. Supply only facts the user gave; omitted fields are preserved only from the active email-send action in this conversation. Optional template_id or template_name renders the saved structured template; supply merge_values for name/date/time literally as the user intends. Recipient comes from the To address. Never guess missing merge values. Display the complete final summary before asking approval.', parameters: {
+      type: 'object', properties: { template_id: { type: 'string', description: 'Exact owned Email Template ID. Use either ID or exact case-sensitive name, never both.' }, template_name: { type: 'string', description: 'Exact case-sensitive name; ambiguous names are refused.' }, merge_values: { type: 'object', properties: { name: { type: 'string' }, date: { type: 'string' }, time: { type: 'string' } }, additionalProperties: false }, recipient: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' }, cc: { type: 'array', items: { type: 'string' } } },
       required: [],
     } }, actionClass: 'email_send', requiresCapability: 'email_send',
   },
