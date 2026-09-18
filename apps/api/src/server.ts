@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
-import { attachmentRoot, probeAttachmentStorage } from '@josi-ce/storage';
+import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
 import { createApp } from './app.js';
 import { publicAddressFromEnvironment, reconcilePublicAddress } from './setup/publicAddress.js';
 
@@ -45,6 +45,12 @@ const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '') || 'http://localho
 // persisted address derivatives before listening so a failure rolls the whole
 // runtime change back instead of leaving Caddy and the database disagreeing.
 await reconcilePublicAddress(db, publicAddressFromEnvironment(appUrl));
+const workspaceMount = await reconcileWorkspaceMount(db);
+if (workspaceMount.status === 'unavailable') {
+  console.error('josi-ce: configured workspace mount is unavailable; no workspace access was granted');
+} else if (workspaceMount.status === 'ready') {
+  console.log(`josi-ce: workspace mount ready (${workspaceMount.writable ? 'read/write' : 'read-only'})`);
+}
 const cookieSecure = process.env.COOKIE_SECURE === 'true'
   ? true
   : process.env.COOKIE_SECURE === 'false'

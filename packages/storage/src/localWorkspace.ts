@@ -30,7 +30,11 @@ export async function workspaceGrant(db: Db, userId: string, id: string): Promis
   const [g] = await db.query<Grant>(`select m.id,m.relative_path,m.recursive,m.may_create,m.may_edit,m.may_move,m.may_delete,r.container_path,r.writable
     from folder_mappings m join storage_roots r on r.id=m.root_id join storage_capabilities c on c.user_id=m.owner_user_id
     where m.id=$1 and m.owner_user_id=$2 and m.provider='local' and m.status='active' and r.enabled=true and c.may_map_local=true`, [id,userId]);
-  if (!g || !g.container_path.startsWith(`${ROOT_BASE}/`)) throw new PathEscape('Workspace unavailable or permission revoked');
+  const configuredWorkspace = process.env.JOSI_WORKSPACE_ENABLED === '1'
+    && g?.container_path === '/workspace';
+  if (!g || !(g.container_path.startsWith(`${ROOT_BASE}/`) || configuredWorkspace)) {
+    throw new PathEscape('Workspace unavailable or permission revoked');
+  }
   return g;
 }
 function inGrant(g: Grant, path: string) { const p = workspacePath(path); if (!g.recursive && p.includes('/')) throw new PathEscape('Subfolders are outside this grant'); return p; }

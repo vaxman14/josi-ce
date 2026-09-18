@@ -100,6 +100,10 @@ services:
       JOSI_INSTALLER_CONFIGURED: ${JOSI_INSTALLER_CONFIGURED:-}
       JOSI_ACCESS_MODE: ${JOSI_ACCESS_MODE:-}
       JOSI_SETUP_TOKEN_SHA256: ${JOSI_SETUP_TOKEN_SHA256:-}
+      # Set only by the installer alongside docker-compose.workspace.yml. The
+      # application still verifies that /workspace is a real mount point.
+      JOSI_WORKSPACE_ENABLED: ${JOSI_WORKSPACE_ENABLED:-0}
+      JOSI_WORKSPACE_MODE: ${JOSI_WORKSPACE_MODE:-ro}
       JOSI_MAINTENANCE_HELPER_SOCKET: /run/josi-maintenance/helper.sock
       # Empty means infer from APP_URL: secure for https, non-secure for LAN
       # http. Explicit true/false remains available as an advanced override.
@@ -181,6 +185,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-josi}@db:5432/${POSTGRES_DB:-josi}
       PGPASSWORD_FILE: /run/secrets/josi_db_password
       MASTER_KEY_FILE: /run/secrets/josi_master_key
+      JOSI_WORKSPACE_ENABLED: ${JOSI_WORKSPACE_ENABLED:-0}
+      JOSI_WORKSPACE_MODE: ${JOSI_WORKSPACE_MODE:-ro}
       CODEX_HOME: /data/codex
       # Where the official Claude Code CLI keeps its login. Its own volume for
       # the same reason: an update replaces the container and must not sign the
