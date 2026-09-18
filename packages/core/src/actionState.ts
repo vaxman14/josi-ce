@@ -143,14 +143,16 @@ export async function resolveConversationalAction(db:Db,args:{ownerUserId:string
     }
     const task=await getTask(db,action.task_id);
     if(NO.test(text)){
-      if(action.approval_id)try{await decideActionApproval(db,{approvalId:action.approval_id,decidedBy:args.ownerUserId,approve:false});}
+      let decidedAction=action;
+      if(action.approval_id)try{decidedAction=(await decideActionApproval(db,{approvalId:action.approval_id,decidedBy:args.ownerUserId,approve:false})).action??action;}
       catch(error){if(error instanceof ApprovalError)return {handled:true,reply:'That action was already decided.',action,task};throw error;}
-      return {handled:true,reply:`Denied. The ${action.domain==='email'?'email was not sent':'calendar was not changed'}.`,action,task};
+      return {handled:true,reply:`Denied. The ${action.domain==='email'?'email was not sent':'calendar was not changed'}.`,action:decidedAction,task};
     }
     if(!action.approval_id)return {handled:true,reply:'That prepared action has no valid approval request. Review it again.'};
-    try{await decideActionApproval(db,{approvalId:action.approval_id,decidedBy:args.ownerUserId,approve:true});}
+    let decidedAction=action;
+    try{decidedAction=(await decideActionApproval(db,{approvalId:action.approval_id,decidedBy:args.ownerUserId,approve:true})).action??action;}
     catch(error){if(error instanceof ApprovalError)return {handled:true,reply:'That action was already decided.',action,task};throw error;}
-    return {handled:true,reply:`Approved. I queued the exact ${action.domain==='email'?'email':'calendar event'} you reviewed.`,action,task};
+    return {handled:true,reply:`Approved. I queued the exact ${action.domain==='email'?'email':'calendar event'} you reviewed.`,action:decidedAction,task};
   }
   let emailStatusQuestion=EMAIL_STATUS.test(text);
   if(!emailStatusQuestion&&BARE_WHY.test(text)){

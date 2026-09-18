@@ -68,7 +68,7 @@ with candidates as (
     left join calendar_sync_origins o
       on o.connection_id=s.connection_id and o.provider_calendar_id=s.provider_calendar_id
     left join calendars c on c.id=o.calendar_id
-   where s.writable
+   where s.writable and s.selected
 )
 update calendar_sources s
    set is_write_default=(c.position=1)

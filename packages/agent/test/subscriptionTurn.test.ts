@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
-import { createThread } from '@josi-ce/core';
+import { addMessage, createThread, markActionsPresented, MasterKey } from '@josi-ce/core';
+import { setCapability, upsertConnection } from '@josi-ce/connectors';
 import { runAssistantTurn } from '../src/assistantAgent.js';
+import { buildCore } from '../src/mcp/server.js';
 import type { SpawnRunner } from '@josi-ce/llm';
 
 let db:TestDb;let userId:string;let threadId:string;let oldServer:string|undefined;
 const privateReceipt='123e4567-e89b-42d3-a456-426614174000';
+const key=new MasterKey(Buffer.alloc(32,11));
 
 function contextPath(args:string[]):string{
   const override=args.find(value=>value.includes('JOSI_MCP_CONTEXT'))!;
@@ -41,5 +44,34 @@ describe('subscription turn receipts',()=>{
     expect(result.reply).toContain('Google Calendar is connected');
     expect(result.reply).not.toContain(privateReceipt);
     expect(result.reply).not.toMatch(/receipt id/i);
+  });
+
+  it('carries a real MCP approval result into exact presentation and a following yes',async()=>{
+    const connection=await upsertConnection(db,key,{
+      ownerUserId:userId,provider:'google',providerAccountId:'subscription-action',accountEmail:'subscription-action@ce.test',
+      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/gmail.send'},
+      requestedCapabilities:['google.mail.send'],
+    });
+    await setCapability(db,{connection,capability:'google.mail.send',enabled:true,actorUserId:userId});
+    const runner:SpawnRunner=async({args})=>{
+      const ctx=JSON.parse(readFileSync(contextPath(args),'utf8'));
+      expect(ctx.tools).toContain('draft_email');
+      const core=buildCore(ctx,async()=>db);
+      const outcome=await core.execute('draft_email',{
+        recipient:'recipient@example.test',subject:'Subscription approval',body:'Exact body',
+      },'draft-1');
+      expect(JSON.parse(outcome.text)).toMatchObject({ok:true,state:'prepared',task_id:expect.any(String),approval_id:expect.any(String)});
+      return {code:0,timedOut:false,stderr:'',stdout:JSON.stringify({type:'agent_message',message:'I prepared it.'})};
+    };
+    const prepared=await runAssistantTurn({db,userId,threadId,history:[],inbound:'Email the exact note',registry:{db,masterKey:key,codexRunner:runner}});
+    expect(prepared.actions).toEqual([{tool:'draft_email',result:expect.objectContaining({ok:true,state:'prepared',task_id:expect.any(String),approval_id:expect.any(String)})}]);
+    expect(prepared.reply).toBe('Send email\nTo: recipient@example.test\nSubject: Subscription approval\nBody: Exact body\n\nApprove this exact action? Reply yes or no.');
+
+    const message=await addMessage(db,{threadId,direction:'out',body:prepared.reply});
+    const taskId=(prepared.actions[0].result as {task_id:string}).task_id;
+    await markActionsPresented(db,{ownerUserId:userId,threadId,taskIds:[taskId],messageId:message.id});
+    const approved=await runAssistantTurn({db,userId,threadId,history:[],inbound:'yes',registry:{db,masterKey:key,codexRunner:runner}});
+    expect(approved.reply).toMatch(/queued the exact email/i);
+    expect(approved.actions).toEqual([{tool:'assistant_action_state',result:expect.objectContaining({task_id:taskId,status:'approved'})}]);
   });
 });

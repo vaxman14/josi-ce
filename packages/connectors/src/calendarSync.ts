@@ -46,17 +46,20 @@ function parsed(input: CalendarEventInput) {
   return { allDay, start, end };
 }
 
-export async function ensureInternalCalendar(db: Db, args:{ownerUserId:string;connectionId:string;provider:CalendarProvider;providerCalendarId?:string;name?:string}):Promise<Origin> {
+export async function ensureInternalCalendar(db: Db, args:{ownerUserId:string;connectionId:string;provider:CalendarProvider;providerCalendarId?:string;name?:string;writable?:boolean}):Promise<Origin> {
   const connection = await getConnection(db,args.connectionId);
   if (!connection || connection.owner_user_id !== args.ownerUserId || connection.provider !== args.provider) throw new Error('calendar connection does not belong to this user');
   const providerCalendarId=args.providerCalendarId ?? 'primary';
   await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,selected,writable,is_write_default)
     values($1,$2,$3,$4,
       $5 and not exists(select 1 from calendar_sources where connection_id=$2 and is_primary and provider_calendar_id<>'primary'),
-      true,true,
-      not exists(select 1 from calendar_sources where owner_user_id=$1 and is_write_default))
-    on conflict(connection_id,provider_calendar_id) do update set writable=true,last_discovered_at=now()`,
-    [args.ownerUserId,args.connectionId,providerCalendarId,args.name??(providerCalendarId==='primary'?'Primary calendar':providerCalendarId),providerCalendarId==='primary']);
+      true,coalesce($6,$5),
+      coalesce($6,$5) and not exists(select 1 from calendar_sources where owner_user_id=$1 and is_write_default))
+    on conflict(connection_id,provider_calendar_id) do update set
+      name=coalesce($7,calendar_sources.name),
+      writable=case when $6::boolean is null then calendar_sources.writable else $6 end,
+      last_discovered_at=now()`,
+    [args.ownerUserId,args.connectionId,providerCalendarId,args.name??(providerCalendarId==='primary'?'Primary calendar':providerCalendarId),providerCalendarId==='primary',args.writable??null,args.name??null]);
   const [existing]=await db.query<Origin>(`select * from calendar_sync_origins where connection_id=$1 and provider_calendar_id=$2`,[args.connectionId,providerCalendarId]);
   if(existing) return existing;
   const [source]=await db.query<{name:string;is_write_default:boolean}>(`select name,is_write_default from calendar_sources where connection_id=$1 and provider_calendar_id=$2`,[args.connectionId,providerCalendarId]);
@@ -148,14 +151,14 @@ export async function markCalendarAttempted(db:Db,id:string){await db.query(`upd
 /** Backfills existing connected calendars without making a conversation wait
  * for a provider call. Safe on every scheduler tick; the origin key is unique. */
 export async function provisionCalendarOrigins(db:Db):Promise<number>{
-  const rows=await db.query<{owner_user_id:string;connection_id:string;provider:CalendarProvider;provider_calendar_id:string;name:string}>(`select s.owner_user_id,s.connection_id,c.provider,s.provider_calendar_id,s.name
+  const rows=await db.query<{owner_user_id:string;connection_id:string;provider:CalendarProvider;provider_calendar_id:string;name:string;writable:boolean}>(`select s.owner_user_id,s.connection_id,c.provider,s.provider_calendar_id,s.name,s.writable
     from calendar_sources s join connections c on c.id=s.connection_id join connection_capabilities cc on cc.connection_id=c.id
     where c.provider in('google','microsoft') and c.status='active' and cc.enabled
       and cc.capability in('google.calendar.read','google.calendar.write','microsoft.calendar.read','microsoft.calendar.write')
       and s.selected
       and not exists(select 1 from calendar_sync_origins o where o.connection_id=s.connection_id and o.provider_calendar_id=s.provider_calendar_id)
-    group by s.owner_user_id,s.connection_id,c.provider,s.provider_calendar_id,s.name`);
-  for(const row of rows)await ensureInternalCalendar(db,{ownerUserId:row.owner_user_id,connectionId:row.connection_id,provider:row.provider,providerCalendarId:row.provider_calendar_id,name:row.name});
+    group by s.owner_user_id,s.connection_id,c.provider,s.provider_calendar_id,s.name,s.writable`);
+  for(const row of rows)await ensureInternalCalendar(db,{ownerUserId:row.owner_user_id,connectionId:row.connection_id,provider:row.provider,providerCalendarId:row.provider_calendar_id,name:row.name,writable:row.writable});
   return rows.length;
 }
 

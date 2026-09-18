@@ -98,9 +98,11 @@ describe('internal calendar is authoritative',()=>{
 
   it('backfills every selected calendar, including secondaries',async()=>{
     const c=await connected();
-    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable,selected) values($1,$2,'real-primary','Primary',true,true,true),($1,$2,'secondary','Secondary',false,true,true),($1,$2,'off','Off',false,true,false)`,[alice,c.id]);
+    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable,selected) values($1,$2,'real-primary','Primary',true,true,true),($1,$2,'secondary','Secondary',false,false,true),($1,$2,'off','Off',false,true,false)`,[alice,c.id]);
     expect(await provisionCalendarOrigins(db)).toBe(2);
     const origins=await db.query<{provider_calendar_id:string}>(`select provider_calendar_id from calendar_sync_origins where connection_id=$1 order by provider_calendar_id`,[c.id]);
     expect(origins.map(origin=>origin.provider_calendar_id)).toEqual(['real-primary','secondary']);
+    const [secondary]=await db.query<{writable:boolean;is_write_default:boolean}>(`select writable,is_write_default from calendar_sources where connection_id=$1 and provider_calendar_id='secondary'`,[c.id]);
+    expect(secondary).toEqual({writable:false,is_write_default:false});
   });
 });

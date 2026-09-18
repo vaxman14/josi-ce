@@ -568,6 +568,7 @@ describe('the central calendar', () => {
     expect(origins.map(origin=>origin.provider_calendar_id)).toEqual(['kids@example.test','primary@example.test']);
     expect(origins.every(origin=>origin.last_sync_at!==null)).toBe(true);
     const kids = listed.body.sources.find((s: any) => s.name === 'Vaxman Kids');
+    expect(kids).toMatchObject({providerCalendarId:'kids@example.test',writable:false,writeDefault:false});
     expect((await call(`/api/calendar/sources/${kids.id}`, { method: 'PUT', jar: cookies.bob, body: { selected: false } })).status).toBe(404);
     expect((await call(`/api/calendar/sources/${kids.id}`, { method: 'PUT', jar: cookies.alice, body: { selected: false } })).status).toBe(200);
     const events = await call('/api/calendar/events?start=2026-09-14T00%3A00%3A00Z&end=2026-09-21T00%3A00%3A00Z', { jar: cookies.alice });

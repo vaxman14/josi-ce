@@ -87,19 +87,19 @@ async function discover(ctx: Ctx, ownerUserId: string) {
       // Every owner has exactly one write destination, independent of how
       // many calendars are selected for reading.
       const [writeDefault] = await ctx.db.query<{id:string}>(
-        `select id from calendar_sources where owner_user_id=$1 and writable
+        `select id from calendar_sources where owner_user_id=$1 and writable and selected
          order by is_write_default desc,is_primary desc,last_discovered_at desc,id limit 1`, [ownerUserId],
       );
       await ctx.db.query(`update calendar_sources set is_write_default=false where owner_user_id=$1 and is_write_default`, [ownerUserId]);
       if(writeDefault)await ctx.db.query(`update calendar_sources set is_write_default=true where id=$1 and owner_user_id=$2`,[writeDefault.id,ownerUserId]);
-      const selected = await ctx.db.query<{ provider_calendar_id:string; name:string }>(
-        `select provider_calendar_id,name from calendar_sources where connection_id=$1 and selected order by id`,
+      const selected = await ctx.db.query<{ provider_calendar_id:string; name:string; writable:boolean }>(
+        `select provider_calendar_id,name,writable from calendar_sources where connection_id=$1 and selected order by id`,
         [connection.id],
       );
       for (const source of selected) {
         const origin = await ensureInternalCalendar(ctx.db, {
           ownerUserId, connectionId: connection.id, provider: connection.provider,
-          providerCalendarId: source.provider_calendar_id, name: source.name,
+          providerCalendarId: source.provider_calendar_id, name: source.name, writable: source.writable,
         });
         await syncCalendarOrigin(ctx.db, origin.id, { masterKey, fetchImpl: ctx.fetchImpl });
       }
@@ -216,13 +216,13 @@ export function calendarRoutes(ctx: Ctx): Router {
       await ctx.db.query(`update calendar_sources set is_write_default=false where owner_user_id=$1 and is_write_default`,[req.user!.id]);
       if(nextDefault)await ctx.db.query(`update calendar_sources set is_write_default=true where id=$1 and owner_user_id=$2`,[nextDefault.id,req.user!.id]);
       if (selected === true) {
-        const [source] = await ctx.db.query<{connection_id:string;provider_calendar_id:string;name:string;provider:CalendarProvider}>(
-          `select s.connection_id,s.provider_calendar_id,s.name,c.provider from calendar_sources s
+        const [source] = await ctx.db.query<{connection_id:string;provider_calendar_id:string;name:string;writable:boolean;provider:CalendarProvider}>(
+          `select s.connection_id,s.provider_calendar_id,s.name,s.writable,c.provider from calendar_sources s
             join connections c on c.id=s.connection_id where s.id=$1 and s.owner_user_id=$2`, [sourceId, req.user!.id],
         );
         if (source) {
           const masterKey=key(ctx);
-          const origin=await ensureInternalCalendar(ctx.db,{ownerUserId:req.user!.id,connectionId:source.connection_id,provider:source.provider,providerCalendarId:source.provider_calendar_id,name:source.name});
+          const origin=await ensureInternalCalendar(ctx.db,{ownerUserId:req.user!.id,connectionId:source.connection_id,provider:source.provider,providerCalendarId:source.provider_calendar_id,name:source.name,writable:source.writable});
           await syncCalendarOrigin(ctx.db,origin.id,{masterKey,fetchImpl:ctx.fetchImpl});
         }
       }
