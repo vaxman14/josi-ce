@@ -47,7 +47,7 @@ export function workspaceMountRootAllowed(path: string, env: NodeJS.ProcessEnv =
 }
 
 export type WorkspaceMountReconcileResult =
-  | { status: 'disabled' | 'unavailable' | 'awaiting_owner' }
+  | { status: 'disabled' | 'unavailable' | 'awaiting_owner' | 'revoked' | 'awaiting_mapping' }
   | { status: 'ready'; rootId: string; mappingId: string; ownerUserId: string; writable: boolean };
 
 /**
@@ -88,35 +88,49 @@ export async function reconcileWorkspaceMount(
   );
   if (!owner) return { status: 'awaiting_owner' };
 
-  const [root] = await db.query<{ id: string }>(
-    `insert into storage_roots (container_path, label, purpose, writable, enabled)
-     values ($1, 'Workspace', 'Developer workspace selected during installation', $2, true)
-     on conflict (container_path) do update set
-       writable = excluded.writable,
-       enabled = true
-     returning id`,
-    [WORKSPACE_MOUNT_PATH, configuration.writable],
+  const [priorRoot] = await db.query<{ id: string }>(
+    `select id from storage_roots where container_path = $1`, [WORKSPACE_MOUNT_PATH],
   );
+  const rootWasNew = !priorRoot;
+  const [root] = priorRoot
+    ? await db.query<{ id: string }>(
+      `update storage_roots set writable = $2, enabled = true where id = $1 returning id`,
+      [priorRoot.id, configuration.writable],
+    )
+    : await db.query<{ id: string }>(
+      `insert into storage_roots (container_path, label, purpose, writable, enabled)
+       values ($1, 'Workspace', 'Developer workspace selected during installation', $2, true)
+       returning id`,
+      [WORKSPACE_MOUNT_PATH, configuration.writable],
+    );
 
-  await db.query(
-    `insert into storage_capabilities (user_id, may_map_local, granted_by)
-     values ($1, true, $1)
-     on conflict (user_id) do update set
-       may_map_local = true,
-       granted_by = excluded.granted_by,
-       updated_at = now()`,
-    [owner.id],
-  );
+  if (rootWasNew) {
+    // The installer selection is authority for the first grant only. A later
+    // capability revocation must survive every restart.
+    await db.query(
+      `insert into storage_capabilities (user_id, may_map_local, granted_by)
+       values ($1, true, $1)
+       on conflict (user_id) do update set
+         may_map_local = true,
+         granted_by = excluded.granted_by,
+         updated_at = now()`,
+      [owner.id],
+    );
+  } else {
+    const [capability] = await db.query<{ may_map_local: boolean }>(
+      `select may_map_local from storage_capabilities where user_id = $1`, [owner.id],
+    );
+    if (!capability?.may_map_local) return { status: 'revoked' };
+  }
 
-  // Reuse even a previously revoked row. This avoids accumulating duplicate
-  // grants across disable/enable cycles while leaving every other user's rows
-  // and every unrelated root untouched.
-  const [existing] = await db.query<{ id: string }>(
-    `select id from folder_mappings
+  const [existing] = await db.query<{ id: string; status: string }>(
+    `select id,status from folder_mappings
      where owner_user_id = $1 and provider = 'local' and root_id = $2 and relative_path = ''
      order by (status <> 'revoked') desc, created_at, id limit 1`,
     [owner.id, root.id],
   );
+  if (existing?.status === 'revoked') return { status: 'revoked' };
+  if (!existing && !rootWasNew) return { status: 'awaiting_mapping' };
   const permissions = configuration.writable;
   let mappingId: string;
   if (existing) {
@@ -128,7 +142,6 @@ export async function reconcileWorkspaceMount(
          may_edit = $3,
          may_move = $3,
          may_delete = $3,
-         status = 'active',
          paused_reason = null
        where id = $1`,
       [existing.id, WORKSPACE_MOUNT_PATH, permissions],

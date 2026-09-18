@@ -38,6 +38,7 @@ describe('claimsCompletedAction', () => {
     'All set — it goes off at 6am.',
     'I already cancelled that reminder.',
     "Done — here's your image.",
+    "Done — here's your logo.",
     'I generated the image and attached it below.',
     'The report is ready for download.',
   ];

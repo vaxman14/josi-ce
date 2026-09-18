@@ -24,7 +24,7 @@ export interface PriorMediaResult {
   result: MediaResultMeta;
 }
 
-const IMAGE_NOUN = '(?:images?|pictures?|photos?|artwork|illustrations?|graphics?)';
+const IMAGE_NOUN = '(?:images?|pictures?|photos?|artwork|illustrations?|graphics?|logos?|avatars?|icons?|banners?|posters?|wallpapers?)';
 const GENERATE_VERB = '(?:generate|create|make|draw|render|design|produce)';
 const EDIT_VERB = '(?:edit|modify|change|retouch|remove|replace|recolor|resize|crop|upscale)';
 

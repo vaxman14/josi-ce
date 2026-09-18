@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { addMessage, createThread, listMessages } from '@josi-ce/core';
-import { runAssistantTurn, IMAGE_GENERATION_UNAVAILABLE, immediatePriorMediaResult } from '../src/index.js';
+import { runAssistantTurn, IMAGE_GENERATION_UNAVAILABLE, classifyImageIntent, immediatePriorMediaResult } from '../src/index.js';
 import type { SpawnRunner } from '@josi-ce/llm';
 
 let db: TestDb;
@@ -56,6 +56,13 @@ async function persistedTurn(inbound: string, actingOwner = owner, actingThread 
 }
 
 describe('image capability truth and immediate follow-up binding', () => {
+  it('classifies common image deliverables without requiring the word image', () => {
+    expect(classifyImageIntent('Make me a logo')).toBe('generate');
+    expect(classifyImageIntent('Create an avatar')).toBe('generate');
+    expect(classifyImageIntent('Design a banner')).toBe('generate');
+    expect(classifyImageIntent('Edit this icon')).toBe('edit');
+  });
+
   it('locks the exact transcript to truthful unavailable results with no model, image, calendar, or attachment action', async () => {
     const capability = await persistedTurn('can you generate images?');
     expect(capability.reply).toBe(IMAGE_GENERATION_UNAVAILABLE);

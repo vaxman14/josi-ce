@@ -76,6 +76,27 @@ describe('workspace mount bootstrap and reconciliation', () => {
     expect(mapping).toEqual({ may_create: false, may_edit: false });
   });
 
+  it('preserves explicit capability revocation and unmapping across restarts', async () => {
+    const admin = await owner();
+    const first = await reconcileWorkspaceMount(db, { enabled: true, writable: true }, mounted);
+    expect(first.status).toBe('ready');
+    if (first.status !== 'ready') return;
+
+    await db.query(`update storage_capabilities set may_map_local=false where user_id=$1`, [admin.id]);
+    expect(await reconcileWorkspaceMount(db, { enabled: true, writable: true }, mounted))
+      .toEqual({ status: 'revoked' });
+    expect((await db.query<{ may_map_local: boolean }>(
+      `select may_map_local from storage_capabilities where user_id=$1`, [admin.id],
+    ))[0].may_map_local).toBe(false);
+
+    await db.query(`update storage_capabilities set may_map_local=true where user_id=$1`, [admin.id]);
+    await db.query(`delete from folder_mappings where id=$1`, [first.mappingId]);
+    expect(await reconcileWorkspaceMount(db, { enabled: true, writable: true }, mounted))
+      .toEqual({ status: 'awaiting_mapping' });
+    expect(await db.query(`select id from folder_mappings where owner_user_id=$1`, [admin.id]))
+      .toHaveLength(0);
+  });
+
   it('assigns only the active super-admin and preserves other users and roots', async () => {
     const member = await createUser(db, {
       email: 'member@example.test', username: 'member', role: 'member',

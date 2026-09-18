@@ -36,12 +36,7 @@ function parseDurationMinutes(text: string): number | null {
   return Number.isInteger(minutes) && minutes > 0 && minutes <= 24 * 60 ? minutes : null;
 }
 
-function parseLocalTime(text: string): string | null {
-  // A bare number is not a time: in “45 minutes” it is a duration. Require
-  // “at”, a meridiem, or a colon-form clock before treating it as one.
-  const match = /\bat\s+(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\b/i.exec(text)
-    ?? /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i.exec(text)
-    ?? /\b([01]?\d|2[0-3]):([0-5]\d)\b/.exec(text);
+function clockFromMatch(match: RegExpExecArray | null): string | null {
   if (!match) return null;
   let hour = Number(match[1]);
   const minute = Number(match[2] ?? 0);
@@ -53,6 +48,18 @@ function parseLocalTime(text: string): string | null {
     if (meridiem === 'am' && hour === 12) hour = 0;
   } else if (hour > 23) return null;
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function parseLocalTime(text: string): string | null {
+  // A bare number is not a time: in “45 minutes” it is a duration. Require
+  // “at”/“from”, a meridiem, or a colon-form clock before treating it as one.
+  return clockFromMatch(/\b(?:at|from)\s+(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\b/i.exec(text)
+    ?? /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i.exec(text)
+    ?? /\b([01]?\d|2[0-3]):([0-5]\d)\b/.exec(text));
+}
+
+function parseEndLocalTime(text: string): string | null {
+  return clockFromMatch(/\b(?:to|until|through)\s+(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\b/i.exec(text));
 }
 
 function relativeDayOffset(text: string): number | null {
@@ -171,6 +178,7 @@ export async function resolveCalendarTimeIntent(
     : shiftCivilDate(temporal.today, dayOffset);
   const localTime = parseLocalTime(text) ?? existing?.localTime ?? null;
   const durationMinutes = parseDurationMinutes(text) ?? existing?.durationMinutes;
+  const explicitEndTime = parseEndLocalTime(text);
   if (!localTime) {
     return { kind: 'invalid', error: 'bad_calendar_time', message: `I could not safely determine the local time for that relative date in ${temporal.timeZone}. Please give a time.` };
   }
@@ -178,7 +186,7 @@ export async function resolveCalendarTimeIntent(
     kind: 'relative_day', dayOffset, localDate, localTime, timeZone: temporal.timeZone,
     ...(durationMinutes ? { durationMinutes } : {}),
   };
-  if (!durationMinutes) {
+  if (!durationMinutes && !explicitEndTime) {
     return { kind: 'incomplete', intent, message: 'I have the relative date and time, but need the event duration before I can prepare it.' };
   }
   const start = resolveCivilMinute(localDate, localTime, temporal.timeZone);
@@ -187,6 +195,20 @@ export async function resolveCalendarTimeIntent(
       ? { kind: 'invalid', error: 'nonexistent_local_time', message: `${localTime} does not exist on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Choose another time.` }
       : { kind: 'invalid', error: 'ambiguous_local_time', message: `${localTime} occurs twice on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Give an explicit UTC offset or choose another time.` };
   }
-  const endInstant = new Date(start.instant.getTime() + durationMinutes * 60_000);
+  if (explicitEndTime) {
+    const end = resolveCivilMinute(localDate, explicitEndTime, temporal.timeZone);
+    if (!end.ok) {
+      return end.reason === 'nonexistent'
+        ? { kind: 'invalid', error: 'nonexistent_local_time', message: `${explicitEndTime} does not exist on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Choose another time.` }
+        : { kind: 'invalid', error: 'ambiguous_local_time', message: `${explicitEndTime} occurs twice on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Give an explicit UTC offset or choose another time.` };
+    }
+    const explicitDuration = (end.instant.getTime() - start.instant.getTime()) / 60_000;
+    if (!Number.isInteger(explicitDuration) || explicitDuration <= 0 || explicitDuration > 24 * 60) {
+      return { kind: 'invalid', error: 'bad_calendar_time', message: 'The relative event end must be after its start on the same local date.' };
+    }
+    intent.durationMinutes = explicitDuration;
+    return { kind: 'resolved', intent, start: start.iso, end: end.iso };
+  }
+  const endInstant = new Date(start.instant.getTime() + durationMinutes! * 60_000);
   return { kind: 'resolved', intent, start: start.iso, end: formatInstant(endInstant, temporal.timeZone) };
 }

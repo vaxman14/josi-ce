@@ -29,7 +29,7 @@
 const ACTED_ON =
   '(?:reminder|task|email|e-mail|message|event|meeting|appointment|invite|notification|alert|timer)';
 const ARTIFACT =
-  '(?:images?|pictures?|photos?|files?|documents?|reports?|audio|videos?|attachments?|downloads?)';
+  '(?:images?|pictures?|photos?|logos?|avatars?|icons?|banners?|posters?|wallpapers?|files?|documents?|reports?|audio|videos?|attachments?|downloads?)';
 
 /** Perfective, completed-action shapes. Each pattern must assert COMPLETION
  * ("set", "sent", "I've scheduled"), never intent ("I will schedule"). */

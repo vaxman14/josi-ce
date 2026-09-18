@@ -26,6 +26,19 @@ describe('server calendar time intent', () => {
     });
   });
 
+  it('accepts an explicit relative local-time range without trusting model absolutes', async () => {
+    expect(await resolveCalendarTimeIntent(db, {
+      userId,
+      latestUserText: 'tomorrow from 4pm to 5pm',
+      effectiveNow: new Date('2026-09-18T04:00:00.000Z'),
+    })).toMatchObject({
+      kind: 'resolved',
+      start: '2026-09-18T16:00:00-07:00',
+      end: '2026-09-18T17:00:00-07:00',
+      intent: { durationMinutes: 60 },
+    });
+  });
+
   it('carries structured relative intent into a duration-only retry', async () => {
     const first = await resolveCalendarTimeIntent(db, {
       userId, latestUserText: 'tomorrow at 4pm', effectiveNow: new Date('2026-09-18T04:00:00.000Z'),
