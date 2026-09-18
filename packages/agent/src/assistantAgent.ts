@@ -22,6 +22,7 @@
 // The last two are the ones worth reading twice. A model that was never proven
 // to call tools is not offered any, because offering them produces a confident
 // description of work that never happened.
+import { randomUUID } from 'node:crypto';
 import {
   appendEvent, checkChildAccess, checkStepUp, listTemplates, recordChildActivity, resolveConversationalAction,
   type ActivityChannel, type Db,
@@ -35,7 +36,9 @@ import {
   narrowPolicy, relevantMemories, suggestMemory, type Memory,
 } from '@josi-ce/persona';
 import {
-  CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsCompletedAction,
+  ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
+  CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsArtifactCompletion,
+  claimsCompletedAction, hasArtifactReceipt,
 } from './claimGuard.js';
 import {
   DATA_CLAIM_GUARD_FALLBACK, DATA_CLAIM_GUARD_REPROMPT, DATA_CLAIM_TOOLS, checkDataClaims,
@@ -55,6 +58,11 @@ import {
   GENERIC_RETRY, immediatelyPrecedingRetryTarget, retryReply, retryTargetFor,
   type AssistantRetryTarget,
 } from './retry.js';
+import {
+  IMAGE_GENERATION_UNAVAILABLE, auditUnsupportedImageIntent, classifyImageIntent,
+  immediatePriorMediaResult, isImmediateMediaStatusFollowup,
+  type MediaRequestMeta, type MediaResultMeta,
+} from './mediaCapability.js';
 
 /** Recall over the user's own history, injected by the caller. A function
  * rather than a package dependency: the agent does not care whether recall is
@@ -79,6 +87,11 @@ export interface AgentTurnResult {
    * about an attachment; this field lets the CALLER (the route, a future UI)
    * know the same thing happened, without parsing the reply text for it. */
   imagesDroppedNoVision?: boolean;
+  /** Typed, content-free media state for durable immediate follow-up binding.
+   * Callers persist request metadata on the inbound message and result metadata
+   * on the outbound message; neither field contains the person's prompt. */
+  mediaRequest?: MediaRequestMeta;
+  mediaResult?: MediaResultMeta;
   /** Set when the turn could not run at all. The caller shows this instead of a
    * reply — it is never dressed up as something Josi said. */
   refusal?: {
@@ -223,6 +236,34 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // provider error still happened.
   if (childAccess.managed) {
     await recordChildActivity(db, { childUserId: userId, channel: args.channel ?? 'web' });
+  }
+
+  // Unsupported media requests and their immediate status follow-ups are
+  // resolved before generic retry or any model/tool routing, so they cannot
+  // drift into an older calendar or workspace domain.
+  const imageIntent = classifyImageIntent(args.inbound);
+  let priorMedia = null as Awaited<ReturnType<typeof immediatePriorMediaResult>>;
+  if (!imageIntent && isImmediateMediaStatusFollowup(args.inbound)) {
+    priorMedia = await immediatePriorMediaResult(db, {
+      ownerUserId: userId,
+      threadId: args.threadId,
+      currentInboundMessageId: args.inboundMessageId,
+    });
+  }
+  if (imageIntent || priorMedia) {
+    const intent = imageIntent ?? 'status';
+    const requestId = priorMedia?.result.request_id ?? randomUUID();
+    const mediaRequest: MediaRequestMeta = {
+      v: 1, id: randomUUID(), media: 'image', intent,
+      ...(priorMedia ? { refers_to: requestId } : {}),
+    };
+    const mediaResult: MediaResultMeta = {
+      v: 1, request_id: priorMedia ? requestId : mediaRequest.id,
+      media: 'image', intent, status: 'unavailable',
+      error: 'image_generation_unavailable',
+    };
+    await auditUnsupportedImageIntent(db, { ownerUserId: userId, threadId: args.threadId, intent });
+    return { reply: IMAGE_GENERATION_UNAVAILABLE, actions, mediaRequest, mediaResult };
   }
 
   // Generic retry is resolved before either action-state prose or the model.
@@ -398,6 +439,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // Claims require receipts (round-2 item 12). One corrective re-prompt is
   // allowed per turn; a model that fabricates twice gets its reply replaced.
   let claimGuardReprompted = false;
+  let artifactClaimGuardAudited = false;
   // Data claims require receipts too (item 41b). A SEPARATE one-reprompt
   // budget from the action guard above — a turn could conceivably trip both
   // in sequence (fabricate a tool call's existence, get corrected, then
@@ -498,21 +540,37 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       // AND tools a subscription CLI harness executed out of process
       // (recorded from executedToolCalls above). Zero receipts + a reply that
       // claims a completed action = a fabrication, and it does not pass.
-      if (actions.length === 0 && claimsCompletedAction(reply)) {
+      const artifactClaim = claimsArtifactCompletion(reply);
+      const missingArtifactReceipt = artifactClaim && !hasArtifactReceipt(actions);
+      if ((actions.length === 0 && claimsCompletedAction(reply)) || missingArtifactReceipt) {
+        if (missingArtifactReceipt && !artifactClaimGuardAudited) {
+          artifactClaimGuardAudited = true;
+          await appendEvent(db, {
+            actorUserId: userId,
+            actor: 'agent',
+            kind: 'agent.artifact_claim_without_receipt',
+            subjectType: 'thread',
+            subjectId: args.threadId,
+            payload: { receiptCount: actions.length },
+          });
+        }
         if (!claimGuardReprompted) {
           claimGuardReprompted = true;
           messages.push({ role: 'assistant', content: reply });
-          messages.push({ role: 'user', content: CLAIM_GUARD_REPROMPT });
-          continue; // one more hop: call the tool for real, or restate honestly
+          messages.push({ role: 'user', content: missingArtifactReceipt
+            ? ARTIFACT_CLAIM_GUARD_REPROMPT : CLAIM_GUARD_REPROMPT });
+          continue; // one more hop: produce a real receipt, or restate honestly
         }
-        await appendEvent(db, {
-          actorUserId: userId,
-          actor: 'agent',
-          kind: 'agent.claim_without_receipt',
-          subjectType: 'thread',
-          subjectId: args.threadId,
-        });
-        reply = CLAIM_GUARD_FALLBACK;
+        if (!missingArtifactReceipt) {
+          await appendEvent(db, {
+            actorUserId: userId,
+            actor: 'agent',
+            kind: 'agent.claim_without_receipt',
+            subjectType: 'thread',
+            subjectId: args.threadId,
+          });
+        }
+        reply = missingArtifactReceipt ? ARTIFACT_CLAIM_GUARD_FALLBACK : CLAIM_GUARD_FALLBACK;
       }
 
       // ---- data claims require receipts too (item 41b) -------------------

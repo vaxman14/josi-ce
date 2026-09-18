@@ -28,6 +28,8 @@
  * domains the assistant has no tools for read as conversation, not receipts. */
 const ACTED_ON =
   '(?:reminder|task|email|e-mail|message|event|meeting|appointment|invite|notification|alert|timer)';
+const ARTIFACT =
+  '(?:images?|pictures?|photos?|files?|documents?|reports?|audio|videos?|attachments?|downloads?)';
 
 /** Perfective, completed-action shapes. Each pattern must assert COMPLETION
  * ("set", "sent", "I've scheduled"), never intent ("I will schedule"). */
@@ -57,6 +59,13 @@ const CLAIM_PATTERNS: RegExp[] = [
   new RegExp(`\\b(?:done|all set)\\b\\s*[—:,-]?[^.!?\\n]{0,80}?\\b(?:${ACTED_ON}|fires? at|goes? off at)\\b`, 'i'),
   // "…will fire at 03:51", "it goes off at 3pm" — fabricated timer specifics.
   /\b(?:fires?|will fire|goes? off|will go off)\s+(?:at|in)\b/i,
+  // Artifact-bearing work: "Done — here's your image", "I generated the
+  // file", "the report is ready". These require an artifact receipt, not
+  // merely an unrelated tool call in the same turn.
+  new RegExp(`\\b(?:done|finished|completed|ready)\\b[^.!?\\n]{0,80}?\\b${ARTIFACT}\\b`, 'i'),
+  new RegExp(`\\b(?:here(?:'s| is)|attached is|download)\\b[^.!?\\n]{0,60}?\\b${ARTIFACT}\\b`, 'i'),
+  new RegExp(`\\bI(?:'ve| have)?\\s+(?:just\\s+|now\\s+|already\\s+)?(?:created|generated|made|rendered|edited|uploaded|attached|exported|saved)\\b[^.!?\\n]{0,60}?\\b${ARTIFACT}\\b`, 'i'),
+  new RegExp(`\\b${ARTIFACT}\\b[^.!?\\n]{0,50}?\\b(?:is|are)\\s+(?:done|ready|attached|available for download)\\b`, 'i'),
 ];
 
 /** Phrasings that make a sentence honest even though it names an action:
@@ -71,6 +80,8 @@ const HONEST_MARKERS: RegExp[] = [
   /\b(?:would you|should I|do you want|shall I|want me to)\b/i,
   /\b(?:I(?:'ll| will| can| could)\s+(?:set|schedule|create|send|book))\b/i, // intent, not completion
   /\bif you(?:'d| would)? like\b/i,
+  new RegExp(`\\bno\\s+${ARTIFACT}\\s+(?:was|were|has been|have been)?\\s*(?:created|generated|made|attached|produced)\\b`, 'i'),
+  new RegExp(`\\b${ARTIFACT}\\s+(?:generation|creation|editing)?\\s*(?:is|are)?\\s*(?:unavailable|not available|unsupported)\\b`, 'i'),
 ];
 
 /**
@@ -82,6 +93,34 @@ export function claimsCompletedAction(text: string): boolean {
   if (!CLAIM_PATTERNS.some((p) => p.test(text))) return false;
   if (HONEST_MARKERS.some((p) => p.test(text))) return false;
   return true;
+}
+
+const ARTIFACT_CLAIM_PATTERNS = [
+  new RegExp(`\\b(?:done|finished|completed|ready)\\b[^.!?\\n]{0,80}?\\b${ARTIFACT}\\b`, 'i'),
+  new RegExp(`\\b(?:here(?:'s| is)|attached is|download)\\b[^.!?\\n]{0,60}?\\b${ARTIFACT}\\b`, 'i'),
+  new RegExp(`\\b(?:created|generated|made|rendered|edited|uploaded|attached|exported|saved)\\b[^.!?\\n]{0,60}?\\b${ARTIFACT}\\b`, 'i'),
+  new RegExp(`\\b${ARTIFACT}\\b[^.!?\\n]{0,50}?\\b(?:is|are)\\s+(?:done|ready|attached|available for download)\\b`, 'i'),
+];
+
+export function claimsArtifactCompletion(text: string): boolean {
+  return claimsCompletedAction(text) && ARTIFACT_CLAIM_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+/** A real artifact receipt must identify output, not merely report that some
+ * unrelated tool ran. Kept structural so future provider-gated media tools can
+ * satisfy it without teaching this guard vendor names. */
+export function hasArtifactReceipt(actions: Array<{ tool: string; result: unknown }>): boolean {
+  return actions.some(({ result }) => {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+    const row = result as Record<string, unknown>;
+    if (typeof row.artifact_id === 'string' || typeof row.attachment_id === 'string') return true;
+    if (Array.isArray(row.artifacts) && row.artifacts.length > 0) return true;
+    if (Array.isArray(row.attachments) && row.attachments.length > 0) return true;
+    const artifact = row.artifact;
+    return !!artifact && typeof artifact === 'object' && !Array.isArray(artifact)
+      && (typeof (artifact as Record<string, unknown>).id === 'string'
+        || typeof (artifact as Record<string, unknown>).url === 'string');
+  });
 }
 
 /** The corrective re-prompt, worded so the model's two honest exits are both
@@ -98,3 +137,11 @@ export const CLAIM_GUARD_FALLBACK =
   'I need to correct myself: I described an action as done, but I did not actually perform it — ' +
   'nothing was scheduled, sent, or created. Ask me again and I will do it for real, or tell me ' +
   'if you want something else.';
+
+export const ARTIFACT_CLAIM_GUARD_REPROMPT =
+  '[system integrity check] Your previous reply claimed an artifact was created, attached, or ready, ' +
+  'but this turn has no artifact receipt or attachment. Rewrite the reply truthfully. Do not say done, ' +
+  'ready, attached, or offer a download unless a tool result identifies the real artifact.';
+
+export const ARTIFACT_CLAIM_GUARD_FALLBACK =
+  'I need to correct myself: I claimed an artifact was ready, but no artifact or attachment was created.';

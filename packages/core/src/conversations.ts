@@ -116,10 +116,11 @@ export async function recordExchange(
     channel?: string;
     inbound: string;
     reply: string;
+    inboundMeta?: Record<string, unknown>;
     outboundMeta?: Record<string, unknown>;
   },
 ): Promise<{ inbound: Message; outbound: Message }> {
-  const inbound = await addMessage(db, { threadId: args.threadId, direction: 'in', body: args.inbound, channel: args.channel });
+  const inbound = await addMessage(db, { threadId: args.threadId, direction: 'in', body: args.inbound, channel: args.channel, meta: args.inboundMeta });
   const outbound = await addMessage(db, { threadId: args.threadId, direction: 'out', body: args.reply, channel: args.channel, meta: args.outboundMeta });
   await appendEvent(db, {
     actorUserId: args.ownerUserId,

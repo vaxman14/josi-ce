@@ -411,7 +411,8 @@ export function mountTelegramWebhook(app: Express, ctx: TelegramRoutesCtx): void
                 // agent produces, which tells them to use the web app.
                 sessionKey: args.threadId,
               });
-              return { reply: result.reply, refusal: result.refusal, actions: result.actions };
+              return { reply: result.reply, refusal: result.refusal, actions: result.actions,
+                mediaRequest: result.mediaRequest, mediaResult: result.mediaResult };
             },
           },
           update,
