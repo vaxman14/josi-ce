@@ -65,10 +65,9 @@
   /* FullCalendar's time-grid proportions: a full civil day is tall enough
      that a normal half-hour event gets about 48px instead of a tiny scrollbox. */
   .calendar-time-grid-scroll {
-    max-height: max(28rem, calc(100vh - 24rem));
-    overflow: auto;
-    overscroll-behavior: contain;
-    scrollbar-gutter: stable;
+    overflow-x: auto;
+    overflow-y: visible;
+    overscroll-behavior-x: contain;
   }
 
   .calendar-time-grid { min-width: 0; }
