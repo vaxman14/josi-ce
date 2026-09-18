@@ -66,6 +66,22 @@ create trigger assistant_turns_reserve before insert on assistant_turns
 create trigger assistant_turns_release after update or delete on assistant_turns
   for each row execute function release_assistant_turn_capacity();
 
+-- Durable tool-effect fence. A started row is intentionally ambiguous after a
+-- crash: a linked retry may not execute it again. Completed rows retain the
+-- exact receipt so repeated model calls inside one turn are harmless.
+create table assistant_turn_effects (
+  id uuid primary key default gen_random_uuid(),
+  turn_id uuid not null references assistant_turns(id) on delete cascade,
+  effect_key text not null,
+  tool_name text not null,
+  state text not null default 'started' check(state in ('started','completed')),
+  receipt jsonb,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz,
+  unique(turn_id,effect_key)
+);
+create index assistant_turn_effects_turn on assistant_turn_effects(turn_id);
+
 -- One queue row per durable turn. Its payload has only an opaque id.
 create unique index job_queue_one_assistant_turn
   on job_queue ((payload->>'turnId')) where kind='assistant.turn';
@@ -106,7 +122,7 @@ create table push_deliveries (
   title text not null,
   body text not null,
   explicit_reminder boolean not null default false,
-  status text not null default 'queued' check(status in ('queued','sending','ticketed','checking','delivered','retry','failed','suppressed')),
+  status text not null default 'queued' check(status in ('queued','sending','ticketed','checking','provider_accepted','retry','failed','suppressed')),
   lease_token uuid,
   attempts int not null default 0,
   next_attempt_at timestamptz not null default now(),
@@ -124,6 +140,76 @@ create index push_deliveries_due on push_deliveries(status,next_attempt_at)
 create trigger push_deliveries_touch before update on push_deliveries
   for each row execute function touch_updated_at();
 
+-- Task completion/failure notifications are a transactional outbox: rows are
+-- created in the same commit as the authoritative task state transition.
+create function task_push_outbox() returns trigger language plpgsql as $$
+declare push_category text;
+begin
+  if new.state not in ('confirmed','failed') or new.state=old.state then return new; end if;
+  push_category:=case when new.template_key='schedule_appointment' then 'calendar' else 'assistant' end;
+  insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body)
+    select new.owner_user_id,d.id,'task:'||new.id||':'||new.state,push_category,'task',new.id,'Josi',
+      case when new.state='confirmed' then 'Your task completed.' else 'Your task needs attention.' end
+    from mobile_devices d where d.owner_user_id=new.owner_user_id and d.revoked_at is null and d.app_state<>'foreground'
+      and coalesce((d.categories->>push_category)::boolean,true)
+    on conflict(device_id,event_key) do nothing;
+  return new;
+end $$;
+create trigger tasks_push_outbox after update of state on tasks
+  for each row execute function task_push_outbox();
+
+-- Approval-needed means "presented to the owner", not merely drafted by a
+-- model. This trigger shares the transaction that pins the presented message.
+create function approval_push_outbox() returns trigger language plpgsql as $$
+begin
+  if new.status<>'prepared' or new.approval_id is null or new.presented_turn_id is null
+     or new.presented_turn_id is not distinct from old.presented_turn_id then return new; end if;
+  insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body)
+    select new.owner_user_id,d.id,'approval:'||new.approval_id,'approval','approval',new.approval_id,
+      'Josi','Your approval is needed.' from mobile_devices d
+    where d.owner_user_id=new.owner_user_id and d.revoked_at is null and d.app_state<>'foreground'
+      and coalesce((d.categories->>'approval')::boolean,true)
+    on conflict(device_id,event_key) do nothing;
+  return new;
+end $$;
+create trigger assistant_action_push_outbox after update of presented_turn_id on assistant_action_states
+  for each row execute function approval_push_outbox();
+
+-- A function gives PostgreSQL sequential statements for account switching.
+-- Data-modifying CTEs share one snapshot and cannot reliably retire a partial
+-- unique-index entry before inserting its replacement on every supported
+-- PostgreSQL implementation.
+create function register_mobile_device(
+  p_owner uuid,p_identity text,p_platform text,p_token_enc text,p_fingerprint text,
+  p_app_state text,p_privacy boolean,p_categories jsonb,p_quiet_start time,
+  p_quiet_end time,p_timezone text
+) returns uuid language plpgsql as $$
+declare target uuid; old_ids uuid[];
+begin
+  -- Registration is infrequent; one installation-wide lock avoids partial-
+  -- unique-index races and lock-order deadlocks across identity/token swaps.
+  perform pg_advisory_xact_lock(hashtext('josi_mobile_device_registration'));
+  select array_agg(id) into old_ids from mobile_devices
+    where revoked_at is null and (device_identity=p_identity or token_fingerprint=p_fingerprint)
+      and not(owner_user_id=p_owner and device_identity=p_identity);
+  if old_ids is not null then
+    update push_deliveries set status='suppressed',lease_token=null,last_error_code='account_switched'
+      where device_id=any(old_ids) and status in('queued','sending','retry','ticketed','checking');
+    update mobile_devices set revoked_at=now() where id=any(old_ids);
+  end if;
+  select id into target from mobile_devices where owner_user_id=p_owner and device_identity=p_identity for update;
+  if target is null then
+    insert into mobile_devices(owner_user_id,device_identity,platform,expo_token_enc,token_fingerprint,app_state,privacy_locked,categories,quiet_start,quiet_end,timezone)
+      values(p_owner,p_identity,p_platform,p_token_enc,p_fingerprint,p_app_state,p_privacy,p_categories,p_quiet_start,p_quiet_end,p_timezone) returning id into target;
+  else
+    update mobile_devices set platform=p_platform,expo_token_enc=p_token_enc,token_fingerprint=p_fingerprint,
+      app_state=p_app_state,privacy_locked=p_privacy,categories=p_categories,quiet_start=p_quiet_start,
+      quiet_end=p_quiet_end,timezone=p_timezone,revoked_at=null,last_seen_at=now() where id=target;
+  end if;
+  return target;
+end $$;
+
 alter table assistant_turns enable row level security;
+alter table assistant_turn_effects enable row level security;
 alter table mobile_devices enable row level security;
 alter table push_deliveries enable row level security;

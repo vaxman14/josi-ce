@@ -33,7 +33,9 @@ export async function claimJobs(db: Db, workerId: string, limit = 5): Promise<Jo
      where id in (
        select id from job_queue
        where ((status = 'queued' and run_at <= now())
-          or (status = 'running' and kind = 'assistant.turn' and locked_at < now() - interval '10 minutes'))
+          or (status = 'running' and kind = 'assistant.turn' and locked_at < now() - interval '10 minutes'
+            and exists(select 1 from assistant_turns stale where stale.id::text=job_queue.payload->>'turnId'
+              and (stale.status='queued' or (stale.status='running' and stale.lease_expires_at<now())))))
          and (kind <> 'assistant.turn' or not exists (
            select 1 from assistant_turns current_turn join assistant_turns earlier on earlier.thread_id=current_turn.thread_id
            where current_turn.id::text=job_queue.payload->>'turnId' and earlier.id<>current_turn.id
@@ -46,6 +48,10 @@ export async function claimJobs(db: Db, workerId: string, limit = 5): Promise<Jo
      returning *`,
     [workerId, limit],
   );
+}
+
+export async function renewJobLease(db:Db,jobId:number,workerId:string):Promise<boolean>{
+  return !!(await db.query(`update job_queue set locked_at=now() where id=$1 and status='running' and locked_by=$2 returning id`,[jobId,workerId])).length;
 }
 
 export async function completeJob(db: Db, jobId: number, workerId?: string): Promise<void> {

@@ -1,6 +1,6 @@
 # Durable native turns and Expo push
 
-Migration `0057_durable_mobile_turns_push.sql` reserves `0056` for the parallel assistant migration.
+Migration `0057_durable_mobile_turns_push.sql` reserves `0056` for the parallel assistant migration. **Merge gate:** land and validate the parallel `0056` first, then rebase this branch and run the real PostgreSQL upgrade suite before merge; migration filenames are ledger keys, so adding `0056` after an already-deployed `0057` is not a supported order.
 
 ## Native API contract
 
@@ -28,9 +28,9 @@ Accepts JSON:
 
 Reusing the key with the exact request returns the same turn with `duplicate: true`; reusing it for different input returns `409 idempotency_conflict`. Submission is limited to 20 turns per owner per minute and 50 queued/running turns per owner; overload returns `429` with `Retry-After`. A terminal failure remains `failed`. Retry by sending a new `client_message_id` and linking `attempt_of` to that failed turn.
 
-### `GET /api/assistant/threads/:threadId/turns?after=<RFC3339>`
+### `GET /api/assistant/threads/:threadId/turns?cursor=<opaque>`
 
-Returns owner-scoped queued/running/completed/failed reconciliation state. `completed` is emitted only after the assistant message is persisted. Failure includes a stable code and `retryable` hint.
+Returns owner-scoped queued/running/completed/failed reconciliation state ordered by the stable `(updated_at,id)` key. The response includes `next_cursor`; `turn_id=<opaque UUID>` directly reconciles one known turn. Timestamp-only cursors are rejected because equal timestamps can lose events. `completed` is emitted only after the assistant message is persisted. Failure includes a stable code and `retryable` hint.
 
 `job_id` intentionally equals the opaque turn UUID; the database queue's
 sequential internal identifier is never exposed. Native records a Sentry
@@ -55,19 +55,11 @@ Expo tokens are AES-256-GCM sealed with the installation master key. Logs, event
 
 ## Worker and delivery semantics
 
-Each accepted turn records the authenticated server-side session. A queued turn fails closed as non-retryable `session_expired` if that login is revoked or expired, or the account is disabled, before the worker starts it. Workers renew live execution leases so slow provider responses are not mistaken for crashed work. They reclaim expired queue rows after crashes, but do **not** replay an
-expired running model/tool turn: its state becomes retryable
-`worker_interrupted`. A compare-and-set lease prevents the old process from
-later creating a reply. The client may submit a new idempotency key linked by
-`attempt_of`. This is deliberate: CE cannot prove whether a provider accepted
-the last request before the process died, so automatic replay would violate the
-no-duplicate-action boundary. Existing action-state, approval hash/consumption,
-and task compare-and-set boundaries additionally protect consequential tools;
-persisted action results become turn tool receipts.
+Each accepted turn records the authenticated server-side session. A queued turn fails closed as non-retryable `session_expired` if that login is revoked or expired, or the account is disabled, before the worker starts it. Workers renew the turn and queue leases together so slow provider responses are not mistaken for crashed work. They reclaim an expired row after crashes, but do **not** replay an expired running model/tool turn. Before every consequential tool, CE persists a unique `(turn, tool-input hash)` effect fence; its exact receipt is durable after success. A crash after the fence but before a receipt is `effect_outcome_unknown`, non-retryable, and a linked retry is refused. A crash before any consequential boundary is retryable as a new `attempt_of`. Compare-and-set leases prevent an old process from later creating a reply. Existing action-state, approval hash/consumption, and task compare-and-set boundaries provide additional protection.
 
-Assistant completion and approval-needed notifications, plus explicit reminder notifications, create unique per-device outbox rows only after their source state is persisted. Foreground devices suppress banners. Privacy lock replaces content with generic text. Ordinary updates respect local quiet hours using `Intl` IANA timezone conversion (including DST); explicit reminders may bypass quiet hours. Deep-link data contains only a route type (`turn` or `reminder`) and its opaque, owner-authorized UUID; provider event identifiers and content never enter it.
+Assistant completion and approval-needed notifications, task/calendar success or failure, and explicit reminder/calendar-reminder notifications create unique per-device outbox rows in the authoritative source-state transaction. Foreground devices suppress banners. Privacy lock replaces content with generic text. Ordinary updates respect local quiet hours using `Intl` IANA timezone conversion (including DST); explicit reminders may bypass quiet hours. Deep-link data contains only a route type (`turn`, `approval`, `task`, or `reminder`) and its opaque, owner-authorized UUID; provider event identifiers and content never enter it.
 
-The Expo sender uses batches of at most 100, unique `(device,event)` delivery keys, bounded exponential retry, and separate ticket/receipt states. A ticket is not delivery. Only a successful receipt becomes `delivered`; `DeviceNotRegistered` revokes the device. Deep links contain only route type plus opaque UUID.
+The Expo sender uses batches of at most 100, unique `(device,event)` delivery keys, bounded timeouts/exponential retry, `Retry-After`, and separate ticket/receipt states. Permanent provider/configuration errors fail immediately. A ticket is not delivery; a successful receipt becomes `provider_accepted`, never a claim that the OS displayed it. `DeviceNotRegistered` revokes only the matching token generation. Deep links contain only route type plus opaque UUID. Category, owner binding, token generation, foreground state, privacy lock, and quiet hours are rechecked at send time.
 
 Tests inject HTTP and never contact Expo. No EAS cloud build is involved.
 

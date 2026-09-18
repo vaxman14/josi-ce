@@ -18,7 +18,7 @@ import {
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder,
-  checkChildAccess, json, submitDurableTurn, listDurableTurns, upsertMobileDevice, revokeMobileDevice, MobileError, consume, LIMITS,
+  checkChildAccess, encodeTurnCursor, json, submitDurableTurn, listDurableTurns, upsertMobileDevice, revokeMobileDevice, MobileError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -291,14 +291,19 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
    * person's native device identity. Acceptance never waits for a model. */
   r.post('/threads/:id/turns',requireOwnership({db},{type:'thread',need:'owner'}),handle(async(req,res)=>{
     const threadId=param(req,'id');
-    const rate=await consume(db,{limit:LIMITS.durable_turn,subject:`durable_turn:${req.user!.id}`});
-    if(!rate.ok){res.set('Retry-After',String(rate.retryAfterSeconds));throw new RouteError(429,'Too many turns were submitted. Reconcile existing work before retrying.');}
-    const bodyKey=str(req.body?.client_message_id,128);
-    const headerKey=str(req.get('Idempotency-Key'),128);
+    const rawBodyKey=typeof req.body?.client_message_id==='string'?req.body.client_message_id.trim():'';
+    const rawHeaderKey=typeof req.get('Idempotency-Key')==='string'?req.get('Idempotency-Key')!.trim():'';
+    if(rawBodyKey.length>128||rawHeaderKey.length>128)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');
+    const bodyKey=rawBodyKey;
+    const headerKey=rawHeaderKey;
     if(bodyKey&&headerKey&&bodyKey!==headerKey)throw new MobileError('idempotency_conflict','The Idempotency-Key and client_message_id must match.');
+    const clientMessageId=bodyKey||headerKey;
+    if(!clientMessageId)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');
+    const duplicate=clientMessageId?!!(await db.query(`select 1 from assistant_turns where owner_user_id=$1 and thread_id=$2 and client_message_id=$3`,[req.user!.id,threadId,clientMessageId])).length:false;
+    if(!duplicate){const rate=await consume(db,{limit:LIMITS.durable_turn,subject:`durable_turn:${req.user!.id}`});if(!rate.ok){res.set('Retry-After',String(rate.retryAfterSeconds));throw new RouteError(429,'Too many turns were submitted. Reconcile existing work before retrying.');}}
     const accepted=await submitDurableTurn(db,{
       ownerUserId:req.user!.id,sessionId:req.user!.session_id,threadId,
-      clientMessageId:bodyKey||headerKey,
+      clientMessageId,
       message:str(req.body?.message,8000),
       replyToMessageId:str(req.body?.reply_to_message_id,80)||null,
       attachmentIds:Array.isArray(req.body?.attachment_receipts)?req.body.attachment_receipts.map((x:unknown)=>str(x,80)):[],
@@ -312,11 +317,14 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
 
   r.get('/threads/:id/turns',requireOwnership({db},{type:'thread',need:'owner'}),handle(async(req,res)=>{
     const threadId=param(req,'id');
-    const after=str(req.query.after,64)||null;
-    if(after&&Number.isNaN(Date.parse(after)))throw new MobileError('invalid_reconciliation_cursor','The after cursor must be an RFC3339 timestamp.');
-    const turns=await listDurableTurns(db,{ownerUserId:req.user!.id,threadId,after});
+    const legacyAfter=typeof req.query.after==='string'?req.query.after:null;
+    if(legacyAfter&&Number.isNaN(Date.parse(legacyAfter)))throw new MobileError('invalid_reconciliation_cursor','Choose a valid reconciliation cursor.');
+    if(legacyAfter)throw new MobileError('invalid_reconciliation_cursor','Timestamp cursors are not stable; use the returned opaque cursor.');
+    const cursor=typeof req.query.cursor==='string'?req.query.cursor:null;
+    const turnId=typeof req.query.turn_id==='string'?req.query.turn_id:null;
+    const turns=await listDurableTurns(db,{ownerUserId:req.user!.id,threadId,cursor,turnId});
     res.set('Cache-Control','no-store');
-    return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};})});
+    return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
   }));
 
   r.put('/devices',handle(async(req,res)=>{

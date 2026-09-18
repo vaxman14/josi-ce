@@ -23,7 +23,7 @@ describe('migration 0057 durable mobile turns and push',()=>{
     expect((await pg.query<{body:string}>(`select body from messages where id='30000000-0000-4000-8000-000000000001'`)).rows[0].body).toBe('existing');
     expect((await pg.query<{channel:string}>(`select channel from child_activity_minutes where child_user_id='10000000-0000-4000-8000-000000000001'`)).rows[0].channel).toBe('web');
     await pg.exec(`insert into child_activity_minutes(child_user_id,minute,channel) values('10000000-0000-4000-8000-000000000001',date_trunc('minute',now())+interval '1 minute','native')`);
-    const tables=(await pg.query<{table_name:string}>(`select table_name from information_schema.tables where table_name in ('assistant_turns','mobile_devices','push_deliveries') order by table_name`)).rows.map(r=>r.table_name);
-    expect(tables).toEqual(['assistant_turns','mobile_devices','push_deliveries']);
+    const tables=(await pg.query<{table_name:string}>(`select table_name from information_schema.tables where table_name in ('assistant_turns','assistant_turn_effects','mobile_devices','push_deliveries') order by table_name`)).rows.map(r=>r.table_name);
+    expect(tables).toEqual(['assistant_turn_effects','assistant_turns','mobile_devices','push_deliveries']);
   });
 });

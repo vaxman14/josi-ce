@@ -155,12 +155,16 @@ describe('durable native turns and devices',()=>{
     expect(accepted.status).toBe(202);expect(accepted.body.turn).toMatchObject({status:'queued',lifecycle_state:'accepted_queued'});expect(accepted.body.turn.job_id).toBe(accepted.body.turn.id);expect(accepted.body.telemetry).toEqual({state:'accepted_queued',turn_id:accepted.body.turn.id,thread_id:threadId});expect(JSON.stringify(accepted.body)).not.toContain(body.message);expect(llmRequests).toHaveLength(0);
     const duplicate=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body});
     expect(duplicate.status).toBe(202);expect(duplicate.body.duplicate).toBe(true);expect(duplicate.body.turn.id).toBe(accepted.body.turn.id);
+    for(let i=0;i<25;i++)expect((await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body})).status).toBe(202);
     const state=await call(`/api/assistant/threads/${threadId}/turns`,{jar:cookies.alice});
-    expect(state.status).toBe(200);expect(state.body.turns[0]).toMatchObject({id:accepted.body.turn.id,job_id:accepted.body.turn.id,status:'queued',lifecycle_state:'accepted_queued'});
+    expect(state.status).toBe(200);expect(state.body.turns[0]).toMatchObject({id:accepted.body.turn.id,job_id:accepted.body.turn.id,status:'queued',lifecycle_state:'accepted_queued'});expect(typeof state.body.next_cursor).toBe('string');
+    expect((await call(`/api/assistant/threads/${threadId}/turns?turn_id=${accepted.body.turn.id}`,{jar:cookies.alice})).body.turns).toHaveLength(1);
     expect((await call(`/api/assistant/threads/${threadId}/turns`,{jar:cookies.bob})).status).toBe(404);
     expect((await call(`/api/assistant/threads/${threadId}/turns?after=not-a-date`,{jar:cookies.alice})).body.code).toBe('invalid_reconciliation_cursor');
     const mismatch=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,headers:{'Idempotency-Key':'header-key'},body:{client_message_id:'body-key',message:'x'}});
     expect(mismatch.status).toBe(409);expect(mismatch.body.code).toBe('idempotency_conflict');
+    const overlong=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body:{client_message_id:'x'.repeat(129),message:'x'}});
+    expect(overlong.status).toBe(400);expect(overlong.body.code).toBe('invalid_idempotency_key');
     await db.query(`update assistant_turns set status='failed',error_code='test',error_retryable=true where id=$1`,[accepted.body.turn.id]);
     const terminalDuplicate=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body});
     expect(terminalDuplicate.body.turn).toMatchObject({id:accepted.body.turn.id,status:'failed',lifecycle_state:'terminal_failed'});expect(terminalDuplicate.body.telemetry.state).toBe('terminal_failed');

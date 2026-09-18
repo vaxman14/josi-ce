@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
-import { addMessage, createThread, markActionsPresented, MasterKey } from '@josi-ce/core';
+import { createSession } from '../../auth/src/sessions.js';
+import { addMessage, claimDurableTurn, createThread, markActionsPresented, MasterKey, submitDurableTurn } from '@josi-ce/core';
 import { setCapability, upsertConnection } from '@josi-ce/connectors';
 import { runAssistantTurn } from '../src/assistantAgent.js';
 import { buildCore } from '../src/mcp/server.js';
@@ -53,9 +54,14 @@ describe('subscription turn receipts',()=>{
       requestedCapabilities:['google.mail.send'],
     });
     await setCapability(db,{connection,capability:'google.mail.send',enabled:true,actorUserId:userId});
+    const session=await createSession(db,{userId});
+    const accepted=await submitDurableTurn(db,{ownerUserId:userId,sessionId:session.sessionId,threadId,clientMessageId:'subscription-durable',message:'Email the exact note'});
+    const durable=await claimDurableTurn(db,accepted.turn.id);
+    expect(durable).not.toBeNull();
     const runner:SpawnRunner=async({args})=>{
       const ctx=JSON.parse(readFileSync(contextPath(args),'utf8'));
       expect(ctx.tools).toContain('draft_email');
+      expect(ctx.durableTurnId).toBe(durable!.id);expect(ctx.durableLeaseToken).toBe(durable!.lease_token);
       const core=buildCore(ctx,async()=>db);
       const outcome=await core.execute('draft_email',{
         recipient:'recipient@example.test',subject:'Subscription approval',body:'Exact body',
@@ -63,7 +69,8 @@ describe('subscription turn receipts',()=>{
       expect(JSON.parse(outcome.text)).toMatchObject({ok:true,state:'prepared',task_id:expect.any(String),approval_id:expect.any(String)});
       return {code:0,timedOut:false,stderr:'',stdout:JSON.stringify({type:'agent_message',message:'I prepared it.'})};
     };
-    const prepared=await runAssistantTurn({db,userId,threadId,history:[],inbound:'Email the exact note',registry:{db,masterKey:key,codexRunner:runner}});
+    const prepared=await runAssistantTurn({db,userId,threadId,history:[],inbound:'Email the exact note',inboundMessageId:durable!.inbound_message_id,durableTurnId:durable!.id,durableLeaseToken:durable!.lease_token,registry:{db,masterKey:key,codexRunner:runner}});
+    expect(await db.query(`select id from assistant_turn_effects where turn_id=$1 and tool_name='draft_email' and state='completed'`,[durable!.id])).toHaveLength(1);
     expect(prepared.actions).toEqual([{tool:'draft_email',result:expect.objectContaining({ok:true,state:'prepared',task_id:expect.any(String),approval_id:expect.any(String)})}]);
     expect(prepared.reply).toBe('Send email\nTo: recipient@example.test\nSubject: Subscription approval\nBody: Exact body\n\nApprove this exact action? Reply yes or no.');
 
