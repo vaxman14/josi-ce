@@ -56,15 +56,17 @@ export function parseRetryTarget(value: unknown): AssistantRetryTarget | undefin
 
 export async function immediatelyPrecedingRetryTarget(
   db: Db,
-  args: { ownerUserId: string; threadId: string },
+  args: { ownerUserId: string; threadId: string; currentInboundMessageId?: string | null },
 ): Promise<AssistantRetryTarget | undefined> {
-  const [message] = await db.query<{ meta: Record<string, unknown> }>(
-    `select m.meta from messages m
+  const [message] = await db.query<{ direction: 'in' | 'out'; meta: Record<string, unknown> }>(
+    `select m.direction,m.meta from messages m
        join threads t on t.id = m.thread_id
-      where m.thread_id = $1 and t.owner_user_id = $2 and m.direction = 'out'
+      where m.thread_id = $1 and t.owner_user_id = $2
+        and ($3::uuid is null or m.id <> $3::uuid)
       order by m.created_at desc, m.id desc limit 1`,
-    [args.threadId, args.ownerUserId],
+    [args.threadId, args.ownerUserId, args.currentInboundMessageId ?? null],
   );
+  if (message?.direction !== 'out') return undefined;
   return parseRetryTarget(message?.meta?.retry);
 }
 

@@ -10,6 +10,7 @@ import { CONTENT_SECURITY_POLICY } from '../src/http/staticApp.js';
 
 const root = join(import.meta.dirname, '../../..');
 const compose = parse(readFileSync(join(root, 'docker-compose.yml'), 'utf8')) as any;
+const releaseCompose = parse(readFileSync(join(root, 'docker-compose.release.yml'), 'utf8')) as any;
 const dockerfile = readFileSync(join(root, 'Dockerfile'), 'utf8');
 const caddyfile = readFileSync(join(root, 'Caddyfile'), 'utf8');
 const installer = readFileSync(join(root, 'scripts/install.sh'), 'utf8');
@@ -273,6 +274,17 @@ describe('storage mounts — M45, M60', () => {
       const volumes: string[] = service(name).volumes ?? [];
       const roots = volumes.filter((v) => v.includes('/data/roots'));
       expect(roots, `${name} must not mount a shared folder by default`).toEqual([]);
+    }
+  });
+
+  it('passes explicit workspace authority into both development and release app services', () => {
+    for (const candidate of [compose, releaseCompose]) {
+      for (const name of ['web', 'worker']) {
+        expect(candidate.services[name].environment).toMatchObject({
+          JOSI_WORKSPACE_ENABLED: '${JOSI_WORKSPACE_ENABLED:-0}',
+          JOSI_WORKSPACE_MODE: '${JOSI_WORKSPACE_MODE:-ro}',
+        });
+      }
     }
   });
 

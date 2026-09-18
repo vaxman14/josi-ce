@@ -20,8 +20,8 @@ beforeEach(async () => {
   threadId = (await createThread(db, { ownerUserId: userId })).id;
 });
 
-const turn = (inbound = 'retry') => runAssistantTurn({
-  db, userId, threadId, history: [], inbound,
+const turn = (inbound = 'retry', inboundMessageId?: string) => runAssistantTurn({
+  db, userId, threadId, history: [], inbound, inboundMessageId,
   registry: { db, masterKey: null },
 });
 
@@ -106,6 +106,18 @@ describe('deterministic immediate-turn retry', () => {
     });
 
     const result = await turn();
+
+    expect(result.reply).toMatch(/what exactly.*retry/i);
+    expect(result.actions).toEqual([]);
+  });
+
+  it('does not skip an intervening inbound message to recover an older retry target', async () => {
+    const target = retryTargetFor('list_workspace_mappings', {})!;
+    await addMessage(db, { threadId, direction: 'out', body: 'Discovery failed.', meta: { retry: target } });
+    await addMessage(db, { threadId, direction: 'in', body: 'Tell me something else first.' });
+    const current = await addMessage(db, { threadId, direction: 'in', body: 'retry' });
+
+    const result = await turn('retry', current.id);
 
     expect(result.reply).toMatch(/what exactly.*retry/i);
     expect(result.actions).toEqual([]);

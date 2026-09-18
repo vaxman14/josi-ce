@@ -38,7 +38,7 @@ export interface InboundDeps {
   runTurn: (args: {
     userId: string; threadId: string; inbound: string;
   }) => Promise<{ reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }>;
-    mediaRequest?: object; mediaResult?: object }>;
+    retry?: object; mediaRequest?: object; mediaResult?: object }>;
   /** M41's disclosure, read from the mail policy so the wording an operator
    * customised once applies to every channel. */
   disclosure: string;

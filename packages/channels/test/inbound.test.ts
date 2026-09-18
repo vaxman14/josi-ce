@@ -356,6 +356,15 @@ describe('the reply', () => {
     ]);
   });
 
+  it('persists the typed retry target returned by the assistant', async () => {
+    await link(bob, 500);
+    const retry = { version: 1, kind: 'read_tool', domain: 'workspace', tool: 'list_workspace_mappings', input: {} };
+    await handleUpdate(deps({ runTurn: async () => ({ reply: 'Workspace discovery failed.', retry }) }), message());
+    const [thread] = await db.query<{ id: string }>(`select id from threads`);
+    const messages = await listMessages(db, { threadId: thread.id });
+    expect(messages.at(-1)?.meta.retry).toEqual(retry);
+  });
+
   it('the audit log records lengths, not words', async () => {
     await link(bob, 500);
     await handleUpdate(deps(), message({ text: 'my bank pin is 1234' }));

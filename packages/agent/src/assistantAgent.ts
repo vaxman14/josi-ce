@@ -274,6 +274,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     const target = await immediatelyPrecedingRetryTarget(db, {
       ownerUserId: userId,
       threadId: args.threadId,
+      currentInboundMessageId: args.inboundMessageId,
     });
     if (!target) return { reply: 'What exactly would you like me to retry?', actions };
     let result: unknown;
