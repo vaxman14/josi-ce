@@ -36,7 +36,7 @@ import {
   CAUTION_ORDER, assembleSystemContext, extractDurableFacts, loadAll,
   narrowPolicy, relevantMemories, suggestMemory, type Memory,
 } from '@josi-ce/persona';
-import { MUTATING_TOOLS, runDurableEffect } from './durableEffects.js';
+import { isMutatingTool, runDurableEffect } from './durableEffects.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
   CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsArtifactCompletion,
@@ -759,5 +759,5 @@ async function execTool(
       } : null,
     }, name, input);
   };
-  return MUTATING_TOOLS.has(name)?runDurableEffect(args.db,{turnId:args.durableTurnId,leaseToken:args.durableLeaseToken},name,input,execute):execute();
+  return isMutatingTool(name,input)?runDurableEffect(args.db,{turnId:args.durableTurnId,leaseToken:args.durableLeaseToken},name,input,execute):execute();
 }

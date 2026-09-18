@@ -28,7 +28,7 @@ import { createInterface } from 'node:readline';
 import { checkStepUp, connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import type { Db, MasterKey } from '@josi-ce/core';
 import { executeAssistantTool } from '../execute.js';
-import { MUTATING_TOOLS, runDurableEffect } from '../durableEffects.js';
+import { isMutatingTool, runDurableEffect } from '../durableEffects.js';
 import { ALL_TOOLS } from '../tools.js';
 import { handleMcpMessage, type McpCore, type McpToolDescriptor, type McpToolOutcome } from './protocol.js';
 
@@ -151,7 +151,7 @@ export function buildCore(ctx: HarnessContext, connect: () => Promise<Db>): McpC
         name,
         input,
       );
-      const result=MUTATING_TOOLS.has(name)
+      const result=isMutatingTool(name,input)
         ? await runDurableEffect(conn,{turnId:ctx.durableTurnId,leaseToken:ctx.durableLeaseToken},name,input,execute)
         : await execute();
       return completed(result);

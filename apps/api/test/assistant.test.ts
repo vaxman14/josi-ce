@@ -167,6 +167,8 @@ describe('durable native turns and devices',()=>{
     expect(overlong.status).toBe(400);expect(overlong.body.code).toBe('invalid_idempotency_key');
     const paddedOverlong=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body:{client_message_id:` ${'x'.repeat(127)} `,message:'x'}});
     expect(paddedOverlong.status).toBe(400);expect(paddedOverlong.body.code).toBe('invalid_idempotency_key');
+    const byteOverlong=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,headers:{'Idempotency-Key':'é'.repeat(65)},body:{message:'x'}});
+    expect(byteOverlong.status).toBe(400);expect(byteOverlong.body.code).toBe('invalid_idempotency_key');
     await db.query(`update assistant_turns set status='failed',error_code='test',error_retryable=true where id=$1`,[accepted.body.turn.id]);
     const terminalDuplicate=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body});
     expect(terminalDuplicate.body.turn).toMatchObject({id:accepted.body.turn.id,status:'failed',lifecycle_state:'terminal_failed'});expect(terminalDuplicate.body.telemetry.state).toBe('terminal_failed');
