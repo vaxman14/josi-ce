@@ -10,7 +10,7 @@ await mkdir(artifactDir,{recursive:true});
 try {
  for(const viewport of [{width:1440,height:1000},{width:390,height:844}]){
   const page=await browser.newPage({viewport,timezoneId:'America/Los_Angeles',...(viewport.width<500?{hasTouch:true,isMobile:true}:{})});let empty=false,fail=false;
-  const source={id:'source-a',name:'Team',account:'calendar-fixture@example.test',provider:'google',selected:true,primary:false,color:'#7c3aed'};
+  const source={id:'source-a',connectionId:'connection-a',name:'Team',account:'calendar-fixture@example.test',provider:'google',selected:true,primary:true,writable:true,writeDefault:true,color:'#7c3aed'};
   const event=(id,title,start,end,allDay=false)=>({eventId:id,sourceId:source.id,sourceName:source.name,account:source.account,provider:source.provider,sourceColor:source.color,title,start,end,allDay});
   const events=[event('a','Morning meeting','2026-03-08T09:30:00Z','2026-03-08T11:30:00Z'),event('b','Overlapping meeting','2026-03-08T10:00:00Z','2026-03-08T12:00:00Z'),event('short-30','Discover AI opportunities with a long title','2026-03-08T19:00:00Z','2026-03-08T19:30:00Z'),event('short-45','Zoom group follow-up with a long title','2026-03-08T19:00:00Z','2026-03-08T19:45:00Z'),event('c','All day workshop','2026-03-08','2026-03-09',true),event('series-1','Recurring meeting','2026-03-09T16:00:00Z','2026-03-09T17:00:00Z'),event('fall-pdt','First repeated 1:30','2026-11-01T08:30:00Z','2026-11-01T09:00:00Z'),event('fall-pst','Second repeated 1:30','2026-11-01T09:30:00Z','2026-11-01T10:00:00Z')];
   await page.route('**/api/**',async route=>{
@@ -33,6 +33,7 @@ try {
   assert(pageBox&&scheduleCardBox&&pickerCardBox);
   assert(pickerCardBox.y>=scheduleCardBox.y+scheduleCardBox.height-1,'calendar picker must render after the complete schedule card');
   assert(Math.abs(pickerCardBox.width-scheduleCardBox.width)<1,'calendar picker and schedule must share the same full-width container');
+  for(const control of [page.getByText('Primary',{exact:true}),page.getByRole('button',{name:'Write default',exact:true})]){const box=await control.boundingBox();assert(box&&box.x>=pickerCardBox.x&&box.x+box.width<=pickerCardBox.x+pickerCardBox.width,'calendar source controls must remain inside the picker card');}
   let widePageWidthRatio=null,wideScreenshot=null;
   if(viewport.width===1440){
    await page.setViewportSize({width:1920,height:1080});
