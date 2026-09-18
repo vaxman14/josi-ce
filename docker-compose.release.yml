@@ -121,6 +121,8 @@ services:
       JOSI_INSTALLER_CONFIGURED: ${JOSI_INSTALLER_CONFIGURED:-}
       JOSI_ACCESS_MODE: ${JOSI_ACCESS_MODE:-}
       JOSI_SETUP_TOKEN_SHA256: ${JOSI_SETUP_TOKEN_SHA256:-}
+      JOSI_WORKSPACE_ENABLED: ${JOSI_WORKSPACE_ENABLED:-0}
+      JOSI_WORKSPACE_MODE: ${JOSI_WORKSPACE_MODE:-ro}
       # Empty means infer from APP_URL: secure for https, non-secure for LAN
       # http. Explicit true/false remains available as an advanced override.
       COOKIE_SECURE: ${JOSI_COOKIE_SECURE:-}
@@ -192,6 +194,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-josi}@db:5432/${POSTGRES_DB:-josi}
       PGPASSWORD_FILE: /run/secrets/josi_db_password
       MASTER_KEY_FILE: /run/secrets/josi_master_key
+      JOSI_WORKSPACE_ENABLED: ${JOSI_WORKSPACE_ENABLED:-0}
+      JOSI_WORKSPACE_MODE: ${JOSI_WORKSPACE_MODE:-ro}
       CODEX_HOME: /data/codex
       # Where the official Claude Code CLI keeps its login. Its own volume for
       # the same reason: an update replaces the container and must not sign the

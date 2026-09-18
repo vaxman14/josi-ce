@@ -1,3 +1,4 @@
+import { emailTemplateRoutes } from './emailTemplateRoutes.js';
 // Operational email over HTTP.
 //
 // The admin half of this file is the one to read carefully. M38 says an
@@ -76,6 +77,7 @@ export function mailRoutes(ctx: MailRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
   r.use(requireAuth);
+  r.use('/templates', emailTemplateRoutes(db));
 
   async function transportFor(): Promise<{ transport: SmtpTransport; profile: { fromAddress: string; fromName: string } }> {
     const profile = await loadProfile(db, requireKey(ctx), 'communications');

@@ -112,6 +112,11 @@ export interface ToolContext {
   userId: string | null;
   sessionKey: string | null;
   threadId: string | null;
+  /** Latest authenticated user turn and server clock. The out-of-process MCP
+   * server uses these to enforce relative calendar dates independently of the
+   * model's absolute timestamps. */
+  latestUserText?: string | null;
+  effectiveNow?: string | null;
 }
 
 export interface ChatRequest {

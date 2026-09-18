@@ -5,6 +5,11 @@ export function dayKey(date: Date, zone: string): string {
   const part = (name: string) => parts.find(p => p.type === name)!.value;
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
+export function calendarDayLabel(day: string, zone: string, locale?: string | string[]): string {
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: zone, weekday: 'long', month: 'short', day: 'numeric', year: 'numeric',
+  }).format(midnight(day, zone));
+}
 export function addDays(day: string, count: number): string {
   const date = new Date(`${day}T12:00:00Z`); date.setUTCDate(date.getUTCDate() + count); return date.toISOString().slice(0, 10);
 }

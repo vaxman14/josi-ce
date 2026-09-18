@@ -37,7 +37,8 @@ export interface InboundDeps {
    * depend on the agent package, and so a routing test needs no model. */
   runTurn: (args: {
     userId: string; threadId: string; inbound: string;
-  }) => Promise<{ reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }> }>;
+  }) => Promise<{ reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }>;
+    retry?: object; mediaRequest?: object; mediaResult?: object }>;
   /** M41's disclosure, read from the mail policy so the wording an operator
    * customised once applies to every channel. */
   disclosure: string;
@@ -274,7 +275,8 @@ export async function handleUpdate(
   const threadId = await threadFor(db, link);
   await db.query(`update telegram_links set last_inbound_at = now() where id = $1`, [link.id]);
 
-  let result: { reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }> };
+  let result: { reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }>;
+    retry?: unknown; mediaRequest?: object; mediaResult?: object };
   try {
     result = await deps.runTurn({ userId: link.user_id, threadId, inbound: text });
   } catch (err) {
@@ -296,13 +298,18 @@ export async function handleUpdate(
   }
 
   const actionState=(result.actions??[]).find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
+  const outboundMeta:Record<string,unknown>={};
+  if(actionState?.domain==='email'||actionState?.domain==='calendar')outboundMeta.action_status_domain=actionState.domain;
+  if(result.retry)outboundMeta.retry=result.retry;
+  if(result.mediaResult)outboundMeta.media_result=result.mediaResult;
   const exchange = await recordExchange(db, {
     ownerUserId: link.user_id,
     threadId,
     channel: 'telegram',
     inbound: text,
     reply: result.reply,
-    outboundMeta: actionState?.domain==='email'||actionState?.domain==='calendar'?{action_status_domain:actionState.domain}:undefined,
+    inboundMeta: result.mediaRequest ? { media_request: result.mediaRequest } : undefined,
+    outboundMeta: Object.keys(outboundMeta).length ? outboundMeta : undefined,
   });
   const presentedTaskIds = (result.actions ?? []).map((action) => action.result)
     .filter((value): value is { state: string; task_id: string } => !!value && typeof value === 'object'

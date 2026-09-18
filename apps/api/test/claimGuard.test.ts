@@ -18,7 +18,8 @@ import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
 import { MasterKey, createThread, seal } from '@josi-ce/core';
 import {
-  CLAIM_GUARD_FALLBACK, claimsCompletedAction, runAssistantTurn,
+  ARTIFACT_CLAIM_GUARD_FALLBACK, CLAIM_GUARD_FALLBACK,
+  claimsArtifactCompletion, claimsCompletedAction, runAssistantTurn,
 } from '@josi-ce/agent';
 
 // ------------------------------------------------------------- the matcher
@@ -36,6 +37,10 @@ describe('claimsCompletedAction', () => {
     'The meeting has been cancelled as you asked.',
     'All set — it goes off at 6am.',
     'I already cancelled that reminder.',
+    "Done — here's your image.",
+    "Done — here's your logo.",
+    'I generated the image and attached it below.',
+    'The report is ready for download.',
   ];
   for (const text of fabrications) {
     it(`matches: "${text.slice(0, 50)}"`, () => {
@@ -64,6 +69,12 @@ describe('claimsCompletedAction', () => {
       expect(claimsCompletedAction(text)).toBe(false);
     });
   }
+
+  it('distinguishes artifact completion from ordinary action completion', () => {
+    expect(claimsArtifactCompletion("Done — here's your image.")).toBe(true);
+    expect(claimsArtifactCompletion('Done — reminder set.')).toBe(false);
+    expect(claimsArtifactCompletion('Image generation is unavailable. No image was created or attached.')).toBe(false);
+  });
 });
 
 // ------------------------------------------------------------- the loop
@@ -163,6 +174,36 @@ describe('the fabrication guard in the loop', () => {
     const result = await turn(fetchImpl);
     expect(result.reply).toMatch(/what time/);
     expect(seen).toHaveLength(1);
+  });
+
+  it('blocks an artifact-less completion even when an unrelated tool receipt exists', async () => {
+    const { fetchImpl, seen } = scripted([
+      {
+        content: null as unknown as string,
+        tool_calls: [{ id: 'c1', type: 'function', function: { name: 'list_open_tasks', arguments: '{}' } }],
+      },
+      { content: "Done — here's your image." },
+      { content: 'Image generation is unavailable. No image was created or attached.' },
+    ]);
+    const result = await turn(fetchImpl, 'continue');
+    expect(result.reply).toMatch(/unavailable/i);
+    expect(result.actions.map((action) => action.tool)).toEqual(['list_open_tasks']);
+    expect(seen).toHaveLength(3);
+    expect(seen[2].messages.at(-1)?.content).toMatch(/no artifact receipt or attachment/i);
+    const events = await db.query<{ payload: Record<string, unknown> }>(
+      `select payload from events where kind='agent.artifact_claim_without_receipt'`,
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].payload).toEqual({ receiptCount: 1 });
+  });
+
+  it('replaces a doubled-down artifact claim with an artifact-specific correction', async () => {
+    const { fetchImpl } = scripted([
+      { content: "Done — here's your image." },
+      { content: 'The image is ready for download.' },
+    ]);
+    const result = await turn(fetchImpl, 'continue');
+    expect(result.reply).toBe(ARTIFACT_CLAIM_GUARD_FALLBACK);
   });
 
   it('a claim WITH a real tool receipt is never touched', async () => {

@@ -148,8 +148,13 @@ async function processInbound(ctx: ExternalChannelCtx, secrets: Record<string, s
   const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound: message.text, connectorFetch: ctx.connectorFetch, channel: 'external', sessionKey: threadId });
   const reply = result.refusal?.message ?? result.reply;
   const actionState=result.actions.find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
+  const outboundMeta:Record<string,unknown>={};
+  if(actionState?.domain==='email'||actionState?.domain==='calendar')outboundMeta.action_status_domain=actionState.domain;
+  if(result.retry)outboundMeta.retry=result.retry;
+  if(result.mediaResult)outboundMeta.media_result=result.mediaResult;
   const exchange=await recordExchange(ctx.db, { ownerUserId: link.user_id, threadId, channel: message.channel, inbound: message.text, reply,
-    outboundMeta: actionState?.domain==='email'||actionState?.domain==='calendar'?{action_status_domain:actionState.domain}:undefined });
+    inboundMeta:result.mediaRequest?{media_request:result.mediaRequest}:undefined,
+    outboundMeta:Object.keys(outboundMeta).length?outboundMeta:undefined });
   const presentedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>
     !!value&&typeof value==='object'&&['collecting','prepared'].includes(String((value as {state?:unknown}).state))&&typeof (value as {task_id?:unknown}).task_id==='string').map(value=>value.task_id);
   await markActionsPresented(ctx.db,{ownerUserId:link.user_id,threadId,taskIds:presentedTaskIds,messageId:exchange.outbound.id});

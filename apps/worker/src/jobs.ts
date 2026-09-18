@@ -29,7 +29,7 @@ type WriteProvider = 'google' | 'microsoft';
 import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk,
 } from '@josi-ce/channels';
-import { mailPolicy } from '@josi-ce/mail';
+import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
 
 /** What the worker needs beyond the database.
  *
@@ -76,6 +76,7 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       const task=await claimReadyTask(db,taskId);
       if(!task)return;
       try {
+        if (task.slots.rendered_email && !preparedAction) throw new Error('Template email requires an exact prepared approval.');
         if(preparedAction){
           if(!preparedAction.approval_id)throw new Error('The prepared action has no approval.');
           const approval=await consumeApproval(db,{approvalId:preparedAction.approval_id,payload:task.slots});
@@ -300,6 +301,20 @@ async function providerFetch(ctx: WorkerContext, url: string, accessToken: strin
 async function executeWriteTask(db: Db, task: WritableTask, ctx: WorkerContext): Promise<void> {
   if (task.template_key === 'send_message') {
     const session = await writeSession(db, task, 'mail', ctx); const to = mailAddress(textSlot(task, 'recipient')); const cc = listSlot(task, 'cc').map(mailAddress);
+    if (task.slots.rendered_email) {
+      const frozen = verifyFrozenEmail(task.slots.rendered_email);
+      if (frozen.values.recipient !== to || task.slots.subject !== frozen.subject || task.slots.body !== frozen.text) throw new Error('The approved email fields do not match.');
+      const raw = renderedEmailMime(frozen, to, cc);
+      if (session.provider === 'google') {
+        await providerFetch(ctx, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', session.accessToken,
+          {method:'POST',body:JSON.stringify({raw:Buffer.from(raw).toString('base64url')})});
+      } else {
+        await providerFetch(ctx, 'https://graph.microsoft.com/v1.0/me/sendMail', session.accessToken,
+          {method:'POST',headers:{'Content-Type':'text/plain'},body:Buffer.from(raw).toString('base64')});
+      }
+      return;
+    }
+    if (task.slots.template_id || task.slots.template_name) throw new Error('Template email must have an approved rendered snapshot.');
     const bodyText = textSlot(task, 'body') || textSlot(task, 'body_brief');
     if (session.provider === 'google') {
       const raw = [`To: ${to}`, ...(cc.length ? [`Cc: ${cc.join(', ')}`] : []), `Subject: ${mailHeader(textSlot(task, 'subject'))}`, 'Content-Type: text/plain; charset=utf-8', '', bodyText].join('\r\n');

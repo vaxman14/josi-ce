@@ -28,6 +28,22 @@ interface PendingCall {
   expiresAt: string;
 }
 
+function TemplatePreview({ id }: { id: string }) {
+  const [html, setHtml] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    void api.get<{html:string}>(`/mail/templates/approvals/${id}/preview`)
+      .then(r => { if (active) setHtml(r.html); })
+      .catch(e => { if (active && e.status !== 404) setError(e.message); });
+    return () => { active = false; };
+  }, [id]);
+  return error ? <ErrorNote>{error}</ErrorNote> : html ? <details className="mt-3" open>
+    <summary className="cursor-pointer py-2 text-sm">Final email layout</summary>
+    <iframe title="Approved email preview" sandbox="" referrerPolicy="no-referrer" srcDoc={html} className="h-[420px] w-full rounded-md border border-border bg-white" />
+  </details> : null;
+}
+
 export function Approvals() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [calls, setCalls] = useState<PendingCall[]>([]);
@@ -145,7 +161,8 @@ export function Approvals() {
               <li key={a.id}>
                 <Card>
                   {/* The exact action, in words, before anyone agrees to it. */}
-                  <p className="break-words text-sm">{a.summary}</p>
+                  <p className="whitespace-pre-wrap break-words text-sm">{a.summary}</p>
+                  {a.action_class === 'email_send' ? <TemplatePreview id={a.id} /> : null}
                   <p className="mt-1 text-xs text-muted-foreground">{a.action.replace(/_/g, ' ')}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button onClick={() => void decide(a.id, true)} disabled={busy === a.id}>Approve</Button>

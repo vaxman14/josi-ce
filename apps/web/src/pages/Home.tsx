@@ -34,6 +34,7 @@ export function Home() {
         </Card>
       ) : null}
 
+      <Link className="flex min-h-11 items-center rounded-md px-2 text-sm underline" to="/app/email/templates">Email / Templates</Link>
       <div className="grid gap-3 sm:grid-cols-2">
         <Card>
           <CardTitle>Waiting on you</CardTitle>

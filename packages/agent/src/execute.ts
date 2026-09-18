@@ -1,3 +1,4 @@
+import { EmailTemplateError, freezeEmailTemplate } from '@josi-ce/mail';
 // Executing one assistant tool call, wherever it was asked for.
 //
 // Extracted from `assistantAgent.ts` unchanged in behaviour, because it now
@@ -25,9 +26,10 @@ import { DATA_TOOL_FAMILY, executeDataTool, selectedCalendars, writeActionCapabi
 import { executeCustomApiTool, isCustomApiTool } from './customApiTools.js';
 import { executeWorkflowTool, WORKFLOW_TOOL_NAMES } from './workflowTools.js';
 import { executeObsidianTool, DEVELOPER_INTEGRATION_TOOL, executeDeveloperIntegrationTool, executeDeveloperResourceTool } from './developerIntegrationTools.js';
+import { resolveCalendarTimeIntent, validateAbsoluteCalendarRange, type CalendarTimeResolution } from './calendarTimeIntent.js';
 
 function actionSummary(domain:string,operation:string,slots:Record<string,unknown>):string{
-  if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
+  if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}${Array.isArray(slots.cc) && slots.cc.length ? `\nCc: ${slots.cc.join(', ')}` : ''}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
   if(domain==='calendar'){
     const source=slots.calendar_source as {calendar_name?:unknown}|undefined;
     return `${operation==='update'?'Update':'Create'} calendar event\nCalendar: ${String(source?.calendar_name??'Selected calendar')}\nTitle: ${String(slots.title)}\nStart: ${String(slots.start)}\nEnd: ${String(slots.end)}`;
@@ -49,6 +51,10 @@ export interface ToolExecutionContext {
    * that cannot open secrets; those tools then refuse honestly rather than
    * crash. The task and reminder tools never touch it. */
   connectors?: ConnectorAccess | null;
+  /** Authenticated latest user turn and its clock seam. Calendar relative
+   * dates are rebuilt from these server-side instead of trusting model math. */
+  latestUserText?: string;
+  effectiveNow?: Date;
 }
 
 export async function executeAssistantTool(
@@ -103,6 +109,39 @@ export async function executeAssistantTool(
       let action = await activeCollectingAction(db,{ownerUserId:userId,threadId:ctx.threadId,domain,operation,sourceTurnId:ctx.turnId});
       let task = action ? await getTask(db,action.task_id) : null;
       let draftSlots = Object.fromEntries(Object.entries(input).filter(([,value])=>value!==undefined));
+      let calendarTime: CalendarTimeResolution = {kind:'none'};
+      if(name==='draft_calendar_event'){
+        calendarTime=await resolveCalendarTimeIntent(db,{
+          userId,latestUserText:ctx.latestUserText,effectiveNow:ctx.effectiveNow,
+          existingIntent:task?.slots.calendar_time_intent,
+        });
+        if(calendarTime.kind==='resolved')draftSlots={...draftSlots,start:calendarTime.start,end:calendarTime.end,calendar_time_intent:calendarTime.intent};
+        else if(calendarTime.kind==='incomplete'){
+          delete draftSlots.start;delete draftSlots.end;
+          draftSlots={...draftSlots,calendar_time_intent:calendarTime.intent};
+        }
+      }
+      if (name === 'draft_email') {
+        const allowed = new Set(['recipient', 'subject', 'body', 'cc', 'template_id', 'template_name', 'merge_values']);
+        if (Object.keys(input).some(key => !allowed.has(key))) return {ok:false,message:'Unsupported email draft field. Raw HTML is not accepted.'};
+        if (input.template_id !== undefined && input.template_name !== undefined) return {ok:false,message:'Supply exactly one template_id or template_name.'};
+        const combined = {...task?.slots, ...draftSlots};
+        if (input.template_id !== undefined) delete combined.template_name;
+        if (input.template_name !== undefined) delete combined.template_id;
+        if (combined.template_id !== undefined || combined.template_name !== undefined) {
+          try {
+            const address = /^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/;
+            if (combined.recipient !== undefined && (typeof combined.recipient !== 'string' || !address.test(combined.recipient))) throw new EmailTemplateError('Enter one valid recipient address.');
+            if (combined.cc !== undefined && (!Array.isArray(combined.cc) || combined.cc.length > 20 || combined.cc.some(value => typeof value !== 'string' || !address.test(value)))) throw new EmailTemplateError('CC must contain at most 20 valid email addresses.');
+            const frozen = await freezeEmailTemplate(db, userId, {id:combined.template_id, name:combined.template_name}, String(combined.recipient ?? ''), combined.merge_values);
+            if ((input.subject !== undefined && input.subject !== frozen.subject) || (input.body !== undefined && input.body !== frozen.text)) throw new EmailTemplateError('Subject and body come from the selected template. Edit the saved template, or draft without a template.');
+            draftSlots = {...draftSlots, template_id:frozen.templateId, template_name:undefined, rendered_email:frozen, subject:frozen.subject, body:frozen.text};
+          } catch (error) {
+            if (error instanceof EmailTemplateError) return {ok:false,error:'email_template',message:error.message};
+            throw error;
+          }
+        }
+      }
       if(!action){
         const [prepared]=await db.query<import('@josi-ce/core').AssistantActionState>(`select * from assistant_action_states
           where owner_user_id=$1 and thread_id=$2 and domain=$3 and operation=$4 and status='prepared'
@@ -120,6 +159,7 @@ export async function executeAssistantTool(
       }
       if(name==='draft_email'&&draftSlots.body!==undefined)draftSlots.body_brief=draftSlots.body;
       if (name === 'draft_calendar_event') {
+        if(calendarTime.kind==='invalid')return {ok:false,error:calendarTime.error,message:calendarTime.message};
         if (input.event_id !== undefined) {
           const receipt = await executeDataTool(db,{userId,access:ctx.connectors ?? null},'get_event',{event_id:input.event_id}) as {ok:boolean;event?:Record<string,unknown>};
           if (!receipt.ok || !receipt.event) return receipt;
@@ -161,9 +201,13 @@ export async function executeAssistantTool(
           if(!allowed.some(connection=>connection.id===source.connection_id)) return {ok:false,error:'source_unavailable',message:'That exact calendar account is unavailable or its permission was withdrawn.'};
           draftSlots={...draftSlots,calendar_source:{source_id:source.id,provider:source.provider,account_id:source.connection_id,account:source.account,calendar_id:source.provider_calendar_id,calendar_name:source.name}};
         }
-        if(!input.event_id&&draftSlots.calendar_source&&typeof (task?.slots.start??draftSlots.start)==='string'&&typeof (task?.slots.end??draftSlots.end)==='string'){
+        const candidateStart=draftSlots.start??task?.slots.start;
+        const candidateEnd=draftSlots.end??task?.slots.end;
+        const badRange=validateAbsoluteCalendarRange(candidateStart,candidateEnd);
+        if(badRange)return {ok:false,error:'bad_calendar_time',message:badRange};
+        if(!input.event_id&&draftSlots.calendar_source&&typeof candidateStart==='string'&&typeof candidateEnd==='string'){
           const source=draftSlots.calendar_source as {source_id:string};
-          const start=String(task?.slots.start??draftSlots.start);const end=String(task?.slots.end??draftSlots.end);
+          const start=String(candidateStart);const end=String(candidateEnd);
           const availability=await executeDataTool(db,{userId,access:ctx.connectors??null},'query_calendar',{source_id:source.source_id,start,end}) as {ok?:boolean;events?:Array<{event_id?:unknown;title?:unknown;start?:unknown;end?:unknown}>;message?:string};
           if(!availability.ok)return {ok:false,error:'availability_unavailable',message:availability.message??'Calendar availability could not be verified. Nothing was prepared.'};
           draftSlots={...draftSlots,calendar_intent:'create_separate_event',calendar_availability:{verified:true,conflicts:(availability.events??[]).map(event=>({event_id:event.event_id,title:event.title,start:event.start,end:event.end}))}};
@@ -172,6 +216,7 @@ export async function executeAssistantTool(
       delete draftSlots.calendar;
       if(domain==='calendar')delete draftSlots.source_id;
       task=await mergeActionTask(db,action,draftSlots,domain==='calendar'?['source_id']:[]);
+      if(calendarTime.kind==='incomplete')return {ok:true,task_id:task.id,state:'collecting',missing_slots:['end'],message:calendarTime.message};
       const template=await getTemplate(db,templateKey);
       const required = domain==='email' ? ['recipient','subject','body']
         : domain==='calendar' ? ['title','start','end','calendar_source']

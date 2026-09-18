@@ -22,6 +22,7 @@
 // The last two are the ones worth reading twice. A model that was never proven
 // to call tools is not offered any, because offering them produces a confident
 // description of work that never happened.
+import { randomUUID } from 'node:crypto';
 import {
   appendEvent, checkChildAccess, checkStepUp, listTemplates, recordChildActivity, resolveConversationalAction,
   type ActivityChannel, type Db,
@@ -35,7 +36,9 @@ import {
   narrowPolicy, relevantMemories, suggestMemory, type Memory,
 } from '@josi-ce/persona';
 import {
-  CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsCompletedAction,
+  ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
+  CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsArtifactCompletion,
+  claimsCompletedAction, hasArtifactReceipt,
 } from './claimGuard.js';
 import {
   DATA_CLAIM_GUARD_FALLBACK, DATA_CLAIM_GUARD_REPROMPT, DATA_CLAIM_TOOLS, checkDataClaims,
@@ -51,6 +54,15 @@ import { workspaceToolNames } from './workspaceTools.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
 import { presentToolBackedReply } from './presentation.js';
 import { effectiveTimeContext } from './timeContext.js';
+import {
+  GENERIC_RETRY, immediatelyPrecedingRetryTarget, retryReply, retryTargetFor,
+  type AssistantRetryTarget,
+} from './retry.js';
+import {
+  IMAGE_GENERATION_UNAVAILABLE, auditUnsupportedImageIntent, classifyImageIntent,
+  immediatePriorMediaResult, isImmediateMediaStatusFollowup,
+  type MediaRequestMeta, type MediaResultMeta,
+} from './mediaCapability.js';
 
 /** Recall over the user's own history, injected by the caller. A function
  * rather than a package dependency: the agent does not care whether recall is
@@ -61,6 +73,9 @@ export type RecallLookup = (query: string) => Promise<string>;
 export interface AgentTurnResult {
   reply: string;
   actions: Array<{ tool: string; result: unknown }>;
+  /** Exact repeatable read represented by this assistant turn. Callers persist
+   * it in the outbound message metadata; generic retry never parses prose. */
+  retry?: AssistantRetryTarget;
   /** Which memories shaped this turn, so a person can see why it said what it
    * did rather than being quietly profiled. */
   memoriesUsed?: Array<{ id: string; content: string }>;
@@ -72,6 +87,11 @@ export interface AgentTurnResult {
    * about an attachment; this field lets the CALLER (the route, a future UI)
    * know the same thing happened, without parsing the reply text for it. */
   imagesDroppedNoVision?: boolean;
+  /** Typed, content-free media state for durable immediate follow-up binding.
+   * Callers persist request metadata on the inbound message and result metadata
+   * on the outbound message; neither field contains the person's prompt. */
+  mediaRequest?: MediaRequestMeta;
+  mediaResult?: MediaResultMeta;
   /** Set when the turn could not run at all. The caller shows this instead of a
    * reply — it is never dressed up as something Josi said. */
   refusal?: {
@@ -185,6 +205,7 @@ function systemPrompt(args: {
 export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult> {
   const { db, userId } = args;
   const actions: AgentTurnResult['actions'] = [];
+  let retry: AssistantRetryTarget | undefined;
   const sessionKey = args.sessionKey ?? args.threadId;
 
   // ---- is this person allowed to be talking to Josi at all? --------------
@@ -215,6 +236,58 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // provider error still happened.
   if (childAccess.managed) {
     await recordChildActivity(db, { childUserId: userId, channel: args.channel ?? 'web' });
+  }
+
+  // Unsupported media requests and their immediate status follow-ups are
+  // resolved before generic retry or any model/tool routing, so they cannot
+  // drift into an older calendar or workspace domain.
+  const imageIntent = classifyImageIntent(args.inbound);
+  let priorMedia = null as Awaited<ReturnType<typeof immediatePriorMediaResult>>;
+  if (!imageIntent && isImmediateMediaStatusFollowup(args.inbound)) {
+    priorMedia = await immediatePriorMediaResult(db, {
+      ownerUserId: userId,
+      threadId: args.threadId,
+      currentInboundMessageId: args.inboundMessageId,
+    });
+  }
+  if (imageIntent || priorMedia) {
+    const intent = imageIntent ?? 'status';
+    const requestId = priorMedia?.result.request_id ?? randomUUID();
+    const mediaRequest: MediaRequestMeta = {
+      v: 1, id: randomUUID(), media: 'image', intent,
+      ...(priorMedia ? { refers_to: requestId } : {}),
+    };
+    const mediaResult: MediaResultMeta = {
+      v: 1, request_id: priorMedia ? requestId : mediaRequest.id,
+      media: 'image', intent, status: 'unavailable',
+      error: 'image_generation_unavailable',
+    };
+    await auditUnsupportedImageIntent(db, { ownerUserId: userId, threadId: args.threadId, intent });
+    return { reply: IMAGE_GENERATION_UNAVAILABLE, actions, mediaRequest, mediaResult };
+  }
+
+  // Generic retry is resolved before either action-state prose or the model.
+  // It may repeat only the exact typed read stored on the immediately preceding
+  // assistant message. No metadata means no target: old approvals, succeeded
+  // writes and nouns in conversation history are deliberately invisible here.
+  if (GENERIC_RETRY.test(args.inbound.trim())) {
+    const target = await immediatelyPrecedingRetryTarget(db, {
+      ownerUserId: userId,
+      threadId: args.threadId,
+      currentInboundMessageId: args.inboundMessageId,
+    });
+    if (!target) return { reply: 'What exactly would you like me to retry?', actions };
+    let result: unknown;
+    try {
+      const decision = await checkStepUp(db, { userId, sessionKey, action: target.tool });
+      result = decision.allowed
+        ? await execTool(args, target.tool, target.input)
+        : { ok: false, error: decision.reason, message: decision.message };
+    } catch {
+      result = { ok: false, error: 'failed' };
+    }
+    actions.push({ tool: target.tool, result });
+    return { reply: retryReply(target, result), actions, retry: target };
   }
 
   // Short approvals, denials and execution-status questions are resolved from
@@ -367,6 +440,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // Claims require receipts (round-2 item 12). One corrective re-prompt is
   // allowed per turn; a model that fabricates twice gets its reply replaced.
   let claimGuardReprompted = false;
+  let artifactClaimGuardAudited = false;
   // Data claims require receipts too (item 41b). A SEPARATE one-reprompt
   // budget from the action guard above — a turn could conceivably trip both
   // in sequence (fabricate a tool call's existence, get corrected, then
@@ -391,7 +465,11 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
           // CLI harness): who is asking travels with the request, so the MCP
           // server enforces the same step-up gate this loop enforces below.
           // From the session, never from a request body.
-          toolContext: { userId, sessionKey, threadId: args.threadId },
+          toolContext: {
+            userId, sessionKey, threadId: args.threadId,
+            latestUserText: args.inbound,
+            effectiveNow: (args.now ?? new Date()).toISOString(),
+          },
         },
         { userId, purpose: 'assistant_chat' },
       );
@@ -415,6 +493,10 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     // is why they are kept apart from `toolCalls` in the seam.
     for (const call of res.executedToolCalls ?? []) {
       actions.push({ tool: call.name, result: call.result });
+      // Assignment (rather than "last retryable") is intentional: if a write
+      // follows a read, the immediately preceding operation is the write and
+      // this turn must carry no generic-retry target.
+      retry = retryTargetFor(call.name, call.input);
     }
 
     if (!res.toolCalls.length) {
@@ -450,7 +532,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
         const learnedOnFabrication = await learnFromTurn(db, { userId, inbound: args.inbound });
         return {
           reply: NARRATED_SEARCH_GUARD_FALLBACK, actions, memoriesUsed, learned: learnedOnFabrication,
-          imagesDroppedNoVision,
+          imagesDroppedNoVision, retry,
         };
       }
 
@@ -459,21 +541,37 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       // AND tools a subscription CLI harness executed out of process
       // (recorded from executedToolCalls above). Zero receipts + a reply that
       // claims a completed action = a fabrication, and it does not pass.
-      if (actions.length === 0 && claimsCompletedAction(reply)) {
+      const artifactClaim = claimsArtifactCompletion(reply);
+      const missingArtifactReceipt = artifactClaim && !hasArtifactReceipt(actions);
+      if ((actions.length === 0 && claimsCompletedAction(reply)) || missingArtifactReceipt) {
+        if (missingArtifactReceipt && !artifactClaimGuardAudited) {
+          artifactClaimGuardAudited = true;
+          await appendEvent(db, {
+            actorUserId: userId,
+            actor: 'agent',
+            kind: 'agent.artifact_claim_without_receipt',
+            subjectType: 'thread',
+            subjectId: args.threadId,
+            payload: { receiptCount: actions.length },
+          });
+        }
         if (!claimGuardReprompted) {
           claimGuardReprompted = true;
           messages.push({ role: 'assistant', content: reply });
-          messages.push({ role: 'user', content: CLAIM_GUARD_REPROMPT });
-          continue; // one more hop: call the tool for real, or restate honestly
+          messages.push({ role: 'user', content: missingArtifactReceipt
+            ? ARTIFACT_CLAIM_GUARD_REPROMPT : CLAIM_GUARD_REPROMPT });
+          continue; // one more hop: produce a real receipt, or restate honestly
         }
-        await appendEvent(db, {
-          actorUserId: userId,
-          actor: 'agent',
-          kind: 'agent.claim_without_receipt',
-          subjectType: 'thread',
-          subjectId: args.threadId,
-        });
-        reply = CLAIM_GUARD_FALLBACK;
+        if (!missingArtifactReceipt) {
+          await appendEvent(db, {
+            actorUserId: userId,
+            actor: 'agent',
+            kind: 'agent.claim_without_receipt',
+            subjectType: 'thread',
+            subjectId: args.threadId,
+          });
+        }
+        reply = missingArtifactReceipt ? ARTIFACT_CLAIM_GUARD_FALLBACK : CLAIM_GUARD_FALLBACK;
       }
 
       // ---- data claims require receipts too (item 41b) -------------------
@@ -521,7 +619,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
         !!result&&typeof result==='object'&&(result as {state?:unknown}).state==='prepared'&&typeof (result as {summary?:unknown}).summary==='string');
       if(prepared.length===1)reply=`${prepared[0].summary}\n\nApprove this exact action? Reply yes or no.`;
       else if(prepared.length>1)reply='More than one consequential action was prepared together. Name which one you want to review; a bare yes will not approve either.';
-      return { reply, actions, memoriesUsed, learned, imagesDroppedNoVision };
+      return { reply, actions, memoriesUsed, learned, imagesDroppedNoVision, retry };
     }
 
     const toolResults: ToolResult[] = [];
@@ -540,6 +638,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
         result = { ok: false, error: 'failed', message: (err as Error).message };
       }
       actions.push({ tool: call.name, result });
+      retry = retryTargetFor(call.name, call.input);
       toolResults.push({ toolCallId: call.id, name: call.name, content: JSON.stringify(result) });
     }
 
@@ -556,7 +655,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   });
   return {
     reply: 'I went round in circles on that one and stopped. Try telling me in a different way.',
-    actions, imagesDroppedNoVision,
+    actions, imagesDroppedNoVision, retry,
   };
 }
 
@@ -629,6 +728,8 @@ async function execTool(
     userId: args.userId,
     threadId: args.threadId,
     turnId: args.inboundMessageId,
+    latestUserText: args.inbound,
+    effectiveNow: args.now,
     // The registry already holds the installation key when there is one; the
     // data tools open sealed tokens with it at the moment of use.
     connectors: masterKey ? {

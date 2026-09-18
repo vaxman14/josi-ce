@@ -22,6 +22,7 @@ import {
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
 import { describeProvider, discoverModels } from '@josi-ce/llm';
+import { reconcileWorkspaceMount } from '@josi-ce/storage';
 import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
 import { DeviceLogin, codexLoginStatus, codexLogout, claudeAuthStatus } from '@josi-ce/llm';
 import { claudeSubscriptionRouter, claudeEnv } from '../http/claudeSubscriptionRoutes.js';
@@ -650,6 +651,7 @@ async function applyStep(
           role: 'super_admin',
           password: password.reveal(),
         });
+        await reconcileWorkspaceMount(db);
         const vault=await initializeVault(db,requireMasterKey(ctx),owner.id);
         return {vaultRecovery:{key:vault.recoveryKey.reveal(),fingerprint:vault.fingerprint}};
       } catch (err) {

@@ -49,6 +49,11 @@ export {
   type SharingPolicy, type SyncPolicy,
 } from './versions.js';
 export { workspacePath, withWorkspaceDirectory, workspaceGrant, workspaceList, workspaceRead, workspaceChange, type WorkspaceChange } from './localWorkspace.js';
+export {
+  WORKSPACE_MOUNT_PATH, linuxWorkspaceMountProbe, reconcileWorkspaceMount,
+  workspaceMountConfiguration, workspaceMountRootAllowed,
+  type WorkspaceMountConfiguration, type WorkspaceMountProbe, type WorkspaceMountReconcileResult,
+} from './workspaceMount.js';
 export { AttachmentError, attachmentFailure, attachmentRoot, validateAttachment,
   writeAttachment, readAttachment, removeAttachment, probeAttachmentStorage, cleanupAttachments,
   CHAT_FILE_BYTES, CHAT_USER_BYTES, CHAT_USER_FILES, CHAT_THREAD_FILES, CHAT_TENANT_BYTES,
