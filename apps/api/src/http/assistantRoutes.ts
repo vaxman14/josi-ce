@@ -291,11 +291,11 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
    * person's native device identity. Acceptance never waits for a model. */
   r.post('/threads/:id/turns',requireOwnership({db},{type:'thread',need:'owner'}),handle(async(req,res)=>{
     const threadId=param(req,'id');
-    const rawBodyKey=typeof req.body?.client_message_id==='string'?req.body.client_message_id.trim():'';
-    const rawHeaderKey=typeof req.get('Idempotency-Key')==='string'?req.get('Idempotency-Key')!.trim():'';
-    if(rawBodyKey.length>128||rawHeaderKey.length>128)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');
-    const bodyKey=rawBodyKey;
-    const headerKey=rawHeaderKey;
+    const wireBodyKey=typeof req.body?.client_message_id==='string'?req.body.client_message_id:'';
+    const wireHeaderKey=typeof req.get('Idempotency-Key')==='string'?req.get('Idempotency-Key')!:'';
+    if(wireBodyKey.length>128||wireHeaderKey.length>128)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');
+    const bodyKey=wireBodyKey.trim();
+    const headerKey=wireHeaderKey.trim();
     if(bodyKey&&headerKey&&bodyKey!==headerKey)throw new MobileError('idempotency_conflict','The Idempotency-Key and client_message_id must match.');
     const clientMessageId=bodyKey||headerKey;
     if(!clientMessageId)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');

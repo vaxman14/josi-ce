@@ -99,6 +99,9 @@ export interface AgentTurnResult {
   refusal?: {
     reason: 'no_model' | 'not_probed' | 'cannot_chat' | 'capped' | 'provider_error' | 'restricted';
     message: string;
+    /** Provider-declared retryability; durable callers must not infer this
+     * from the broad provider_error category. */
+    retryable?: boolean;
   };
 }
 
@@ -497,6 +500,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
         refusal: {
           reason: (err as { needsReconfiguration?: boolean }).needsReconfiguration ? 'capped' : 'provider_error',
           message: (err as Error).message,
+          retryable: (err as { retryable?: boolean }).retryable === true,
         },
       };
     }

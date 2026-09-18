@@ -108,9 +108,11 @@ describe('Expo push outbox',()=>{
     const db=await testDb(),a=await owner(db,'switch-a'),b=await owner(db,'switch-b');const key=new MasterKey(Buffer.alloc(32,6));
     const old=await upsertMobileDevice(db,key,a.u.id,{deviceIdentity:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',platform:'ios',expoToken:'ExpoPushToken[switch-old]',appState:'background',privacyLocked:false,timezone:'UTC'});
     await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body) values($1,$2,'old-owner','assistant','turn',$3,'Josi','private old owner body')`,[a.u.id,old.id,a.t.id]);
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body,status,lease_token) values($1,$2,'old-in-flight','assistant','turn',$3,'Josi','generic','sending',$4)`,[a.u.id,old.id,a.t.id,crypto.randomUUID()]);
     const current=await upsertMobileDevice(db,key,b.u.id,{deviceIdentity:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',platform:'ios',expoToken:'ExpoPushToken[switch-new]',appState:'background',privacyLocked:false,timezone:'UTC'});
     expect((await db.query<{revoked_at:string|null}>(`select revoked_at from mobile_devices where id=$1`,[old.id]))[0].revoked_at).toBeTruthy();
     expect((await db.query<{status:string;last_error_code:string}>(`select status,last_error_code from push_deliveries where event_key='old-owner'`))[0]).toEqual({status:'suppressed',last_error_code:'account_switched'});
+    expect((await db.query<{status:string}>(`select status from push_deliveries where event_key='old-in-flight'`))[0].status).toBe('sending');
     expect((await db.query<{revoked_at:string|null}>(`select revoked_at from mobile_devices where id=$1`,[current.id]))[0].revoked_at).toBeNull();
     await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body) values($1,$2,'keep-on-refresh','assistant','turn',$3,'Josi','generic')`,[b.u.id,current.id,b.t.id]);
     await upsertMobileDevice(db,key,b.u.id,{deviceIdentity:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',platform:'ios',expoToken:'ExpoPushToken[rotated]',appState:'foreground',privacyLocked:true,categories:{assistant:false},timezone:'UTC'});

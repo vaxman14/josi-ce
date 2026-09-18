@@ -193,8 +193,12 @@ begin
     where revoked_at is null and (device_identity=p_identity or token_fingerprint=p_fingerprint)
       and not(owner_user_id=p_owner and device_identity=p_identity);
   if old_ids is not null then
+    -- Suppress only work that has not crossed the Expo HTTP boundary. A
+    -- sending/ticketed/checking row may already have been accepted externally;
+    -- preserve its lease/state so receipts remain truthful rather than claiming
+    -- a concurrent account switch unsent an in-flight notification.
     update push_deliveries set status='suppressed',lease_token=null,last_error_code='account_switched'
-      where device_id=any(old_ids) and status in('queued','sending','retry','ticketed','checking');
+      where device_id=any(old_ids) and status in('queued','retry');
     update mobile_devices set revoked_at=now() where id=any(old_ids);
   end if;
   select id into target from mobile_devices where owner_user_id=p_owner and device_identity=p_identity for update;
