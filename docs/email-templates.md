@@ -52,6 +52,6 @@ All routes use session authentication and the application's CSRF protection. Own
 
 Template fields: `name` (120 characters), `subject` (300), `heading` (300), `body` (30,000), `accentColor` (`#RRGGBB`), `ctaLabel` (120), `ctaUrl` (2,000), `footer` (2,000). Name, subject, body, and valid color are required; optional text fields default to empty. Unknown fields are rejected. Drafts with missing information cannot become sendable tasks.
 
-Migration `0054_email_templates.sql` adds the owner-indexed table with row-level security enabled, following the repository's application-scoped ownership convention. No live migration is performed by this implementation.
+Migration `0055_email_templates.sql` adds the owner-indexed table with row-level security enabled, following the repository's application-scoped ownership convention.
 
 Provider reference: [Microsoft Graph MIME sendMail](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0).
