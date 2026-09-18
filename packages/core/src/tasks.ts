@@ -204,10 +204,12 @@ export async function setSlots(
   db: Db,
   taskId: string,
   patch: Record<string, unknown>,
-  opts: { actor?: 'agent' | 'user' | 'system'; actorUserId?: string | null } = {},
+  opts: { actor?: 'agent' | 'user' | 'system'; actorUserId?: string | null; removeKeys?: string[] } = {},
 ): Promise<Task> {
   const task = await getTask(db, taskId);
-  const merged = { ...task.slots, ...patch };
+  const merged = { ...task.slots };
+  for (const key of opts.removeKeys ?? []) delete merged[key];
+  Object.assign(merged, patch);
   const rows = await db.query<Task>(
     `update tasks set slots = $2 where id = $1 returning *`,
     [taskId, json(merged)],
@@ -219,7 +221,7 @@ export async function setSlots(
     kind: 'task.slots_updated',
     subjectType: 'task',
     subjectId: taskId,
-    payload: { keys: Object.keys(patch) },
+    payload: { keys: [...new Set([...Object.keys(patch), ...(opts.removeKeys ?? [])])] },
   });
   return rows[0];
 }

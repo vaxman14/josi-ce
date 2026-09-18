@@ -64,6 +64,41 @@ describe('action drafts are merged only inside their namespace',()=>{
     expect(task.slots.calendar_source).toMatchObject({calendar_id:'primary',calendar_name:'Main calendar'});
   });
 
+  it('discards a superseded pre-migration source id when primary intent resolves the current write default',async()=>{
+    const connection=await upsertConnection(db,key,{ownerUserId:user,provider:'google',providerAccountId:'acct-stale',accountEmail:'state@example.test',
+      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.readonly'},
+      requestedCapabilities:['google.calendar.read','google.calendar.write']});
+    await setCapability(db,{connection,capability:'google.calendar.write',enabled:true,actorUserId:user});
+    await setCapability(db,{connection,capability:'google.calendar.read',enabled:true,actorUserId:user});
+    const [stale]=await db.query<{id:string}>(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,writable,is_write_default)
+      values($1,$2,'primary','Old primary alias',true,true) returning id`,[user,connection.id]);
+    const [current]=await db.query<{id:string}>(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable)
+      values($1,$2,'actual-primary','Primary calendar',true,true) returning id`,[user,connection.id]);
+    const staleOrigin=await ensureInternalCalendar(db,{ownerUserId:user,connectionId:connection.id,provider:'google',providerCalendarId:'primary'});
+    const currentOrigin=await ensureInternalCalendar(db,{ownerUserId:user,connectionId:connection.id,provider:'google',providerCalendarId:'actual-primary'});
+    await db.query(`update calendar_sync_origins set last_sync_at=now() where id in($1,$2)`,[staleOrigin.id,currentOrigin.id]);
+
+    const previous=await executeAssistantTool(db,ctx(),'draft_calendar_event',{
+      source_id:stale.id,title:'Old call',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00',
+    }) as any;
+    expect(previous.state).toBe('prepared');
+    await present(previous,previous.summary);
+
+    await db.query(`update calendar_sources set is_write_default=false where owner_user_id=$1 and is_write_default`,[user]);
+    await db.query(`update calendar_sources set is_write_default=true where id=$1`,[current.id]);
+    await db.query(`delete from calendar_sources where id=$1`,[stale.id]);
+    const next=await executeAssistantTool(db,ctx(),'draft_calendar_event',{
+      source_id:stale.id,calendar:'Primary calendar',title:'Fresh call',start:'2026-09-18T16:00:00-07:00',end:'2026-09-18T16:30:00-07:00',
+    }) as any;
+
+    expect(next.state,JSON.stringify(next)).toBe('prepared');
+    expect(next.summary).toContain('Calendar: Primary calendar');
+    const task=await getTask(db,next.task_id);
+    expect(task.slots).not.toHaveProperty('source_id');
+    expect(task.slots.calendar_source).toMatchObject({source_id:current.id,calendar_id:'actual-primary',calendar_name:'Primary calendar'});
+    expect((await db.query<{status:string}>(`select status from assistant_action_states where task_id=$1`,[previous.task_id]))[0].status).toBe('superseded');
+  });
+
   it('does not guess when no write default exists',async()=>{
     const connection=await upsertConnection(db,key,{ownerUserId:user,provider:'google',providerAccountId:'acct2',accountEmail:'state@example.test',
       tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar'},requestedCapabilities:['google.calendar.write']});

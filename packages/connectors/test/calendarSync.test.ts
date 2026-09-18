@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
@@ -104,6 +105,21 @@ describe('internal calendar is authoritative',()=>{
     expect(origins.map(origin=>origin.provider_calendar_id)).toEqual(['real-primary','secondary']);
     const [secondary]=await db.query<{writable:boolean;is_write_default:boolean}>(`select writable,is_write_default from calendar_sources where connection_id=$1 and provider_calendar_id='secondary'`,[c.id]);
     expect(secondary).toEqual({writable:false,is_write_default:false});
+  });
+
+  it('upgrade reconciliation prefers the writable provider primary over an arbitrary secondary default',async()=>{
+    const c=await connected();
+    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable,selected,is_write_default)
+      values($1,$2,'provider-primary','Primary calendar',true,true,true,false),($1,$2,'kids','Kids',false,true,true,true)`,[alice,c.id]);
+    const kids=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google',providerCalendarId:'kids'});
+    const primary=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google',providerCalendarId:'provider-primary'});
+    await db.exec(readFileSync(new URL('../../db/migrations/0054_calendar_write_default_primary.sql',import.meta.url),'utf8'));
+
+    const rows=await db.query<{provider_calendar_id:string;is_write_default:boolean}>(`select provider_calendar_id,is_write_default from calendar_sources where connection_id=$1 order by provider_calendar_id`,[c.id]);
+    expect(rows).toEqual([{provider_calendar_id:'kids',is_write_default:false},{provider_calendar_id:'provider-primary',is_write_default:true}]);
+    const [defaultCalendar]=await db.query<{id:string}>(`select id from calendars where owner_user_id=$1 and is_default`,[alice]);
+    expect(defaultCalendar.id).toBe(primary.calendar_id);
+    expect(defaultCalendar.id).not.toBe(kids.calendar_id);
   });
 
   it('moves an old internal default when backfilling the explicit write default',async()=>{
