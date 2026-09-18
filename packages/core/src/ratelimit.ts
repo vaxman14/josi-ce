@@ -42,6 +42,9 @@ export const LIMITS = {
    *
    * 20/minute is far above human conversation and far below a script. */
   telegram_inbound: { bucket: 'telegram_inbound', max: 20, windowSeconds: 60 },
+  /** Authenticated native submissions. Also backed by a hard database cap of
+   * 50 queued/running turns per owner. */
+  durable_turn: { bucket: 'durable_turn', max: 20, windowSeconds: 60 },
   /** Link-code redemption attempts from one chat. Tight, because this one is a
    * guessing surface: a 160-bit code is not brute-forcible, but a limit means
    * the attempt is visible in the audit log as a burst rather than a trickle. */

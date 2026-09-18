@@ -28,6 +28,7 @@ import { createInterface } from 'node:readline';
 import { checkStepUp, connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import type { Db, MasterKey } from '@josi-ce/core';
 import { executeAssistantTool } from '../execute.js';
+import { MUTATING_TOOLS, runDurableEffect } from '../durableEffects.js';
 import { ALL_TOOLS } from '../tools.js';
 import { handleMcpMessage, type McpCore, type McpToolDescriptor, type McpToolOutcome } from './protocol.js';
 
@@ -40,6 +41,8 @@ interface HarnessContext {
   userId: string | null;
   sessionKey: string | null;
   threadId: string | null;
+  durableTurnId?: string | null;
+  durableLeaseToken?: string | null;
   latestUserText?: string | null;
   effectiveNow?: string | null;
   tools: string[];
@@ -138,16 +141,19 @@ export function buildCore(ctx: HarnessContext, connect: () => Promise<Db>): McpC
         return completed({ ok: false, error: decision.reason, message: decision.message });
       }
 
-      const result = await executeAssistantTool(
+      const execute=()=>executeAssistantTool(
         conn,
         {
-          userId: ctx.userId, threadId: ctx.threadId, connectors: connectors(),
+          userId: ctx.userId!, threadId: ctx.threadId, connectors: connectors(),
           latestUserText: ctx.latestUserText ?? undefined,
           effectiveNow: ctx.effectiveNow ? new Date(ctx.effectiveNow) : undefined,
         },
         name,
         input,
       );
+      const result=MUTATING_TOOLS.has(name)
+        ? await runDurableEffect(conn,{turnId:ctx.durableTurnId,leaseToken:ctx.durableLeaseToken},name,input,execute)
+        : await execute();
       return completed(result);
     } catch (err) {
       // Record the real failure shape for guards, but keep stack traces and

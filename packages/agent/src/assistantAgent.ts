@@ -24,7 +24,8 @@
 // description of work that never happened.
 import { randomUUID } from 'node:crypto';
 import {
-  appendEvent, checkChildAccess, checkStepUp, listTemplates, recordChildActivity, resolveConversationalAction,
+  appendEvent, checkChildAccess, checkStepUp,
+  listTemplates, recordChildActivity, resolveConversationalAction,
   type ActivityChannel, type Db,
 } from '@josi-ce/core';
 import {
@@ -35,6 +36,7 @@ import {
   CAUTION_ORDER, assembleSystemContext, extractDurableFacts, loadAll,
   narrowPolicy, relevantMemories, suggestMemory, type Memory,
 } from '@josi-ce/persona';
+import { MUTATING_TOOLS, runDurableEffect } from './durableEffects.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
   CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsArtifactCompletion,
@@ -97,6 +99,9 @@ export interface AgentTurnResult {
   refusal?: {
     reason: 'no_model' | 'not_probed' | 'cannot_chat' | 'capped' | 'provider_error' | 'restricted';
     message: string;
+    /** Provider-declared retryability; durable callers must not infer this
+     * from the broad provider_error category. */
+    retryable?: boolean;
   };
 }
 
@@ -109,6 +114,14 @@ export interface TurnArgs {
   threadId: string;
   /** Persisted inbound message id for action-state turn scoping. */
   inboundMessageId?: string;
+  /** Durable worker fence for consequential tool effects. Both values are
+   * server-derived and never accepted from a client request. */
+  durableTurnId?: string;
+  durableLeaseToken?: string;
+  /** Durable queued channels require yes/no to target the presented approval
+   * message; synchronous legacy channels rely on immediate adjacency. */
+  replyToMessageId?: string|null;
+  requireApprovalReplyTarget?: boolean;
   history: ChatMessage[];
   inbound: string;
   /** Images attached to THIS turn, already read off disk as bytes by the
@@ -294,7 +307,11 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // durable action state before a model is consulted. A bare "yes" can only
   // bind to one action prepared in the immediately preceding presented turn;
   // provider names and old calendar subjects in model history are irrelevant.
-  const deterministic=await resolveConversationalAction(db,{ownerUserId:userId,threadId:args.threadId,inbound:args.inbound});
+  const resolveAction=()=>resolveConversationalAction(db,{ownerUserId:userId,threadId:args.threadId,inbound:args.inbound,replyToMessageId:args.replyToMessageId,requireReplyTarget:args.requireApprovalReplyTarget});
+  const mayDecideAction=/^(?:yes|yes please|please do|do it|send it|approve|confirmed?|no|no thanks|don't|do not|cancel|deny)\s*[.!]?$/i.test(args.inbound.trim());
+  const deterministic=args.durableTurnId&&args.durableLeaseToken&&mayDecideAction
+    ? await runDurableEffect(args.db,{turnId:args.durableTurnId,leaseToken:args.durableLeaseToken},'assistant_action_resolution',{inbound:args.inbound,replyToMessageId:args.replyToMessageId??null},resolveAction)
+    : await resolveAction();
   if(deterministic.handled){
     return {reply:deterministic.reply??'',actions:deterministic.action?[{tool:'assistant_action_state',result:{ok:true,domain:deterministic.action.domain,status:deterministic.action.status,task_id:deterministic.action.task_id}}]:[]};
   }
@@ -467,6 +484,8 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
           // From the session, never from a request body.
           toolContext: {
             userId, sessionKey, threadId: args.threadId,
+            durableTurnId: args.durableTurnId ?? null,
+            durableLeaseToken: args.durableLeaseToken ?? null,
             latestUserText: args.inbound,
             effectiveNow: (args.now ?? new Date()).toISOString(),
           },
@@ -481,6 +500,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
         refusal: {
           reason: (err as { needsReconfiguration?: boolean }).needsReconfiguration ? 'capped' : 'provider_error',
           message: (err as Error).message,
+          retryable: (err as { retryable?: boolean }).retryable === true,
         },
       };
     }
@@ -720,23 +740,24 @@ async function execTool(
 ): Promise<unknown> {
   const spec = TOOL_SPECS_BY_NAME.get(name);
   if (!spec) return { ok: false, error: 'unknown_tool', message: `no tool named ${name}` };
-  // The implementations live in execute.ts so the MCP server — which offers
-  // these same tools to a subscription CLI's own agent loop — runs the exact
-  // code this loop runs, ownership checks and all.
-  const masterKey = args.registry.masterKey;
-  return executeAssistantTool(args.db, {
-    userId: args.userId,
-    threadId: args.threadId,
-    turnId: args.inboundMessageId,
-    latestUserText: args.inbound,
-    effectiveNow: args.now,
-    // The registry already holds the installation key when there is one; the
-    // data tools open sealed tokens with it at the moment of use.
-    connectors: masterKey ? {
-      masterKey: () => masterKey,
-      fetchImpl: args.connectorFetch,
-      customApiFetch: args.customApiFetch,
-      resolve: args.outboundResolve,
-    } : null,
-  }, name, input);
+  const execute=()=>{
+    // The implementations live in execute.ts so the MCP server — which offers
+    // these same tools to a subscription CLI's own agent loop — runs the exact
+    // code this loop runs, ownership checks and all.
+    const masterKey = args.registry.masterKey;
+    return executeAssistantTool(args.db, {
+      userId: args.userId,
+      threadId: args.threadId,
+      turnId: args.inboundMessageId,
+      latestUserText: args.inbound,
+      effectiveNow: args.now,
+      connectors: masterKey ? {
+        masterKey: () => masterKey,
+        fetchImpl: args.connectorFetch,
+        customApiFetch: args.customApiFetch,
+        resolve: args.outboundResolve,
+      } : null,
+    }, name, input);
+  };
+  return MUTATING_TOOLS.has(name)?runDurableEffect(args.db,{turnId:args.durableTurnId,leaseToken:args.durableLeaseToken},name,input,execute):execute();
 }

@@ -18,7 +18,7 @@ import {
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder,
-  checkChildAccess, json,
+  checkChildAccess, encodeTurnCursor, json, submitDurableTurn, listDurableTurns, upsertMobileDevice, revokeMobileDevice, MobileError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -56,6 +56,8 @@ class RouteError extends Error {
 }
 
 const str = (v: unknown, max = 4000): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const mobileLifecycleState=(status:string):'accepted_queued'|'reconciling'|'completed'|'terminal_failed'=>
+  status==='queued'?'accepted_queued':status==='running'?'reconciling':status==='completed'?'completed':'terminal_failed';
 
 function registryOptions(ctx: AssistantRoutesCtx) {
   let masterKey = null;
@@ -109,6 +111,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         return await fn(req, res);
       } catch (err: unknown) {
         if (err instanceof AttachmentError) return res.status(err.status).json({ error: err.message, code: err.code });
+        if (err instanceof MobileError) {if(err.code==='turn_queue_full')res.set('Retry-After','30');return res.status(err.code==='idempotency_conflict'?409:err.code==='turn_queue_full'?429:400).json({error:err.message,code:err.code});}
         if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
         throw err;
       }
@@ -282,6 +285,65 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       });
     }),
   );
+
+  /** Durable native submission. The thread owner is authoritative: unlike the
+   * legacy shared-web route, a shared writer cannot enqueue work under another
+   * person's native device identity. Acceptance never waits for a model. */
+  r.post('/threads/:id/turns',requireOwnership({db},{type:'thread',need:'owner'}),handle(async(req,res)=>{
+    const threadId=param(req,'id');
+    const wireBodyKey=typeof req.body?.client_message_id==='string'?req.body.client_message_id:'';
+    const wireHeaderKey=typeof req.get('Idempotency-Key')==='string'?req.get('Idempotency-Key')!:'';
+    if(wireBodyKey.length>128||wireHeaderKey.length>128)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');
+    const bodyKey=wireBodyKey.trim();
+    const headerKey=wireHeaderKey.trim();
+    if(bodyKey&&headerKey&&bodyKey!==headerKey)throw new MobileError('idempotency_conflict','The Idempotency-Key and client_message_id must match.');
+    const clientMessageId=bodyKey||headerKey;
+    if(!clientMessageId)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');
+    const duplicate=clientMessageId?!!(await db.query(`select 1 from assistant_turns where owner_user_id=$1 and thread_id=$2 and client_message_id=$3`,[req.user!.id,threadId,clientMessageId])).length:false;
+    if(!duplicate){const rate=await consume(db,{limit:LIMITS.durable_turn,subject:`durable_turn:${req.user!.id}`});if(!rate.ok){res.set('Retry-After',String(rate.retryAfterSeconds));throw new RouteError(429,'Too many turns were submitted. Reconcile existing work before retrying.');}}
+    const accepted=await submitDurableTurn(db,{
+      ownerUserId:req.user!.id,sessionId:req.user!.session_id,threadId,
+      clientMessageId,
+      message:str(req.body?.message,8000),
+      replyToMessageId:str(req.body?.reply_to_message_id,80)||null,
+      attachmentIds:Array.isArray(req.body?.attachment_receipts)?req.body.attachment_receipts.map((x:unknown)=>str(x,80)):[],
+      attemptOf:str(req.body?.attempt_of,80)||null,
+    });
+    res.set('Cache-Control','no-store');
+    res.set('Location',`/api/assistant/threads/${threadId}/turns`);
+    const lifecycleState=mobileLifecycleState(accepted.turn.status);
+    return res.status(202).json({turn:{id:accepted.turn.id,job_id:accepted.turn.id,status:accepted.turn.status,lifecycle_state:lifecycleState,thread_id:threadId,client_message_id:accepted.turn.client_message_id,attempt_of:accepted.turn.attempt_of,error:accepted.turn.status==='failed'?{code:accepted.turn.error_code,retryable:accepted.turn.error_retryable}:null},duplicate:accepted.duplicate,telemetry:{state:lifecycleState,turn_id:accepted.turn.id,thread_id:threadId}});
+  }));
+
+  r.get('/threads/:id/turns',requireOwnership({db},{type:'thread',need:'owner'}),handle(async(req,res)=>{
+    const threadId=param(req,'id');
+    const legacyAfter=typeof req.query.after==='string'?req.query.after:null;
+    if(legacyAfter&&Number.isNaN(Date.parse(legacyAfter)))throw new MobileError('invalid_reconciliation_cursor','Choose a valid reconciliation cursor.');
+    if(legacyAfter)throw new MobileError('invalid_reconciliation_cursor','Timestamp cursors are not stable; use the returned opaque cursor.');
+    const cursor=typeof req.query.cursor==='string'?req.query.cursor:null;
+    const turnId=typeof req.query.turn_id==='string'?req.query.turn_id:null;
+    const turns=await listDurableTurns(db,{ownerUserId:req.user!.id,threadId,cursor,turnId});
+    res.set('Cache-Control','no-store');
+    return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
+  }));
+
+  r.put('/devices',handle(async(req,res)=>{
+    let key;try{key=ctx.masterKey===false?null:loadMasterKey(ctx.masterKey??{});}catch{key=null;}
+    if(!key)throw new RouteError(503,'Push registration is unavailable because secure token storage is unavailable.');
+    const device=await upsertMobileDevice(db,key,req.user!.id,{
+      deviceIdentity:str(req.body?.device_identity,200),platform:req.body?.platform,
+      expoToken:typeof req.body?.expo_token==='string'?req.body.expo_token:'',appState:req.body?.app_state,
+      privacyLocked:req.body?.privacy_locked===true,categories:req.body?.categories,
+      quietStart:str(req.body?.quiet_start,8)||null,quietEnd:str(req.body?.quiet_end,8)||null,
+      timezone:str(req.body?.timezone,100)||'UTC',
+    });
+    return res.status(200).json({device:{id:device.id}});
+  }));
+  r.delete('/devices/:deviceId',handle(async(req,res)=>{
+    if(!await revokeMobileDevice(db,req.user!.id,param(req,'deviceId')))throw new RouteError(404,'not found');
+    return res.status(204).end();
+  }));
+  r.get('/devices',handle(async(req,res)=>res.json({devices:await db.query(`select id,device_identity,platform,app_state,privacy_locked,categories,quiet_start,quiet_end,timezone,revoked_at,last_seen_at from mobile_devices where owner_user_id=$1 order by last_seen_at desc`,[req.user!.id])})));
 
   /** One turn of conversation.
    *

@@ -25,7 +25,7 @@ function session(tools: ToolDefinition[] = [A_TOOL]) {
   return openHarnessSession({
     serverPath: '/app/packages/agent/dist/mcp/server.js',
     tools,
-    toolContext: { userId: 'u1', sessionKey: 's1', threadId: 't1' },
+    toolContext: { userId: 'u1', sessionKey: 's1', threadId: 't1', durableTurnId:'turn-1', durableLeaseToken:'lease-1' },
     env: { DATABASE_URL: 'postgresql://josi@db:5432/josi', PGPASSWORD_FILE: '/run/secrets/pw' },
   });
 }
@@ -40,6 +40,8 @@ describe('the harness context file', () => {
       expect(ctx.userId).toBe('u1');
       expect(ctx.sessionKey).toBe('s1');
       expect(ctx.threadId).toBe('t1');
+      expect(ctx.durableTurnId).toBe('turn-1');
+      expect(ctx.durableLeaseToken).toBe('lease-1');
       expect(ctx.tools).toEqual(['create_task']);
       expect(ctx.databaseUrl).toBe('postgresql://josi@db:5432/josi');
       expect(ctx.callsPath).toBe(s.callsPath);
