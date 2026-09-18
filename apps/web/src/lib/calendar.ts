@@ -39,12 +39,34 @@ export function eventsOnDay<T extends CalendarEvent>(events:T[], day:string, zon
   const start=midnight(day,zone).getTime(), end=midnight(addDays(day,1),zone).getTime();
   return events.filter(e=>e.start && (e.allDay ? e.start.slice(0,10)<=day && (e.end?.slice(0,10) ?? addDays(e.start.slice(0,10),1))>day : Date.parse(e.start)<end && Math.max(Date.parse(e.end ?? e.start),Date.parse(e.start)+1)>start));
 }
-/** Interval partitioning; each connected overlap group shares the same column count. */
+/** Interval partitioning; each connected visual-overlap group shares the same column count. */
 export function layoutEvents<T extends CalendarEvent>(events:T[], day:string, zone:string) {
   const start=midnight(day,zone).getTime(), end=midnight(addDays(day,1),zone).getTime();
-  const rows=events.filter(e=>!e.allDay && e.start).map(event=>({event, start:Math.max(start,Date.parse(event.start!)), end:Math.min(end,Math.max(Date.parse(event.end ?? event.start! ),Date.parse(event.start!)+15*60000)), column:0, columns:1})).sort((a,b)=>a.start-b.start);
+  const civilMinute=(value:number)=>{
+    if(value<=start) return 0;
+    if(value>=end) return 24*60;
+    const parts=new Intl.DateTimeFormat('en-CA',{timeZone:zone,hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(value));
+    const part=(type:string)=>Number(parts.find(item=>item.type===type)!.value);
+    return part('hour')*60+part('minute')+part('second')/60;
+  };
+  const rows=events.filter(e=>!e.allDay && e.start).map(event=>{
+    const rowStart=Math.max(start,Date.parse(event.start!));
+    const rowEnd=Math.min(end,Math.max(Date.parse(event.end ?? event.start!),Date.parse(event.start!)+15*60000));
+    const displayStart=civilMinute(rowStart);
+    let displayEnd=civilMinute(rowEnd);
+    // A fall-back event can begin and end at the same repeated wall-clock
+    // minute. Preserve its real duration on the shared civil-time grid.
+    if(displayEnd<=displayStart) displayEnd=Math.min(24*60,displayStart+Math.max(15,(rowEnd-rowStart)/60000));
+    return {event,start:rowStart,end:rowEnd,displayStart,displayEnd,column:0,columns:1};
+  }).sort((a,b)=>a.displayStart-b.displayStart||a.start-b.start);
   let group:typeof rows=[]; let ends:number[]=[];
   const finish=()=>{for(const row of group) row.columns=ends.length;group=[];ends=[];};
-  for(const row of rows){ if(ends.length && ends.every(t=>t<=row.start)) finish(); let column=ends.findIndex(t=>t<=row.start); if(column<0) column=ends.length; row.column=column;ends[column]=row.end;group.push(row); } finish();
-  return rows.map(row=>({...row,top:(row.start-start)/(end-start)*100,height:(row.end-row.start)/(end-start)*100}));
+  for(const row of rows){
+    if(ends.length && ends.every(value=>value<=row.displayStart)) finish();
+    let column=ends.findIndex(value=>value<=row.displayStart);
+    if(column<0) column=ends.length;
+    row.column=column;ends[column]=row.displayEnd;group.push(row);
+  }
+  finish();
+  return rows.map(row=>({...row,top:row.displayStart/(24*60)*100,height:(row.displayEnd-row.displayStart)/(24*60)*100}));
 }
