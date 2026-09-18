@@ -8,15 +8,16 @@
 // The 44px rule lives HERE, in the components, not in each call site: an iOS
 // tap target smaller than 44x44 is the accessibility failure the acceptance
 // criteria name, and it is not something to remember page by page.
-import { useState } from 'react';
+import { forwardRef, useState } from 'react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
-export function Button({
+export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger' }>(function Button({
   variant = 'primary', className, ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'ghost' | 'danger' }) {
+}, ref) {
   return (
     <button
+      ref={ref}
       {...props}
       className={cn(
         // min-h-11 is 44px. Not negotiable and not overridable by a caller
@@ -31,7 +32,7 @@ export function Button({
       )}
     />
   );
-}
+});
 
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
   const ignoresPasswordManagers = props.autoComplete === 'off';
