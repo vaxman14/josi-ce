@@ -128,13 +128,29 @@ export async function executeAssistantTool(
           draftSlots={...draftSlots,calendar_source:{source_id:event.source_id,provider:event.provider,account_id:event.account_id,account:event.account,calendar_id:event.calendar_id,calendar_name:event.calendar_name,event_id:event.event_id}};
         } else {
           const hint=String(input.calendar??'').trim().toLowerCase();
-          let sources=await selectedCalendars(db,userId,typeof input.source_id === 'string'?input.source_id:undefined);
-          if(!input.source_id){
-            if(!hint||/^(?:the )?(?:main|primary|default)(?: one| calendar)?$/.test(hint))sources=sources.filter(source=>source.is_write_default);
-            else sources=sources.filter(source=>source.name.trim().toLowerCase()===hint);
+          const requestedSourceId=typeof input.source_id==='string'&&input.source_id ? input.source_id : undefined;
+          const genericHint=/^(?:the )?(?:main|primary|default)(?: one| calendar)?$/.test(hint);
+          const selected=await selectedCalendars(db,userId);
+          let sources=selected;
+          if(hint&&genericHint){
+            // Generic intent is authoritative: a model-carried source id may
+            // refer to a superseded pre-reconciliation task or deleted source.
+            sources=selected.filter(source=>source.is_write_default);
+          }else if(requestedSourceId){
+            const exact=selected.filter(source=>source.id===requestedSourceId);
+            sources=exact.length ? exact
+              : hint ? selected.filter(source=>source.name.trim().toLowerCase()===hint)
+                : selected.filter(source=>source.is_write_default);
+          }else if(!hint){
+            sources=selected.filter(source=>source.is_write_default);
+          }else{
+            sources=selected.filter(source=>source.name.trim().toLowerCase()===hint);
           }
+          // `calendar_source` below is the only durable source identity for a
+          // draft. Never preserve the raw model argument after resolution.
+          delete draftSlots.source_id;
           if(sources.length!==1){
-            task=await mergeActionTask(db,action,draftSlots);
+            task=await mergeActionTask(db,action,draftSlots,['source_id']);
             return {ok:false,error:'select_calendar',task_id:task.id,state:'collecting',
               choices:sources.map(source=>({source_id:source.id,calendar_name:source.name,write_default:source.is_write_default})),
               message:'Choose one exact writable calendar, or set a default write calendar on the Calendar page.'};
@@ -154,7 +170,8 @@ export async function executeAssistantTool(
         }
       }
       delete draftSlots.calendar;
-      task=await mergeActionTask(db,action,draftSlots);
+      if(domain==='calendar')delete draftSlots.source_id;
+      task=await mergeActionTask(db,action,draftSlots,domain==='calendar'?['source_id']:[]);
       const template=await getTemplate(db,templateKey);
       const required = domain==='email' ? ['recipient','subject','body']
         : domain==='calendar' ? ['title','start','end','calendar_source']

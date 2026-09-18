@@ -46,8 +46,8 @@ export async function attachCollectingAction(db:Db,args:{ownerUserId:string;thre
   return row;
 }
 
-export async function mergeActionTask(db:Db,action:AssistantActionState,patch:Record<string,unknown>):Promise<Task>{
-  return setSlots(db,action.task_id,patch,{actor:'agent',actorUserId:action.owner_user_id});
+export async function mergeActionTask(db:Db,action:AssistantActionState,patch:Record<string,unknown>,removeKeys:string[]=[]):Promise<Task>{
+  return setSlots(db,action.task_id,patch,{actor:'agent',actorUserId:action.owner_user_id,removeKeys});
 }
 
 export async function prepareAction(db:Db,args:{actionState:AssistantActionState;task:Task;summary:string;actionClass:string;action:string;ttlSeconds?:number}) {
