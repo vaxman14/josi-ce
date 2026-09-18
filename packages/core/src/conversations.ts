@@ -96,13 +96,31 @@ export async function addMessage(
   // have the same resolution.
   if(args.direction==='out')await db.query(`update assistant_action_states set presented_turn_id=null
     where thread_id=$1 and status='prepared' and presented_turn_id is not null`,[args.threadId]);
+  // `created_at` is also the conversation-order key. Database clocks can give
+  // several fast messages the same timestamp, and random UUIDs are not a safe
+  // tie-breaker for "immediately preceding" semantics. Updating the thread row
+  // first serializes concurrent writers and gives every message a monotonic
+  // per-thread timestamp.
   const rows = await db.query<Message>(
+    `with activity as (
+       update threads
+          set last_activity_at = greatest(now(), last_activity_at + interval '1 microsecond')
+        where id = $1
+        returning last_activity_at
+     )
+     insert into messages (thread_id, direction, channel, body, meta, created_at)
+     select $1, $2, $3, $4, $5, last_activity_at from activity
+     returning *`,
+    [args.threadId, args.direction, args.channel ?? 'web', args.body, json(args.meta)],
+  );
+  if (rows[0]) return rows[0];
+  // Preserve the database's ordinary foreign-key refusal for a missing thread.
+  const missingThread = await db.query<Message>(
     `insert into messages (thread_id, direction, channel, body, meta)
      values ($1, $2, $3, $4, $5) returning *`,
     [args.threadId, args.direction, args.channel ?? 'web', args.body, json(args.meta)],
   );
-  await db.query(`update threads set last_activity_at = now() where id = $1`, [args.threadId]);
-  return rows[0];
+  return missingThread[0];
 }
 
 /** Record one full exchange. Lengths, not words: enough to see that a
