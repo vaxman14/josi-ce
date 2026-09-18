@@ -18,7 +18,7 @@ import {
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder,
-  checkChildAccess,
+  checkChildAccess, json,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -410,8 +410,8 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       const actionStatusDomain=result.actions.find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
       const outboundMeta:Record<string,unknown>={};
       if(result.mediaRequest)await db.query(
-        `update messages set meta=meta || $2::jsonb where id=$1 and thread_id=$3`,
-        [inboundMessage.id,JSON.stringify({media_request:result.mediaRequest}),threadId]);
+        `update messages set meta=meta || $2 where id=$1 and thread_id=$3`,
+        [inboundMessage.id,json({media_request:result.mediaRequest}),threadId]);
       if(calendarReceipts.length)outboundMeta.calendar_receipts=calendarReceipts;
       if(actionStatusDomain?.domain==='email'||actionStatusDomain?.domain==='calendar')outboundMeta.action_status_domain=actionStatusDomain.domain;
       if(result.retry)outboundMeta.retry=result.retry;
