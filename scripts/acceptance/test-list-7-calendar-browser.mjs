@@ -27,6 +27,21 @@ try {
   await page.getByRole('button',{name:/^Day$/i}).click();
   await page.getByText('Loading…',{exact:true}).waitFor();
   await page.getByRole('button',{name:/Morning meeting/}).waitFor();
+  const pageBox=await page.getByTestId('calendar-page').boundingBox();
+  const scheduleCardBox=await page.getByLabel('day calendar').locator('..').boundingBox();
+  const pickerCardBox=await page.getByRole('heading',{name:'Calendars',exact:true}).locator('..').boundingBox();
+  assert(pageBox&&scheduleCardBox&&pickerCardBox);
+  assert(pickerCardBox.y>=scheduleCardBox.y+scheduleCardBox.height-1,'calendar picker must render after the complete schedule card');
+  assert(Math.abs(pickerCardBox.width-scheduleCardBox.width)<1,'calendar picker and schedule must share the same full-width container');
+  let widePageWidthRatio=null,wideScreenshot=null;
+  if(viewport.width===1440){
+   await page.setViewportSize({width:1920,height:1080});
+   const widePageBox=await page.getByTestId('calendar-page').boundingBox();assert(widePageBox);
+   widePageWidthRatio=widePageBox.width/1920;
+   assert(widePageWidthRatio>=0.8,`calendar page should use at least 80% of the desktop viewport, received ${widePageWidthRatio}`);
+   wideScreenshot=resolve(artifactDir,'calendar-full-width-1920x1080.png');await page.screenshot({path:wideScreenshot,fullPage:true});
+   await page.setViewportSize(viewport);
+  }
   const positions=await page.getByRole('button',{name:/Morning meeting|Overlapping meeting/}).evaluateAll(nodes=>nodes.map(n=>({left:n.parentElement.style.left,width:n.parentElement.style.width})));
   assert.deepEqual(positions.map(p=>p.width),['50%','50%']);assert.notEqual(positions[0].left,positions[1].left);
   const shortCards=page.locator('.calendar-time-event').filter({has:page.getByRole('button',{name:/Discover AI opportunities|Zoom group follow-up/})});
@@ -53,8 +68,8 @@ try {
   await page.getByRole('button',{name:'Open 2026-03-08',exact:true}).focus();await page.keyboard.press('ArrowRight');assert.equal(await page.locator(':focus').getAttribute('aria-label'),'Open 2026-03-09');
   assert.equal(await page.locator('button[data-day]').count(),42);
   await page.getByRole('button',{name:/^List$/i}).click();await page.getByRole('button',{name:/Recurring meeting/}).waitFor();
-  await page.getByRole('button',{name:/^Week$/i}).click();await page.getByLabel('Timed events 2026-03-08').waitFor();assert.equal(await page.locator('[aria-label^="Timed events 2026-03-"]').count(),7);
-  const horizontalScroller=await page.locator('.calendar-time-grid-scroll').evaluate(scroller=>({clientWidth:scroller.clientWidth,scrollWidth:scroller.scrollWidth,overflowX:getComputedStyle(scroller).overflowX}));assert.equal(horizontalScroller.overflowX,'auto');assert(horizontalScroller.scrollWidth>horizontalScroller.clientWidth,'week grid owns horizontal scrolling');
+  await page.getByRole('button',{name:/^Week$/i}).click();await page.waitForFunction(()=>document.querySelectorAll('[aria-label^="Timed events 2026-03-"]').length===7);assert.equal(await page.locator('[aria-label^="Timed events 2026-03-"]').count(),7);
+  const horizontalScroller=await page.locator('.calendar-time-grid-scroll').evaluate(scroller=>({clientWidth:scroller.clientWidth,scrollWidth:scroller.scrollWidth,overflowX:getComputedStyle(scroller).overflowX}));assert.equal(horizontalScroller.overflowX,'auto');assert(horizontalScroller.scrollWidth>horizontalScroller.clientWidth,'week grid owns horizontal scrolling when it cannot fit');
   const weekShortCards=page.locator('.calendar-time-event').filter({has:page.getByRole('button',{name:/Discover AI opportunities|Zoom group follow-up/})});assert.equal(await weekShortCards.count(),2);
   const weekGeometry=await weekShortCards.evaluateAll(nodes=>nodes.map(slot=>{const card=slot.querySelector('button');const slotBox=slot.getBoundingClientRect();const cardBox=card.getBoundingClientRect();return {slotOverflow:getComputedStyle(slot).overflow,cardOverflow:getComputedStyle(card).overflow,width:slotBox.width,height:slotBox.height,cardWidth:cardBox.width,cardHeight:cardBox.height,timeVisible:getComputedStyle(card.querySelector('.calendar-event-time')).display!=='none',titleVisible:card.querySelector('.calendar-event-title').getBoundingClientRect().height>0};}));
   for(const card of weekGeometry){assert.equal(card.slotOverflow,'hidden');assert.equal(card.cardOverflow,'hidden');assert(card.width>=76,'overlapping week cards should remain legible side-by-side');assert(card.cardWidth<=card.width+0.5);assert(card.cardHeight<=card.height+0.5);assert(card.timeVisible);assert(card.titleVisible);}
@@ -75,7 +90,9 @@ try {
   empty=true;await page.getByRole('button',{name:'Next',exact:true}).click();await page.getByText('No events in this range.',{exact:true}).waitFor();
   fail=true;await page.getByRole('button',{name:'Next',exact:true}).click();await page.getByRole('alert').filter({hasText:'Calendar temporarily unavailable'}).waitFor();
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-  results.push({viewport,screenshots:[dayScreenshot,weekScreenshot,weekGridScreenshot,fallBackScreenshot],checks:['list/month/week/day','overlap columns','30/45-minute card containment','repeated fall-back hour columns and timezone labels','calendar-owned two-axis scrolling','touch activation','44px all-day target','no event-card native scrollbars','full accessible event labels','all-day','recurrence instance','month keyboard arrows','detail focus and return','loading','today in local timezone','timezone selector','empty','error','no page horizontal overflow']});await page.close();
+  await page.getByRole('heading',{name:'Calendars',exact:true}).scrollIntoViewIfNeeded();
+  const pickerBelowScreenshot=resolve(artifactDir,`calendar-picker-below-${viewport.width}x${viewport.height}.png`);await page.screenshot({path:pickerBelowScreenshot,fullPage:true});
+  results.push({viewport,screenshots:[dayScreenshot,weekScreenshot,weekGridScreenshot,fallBackScreenshot,pickerBelowScreenshot,...(wideScreenshot?[wideScreenshot]:[])],pageWidthRatio:Number((pageBox.width/viewport.width).toFixed(4)),...(widePageWidthRatio?{widePageWidthRatio:Number(widePageWidthRatio.toFixed(4))}:{}),checks:['full-width desktop container','schedule before aligned calendar picker','list/month/week/day','overlap columns','30/45-minute card containment','repeated fall-back hour columns and timezone labels','calendar-owned two-axis scrolling','touch activation','44px all-day target','no event-card native scrollbars','full accessible event labels','all-day','recurrence instance','month keyboard arrows','detail focus and return','loading','today in local timezone','timezone selector','empty','error','no page horizontal overflow']});await page.close();
  }
  console.log(JSON.stringify({pass:true,provider:'synthetic fixtures',results},null,2));
 } finally {await browser.close();}
