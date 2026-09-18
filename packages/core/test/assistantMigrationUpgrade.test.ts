@@ -49,6 +49,15 @@ describe('assistant migration schema upgrade', () => {
     await pg.query(`update memories set content='Different fact',content_fingerprint=md5('different fact') where id=$1`, [existing[1].id]);
     await expect(pg.query(`insert into memories(owner_user_id,content,content_fingerprint) values($1,'Existing synthetic memory',$2)`,
       [user, existing[0].content_fingerprint])).resolves.toBeDefined();
+    const other = randomUUID();
+    await pg.query(`insert into users(id,email,username,role) values($1,$2,$3,'member')`, [other, 'other@example.test', 'other-user']);
+    const [moved] = (await pg.query<{ id: string }>(`select id from memories where owner_user_id=$1 and content_fingerprint=$2 limit 1`,
+      [user, existing[0].content_fingerprint])).rows;
+    await pg.query(`update memories set owner_user_id=$1 where id=$2`, [other, moved.id]);
+    await expect(pg.query(`insert into memories(owner_user_id,content,content_fingerprint) values($1,'Existing synthetic memory',$2)`,
+      [other, existing[0].content_fingerprint])).rejects.toThrow();
+    await expect(pg.query(`insert into memories(owner_user_id,content,content_fingerprint) values($1,'Existing synthetic memory',$2)`,
+      [user, existing[0].content_fingerprint])).resolves.toBeDefined();
     expect((await pg.query(`select content from persona_profiles where owner_user_id=$1`, [user])).rows[0]).toEqual({ content: 'tone: brief' });
     expect((await pg.query(`select to_regclass('migration_previews') as previews, to_regclass('migration_archives') as archives`)).rows[0]).toEqual({ previews: 'migration_previews', archives: 'migration_archives' });
     await pg.close();

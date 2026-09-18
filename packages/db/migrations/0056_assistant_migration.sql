@@ -51,7 +51,9 @@ insert into memory_content_keys(owner_user_id,fingerprint)
 create or replace function claim_memory_content_key() returns trigger as $$
 begin
   if new.content_fingerprint is not null
-     and (tg_op = 'INSERT' or new.content_fingerprint is distinct from old.content_fingerprint) then
+     and (tg_op = 'INSERT'
+       or new.owner_user_id is distinct from old.owner_user_id
+       or new.content_fingerprint is distinct from old.content_fingerprint) then
     insert into memory_content_keys(owner_user_id,fingerprint)
       values(new.owner_user_id,new.content_fingerprint);
   end if;
@@ -62,7 +64,9 @@ $$ language plpgsql;
 create or replace function release_memory_content_key() returns trigger as $$
 begin
   if old.content_fingerprint is not null
-     and (tg_op = 'DELETE' or new.content_fingerprint is distinct from old.content_fingerprint)
+     and (tg_op = 'DELETE'
+       or new.owner_user_id is distinct from old.owner_user_id
+       or new.content_fingerprint is distinct from old.content_fingerprint)
      and not exists (
        select 1 from memories
        where owner_user_id=old.owner_user_id and content_fingerprint=old.content_fingerprint
@@ -74,9 +78,9 @@ begin
 end;
 $$ language plpgsql;
 
-create trigger memories_claim_content_key before insert or update of content_fingerprint on memories
+create trigger memories_claim_content_key before insert or update of owner_user_id,content_fingerprint on memories
   for each row execute function claim_memory_content_key();
-create trigger memories_release_content_key after update of content_fingerprint or delete on memories
+create trigger memories_release_content_key after update of owner_user_id,content_fingerprint or delete on memories
   for each row execute function release_memory_content_key();
 alter table memories add constraint memory_migration_owner
   foreign key (migration_batch_id, owner_user_id) references migration_batches(id, owner_user_id);
