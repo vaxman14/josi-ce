@@ -4,8 +4,10 @@ import { json, postgresDb } from '../src/db.js';
 describe('PostgreSQL transaction adapter', () => {
   it('pins every query and JSON parameter to the driver transaction connection', async () => {
     const calls: unknown[] = [];
-    const tx = { unsafe: async (sql: string, params: unknown[]) => { calls.push([sql, params]); return []; }, json: (value: unknown) => ({ driverJson: value }) };
-    const db = postgresDb({ unsafe: async () => { throw new Error('pool query is forbidden inside this transaction'); }, begin: async (work: (connection: unknown) => Promise<unknown>) => work(tx) });
+    // Real postgres.js transaction clients omit `.json`; the root encoder must
+    // survive when the adapter pins queries to the transaction connection.
+    const tx = { unsafe: async (sql: string, params: unknown[]) => { calls.push([sql, params]); return []; } };
+    const db = postgresDb({ unsafe: async () => { throw new Error('pool query is forbidden inside this transaction'); }, json: (value: unknown) => ({ driverJson: value }), begin: async (work: (connection: unknown) => Promise<unknown>) => work(tx) });
     await db.transaction!(async connection => { await connection.query('synthetic insert', [json({ count: 1 })]); await connection.query('synthetic read', []); });
     expect(calls).toEqual([['synthetic insert', [{ driverJson: { count: 1 } }]], ['synthetic read', []]]);
   });

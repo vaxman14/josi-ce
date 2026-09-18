@@ -34,6 +34,20 @@ create index migration_previews_expiry on migration_previews (expires_at);
 alter table memories add column migration_batch_id uuid;
 alter table memories add column source_provenance jsonb;
 alter table memories add column content_fingerprint text;
+-- Seed one key for every distinct normalized pre-upgrade fact. Existing exact
+-- duplicates remain readable with null keys, but any future create/edit for
+-- that normalized content conflicts with the seeded representative.
+with ranked as (
+  select id,
+    md5(lower(regexp_replace(btrim(content), '\s+', ' ', 'g'))) as fingerprint,
+    row_number() over (
+      partition by owner_user_id, lower(regexp_replace(btrim(content), '\s+', ' ', 'g'))
+      order by created_at, id
+    ) as position
+  from memories
+)
+update memories m set content_fingerprint = ranked.fingerprint
+from ranked where ranked.id = m.id and ranked.position = 1;
 alter table memories add constraint memory_migration_owner
   foreign key (migration_batch_id, owner_user_id) references migration_batches(id, owner_user_id);
 alter table memories add constraint memory_migration_provenance

@@ -22,8 +22,9 @@ async function assertScope(db: Db, scope: MigrationScope, lock = false): Promise
   if (!row) throw new MigrationError('Not found.', 404);
 }
 
-/** No content is persisted during preview. Duplicate checks only read the
- * authenticated owner's rows, within this installation's database. */
+/** Duplicate checks read only the authenticated owner's rows. The route may
+ * persist the resulting sanitized manifest briefly; raw upload bytes never
+ * reach this layer or PostgreSQL. */
 export async function previewMigration(db: Db, scope: MigrationScope, input: MigrationManifest): Promise<MigrationManifest> {
   await assertScope(db, scope);
   const manifest = structuredClone(input);

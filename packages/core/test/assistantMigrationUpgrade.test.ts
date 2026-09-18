@@ -35,7 +35,12 @@ describe('assistant migration schema upgrade', () => {
     };
     expect(await apply()).toBe(true);
     expect(await apply()).toBe(false);
-    expect((await pg.query(`select content from memories where owner_user_id=$1`, [user])).rows[0]).toEqual({ content: 'Existing synthetic memory' });
+    const existing = (await pg.query<{ content: string; content_fingerprint: string }>(
+      `select content,content_fingerprint from memories where owner_user_id=$1`, [user])).rows[0];
+    expect(existing.content).toBe('Existing synthetic memory');
+    expect(existing.content_fingerprint).toMatch(/^[a-f0-9]{32}$/);
+    await expect(pg.query(`insert into memories(owner_user_id,content,content_fingerprint) values($1,' existing  SYNTHETIC memory ',$2)`,
+      [user, existing.content_fingerprint])).rejects.toThrow();
     expect((await pg.query(`select content from persona_profiles where owner_user_id=$1`, [user])).rows[0]).toEqual({ content: 'tone: brief' });
     expect((await pg.query(`select to_regclass('migration_previews') as previews, to_regclass('migration_archives') as archives`)).rows[0]).toEqual({ previews: 'migration_previews', archives: 'migration_archives' });
     await pg.close();

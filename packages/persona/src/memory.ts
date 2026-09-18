@@ -70,7 +70,17 @@ export function refuseSecret(content: string): string | null {
 
 /** Stable owner-scoped duplicate key shared with migration imports. */
 export function memoryFingerprint(content: string): string {
-  return createHash('sha256').update(content.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase()).digest('hex');
+  // PostgreSQL's built-in md5(text) lets schema upgrades backfill the same key
+  // without reading private memories through application code. This is a
+  // duplicate key, not a security digest.
+  return createHash('md5').update(content.trim().replace(/\s+/g, ' ').toLowerCase()).digest('hex');
+}
+
+function duplicateMemory(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error) || error.code !== '23505') return false;
+  const constraint = ('constraint' in error && typeof error.constraint === 'string') ? error.constraint
+    : ('constraint_name' in error && typeof error.constraint_name === 'string') ? error.constraint_name : '';
+  return constraint === 'memories_owner_content_fingerprint';
 }
 
 export async function addMemory(
@@ -114,8 +124,7 @@ export async function addMemory(
     // Keep the private memory text out of the generic database-error logger.
     // This exact constraint is the expected result of a normalized duplicate;
     // every other database error still follows the ordinary failure path.
-    if (error && typeof error === 'object' && 'code' in error && error.code === '23505'
-      && 'constraint' in error && error.constraint === 'memories_owner_content_fingerprint') {
+    if (duplicateMemory(error)) {
       throw new MemoryError('that memory already exists');
     }
     throw error;
@@ -212,16 +221,22 @@ export async function updateMemory(
     const secret = refuseSecret(args.content);
     if (secret) throw new MemoryError(`that looks like ${secret}, so it was not saved.`);
   }
-  const [row] = await db.query<Memory>(
-    `update memories set
-       content = coalesce($3, content),
-       pinned = coalesce($4, pinned),
-       content_fingerprint = case when $3 is null then content_fingerprint else $5 end
-     where id = $1 and owner_user_id = $2
-     returning *`,
-    [args.id, args.ownerUserId, args.content ?? null, args.pinned ?? null,
-      args.content === undefined ? null : memoryFingerprint(args.content)],
-  );
+  let row: Memory;
+  try {
+    [row] = await db.query<Memory>(
+      `update memories set
+         content = coalesce($3, content),
+         pinned = coalesce($4, pinned),
+         content_fingerprint = case when $3 is null then content_fingerprint else $5 end
+       where id = $1 and owner_user_id = $2
+       returning *`,
+      [args.id, args.ownerUserId, args.content ?? null, args.pinned ?? null,
+        args.content === undefined ? null : memoryFingerprint(args.content)],
+    );
+  } catch (error) {
+    if (duplicateMemory(error)) throw new MemoryError('that memory already exists');
+    throw error;
+  }
   // 404, not 403 — the Phase 1 rule. Somebody else's memory is not theirs to
   // know exists.
   if (!row) throw new MemoryError('not found');

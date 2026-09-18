@@ -49,20 +49,24 @@ export function pgliteDb(pglite: {
 /** Adapter for porsager/postgres (production). Loosely typed on purpose:
  * postgres.js's generic rejects `unknown[]`, but every value bound here is a
  * JSON-serializable primitive. */
-export function postgresDb(sql: unknown): Db {
+export function postgresDb(sql: unknown, inheritedJson?: (value: unknown) => unknown): Db {
   const client = sql as {
     unsafe: (q: string, params?: unknown[]) => Promise<unknown[]>;
     json?: (value: unknown) => unknown;
     begin?: <T>(work: (tx: unknown) => Promise<T>) => Promise<T>;
   };
+  // postgres.js transaction-scoped clients do not reliably expose `.json`.
+  // Preserve the root client's encoder so JSON parameters inside a transaction
+  // are stored as objects rather than as an accidental `{ value: ... }` shape.
+  const encodeJson = client.json ? (value: unknown) => client.json!(value) : inheritedJson;
   return {
     ...(client.begin ? {
-      transaction: <T>(work: (tx: Db) => Promise<T>) => client.begin!(tx => work(postgresDb(tx))),
+      transaction: <T>(work: (tx: Db) => Promise<T>) => client.begin!(tx => work(postgresDb(tx, encodeJson))),
     } : {}),
     async query<T>(q: string, params: unknown[] = []): Promise<T[]> {
       const bound = params.map((p) => {
         if (!(p instanceof JsonParam)) return p;
-        return client.json ? client.json(p.value) : p.value;
+        return encodeJson ? encodeJson(p.value) : p.value;
       });
       return (await client.unsafe(q, bound)) as T[];
     },

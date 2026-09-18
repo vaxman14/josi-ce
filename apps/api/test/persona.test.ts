@@ -181,6 +181,14 @@ describe('two people, two personalities, no leakage', () => {
     });
     expect(duplicate.status).toBe(409);
     expect(duplicate.body).toEqual({ error: 'that memory already exists' });
+    const other = await call('/api/persona/memories', {
+      method: 'POST', jar: cookies.alice, body: { content: 'Another synthetic fact' },
+    });
+    const edited = await call(`/api/persona/memories/${other.body.memory.id}`, {
+      method: 'PUT', jar: cookies.alice, body: { content: 'SYNTHETIC DUPLICATE FACT' },
+    });
+    expect(edited.status).toBe(409);
+    expect(edited.body).toEqual({ error: 'that memory already exists' });
     expect(log).not.toHaveBeenCalled();
     log.mockRestore();
   });
