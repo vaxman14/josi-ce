@@ -17,6 +17,7 @@ import { PwaPrompts } from '@/lib/pwa';
 import { Button } from '@/components/ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { HELP_URL, LegalLinks } from '@/components/LegalLinks';
+import { PHONE_MORE_LABELS, PHONE_PRIMARY_LABELS, routeMatches } from './mobileNavigation';
 
 const MEMBER_NAV = [
   { to: '/app', label: 'Home', end: true },
@@ -63,17 +64,22 @@ const ADMIN_NAV = [
   { to: '/admin/workspace', label: 'Workspace' },
 ];
 
-/** The five a thumb reaches on a phone. The rest live on the Home page and in
- * the sidebar; a bottom bar with nine items is a bar with none. */
-const PHONE_NAV = MEMBER_NAV.filter((i) => ['Home', 'Talk', 'Tasks', 'Approvals', 'Usage'].includes(i.label));
+/** The four destinations a member reaches directly from the phone bar. */
+const PHONE_NAV = MEMBER_NAV.filter((i) => PHONE_PRIMARY_LABELS.includes(i.label as (typeof PHONE_PRIMARY_LABELS)[number]));
+
+/** Member destinations that remain available from the phone's More sheet. */
+const PHONE_MORE_NAV = [
+  ...PHONE_MORE_LABELS.slice(0, -1).map((label) => MEMBER_NAV.find((item) => item.label === label)),
+  { ...FAMILY_NAV, label: 'Family' },
+].filter((item): item is { to: string; label: string; end?: boolean } => item !== undefined);
 
 function PhoneNavIcon({ label }: { label: string }) {
   const common = 'h-6 w-6';
   if (label === 'Home') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z" /></svg>;
   if (label === 'Talk') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="currentColor"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v7a3.5 3.5 0 0 1-3.5 3.5H10l-4.8 4a.75.75 0 0 1-1.2-.58V16.5A3.5 3.5 0 0 1 2 13.34V5.5Z" /></svg>;
-  if (label === 'Tasks') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 12 2.5 2.5L16 9"/></svg>;
-  if (label === 'Approvals') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M7 2h8l4 4v16H5V2Z"/><path d="M14 2v5h5M8 12h8M8 16h8"/></svg>;
-  return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 20v-6M12 20V9M19 20V4"/></svg>;
+  if (label === 'Calendar') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></svg>;
+  if (label === 'Contacts') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M17 8h4M17 12h4M17 16h3"/></svg>;
+  return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>;
 }
 
 export function Shell() {
@@ -82,11 +88,56 @@ export function Shell() {
   const location = useLocation();
   const [status, setStatus] = useState<LlmStatus | null>(null);
   const [talkMenuOpen, setTalkMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const talkMenu = useRef<HTMLDivElement>(null);
+  const moreDialog = useRef<HTMLDivElement>(null);
+  const moreTrigger = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => setStatus(null));
   }, [location.pathname]);
+
+  useEffect(() => setMoreOpen(false), [location.pathname]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const frame = window.requestAnimationFrame(() => {
+      const current = moreDialog.current?.querySelector<HTMLElement>('[aria-current="page"]');
+      const first = moreDialog.current?.querySelector<HTMLElement>('a, button');
+      (current ?? first)?.focus();
+    });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMoreOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(moreDialog.current?.querySelectorAll<HTMLElement>('a, button') ?? []);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      moreTrigger.current?.focus();
+    };
+  }, [moreOpen]);
 
   const isAdminArea = location.pathname.startsWith('/admin');
   const isTalk = location.pathname === '/app/talk';
@@ -198,7 +249,65 @@ export function Shell() {
             {!isAdminArea ? <span className={`absolute bottom-1.5 h-1 w-8 rounded-full ${location.pathname === item.to ? 'bg-primary' : 'bg-transparent'}`} /> : null}
           </NavLink>
         ))}
+        {!isAdminArea ? (
+          <button
+            ref={moreTrigger}
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={moreOpen}
+            aria-controls="phone-more-navigation"
+            aria-current={PHONE_MORE_NAV.some((item) => routeMatches(location.pathname, item.to)) ? 'page' : undefined}
+            className={cn(
+              'relative flex min-h-[4.75rem] flex-1 flex-col items-center justify-center gap-1 px-1 text-[11px] font-medium',
+              PHONE_MORE_NAV.some((item) => routeMatches(location.pathname, item.to)) ? 'text-primary' : 'text-muted-foreground',
+            )}
+            onClick={() => setMoreOpen(true)}
+          >
+            <PhoneNavIcon label="More" />
+            More
+            <span className={`absolute bottom-1.5 h-1 w-8 rounded-full ${PHONE_MORE_NAV.some((item) => routeMatches(location.pathname, item.to)) ? 'bg-primary' : 'bg-transparent'}`} />
+          </button>
+        ) : null}
       </nav>
+
+      {moreOpen && !isAdminArea ? (
+        <div
+          className="fixed inset-0 z-40 flex items-end bg-black/60 lg:hidden"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setMoreOpen(false);
+          }}
+        >
+          <div
+            id="phone-more-navigation"
+            ref={moreDialog}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="phone-more-title"
+            className="max-h-[min(80dvh,44rem)] w-full overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-card px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl"
+          >
+            <div className="mb-2 flex min-h-11 items-center justify-between gap-3 px-1">
+              <h2 id="phone-more-title" className="text-lg font-semibold">More</h2>
+              <button type="button" className="flex h-11 w-11 items-center justify-center rounded-full text-2xl hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary" aria-label="Close more navigation" onClick={() => setMoreOpen(false)}>×</button>
+            </div>
+            <nav aria-label="More destinations">
+              <ul className="grid grid-cols-1 gap-1 min-[360px]:grid-cols-2">
+                {PHONE_MORE_NAV.map((item) => (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      end={item.end}
+                      className={({ isActive }) => cn('flex min-h-11 items-center rounded-lg px-3 text-sm font-medium', isActive ? 'bg-primary/15 text-primary' : 'hover:bg-secondary')}
+                      onClick={() => setMoreOpen(false)}
+                    >
+                      {item.label}
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </div>
+        </div>
+      ) : null}
 
       {/* Install and update prompts. Inside the signed-in shell on purpose:
           nothing offers to install an app to somebody looking at a login form,
