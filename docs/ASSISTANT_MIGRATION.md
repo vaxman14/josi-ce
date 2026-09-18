@@ -74,8 +74,8 @@ writer. Its HTTP response includes a receipt; it no longer drops MEMORY. Persona
 imports cannot write `agents_admin`, even for a super administrator. Existing
 profiles/facts remain intact. Original provenance is retained for round trips;
 separate `source_provenance` records the import source, file, locator and hash.
-Normalized deduplication uses NFKC, case folding and collapsed whitespace; pinning
-and differing provenance do not create another copy of the same fact.
+Normalized deduplication trims edges, lowercases text and collapses whitespace;
+pinning and differing provenance do not create another copy of the same fact.
 
 ## Architecture and security boundaries
 
