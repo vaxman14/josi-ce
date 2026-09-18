@@ -51,6 +51,10 @@ import { workspaceToolNames } from './workspaceTools.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
 import { presentToolBackedReply } from './presentation.js';
 import { effectiveTimeContext } from './timeContext.js';
+import {
+  GENERIC_RETRY, immediatelyPrecedingRetryTarget, retryReply, retryTargetFor,
+  type AssistantRetryTarget,
+} from './retry.js';
 
 /** Recall over the user's own history, injected by the caller. A function
  * rather than a package dependency: the agent does not care whether recall is
@@ -61,6 +65,9 @@ export type RecallLookup = (query: string) => Promise<string>;
 export interface AgentTurnResult {
   reply: string;
   actions: Array<{ tool: string; result: unknown }>;
+  /** Exact repeatable read represented by this assistant turn. Callers persist
+   * it in the outbound message metadata; generic retry never parses prose. */
+  retry?: AssistantRetryTarget;
   /** Which memories shaped this turn, so a person can see why it said what it
    * did rather than being quietly profiled. */
   memoriesUsed?: Array<{ id: string; content: string }>;
@@ -185,6 +192,7 @@ function systemPrompt(args: {
 export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult> {
   const { db, userId } = args;
   const actions: AgentTurnResult['actions'] = [];
+  let retry: AssistantRetryTarget | undefined;
   const sessionKey = args.sessionKey ?? args.threadId;
 
   // ---- is this person allowed to be talking to Josi at all? --------------
@@ -215,6 +223,29 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // provider error still happened.
   if (childAccess.managed) {
     await recordChildActivity(db, { childUserId: userId, channel: args.channel ?? 'web' });
+  }
+
+  // Generic retry is resolved before either action-state prose or the model.
+  // It may repeat only the exact typed read stored on the immediately preceding
+  // assistant message. No metadata means no target: old approvals, succeeded
+  // writes and nouns in conversation history are deliberately invisible here.
+  if (GENERIC_RETRY.test(args.inbound.trim())) {
+    const target = await immediatelyPrecedingRetryTarget(db, {
+      ownerUserId: userId,
+      threadId: args.threadId,
+    });
+    if (!target) return { reply: 'What exactly would you like me to retry?', actions };
+    let result: unknown;
+    try {
+      const decision = await checkStepUp(db, { userId, sessionKey, action: target.tool });
+      result = decision.allowed
+        ? await execTool(args, target.tool, target.input)
+        : { ok: false, error: decision.reason, message: decision.message };
+    } catch {
+      result = { ok: false, error: 'failed' };
+    }
+    actions.push({ tool: target.tool, result });
+    return { reply: retryReply(target, result), actions, retry: target };
   }
 
   // Short approvals, denials and execution-status questions are resolved from
@@ -419,6 +450,10 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     // is why they are kept apart from `toolCalls` in the seam.
     for (const call of res.executedToolCalls ?? []) {
       actions.push({ tool: call.name, result: call.result });
+      // Assignment (rather than "last retryable") is intentional: if a write
+      // follows a read, the immediately preceding operation is the write and
+      // this turn must carry no generic-retry target.
+      retry = retryTargetFor(call.name, call.input);
     }
 
     if (!res.toolCalls.length) {
@@ -454,7 +489,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
         const learnedOnFabrication = await learnFromTurn(db, { userId, inbound: args.inbound });
         return {
           reply: NARRATED_SEARCH_GUARD_FALLBACK, actions, memoriesUsed, learned: learnedOnFabrication,
-          imagesDroppedNoVision,
+          imagesDroppedNoVision, retry,
         };
       }
 
@@ -525,7 +560,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
         !!result&&typeof result==='object'&&(result as {state?:unknown}).state==='prepared'&&typeof (result as {summary?:unknown}).summary==='string');
       if(prepared.length===1)reply=`${prepared[0].summary}\n\nApprove this exact action? Reply yes or no.`;
       else if(prepared.length>1)reply='More than one consequential action was prepared together. Name which one you want to review; a bare yes will not approve either.';
-      return { reply, actions, memoriesUsed, learned, imagesDroppedNoVision };
+      return { reply, actions, memoriesUsed, learned, imagesDroppedNoVision, retry };
     }
 
     const toolResults: ToolResult[] = [];
@@ -544,6 +579,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
         result = { ok: false, error: 'failed', message: (err as Error).message };
       }
       actions.push({ tool: call.name, result });
+      retry = retryTargetFor(call.name, call.input);
       toolResults.push({ toolCallId: call.id, name: call.name, content: JSON.stringify(result) });
     }
 
@@ -560,7 +596,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   });
   return {
     reply: 'I went round in circles on that one and stopped. Try telling me in a different way.',
-    actions, imagesDroppedNoVision,
+    actions, imagesDroppedNoVision, retry,
   };
 }
 

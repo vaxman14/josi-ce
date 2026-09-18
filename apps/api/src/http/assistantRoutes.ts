@@ -411,6 +411,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       const outboundMeta:Record<string,unknown>={};
       if(calendarReceipts.length)outboundMeta.calendar_receipts=calendarReceipts;
       if(actionStatusDomain?.domain==='email'||actionStatusDomain?.domain==='calendar')outboundMeta.action_status_domain=actionStatusDomain.domain;
+      if(result.retry)outboundMeta.retry=result.retry;
       const outboundMessage=await addMessage(db, { threadId, direction: 'out', body: result.reply,
         meta: Object.keys(outboundMeta).length ? outboundMeta : undefined });
       const presentedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>

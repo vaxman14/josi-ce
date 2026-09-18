@@ -274,7 +274,7 @@ export async function handleUpdate(
   const threadId = await threadFor(db, link);
   await db.query(`update telegram_links set last_inbound_at = now() where id = $1`, [link.id]);
 
-  let result: { reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }> };
+  let result: { reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }>; retry?: unknown };
   try {
     result = await deps.runTurn({ userId: link.user_id, threadId, inbound: text });
   } catch (err) {
@@ -296,13 +296,16 @@ export async function handleUpdate(
   }
 
   const actionState=(result.actions??[]).find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
+  const outboundMeta:Record<string,unknown>={};
+  if(actionState?.domain==='email'||actionState?.domain==='calendar')outboundMeta.action_status_domain=actionState.domain;
+  if(result.retry)outboundMeta.retry=result.retry;
   const exchange = await recordExchange(db, {
     ownerUserId: link.user_id,
     threadId,
     channel: 'telegram',
     inbound: text,
     reply: result.reply,
-    outboundMeta: actionState?.domain==='email'||actionState?.domain==='calendar'?{action_status_domain:actionState.domain}:undefined,
+    outboundMeta: Object.keys(outboundMeta).length ? outboundMeta : undefined,
   });
   const presentedTaskIds = (result.actions ?? []).map((action) => action.result)
     .filter((value): value is { state: string; task_id: string } => !!value && typeof value === 'object'
