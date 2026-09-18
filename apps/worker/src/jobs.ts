@@ -10,8 +10,9 @@
 // because Phase 7 has not happened yet would read, to the person waiting on it,
 // exactly like Josi tried and could not.
 import {
-  addMessage, claimJobs, claimReadyTask, claimReminderForDelivery, completeJob, consumeApproval, createThread, enqueue,
-  expireApprovals, expireHolds, failJob, getTask, markReminderFailed, tickSchedules,
+  claimJobs, claimReadyTask, completeJob, consumeApproval, enqueue,
+  expireApprovals, expireHolds, failJob, getTask, tickSchedules,
+  claimDurableTurn, completeDurableTurn, failDurableTurn, renewDurableTurnLease, processPushBatch, processPushReceipts, deliverReminderPersisted, json,
   settleActionForTask, transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
@@ -30,6 +31,10 @@ import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk,
 } from '@josi-ce/channels';
 import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
+import { runAssistantTurn } from '@josi-ce/agent';
+import { IMAGE_MEDIA_TYPES, readAttachment } from '@josi-ce/storage';
+import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
+import { extname } from 'node:path';
 
 /** What the worker needs beyond the database.
  *
@@ -42,6 +47,12 @@ export interface WorkerContext {
   connectorFetch?: typeof fetch;
   /** Injected by the tests so no suite contacts api.telegram.org. */
   telegramFetch?: typeof fetch;
+  llmFetch?: typeof fetch;
+  llmResolve?: (hostname:string)=>Promise<string[]>;
+  customApiFetch?: typeof fetch;
+  outboundResolve?: (hostname:string)=>Promise<string[]>;
+  /** Explicit seam: suites omit it, so tests can never contact Expo. */
+  pushFetch?: typeof fetch;
 }
 
 export interface JobOutcome {
@@ -50,11 +61,56 @@ export interface JobOutcome {
   failed: number;
 }
 
+const DURABLE_CALENDAR_CONTINUITY_TOOLS = new Set(['query_calendar', 'get_event', 'draft_calendar_event']);
+function durableHistoryContent(message: { direction: 'in' | 'out'; body: string; meta: Record<string, unknown> }): string {
+  if (message.direction !== 'out' || !Array.isArray(message.meta?.calendar_receipts) || !message.meta.calendar_receipts.length) return message.body;
+  return `${message.body}\n\n[Verified calendar receipts from this prior turn. Preserve the named event, event_id, source_id, account, and calendar in follow-up actions; do not transfer a requested edit to another event.]\n${JSON.stringify(message.meta.calendar_receipts).slice(0, 12_000)}`;
+}
+
 /** Job kinds this worker understands. An unknown kind fails the job rather
  * than silently completing it: a job nobody handles is a bug, and marking it
  * done would hide it forever. */
 export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise<void> {
   switch (job.kind) {
+    case 'assistant.turn': {
+      const turnId=String((job.payload as {turnId?:unknown}).turnId??'');
+      if(!turnId)throw new Error('assistant.turn without a turnId');
+      if(!ctx.masterKey)throw new Error('assistant.turn needs the installation master key');
+      const turn=await claimDurableTurn(db,turnId);
+      // A later turn waits until the thread's earlier turn settles. Completed
+      // and failed turns make a duplicate queue row harmless.
+      if(!turn){const [state]=await db.query<{status:string}>(`select status from assistant_turns where id=$1`,[turnId]);if(state?.status==='queued')throw new Error('assistant thread has an earlier turn');return;}
+      const leaseHeartbeat=setInterval(()=>{void renewDurableTurnLease(db,{turnId,leaseToken:turn.lease_token}).catch(()=>undefined);},60_000);
+      leaseHeartbeat.unref?.();
+      try{
+        const [inbound]=await db.query<{id:string;body:string;created_at:string}>(`select id,body,created_at from messages where id=$1 and thread_id=$2 and direction='in'`,[turn.inbound_message_id,turn.thread_id]);
+        if(!inbound)throw new Error('durable inbound message is unavailable');
+        const preceding=await db.query<{direction:'in'|'out';body:string;meta:Record<string,unknown>}>(`select direction,body,meta from messages where thread_id=$1 and id<>$2 and created_at<=$3 order by created_at desc,id desc limit 40`,[turn.thread_id,inbound.id,inbound.created_at]);
+        const history=preceding.reverse().map(m=>({role:m.direction==='in'?('user' as const):('assistant' as const),content:durableHistoryContent(m)}));
+        const attachments=turn.attachment_ids.length?await db.query<{id:string;filename:string;extracted_text:string|null}>(`select id,filename,extracted_text from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 and storage_state='ready' order by id`,[turn.attachment_ids,turn.owner_user_id,turn.thread_id]):[];
+        const mediaType=(name:string)=>IMAGE_MEDIA_TYPES[extname(name).replace(/^\./,'').toLowerCase()];
+        const textAttachments=attachments.filter(a=>!mediaType(a.filename));
+        const context=textAttachments.map(a=>a.extracted_text?`Attached file ${a.filename}:\n${a.extracted_text}`:`Attached file ${a.filename}; no readable text was extracted.`).join('\n\n');
+        const provider=await loadStoredProvider(db,'primary');
+        const images=capabilitiesOf(provider)?.vision===true?await Promise.all(attachments.filter(a=>mediaType(a.filename)).map(async a=>({mediaType:mediaType(a.filename),base64:(await readAttachment(a.id)).toString('base64')}))):undefined;
+        const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},userId:turn.owner_user_id,threadId:turn.thread_id,history,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,replyToMessageId:turn.reply_to_message_id,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native'});
+        if(result.mediaRequest)await db.query(`update messages set meta=meta||$2 where id=$1 and thread_id=$3`,[inbound.id,json({media_request:result.mediaRequest}),turn.thread_id]);
+        if(result.refusal){await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:result.refusal.reason,retryable:result.refusal.reason==='provider_error'});return;}
+        const approvalNeeded=result.actions.some(a=>a.result&&typeof a.result==='object'&&String((a.result as any).state)==='prepared');
+        const taskIds=result.actions.map(a=>a.result).filter((v):v is {state:string;task_id:string}=>!!v&&typeof v==='object'&&['collecting','prepared'].includes(String((v as any).state))&&typeof (v as any).task_id==='string').map(v=>v.task_id);
+        const calendarReceipts=result.actions.filter(a=>DURABLE_CALENDAR_CONTINUITY_TOOLS.has(a.tool)).slice(-6);
+        const replyMeta:Record<string,unknown>={};
+        if(calendarReceipts.length)replyMeta.calendar_receipts=calendarReceipts;
+        const actionStatusDomain=result.actions.find(a=>a.tool==='assistant_action_state'&&a.result&&typeof a.result==='object')?.result as {domain?:unknown}|undefined;
+        if(actionStatusDomain?.domain==='email'||actionStatusDomain?.domain==='calendar')replyMeta.action_status_domain=actionStatusDomain.domain;
+        if(result.retry)replyMeta.retry=result.retry;
+        if(result.mediaResult)replyMeta.media_result=result.mediaResult;
+        await completeDurableTurn(db,{turnId,leaseToken:turn.lease_token,reply:result.reply,toolReceipts:result.actions,replyMeta,approvalNeeded,presentedTaskIds:taskIds});
+      }catch{await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:'turn_execution_failed',retryable:true});}
+      finally{clearInterval(leaseHeartbeat);}
+      return;
+    }
+
     case 'task.wake': {
       const taskId = String((job.payload as { taskId?: unknown }).taskId ?? '');
       if (!taskId) throw new Error('task.wake without a taskId');
@@ -366,33 +422,16 @@ function safeTaskError(err: unknown): string {
   return message.slice(0, 300);
 }
 
-/** Deliver one due reminder.
- *
- * The claim is the concurrency control: `claimReminderForDelivery` flips
- * 'scheduled' to 'delivered' atomically, so a cancelled reminder, a second
- * worker holding the same job, or a retry of a job that already delivered all
- * land here and find nothing to do. The chat surface is the delivery that
- * counts; Telegram is best-effort on top — a person whose bot is briefly
- * unreachable still gets the reminder where they asked for it, and a Telegram
- * failure must not fail a delivery that already happened. */
+/** Deliver one due reminder. Chat persistence and native push outbox creation
+ * share one database statement; Telegram remains best-effort after that
+ * authoritative local delivery. */
 async function deliverReminder(db: Db, reminderId: string, ctx: WorkerContext): Promise<void> {
-  const reminder = await claimReminderForDelivery(db, reminderId);
-  if (!reminder) return;
-
-  const text = `Reminder: ${reminder.body}`;
-  try {
-    // The conversation it was asked in, or a fresh one when that thread has
-    // been deleted since — the reminder is owed to the person, not the thread.
-    const threadId = reminder.thread_id
-      ?? (await createThread(db, { ownerUserId: reminder.owner_user_id, title: 'Reminders' })).id;
-    await addMessage(db, { threadId, direction: 'out', body: text, channel: 'web' });
-  } catch (err) {
-    // Claimed but delivered nowhere. Recorded as failed so the owner's list
-    // tells the truth, then rethrown so the queue's retry/dead machinery and
-    // its visible last_error apply.
-    await markReminderFailed(db, reminderId);
-    throw err;
-  }
+  const [pending]=await db.query<{body:string}>(`select body from reminders where id=$1 and status='scheduled'`,[reminderId]);
+  if(!pending)return;
+  const text=`Reminder: ${pending.body}`;
+  const calendarReminder=text.includes('\nCalendar source:');
+  const reminder=await deliverReminderPersisted(db,{reminderId,text,category:calendarReminder?'calendar':'reminder',pushBody:calendarReminder?text.split('\nCalendar source:')[0]:text});
+  if(!reminder)return;
 
   await deliverReminderToTelegram(db, reminder.owner_user_id, text, ctx).catch(() => {
     // sendChunk already records the failed attempt and its category; a dead
@@ -442,15 +481,19 @@ export async function processQueue(
   for (const job of jobs) {
     try {
       await runJob(db, job, ctx);
-      await completeJob(db, job.id);
+      await completeJob(db, job.id,workerId);
       done++;
     } catch (err) {
       // Our own message, never a provider body — `last_error` is readable by
       // anything with database access, so it must not become a side channel for
       // content.
-      await failJob(db, job.id, (err as Error).message);
+      await failJob(db, job.id, (err as Error).message,workerId);
       failed++;
     }
+  }
+  if(ctx.masterKey&&ctx.pushFetch){
+    await processPushBatch(db,ctx.masterKey,ctx.pushFetch);
+    await processPushReceipts(db,ctx.pushFetch);
   }
   return { claimed: jobs.length, done, failed };
 }

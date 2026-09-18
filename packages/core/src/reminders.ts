@@ -117,6 +117,29 @@ export async function claimReminderForDelivery(db: Db, reminderId: string): Prom
   return row ?? null;
 }
 
+/** Persist chat delivery and its native push outbox atomically. */
+export async function deliverReminderPersisted(db:Db,args:{reminderId:string;text:string;category:'reminder'|'calendar';pushBody:string}):Promise<Reminder|null>{
+  const [row]=await db.query<Reminder>(`with claimed as (
+    update reminders set status='delivered',delivered_at=now() where id=$1 and status='scheduled' returning *
+  ), fresh_thread as (
+    insert into threads(owner_user_id,title) select owner_user_id,'Reminders' from claimed where thread_id is null returning id
+  ), target as (
+    select c.*,coalesce(c.thread_id,f.id) target_thread_id from claimed c left join fresh_thread f on true
+  ), cleared as (
+    update assistant_action_states set presented_turn_id=null where thread_id in(select target_thread_id from target) and status='prepared' and presented_turn_id is not null returning id
+  ), message as (
+    insert into messages(thread_id,direction,channel,body) select target_thread_id,'out','web',$2 from target returning id,thread_id
+  ), touched as (
+    update threads set last_activity_at=now() where id in(select thread_id from message) returning id
+  ), pushed as (
+    insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body,explicit_reminder)
+      select t.owner_user_id,d.id,'reminder:'||t.id,$3,'reminder',t.id,'Josi reminder',$4,true from target t
+      join mobile_devices d on d.owner_user_id=t.owner_user_id and d.revoked_at is null and d.app_state<>'foreground' and coalesce((d.categories->>$3)::boolean,true)
+      on conflict(device_id,event_key) do nothing
+  ) select id,owner_user_id,thread_id,body,due_at,status,delivered_at,created_at from claimed`,[args.reminderId,args.text,args.category,args.pushBody]);
+  return row??null;
+}
+
 /** What the Tasks page shows (round-2 item 13): everything still to come,
  * plus the recent past — anything that settled (delivered, cancelled, failed)
  * in the last week. Anything the assistant schedules must be visible and

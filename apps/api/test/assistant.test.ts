@@ -44,13 +44,13 @@ const llmFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
 const llmResolve = async () => ['203.0.113.5'];
 const connectorFetch = (async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
 
-interface Res { status: number; body: any; setCookie: string[] }
+interface Res { status: number; body: any; setCookie: string[]; headers: Headers }
 
 async function call(
   path: string,
-  opts: { method?: string; body?: unknown; jar?: string } = {},
+  opts: { method?: string; body?: unknown; jar?: string; headers?: Record<string,string> } = {},
 ): Promise<Res> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers ?? {}) };
   if (opts.jar) headers.cookie = opts.jar;
   const token = opts.jar ? /josi_csrf=([^;]+)/.exec(opts.jar)?.[1] : undefined;
   if (token) headers['x-josi-csrf'] = decodeURIComponent(token);
@@ -60,7 +60,7 @@ async function call(
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     redirect: 'manual',
   });
-  return { status: res.status, body: await res.json().catch(() => null), setCookie: res.headers.getSetCookie?.() ?? [] };
+  return { status: res.status, body: await res.json().catch(() => null), setCookie: res.headers.getSetCookie?.() ?? [], headers:res.headers };
 }
 
 function mergeJar(existing: string | undefined, setCookie: string[]): string {
@@ -123,6 +123,7 @@ beforeEach(async () => {
   await db.query(`delete from admin_approval_policy`);
   await db.query(`delete from llm_providers`);
   await db.query(`delete from llm_usage`);
+  await db.query(`delete from rate_limits where bucket='durable_turn'`);
   await db.query(`update security_policy set local_only = false where id = true`);
 });
 
@@ -145,6 +146,41 @@ async function threadWith(owner: 'alice' | 'bob', text = 'PRIVATE-CONVERSATION-T
   await db.query(`insert into messages (thread_id, direction, body) values ($1, 'in', $2)`, [id, text]);
   return id;
 }
+
+describe('durable native turns and devices',()=>{
+  it('returns 202 before model work, reconciles, and idempotently returns the stable turn',async()=>{
+    const threadId=await threadWith('alice');
+    const body={client_message_id:'phone-1',message:'continue after disconnect'};
+    const accepted=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body});
+    expect(accepted.status).toBe(202);expect(accepted.body.turn).toMatchObject({status:'queued',lifecycle_state:'accepted_queued'});expect(accepted.body.turn.job_id).toBe(accepted.body.turn.id);expect(accepted.body.telemetry).toEqual({state:'accepted_queued',turn_id:accepted.body.turn.id,thread_id:threadId});expect(JSON.stringify(accepted.body)).not.toContain(body.message);expect(llmRequests).toHaveLength(0);
+    const duplicate=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body});
+    expect(duplicate.status).toBe(202);expect(duplicate.body.duplicate).toBe(true);expect(duplicate.body.turn.id).toBe(accepted.body.turn.id);
+    const state=await call(`/api/assistant/threads/${threadId}/turns`,{jar:cookies.alice});
+    expect(state.status).toBe(200);expect(state.body.turns[0]).toMatchObject({id:accepted.body.turn.id,job_id:accepted.body.turn.id,status:'queued',lifecycle_state:'accepted_queued'});
+    expect((await call(`/api/assistant/threads/${threadId}/turns`,{jar:cookies.bob})).status).toBe(404);
+    expect((await call(`/api/assistant/threads/${threadId}/turns?after=not-a-date`,{jar:cookies.alice})).body.code).toBe('invalid_reconciliation_cursor');
+    const mismatch=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,headers:{'Idempotency-Key':'header-key'},body:{client_message_id:'body-key',message:'x'}});
+    expect(mismatch.status).toBe(409);expect(mismatch.body.code).toBe('idempotency_conflict');
+    await db.query(`update assistant_turns set status='failed',error_code='test',error_retryable=true where id=$1`,[accepted.body.turn.id]);
+    const terminalDuplicate=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body});
+    expect(terminalDuplicate.body.turn).toMatchObject({id:accepted.body.turn.id,status:'failed',lifecycle_state:'terminal_failed'});expect(terminalDuplicate.body.telemetry.state).toBe('terminal_failed');
+  });
+
+  it('rate-limits native submission bursts with retry guidance',async()=>{
+    const threadId=await threadWith('alice');
+    for(let i=0;i<20;i++)expect((await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body:{client_message_id:`burst-${i}`,message:'queued'}})).status).toBe(202);
+    const limited=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body:{client_message_id:'burst-over',message:'queued'}});
+    expect(limited.status).toBe(429);expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+  });
+
+  it('seals Expo tokens and never returns ciphertext or plaintext',async()=>{
+    const registered=await call('/api/assistant/devices',{method:'PUT',jar:cookies.alice,body:{device_identity:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',platform:'ios',expo_token:'ExpoPushToken[api_test]',app_state:'background',privacy_locked:true,categories:{assistant:true},quiet_start:'22:00',quiet_end:'07:00',timezone:'America/Los_Angeles'}});
+    expect(registered.status).toBe(200);
+    const listed=await call('/api/assistant/devices',{jar:cookies.alice});expect(JSON.stringify(listed.body)).not.toContain('api_test');expect(JSON.stringify(listed.body)).not.toContain('expo_token_enc');
+    const [stored]=await db.query<{expo_token_enc:string}>(`select expo_token_enc from mobile_devices where id=$1`,[registered.body.device.id]);expect(stored.expo_token_enc).not.toContain('api_test');
+    expect((await call(`/api/assistant/devices/${registered.body.device.id}`,{method:'DELETE',jar:cookies.bob})).status).toBe(404);
+  });
+});
 
 describe('anonymous callers', () => {
   it('are refused every assistant surface', async () => {

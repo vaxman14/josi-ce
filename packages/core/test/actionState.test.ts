@@ -40,6 +40,17 @@ describe('transactional conversational action state',()=>{
     expect((await db.query<{kind:string}>(`select kind from events where subject_id=$1 order by created_at`,[task.id])).map(x=>x.kind)).toEqual(expect.arrayContaining(['approval.requested','approval.granted']));
   });
 
+  it('requires a durable queued yes to target the exact presented approval message',async()=>{
+    const email=await prepared('email',emailSlots);
+    const [presented]=await db.query<{presented_turn_id:string}>(`select presented_turn_id from assistant_action_states where task_id=$1`,[email.task.id]);
+    const untargeted=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes',requireReplyTarget:true,replyToMessageId:null});
+    expect(untargeted.reply).toMatch(/reply directly/i);expect((await getTask(db,email.task.id)).state).toBe('awaiting_approval');
+    const wrong=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes',requireReplyTarget:true,replyToMessageId:'00000000-0000-4000-8000-000000000099'});
+    expect(wrong.reply).toMatch(/reply directly/i);expect((await getTask(db,email.task.id)).state).toBe('awaiting_approval');
+    const targeted=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes',requireReplyTarget:true,replyToMessageId:presented.presented_turn_id});
+    expect(targeted.reply).toMatch(/queued the exact/i);expect((await getTask(db,email.task.id)).state).toBe('ready');
+  });
+
   it('keeps calendar and email namespaces isolated in both interleaving directions',async()=>{
     const email=await prepared('email',emailSlots);
     const calendar=await prepared('calendar',calendarSlots);

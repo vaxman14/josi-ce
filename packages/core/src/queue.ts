@@ -32,7 +32,13 @@ export async function claimJobs(db: Db, workerId: string, limit = 5): Promise<Jo
     `update job_queue set status = 'running', locked_at = now(), locked_by = $1, attempts = attempts + 1
      where id in (
        select id from job_queue
-       where status = 'queued' and run_at <= now()
+       where ((status = 'queued' and run_at <= now())
+          or (status = 'running' and kind = 'assistant.turn' and locked_at < now() - interval '10 minutes'))
+         and (kind <> 'assistant.turn' or not exists (
+           select 1 from assistant_turns current_turn join assistant_turns earlier on earlier.thread_id=current_turn.thread_id
+           where current_turn.id::text=job_queue.payload->>'turnId' and earlier.id<>current_turn.id
+             and earlier.status in ('queued','running') and (earlier.created_at,earlier.id)<(current_turn.created_at,current_turn.id)
+         ))
        order by run_at
        for update skip locked
        limit $2
@@ -42,8 +48,8 @@ export async function claimJobs(db: Db, workerId: string, limit = 5): Promise<Jo
   );
 }
 
-export async function completeJob(db: Db, jobId: number): Promise<void> {
-  await db.query(`update job_queue set status = 'done' where id = $1`, [jobId]);
+export async function completeJob(db: Db, jobId: number, workerId?: string): Promise<void> {
+  await db.query(`update job_queue set status = 'done' where id = $1 and ($2::text is null or locked_by=$2)`, [jobId,workerId??null]);
 }
 
 /** Exponential backoff to `max_attempts`, then dead.
@@ -51,15 +57,15 @@ export async function completeJob(db: Db, jobId: number): Promise<void> {
  * `last_error` is truncated and comes from our own code paths; a provider's
  * error text can quote the request that caused it, so callers pass a category,
  * not a raw provider body. */
-export async function failJob(db: Db, jobId: number, error: string): Promise<void> {
+export async function failJob(db: Db, jobId: number, error: string, workerId?: string): Promise<void> {
   await db.query(
     `update job_queue set
        status = case when attempts >= max_attempts then 'dead' else 'queued' end,
        run_at = now() + make_interval(secs => least(3600, 30 * power(2, attempts))),
        last_error = $2,
        locked_at = null, locked_by = null
-     where id = $1`,
-    [jobId, error.slice(0, 2000)],
+     where id = $1 and ($3::text is null or locked_by=$3)`,
+    [jobId, error.slice(0, 2000),workerId??null],
   );
 }
 

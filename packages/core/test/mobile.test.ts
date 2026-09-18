@@ -1,0 +1,155 @@
+import {describe,it,expect} from 'vitest';
+import {testDb} from './helpers.js';
+import {MasterKey} from '../src/masterKey.js';
+import {claimDurableTurn,completeDurableTurn,failDurableTurn,listDurableTurns,looksSealed,processPushBatch,processPushReceipts,quietNow,submitDurableTurn,upsertMobileDevice} from '../src/index.js';
+
+async function owner(db:Awaited<ReturnType<typeof testDb>>,name='alice'){
+  const [u]=await db.query<{id:string}>(`insert into users(email,username,role) values($1,$2,'member') returning id`,[`${name}@example.test`,name]);
+  const [s]=await db.query<{id:string}>(`insert into sessions(user_id,token_hash,expires_at) values($1,$2,now()+interval '1 day') returning id`,[u.id,`mobile-test-${name}-${crypto.randomUUID()}`]);
+  const [t]=await db.query<{id:string}>(`insert into threads(owner_user_id,title) values($1,'mobile') returning id`,[u.id]);return{u,t,s};
+}
+
+describe('durable native turns',()=>{
+  it('atomically accepts once, binds receipts, and terminally fences a stale worker lease',async()=>{
+    const db=await testDb(),{u,t}=await owner(db);
+    const [a]=await db.query<{id:string}>(`insert into chat_attachments(owner_user_id,thread_id,filename,content_type,byte_size,storage_path,storage_state) values($1,$2,'a.txt','text/plain',1,'x','ready') returning id`,[u.id,t.id]);
+    const first=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'native-1',message:'hello',attachmentIds:[a.id]});
+    const duplicate=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'native-1',message:'hello',attachmentIds:[a.id]});
+    expect(duplicate.duplicate).toBe(true);expect(duplicate.turn.id).toBe(first.turn.id);
+    expect((await db.query(`select id from messages`))).toHaveLength(1);
+    expect((await db.query(`select id from job_queue where kind='assistant.turn'`))).toHaveLength(1);
+    await expect(submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'native-1',message:'different'})).rejects.toMatchObject({code:'idempotency_conflict'});
+    const claimed=await claimDurableTurn(db,first.turn.id,1);expect(claimed?.status).toBe('running');
+    await db.query(`update assistant_turns set lease_expires_at=now()-interval '1 second' where id=$1`,[first.turn.id]);
+    const reclaimed=await claimDurableTurn(db,first.turn.id);expect(reclaimed).toBeNull();
+    expect(await completeDurableTurn(db,{turnId:first.turn.id,leaseToken:claimed!.lease_token,reply:'late',toolReceipts:[]})).toBeNull();
+    const reconciled=(await listDurableTurns(db,{ownerUserId:u.id,threadId:t.id}))[0];expect(reconciled).toMatchObject({status:'failed',error_code:'worker_interrupted',error_retryable:true});
+    expect((await db.query(`select id from messages where direction='out'`))).toHaveLength(0);
+    const retry=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'native-2',message:'hello',attachmentIds:[a.id],attemptOf:first.turn.id});
+    await expect(submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'native-3',message:'hello',attachmentIds:[a.id],attemptOf:first.turn.id})).rejects.toMatchObject({code:'invalid_receipt_binding'});
+    const retryClaim=await claimDurableTurn(db,retry.turn.id);expect(await completeDurableTurn(db,{turnId:retry.turn.id,leaseToken:retryClaim!.lease_token,reply:'done',toolReceipts:[{tool:'read'}]})).toBeTruthy();
+    expect((await db.query(`select id from messages where direction='out'`))).toHaveLength(1);
+  });
+
+  it('serializes concurrent same-key and same-thread submissions',async()=>{
+    const db=await testDb(),{u,t}=await owner(db);
+    const [a,b]=await Promise.all([
+      submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'same',message:'once'}),
+      submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'same',message:'once'}),
+    ]);expect(a.turn.id).toBe(b.turn.id);expect(await db.query(`select id from messages`)).toHaveLength(1);
+    const next=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'next',message:'second'});
+    const first=await claimDurableTurn(db,a.turn.id);expect(first).toBeTruthy();expect(await claimDurableTurn(db,next.turn.id)).toBeNull();
+    await failDurableTurn(db,{turnId:a.turn.id,leaseToken:first!.lease_token,code:'test',retryable:true});expect(await claimDurableTurn(db,next.turn.id)).toBeTruthy();
+  });
+
+  it('fails queued work closed when the accepting login is revoked',async()=>{
+    const db=await testDb(),{u,t,s}=await owner(db);
+    const accepted=await submitDurableTurn(db,{ownerUserId:u.id,sessionId:s.id,threadId:t.id,clientMessageId:'revoked-session',message:'do not run'});
+    await db.query(`update sessions set revoked_at=now() where id=$1`,[s.id]);
+    expect(await claimDurableTurn(db,accepted.turn.id)).toBeNull();
+    expect((await listDurableTurns(db,{ownerUserId:u.id,threadId:t.id}))[0]).toMatchObject({status:'failed',error_code:'session_expired',error_retryable:false});
+  });
+
+  it('enforces the database-backed active-turn capacity before persisting a message',async()=>{
+    const db=await testDb(),{u,t}=await owner(db);
+    await db.query(`insert into assistant_turn_capacity(owner_user_id,active_count) values($1,50)`,[u.id]);
+    await expect(submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'over-cap',message:'do not persist'})).rejects.toMatchObject({code:'turn_queue_full'});
+    expect(await db.query(`select id from messages where thread_id=$1`,[t.id])).toHaveLength(0);
+  });
+
+  it('finds an inbound turn after a long conversation by its receipt',async()=>{
+    const db=await testDb(),{u,t}=await owner(db);
+    for(let i=0;i<45;i++)await db.query(`insert into messages(thread_id,direction,body) values($1,$2,$3)`,[t.id,i%2?'out':'in',`old-${i}`]);
+    const accepted=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'long',message:'new'});
+    const [inbound]=await db.query(`select id from messages where id=$1 and thread_id=$2`,[accepted.turn.inbound_message_id,t.id]);expect(inbound).toBeTruthy();
+  });
+
+  it('refuses cross-owner attachment and failed-attempt bindings',async()=>{
+    const db=await testDb(),a=await owner(db,'a'),b=await owner(db,'b');
+    const [file]=await db.query<{id:string}>(`insert into chat_attachments(owner_user_id,thread_id,filename,content_type,byte_size,storage_path,storage_state) values($1,$2,'x','text/plain',1,'x','ready') returning id`,[b.u.id,b.t.id]);
+    const [foreignMessage]=await db.query<{id:string}>(`insert into messages(thread_id,direction,body) values($1,'in','foreign') returning id`,[b.t.id]);
+    const foreignTurn=await submitDurableTurn(db,{ownerUserId:b.u.id,threadId:b.t.id,clientMessageId:'foreign-turn',message:'foreign'});
+    await expect(submitDurableTurn(db,{ownerUserId:a.u.id,threadId:a.t.id,clientMessageId:'x',message:'x',attachmentIds:[file.id]})).rejects.toMatchObject({code:'invalid_receipt_binding'});
+    await expect(submitDurableTurn(db,{ownerUserId:a.u.id,threadId:a.t.id,clientMessageId:'reply',message:'x',replyToMessageId:foreignMessage.id})).rejects.toMatchObject({code:'invalid_receipt_binding'});
+    await expect(submitDurableTurn(db,{ownerUserId:a.u.id,threadId:a.t.id,clientMessageId:'attempt',message:'x',attemptOf:foreignTurn.turn.id})).rejects.toMatchObject({code:'invalid_receipt_binding'});
+    expect(await db.query(`select id from messages where thread_id=$1`,[a.t.id])).toHaveLength(0);
+  });
+});
+
+describe('Expo push outbox',()=>{
+  it('seals tokens, respects DST-aware quiet hours/privacy, tickets then receipts without real network',async()=>{
+    const db=await testDb(),{u,t}=await owner(db);const key=new MasterKey(Buffer.alloc(32,7));
+    const device=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'ios',expoToken:'ExpoPushToken[test_token]',appState:'background',privacyLocked:true,quietStart:'23:00',quietEnd:'07:00',timezone:'America/Los_Angeles'});
+    const [stored]=await db.query<{expo_token_enc:string}>(`select expo_token_enc from mobile_devices where id=$1`,[device.id]);expect(looksSealed(stored.expo_token_enc)).toBe(true);expect(stored.expo_token_enc).not.toContain('test_token');
+    expect(quietNow(new Date('2026-11-01T09:30:00Z'),'America/Los_Angeles','23:00','07:00')).toBe(true);
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body,next_attempt_at) values($1,$2,'e1','assistant','turn',$3,'Private title','Private body',$4)`,[u.id,device.id,t.id,new Date('2026-09-18T20:00:00Z')]);
+    let sent:any;const pushFetch=async(_url:any,init:any)=>{sent=JSON.parse(init.body);return new Response(JSON.stringify({data:[{status:'ok',id:'ticket-1'}]}),{status:200,headers:{'content-type':'application/json'}})};
+    const outcome=await processPushBatch(db,key,pushFetch as typeof fetch,new Date('2026-09-18T20:01:00Z'));expect(outcome.ticketed).toBe(1);expect(sent[0]).toMatchObject({title:'Josi',body:'Open Josi to view this update.',data:{route:'turn',id:t.id}});
+    await db.query(`update push_deliveries set next_attempt_at=now()-interval '1 minute'`);
+    const receiptFetch=async()=>new Response(JSON.stringify({data:{'ticket-1':{status:'ok'}}}),{status:200,headers:{'content-type':'application/json'}});
+    expect((await processPushReceipts(db,receiptFetch as typeof fetch)).delivered).toBe(1);
+  });
+
+  it('rotates tokens and revokes the old account binding on account switch',async()=>{
+    const db=await testDb(),a=await owner(db,'switch-a'),b=await owner(db,'switch-b');const key=new MasterKey(Buffer.alloc(32,6));
+    const old=await upsertMobileDevice(db,key,a.u.id,{deviceIdentity:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',platform:'ios',expoToken:'ExpoPushToken[switch-old]',appState:'background',privacyLocked:false,timezone:'UTC'});
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body) values($1,$2,'old-owner','assistant','turn',$3,'Josi','private old owner body')`,[a.u.id,old.id,a.t.id]);
+    const current=await upsertMobileDevice(db,key,b.u.id,{deviceIdentity:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',platform:'ios',expoToken:'ExpoPushToken[switch-new]',appState:'background',privacyLocked:false,timezone:'UTC'});
+    expect((await db.query<{revoked_at:string|null}>(`select revoked_at from mobile_devices where id=$1`,[old.id]))[0].revoked_at).toBeTruthy();
+    expect((await db.query<{status:string;last_error_code:string}>(`select status,last_error_code from push_deliveries where event_key='old-owner'`))[0]).toEqual({status:'suppressed',last_error_code:'account_switched'});
+    expect((await db.query<{revoked_at:string|null}>(`select revoked_at from mobile_devices where id=$1`,[current.id]))[0].revoked_at).toBeNull();
+    await upsertMobileDevice(db,key,b.u.id,{deviceIdentity:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',platform:'ios',expoToken:'ExpoPushToken[rotated]',appState:'background',privacyLocked:false,timezone:'UTC'});
+    expect((await db.query<{token_fingerprint:string}>(`select token_fingerprint from mobile_devices where id=$1`,[current.id]))[0].token_fingerprint).not.toBe('');
+  });
+
+  it('retries receipt lookup without resending and does not let an old token receipt revoke a rotated token',async()=>{
+    const db=await testDb(),{u,t}=await owner(db);const key=new MasterKey(Buffer.alloc(32,4));
+    const d=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'ios',expoToken:'ExpoPushToken[old]',appState:'background',privacyLocked:false,timezone:'UTC'});
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body) values($1,$2,'receipt','assistant','turn',$3,'Josi','ready')`,[u.id,d.id,t.id]);
+    const send=async()=>new Response(JSON.stringify({data:[{status:'ok',id:'old-ticket'}]}),{status:200,headers:{'content-type':'application/json'}});await processPushBatch(db,key,send as typeof fetch);
+    await db.query(`update push_deliveries set next_attempt_at=now()-interval '1 minute'`);
+    await processPushReceipts(db,(async()=>{throw new Error('network')}) as typeof fetch);
+    const [afterNetwork]=await db.query<{status:string}>(`select status from push_deliveries where event_key='receipt'`);expect(afterNetwork.status).toBe('ticketed');
+    const noResend=(async()=>{throw new Error('must not resend')}) as typeof fetch;expect((await processPushBatch(db,key,noResend)).sent).toBe(0);
+    await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'ios',expoToken:'ExpoPushToken[new]',appState:'background',privacyLocked:false,timezone:'UTC'});
+    await db.query(`update push_deliveries set next_attempt_at=now()-interval '1 minute'`);
+    const receipt=async()=>new Response(JSON.stringify({data:{'old-ticket':{status:'error',details:{error:'DeviceNotRegistered'}}}}),{status:200,headers:{'content-type':'application/json'}});await processPushReceipts(db,receipt as typeof fetch);
+    expect((await db.query<{revoked_at:string|null}>(`select revoked_at from mobile_devices where id=$1`,[d.id]))[0].revoked_at).toBeNull();
+  });
+
+  it('continues accepted work through persistence into the push outbox after the client is gone',async()=>{
+    const db=await testDb(),{u,t}=await owner(db);const key=new MasterKey(Buffer.alloc(32,9));
+    await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'ios',expoToken:'ExpoPushToken[e2e]',appState:'background',privacyLocked:false,timezone:'UTC'});
+    const accepted=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'disconnected',message:'finish in background'});
+    const turn=await claimDurableTurn(db,accepted.turn.id);await completeDurableTurn(db,{turnId:turn!.id,leaseToken:turn!.lease_token,reply:'persisted reply',toolReceipts:[{tool:'read',result:{ok:true}}],replyMeta:{retry:{kind:'none'}}});
+    const [persistedTurn]=await db.query<{tool_receipts:any[]}>(`select tool_receipts from assistant_turns where id=$1`,[turn!.id]);expect(persistedTurn.tool_receipts).toEqual([{tool:'read',result:{ok:true}}]);
+    expect(await completeDurableTurn(db,{turnId:turn!.id,leaseToken:turn!.lease_token,reply:'duplicate',toolReceipts:[]})).toBeNull();
+    expect(await db.query(`select id from messages where direction='out'`)).toHaveLength(1);
+    expect(await db.query(`select id from push_deliveries where event_key=$1`,[`turn:${turn!.id}`])).toHaveLength(1);
+    const sent:any[]=[];const fake=async(_u:any,init:any)=>{sent.push(...JSON.parse(init.body));return new Response(JSON.stringify({data:[{status:'ok',id:'e2e-ticket'}]}),{status:200,headers:{'content-type':'application/json'}})};
+    expect((await processPushBatch(db,key,fake as typeof fetch)).ticketed).toBe(1);expect(sent[0].data).toEqual({route:'turn',id:accepted.turn.id});
+    const [persistedReply]=await db.query<{body:string;meta:Record<string,unknown>}>(`select body,meta from messages where direction='out'`);expect(persistedReply.body).toBe('persisted reply');expect(persistedReply.meta).toMatchObject({turn_id:turn!.id,retry:{kind:'none'}});
+  });
+
+  it('suppresses ordinary quiet-hour delivery while an explicit reminder bypasses it',async()=>{
+    const db=await testDb(),{u,t}=await owner(db);const key=new MasterKey(Buffer.alloc(32,3));
+    const d=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'ios',expoToken:'ExpoPushToken[quiet]',appState:'background',privacyLocked:false,quietStart:'22:00',quietEnd:'07:00',timezone:'UTC'});
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body,explicit_reminder,next_attempt_at) values($1,$2,'ordinary','assistant','turn',$3,'Josi','ordinary',false,$4),($1,$2,'explicit','reminder','reminder',$3,'Josi reminder','explicit',true,$4)`,[u.id,d.id,t.id,new Date('2026-09-18T22:59:00Z')]);
+    let messages:any[]=[];const send=async(_url:any,init:any)=>{messages=JSON.parse(init.body);return new Response(JSON.stringify({data:[{status:'ok',id:'quiet-ticket'}]}),{status:200,headers:{'content-type':'application/json'}})};
+    const result=await processPushBatch(db,key,send as typeof fetch,new Date('2026-09-18T23:00:00Z'));expect(result).toMatchObject({suppressed:1,ticketed:1});expect(messages).toHaveLength(1);expect(messages[0]).toMatchObject({title:'Josi',body:'You have a reminder.',data:{route:'reminder',id:t.id}});
+  });
+
+  it('reclaims a sender crash and revokes DeviceNotRegistered while suppressing foreground banners',async()=>{
+    const db=await testDb(),{u,t}=await owner(db);const key=new MasterKey(Buffer.alloc(32,8));
+    const d=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'android',expoToken:'ExponentPushToken[dead]',appState:'foreground',privacyLocked:false,timezone:'UTC'});
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body) values($1,$2,'fg','assistant','turn',$3,'Josi','ready')`,[u.id,d.id,t.id]);
+    const noSend=(async()=>{throw new Error('must not send')}) as typeof fetch;
+    expect((await processPushBatch(db,key,noSend)).suppressed).toBe(1);
+    await db.query(`update mobile_devices set app_state='background' where id=$1`,[d.id]);
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body,status,updated_at) values($1,$2,'stale','assistant','turn',$3,'Josi','ready','sending',now()-interval '11 minutes')`,[u.id,d.id,t.id]);
+    const stale=async()=>new Response(JSON.stringify({data:[{status:'ok',id:'stale-ticket'}]}),{status:200,headers:{'content-type':'application/json'}});expect((await processPushBatch(db,key,stale as typeof fetch)).ticketed).toBe(1);
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body) values($1,$2,'dead','assistant','turn',$3,'Josi','ready')`,[u.id,d.id,t.id]);
+    const f=async()=>new Response(JSON.stringify({data:[{status:'error',details:{error:'DeviceNotRegistered'}}]}),{status:200,headers:{'content-type':'application/json'}});
+    await processPushBatch(db,key,f as typeof fetch);expect((await db.query<{revoked_at:string|null}>(`select revoked_at from mobile_devices where id=$1`,[d.id]))[0].revoked_at).toBeTruthy();
+  });
+});

@@ -359,7 +359,7 @@ export async function setControls(
 
 // ------------------------------------------------------------------- minutes
 
-export type ActivityChannel = 'web' | 'telegram' | 'external';
+export type ActivityChannel = 'web' | 'native' | 'telegram' | 'external';
 
 /** Record that this child spoke to Josi in this minute. Idempotent by primary
  * key, so ten messages in one minute are one minute. */

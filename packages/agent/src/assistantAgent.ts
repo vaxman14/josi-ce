@@ -109,6 +109,10 @@ export interface TurnArgs {
   threadId: string;
   /** Persisted inbound message id for action-state turn scoping. */
   inboundMessageId?: string;
+  /** Durable queued channels require yes/no to target the presented approval
+   * message; synchronous legacy channels rely on immediate adjacency. */
+  replyToMessageId?: string|null;
+  requireApprovalReplyTarget?: boolean;
   history: ChatMessage[];
   inbound: string;
   /** Images attached to THIS turn, already read off disk as bytes by the
@@ -294,7 +298,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // durable action state before a model is consulted. A bare "yes" can only
   // bind to one action prepared in the immediately preceding presented turn;
   // provider names and old calendar subjects in model history are irrelevant.
-  const deterministic=await resolveConversationalAction(db,{ownerUserId:userId,threadId:args.threadId,inbound:args.inbound});
+  const deterministic=await resolveConversationalAction(db,{ownerUserId:userId,threadId:args.threadId,inbound:args.inbound,replyToMessageId:args.replyToMessageId,requireReplyTarget:args.requireApprovalReplyTarget});
   if(deterministic.handled){
     return {reply:deterministic.reply??'',actions:deterministic.action?[{tool:'assistant_action_state',result:{ok:true,domain:deterministic.action.domain,status:deterministic.action.status,task_id:deterministic.action.task_id}}]:[]};
   }

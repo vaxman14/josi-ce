@@ -50,7 +50,7 @@ async function tick(): Promise<void> {
   if (Date.now() - lastCleanup > 3600000) {
     await cleanupAttachments(db); lastCleanup = Date.now();
   }
-  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey });
+  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey, pushFetch: fetch });
   if (outcome.claimed) {
     console.log(`josi-ce worker: ${outcome.done} done, ${outcome.failed} failed`);
   }

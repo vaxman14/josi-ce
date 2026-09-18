@@ -125,13 +125,18 @@ export async function decideActionApproval(db:Db,args:{approvalId:string;decided
   return {approval,action:claimed,task};
 }
 
-export async function resolveConversationalAction(db:Db,args:{ownerUserId:string;threadId:string;inbound:string}):Promise<ConversationalDecision>{
+export async function resolveConversationalAction(db:Db,args:{ownerUserId:string;threadId:string;inbound:string;replyToMessageId?:string|null;requireReplyTarget?:boolean}):Promise<ConversationalDecision>{
   const text=args.inbound.trim();
   if(YES.test(text)||NO.test(text)){
     const candidates=await latestPresented(db,{ownerUserId:args.ownerUserId,threadId:args.threadId,status:'prepared'});
     if(!candidates.length)return {handled:true,reply:'I do not have one immediately preceding prepared action to apply that answer to.'};
     const [lastOutbound]=await db.query<{id:string}>(`select id from messages where thread_id=$1 and direction='out' order by created_at desc limit 1`,[args.threadId]);
     if(!lastOutbound||candidates[0].presented_turn_id!==lastOutbound.id)return {handled:true,reply:'I do not have one immediately preceding prepared action to apply that answer to.'};
+    // Durable clients can queue multiple turns before any reply exists. For
+    // them, arrival order is not consent: yes/no must explicitly reply to the
+    // exact assistant message that presented the action. Legacy synchronous
+    // channels retain their immediately-preceding-turn rule above.
+    if(args.requireReplyTarget&&args.replyToMessageId!==lastOutbound.id)return {handled:true,reply:'Reply directly to the approval request so I can apply that answer to the action you reviewed.'};
     const latestTurn=candidates[0].presented_turn_id;
     const sameTurn=candidates.filter(c=>c.presented_turn_id===latestTurn);
     if(sameTurn.length!==1)return {handled:true,reply:'That answer is ambiguous because more than one action was prepared together. Name the email or calendar action you mean.'};
