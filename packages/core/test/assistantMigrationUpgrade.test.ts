@@ -21,6 +21,7 @@ describe('assistant migration schema upgrade', () => {
     const user = randomUUID();
     await pg.query(`insert into users(id,email,username,role) values($1,$2,$3,'member')`, [user, 'upgrade@example.test', 'upgrade-user']);
     await pg.query(`insert into memories(owner_user_id,content) values($1,'Existing synthetic memory')`, [user]);
+    await pg.query(`insert into memories(owner_user_id,content) values($1,'  existing  SYNTHETIC memory  ')`, [user]);
     await pg.query(`insert into persona_profiles(owner_user_id,kind,content) values($1,'soul','tone: brief')`, [user]);
     await pg.exec(`create table if not exists _migrations(name text primary key, applied_at timestamptz not null default now())`);
 
@@ -35,12 +36,19 @@ describe('assistant migration schema upgrade', () => {
     };
     expect(await apply()).toBe(true);
     expect(await apply()).toBe(false);
-    const existing = (await pg.query<{ content: string; content_fingerprint: string }>(
-      `select content,content_fingerprint from memories where owner_user_id=$1`, [user])).rows[0];
-    expect(existing.content).toBe('Existing synthetic memory');
-    expect(existing.content_fingerprint).toMatch(/^[a-f0-9]{32}$/);
+    const existing = (await pg.query<{ id: string; content: string; content_fingerprint: string }>(
+      `select id,content,content_fingerprint from memories where owner_user_id=$1 order by created_at,id`, [user])).rows;
+    expect(existing).toHaveLength(2);
+    expect(existing[0].content_fingerprint).toMatch(/^[a-f0-9]{32}$/);
+    expect(existing[1].content_fingerprint).toBe(existing[0].content_fingerprint);
     await expect(pg.query(`insert into memories(owner_user_id,content,content_fingerprint) values($1,' existing  SYNTHETIC memory ',$2)`,
-      [user, existing.content_fingerprint])).rejects.toThrow();
+      [user, existing[0].content_fingerprint])).rejects.toThrow();
+    await pg.query(`delete from memories where id=$1`, [existing[0].id]);
+    await expect(pg.query(`insert into memories(owner_user_id,content,content_fingerprint) values($1,'Existing synthetic memory',$2)`,
+      [user, existing[0].content_fingerprint])).rejects.toThrow();
+    await pg.query(`update memories set content='Different fact',content_fingerprint=md5('different fact') where id=$1`, [existing[1].id]);
+    await expect(pg.query(`insert into memories(owner_user_id,content,content_fingerprint) values($1,'Existing synthetic memory',$2)`,
+      [user, existing[0].content_fingerprint])).resolves.toBeDefined();
     expect((await pg.query(`select content from persona_profiles where owner_user_id=$1`, [user])).rows[0]).toEqual({ content: 'tone: brief' });
     expect((await pg.query(`select to_regclass('migration_previews') as previews, to_regclass('migration_archives') as archives`)).rows[0]).toEqual({ previews: 'migration_previews', archives: 'migration_archives' });
     await pg.close();

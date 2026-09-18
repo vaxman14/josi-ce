@@ -34,26 +34,56 @@ create index migration_previews_expiry on migration_previews (expires_at);
 alter table memories add column migration_batch_id uuid;
 alter table memories add column source_provenance jsonb;
 alter table memories add column content_fingerprint text;
--- Seed one key for every distinct normalized pre-upgrade fact. Existing exact
--- duplicates remain readable with null keys, but any future create/edit for
--- that normalized content conflicts with the seeded representative.
-with ranked as (
-  select id,
-    md5(lower(regexp_replace(btrim(content), '\s+', ' ', 'g'))) as fingerprint,
-    row_number() over (
-      partition by owner_user_id, lower(regexp_replace(btrim(content), '\s+', ' ', 'g'))
-      order by created_at, id
-    ) as position
-  from memories
-)
-update memories m set content_fingerprint = ranked.fingerprint
-from ranked where ranked.id = m.id and ranked.position = 1;
+-- Backfill every pre-upgrade row, including duplicates. A separate key table
+-- owns uniqueness so preserving duplicate legacy rows does not weaken future
+-- create/edit guards when one of those rows is later changed or deleted.
+update memories set content_fingerprint =
+  md5(lower(regexp_replace(btrim(content), '\s+', ' ', 'g')));
+
+create table memory_content_keys (
+  owner_user_id uuid not null references users(id) on delete cascade,
+  fingerprint text not null,
+  constraint memories_owner_content_fingerprint primary key (owner_user_id, fingerprint)
+);
+insert into memory_content_keys(owner_user_id,fingerprint)
+  select distinct owner_user_id,content_fingerprint from memories where content_fingerprint is not null;
+
+create or replace function claim_memory_content_key() returns trigger as $$
+begin
+  if new.content_fingerprint is not null
+     and (tg_op = 'INSERT' or new.content_fingerprint is distinct from old.content_fingerprint) then
+    insert into memory_content_keys(owner_user_id,fingerprint)
+      values(new.owner_user_id,new.content_fingerprint);
+  end if;
+  return new;
+end;
+$$ language plpgsql;
+
+create or replace function release_memory_content_key() returns trigger as $$
+begin
+  if old.content_fingerprint is not null
+     and (tg_op = 'DELETE' or new.content_fingerprint is distinct from old.content_fingerprint)
+     and not exists (
+       select 1 from memories
+       where owner_user_id=old.owner_user_id and content_fingerprint=old.content_fingerprint
+     ) then
+    delete from memory_content_keys
+      where owner_user_id=old.owner_user_id and fingerprint=old.content_fingerprint;
+  end if;
+  return null;
+end;
+$$ language plpgsql;
+
+create trigger memories_claim_content_key before insert or update of content_fingerprint on memories
+  for each row execute function claim_memory_content_key();
+create trigger memories_release_content_key after update of content_fingerprint or delete on memories
+  for each row execute function release_memory_content_key();
 alter table memories add constraint memory_migration_owner
   foreign key (migration_batch_id, owner_user_id) references migration_batches(id, owner_user_id);
 alter table memories add constraint memory_migration_provenance
   check ((migration_batch_id is null) = (source_provenance is null));
 create index memories_migration on memories(migration_batch_id, owner_user_id) where migration_batch_id is not null;
-create unique index memories_owner_content_fingerprint
+create index memories_owner_content_fingerprint_lookup
   on memories(owner_user_id, content_fingerprint) where content_fingerprint is not null;
 
 alter table persona_profiles add column migration_batch_id uuid;
@@ -83,3 +113,4 @@ create index migration_archives_owner on migration_archives(owner_user_id, creat
 alter table migration_batches enable row level security;
 alter table migration_previews enable row level security;
 alter table migration_archives enable row level security;
+alter table memory_content_keys enable row level security;
