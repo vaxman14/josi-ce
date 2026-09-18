@@ -27,3 +27,7 @@ export {
 export {
   DEFAULT_PRESET, SOUL_PRESETS, presetContent, type Preset,
 } from './presets.js';
+export * from './migration/types.js';
+export * from './migration/scan.js';
+export * from './migration/store.js';
+export { unpackUploads } from './migration/zip.js';

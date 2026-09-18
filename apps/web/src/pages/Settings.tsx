@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Badge, Button, CollapsibleCard, ErrorNote, Input } from '@/components/ui';
+import { AssistantMigration } from '@/pages/AssistantMigration';
 
 const ACTION_CLASSES = [
   { key: 'email_send', label: 'Sending email on your behalf' },
@@ -91,6 +92,9 @@ export function Settings() {
         </div>
       </CollapsibleCard>
 
+      <CollapsibleCard title="Data & Backup" summary="Migrate your assistant data and manage import batches">
+        <AssistantMigration />
+      </CollapsibleCard>
       <StepUpCard />
       <MfaCard />
     </div>

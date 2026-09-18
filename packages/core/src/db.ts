@@ -3,6 +3,8 @@
 // keep happy, which is why this file is small.
 export interface Db {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /** Pins all work to one connection and rolls it back on any failure. */
+  transaction?<T>(work: (tx: Db) => Promise<T>): Promise<T>;
 }
 
 /** A value bound to a jsonb column.
@@ -28,8 +30,12 @@ export function json(value: unknown): JsonParam {
 /** Adapter for @electric-sql/pglite (tests). */
 export function pgliteDb(pglite: {
   query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }>;
+  transaction?: <T>(work: (tx: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> }) => Promise<T>) => Promise<T>;
 }): Db {
   return {
+    ...(pglite.transaction ? {
+      transaction: <T>(work: (tx: Db) => Promise<T>) => pglite.transaction!(tx => work(pgliteDb(tx))),
+    } : {}),
     async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
       const res = await pglite.query(
         sql,
@@ -47,8 +53,12 @@ export function postgresDb(sql: unknown): Db {
   const client = sql as {
     unsafe: (q: string, params?: unknown[]) => Promise<unknown[]>;
     json?: (value: unknown) => unknown;
+    begin?: <T>(work: (tx: unknown) => Promise<T>) => Promise<T>;
   };
   return {
+    ...(client.begin ? {
+      transaction: <T>(work: (tx: Db) => Promise<T>) => client.begin!(tx => work(postgresDb(tx))),
+    } : {}),
     async query<T>(q: string, params: unknown[] = []): Promise<T[]> {
       const bound = params.map((p) => {
         if (!(p instanceof JsonParam)) return p;

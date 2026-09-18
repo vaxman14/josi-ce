@@ -183,6 +183,8 @@ export interface ExportBundle {
   version: 1;
   exported_at: string;
   files: Partial<Record<Layer | 'memory', string>>;
+  /** Optional lossless companion to the unchanged version-1 Markdown view. */
+  memory_records?: Array<{ content: string; provenance: string; pinned: boolean }>;
 }
 
 /** M-new: "Import/export all four portable Markdown files... Round trips
@@ -211,29 +213,27 @@ export async function exportProfiles(
       .join('\n') + '\n';
   }
 
-  return { version: 1, exported_at: args.now, files };
+  return { version: 1, exported_at: args.now, files, ...(memories.length ? { memory_records: memories } : {}) };
 }
 
 export async function importProfiles(
   db: Db,
   args: { userId: string; bundle: ExportBundle; actorUserId: string },
-): Promise<Record<string, ParsedProfile>> {
-  if (args.bundle?.version !== 1) throw new ProfileError('that is not a Josi profile export');
-  const results: Record<string, ParsedProfile> = {};
-
-  for (const kind of ['soul', 'user', 'agents_user'] as const) {
-    const content = args.bundle.files?.[kind];
-    if (typeof content !== 'string') continue;
-    const { parsed } = await saveProfile(db, {
-      kind, userId: args.userId, content, actorUserId: args.actorUserId,
-    });
-    results[kind] = parsed;
+): Promise<{ profiles: Record<string, ParsedProfile>; receipt: import('./migration/types.js').MigrationReceipt }> {
+  if (args.bundle?.version !== 1 || !args.bundle.files) throw new ProfileError('that is not a Josi profile export');
+  if (args.userId !== args.actorUserId) throw new ProfileError('a personal import must belong to its actor');
+  const { scanMigration } = await import('./migration/scan.js');
+  const { migrationScope, previewMigration, commitMigration } = await import('./migration/store.js');
+  const { selectable } = await import('./migration/types.js');
+  const scanned = scanMigration([{ path: 'josi-profile-export.json', bytes: Buffer.from(JSON.stringify(args.bundle)) }], 'josi');
+  const scope = await migrationScope(db, args.userId);
+  const reviewed = await previewMigration(db, scope, scanned);
+  const receipt = await commitMigration(db, scope, reviewed);
+  const profiles: Record<string, ParsedProfile> = {};
+  for (const item of reviewed.items) {
+    if (selectable(item) && item.profileKind) profiles[item.profileKind] = parseProfile(item.profileKind, item.content!);
   }
-
-  // The admin layer is deliberately NOT importable from a personal bundle. An
-  // import is a file somebody was sent; letting it rewrite installation policy
-  // would make "import your profile" a privilege escalation.
-  return results;
+  return { profiles, receipt };
 }
 
 export { AGENTS_FIELDS, CAUTION_ORDER, FIELDS, renderProfile };

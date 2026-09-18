@@ -145,7 +145,7 @@ export function parseProfile(layer: Layer, markdown: string): ParsedProfile {
 
     const key = kv[1].trim().toLowerCase().replace(/[ -]/g, '_');
     const rest = kv[2].trim();
-    const fieldSpec = spec[key];
+    const fieldSpec = Object.hasOwn(spec, key) ? spec[key] : undefined;
 
     if (!fieldSpec) {
       ignored.push({
