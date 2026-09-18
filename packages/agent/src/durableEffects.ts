@@ -12,8 +12,15 @@ export interface DurableEffectContext {
 export const MUTATING_TOOLS=new Set([
   'create_task','update_task_slots','approve_task','cancel_task','schedule_reminder','cancel_reminder',
   'draft_email','draft_calendar_event','draft_contact_update','call_custom_api','run_native_workflow',
-  'workspace_propose_change','workspace_propose_code','workspace_code_status',
+  'workspace_propose_change','workspace_propose_code',
 ]);
+
+/** Some tools are reads for their usual shape but consequential for a specific
+ * option. Keep that decision beside the fixed catalogue so every execution
+ * surface applies the same durable fence. */
+export function isMutatingTool(name:string,input:Record<string,unknown>):boolean {
+  return MUTATING_TOOLS.has(name)||(name==='workspace_code_status'&&input.cancel===true);
+}
 
 function canonical(value:unknown):string {
   return JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)

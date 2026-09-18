@@ -293,7 +293,10 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     const threadId=param(req,'id');
     const wireBodyKey=typeof req.body?.client_message_id==='string'?req.body.client_message_id:'';
     const wireHeaderKey=typeof req.get('Idempotency-Key')==='string'?req.get('Idempotency-Key')!:'';
-    if(wireBodyKey.length>128||wireHeaderKey.length>128)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');
+    // Bound the exact supplied values before trimming or using them in any
+    // lookup/hash. Byte length, rather than UTF-16 code units, also prevents a
+    // short-looking Unicode key from exceeding the wire/storage contract.
+    if(Buffer.byteLength(wireBodyKey,'utf8')>128||Buffer.byteLength(wireHeaderKey,'utf8')>128)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 bytes is required.');
     const bodyKey=wireBodyKey.trim();
     const headerKey=wireHeaderKey.trim();
     if(bodyKey&&headerKey&&bodyKey!==headerKey)throw new MobileError('idempotency_conflict','The Idempotency-Key and client_message_id must match.');
