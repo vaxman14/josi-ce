@@ -231,6 +231,33 @@ describe('running tools', () => {
     expect(toolMsg.tool_call_id).toBe('t1');
   });
 
+  it('presents tool-backed prose without leaking identifiers while retaining backend actions', async () => {
+    await configureModel();
+    const task = await createTask(db, { ownerUserId: alice, templateKey: 'follow_up', slots: { what: 'call back' } });
+    replies = [
+      { content: null, tool_calls: [toolCall('list_open_tasks', {})] },
+      { content: `You have one open follow-up. Task ID: ${task.id}` },
+    ];
+    const result = await turn();
+    expect(result.reply).toBe('You have one open follow-up.');
+    expect(JSON.stringify(result.actions)).toContain(task.id);
+  });
+
+  it('applies the boundary after retries and all accumulated receipts', async () => {
+    await configureModel();
+    const first = await createTask(db, { ownerUserId: alice, templateKey: 'follow_up', slots: { what: 'first' } });
+    const second = await createTask(db, { ownerUserId: alice, templateKey: 'follow_up', slots: { what: 'second' } });
+    replies = [
+      { content: null, tool_calls: [toolCall('list_open_tasks', {}, 'first-call')] },
+      { content: null, tool_calls: [toolCall('list_open_tasks', {}, 'retry-call')] },
+      { content: `Two follow-ups are open: ${first.id} and ${second.id}.` },
+    ];
+    const result = await turn();
+    expect(result.actions).toHaveLength(2);
+    expect(result.reply).not.toContain(first.id);
+    expect(result.reply).not.toContain(second.id);
+  });
+
   it('stops at the hop limit instead of looping forever', async () => {
     await configureModel();
     // A model that only ever calls tools.

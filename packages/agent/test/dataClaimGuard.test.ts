@@ -32,8 +32,8 @@ const NINE_DOCS = Array.from({ length: 9 }, (_, i) => ({
 describe('DATA_CLAIM_TOOLS', () => {
   it('covers the document tools and the item-17 read tools', () => {
     expect([...DATA_CLAIM_TOOLS].sort()).toEqual([
-      'get_event', 'get_provider_status', 'list_documents', 'query_calendar', 'read_email',
-      'search_contacts', 'search_documents', 'search_email',
+      'check_email_availability', 'get_event', 'get_provider_status', 'list_documents',
+      'query_calendar', 'read_email', 'search_contacts', 'search_documents', 'search_email',
     ].sort());
   });
 });
@@ -217,6 +217,16 @@ describe('checkDataClaims — instability across turns with unchanged data (item
 // above — checkNarratedSearchWithoutTool fires on the NARRATION itself:
 // "I searched / I found N files / passages returned" language, when the
 // turn's receipts contain zero DATA_CLAIM_TOOLS calls at all.
+describe('live email availability grounding', () => {
+  it('rejects metadata-only availability and accepts only a successful live mailbox check', () => {
+    const claim = 'Email is available and ready.';
+    expect(checkNarratedSearchWithoutTool(claim, [{tool:'get_provider_status',result:{ok:true,receipt:'private'}}]).fabricated).toBe(true);
+    expect(checkNarratedSearchWithoutTool('I can see your emails.', [{tool:'get_provider_status',result:{ok:true}}]).fabricated).toBe(true);
+    expect(checkNarratedSearchWithoutTool(claim, [{tool:'check_email_availability',result:{ok:false,error:'provider_unavailable'}}]).fabricated).toBe(true);
+    expect(checkNarratedSearchWithoutTool(claim, [{tool:'check_email_availability',result:{ok:true,available:true,providers:['Gmail']}}]).fabricated).toBe(false);
+  });
+});
+
 describe('checkNarratedSearchWithoutTool — the zero-tool-call narration gap (2026-09-04 incident)', () => {
   it('flags a reply that narrates search results when no data tool ran this turn', () => {
     // The literal incident shape, condensed: "Test" is the user's message;

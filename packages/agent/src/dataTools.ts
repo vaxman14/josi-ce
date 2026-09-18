@@ -79,6 +79,14 @@ const PROVIDERS: DataProvider[] = ['google', 'microsoft'];
 export const DATA_TOOLS: ToolSpec[] = [
   {
     def: {
+      name: 'check_email_availability',
+      description: 'Make a live read-only request to the enabled mailbox provider. Use this before claiming email is currently available; stored connection metadata is not live proof.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+    actionClass: null,
+  },
+  {
+    def: {
       name: 'search_email',
       description:
         "Use only when the user explicitly asks about their email/mailbox or clearly continues such a request. Never use for ordinary conversation or a bare word such as 'test'. Search the user's connected mailbox (Gmail or Outlook). Read-only. Returns sender, "
@@ -158,7 +166,7 @@ export const DATA_TOOLS: ToolSpec[] = [
 ];
 
 const TOOLS_BY_FAMILY: Record<Family, string[]> = {
-  mail: ['search_email', 'read_email'],
+  mail: ['check_email_availability', 'search_email', 'read_email'],
   calendar: ['query_calendar', 'get_event'],
   contacts: ['search_contacts'],
 };
@@ -318,11 +326,11 @@ function untagId(tagged: string): { provider: DataProvider; connectionId: string
   return legacy ? { provider: legacy[1] as DataProvider, connectionId: null, id: legacy[2] } : null;
 }
 
-interface CalendarSource { id:string; connection_id:string; provider_calendar_id:string; name:string; provider:DataProvider; account:string|null }
+export interface CalendarSource { id:string; connection_id:string; provider_calendar_id:string; name:string; is_primary:boolean; writable:boolean; provider:DataProvider; account:string|null }
 export async function selectedCalendars(db:Db,userId:string,sourceId?:string):Promise<CalendarSource[]> {
-  return db.query<CalendarSource>(`select s.id,s.connection_id,s.provider_calendar_id,s.name,c.provider,c.account_email account
+  return db.query<CalendarSource>(`select s.id,s.connection_id,s.provider_calendar_id,s.name,s.is_primary,s.writable,c.provider,c.account_email account
     from calendar_sources s join connections c on c.id=s.connection_id
-    where s.owner_user_id=$1 and c.owner_user_id=$1 and ($2::text is null and s.selected=true or s.id::text=$2) order by s.id`,[userId,sourceId??null]);
+    where s.owner_user_id=$1 and c.owner_user_id=$1 and s.selected=true and ($2::text is null or s.id::text=$2) order by s.id`,[userId,sourceId??null]);
 }
 function eventView(source:CalendarSource,event:RemoteEvent) {
   return {
@@ -354,6 +362,26 @@ export async function executeDataTool(
   }
 
   switch (name) {
+    case 'check_email_availability': {
+      if (!args.access) return { ok: false, error: 'unavailable', message: 'Email cannot be reached live right now.' };
+      try {
+        const { sessions, refusal } = await openSessions(db, args.access, args.userId, 'mail');
+        if (!sessions.length) return NO_ACCESS(refusal);
+        const live: string[] = [];
+        for (const session of sessions) {
+          const url = session.provider === 'google'
+            ? 'https://gmail.googleapis.com/gmail/v1/users/me/profile'
+            : 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=id';
+          const response = await (args.access.fetchImpl ?? fetch)(url, { headers: { Authorization: `Bearer ${session.accessToken}` } });
+          if (response.ok) live.push(session.provider === 'google' ? 'Gmail' : 'Outlook');
+        }
+        return live.length
+          ? { ok: true, available: true, providers: live, message: `${live.join(' and ')} answered a live mailbox check.` }
+          : { ok: false, error: 'provider_unavailable', message: 'The configured mailbox did not answer a live check. No email availability was claimed.' };
+      } catch {
+        return { ok: false, error: 'provider_unavailable', message: 'The configured mailbox could not be reached live. No email availability was claimed.' };
+      }
+    }
     case 'search_email': {
       const query = String(input.query ?? '').trim();
       if (!query) return { ok: false, error: 'bad_query', message: 'Say what to search for.' };

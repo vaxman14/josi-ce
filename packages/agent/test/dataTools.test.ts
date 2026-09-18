@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
-import { MasterKey } from '@josi-ce/core';
+import { addMessage, markActionsPresented, MasterKey } from '@josi-ce/core';
 import {
   createInternalEvent, ensureInternalCalendar, saveClient, setCapability, upsertConnection, type ConnectionRow,
 } from '@josi-ce/connectors';
@@ -27,6 +27,7 @@ const key = new MasterKey(Buffer.alloc(32, 7));
 const GOOGLE_READ_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/contacts.readonly',
 ].join(' ');
 
@@ -55,7 +56,7 @@ async function connectGoogle(user: string): Promise<ConnectionRow> {
     },
     accountEmail: 'a@gmail.test',
     providerAccountId: 'acct-1',
-    requestedCapabilities: ['google.mail.read', 'google.calendar.read', 'google.contacts.read'],
+    requestedCapabilities: ['google.mail.read', 'google.calendar.read', 'google.calendar.write', 'google.contacts.read'],
   });
   await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name) values($1,$2,'selected@example.test','Selected calendar')`,[user,connection.id]);
   return connection;
@@ -130,7 +131,7 @@ describe('offering follows the switches', () => {
     const connection = await connectGoogle(alice);
     await enable(connection, 'google.mail.read');
     const out = await dataToolAvailability(db, alice);
-    expect(out.specs.map((s) => s.def.name).sort()).toEqual(['read_email', 'search_email']);
+    expect(out.specs.map((s) => s.def.name).sort()).toEqual(['check_email_availability', 'read_email', 'search_email']);
     expect(out.granted).toEqual(['mail']);
     expect(out.denied.map((d) => d.what).sort()).toEqual(['calendar', 'contacts']);
   });
@@ -344,6 +345,61 @@ describe('the MCP server offers the same catalogue', () => {
     const parsed = JSON.parse(outcome.text) as { ok: boolean; error: string };
     expect(parsed.ok).toBe(false);
     expect(['not_enabled', 'unavailable']).toContain(parsed.error);
+  });
+});
+
+describe('live mailbox availability',()=>{
+  it('claims availability only after a successful provider request',async()=>{
+    const c=await connectGoogle(alice);await enable(c,'google.mail.read');
+    const good=providerFetch();
+    expect(await executeAssistantTool(db,{userId:alice,threadId:null,connectors:access(good.fetchImpl)},'check_email_availability',{})).toMatchObject({ok:true,available:true,providers:['Gmail']});
+    expect(good.urls.some(url=>url.includes('/gmail/v1/users/me/profile'))).toBe(true);
+    const failed=(async()=>new Response('',{status:503})) as unknown as typeof fetch;
+    expect(await executeAssistantTool(db,{userId:alice,threadId:null,connectors:access(failed)},'check_email_availability',{})).toMatchObject({ok:false,error:'provider_unavailable'});
+  });
+});
+
+describe('multi-turn consequential action drafts',()=>{
+  async function present(threadId:string,result:{task_id?:unknown},body:string){
+    const message=await addMessage(db,{threadId,direction:'out',body});
+    if(typeof result.task_id==='string')await markActionsPresented(db,{ownerUserId:alice,threadId,taskIds:[result.task_id],messageId:message.id});
+  }
+  it('retains the exact email fields across follow-up completion and retries idempotently',async()=>{
+    const thread=(await db.query<{id:string}>(`insert into threads(owner_user_id,title) values($1,'Email exact repro') returning id`,[alice]))[0].id;
+    const ctx={userId:alice,threadId:thread,turnId:null,connectors:null};
+    const first=await executeAssistantTool(db,ctx,'draft_email',{recipient:'romanvaxman14@gmail.com',body:'testing the connection'}) as any;
+    expect(first).toMatchObject({ok:true,state:'collecting',missing_slots:['subject']});
+    await present(thread,first,'What subject should I use?');
+    const second=await executeAssistantTool(db,ctx,'draft_email',{subject:'testing the coonection'}) as any;
+    expect(second).toMatchObject({ok:true,state:'prepared'});
+    expect(second.summary).toContain('To: romanvaxman14@gmail.com');
+    expect(second.summary).toContain('Subject: testing the coonection');
+    expect(second.summary).toContain('Body: testing the connection');
+    const retry=await executeAssistantTool(db,ctx,'draft_email',{subject:'testing the coonection'}) as any;
+    expect(retry).toMatchObject({task_id:second.task_id,approval_id:second.approval_id,state:'prepared'});
+    expect(await db.query(`select id from assistant_action_states where thread_id=$1 and domain='email'`,[thread])).toHaveLength(1);
+  });
+
+  it('resolves one primary calendar, preserves a separate EDD event, and records conflicts as verified availability',async()=>{
+    let c=await connectGoogle(alice);await enable(c,'google.calendar.read');
+    c=await upsertConnection(db,key,{ownerUserId:alice,provider:'google',providerAccountId:'acct-1',accountEmail:'a@gmail.test',tokens:{accessToken:'live-access-token',refreshToken:'refresh-token',expiresIn:3600,grantedScopes:`${GOOGLE_READ_SCOPES} https://www.googleapis.com/auth/calendar`},requestedCapabilities:['google.calendar.write']});
+    await enable(c,'google.calendar.write');
+    await db.query(`update calendar_sources set is_primary=true,name='Main',writable=true where connection_id=$1 and provider_calendar_id='selected@example.test'`,[c.id]);
+    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary) values($1,$2,'secondary','LexisNexis',false)`,[alice,c.id]);
+    const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google',providerCalendarId:'selected@example.test',name:'Main'});
+    await createInternalEvent(db,{ownerUserId:alice,originId:origin.id,event:{title:'Existing conflict',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00'}});
+    const thread=(await db.query<{id:string}>(`insert into threads(owner_user_id,title) values($1,'Calendar exact repro') returning id`,[alice]))[0].id;
+    const ctx={userId:alice,threadId:thread,turnId:null,connectors:null};
+    expect(await db.query(`select c.id from connections c join connection_capabilities cc on cc.connection_id=c.id where c.id=$1 and cc.capability='google.calendar.read' and cc.enabled and cc.scopes_granted_at is not null`,[c.id])).toHaveLength(1);
+    const first=await executeAssistantTool(db,ctx,'draft_calendar_event',{title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00'}) as any;
+    expect(first).toMatchObject({error:'select_calendar',state:'collecting'});
+    await present(thread,first,'Which calendar should I use?');
+    const second=await executeAssistantTool(db,ctx,'draft_calendar_event',{calendar:'the main one'}) as any;
+    expect(second,JSON.stringify(second)).toMatchObject({ok:true,state:'prepared'});
+    const [task]=await db.query<{slots:any}>(`select slots from tasks where id=$1`,[second.task_id]);
+    expect(task.slots).toMatchObject({title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00',calendar_intent:'create_separate_event',calendar_source:{calendar_name:'Main'},calendar_availability:{verified:true,conflicts:[{title:'Existing conflict'}]}});
+    expect(JSON.stringify(task.slots)).not.toContain('LexisNexis');
+    expect(task.slots).not.toHaveProperty('event_id');
   });
 });
 

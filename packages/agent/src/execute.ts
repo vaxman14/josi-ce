@@ -12,8 +12,9 @@
 // at the call sites also keeps this function honest about what it is: the
 // action, not the permission.
 import {
-  ReminderError, cancelReminder, createReminder, createTask, enqueue, getTemplate, listRemindersFor,
+  ReminderError, activeCollectingAction, attachCollectingAction, cancelReminder, createReminder, createTask, enqueue, getTemplate, getTask, listRemindersFor,
   listTasksFor, listTemplates, missingSlots, setSlots, transition,
+  mergeActionTask, prepareAction,
   type Db,
 } from '@josi-ce/core';
 import { citationLabel, folderSyncHealthFor, searchDocuments, type FolderSyncHealth } from '@josi-ce/storage';
@@ -25,6 +26,15 @@ import { executeCustomApiTool, isCustomApiTool } from './customApiTools.js';
 import { executeWorkflowTool, WORKFLOW_TOOL_NAMES } from './workflowTools.js';
 import { executeObsidianTool, DEVELOPER_INTEGRATION_TOOL, executeDeveloperIntegrationTool, executeDeveloperResourceTool } from './developerIntegrationTools.js';
 
+function actionSummary(domain:string,operation:string,slots:Record<string,unknown>):string{
+  if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
+  if(domain==='calendar'){
+    const source=slots.calendar_source as {calendar_name?:unknown}|undefined;
+    return `${operation==='update'?'Update':'Create'} calendar event\nCalendar: ${String(source?.calendar_name??'Selected calendar')}\nTitle: ${String(slots.title)}\nStart: ${String(slots.start)}\nEnd: ${String(slots.end)}`;
+  }
+  return `${operation==='update'?'Update':'Create'} contact\nName: ${String(slots.name)}`;
+}
+
 export interface ToolExecutionContext {
   /** Whose work this is. Everything created belongs to them. Never a value
    * from a request body — the HTTP caller takes it from the session, the MCP
@@ -32,6 +42,9 @@ export interface ToolExecutionContext {
   userId: string;
   /** The conversation the work came from, when there is one to link. */
   threadId: string | null;
+  /** The inbound message that caused this tool call. It namespaces partial
+   * action state to a real conversation turn rather than model history. */
+  turnId?: string | null;
   /** How the connected-data tools reach sealed tokens. Absent for callers
    * that cannot open secrets; those tools then refuse honestly rather than
    * crash. The task and reminder tools never touch it. */
@@ -84,26 +97,71 @@ export async function executeAssistantTool(
     case 'draft_calendar_event':
     case 'draft_contact_update': {
       const templateKey = name === 'draft_email' ? 'send_message' : name === 'draft_calendar_event' ? 'schedule_appointment' : 'update_contact';
-      let draftSlots = input;
+      if (!ctx.threadId) return {ok:false,error:'conversation_required',message:'Prepare consequential actions inside a conversation.'};
+      const domain = name === 'draft_email' ? 'email' : name === 'draft_calendar_event' ? 'calendar' : 'contacts';
+      const operation = name === 'draft_email' ? 'send' : (input.event_id ? 'update' : 'create');
+      let action = await activeCollectingAction(db,{ownerUserId:userId,threadId:ctx.threadId,domain,operation,sourceTurnId:ctx.turnId});
+      let task = action ? await getTask(db,action.task_id) : null;
+      let draftSlots = Object.fromEntries(Object.entries(input).filter(([,value])=>value!==undefined));
+      if(!action){
+        const [prepared]=await db.query<import('@josi-ce/core').AssistantActionState>(`select * from assistant_action_states
+          where owner_user_id=$1 and thread_id=$2 and domain=$3 and operation=$4 and status='prepared'
+          order by created_at desc limit 1`,[userId,ctx.threadId,domain,operation]);
+        if(prepared){
+          const previous=await getTask(db,prepared.task_id);
+          const unchanged=Object.entries(draftSlots).every(([key,value])=>JSON.stringify(previous.slots[key])===JSON.stringify(value));
+          if(unchanged)return {ok:true,task_id:previous.id,state:'prepared',approval_id:prepared.approval_id,summary:actionSummary(domain,operation,previous.slots),message:'This exact action is already prepared and waiting for approval.'};
+          await db.query(`update assistant_action_states set status='superseded' where id=$1 and status='prepared'`,[prepared.id]);
+          if(prepared.approval_id)await db.query(`update approvals set status='expired' where id=$1 and status='pending'`,[prepared.approval_id]);
+          if(previous.state==='awaiting_approval')await transition(db,previous.id,'cancelled',{actor:'user',actorUserId:userId});
+        }
+        task=await createTask(db,{ownerUserId:userId,templateKey,slots:{},threadId:ctx.threadId});
+        action=await attachCollectingAction(db,{ownerUserId:userId,threadId:ctx.threadId,domain,operation,taskId:task.id,sourceTurnId:ctx.turnId});
+      }
+      if(name==='draft_email'&&draftSlots.body!==undefined)draftSlots.body_brief=draftSlots.body;
       if (name === 'draft_calendar_event') {
         if (input.event_id !== undefined) {
           const receipt = await executeDataTool(db,{userId,access:ctx.connectors ?? null},'get_event',{event_id:input.event_id}) as {ok:boolean;event?:Record<string,unknown>};
           if (!receipt.ok || !receipt.event) return receipt;
           const event=receipt.event;
           if (input.source_id !== undefined && input.source_id !== event.source_id) return {ok:false,error:'source_mismatch',message:'The event belongs to a different calendar. Use its original source.'};
-          draftSlots={...input,calendar_source:{source_id:event.source_id,provider:event.provider,account_id:event.account_id,account:event.account,calendar_id:event.calendar_id,calendar_name:event.calendar_name,event_id:event.event_id}};
+          draftSlots={...draftSlots,calendar_source:{source_id:event.source_id,provider:event.provider,account_id:event.account_id,account:event.account,calendar_id:event.calendar_id,calendar_name:event.calendar_name,event_id:event.event_id}};
         } else {
-          const sources=await selectedCalendars(db,userId,typeof input.source_id === 'string'?input.source_id:undefined);
-          if(sources.length!==1) return {ok:false,error:'select_calendar',message:'Choose one exact calendar source before drafting an event.'};
+          const hint=String(input.calendar??'').trim().toLowerCase();
+          let sources=await selectedCalendars(db,userId,typeof input.source_id === 'string'?input.source_id:undefined);
+          if(!input.source_id&&/^(?:the )?(?:main|primary|default)(?: one| calendar)?$/.test(hint))sources=sources.filter(source=>source.is_primary);
+          if(sources.length!==1){
+            task=await mergeActionTask(db,action,draftSlots);
+            return {ok:false,error:'select_calendar',task_id:task.id,state:'collecting',
+              choices:sources.map(source=>({source_id:source.id,calendar_name:source.name,primary:source.is_primary})),
+              message:'Choose one exact calendar. “The main one” selects the single provider-marked primary calendar; it is never guessed from an old event.'};
+          }
           const source=sources[0];
-          const allowed=await connectionsWithCapability(db,{ownerUserId:userId,capability:`${source.provider}.calendar.read`});
+          if(!source.writable)return {ok:false,error:'source_read_only',message:'That calendar is read-only. Choose a writable calendar.'};
+          const allowed=await connectionsWithCapability(db,{ownerUserId:userId,capability:`${source.provider}.calendar.write`});
           if(!allowed.some(connection=>connection.id===source.connection_id)) return {ok:false,error:'source_unavailable',message:'That exact calendar account is unavailable or its permission was withdrawn.'};
-          draftSlots={...input,calendar_source:{source_id:source.id,provider:source.provider,account_id:source.connection_id,account:source.account,calendar_id:source.provider_calendar_id,calendar_name:source.name}};
+          draftSlots={...draftSlots,calendar_source:{source_id:source.id,provider:source.provider,account_id:source.connection_id,account:source.account,calendar_id:source.provider_calendar_id,calendar_name:source.name}};
+        }
+        if(!input.event_id&&draftSlots.calendar_source&&typeof (task?.slots.start??draftSlots.start)==='string'&&typeof (task?.slots.end??draftSlots.end)==='string'){
+          const source=draftSlots.calendar_source as {source_id:string};
+          const start=String(task?.slots.start??draftSlots.start);const end=String(task?.slots.end??draftSlots.end);
+          const availability=await executeDataTool(db,{userId,access:ctx.connectors??null},'query_calendar',{source_id:source.source_id,start,end}) as {ok?:boolean;events?:Array<{event_id?:unknown;title?:unknown;start?:unknown;end?:unknown}>;message?:string};
+          if(!availability.ok)return {ok:false,error:'availability_unavailable',message:availability.message??'Calendar availability could not be verified. Nothing was prepared.'};
+          draftSlots={...draftSlots,calendar_intent:'create_separate_event',calendar_availability:{verified:true,conflicts:(availability.events??[]).map(event=>({event_id:event.event_id,title:event.title,start:event.start,end:event.end}))}};
         }
       }
-      const task = await createTask(db, { ownerUserId: userId, templateKey, slots: draftSlots, threadId: ctx.threadId ?? undefined });
-      await transition(db, task.id, 'awaiting_approval', { actor: 'agent', actorUserId: userId });
-      return { ok: true, task_id: task.id, state: 'awaiting_approval', message: 'Prepared, but not carried out. Ask the user to approve this exact task before calling approve_task.' };
+      delete draftSlots.calendar;
+      task=await mergeActionTask(db,action,draftSlots);
+      const template=await getTemplate(db,templateKey);
+      const required = domain==='email' ? ['recipient','subject','body']
+        : domain==='calendar' ? ['title','start','end','calendar_source']
+        : template.contract.slots.required;
+      const missing=required.filter(key=>task.slots[key]===undefined||task.slots[key]===null||task.slots[key]==='');
+      if(missing.length)return {ok:true,task_id:task.id,state:'collecting',missing_slots:missing,message:`Keep this ${domain} draft and ask only for: ${missing.join(', ')}.`};
+      const summary=actionSummary(domain,operation,task.slots);
+      const prepared=await prepareAction(db,{actionState:action,task,summary,actionClass:name==='draft_email'?'email_send':name==='draft_calendar_event'?'calendar_write':'contacts_write',action:operation});
+      return {ok:true,task_id:task.id,state:'prepared',approval_id:prepared.approval.id,summary,
+        message:'Prepared but not carried out. Display the exact summary and ask for an explicit yes or no.'};
     }
     case 'list_task_types': {
       const templates = await listTemplates(db);

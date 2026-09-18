@@ -45,7 +45,7 @@
  * tools (search_documents/list_documents, storage-providers-phase2). */
 export const DATA_CLAIM_TOOLS = new Set([
   'search_documents', 'list_documents', 'get_provider_status',
-  'search_email', 'read_email',
+  'check_email_availability', 'search_email', 'read_email',
   'query_calendar', 'get_event',
   'search_contacts',
 ]);
@@ -388,6 +388,15 @@ export function checkNarratedSearchWithoutTool(
   const reasons: string[] = [];
   if (!reply) return { fabricated: false, reasons };
 
+  // Mailbox reachability is volatile and stricter than stored connection
+  // status: only the dedicated live probe can substantiate availability.
+  const emailAvailable = /\b(?:email|mail|gmail|outlook|mailbox)\b[^.!?\n]{0,50}\b(?:is|are|looks?|seems?)\s+(?:currently\s+)?(?:available|connected|working|online|ready)\b|\bI\s+(?:can|am able to)\s+(?:see|access|read|reach)\s+(?:your\s+)?(?:emails?|mail|gmail|outlook|mailbox)\b/i.test(reply);
+  if (emailAvailable && !HONEST_SEARCH_MARKERS.some((p) => p.test(reply))) {
+    const live = receipts.find((r) => r.tool === 'check_email_availability' && r.result && typeof r.result === 'object'
+      && (r.result as {ok?:boolean;available?:boolean}).ok === true && (r.result as {available?:boolean}).available === true);
+    if (!live) return { fabricated: true, reasons: ['email availability requires a successful live mailbox check this turn'] };
+  }
+
   // Runtime connectivity is volatile. File search receipts and old chat cannot
   // substantiate a current connection/indexing assertion.
   const statusClaim = /\b(?:(?:your|the)\s+)?(?:google drive|onedrive|dropbox|box|nextcloud|storage|nas|local workspace|provider|account|folders?)\b[^.!?\n]{0,60}\b(?:is|are|has|have)\s+(?:currently\s+)?(?:connected|disconnected|indexed|synced|available|healthy|offline|online)\b/i.test(reply);
@@ -395,8 +404,8 @@ export function checkNarratedSearchWithoutTool(
     const current = receipts.find((r) => r.tool === 'get_provider_status' &&
       r.result && typeof r.result === 'object' && (r.result as {ok?: boolean}).ok);
     const receipt = current ? (current.result as {receipt?: string}).receipt : undefined;
-    if (!receipt || !reply.includes(receipt)) {
-      return { fabricated: true, reasons: ['runtime provider/storage claim requires a cited current get_provider_status receipt'] };
+    if (!receipt) {
+      return { fabricated: true, reasons: ['runtime provider/storage claim requires a current get_provider_status receipt'] };
     }
   }
 
@@ -424,7 +433,7 @@ export function checkNarratedSearchWithoutTool(
 export const NARRATED_SEARCH_GUARD_REPROMPT =
   '[system integrity check] Your previous reply described running a search or lookup and reported '
   + 'specific results, but you did not call any tool this turn — nothing was actually searched. '
-  + 'Runtime connectivity/indexing claims require get_provider_status this turn and an explicit citation of its receipt UUID. Either '
+  + 'Runtime connectivity/indexing claims require get_provider_status this turn. Keep its receipt as internal evidence and never expose it. Either '
   + 'call the appropriate tool NOW to really search, or rewrite your reply to say honestly that you have '
   + 'not searched yet. Never report file names, passages, counts, or other specifics from a search that '
   + 'did not happen.';

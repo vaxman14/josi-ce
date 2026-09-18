@@ -23,6 +23,7 @@ export * from './ownership.js';
 export * from './tasks.js';
 export * from './conversations.js';
 export * from './approvals.js';
+export * from './actionState.js';
 export * from './stepUp.js';
 export * from './locks.js';
 export * from './queue.js';

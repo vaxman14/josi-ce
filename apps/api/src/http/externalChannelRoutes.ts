@@ -1,6 +1,6 @@
 import { Router, type Express, type Request, type Response } from 'express';
 import {
-  appendEvent, createThread, listMessages, loadMasterKey, recordExchange,
+  appendEvent, createThread, listMessages, loadMasterKey, markActionsPresented, recordExchange,
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
@@ -147,7 +147,12 @@ async function processInbound(ctx: ExternalChannelCtx, secrets: Record<string, s
   const history = (await listMessages(ctx.db, { threadId, limit: 40 })).map((m) => ({ role: m.direction === 'in' ? 'user' as const : 'assistant' as const, content: m.body }));
   const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound: message.text, connectorFetch: ctx.connectorFetch, channel: 'external', sessionKey: threadId });
   const reply = result.refusal?.message ?? result.reply;
-  await recordExchange(ctx.db, { ownerUserId: link.user_id, threadId, channel: message.channel, inbound: message.text, reply });
+  const actionState=result.actions.find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
+  const exchange=await recordExchange(ctx.db, { ownerUserId: link.user_id, threadId, channel: message.channel, inbound: message.text, reply,
+    outboundMeta: actionState?.domain==='email'||actionState?.domain==='calendar'?{action_status_domain:actionState.domain}:undefined });
+  const presentedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>
+    !!value&&typeof value==='object'&&['collecting','prepared'].includes(String((value as {state?:unknown}).state))&&typeof (value as {task_id?:unknown}).task_id==='string').map(value=>value.task_id);
+  await markActionsPresented(ctx.db,{ownerUserId:link.user_id,threadId,taskIds:presentedTaskIds,messageId:exchange.outbound.id});
   const disclosure = (await mailPolicy(ctx.db)).disclosure.replace('{user}', 'you');
   await sendExternal(ctx, secrets, message, `${reply}\n\n${disclosure}`);
   await ctx.db.query('update external_channel_links set last_inbound_at=now(),last_outbound_at=now() where id=$1', [link.id]);

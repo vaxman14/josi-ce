@@ -10,9 +10,9 @@
 // because Phase 7 has not happened yet would read, to the person waiting on it,
 // exactly like Josi tried and could not.
 import {
-  addMessage, claimJobs, claimReminderForDelivery, completeJob, createThread, enqueue,
+  addMessage, claimJobs, claimReadyTask, claimReminderForDelivery, completeJob, consumeApproval, createThread, enqueue,
   expireApprovals, expireHolds, failJob, getTask, markReminderFailed, tickSchedules,
-  transition, type Db, type Job, type MasterKey,
+  settleActionForTask, transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
   accessTokenFor, can, connectionsWithCapability, createInternalEvent, dueCalendarOrigins, dueCloudMappings, dueOrigins, expireCustomApiCalls,
@@ -60,17 +60,37 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       if (!taskId) throw new Error('task.wake without a taskId');
       // Throws if the task is gone, which retries and then goes dead — visible,
       // rather than a wake that quietly did nothing.
-      const task = await getTask(db, taskId);
-      if (task.state !== 'ready') return;
-      if (['send_message', 'schedule_appointment', 'update_contact'].includes(task.template_key)
-          && !(await taskWriteEnabled(db, task))) return;
+      const pending = await getTask(db, taskId);
+      if (pending.state !== 'ready') return;
+      const [preparedAction]=await db.query<{approval_id:string|null}>(`select approval_id from assistant_action_states where task_id=$1`,[pending.id]);
+      // Legacy ready tasks still wait for a capability. A conversational action
+      // was explicitly approved, so a withdrawn/unavailable provider must
+      // settle it as an authoritative domain failure rather than leave it
+      // looking queued forever.
+      if (!preparedAction && ['send_message', 'schedule_appointment', 'update_contact'].includes(pending.template_key)
+          && !(await taskWriteEnabled(db, pending))) return;
       if (!ctx.masterKey) throw new Error('task.wake needs the installation master key');
-      await transition(db, task.id, 'attempting', { actor: 'system' });
+      // Compare-and-set is the exactly-once local claim. Duplicate queue rows,
+      // retries, and concurrent workers can observe ready, but only one changes
+      // it to attempting and reaches the provider.
+      const task=await claimReadyTask(db,taskId);
+      if(!task)return;
       try {
+        if(preparedAction){
+          if(!preparedAction.approval_id)throw new Error('The prepared action has no approval.');
+          const approval=await consumeApproval(db,{approvalId:preparedAction.approval_id,payload:task.slots});
+          if(!approval.ok){
+            if(approval.reason==='expired')await db.query(`update assistant_action_states set status='expired' where task_id=$1 and status='approved'`,[task.id]);
+            throw new Error(`The prepared action approval is not usable (${approval.reason}).`);
+          }
+          await db.query(`update assistant_action_states set status='executing' where task_id=$1 and status='approved'`,[task.id]);
+        }
         await executeWriteTask(db, task, ctx);
         await transition(db, task.id, 'confirmed', { actor: 'system' });
+        await settleActionForTask(db,task.id,'succeeded');
       } catch (err) {
         await transition(db, task.id, 'failed', { actor: 'system', reason: safeTaskError(err) });
+        await settleActionForTask(db,task.id,'failed');
       }
       return;
     }

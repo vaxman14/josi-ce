@@ -13,7 +13,7 @@ import { extname, join } from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
-  addMessage, appendEvent, createContact, createTask, createThread, decideApproval,
+  addMessage, appendEvent, createContact, createTask, createThread, decideActionApproval, markActionsPresented,
   getTask, getTemplate, getThread, listContactsFor, listMessages, listPendingApprovals,
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
@@ -87,6 +87,13 @@ function historyContent(message: { direction: 'in' | 'out'; body: string; meta: 
     return message.body;
   }
   return `${message.body}\n\n[Verified calendar receipts from this prior turn. Preserve the named event, event_id, source_id, account, and calendar in follow-up actions; do not transfer a requested edit to another event.]\n${JSON.stringify(message.meta.calendar_receipts).slice(0, 12_000)}`;
+}
+
+/** Public message shape. Metadata is private by default: only fields the chat
+ * UI deliberately renders cross the HTTP presentation boundary. */
+function presentMessage<T extends { meta: Record<string, unknown> }>(message: T): T {
+  const attachments = Array.isArray(message.meta?.attachments) ? message.meta.attachments : undefined;
+  return { ...message, meta: attachments ? { attachments } : {} };
 }
 
 export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
@@ -271,7 +278,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       const threadId = param(req, 'id');
       return res.json({
         thread: await getThread(db, threadId),
-        messages: await listMessages(db, { threadId }),
+        messages: (await listMessages(db, { threadId })).map(presentMessage),
       });
     }),
   );
@@ -373,6 +380,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
 
       const modelInbound = [inbound, attachmentContext].filter(Boolean).join('\n\n');
       const attachmentMeta = attachments.map((a) => ({ id: a.id, filename: a.filename, contentType: a.content_type }));
+      const inboundMessage=await addMessage(db,{threadId,direction:'in',body:inbound||'Sent an attachment',meta:{attachments:attachmentMeta}});
       const result = await runAssistantTurn({
         db,
         registry: registryOptions(ctx),
@@ -380,6 +388,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         threadId,
         history,
         inbound: modelInbound,
+        inboundMessageId: inboundMessage.id,
         images,
         recall: ctx.recall,
         connectorFetch: ctx.connectorFetch,
@@ -390,24 +399,27 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       });
 
       if (result.refusal) {
-        // Recorded as an inbound message so the conversation is not silently
-        // missing what the person said, but no reply is fabricated.
-        await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
         // A refusal because somebody is outside their agreed hours is the
         // server saying no, not the server being broken. 503 would have it
         // read as an outage on the one screen where that would be a lie.
         return res.status(result.refusal.reason === 'restricted' ? 403 : 503)
-          .json({ refusal: result.refusal, actions: result.actions });
+          .json({ refusal: result.refusal });
       }
 
-      await addMessage(db, { threadId, direction: 'in', body: inbound || 'Sent an attachment', meta: { attachments: attachmentMeta } });
       const calendarReceipts = calendarContinuity(result.actions);
-      await addMessage(db, { threadId, direction: 'out', body: result.reply,
-        meta: calendarReceipts.length ? { calendar_receipts: calendarReceipts } : undefined });
+      const actionStatusDomain=result.actions.find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
+      const outboundMeta:Record<string,unknown>={};
+      if(calendarReceipts.length)outboundMeta.calendar_receipts=calendarReceipts;
+      if(actionStatusDomain?.domain==='email'||actionStatusDomain?.domain==='calendar')outboundMeta.action_status_domain=actionStatusDomain.domain;
+      const outboundMessage=await addMessage(db, { threadId, direction: 'out', body: result.reply,
+        meta: Object.keys(outboundMeta).length ? outboundMeta : undefined });
+      const presentedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>
+        !!value&&typeof value==='object'&&['collecting','prepared'].includes(String((value as {state?:unknown}).state))&&typeof (value as {task_id?:unknown}).task_id==='string').map(value=>value.task_id);
+      await markActionsPresented(db,{ownerUserId:thread.owner_user_id,threadId,taskIds:presentedTaskIds,messageId:outboundMessage.id});
       await appendEvent(db, { actorUserId: thread.owner_user_id, actor: 'user', kind: 'thread.exchange',
         subjectType: 'thread', subjectId: threadId,
         payload: { channel: 'web', inboundChars: inbound.length, attachmentCount: attachments.length, replyChars: result.reply.length } });
-      return res.json({ reply: result.reply, actions: result.actions });
+      return res.json({ reply: result.reply });
     }),
   );
 
@@ -513,7 +525,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     '/approvals/:id/decide',
     handle(async (req, res) => {
       try {
-        const approval = await decideApproval(db, {
+        const {approval} = await decideActionApproval(db, {
           approvalId: param(req, 'id'),
           decidedBy: req.user!.id,
           approve: req.body?.approve === true,

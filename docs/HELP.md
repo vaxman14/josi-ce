@@ -107,6 +107,26 @@ old grants, so removed provider permissions cannot remain authorized locally.
 Disconnect withdraws local access before attempting remote token revocation.
 Consequential actions still require their own local confirmation.
 
+### Chat drafts, approval, and status
+
+Email sends and calendar writes are kept as server-side action records scoped
+to your account, conversation, domain, operation, and originating turn. Josi
+shows the exact recipient/subject/body or calendar/title/time before asking for
+approval. A plain “yes” applies only when exactly one action was prepared in
+the immediately preceding assistant turn; otherwise Josi asks you to name the
+action. “No” cancels it, and unanswered approvals expire after 15 minutes.
+
+Partial drafts keep only fields from the same active action. For example, a
+follow-up subject completes the current email without changing its recipient or
+body; an unrelated calendar name cannot enter that email. “The main one” means
+the single calendar marked primary by the connected provider. If that metadata
+is missing or ambiguous, choose an exact calendar instead.
+
+Connection status is configuration evidence, not a live mailbox probe. Josi
+must say whether email is configured versus actually reached during a read or
+send. After approval, “was it sent?” reports the email action's recorded state
+(queued, sent, or failed), not the state of a calendar action.
+
 Native workflow discovery, exact-input approvals, callbacks, and Obsidian access
 are covered in [Integrations](DEVELOPER_SERVICE_CONNECTIONS.md).
 
