@@ -110,4 +110,43 @@ describe('action drafts are merged only inside their namespace',()=>{
     const result=await executeAssistantTool(db,ctx(),'draft_calendar_event',{calendar:'the main one'}) as any;
     expect(result).toMatchObject({ok:false,error:'select_calendar'});
   });
+
+  it('corrects stale model times and stale source ids from the latest relative request',async()=>{
+    await db.query(`insert into workspace(id,name,timezone) values(true,'Test','America/Los_Angeles') on conflict(id) do update set timezone=excluded.timezone`);
+    const connection=await upsertConnection(db,key,{ownerUserId:user,provider:'google',providerAccountId:'acct3',accountEmail:'state@example.test',
+      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.readonly'},requestedCapabilities:['google.calendar.read','google.calendar.write']});
+    await setCapability(db,{connection,capability:'google.calendar.write',enabled:true,actorUserId:user});
+    await setCapability(db,{connection,capability:'google.calendar.read',enabled:true,actorUserId:user});
+    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable,is_write_default)
+      values($1,$2,'stable-primary@example.test','Main calendar',true,true,true)`,[user,connection.id]);
+    const origin=await ensureInternalCalendar(db,{ownerUserId:user,connectionId:connection.id,provider:'google',providerCalendarId:'stable-primary@example.test'});
+    await db.query(`update calendar_sync_origins set last_sync_at=now() where id=$1`,[origin.id]);
+
+    const result=await executeAssistantTool(db,{
+      ...ctx(),latestUserText:'tomorrow at 4pm, 45 minutes',effectiveNow:new Date('2026-09-18T04:00:00.000Z'),
+    },'draft_calendar_event',{
+      source_id:'00000000-0000-0000-0000-000000000000',calendar:'the main one',title:'Regression check',
+      start:'2026-09-17T16:00:00-07:00',end:'2026-09-17T16:30:00-07:00',
+    }) as any;
+    expect(result.state,JSON.stringify(result)).toBe('prepared');
+    const task=await getTask(db,result.task_id);
+    expect(task.slots).toMatchObject({
+      start:'2026-09-18T16:00:00-07:00',end:'2026-09-18T16:45:00-07:00',
+      calendar_time_intent:{kind:'relative_day',localDate:'2026-09-18',localTime:'16:00',durationMinutes:45,timeZone:'America/Los_Angeles'},
+      calendar_source:{calendar_id:'stable-primary@example.test',calendar_name:'Main calendar'},
+    });
+    expect(task.slots.calendar_source).not.toHaveProperty('source_id','00000000-0000-0000-0000-000000000000');
+
+    const retry=await executeAssistantTool(db,{
+      ...ctx(),latestUserText:'tomorrow at 5pm, 30 minutes',effectiveNow:new Date('2026-09-18T04:02:00.000Z'),
+    },'draft_calendar_event',{
+      calendar:'default',title:'Regression check',
+      // Deliberately stale model retry: the server must not reuse it.
+      start:'2026-09-18T16:00:00-07:00',end:'2026-09-18T16:45:00-07:00',
+    }) as any;
+    expect(retry.state,JSON.stringify(retry)).toBe('prepared');
+    const retriedTask=await getTask(db,retry.task_id);
+    expect(retriedTask.slots).toMatchObject({start:'2026-09-18T17:00:00-07:00',end:'2026-09-18T17:30:00-07:00'});
+    expect(await db.query(`select id from approvals where subject_type='task' and subject_id=$1 and status='pending'`,[task.id])).toHaveLength(0);
+  });
 });

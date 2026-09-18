@@ -391,7 +391,11 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
           // CLI harness): who is asking travels with the request, so the MCP
           // server enforces the same step-up gate this loop enforces below.
           // From the session, never from a request body.
-          toolContext: { userId, sessionKey, threadId: args.threadId },
+          toolContext: {
+            userId, sessionKey, threadId: args.threadId,
+            latestUserText: args.inbound,
+            effectiveNow: (args.now ?? new Date()).toISOString(),
+          },
         },
         { userId, purpose: 'assistant_chat' },
       );
@@ -629,6 +633,8 @@ async function execTool(
     userId: args.userId,
     threadId: args.threadId,
     turnId: args.inboundMessageId,
+    latestUserText: args.inbound,
+    effectiveNow: args.now,
     // The registry already holds the installation key when there is one; the
     // data tools open sealed tokens with it at the moment of use.
     connectors: masterKey ? {

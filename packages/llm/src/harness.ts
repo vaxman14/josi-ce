@@ -67,6 +67,8 @@ export interface HarnessContext {
   userId: string | null;
   sessionKey: string | null;
   threadId: string | null;
+  latestUserText: string | null;
+  effectiveNow: string | null;
   /** Names the caller offered THIS turn. The server exposes only these (plus
    * its own probe tools), so a turn that offered nothing user-scoped cannot be
    * talked into task work by the model. */
@@ -105,6 +107,8 @@ export function openHarnessSession(args: {
     userId: args.toolContext?.userId ?? null,
     sessionKey: args.toolContext?.sessionKey ?? null,
     threadId: args.toolContext?.threadId ?? null,
+    latestUserText: args.toolContext?.latestUserText ?? null,
+    effectiveNow: args.toolContext?.effectiveNow ?? null,
     tools: args.tools.map((t) => t.name),
     callsPath,
   };

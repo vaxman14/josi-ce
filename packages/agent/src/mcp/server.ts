@@ -40,6 +40,8 @@ interface HarnessContext {
   userId: string | null;
   sessionKey: string | null;
   threadId: string | null;
+  latestUserText?: string | null;
+  effectiveNow?: string | null;
   tools: string[];
   callsPath: string;
 }
@@ -138,7 +140,11 @@ export function buildCore(ctx: HarnessContext, connect: () => Promise<Db>): McpC
 
       const result = await executeAssistantTool(
         conn,
-        { userId: ctx.userId, threadId: ctx.threadId, connectors: connectors() },
+        {
+          userId: ctx.userId, threadId: ctx.threadId, connectors: connectors(),
+          latestUserText: ctx.latestUserText ?? undefined,
+          effectiveNow: ctx.effectiveNow ? new Date(ctx.effectiveNow) : undefined,
+        },
         name,
         input,
       );
