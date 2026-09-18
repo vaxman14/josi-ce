@@ -28,6 +28,7 @@ import {
 } from './http/developerServiceRoutes.js';
 import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
 import { personaRoutes } from './http/personaRoutes.js';
+import { migrationRoutes } from './http/migrationRoutes.js';
 import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './http/telegramRoutes.js';
@@ -269,6 +270,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   }));
+  api.use('/migrations', migrationRoutes(db));
   api.use('/persona', personaRoutes({
     db,
     masterKey: cfg.masterKeyCheck,
