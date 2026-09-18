@@ -5,7 +5,7 @@
 // preferences, and memories without cross-user leakage; import/export is an
 // exact round trip; ... reset changes no conversations or unrelated memory;
 // deleted memory cannot be recalled; a hostile profile ... has no effect."
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -169,6 +169,28 @@ describe('two people, two personalities, no leakage', () => {
     const bob = await call('/api/persona/memories', { jar: cookies.bob });
     expect(bob.body.memories).toHaveLength(0);
     expect(JSON.stringify(bob.body)).not.toContain('ALICE-PRIVATE-FACT');
+  });
+
+  it('returns a content-free conflict for a normalized duplicate without using the database logger', async () => {
+    await call('/api/persona/memories', {
+      method: 'POST', jar: cookies.alice, body: { content: 'Synthetic duplicate fact' },
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const duplicate = await call('/api/persona/memories', {
+      method: 'POST', jar: cookies.alice, body: { content: '  synthetic   duplicate FACT  ' },
+    });
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body).toEqual({ error: 'that memory already exists' });
+    const other = await call('/api/persona/memories', {
+      method: 'POST', jar: cookies.alice, body: { content: 'Another synthetic fact' },
+    });
+    const edited = await call(`/api/persona/memories/${other.body.memory.id}`, {
+      method: 'PUT', jar: cookies.alice, body: { content: 'SYNTHETIC DUPLICATE FACT' },
+    });
+    expect(edited.status).toBe(409);
+    expect(edited.body).toEqual({ error: 'that memory already exists' });
+    expect(log).not.toHaveBeenCalled();
+    log.mockRestore();
   });
 
   it('a colleague cannot touch a memory that is not theirs', async () => {

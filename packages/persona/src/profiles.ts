@@ -4,6 +4,7 @@
 // cannot erase them"). The Markdown is what the person reads and exports; the
 // parsed configuration is what the system uses. Both are stored, and the parse
 // is redone on every save so the two can never disagree.
+import { randomUUID } from 'node:crypto';
 import { appendEvent, json, type Db } from '@josi-ce/core';
 import { parseProfile, renderProfile, type ParsedProfile } from './parse.js';
 import { AGENTS_FIELDS, CAUTION_ORDER, FIELDS, type Layer } from './schema.js';
@@ -183,6 +184,8 @@ export interface ExportBundle {
   version: 1;
   exported_at: string;
   files: Partial<Record<Layer | 'memory', string>>;
+  /** Optional lossless companion to the unchanged version-1 Markdown view. */
+  memory_records?: Array<{ content: string; provenance: string; pinned: boolean }>;
 }
 
 /** M-new: "Import/export all four portable Markdown files... Round trips
@@ -211,29 +214,36 @@ export async function exportProfiles(
       .join('\n') + '\n';
   }
 
-  return { version: 1, exported_at: args.now, files };
+  return { version: 1, exported_at: args.now, files, ...(memories.length ? { memory_records: memories } : {}) };
 }
 
 export async function importProfiles(
   db: Db,
   args: { userId: string; bundle: ExportBundle; actorUserId: string },
-): Promise<Record<string, ParsedProfile>> {
-  if (args.bundle?.version !== 1) throw new ProfileError('that is not a Josi profile export');
-  const results: Record<string, ParsedProfile> = {};
-
-  for (const kind of ['soul', 'user', 'agents_user'] as const) {
-    const content = args.bundle.files?.[kind];
-    if (typeof content !== 'string') continue;
-    const { parsed } = await saveProfile(db, {
-      kind, userId: args.userId, content, actorUserId: args.actorUserId,
-    });
-    results[kind] = parsed;
-  }
-
-  // The admin layer is deliberately NOT importable from a personal bundle. An
-  // import is a file somebody was sent; letting it rewrite installation policy
-  // would make "import your profile" a privilege escalation.
-  return results;
+): Promise<{ profiles: Record<string, ParsedProfile>; receipt: import('./migration/types.js').MigrationReceipt }> {
+  if (args.bundle?.version !== 1 || !args.bundle.files) throw new ProfileError('that is not a Josi profile export');
+  if (args.userId !== args.actorUserId) throw new ProfileError('a personal import must belong to its actor');
+  if (!db.transaction) throw new (await import('./migration/types.js')).MigrationError('Atomic transactions are unavailable; nothing was imported.', 503);
+  const { scanMigration } = await import('./migration/scan.js');
+  const { migrationScope, previewMigration, commitMigrationInTransaction } = await import('./migration/store.js');
+  const scanned = scanMigration([{ path: 'josi-profile-export.json', bytes: Buffer.from(JSON.stringify(args.bundle)) }], 'josi');
+  return db.transaction(async tx => {
+    const profiles: Record<string, ParsedProfile> = {};
+    // Preserve the released v1 restore contract for Josi-owned backups. This
+    // trusted restore path is separate from the foreign-assistant wizard,
+    // which never overwrites an occupied profile layer.
+    for (const kind of ['soul', 'user', 'agents_user'] as const) {
+      const content = args.bundle.files[kind];
+      if (typeof content !== 'string') continue;
+      const saved = await saveProfile(tx, { kind, userId: args.userId, content, actorUserId: args.actorUserId });
+      profiles[kind] = saved.parsed;
+    }
+    const memoryOnly = { ...scanned, items: scanned.items.filter(item => item.category === 'memory') };
+    const scope = await migrationScope(tx, args.userId);
+    const reviewed = await previewMigration(tx, scope, memoryOnly);
+    const receipt = await commitMigrationInTransaction(tx, scope, reviewed, randomUUID());
+    return { profiles, receipt };
+  });
 }
 
 export { AGENTS_FIELDS, CAUTION_ORDER, FIELDS, renderProfile };

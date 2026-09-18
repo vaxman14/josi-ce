@@ -17,6 +17,7 @@
 //      a document purges what was learned from it — otherwise "I revoked that"
 //      and "it can still tell you what was in it" are both true, which is the
 //      worst possible combination.
+import { createHash } from 'node:crypto';
 import { appendEvent, type Db } from '@josi-ce/core';
 
 export type SourceKind = 'manual' | 'conversation' | 'document' | 'email' | 'contact' | 'calendar';
@@ -67,6 +68,21 @@ export function refuseSecret(content: string): string | null {
   return null;
 }
 
+/** Stable owner-scoped duplicate key shared with migration imports. */
+export function memoryFingerprint(content: string): string {
+  // PostgreSQL's built-in md5(text) lets schema upgrades backfill the same key
+  // without reading private memories through application code. This is a
+  // duplicate key, not a security digest.
+  return createHash('md5').update(content.trim().replace(/\s+/g, ' ').toLowerCase()).digest('hex');
+}
+
+function duplicateMemory(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error) || error.code !== '23505') return false;
+  const constraint = ('constraint' in error && typeof error.constraint === 'string') ? error.constraint
+    : ('constraint_name' in error && typeof error.constraint_name === 'string') ? error.constraint_name : '';
+  return constraint === 'memories_owner_content_fingerprint';
+}
+
 export async function addMemory(
   db: Db,
   args: {
@@ -90,18 +106,29 @@ export async function addMemory(
     );
   }
 
-  const [row] = await db.query<Memory>(
-    `insert into memories
-       (owner_user_id, content, source_kind, source_id, provenance, confidence, confirmed_at)
-     values ($1, $2, $3, $4, $5, $6, case when $3 = 'manual' then now() else null end)
-     returning *`,
-    [
-      args.ownerUserId, content, args.sourceKind ?? 'manual',
-      args.sourceKind === 'manual' || !args.sourceKind ? null : args.sourceId ?? null,
-      args.provenance ?? 'You added this',
-      Math.min(1, Math.max(0, args.confidence ?? 1)),
-    ],
-  );
+  let row: Memory;
+  try {
+    [row] = await db.query<Memory>(
+      `insert into memories
+         (owner_user_id, content, source_kind, source_id, provenance, confidence, confirmed_at, content_fingerprint)
+       values ($1, $2, $3, $4, $5, $6, case when $3 = 'manual' then now() else null end, $7)
+       returning *`,
+      [
+        args.ownerUserId, content, args.sourceKind ?? 'manual',
+        args.sourceKind === 'manual' || !args.sourceKind ? null : args.sourceId ?? null,
+        args.provenance ?? 'You added this',
+        Math.min(1, Math.max(0, args.confidence ?? 1)), memoryFingerprint(content),
+      ],
+    );
+  } catch (error) {
+    // Keep the private memory text out of the generic database-error logger.
+    // This exact constraint is the expected result of a normalized duplicate;
+    // every other database error still follows the ordinary failure path.
+    if (duplicateMemory(error)) {
+      throw new MemoryError('that memory already exists');
+    }
+    throw error;
+  }
 
   await appendEvent(db, {
     actorUserId: args.ownerUserId,
@@ -194,14 +221,22 @@ export async function updateMemory(
     const secret = refuseSecret(args.content);
     if (secret) throw new MemoryError(`that looks like ${secret}, so it was not saved.`);
   }
-  const [row] = await db.query<Memory>(
-    `update memories set
-       content = coalesce($3, content),
-       pinned = coalesce($4, pinned)
-     where id = $1 and owner_user_id = $2
-     returning *`,
-    [args.id, args.ownerUserId, args.content ?? null, args.pinned ?? null],
-  );
+  let row: Memory;
+  try {
+    [row] = await db.query<Memory>(
+      `update memories set
+         content = coalesce($3, content),
+         pinned = coalesce($4, pinned),
+         content_fingerprint = case when $3 is null then content_fingerprint else $5 end
+       where id = $1 and owner_user_id = $2
+       returning *`,
+      [args.id, args.ownerUserId, args.content ?? null, args.pinned ?? null,
+        args.content === undefined ? null : memoryFingerprint(args.content)],
+    );
+  } catch (error) {
+    if (duplicateMemory(error)) throw new MemoryError('that memory already exists');
+    throw error;
+  }
   // 404, not 403 — the Phase 1 rule. Somebody else's memory is not theirs to
   // know exists.
   if (!row) throw new MemoryError('not found');

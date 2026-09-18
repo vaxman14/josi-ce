@@ -16,7 +16,7 @@ import { Router, type Request, type Response } from 'express';
 import { loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import { capabilitiesOf, chat, featureAvailable, loadStoredProvider } from '@josi-ce/llm';
 import {
-  CAUTION_ORDER, FIELDS, assembleSystemContext, MemoryError, ProfileError, ProfileTooLarge,
+  CAUTION_ORDER, FIELDS, assembleSystemContext, MemoryError, MigrationError, ProfileError, ProfileTooLarge,
   addMemory, assemblePrompt, confirmMemory, decideSuggestion, deleteMemory,
   exportProfiles, getProfile, importProfiles, listMemories, listVersions,
   SOUL_PRESETS, loadAll, narrowPolicy, parseProfile, presetContent,
@@ -454,13 +454,23 @@ export function personaRoutes(ctx: PersonaRoutesCtx): Router {
   r.post(
     '/import',
     handle(async (req, res) => {
-      const results = await importProfiles(db, {
-        userId: req.user!.id, bundle: req.body, actorUserId: req.user!.id,
-      });
-      const ignored = Object.entries(results).flatMap(([layer, parsed]) =>
+      // Import errors may contain driver parameters. Never pass them to the
+      // application's generic logger (which prints database errors verbatim).
+      let result;
+      try {
+        result = await importProfiles(db, {
+          userId: req.user!.id, bundle: req.body, actorUserId: req.user!.id,
+        });
+      } catch (error) {
+        if (error instanceof ProfileError) throw error;
+        if (error instanceof MigrationError) return res.status(error.status).json({ error: error.message });
+        return res.status(500).json({ error: 'Import could not be completed. No partial import was saved. Try again.' });
+      }
+      const ignored = Object.entries(result.profiles).flatMap(([layer, parsed]) =>
         parsed.ignored.map((i) => ({ layer, ...i })));
       return res.json({
-        imported: Object.keys(results),
+        imported: Object.keys(result.profiles),
+        receipt: result.receipt,
         ignored,
         // Said explicitly, because an import is a file somebody was sent.
         notice: 'Installation policy is never imported from a personal profile.',
