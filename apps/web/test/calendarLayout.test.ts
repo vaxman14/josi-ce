@@ -22,4 +22,9 @@ describe('calendar page visual order', () => {
     expect(page.slice(sourceStart)).toContain("s.writeDefault?'Write default':'Make default'");
     expect(page.slice(sourceStart)).not.toMatch(/(?:^|\s)(?:order-|sm:order-|md:order-|lg:order-)/);
   });
+
+  it('uses the full practical member-content width for the calendar and picker', () => {
+    expect(page).toContain('data-testid="calendar-page" className="w-full min-w-0 space-y-4"');
+    expect(page).not.toMatch(/data-testid="calendar-page"[^>]+(?:max-w-|mx-auto)/);
+  });
 });

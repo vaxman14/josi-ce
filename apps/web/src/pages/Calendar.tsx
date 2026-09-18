@@ -67,7 +67,7 @@ export function Calendar() {
       {window.days.map(day=>{const rows=eventsOnDay(events,day,zone);return <div key={`timed:${day}`} className="calendar-time-grid relative h-[2304px] border border-border" aria-label={`Timed events ${day}`}>{hours.map(hour=><div key={hour} aria-hidden="true" className="absolute inset-x-0 border-t border-border" style={{top:`${hour/24*100}%`}}/>)}{layoutEvents(rows,day,zone).map(row=><div key={`${row.event.sourceId}:${row.event.eventId}`} className="calendar-time-event" data-calendar-event-duration={Math.round((row.end-row.start)/60000)} style={{top:`${row.top}%`,height:`${row.height}%`,left:`${row.column/row.columns*100}%`,width:`${100/row.columns}%`}}>{eventButton(row.event,true,true)}</div>)}</div>;})}
     </div></div>;
   }
-  return <div className="mx-auto w-full max-w-7xl space-y-4">
+  return <div data-testid="calendar-page" className="w-full min-w-0 space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-xl font-semibold">Calendar</h1><p className="text-sm text-muted-foreground">One view of the calendars you choose from all your connected accounts.</p></div><Button variant="secondary" onClick={()=>void loadSources(true).then(loadEvents).catch(e=>setError(String(e)))}>Refresh calendars</Button></div>
     {error?<ErrorNote>{error}</ErrorNote>:null}
     {warnings.length?<ErrorNote>{[...new Set(warnings)].join(' ')}</ErrorNote>:null}
