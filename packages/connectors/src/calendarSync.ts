@@ -63,10 +63,18 @@ export async function ensureInternalCalendar(db: Db, args:{ownerUserId:string;co
   const [existing]=await db.query<Origin>(`select * from calendar_sync_origins where connection_id=$1 and provider_calendar_id=$2`,[args.connectionId,providerCalendarId]);
   if(existing) return existing;
   const [source]=await db.query<{name:string;is_write_default:boolean}>(`select name,is_write_default from calendar_sources where connection_id=$1 and provider_calendar_id=$2`,[args.connectionId,providerCalendarId]);
+  // Create non-default first. An upgraded database may still have its old
+  // internal default while reconciliation has moved the explicit write default
+  // to a newly selected provider source. Inserting the new row as default would
+  // violate calendars_one_default before its origin can be provisioned.
   const [calendar]=await db.query<{id:string}>(`insert into calendars(owner_user_id,name,is_default)
-    values($1,$2,$3) returning id`,[args.ownerUserId,args.name ?? source?.name ?? `${args.provider === 'google' ? 'Google' : 'Outlook'} calendar`,source?.is_write_default===true]);
+    values($1,$2,false) returning id`,[args.ownerUserId,args.name ?? source?.name ?? `${args.provider === 'google' ? 'Google' : 'Outlook'} calendar`]);
   const [origin]=await db.query<Origin>(`insert into calendar_sync_origins(calendar_id,connection_id,owner_user_id,provider,provider_account_id,provider_calendar_id)
     values($1,$2,$3,$4,$5,$6) returning *`,[calendar.id,args.connectionId,args.ownerUserId,args.provider,connection.provider_account_id,providerCalendarId]);
+  if(source?.is_write_default===true){
+    await db.query(`update calendars set is_default=false where owner_user_id=$1 and is_default`,[args.ownerUserId]);
+    await db.query(`update calendars set is_default=true where id=$1 and owner_user_id=$2`,[calendar.id,args.ownerUserId]);
+  }
   return origin;
 }
 
