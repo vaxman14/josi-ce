@@ -50,6 +50,7 @@ import { executeAssistantTool } from './execute.js';
 import { workspaceToolNames } from './workspaceTools.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
 import { presentToolBackedReply } from './presentation.js';
+import { effectiveTimeContext } from './timeContext.js';
 
 /** Recall over the user's own history, injected by the caller. A function
  * rather than a package dependency: the agent does not care whether recall is
@@ -112,6 +113,8 @@ export interface TurnArgs {
    * in one conversation does not silently unlock another. */
   sessionKey?: string;
   maxHops?: number;
+  /** Test seam for deterministic local-date and DST behavior. */
+  now?: Date;
 }
 
 const HOP_LIMIT = 6;
@@ -124,6 +127,7 @@ function systemPrompt(args: {
   data?: DataToolAvailability;
   customApis?: string[];
   imagesAttached?: boolean;
+  temporalContext: string;
 }): string {
   return [
     'You are Josi, an assistant working for one person inside a small shared workspace.',
@@ -133,7 +137,7 @@ function systemPrompt(args: {
     'You do work through tasks. Fill every required slot BEFORE anything is attempted; if a required slot is missing, ask for it. Never start work with a hole in it.',
     'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn. Email availability is stricter: call check_email_availability and claim availability only when its live provider request succeeds; connection metadata is never live proof. Use evidence internally, but never show receipts, observation timestamps, account metadata, internal identifiers, or raw status records. Summarize only the useful human-facing answer and source/provider name. Never infer runtime state from prior chat.',
     'Never invent a name, number, address or time. If you do not know something, ask or say you do not know.',
-    `The current date and time is ${new Date().toISOString()}. When a date omits its year, use the next occurrence that is not in the past. Use the person's configured timezone when their profile supplies one; do not ask them to repeat it. Ask only for scheduling details that are genuinely missing, such as duration when no end time or duration was given.`,
+    `${args.temporalContext} Ask only for scheduling details that are genuinely missing, such as duration when no end time or duration was given.`,
     'For calendar follow-ups, preserve the exact named subject and verified event receipt from the prior turn. “Move/push the EDD call” modifies the EDD event, never the newly proposed event. Keep the existing event on its original calendar and inherit the verified/default calendar for a new event instead of asking again when the receipt already identifies it.',
     args.templateNames.length
       ? `The kinds of work you can start: ${args.templateNames.join(', ')}.`
@@ -309,6 +313,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // and the hard-coded safety lines are unchanged, and personalization is
   // appended to it rather than replacing any of it.
   const imagesAttached = !!args.images?.length;
+  const temporal = await effectiveTimeContext(db, userId, args.now ?? new Date());
   const core = systemPrompt({
     capabilities,
     templateNames: templates.map((t) => t.key),
@@ -317,6 +322,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     data,
     customApis: customApis.connectionNames,
     imagesAttached,
+    temporalContext: temporal.prompt,
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '');
 
   // The person's own layers, in the order the plan fixes. A failure here costs
@@ -408,7 +414,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     // the person can see what acted on their behalf; NOT executed again, which
     // is why they are kept apart from `toolCalls` in the seam.
     for (const call of res.executedToolCalls ?? []) {
-      actions.push({ tool: call.name, result: { executed: 'by_model_harness', input: call.input } });
+      actions.push({ tool: call.name, result: call.result });
     }
 
     if (!res.toolCalls.length) {

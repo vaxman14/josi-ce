@@ -156,9 +156,9 @@ describe('capability gating', () => {
     replies = [{ content: 'How long should it be?' }];
     await turn({ inbound: 'Book test on September 5 at 9am' });
     const system = requests[0].messages[0].content;
-    expect(system).toMatch(/current date and time/i);
+    expect(system).toMatch(/current local date and time/i);
     expect(system).toMatch(/next occurrence that is not in the past/i);
-    expect(system).toMatch(/configured timezone/i);
+    expect(system).toMatch(/effective timezone/i);
     expect(system).toMatch(/duration when no end time/i);
     expect(system).toMatch(/Move\/push the EDD call.*modifies the EDD event/i);
     expect(system).toMatch(/original calendar/i);

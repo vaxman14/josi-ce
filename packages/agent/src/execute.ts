@@ -129,12 +129,15 @@ export async function executeAssistantTool(
         } else {
           const hint=String(input.calendar??'').trim().toLowerCase();
           let sources=await selectedCalendars(db,userId,typeof input.source_id === 'string'?input.source_id:undefined);
-          if(!input.source_id&&/^(?:the )?(?:main|primary|default)(?: one| calendar)?$/.test(hint))sources=sources.filter(source=>source.is_primary);
+          if(!input.source_id){
+            if(!hint||/^(?:the )?(?:main|primary|default)(?: one| calendar)?$/.test(hint))sources=sources.filter(source=>source.is_write_default);
+            else sources=sources.filter(source=>source.name.trim().toLowerCase()===hint);
+          }
           if(sources.length!==1){
             task=await mergeActionTask(db,action,draftSlots);
             return {ok:false,error:'select_calendar',task_id:task.id,state:'collecting',
-              choices:sources.map(source=>({source_id:source.id,calendar_name:source.name,primary:source.is_primary})),
-              message:'Choose one exact calendar. “The main one” selects the single provider-marked primary calendar; it is never guessed from an old event.'};
+              choices:sources.map(source=>({source_id:source.id,calendar_name:source.name,write_default:source.is_write_default})),
+              message:'Choose one exact writable calendar, or set a default write calendar on the Calendar page.'};
           }
           const source=sources[0];
           if(!source.writable)return {ok:false,error:'source_read_only',message:'That calendar is read-only. Choose a writable calendar.'};

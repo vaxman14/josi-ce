@@ -34,7 +34,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ToolCall, ToolContext, ToolDefinition } from './types.js';
+import type { ExecutedToolCall, ToolContext, ToolDefinition } from './types.js';
 
 /** Where the built image puts the MCP server entry. A source checkout or a
  * test overrides this with `JOSI_MCP_SERVER`; when neither exists the harness
@@ -109,6 +109,9 @@ export function openHarnessSession(args: {
     callsPath,
   };
   writeFileSync(contextPath, JSON.stringify(context), { mode: 0o600 });
+  // Create this explicitly rather than relying on appendFile's umask. The
+  // completed results may contain private connected data used by grounding.
+  writeFileSync(callsPath, '', { mode: 0o600 });
   return {
     serverPath: args.serverPath,
     contextPath,
@@ -121,24 +124,25 @@ export function openHarnessSession(args: {
 
 /** Reads back what the server recorded. Missing file means no tool ran, which
  * is a normal outcome, not an error. */
-export function readExecutedCalls(callsPath: string): ToolCall[] {
+export function readExecutedCalls(callsPath: string): ExecutedToolCall[] {
   let raw: string;
   try {
     raw = readFileSync(callsPath, 'utf8');
   } catch {
     return [];
   }
-  const calls: ToolCall[] = [];
+  const calls: ExecutedToolCall[] = [];
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const entry = JSON.parse(trimmed) as { id?: unknown; name?: unknown; input?: unknown };
-      if (typeof entry.name !== 'string') continue;
+      const entry = JSON.parse(trimmed) as { id?: unknown; name?: unknown; input?: unknown; result?: unknown };
+      if (typeof entry.name !== 'string' || !Object.hasOwn(entry, 'result')) continue;
       calls.push({
         id: typeof entry.id === 'string' ? entry.id : `call-${calls.length}`,
         name: entry.name,
         input: (entry.input && typeof entry.input === 'object' ? entry.input : {}) as Record<string, unknown>,
+        result: entry.result,
       });
     } catch {
       // A torn last line from a killed server. The completed lines still count.

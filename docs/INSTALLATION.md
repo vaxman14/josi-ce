@@ -1374,7 +1374,8 @@ signed in as you. Install the CLI, run `codex login` **as the account Josi runs
 as**, then **Admin → Model → Use this for the primary model** and press Test.
 
 It is per installation rather than per person, shares your own Codex usage
-limits, reports no token counts or cost, and **cannot call tools** — so Josi can
+limits, reports no token counts or cost, and calls Josi tools only through the
+bundled permission-checked MCP harness — so Josi can
 talk but cannot book, send or search on that path. Those limits are shown on the
 Model screen, not just here.
 

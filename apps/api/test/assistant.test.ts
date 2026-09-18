@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createReminder, seal, MasterKey } from '@josi-ce/core';
-import { saveClient, setCapability, upsertConnection } from '@josi-ce/connectors';
+import { ensureInternalCalendar, saveClient, setCapability, upsertConnection } from '@josi-ce/connectors';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -646,19 +646,21 @@ describe('transactional conversational writes over HTTP',()=>{
     expect((await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'why?'}})).body.reply).toMatch(/email.*queued.*not confirmed sent/i);
   });
 
-  it('creates the separate EDD draft on the one primary calendar without stale-name drift',async()=>{
+  it('creates the separate EDD draft on the write default without asking among read calendars',async()=>{
     await configureModel();
     const key=new MasterKey(KEY_BYTES);
     const connection=await upsertConnection(db,key,{ownerUserId:ids.alice,provider:'google',providerAccountId:'http-calendar',accountEmail:'alice-calendar@example.test',
-      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar'},requestedCapabilities:['google.calendar.read','google.calendar.write']});
+      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.readonly'},requestedCapabilities:['google.calendar.read','google.calendar.write']});
     await setCapability(db,{connection,capability:'google.calendar.write',enabled:true,actorUserId:ids.alice});
-    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable)
-      values($1,$2,'primary','Main calendar',true,true),($1,$2,'lexis','LexisNexis',false,true)`,[ids.alice,connection.id]);
+    await setCapability(db,{connection,capability:'google.calendar.read',enabled:true,actorUserId:ids.alice});
+    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable,is_write_default)
+      values($1,$2,'primary','Main calendar',true,true,true),($1,$2,'lexis','LexisNexis',false,true,false)`,[ids.alice,connection.id]);
+    const primary=await ensureInternalCalendar(db,{ownerUserId:ids.alice,connectionId:connection.id,provider:'google',providerCalendarId:'primary'});
+    const lexis=await ensureInternalCalendar(db,{ownerUserId:ids.alice,connectionId:connection.id,provider:'google',providerCalendarId:'lexis'});
+    await db.query(`update calendar_sync_origins set last_sync_at=now() where id in($1,$2)`,[primary.id,lexis.id]);
     const t=await threadWith('alice');
-    replies=[{content:null,tool_calls:[tc('draft_calendar_event',{title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00'})]},{content:'Which calendar?'}];
-    expect((await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:"create tomorrow 3pm PT 30m 'Phone call with EDD' (they call me)"}})).body.reply).toMatch(/calendar/i);
-    replies=[{content:null,tool_calls:[tc('draft_calendar_event',{calendar:'the main one'})]},{content:'wrong old LexisNexis'}];
-    const prepared=await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:'the main one'}});
+    replies=[{content:null,tool_calls:[tc('draft_calendar_event',{title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00'})]},{content:'wrong old LexisNexis'}];
+    const prepared=await call(`/api/assistant/threads/${t}/talk`,{method:'POST',jar:cookies.alice,body:{message:"create tomorrow 3pm PT 30m 'Phone call with EDD' (they call me)"}});
     expect(prepared.body.reply).toContain('Calendar: Main calendar');
     expect(prepared.body.reply).toContain('Title: Phone call with EDD');
     expect(prepared.body.reply).not.toContain('LexisNexis');

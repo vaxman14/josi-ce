@@ -18,7 +18,8 @@ export interface CalendarEventRow {
   ends_at: string | null; start_date: string | null; end_date: string | null;
   all_day: boolean; timezone: string; status: string; organizer: string | null;
   attendees: Array<{ email: string; response_status?: string }>;
-  recurrence: string[]; sync_state: CalendarSyncState; sync_error: string | null;
+  recurrence: string[]; recurring_event_id: string | null; recurring_provider_event_id: string | null;
+  original_start: string | null; sync_state: CalendarSyncState; sync_error: string | null;
   local_revision: number; deleted_at: string | null; updated_at: string;
 }
 interface Origin { id:string; calendar_id:string; connection_id:string; owner_user_id:string; provider:CalendarProvider; provider_calendar_id:string; sync_cursor:string|null; sync_mode:'import_only'|'two_way'; status:string }
@@ -45,18 +46,25 @@ function parsed(input: CalendarEventInput) {
   return { allDay, start, end };
 }
 
-export async function ensureInternalCalendar(db: Db, args:{ownerUserId:string;connectionId:string;provider:CalendarProvider;providerCalendarId?:string;name?:string}):Promise<Origin> {
+export async function ensureInternalCalendar(db: Db, args:{ownerUserId:string;connectionId:string;provider:CalendarProvider;providerCalendarId?:string;name?:string;writable?:boolean}):Promise<Origin> {
   const connection = await getConnection(db,args.connectionId);
   if (!connection || connection.owner_user_id !== args.ownerUserId || connection.provider !== args.provider) throw new Error('calendar connection does not belong to this user');
   const providerCalendarId=args.providerCalendarId ?? 'primary';
-  await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,selected,writable)
-    values($1,$2,$3,$4,$5,true,true)
-    on conflict(connection_id,provider_calendar_id) do update set writable=true,last_discovered_at=now()`,
-    [args.ownerUserId,args.connectionId,providerCalendarId,args.name??(providerCalendarId==='primary'?'Primary calendar':providerCalendarId),providerCalendarId==='primary']);
+  await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,selected,writable,is_write_default)
+    values($1,$2,$3,$4,
+      $5 and not exists(select 1 from calendar_sources where connection_id=$2 and is_primary and provider_calendar_id<>'primary'),
+      true,coalesce($6,$5),
+      coalesce($6,$5) and not exists(select 1 from calendar_sources where owner_user_id=$1 and is_write_default))
+    on conflict(connection_id,provider_calendar_id) do update set
+      name=coalesce($7,calendar_sources.name),
+      writable=case when $6::boolean is null then calendar_sources.writable else $6 end,
+      last_discovered_at=now()`,
+    [args.ownerUserId,args.connectionId,providerCalendarId,args.name??(providerCalendarId==='primary'?'Primary calendar':providerCalendarId),providerCalendarId==='primary',args.writable??null,args.name??null]);
   const [existing]=await db.query<Origin>(`select * from calendar_sync_origins where connection_id=$1 and provider_calendar_id=$2`,[args.connectionId,providerCalendarId]);
   if(existing) return existing;
+  const [source]=await db.query<{name:string;is_write_default:boolean}>(`select name,is_write_default from calendar_sources where connection_id=$1 and provider_calendar_id=$2`,[args.connectionId,providerCalendarId]);
   const [calendar]=await db.query<{id:string}>(`insert into calendars(owner_user_id,name,is_default)
-    values($1,$2,not exists(select 1 from calendars where owner_user_id=$1)) returning id`,[args.ownerUserId,args.name ?? `${args.provider === 'google' ? 'Google' : 'Outlook'} calendar`]);
+    values($1,$2,$3) returning id`,[args.ownerUserId,args.name ?? source?.name ?? `${args.provider === 'google' ? 'Google' : 'Outlook'} calendar`,source?.is_write_default===true]);
   const [origin]=await db.query<Origin>(`insert into calendar_sync_origins(calendar_id,connection_id,owner_user_id,provider,provider_account_id,provider_calendar_id)
     values($1,$2,$3,$4,$5,$6) returning *`,[calendar.id,args.connectionId,args.ownerUserId,args.provider,connection.provider_account_id,providerCalendarId]);
   return origin;
@@ -143,13 +151,14 @@ export async function markCalendarAttempted(db:Db,id:string){await db.query(`upd
 /** Backfills existing connected calendars without making a conversation wait
  * for a provider call. Safe on every scheduler tick; the origin key is unique. */
 export async function provisionCalendarOrigins(db:Db):Promise<number>{
-  const rows=await db.query<{owner_user_id:string;connection_id:string;provider:CalendarProvider}>(`select c.owner_user_id,c.id connection_id,c.provider
-    from connections c join connection_capabilities cc on cc.connection_id=c.id
+  const rows=await db.query<{owner_user_id:string;connection_id:string;provider:CalendarProvider;provider_calendar_id:string;name:string;writable:boolean}>(`select s.owner_user_id,s.connection_id,c.provider,s.provider_calendar_id,s.name,s.writable
+    from calendar_sources s join connections c on c.id=s.connection_id join connection_capabilities cc on cc.connection_id=c.id
     where c.provider in('google','microsoft') and c.status='active' and cc.enabled
       and cc.capability in('google.calendar.read','google.calendar.write','microsoft.calendar.read','microsoft.calendar.write')
-      and not exists(select 1 from calendar_sync_origins o where o.connection_id=c.id and o.provider_calendar_id='primary')
-    group by c.owner_user_id,c.id,c.provider`);
-  for(const row of rows)await ensureInternalCalendar(db,{ownerUserId:row.owner_user_id,connectionId:row.connection_id,provider:row.provider});
+      and s.selected
+      and not exists(select 1 from calendar_sync_origins o where o.connection_id=s.connection_id and o.provider_calendar_id=s.provider_calendar_id)
+    group by s.owner_user_id,s.connection_id,c.provider,s.provider_calendar_id,s.name,s.writable`);
+  for(const row of rows)await ensureInternalCalendar(db,{ownerUserId:row.owner_user_id,connectionId:row.connection_id,provider:row.provider,providerCalendarId:row.provider_calendar_id,name:row.name,writable:row.writable});
   return rows.length;
 }
 
@@ -178,7 +187,7 @@ export async function syncCalendarOrigin(db:Db,originId:string,args:{masterKey:M
   try{
     const connection=await getConnection(db,origin.connection_id);if(!connection)throw new Error('calendar connection is gone');const client=await loadClient(db,args.masterKey,'google');const token=await accessTokenFor(db,args.masterKey,{connection,client},{fetchImpl:args.fetchImpl});
     let page:string|null=null;let cursor:string|null=origin.sync_cursor;
-    do{const q=new URLSearchParams({showDeleted:'true',singleEvents:'false',maxResults:'2500'});if(cursor)q.set('syncToken',cursor);if(page)q.set('pageToken',page);const res=await providerRequest(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(origin.provider_calendar_id)}/events?${q}`,{headers:{Authorization:`Bearer ${token}`}},{fetchImpl:args.fetchImpl});
+    do{const q=new URLSearchParams({showDeleted:'true',singleEvents:'true',maxResults:'2500'});if(cursor)q.set('syncToken',cursor);if(page)q.set('pageToken',page);const res=await providerRequest(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(origin.provider_calendar_id)}/events?${q}`,{headers:{Authorization:`Bearer ${token}`}},{fetchImpl:args.fetchImpl});
       if(res.status===410&&cursor){await db.query(`update calendar_sync_origins set sync_cursor=null,status='idle' where id=$1`,[origin.id]);return syncCalendarOrigin(db,origin.id,args);}if(res.status<200||res.status>=300)raiseProviderError(res.status,res.body);const body:any=res.body??{};for(const remote of body.items??[])await applyRemote(db,origin,remote);page=body.nextPageToken??null;if(!page&&body.nextSyncToken)cursor=body.nextSyncToken;
     }while(page);
     await ensureGoogleWatch(db,origin,token,args.fetchImpl);
@@ -194,7 +203,7 @@ async function applyRemote(db:Db,origin:Origin,r:any){
   const allDay=!!r.start?.date;
   const [parentLink]=r.recurringEventId
     ? await db.query<{event_id:string}>(`select event_id from calendar_event_links where origin_id=$1 and provider_event_id=$2`,[origin.id,String(r.recurringEventId)]) : [];
-  const shaped:any={title:r.summary??null,description:r.description??null,location:r.location??null,all_day:allDay,starts_at:allDay?null:r.start?.dateTime??null,ends_at:allDay?null:r.end?.dateTime??null,start_date:allDay?r.start?.date:null,end_date:allDay?r.end?.date:null,timezone:r.start?.timeZone??'UTC',status:r.status??'confirmed',organizer:r.organizer?.email??null,attendees:(r.attendees??[]).map((a:any)=>({email:a.email,response_status:a.responseStatus})),recurrence:r.recurrence??[],recurring_event_id:parentLink?.event_id??null,original_start:r.originalStartTime?.dateTime??null,deleted_at:null};const remoteFp=calendarFingerprint(shaped);
-  if(link){const [local]=await db.query<CalendarEventRow>(`select * from calendar_events where id=$1`,[link.event_id]);const localFp=local?calendarFingerprint(local):null;const remoteChanged=link.remote_fingerprint!==null&&remoteFp!==link.remote_fingerprint;const localChanged=link.local_fingerprint!==null&&localFp!==link.local_fingerprint;if(remoteChanged&&localChanged){await db.query(`update calendar_events set sync_state='conflict',conflict_state='local_remote_changed' where id=$1`,[link.event_id]);return;}await db.query(`update calendar_events set title=$2,description=$3,location=$4,starts_at=$5,ends_at=$6,start_date=$7,end_date=$8,all_day=$9,timezone=$10,status=$11,organizer=$12,attendees=$13,recurrence=$14,sync_state='synced',sync_error=null,deleted_at=null where id=$1`,[link.event_id,shaped.title,shaped.description,shaped.location,shaped.starts_at,shaped.ends_at,shaped.start_date,shaped.end_date,shaped.all_day,shaped.timezone,shaped.status,shaped.organizer,json(shaped.attendees),json(shaped.recurrence)]);await db.query(`update calendar_event_links set remote_etag=$2,remote_revision=$3,remote_updated_at=$4,remote_fingerprint=$5,local_fingerprint=$5,last_synced_at=now() where origin_id=$1 and provider_event_id=$6`,[origin.id,r.etag??null,r.sequence==null?null:String(r.sequence),r.updated??null,remoteFp,remoteId]);return;}
-  const [tomb]=await db.query<{id:string}>(`select id from calendar_tombstones where origin_id=$1 and provider_event_id=$2`,[origin.id,remoteId]);if(tomb)return;const [event]=await db.query<{id:string}>(`insert into calendar_events(owner_user_id,calendar_id,title,description,location,starts_at,ends_at,start_date,end_date,all_day,timezone,status,organizer,attendees,recurrence,recurring_event_id,original_start,sync_state) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'synced') returning id`,[origin.owner_user_id,origin.calendar_id,shaped.title,shaped.description,shaped.location,shaped.starts_at,shaped.ends_at,shaped.start_date,shaped.end_date,shaped.all_day,shaped.timezone,shaped.status,shaped.organizer,json(shaped.attendees),json(shaped.recurrence),shaped.recurring_event_id,shaped.original_start]);await db.query(`insert into calendar_event_links(origin_id,event_id,provider_event_id,ical_uid,remote_etag,remote_revision,remote_updated_at,remote_fingerprint,local_fingerprint,last_synced_at) values($1,$2,$3,$4,$5,$6,$7,$8,$8,now())`,[origin.id,event.id,remoteId,r.iCalUID??null,r.etag??null,r.sequence==null?null:String(r.sequence),r.updated??null,remoteFp]);
+  const shaped:any={title:r.summary??null,description:r.description??null,location:r.location??null,all_day:allDay,starts_at:allDay?null:r.start?.dateTime??null,ends_at:allDay?null:r.end?.dateTime??null,start_date:allDay?r.start?.date:null,end_date:allDay?r.end?.date:null,timezone:r.start?.timeZone??'UTC',status:r.status??'confirmed',organizer:r.organizer?.email??null,attendees:(r.attendees??[]).map((a:any)=>({email:a.email,response_status:a.responseStatus})),recurrence:r.recurrence??[],recurring_event_id:parentLink?.event_id??null,recurring_provider_event_id:r.recurringEventId?String(r.recurringEventId):null,original_start:r.originalStartTime?.dateTime??r.originalStartTime?.date??null,deleted_at:null};const remoteFp=calendarFingerprint(shaped);
+  if(link){const [local]=await db.query<CalendarEventRow>(`select * from calendar_events where id=$1`,[link.event_id]);const localFp=local?calendarFingerprint(local):null;const remoteChanged=link.remote_fingerprint!==null&&remoteFp!==link.remote_fingerprint;const localChanged=link.local_fingerprint!==null&&localFp!==link.local_fingerprint;if(remoteChanged&&localChanged){await db.query(`update calendar_events set sync_state='conflict',conflict_state='local_remote_changed' where id=$1`,[link.event_id]);return;}await db.query(`update calendar_events set title=$2,description=$3,location=$4,starts_at=$5,ends_at=$6,start_date=$7,end_date=$8,all_day=$9,timezone=$10,status=$11,organizer=$12,attendees=$13,recurrence=$14,recurring_event_id=$15,recurring_provider_event_id=$16,original_start=$17,sync_state='synced',sync_error=null,deleted_at=null where id=$1`,[link.event_id,shaped.title,shaped.description,shaped.location,shaped.starts_at,shaped.ends_at,shaped.start_date,shaped.end_date,shaped.all_day,shaped.timezone,shaped.status,shaped.organizer,json(shaped.attendees),json(shaped.recurrence),shaped.recurring_event_id,shaped.recurring_provider_event_id,shaped.original_start]);await db.query(`update calendar_event_links set remote_etag=$2,remote_revision=$3,remote_updated_at=$4,remote_fingerprint=$5,local_fingerprint=$5,last_synced_at=now() where origin_id=$1 and provider_event_id=$6`,[origin.id,r.etag??null,r.sequence==null?null:String(r.sequence),r.updated??null,remoteFp,remoteId]);return;}
+  const [tomb]=await db.query<{id:string}>(`select id from calendar_tombstones where origin_id=$1 and provider_event_id=$2`,[origin.id,remoteId]);if(tomb)return;const [event]=await db.query<{id:string}>(`insert into calendar_events(owner_user_id,calendar_id,title,description,location,starts_at,ends_at,start_date,end_date,all_day,timezone,status,organizer,attendees,recurrence,recurring_event_id,recurring_provider_event_id,original_start,sync_state) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'synced') returning id`,[origin.owner_user_id,origin.calendar_id,shaped.title,shaped.description,shaped.location,shaped.starts_at,shaped.ends_at,shaped.start_date,shaped.end_date,shaped.all_day,shaped.timezone,shaped.status,shaped.organizer,json(shaped.attendees),json(shaped.recurrence),shaped.recurring_event_id,shaped.recurring_provider_event_id,shaped.original_start]);await db.query(`insert into calendar_event_links(origin_id,event_id,provider_event_id,ical_uid,remote_etag,remote_revision,remote_updated_at,remote_fingerprint,local_fingerprint,last_synced_at) values($1,$2,$3,$4,$5,$6,$7,$8,$8,now())`,[origin.id,event.id,remoteId,r.iCalUID??null,r.etag??null,r.sequence==null?null:String(r.sequence),r.updated??null,remoteFp]);
 }

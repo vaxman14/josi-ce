@@ -560,7 +560,15 @@ describe('the central calendar', () => {
     const listed = await call('/api/calendar/sources?refresh=true', { jar: cookies.alice });
     expect(listed.status, JSON.stringify(listed.body)).toBe(200);
     expect(listed.body.sources.map((s: any) => s.name)).toEqual(['Primary', 'Vaxman Kids']);
+    const primary=listed.body.sources.find((s:any)=>s.primary);
+    expect(primary).toMatchObject({providerCalendarId:'primary@example.test',writeDefault:true,writable:true});
+    expect(listed.body.sources.filter((s:any)=>s.primary)).toHaveLength(1);
+    expect(listed.body.sources.some((s:any)=>s.providerCalendarId==='primary')).toBe(false);
+    const origins=await db.query<{provider_calendar_id:string;last_sync_at:string|null}>(`select provider_calendar_id,last_sync_at from calendar_sync_origins where owner_user_id=$1 order by provider_calendar_id`,[ids.alice]);
+    expect(origins.map(origin=>origin.provider_calendar_id)).toEqual(['kids@example.test','primary@example.test']);
+    expect(origins.every(origin=>origin.last_sync_at!==null)).toBe(true);
     const kids = listed.body.sources.find((s: any) => s.name === 'Vaxman Kids');
+    expect(kids).toMatchObject({providerCalendarId:'kids@example.test',writable:false,writeDefault:false});
     expect((await call(`/api/calendar/sources/${kids.id}`, { method: 'PUT', jar: cookies.bob, body: { selected: false } })).status).toBe(404);
     expect((await call(`/api/calendar/sources/${kids.id}`, { method: 'PUT', jar: cookies.alice, body: { selected: false } })).status).toBe(200);
     const events = await call('/api/calendar/events?start=2026-09-14T00%3A00%3A00Z&end=2026-09-21T00%3A00%3A00Z', { jar: cookies.alice });

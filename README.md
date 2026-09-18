@@ -96,10 +96,11 @@ Two ways, both shipped:
   Alternatively, on a Community Edition installation, **your own ChatGPT plan**
   through OpenAI's own Codex CLI running on the same machine. Josi never sees,
   stores or forwards your login. It is per installation rather than per person,
-  shares your own Codex usage limits, reports no cost, and cannot call tools —
-  so Josi can talk but cannot act on that path. A **Claude subscription cannot**
-  be used: Anthropic's policy does not permit it outside Claude Code and
-  Claude.ai. Both positions, with sources, are in
+  shares your own Codex usage limits, reports no cost, and can use Josi's
+  permission-checked tools through the bundled private MCP harness. The same
+  first-party-CLI mechanism is implemented for Claude Code, but its public
+  release representation remains gated on the counsel review recorded in
+  FI-006. Both positions, with sources, are in
   [`docs/SUBSCRIPTION_AUTH.md`](docs/SUBSCRIPTION_AUTH.md).
 
 `linux/amd64` and `linux/arm64` images are published. Low-power ARM64 devices are
