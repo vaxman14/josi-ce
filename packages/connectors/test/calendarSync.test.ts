@@ -105,4 +105,21 @@ describe('internal calendar is authoritative',()=>{
     const [secondary]=await db.query<{writable:boolean;is_write_default:boolean}>(`select writable,is_write_default from calendar_sources where connection_id=$1 and provider_calendar_id='secondary'`,[c.id]);
     expect(secondary).toEqual({writable:false,is_write_default:false});
   });
+
+  it('moves an old internal default when backfilling the explicit write default',async()=>{
+    const c=await connected();
+    await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google',providerCalendarId:'old-primary',name:'Old primary',writable:true});
+    await db.query(`update calendar_sources set is_write_default=false where connection_id=$1`,[c.id]);
+    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,writable,selected,is_write_default)
+      values($1,$2,'new-default','New default',true,true,true)`,[alice,c.id]);
+
+    expect(await provisionCalendarOrigins(db)).toBe(1);
+    const [defaults]=await db.query<{n:number}>(`select count(*)::int n from calendars where owner_user_id=$1 and is_default`,[alice]);
+    expect(defaults.n).toBe(1);
+    const [mapped]=await db.query<{provider_calendar_id:string}>(`select s.provider_calendar_id from calendars c
+      join calendar_sync_origins o on o.calendar_id=c.id
+      join calendar_sources s on s.connection_id=o.connection_id and s.provider_calendar_id=o.provider_calendar_id
+      where c.owner_user_id=$1 and c.is_default and s.is_write_default`,[alice]);
+    expect(mapped.provider_calendar_id).toBe('new-default');
+  });
 });
