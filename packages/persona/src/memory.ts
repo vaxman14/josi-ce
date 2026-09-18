@@ -96,18 +96,30 @@ export async function addMemory(
     );
   }
 
-  const [row] = await db.query<Memory>(
-    `insert into memories
-       (owner_user_id, content, source_kind, source_id, provenance, confidence, confirmed_at, content_fingerprint)
-     values ($1, $2, $3, $4, $5, $6, case when $3 = 'manual' then now() else null end, $7)
-     returning *`,
-    [
-      args.ownerUserId, content, args.sourceKind ?? 'manual',
-      args.sourceKind === 'manual' || !args.sourceKind ? null : args.sourceId ?? null,
-      args.provenance ?? 'You added this',
-      Math.min(1, Math.max(0, args.confidence ?? 1)), memoryFingerprint(content),
-    ],
-  );
+  let row: Memory;
+  try {
+    [row] = await db.query<Memory>(
+      `insert into memories
+         (owner_user_id, content, source_kind, source_id, provenance, confidence, confirmed_at, content_fingerprint)
+       values ($1, $2, $3, $4, $5, $6, case when $3 = 'manual' then now() else null end, $7)
+       returning *`,
+      [
+        args.ownerUserId, content, args.sourceKind ?? 'manual',
+        args.sourceKind === 'manual' || !args.sourceKind ? null : args.sourceId ?? null,
+        args.provenance ?? 'You added this',
+        Math.min(1, Math.max(0, args.confidence ?? 1)), memoryFingerprint(content),
+      ],
+    );
+  } catch (error) {
+    // Keep the private memory text out of the generic database-error logger.
+    // This exact constraint is the expected result of a normalized duplicate;
+    // every other database error still follows the ordinary failure path.
+    if (error && typeof error === 'object' && 'code' in error && error.code === '23505'
+      && 'constraint' in error && error.constraint === 'memories_owner_content_fingerprint') {
+      throw new MemoryError('that memory already exists');
+    }
+    throw error;
+  }
 
   await appendEvent(db, {
     actorUserId: args.ownerUserId,

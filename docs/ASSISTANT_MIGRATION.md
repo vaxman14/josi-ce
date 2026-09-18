@@ -135,16 +135,16 @@ names, keeping AGENTS a closed enum vocabulary.
   existing bounded fields. Memory duplicate review permits at most **10,000 existing
   memories**; other categories can be imported separately above that limit.
 - At most two concurrent uploads per API process, one per owner. One unfinished
-  preview per owner, up to 20 retained previews and 32 MiB of manifest/receipt data
-  per installation. Raw uploaded buffers are released/cleared after scanning.
-  Sanitized preview manifests live in PostgreSQL and expire after ten minutes, on
-  discard, or opportunistic cleanup. Expiry is checked before use. Committed data
-  remains until deleted or rolled back; raw archives are never saved and encrypted
-  archive retention is not offered by this feature.
+  preview per owner, up to 20 retained previews and 32 MiB of sanitized manifest
+  data per installation. Raw uploaded buffers are released/cleared after scanning.
+  Preview manifests live in PostgreSQL and are deleted after commit or discard, or
+  after ten minutes by opportunistic cleanup. Expiry is checked before use.
+  Committed data remains until deleted or rolled back; raw archives are never saved
+  and encrypted archive retention is not offered by this feature.
 - Preview rows and commit locks are shared through PostgreSQL, so multiple API
-  replicas do not require request affinity. A commit response can be retried on
-  another replica while its retained preview receipt remains valid; batch history
-  is also authoritative after an uncertain response.
+  replicas do not require request affinity. After commit, batch history is the
+  authoritative receipt store, so an uncertain commit response can be retried on
+  another replica without retaining a duplicate preview row.
 - Full receipts are fetched individually; batch/archive lists return 20 records
   per page. No background migration, automatic external action or live source
   connection is created.

@@ -118,6 +118,7 @@ describe('migration HTTP boundaries', () => {
       expect(review.status).toBe(200);
       const committed = await requestAt(origin, `/migrations/${preview.previewId}/commit`, 'POST', { confirm: 'import', revision: review.body.revision });
       expect(committed.status).toBe(200); expect(committed.body.receipt.created).toBe(1);
+      expect(await db.query('select id from migration_previews where id=$1', [preview.previewId])).toHaveLength(0);
       const retry = await request(`/migrations/${preview.previewId}/commit`, 'POST', { confirm: 'import', revision: review.body.revision });
       expect(retry.body).toEqual(committed.body);
     } finally { await new Promise<void>(resolve => replica.close(() => resolve())); }
@@ -165,7 +166,7 @@ describe('migration HTTP boundaries', () => {
     const second = await reviewed('A new unrelated synthetic fact');
     const saved = await request(`/migrations/${second.previewId}/commit`, 'POST', { confirm: 'import', revision: second.revision });
     expect((await request(`/migrations/batches/${saved.body.receipt.batchId}/rollback`, 'POST', { confirm: 'rollback' })).body.removed).toBe(1);
-    expect((await request(`/migrations/${second.previewId}/commit`, 'POST', { confirm: 'import', revision: second.revision })).status).toBe(404);
+    expect((await request(`/migrations/${second.previewId}/commit`, 'POST', { confirm: 'import', revision: second.revision })).status).toBe(409);
     expect(await db.query('select id from memories')).toHaveLength(1);
   });
   it('archives cannot be written, resumed or read by another owner and stay out of prompts', async () => {

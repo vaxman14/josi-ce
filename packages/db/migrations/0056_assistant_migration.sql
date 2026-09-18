@@ -1,5 +1,6 @@
 -- Personal, additive imports. CE's tenant boundary is one installation/database.
--- No upload bytes or pending previews are persisted.
+-- Raw upload bytes are never persisted. Sanitized, bounded previews are kept
+-- only until commit, discard, or expiry.
 create table migration_batches (
   id uuid primary key,
   owner_user_id uuid not null references users(id) on delete cascade,
@@ -22,10 +23,9 @@ create table migration_previews (
   scanned jsonb,
   reviewed jsonb,
   revision uuid,
-  receipt jsonb,
   expires_at timestamptz not null,
   created_at timestamptz not null default now(),
-  check (scanned is not null or receipt is not null),
+  check (scanned is not null),
   check ((reviewed is null) = (revision is null))
 );
 create index migration_previews_owner on migration_previews (installation_id, owner_user_id, created_at desc);
