@@ -193,14 +193,14 @@ export async function resolveCalendarTimeIntent(
   if (!start.ok) {
     return start.reason === 'nonexistent'
       ? { kind: 'invalid', error: 'nonexistent_local_time', message: `${localTime} does not exist on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Choose another time.` }
-      : { kind: 'invalid', error: 'ambiguous_local_time', message: `${localTime} occurs twice on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Give an explicit UTC offset or choose another time.` };
+      : { kind: 'invalid', error: 'ambiguous_local_time', message: `${localTime} occurs twice on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Choose another unambiguous time.` };
   }
   if (explicitEndTime) {
     const end = resolveCivilMinute(localDate, explicitEndTime, temporal.timeZone);
     if (!end.ok) {
       return end.reason === 'nonexistent'
         ? { kind: 'invalid', error: 'nonexistent_local_time', message: `${explicitEndTime} does not exist on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Choose another time.` }
-        : { kind: 'invalid', error: 'ambiguous_local_time', message: `${explicitEndTime} occurs twice on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Give an explicit UTC offset or choose another time.` };
+        : { kind: 'invalid', error: 'ambiguous_local_time', message: `${explicitEndTime} occurs twice on ${localDate} in ${temporal.timeZone} because of the daylight-saving transition. Choose another unambiguous time.` };
     }
     const explicitDuration = (end.instant.getTime() - start.instant.getTime()) / 60_000;
     if (!Number.isInteger(explicitDuration) || explicitDuration <= 0 || explicitDuration > 24 * 60) {
