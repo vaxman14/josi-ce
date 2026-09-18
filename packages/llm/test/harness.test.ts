@@ -43,6 +43,7 @@ describe('the harness context file', () => {
       expect(ctx.tools).toEqual(['create_task']);
       expect(ctx.databaseUrl).toBe('postgresql://josi@db:5432/josi');
       expect(ctx.callsPath).toBe(s.callsPath);
+      expect(statSync(s.callsPath).mode & 0o777).toBe(0o600);
     } finally {
       s.cleanup();
     }
@@ -61,9 +62,9 @@ describe('reading back what the server recorded', () => {
   it('parses the calls file and survives a torn last line', () => {
     const dir = mkdtempSync(join(tmpdir(), 'josi-calls-'));
     const path = join(dir, 'calls.jsonl');
-    writeFileSync(path, `${JSON.stringify({ id: '1', name: 'create_task', input: { a: 1 } })}\n{"tor`);
+    writeFileSync(path, `${JSON.stringify({ id: '1', name: 'create_task', input: { a: 1 }, result: { ok:true,state:'ready' } })}\n{"tor`);
     const calls = readExecutedCalls(path);
-    expect(calls).toEqual([{ id: '1', name: 'create_task', input: { a: 1 } }]);
+    expect(calls).toEqual([{ id: '1', name: 'create_task', input: { a: 1 }, result:{ok:true,state:'ready'} }]);
   });
 
   it('a missing file means no tool ran, not an error', () => {
@@ -138,7 +139,7 @@ function harnessRunner(reply: string): { runner: SpawnRunner; seen: { args: stri
     if (override) {
       const contextPath = JSON.parse(contextPathFrom(override));
       const ctx = JSON.parse(readFileSync(contextPath, 'utf8'));
-      writeFileSync(ctx.callsPath, `${JSON.stringify({ id: 'c1', name: 'record_number', input: { value: 7 } })}\n`);
+      writeFileSync(ctx.callsPath, `${JSON.stringify({ id: 'c1', name: 'record_number', input: { value: 7 }, result:{ok:true,recorded:7} })}\n`);
     }
     return { code: 0, stdout: reply, timedOut: false, stderr: '' };
   };
@@ -159,7 +160,7 @@ describe('the codex provider with tools', () => {
     expect(res.text).toBe('done');
     // Nothing pending: the CLI's own loop already ran the tool.
     expect(res.toolCalls).toEqual([]);
-    expect(res.executedToolCalls).toEqual([{ id: 'c1', name: 'record_number', input: { value: 7 } }]);
+    expect(res.executedToolCalls).toEqual([{ id: 'c1', name: 'record_number', input: { value: 7 }, result:{ok:true,recorded:7} }]);
   });
 
   it('cleans up the context file even when the run succeeds', async () => {
@@ -191,7 +192,7 @@ describe('the capability probe over the harness', () => {
           text: 'ok',
           toolCalls: [],
           ...(request.tools?.length
-            ? { executedToolCalls: [{ id: '1', name: 'record_number', input: { value: 7 } }] }
+            ? { executedToolCalls: [{ id: '1', name: 'record_number', input: { value: 7 }, result:{ok:true,recorded:7} }] }
             : {}),
           usage: { inputTokens: 0, outputTokens: 0 },
           latencyMs: 1,

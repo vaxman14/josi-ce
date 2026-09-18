@@ -15,9 +15,9 @@
 //     dressed up as a crash.
 //   * Execution is `executeAssistantTool`, the exact code the in-process loop
 //     runs, ownership checks and all.
-//   * Every call is appended to the calls file BEFORE it runs, so the provider
-//     reports what was attempted even if the tool then fails. That file is how
-//     the capability probe proves a call genuinely reached us.
+//   * Every completed call and its real outcome is appended to the private
+//     calls file. Failures are recorded in their safe Josi error shape. That
+//     file is how the capability probe and reply guards know what truly ran.
 //
 // The two probe tools are contextless by design. `record_number` exists so the
 // standard capability probe measures the real end-to-end harness rather than a
@@ -101,45 +101,54 @@ export function buildCore(ctx: HarnessContext, connect: () => Promise<Db>): McpC
   };
 
   const execute = async (name: string, input: Record<string, unknown>, callId: string): Promise<McpToolOutcome> => {
-    // Ground truth first: recorded before execution so even a failing call is
-    // visible to the provider that reads this file back.
-    appendFileSync(ctx.callsPath, `${JSON.stringify({ id: callId, name, input })}\n`);
-
+    const completed = (result: unknown): McpToolOutcome => {
+      // The private ephemeral file is the ground truth consumed by approval,
+      // presentation and fabrication guards. Vendor prose is not evidence.
+      appendFileSync(ctx.callsPath, `${JSON.stringify({ id: callId, name, input, result })}\n`, { mode: 0o600 });
+      return { text: JSON.stringify(result) };
+    };
     if (name === 'josi_health') {
-      return { text: JSON.stringify({ ok: true, echo: input.message ?? null }) };
+      return completed({ ok: true, echo: input.message ?? null });
     }
     if (name === 'record_number') {
       // A no-op on purpose. The probe asks whether a call ARRIVES, not whether
-      // it changes anything — recording it above already answered.
-      return { text: JSON.stringify({ ok: true, recorded: input.value ?? null }) };
+      // it changes anything — recording its completed result answers that.
+      return completed({ ok: true, recorded: input.value ?? null });
     }
 
     if (!ctx.userId) {
       // Honest refusal, phrased for the model to relay. No user means no owner
       // for the work, and inventing one is the thing this file must never do.
-      return { text: JSON.stringify({ ok: false, error: 'no_user', message: 'This session has no signed-in person attached, so no work can be created or changed.' }) };
+      return completed({ ok: false, error: 'no_user', message: 'This session has no signed-in person attached, so no work can be created or changed.' });
     }
 
-    db ??= connect();
-    const conn = await db;
+    try {
+      db ??= connect();
+      const conn = await db;
 
-    // The same gate, the same key, the same sentence as the in-process loop.
-    const decision = await checkStepUp(conn, {
-      userId: ctx.userId,
-      sessionKey: ctx.sessionKey ?? ctx.threadId ?? 'mcp',
-      action: name,
-    });
-    if (!decision.allowed) {
-      return { text: JSON.stringify({ ok: false, error: decision.reason, message: decision.message }) };
+      // The same gate, the same key, the same sentence as the in-process loop.
+      const decision = await checkStepUp(conn, {
+        userId: ctx.userId,
+        sessionKey: ctx.sessionKey ?? ctx.threadId ?? 'mcp',
+        action: name,
+      });
+      if (!decision.allowed) {
+        return completed({ ok: false, error: decision.reason, message: decision.message });
+      }
+
+      const result = await executeAssistantTool(
+        conn,
+        { userId: ctx.userId, threadId: ctx.threadId, connectors: connectors() },
+        name,
+        input,
+      );
+      return completed(result);
+    } catch (err) {
+      // Record the real failure shape for guards, but keep stack traces and
+      // provider bodies out of the private handoff file.
+      completed({ ok: false, error: 'failed', message: (err as Error).message });
+      throw err;
     }
-
-    const result = await executeAssistantTool(
-      conn,
-      { userId: ctx.userId, threadId: ctx.threadId, connectors: connectors() },
-      name,
-      input,
-    );
-    return { text: JSON.stringify(result) };
   };
 
   return { tools, execute };

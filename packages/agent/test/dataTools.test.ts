@@ -15,7 +15,7 @@ import {
 import { executeAssistantTool } from '../src/execute.js';
 import { dataToolAvailability } from '../src/dataTools.js';
 import { buildCore } from '../src/mcp/server.js';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -231,19 +231,28 @@ describe('execution re-checks the switch', () => {
     expect(Math.round(days)).toBe(7);
   });
 
-  it('reports an empty calendar as empty, never invented', async () => {
+  it('refuses a false-empty claim until every selected calendar has fresh successful coverage', async () => {
     const connection = await connectGoogle(alice);
     await enable(connection, 'google.calendar.read');
-    const empty = (async () => new Response(JSON.stringify({ items: [] }), {
-      status: 200, headers: { 'content-type': 'application/json' },
-    })) as unknown as typeof fetch;
-    const result = await executeAssistantTool(
-      db, { userId: alice, threadId: null, connectors: access(empty) },
-      'query_calendar', {},
+    const missing = await executeAssistantTool(
+      db, { userId: alice, threadId: null, connectors: null }, 'query_calendar', {},
+    ) as {ok:boolean;error:string;message:string};
+    expect(missing).toMatchObject({ok:false,error:'calendar_coverage_unavailable'});
+    expect(missing.message).toMatch(/cannot honestly say.*empty/i);
+
+    const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:connection.id,provider:'google',providerCalendarId:'selected@example.test'});
+    await db.query(`update calendar_sync_origins set status='idle',last_sync_at=now() where id=$1`,[origin.id]);
+    const fresh = await executeAssistantTool(
+      db, { userId: alice, threadId: null, connectors: null }, 'query_calendar', {},
     ) as { ok: boolean; events: unknown[]; message?: string };
-    expect(result.ok).toBe(true);
-    expect(result.events).toEqual([]);
-    expect(result.message).toContain('no events');
+    expect(fresh.ok).toBe(true);
+    expect(fresh.events).toEqual([]);
+    expect(fresh.message).toContain('no events');
+
+    await db.query(`update calendar_sync_origins set last_sync_at=now()-interval '1 day' where id=$1`,[origin.id]);
+    expect(await executeAssistantTool(db,{userId:alice,threadId:null,connectors:null},'query_calendar',{})).toMatchObject({ok:false,error:'calendar_coverage_unavailable'});
+    await db.query(`update calendar_sync_origins set last_sync_at=now(),status='error' where id=$1`,[origin.id]);
+    expect(await executeAssistantTool(db,{userId:alice,threadId:null,connectors:null},'query_calendar',{})).toMatchObject({ok:false,error:'calendar_coverage_unavailable'});
   });
 
   it('refuses an unreasonable calendar range rather than guessing one', async () => {
@@ -345,6 +354,8 @@ describe('the MCP server offers the same catalogue', () => {
     const parsed = JSON.parse(outcome.text) as { ok: boolean; error: string };
     expect(parsed.ok).toBe(false);
     expect(['not_enabled', 'unavailable']).toContain(parsed.error);
+    const recorded=JSON.parse(readFileSync(join(dir,'calls.jsonl'),'utf8').trim());
+    expect(recorded).toMatchObject({id:'c1',name:'search_email',input:{query:'x'},result:parsed});
   });
 });
 
@@ -380,23 +391,20 @@ describe('multi-turn consequential action drafts',()=>{
     expect(await db.query(`select id from assistant_action_states where thread_id=$1 and domain='email'`,[thread])).toHaveLength(1);
   });
 
-  it('resolves one primary calendar, preserves a separate EDD event, and records conflicts as verified availability',async()=>{
+  it('uses the one write default without asking among read calendars, preserves a separate EDD event, and records conflicts',async()=>{
     let c=await connectGoogle(alice);await enable(c,'google.calendar.read');
     c=await upsertConnection(db,key,{ownerUserId:alice,provider:'google',providerAccountId:'acct-1',accountEmail:'a@gmail.test',tokens:{accessToken:'live-access-token',refreshToken:'refresh-token',expiresIn:3600,grantedScopes:`${GOOGLE_READ_SCOPES} https://www.googleapis.com/auth/calendar`},requestedCapabilities:['google.calendar.write']});
     await enable(c,'google.calendar.write');
-    await db.query(`update calendar_sources set is_primary=true,name='Main',writable=true where connection_id=$1 and provider_calendar_id='selected@example.test'`,[c.id]);
+    await db.query(`update calendar_sources set is_primary=true,is_write_default=true,name='Main',writable=true where connection_id=$1 and provider_calendar_id='selected@example.test'`,[c.id]);
     await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary) values($1,$2,'secondary','LexisNexis',false)`,[alice,c.id]);
     const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google',providerCalendarId:'selected@example.test',name:'Main'});
     await createInternalEvent(db,{ownerUserId:alice,originId:origin.id,event:{title:'Existing conflict',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00'}});
     const thread=(await db.query<{id:string}>(`insert into threads(owner_user_id,title) values($1,'Calendar exact repro') returning id`,[alice]))[0].id;
     const ctx={userId:alice,threadId:thread,turnId:null,connectors:null};
     expect(await db.query(`select c.id from connections c join connection_capabilities cc on cc.connection_id=c.id where c.id=$1 and cc.capability='google.calendar.read' and cc.enabled and cc.scopes_granted_at is not null`,[c.id])).toHaveLength(1);
-    const first=await executeAssistantTool(db,ctx,'draft_calendar_event',{title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00'}) as any;
-    expect(first).toMatchObject({error:'select_calendar',state:'collecting'});
-    await present(thread,first,'Which calendar should I use?');
-    const second=await executeAssistantTool(db,ctx,'draft_calendar_event',{calendar:'the main one'}) as any;
-    expect(second,JSON.stringify(second)).toMatchObject({ok:true,state:'prepared'});
-    const [task]=await db.query<{slots:any}>(`select slots from tasks where id=$1`,[second.task_id]);
+    const prepared=await executeAssistantTool(db,ctx,'draft_calendar_event',{title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00'}) as any;
+    expect(prepared,JSON.stringify(prepared)).toMatchObject({ok:true,state:'prepared'});
+    const [task]=await db.query<{slots:any}>(`select slots from tasks where id=$1`,[prepared.task_id]);
     expect(task.slots).toMatchObject({title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00',calendar_intent:'create_separate_event',calendar_source:{calendar_name:'Main'},calendar_availability:{verified:true,conflicts:[{title:'Existing conflict'}]}});
     expect(JSON.stringify(task.slots)).not.toContain('LexisNexis');
     expect(task.slots).not.toHaveProperty('event_id');

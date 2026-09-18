@@ -132,6 +132,12 @@ export interface ToolCall {
   input: Record<string, unknown>;
 }
 
+/** A call completed by an out-of-process subscription harness. The result is
+ * recorded by Josi's MCP server, not reconstructed from vendor CLI prose. */
+export interface ExecutedToolCall extends ToolCall {
+  result: unknown;
+}
+
 export interface Usage {
   inputTokens: number;
   outputTokens: number;
@@ -148,7 +154,7 @@ export interface ChatResponse {
    * what happened and the probe can verify a call genuinely reached us — and
    * they must NEVER be executed again by the caller. Pending calls that still
    * need executing stay in `toolCalls`, exactly as before. */
-  executedToolCalls?: ToolCall[];
+  executedToolCalls?: ExecutedToolCall[];
   usage: Usage;
   /** Wall-clock time for the call, recorded for self-hosted endpoints where
    * latency is the only cost signal there is. */

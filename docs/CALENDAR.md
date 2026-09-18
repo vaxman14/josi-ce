@@ -6,6 +6,13 @@ view; colors supplement, rather than replace, their names. An unavailable select
 calendar produces an error, never substitution with the account's primary calendar.
 Enable calendar reading in Connections if access was withdrawn.
 
+Discovery reconciles Google's request alias `primary` to the stable provider
+calendar ID and permits only one provider-marked primary per account. Every
+selected calendar, including secondaries, gets an internal sync origin and is
+synced immediately. Select exactly one writable calendar as **Write default**.
+Ordinary new-event requests use that destination without asking among calendars
+selected only for reading; an explicit calendar name or source still wins.
+
 Choose List, Month, Week or Day. List shows the next seven civil dates from the
 chosen date. Month has a six-week grid; click a date for Day. Previous/Next move a
 whole month in Month, a week in Week/List, or a day in Day. Today uses the displayed
@@ -31,7 +38,19 @@ event ID. Ambiguous older IDs require a fresh query. Keep these receipts in
 citations and pass the exact `calendar_event_id` for calendar reminders; the
 verified provenance is retained in the reminder's durable message. Event drafts
 preserve the exact source in their approval slots; no provider write is implied by
-a draft. With multiple selections, creation drafts require an explicit source.
+a draft. An empty answer is returned only when every selected source has fresh,
+successful synchronization coverage. Missing, stale, incomplete or failed coverage
+produces an explicit refusal instead of a false "nothing scheduled" claim.
+
+Google sync requests expanded recurrence instances and retains the provider series
+ID plus original occurrence time, so recurring appointments appear in the queried
+range without pretending the first occurrence is the whole series.
+
+Assistant turns receive one effective timezone: the person's USER profile value,
+falling back to the workspace timezone and then UTC. The prompt includes the exact
+local current date/time and explicit today/tomorrow/yesterday civil dates. Relative
+dates advance calendar dates rather than adding 24 hours, including 23- and 25-hour
+daylight-saving transitions.
 
 ## Acceptance checklist and reproduction
 

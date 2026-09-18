@@ -76,12 +76,12 @@ describe('the Josi core', () => {
     expect(names).not.toContain('cancel_task');
   });
 
-  it('records every call to the calls file before running it', async () => {
+  it('records every completed call with its real outcome', async () => {
     const ctx = ctxFor([]);
     const core = buildCore(ctx, NO_DB);
     await core.execute('josi_health', { message: 'ping' }, 'id-1');
     const line = JSON.parse(readFileSync(ctx.callsPath, 'utf8').trim());
-    expect(line).toEqual({ id: 'id-1', name: 'josi_health', input: { message: 'ping' } });
+    expect(line).toEqual({ id: 'id-1', name: 'josi_health', input: { message: 'ping' }, result:{ok:true,echo:'ping'} });
   });
 
   it('probe tools answer without a database or a user', async () => {

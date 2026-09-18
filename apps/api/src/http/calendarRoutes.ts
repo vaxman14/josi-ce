@@ -1,8 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import { loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import {
-  accessTokenFor, getConnection, getEvent, listCalendars, listEvents, loadClient,
-  type OAuthProvider,
+  accessTokenFor, ensureInternalCalendar, getConnection, getEvent, listCalendars, listEvents, loadClient,
+  syncCalendarOrigin,
+  type CalendarProvider, type OAuthProvider,
 } from '@josi-ce/connectors';
 import { asyncRoute, param } from './async.js';
 import { requireAuth } from './authz.js';
@@ -34,7 +35,7 @@ async function calendarAccess(db: Db, connectionId: string): Promise<boolean> {
 
 async function discover(ctx: Ctx, ownerUserId: string) {
   const errors: Array<{ connectionId: string; provider: OAuthProvider; error: string }> = [];
-  const connections = await ctx.db.query<{ id: string; provider: OAuthProvider }>(
+  const connections = await ctx.db.query<{ id: string; provider: CalendarProvider }>(
     `select id, provider from connections where owner_user_id = $1
       and provider in ('google','microsoft') and status = 'active' order by created_at`,
     [ownerUserId],
@@ -43,17 +44,71 @@ async function discover(ctx: Ctx, ownerUserId: string) {
     try {
       if (!(await calendarAccess(ctx.db, connection.id))) continue;
       const full = await getConnection(ctx.db, connection.id); if (!full) continue;
-      const client = await loadClient(ctx.db, key(ctx), connection.provider);
-      const accessToken = await accessTokenFor(ctx.db, key(ctx), { connection: full, client }, { fetchImpl: ctx.fetchImpl });
+      const masterKey = key(ctx);
+      const client = await loadClient(ctx.db, masterKey, connection.provider);
+      const accessToken = await accessTokenFor(ctx.db, masterKey, { connection: full, client }, { fetchImpl: ctx.fetchImpl });
       const remote = await listCalendars(connection.provider, { accessToken }, { fetchImpl: ctx.fetchImpl });
+      const truePrimary = remote.find((calendar) => calendar.primary);
+      if (truePrimary && truePrimary.sourceId !== 'primary') {
+        // `primary` is a Google request alias, not the durable calendar id.
+        // Early calendar sync created it before discovery knew the real id.
+        await ctx.db.query(
+          `update calendar_sync_origins o set provider_calendar_id=$2
+            where o.connection_id=$1 and o.provider_calendar_id='primary'
+              and not exists(select 1 from calendar_sync_origins x where x.connection_id=$1 and x.provider_calendar_id=$2)`,
+          [connection.id, truePrimary.sourceId],
+        );
+        await ctx.db.query(
+          `update calendar_sources s set provider_calendar_id=$2
+            where s.connection_id=$1 and s.provider_calendar_id='primary'
+              and not exists(select 1 from calendar_sources x where x.connection_id=$1 and x.provider_calendar_id=$2)`,
+          [connection.id, truePrimary.sourceId],
+        );
+      }
+      // The provider's latest list is authoritative. Clearing first keeps the
+      // partial unique index useful even if an old response marked two rows.
+      await ctx.db.query(`update calendar_sources set is_primary=false where connection_id=$1`, [connection.id]);
       for (const calendar of remote) await ctx.db.query(
         `insert into calendar_sources
-          (owner_user_id, connection_id, provider_calendar_id, name, color, is_primary, writable)
-         values ($1,$2,$3,$4,$5,$6,$7)
+          (owner_user_id, connection_id, provider_calendar_id, name, color, is_primary, writable, is_write_default)
+         values ($1,$2,$3,$4,$5,$6,$7,
+           $6 and $7 and not exists(select 1 from calendar_sources where owner_user_id=$1 and is_write_default))
          on conflict (connection_id, provider_calendar_id) do update set
           name=excluded.name, color=excluded.color, is_primary=excluded.is_primary,
           writable=excluded.writable, last_discovered_at=now()`,
         [ownerUserId, connection.id, calendar.sourceId, calendar.name, calendar.color, calendar.primary, calendar.writable],
+      );
+      await ctx.db.query(
+        `delete from calendar_sources s where s.connection_id=$1 and s.provider_calendar_id='primary'
+          and exists(select 1 from calendar_sources real where real.connection_id=$1 and real.is_primary and real.provider_calendar_id<>'primary')
+          and not exists(select 1 from calendar_sync_origins o where o.connection_id=$1 and o.provider_calendar_id='primary')`,
+        [connection.id],
+      );
+      // Every owner has exactly one write destination, independent of how
+      // many calendars are selected for reading.
+      const [writeDefault] = await ctx.db.query<{id:string}>(
+        `select id from calendar_sources where owner_user_id=$1 and writable
+         order by is_write_default desc,is_primary desc,last_discovered_at desc,id limit 1`, [ownerUserId],
+      );
+      await ctx.db.query(`update calendar_sources set is_write_default=false where owner_user_id=$1 and is_write_default`, [ownerUserId]);
+      if(writeDefault)await ctx.db.query(`update calendar_sources set is_write_default=true where id=$1 and owner_user_id=$2`,[writeDefault.id,ownerUserId]);
+      const selected = await ctx.db.query<{ provider_calendar_id:string; name:string }>(
+        `select provider_calendar_id,name from calendar_sources where connection_id=$1 and selected order by id`,
+        [connection.id],
+      );
+      for (const source of selected) {
+        const origin = await ensureInternalCalendar(ctx.db, {
+          ownerUserId, connectionId: connection.id, provider: connection.provider,
+          providerCalendarId: source.provider_calendar_id, name: source.name,
+        });
+        await syncCalendarOrigin(ctx.db, origin.id, { masterKey, fetchImpl: ctx.fetchImpl });
+      }
+      await ctx.db.query(`update calendars set is_default=false where owner_user_id=$1 and is_default`, [ownerUserId]);
+      await ctx.db.query(
+        `update calendars c set is_default=true
+          from calendar_sync_origins o join calendar_sources s
+            on s.connection_id=o.connection_id and s.provider_calendar_id=o.provider_calendar_id
+         where c.id=o.calendar_id and o.owner_user_id=$1 and s.is_write_default`, [ownerUserId],
       );
     } catch {
       errors.push({ connectionId: connection.id, provider: connection.provider, error: 'That account could not be refreshed. Check its connection health.' });
@@ -130,6 +185,7 @@ export function calendarRoutes(ctx: Ctx): Router {
     const sources = await ctx.db.query(
       `select s.id, s.connection_id as "connectionId", s.provider_calendar_id as "providerCalendarId",
               s.name, s.color, s.is_primary as "primary", s.selected, s.writable,
+              s.is_write_default as "writeDefault",
               c.provider, c.account_email as account
          from calendar_sources s join connections c on c.id=s.connection_id
         where s.owner_user_id=$1 order by c.provider, c.account_email nulls last, s.is_primary desc, s.name`,
@@ -138,11 +194,45 @@ export function calendarRoutes(ctx: Ctx): Router {
     return res.json({ sources, discoveryErrors });
   }));
   r.put('/sources/:id', handle(async (req, res) => {
-    const rows = await ctx.db.query<{ id: string }>(
-      `update calendar_sources set selected=$3 where id=$1 and owner_user_id=$2 returning id`,
-      [param(req, 'id'), req.user!.id, req.body?.selected === true],
-    );
+    const sourceId = param(req, 'id');
+    const wantsDefault = req.body?.writeDefault === true;
+    const selected = req.body?.selected;
+    const rows = wantsDefault
+      ? await ctx.db.query<{ id: string }>(
+        `update calendar_sources set selected=true
+          where id=$1 and owner_user_id=$2 and writable returning id`, [sourceId, req.user!.id],
+      )
+      : await ctx.db.query<{ id: string }>(
+        `update calendar_sources set selected=$3 where id=$1 and owner_user_id=$2 returning id`,
+        [sourceId, req.user!.id, selected === true],
+      );
     if (!rows.length) throw new HttpError(404, 'calendar not found');
+    if (wantsDefault) {
+      await ctx.db.query(`update calendar_sources set is_write_default=false where owner_user_id=$1 and is_write_default`,[req.user!.id]);
+      await ctx.db.query(`update calendar_sources set is_write_default=true where id=$1 and owner_user_id=$2`,[sourceId,req.user!.id]);
+    }
+    if (!wantsDefault) {
+      const [nextDefault]=await ctx.db.query<{id:string}>(`select id from calendar_sources where owner_user_id=$1 and selected and writable order by is_write_default desc,is_primary desc,last_discovered_at desc,id limit 1`,[req.user!.id]);
+      await ctx.db.query(`update calendar_sources set is_write_default=false where owner_user_id=$1 and is_write_default`,[req.user!.id]);
+      if(nextDefault)await ctx.db.query(`update calendar_sources set is_write_default=true where id=$1 and owner_user_id=$2`,[nextDefault.id,req.user!.id]);
+      if (selected === true) {
+        const [source] = await ctx.db.query<{connection_id:string;provider_calendar_id:string;name:string;provider:CalendarProvider}>(
+          `select s.connection_id,s.provider_calendar_id,s.name,c.provider from calendar_sources s
+            join connections c on c.id=s.connection_id where s.id=$1 and s.owner_user_id=$2`, [sourceId, req.user!.id],
+        );
+        if (source) {
+          const masterKey=key(ctx);
+          const origin=await ensureInternalCalendar(ctx.db,{ownerUserId:req.user!.id,connectionId:source.connection_id,provider:source.provider,providerCalendarId:source.provider_calendar_id,name:source.name});
+          await syncCalendarOrigin(ctx.db,origin.id,{masterKey,fetchImpl:ctx.fetchImpl});
+        }
+      }
+    }
+    await ctx.db.query(`update calendars set is_default=false where owner_user_id=$1 and is_default`, [req.user!.id]);
+    await ctx.db.query(
+      `update calendars c set is_default=true from calendar_sync_origins o
+        join calendar_sources s on s.connection_id=o.connection_id and s.provider_calendar_id=o.provider_calendar_id
+       where c.id=o.calendar_id and s.owner_user_id=$1 and s.is_write_default`, [req.user!.id],
+    );
     return res.json({ ok: true });
   }));
   r.get('/events', handle(async (req, res) => {

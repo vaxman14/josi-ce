@@ -4,7 +4,7 @@ import { createUser } from '../../auth/src/users.js';
 import { MasterKey } from '@josi-ce/core';
 import {
   createInternalEvent, enqueueCalendarWebhook, ensureInternalCalendar, getInternalEvent, listInternalEvents,
-  processCalendarOutbox, saveClient, setCapability, syncCalendarOrigin,
+  processCalendarOutbox, provisionCalendarOrigins, saveClient, setCapability, syncCalendarOrigin,
   updateInternalEvent, upsertConnection,
 } from '../src/index.js';
 
@@ -63,6 +63,17 @@ describe('internal calendar is authoritative',()=>{
     const [saved]=await db.query<any>(`select sync_cursor,status from calendar_sync_origins where id=$1`,[origin.id]); expect(saved).toMatchObject({sync_cursor:'fresh',status:'idle'});
   });
 
+  it('imports recurring instances with their provider series and original occurrence time',async()=>{
+    const c=await connected();const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google'});
+    let requested='';
+    const fetchImpl:typeof fetch=async(url)=>{requested=String(url);return new Response(JSON.stringify({items:[{id:'series_20260918T220000Z',recurringEventId:'series',originalStartTime:{dateTime:'2026-09-18T22:00:00Z'},summary:'Weekly call',start:{dateTime:'2026-09-18T22:00:00Z'},end:{dateTime:'2026-09-18T22:30:00Z'}}],nextSyncToken:'recurring'}),{status:200});};
+    await syncCalendarOrigin(db,origin.id,{masterKey:key,fetchImpl});
+    expect(requested).toContain('singleEvents=true');
+    const [event]=await db.query<{recurring_provider_event_id:string;original_start:string}>(`select recurring_provider_event_id,original_start from calendar_events where owner_user_id=$1`,[alice]);
+    expect(event.recurring_provider_event_id).toBe('series');
+    expect(new Date(event.original_start).toISOString()).toBe('2026-09-18T22:00:00.000Z');
+  });
+
   it('surfaces a concurrent local/remote edit instead of overwriting either',async()=>{
     const c=await connected(); const origin=await ensureInternalCalendar(db,{ownerUserId:alice,connectionId:c.id,provider:'google'});
     const first:typeof fetch=async()=>new Response(JSON.stringify({items:[{id:'r1',summary:'Original',etag:'"1"',start:{dateTime:'2026-09-20T10:00:00Z'},end:{dateTime:'2026-09-20T11:00:00Z'}}],nextSyncToken:'s1'}),{status:200});
@@ -83,5 +94,13 @@ describe('internal calendar is authoritative',()=>{
     expect(await enqueueCalendarWebhook(db,{channelId:'channel',resourceId:'resource'})).toBe(true);
     const [jobs]=await db.query<{n:number}>(`select count(*)::int n from job_queue where kind='calendar.sync'`); expect(jobs.n).toBe(1);
     expect(await enqueueCalendarWebhook(db,{channelId:'wrong',resourceId:'resource'})).toBe(false);
+  });
+
+  it('backfills every selected calendar, including secondaries',async()=>{
+    const c=await connected();
+    await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable,selected) values($1,$2,'real-primary','Primary',true,true,true),($1,$2,'secondary','Secondary',false,true,true),($1,$2,'off','Off',false,true,false)`,[alice,c.id]);
+    expect(await provisionCalendarOrigins(db)).toBe(2);
+    const origins=await db.query<{provider_calendar_id:string}>(`select provider_calendar_id from calendar_sync_origins where connection_id=$1 order by provider_calendar_id`,[c.id]);
+    expect(origins.map(origin=>origin.provider_calendar_id)).toEqual(['real-primary','secondary']);
   });
 });

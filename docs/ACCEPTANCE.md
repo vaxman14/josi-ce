@@ -1,5 +1,33 @@
 # Clean-install acceptance
 
+## Subscription/calendar/timezone correction — 2026-09-17
+
+Evidence on the macOS development host:
+
+- the final focused subscription, MCP, assistant, calendar, migration and worker suite passed **202/202 tests across 14 files**;
+- TypeScript project references and the web application typecheck passed;
+- the production web build passed;
+- the secret scan passed across 653 files; and
+- `git diff --check` passed.
+
+The focused proof covers mode-0600 ephemeral subscription results, real-result
+propagation through grounding/presentation/approval behavior, provider-primary
+reconciliation, all-selected-calendar provisioning, recurrence instances,
+missing/stale/failed coverage refusal, profile/workspace timezone precedence,
+the exact 17/18 September 2026 Los Angeles boundary, DST civil-date arithmetic,
+and one authoritative write default.
+
+A full `npm test -- --maxWorkers=2` run reached **2,784 passing tests**. It
+reported 20 failures: one stale MCP expectation was corrected and passed in the
+final focused run; the other 19 are existing host prerequisites on this macOS
+machine (one browser-installer test requires Docker, and 18 attachment/local
+workspace tests require Linux `/proc/self/fd` semantics). They are not counted
+as passes and this host result is not release evidence. Linux CI remains the
+required full-suite gate.
+
+No install reset, data wipe, tunnel change, gate deployment or release action
+was performed by this work.
+
 ## Authoritative internal calendar sync
 
 - Conversational calendar reads and approved writes use `calendar_events` and stable internal UUIDs; they make no provider request.

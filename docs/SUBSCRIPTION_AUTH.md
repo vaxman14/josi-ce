@@ -159,15 +159,18 @@ shown in the product on the Model screen, not only here.
 | Token counts | **None reported.** | Reported |
 | Cost reporting | **None.** Usage rows record `subscription` and zero — the true per-call figure for a flat fee. | Estimated or reported |
 | Spending caps | **Cannot be enforced** in currency on this path. | Enforced |
-| Tool calling | **No.** Josi can talk; it cannot act. | Yes |
+| Tool calling | **Yes, through Josi's MCP harness.** The same ownership, step-up and approval code runs; vendor built-in shell/file tools remain denied. | Yes |
 | Structured output | **No.** | Usually |
 | Conversation history | Flattened into one prompt — lossy | Native message array |
 | Needs on the host | The `codex` binary, installed and signed in | Nothing |
 | Local-only mode | **Refused**, same as any hosted provider | Refused |
 
-Because tool calling is absent, Phase 4's feature gates switch off calendar,
-email and document tools automatically and say why. That is the product being
-honest rather than a limitation being hidden.
+Tool outcomes do not come from parsing vendor prose. Each call and its real
+result is written by Josi's MCP server to a mode-0600 file inside a private
+per-call temporary directory. The provider reads that file before deleting the
+directory and passes the intact result to approval, grounding and presentation
+guards. The result is never printed by the harness, and internal receipts are
+removed before a reply reaches a person.
 
 ---
 

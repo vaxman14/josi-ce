@@ -22,7 +22,7 @@ import type { Db, MasterKey } from '@josi-ce/core';
 import {
   accessTokenFor, can, connectionFor, connectionsWithCapability, getInternalEvent, listInternalEvents, loadClient, readContactPage, readMail,
   refusalReason, searchMail,
-  type CapabilityState, type ConnectionRow, type OAuthClient, type Provider, type RemoteEvent,
+  type CalendarEventRow, type CapabilityState, type ConnectionRow, type OAuthClient, type Provider, type RemoteEvent,
 } from '@josi-ce/connectors';
 import type { ToolSpec } from './tools.js';
 
@@ -326,9 +326,9 @@ function untagId(tagged: string): { provider: DataProvider; connectionId: string
   return legacy ? { provider: legacy[1] as DataProvider, connectionId: null, id: legacy[2] } : null;
 }
 
-export interface CalendarSource { id:string; connection_id:string; provider_calendar_id:string; name:string; is_primary:boolean; writable:boolean; provider:DataProvider; account:string|null }
+export interface CalendarSource { id:string; connection_id:string; provider_calendar_id:string; name:string; is_primary:boolean; is_write_default:boolean; writable:boolean; provider:DataProvider; account:string|null }
 export async function selectedCalendars(db:Db,userId:string,sourceId?:string):Promise<CalendarSource[]> {
-  return db.query<CalendarSource>(`select s.id,s.connection_id,s.provider_calendar_id,s.name,s.is_primary,s.writable,c.provider,c.account_email account
+  return db.query<CalendarSource>(`select s.id,s.connection_id,s.provider_calendar_id,s.name,s.is_primary,s.is_write_default,s.writable,c.provider,c.account_email account
     from calendar_sources s join connections c on c.id=s.connection_id
     where s.owner_user_id=$1 and c.owner_user_id=$1 and s.selected=true and ($2::text is null or s.id::text=$2) order by s.id`,[userId,sourceId??null]);
 }
@@ -433,9 +433,19 @@ export async function executeDataTool(
       if (!sources.length) return NO_ACCESS('No selected calendar is available. Open Calendar, refresh calendars, and select the exact calendar to query.');
       const calendarIds = new Set<string>();
       const sourceByCalendar = new Map<string,CalendarSource>();
+      const coverageProblems: string[] = [];
       for (const source of sources) {
-        const [origin] = await db.query<{calendar_id:string}>(`select calendar_id from calendar_sync_origins where connection_id=$1 and provider_calendar_id=$2`,[source.connection_id,source.provider_calendar_id]);
-        if (origin) { calendarIds.add(origin.calendar_id); sourceByCalendar.set(origin.calendar_id,source); }
+        if (!(await can(db,{ownerUserId:args.userId,capability:FAMILY_CAPABILITY.calendar[source.provider]})).allowed) {
+          coverageProblems.push(`${source.name} access is disabled`);
+          continue;
+        }
+        const [origin] = await db.query<{calendar_id:string;status:string;last_sync_at:string|null;sync_interval_seconds:number}>(`select calendar_id,status,last_sync_at,sync_interval_seconds from calendar_sync_origins where connection_id=$1 and provider_calendar_id=$2`,[source.connection_id,source.provider_calendar_id]);
+        if (!origin) { coverageProblems.push(`${source.name} has not synchronized yet`); continue; }
+        const age = origin.last_sync_at ? Date.now()-new Date(origin.last_sync_at).getTime() : Number.POSITIVE_INFINITY;
+        const staleAfter = Math.max(900_000, Number(origin.sync_interval_seconds)*3_000);
+        if (origin.status !== 'idle') coverageProblems.push(`${source.name} synchronization ${origin.status === 'error' ? 'failed' : 'is incomplete'}`);
+        else if (!origin.last_sync_at || !Number.isFinite(age) || age > staleAfter) coverageProblems.push(`${source.name} synchronization is stale`);
+        calendarIds.add(origin.calendar_id); sourceByCalendar.set(origin.calendar_id,source);
       }
       const found = await listInternalEvents(db, { ownerUserId: args.userId, start: window.start, end: window.end });
       const events=[];
@@ -445,15 +455,21 @@ export async function executeDataTool(
         events.push({ event_id: e.id, source_id:source.id, provider:source.provider, account_id:source.connection_id,account:source.account,
           calendar_id:source.provider_calendar_id,calendar_name:source.name,provider_event_id:link?.provider_event_id??null,title:e.title,
           start:e.all_day?e.start_date:e.starts_at,end:e.all_day?e.end_date:e.ends_at,all_day:e.all_day,location:e.location,
-          organizer:e.organizer,attendees:e.attendees,status:e.status,sync_state:e.sync_state });
+          organizer:e.organizer,attendees:e.attendees,status:e.status,sync_state:e.sync_state,
+          recurrence:e.recurrence,recurring_event_id:(e as CalendarEventRow & {recurring_provider_event_id?:string|null}).recurring_provider_event_id??null,
+          original_start:(e as CalendarEventRow & {original_start?:string|null}).original_start??null });
       }
       events.sort((a, b) => String(a.start ?? '').localeCompare(String(b.start ?? '')));
+      if (!events.length && coverageProblems.length) {
+        return { ok:false,error:'calendar_coverage_unavailable',message:`I cannot honestly say this range is empty because ${coverageProblems.join('; ')}. Refresh or reconnect the calendar, then try again.` };
+      }
       return {
         ok: true,
         sources: sources.map(s=>({source_id:s.id,provider:s.provider,account_id:s.connection_id,account:s.account,calendar_id:s.provider_calendar_id,calendar_name:s.name})),
         range: { start: window.start, end: window.end },
         events,
-        ...(events.length ? {} : { message: 'The calendar has no events in that range.' }),
+        ...(coverageProblems.length ? { coverage_warning:`Results may be incomplete: ${coverageProblems.join('; ')}.` } : {}),
+        ...(events.length ? {} : { message: 'The synchronized calendars have no events in that range.' }),
       };
     }
 
@@ -470,7 +486,8 @@ export async function executeDataTool(
         start: event.all_day ? event.start_date : event.starts_at, end: event.all_day ? event.end_date : event.ends_at,
         all_day: event.all_day, location: event.location, organizer: event.organizer,
         attendees: event.attendees, status: event.status, description: event.description,
-        recurrence: event.recurrence, sync_state: event.sync_state, sync_error: event.sync_error } };
+        recurrence: event.recurrence, recurring_event_id:event.recurring_provider_event_id,
+        original_start:event.original_start, sync_state: event.sync_state, sync_error: event.sync_error } };
     }
 
     default:
