@@ -126,7 +126,7 @@ names, keeping AGENTS a closed enum vocabulary.
 
 - Upload: one ZIP or 1–100 individual files, **8 MiB aggregate** enforced while
   streaming. Files/ZIP entries: **1 MiB** each, **200** ZIP entries, **16 MiB** expanded
-  total, maximum **100:1** expansion ratio, **2,000** report items.
+  total, maximum **100:1** expansion ratio, **10,000** report items.
 - ZIP32 stored/deflate only. Reject traversal, absolute/Windows paths, symlinks and
   special entries, duplicate paths, overlaps, local/central-header disagreement,
   invalid UTF-8 names, checksum/size mismatch, encryption, multipart ZIPs, ZIP64 and
