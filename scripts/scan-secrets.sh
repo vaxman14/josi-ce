@@ -112,7 +112,7 @@ while IFS= read -r file; do
   # the reviewed installer implementation, its tests/docs, and release wiring.
   # ce.heyjosi.com and every other production-domain occurrence remain blocked.
   case "$file" in
-    .github/workflows/release.yml|docs/CLI.md|get.heyjosi.com/install.sh|scripts/test-cli-installer.sh)
+    .github/workflows/release.yml|docs/CLI.md|get.heyjosi.com/install.sh|scripts/test-cli-installer.sh|scripts/test-cli-installer-debian.sh)
       if grep -Fq 'get.heyjosi.com' "$literal_source"; then
         [[ -n "$literal_tmp" ]] || literal_tmp="$(mktemp)"
         sed 's#get\.heyjosi\.com##g' "$literal_source" > "$literal_tmp.next"

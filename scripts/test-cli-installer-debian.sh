@@ -11,7 +11,6 @@ TMP="$(mktemp -d "$ROOT/.tmp-cli-installer.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 FIX="$TMP/fixture"
 VERSION=1.2.3
-DEBIAN_IMAGE='debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251'
 RELEASE="$FIX/public/get.heyjosi.com/releases/v$VERSION"
 mkdir -p "$RELEASE" "$FIX/public/github.com/sigstore/cosign/releases/download/v2.4.1" "$FIX/manifests" "$FIX/bin" "$TMP/payload"
 
@@ -107,13 +106,18 @@ EOF
 chmod 0755 "$FIX/bin/curl" "$FIX/bin/sha256sum"
 
 run_arch() {
-  local platform=$1 arch=$2 out="$TMP/out-$2"
+  local platform=$1 arch=$2 out="$TMP/out-$2" image
+  case "$arch" in
+    amd64) image='debian:bookworm-slim@sha256:f3034a6ec3c1205360777c4aae76234998866ad18806ae62b63a3f84ccad782b' ;;
+    arm64) image='debian:bookworm-slim@sha256:0c8bbb8e987a035fe1d9704eb2e571b7e9a836e1caa46345290674b45b69e417' ;;
+    *) return 1 ;;
+  esac
   mkdir -p "$out"
   docker run --rm --platform "$platform" \
     -v "$ROOT:/source:ro" \
     -v "$FIX:/fixture:ro" \
     -v "$out:/out" \
-    "$DEBIAN_IMAGE" sh -eu -c '
+    "$image" sh -eu -c '
       export PATH=/fixture/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       awk -W version 2>&1 | grep -q "mawk 1.3.4"
       [ "$(dpkg --print-architecture)" = "$1" ]
