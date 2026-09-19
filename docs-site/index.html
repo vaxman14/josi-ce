@@ -74,6 +74,29 @@ service and should not be treated as one.</p>
 diagnostic snapshot, not continuous monitoring or a warranty that the system is
 safe. Backups exclude the installation master key: keep that key separately and
 test restores.</p>
+<h3>Josi CLI and one-line installer</h3>
+<p>The signed Josi CLI keeps Docker Compose as the only runtime while providing
+operator commands for installation, status, updates, backups, logs, rollback,
+uninstallation, diagnosis, and repair. Install the current verified Linux
+<code>amd64</code> or <code>arm64</code> release with:</p>
+<pre><code>curl -fsSL https://get.heyjosi.com/install.sh |
+  sudo bash -s -- --version 0.1.54 --yes</code></pre>
+<p>The installer requires an explicit version and verifies its pinned verifier,
+the release's Sigstore workflow identity, and the signed SHA-256 manifest before
+installing anything. You can instead download and inspect the script first.</p>
+<p><code>josi doctor</code> backs up state, applies safe deterministic repairs,
+verifies the real postcondition, and rolls back repairs that regress readiness.
+Use <code>josi doctor --check-only</code> for a read-only audit or
+<code>--dry-run</code> for the exact repair plan. <code>--yes</code> does not
+authorize AI repair.</p>
+<p>Use <code>josi logs --since 30m</code>, <code>josi support bundle</code>, or
+<code>josi doctor --export-ai-context PATH</code> to collect a bounded,
+structured, secret-redacted diagnostic bundle. After deterministic repair is
+exhausted, <code>josi doctor --ai-repair --allow-ai</code> can offer a separately
+approved local Codex or loopback Ollama investigation. The exact plan requires a
+second approval before any allowlisted change executes.</p>
+<p><a href="https://github.com/vaxman14/josi-ce/blob/v0.1.54/docs/CLI.md">Complete CLI guide</a>
+· <a href="https://get.heyjosi.com/provenance.json">Public installer provenance</a></p>
 <p>Admin → Backups provides a persistent progress display and guided SMB/NFS setup. Enter the NAS
 address and share, authenticate, browse to a folder, and let the restricted storage controller
 manage the Docker mount. Off-site encryption is enabled by default; save its one-time recovery key
