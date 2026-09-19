@@ -26,6 +26,7 @@ interface LevelState {
 export function Settings() {
   const [levels, setLevels] = useState<Record<string, LevelState>>({});
   const [error, setError] = useState('');
+  const [dataOpen, setDataOpen] = useState(false);
 
   useEffect(() => {
     for (const cls of ACTION_CLASSES) {
@@ -92,8 +93,8 @@ export function Settings() {
         </div>
       </CollapsibleCard>
 
-      <CollapsibleCard title="Data & Backup" summary="Migrate your assistant data and manage import batches">
-        <AssistantMigration />
+      <CollapsibleCard title="Data & Backup" summary="Migrate your assistant data and manage import batches" open={dataOpen} onOpenChange={setDataOpen}>
+        <AssistantMigration onDone={() => setDataOpen(false)} />
       </CollapsibleCard>
       <StepUpCard />
       <MfaCard />

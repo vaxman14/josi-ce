@@ -595,6 +595,66 @@ async function testServiceWorker() {
   }
 }
 
+// --------------------------------------------------------- migration completion
+async function testMigrationDone(browser) {
+  step('Assistant migration: Done exits without touching the committed batch');
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  try {
+    await signIn(page, MEMBER);
+    await page.goto(`${BASE}/app/settings`, { waitUntil: 'networkidle' });
+    const data = page.locator('details').filter({ hasText: 'Data & Backup' }).first();
+    await data.locator('summary').click();
+    await page.getByRole('button', { name: 'Migrate from another assistant' }).click();
+
+    record('Done is absent before an import succeeds', await page.getByRole('button', { name: 'Done', exact: true }).count() === 0);
+    const sentinel = 'Enjoys sailing';
+    await page.getByLabel('Source assistant').selectOption('openclaw');
+    await page.locator('#migration-files').setInputFiles({
+      name: 'MEMORY.md', mimeType: 'text/markdown', buffer: Buffer.from(`- ${sentinel}`),
+    });
+    await page.getByRole('button', { name: 'Scan and preview' }).click();
+    const candidate = page.getByRole('checkbox', { name: /Select MEMORY\.md/ }).first();
+    await candidate.waitFor({ state: 'visible', timeout: 20000 });
+    await candidate.check();
+    await page.getByRole('button', { name: /Review 1 selected item/ }).click();
+    await page.getByRole('button', { name: /Import 1 reviewed item/ }).waitFor({ state: 'visible' });
+    record('Done remains absent on the final dry run', await page.getByRole('button', { name: 'Done', exact: true }).count() === 0);
+    await page.getByRole('button', { name: /Import 1 reviewed item/ }).click();
+    await page.getByText(/Import completed\. 1 new rows? saved\./).waitFor({ state: 'visible', timeout: 20000 });
+
+    const done = page.getByRole('button', { name: 'Done', exact: true });
+    const download = page.getByRole('button', { name: 'Download receipt', exact: true });
+    const another = page.getByRole('button', { name: 'Start another migration', exact: true });
+    record('Done appears after a successful import', await done.isVisible());
+    record('Done is the primary receipt action', (await done.getAttribute('class') ?? '').includes('bg-primary'));
+    record('receipt download remains a secondary action', await download.isVisible() && (await download.getAttribute('class') ?? '').includes('bg-secondary'));
+    record('Start another migration remains a secondary action', await another.isVisible() && (await another.getAttribute('class') ?? '').includes('bg-secondary'));
+
+    const batchText = await page.getByText(/^Batch:/).innerText();
+    const batchId = batchText.replace(/^Batch:\s*/, '');
+    const before = await page.evaluate(async (id) => {
+      const response = await fetch(`/api/migrations/batches/${id}`, { credentials: 'same-origin', cache: 'no-store' });
+      return { status: response.status, body: await response.json() };
+    }, batchId);
+    await done.click();
+    record('Done collapses the Data & Backup disclosure', await data.evaluate((node) => !node.open));
+    await data.locator('summary').click();
+    await page.getByRole('button', { name: 'Migrate from another assistant' }).waitFor({ state: 'visible' });
+    record('Done exits and resets the completed receipt screen', await page.getByText(/Import completed\./).count() === 0 && await done.count() === 0);
+    const after = await page.evaluate(async (id) => {
+      const response = await fetch(`/api/migrations/batches/${id}`, { credentials: 'same-origin', cache: 'no-store' });
+      return { status: response.status, body: await response.json() };
+    }, batchId);
+    record('Done does not alter or delete the committed batch', before.status === 200 && JSON.stringify(after) === JSON.stringify(before));
+  } catch (err) {
+    const screen = await page.locator('body').innerText().catch(() => 'screen unavailable');
+    record('migration Done flow', false, `${String(err).split('\n')[0]} | ${screen.replace(/\s+/g, ' ').slice(-1200)}`);
+  } finally {
+    await ctx.close();
+  }
+}
+
 // ------------------------------------------------------------------ branding
 async function testBranding(browser) {
   step('The Josi identity is present');
@@ -647,6 +707,17 @@ try {
 }
 } else {
   console.log('\n(skipping the WebKit group: E2E_ONLY=' + ONLY + ')');
+}
+
+if (wants('migration')) {
+  const migrationBrowser = await chromium.launch();
+  try {
+    await testMigrationDone(migrationBrowser);
+  } finally {
+    await migrationBrowser.close();
+  }
+} else {
+  console.log('\n(skipping the migration group: E2E_ONLY=' + ONLY + ')');
 }
 
 // Chromium, in its own browser, for the one thing WebKit headless cannot be

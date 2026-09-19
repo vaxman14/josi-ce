@@ -23,7 +23,7 @@ function downloadReceipt(receipt: MigrationReceipt) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function AssistantMigration() {
+export function AssistantMigration({ onDone }: { onDone?: () => void } = {}) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<'upload' | 'select' | 'review' | 'receipt'>('upload');
   const [source, setSource] = useState('auto');
@@ -91,6 +91,15 @@ export function AssistantMigration() {
       setReceipt(result.receipt); setStep('receipt'); setManifest(undefined); setReviewed(undefined); setEdits({}); setSelected(new Set());
       activePreview.current = ''; await refreshBatches(0);
     });
+  }
+  function resetCompletedWizard() {
+    activePreview.current = ''; setOpen(false); setPreviewId(''); setExpires(''); setManifest(undefined); setReviewed(undefined); setRevision('');
+    setFiles([]); setEdits({}); setSelected(new Set()); setReceipt(undefined); setStep('upload'); setCategory('all'); setPage(0); setError(''); setNotice('');
+    if (input.current) input.current.value = '';
+  }
+  function done() {
+    // A completed batch is durable server state. Done only resets this local wizard and closes its settings disclosure.
+    resetCompletedWizard(); onDone?.();
   }
   async function discard() {
     await perform('Discarding preview…', async () => {
@@ -167,7 +176,7 @@ export function AssistantMigration() {
     {step === 'receipt' && receipt && <div className="space-y-3"><p role="status" className="font-medium">Import completed. {receipt.created} new rows saved.</p>
       <p className="break-all text-sm">Batch: {receipt.batchId}</p><Counts items={receipt.items} />
       <p className="text-sm">The receipt records each item’s source, format, file, location and hash. Rollback below removes the rows created by this batch, including later edits to those imported rows.</p>
-      <div className="flex flex-wrap gap-2"><Button onClick={() => downloadReceipt(receipt)}>Download receipt</Button><Button variant="secondary" onClick={() => void discard()} disabled={!!busy}>Start another migration</Button></div>
+      <div className="flex flex-wrap gap-2"><Button onClick={done} disabled={!!busy}>Done</Button><Button variant="secondary" onClick={() => downloadReceipt(receipt)}>Download receipt</Button><Button variant="secondary" onClick={() => void discard()} disabled={!!busy}>Start another migration</Button></div>
     </div>}
     <Card><h3 className="mb-3 font-semibold">Your import batches</h3><p className="mb-3 text-sm">Rollback permanently removes only rows created by the selected batch. Pre-existing data stays intact.</p>
       <div className="space-y-3">{batches.map(batch => <div key={batch.id} className="space-y-2 border-b border-border pb-3">

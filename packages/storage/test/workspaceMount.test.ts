@@ -54,7 +54,7 @@ describe('workspace mount bootstrap and reconciliation', () => {
       mappings: Array<Record<string, unknown>>;
     };
     expect(discovery.mappings).toEqual([
-      expect.objectContaining({ mappingId: result.status === 'ready' ? result.mappingId : '', name: '/workspace' }),
+      expect.objectContaining({ mapping_id: result.status === 'ready' ? result.mappingId : '', name: '/workspace' }),
     ]);
   });
 
