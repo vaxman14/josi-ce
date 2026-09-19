@@ -63,6 +63,8 @@ PASS=0
 ok(){ PASS=$((PASS+1)); printf 'ok %02d - %s\n' "$PASS" "$1"; }
 fail(){ printf 'not ok - %s\n' "$1" >&2; exit 1; }
 run(){ bash -c "$CLI $*"; }
+(export JOSI_DOCKER_BIN=docker; run status --json) | grep -q '"direct":"pass"' || fail default-docker-wrapper
+ok 'the default docker command resolves the host binary without recursive shell-function failure'
 run status --json | grep -q '"direct":"pass"' || fail status; ok 'status reports direct/public readiness and containers'
 printf 'services: {}\n' > "$INSTALL/docker-compose.workspace.yml"; : > "$STATE/calls"; run status --json >/dev/null
 grep -q 'docker-compose.workspace.yml' "$STATE/calls" || fail compose-workspace-override
