@@ -27,27 +27,14 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { checkStepUp, connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import type { Db, MasterKey } from '@josi-ce/core';
+import type { HarnessContext } from '@josi-ce/llm';
 import { executeAssistantTool } from '../execute.js';
 import { isMutatingTool, runDurableEffect } from '../durableEffects.js';
 import { ALL_TOOLS } from '../tools.js';
 import { handleMcpMessage, type McpCore, type McpToolDescriptor, type McpToolOutcome } from './protocol.js';
 
-interface HarnessContext {
-  databaseUrl: string | null;
-  passwordFile: string | null;
-  /** Path to the master key file, when the harness knew one. The key itself
-   * never travels — the path is only useful inside our own container. */
-  masterKeyPath?: string | null;
-  userId: string | null;
-  sessionKey: string | null;
-  threadId: string | null;
-  durableTurnId?: string | null;
-  durableLeaseToken?: string | null;
-  latestUserText?: string | null;
-  effectiveNow?: string | null;
-  tools: string[];
-  callsPath: string;
-}
+type McpHarnessContext = Omit<HarnessContext, 'workspaceEnabled' | 'workspaceMode'>
+  & Partial<Pick<HarnessContext, 'workspaceEnabled' | 'workspaceMode'>>;
 
 const PROBE_TOOLS: McpToolDescriptor[] = [
   {
@@ -74,7 +61,7 @@ const PROBE_TOOLS: McpToolDescriptor[] = [
 
 /** Builds the protocol core for a context. Exported for the tests; the
  * process wiring below is the only other caller. */
-export function buildCore(ctx: HarnessContext, connect: () => Promise<Db>): McpCore {
+export function buildCore(ctx: McpHarnessContext, connect: () => Promise<Db>): McpCore {
   const offered = new Set(ctx.tools);
   const tools: McpToolDescriptor[] = [
     ...PROBE_TOOLS,
@@ -166,13 +153,15 @@ export function buildCore(ctx: HarnessContext, connect: () => Promise<Db>): McpC
   return { tools, execute };
 }
 
-function loadContext(): HarnessContext {
+function loadContext(): McpHarnessContext {
   const path = process.env.JOSI_MCP_CONTEXT;
   if (!path) throw new Error('JOSI_MCP_CONTEXT is not set — this server is only started by the Josi harness');
   // The path came from our own provider; its content is ours. Parse errors are
   // fatal and say the path, never the content: the file names a person.
-  const ctx = JSON.parse(readFileSync(path, 'utf8')) as HarnessContext;
-  if (!ctx.callsPath || !Array.isArray(ctx.tools)) {
+  const ctx = JSON.parse(readFileSync(path, 'utf8')) as McpHarnessContext;
+  if (!ctx.callsPath || !Array.isArray(ctx.tools)
+    || (ctx.workspaceEnabled !== undefined && typeof ctx.workspaceEnabled !== 'boolean')
+    || (ctx.workspaceMode !== undefined && ctx.workspaceMode !== 'ro' && ctx.workspaceMode !== 'rw')) {
     throw new Error(`the harness context at ${path} is not the expected shape`);
   }
   return ctx;
@@ -180,6 +169,12 @@ function loadContext(): HarnessContext {
 
 async function main(): Promise<void> {
   const ctx = loadContext();
+  // This process exists for one private harness session. Restore only the two
+  // non-secret installation facts written by Josi's parent process; absent or
+  // malformed legacy state is disabled/read-only. The shared grant still
+  // enforces the exact /workspace root, owner mapping, capability and status.
+  process.env.JOSI_WORKSPACE_ENABLED = ctx.workspaceEnabled === true ? '1' : '0';
+  process.env.JOSI_WORKSPACE_MODE = ctx.workspaceEnabled === true && ctx.workspaceMode === 'rw' ? 'rw' : 'ro';
   let close: (() => Promise<void>) | null = null;
   const core = buildCore(ctx, async () => {
     // The connection string reaches this process through the 0600 context

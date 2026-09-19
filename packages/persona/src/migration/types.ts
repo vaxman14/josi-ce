@@ -3,7 +3,7 @@ import { memoryFingerprint } from '../memory.js';
 
 export const LIMITS = Object.freeze({
   uploadBytes: 8 * 1024 * 1024, expandedBytes: 16 * 1024 * 1024,
-  entryBytes: 1024 * 1024, files: 200, uploadFiles: 100, items: 2000,
+  entryBytes: 1024 * 1024, files: 200, uploadFiles: 100, items: 10000,
   ratio: 100, previewMs: 10 * 60 * 1000,
 });
 export type MigrationSource = 'openclaw' | 'hermes' | 'josi' | 'unknown';

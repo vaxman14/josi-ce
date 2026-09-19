@@ -43,6 +43,21 @@ describe('pure migration adapters', () => {
     expect(manifest.items.find(item => item.profileKind === 'agents_user')?.values).toEqual({ formatting: 'bullets' });
     expect(manifest.items.some(item => item.classification === 'ignored' && item.reason.includes('Authority'))).toBe(true);
   });
+  it('scans a realistic 7,000-item OpenClaw workspace archive and fails closed above 10,000 items', () => {
+    const workspaceMemory = (count: number) => Array.from({ length: count }, (_, i) =>
+      `- Synthetic OpenClaw workspace memory ${String(i + 1).padStart(5, '0')}`).join('\n');
+    const archive = (count: number) => Buffer.from(zipSync({
+      'workspace/MEMORY.md': strToU8(workspaceMemory(count)),
+    }, { level: 0 }));
+
+    const accepted = scanMigration(readZip(archive(7_000)), 'openclaw');
+    expect(accepted.fileCount).toBe(1);
+    expect(accepted.items).toHaveLength(7_000);
+    expect(accepted.items.every(item => item.provenance.source === 'openclaw')).toBe(true);
+
+    expect(() => scanMigration(readZip(archive(LIMITS.items + 1)), 'openclaw'))
+      .toThrow('More than 10,000 preview items. Split this export.');
+  });
   it('supports the exact Hermes delimiter including multiline entries and literal section signs', () => {
     const result = scanMigration([file('memories/MEMORY.md', 'Enjoys § typography\n§\nWorks mornings\nand afternoons')]);
     expect(result.items.map(item => item.content)).toEqual(['Enjoys § typography', 'Works mornings\nand afternoons']);

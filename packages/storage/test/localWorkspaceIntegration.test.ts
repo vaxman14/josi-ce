@@ -8,17 +8,31 @@ import {createUser} from '../../auth/src/users.js';
 import {decideApproval} from '../../core/src/approvals.js';
 import {workspaceList,workspaceRead,workspaceChange} from '../src/localWorkspace.js';
 import {proposeCodingRun,codingRunStatus} from '../src/workspaceCoding.js';
+let executeWorkspaceTool:typeof import('../../agent/src/workspaceTools.js').executeWorkspaceTool;
 let db:TestDb,root:string,user:string,other:string,mapping:string;
-beforeAll(async()=>{db=await testDb();root=await mkdtemp(join(tmpdir(),'josi-workspace-integration-'));user=(await createUser(db,{email:'workspace@example.test',username:'workspace',role:'member'})).id;other=(await createUser(db,{email:'other@example.test',username:'other',role:'member'})).id;
+beforeAll(async()=>{vi.doMock('@josi-ce/storage',async()=>await import('../src/index.js'));({executeWorkspaceTool}=await import('../../agent/src/workspaceTools.js'));db=await testDb();root=await mkdtemp(join(tmpdir(),'josi-workspace-integration-'));user=(await createUser(db,{email:'workspace@example.test',username:'workspace',role:'member'})).id;other=(await createUser(db,{email:'other@example.test',username:'other',role:'member'})).id;
  await db.query('insert into storage_capabilities(user_id,may_map_local) values($1,true)',[user]);
  const [r]=await db.query<{id:string}>(`insert into storage_roots(label,container_path,purpose,writable) values('Fixture',$1,'documents',true) returning id`,[root]);
  const [m]=await db.query<{id:string}>(`insert into folder_mappings(owner_user_id,provider,root_id,relative_path,display_path,recursive,may_create,may_edit,may_move,may_delete) values($1,'local',$2,'','Fixture',true,true,true,true,true) returning id`,[user,r.id]);mapping=m.id;
  await writeFile(join(root,'hello.txt'),'hello');
+ await writeFile(join(root,'JOSI_PASSTHROUGH_TEST.txt'),'workspace passthrough sentinel');
 },30000);
 afterAll(async()=>{await rm(root,{recursive:true,force:true});});
 async function approve(change:Parameters<typeof workspaceChange>[3]){const proposed=await workspaceChange(db,user,mapping,change);const id=proposed.approval!.id;await decideApproval(db,{approvalId:id,decidedBy:user,approve:true});return id;}
 describe('workspace filesystem and SQL approval integration',()=>{
  it('lists and reads authorized actual files',async()=>{expect((await workspaceList(db,user,mapping)).entries).toContainEqual(expect.objectContaining({name:'hello.txt',kind:'file'}));expect((await workspaceRead(db,user,mapping,'hello.txt')).data.toString()).toBe('hello');});
+ it('uses the discovered mapping_id verbatim in a list-to-read tool flow',async()=>{
+  const listed=await executeWorkspaceTool(db,user,'list_workspace_mappings',{}) as {mappings:Array<{mapping_id:string}>};
+  expect(listed.mappings).toHaveLength(1);
+  const mapping_id=listed.mappings[0]!.mapping_id;
+  const read=await executeWorkspaceTool(db,user,'workspace_read',{mapping_id,path:'JOSI_PASSTHROUGH_TEST.txt'}) as Record<string,unknown>;
+  expect(read).toMatchObject({mapping_id,path:'JOSI_PASSTHROUGH_TEST.txt',text:'workspace passthrough sentinel',untrustedContent:true});
+  expect(read).not.toHaveProperty('mappingId');
+ });
+ it('temporarily accepts the legacy mappingId request alias without advertising it',async()=>{
+  const read=await executeWorkspaceTool(db,user,'workspace_read',{mappingId:mapping,path:'JOSI_PASSTHROUGH_TEST.txt'}) as Record<string,unknown>;
+  expect(read).toMatchObject({mapping_id:mapping,text:'workspace passthrough sentinel'});
+ });
  it('denies another owner including super-admin-style mapping lookup',async()=>{await expect(workspaceList(db,other,mapping)).rejects.toThrow();});
  it('denies symlink and hardlink file reads',async()=>{await symlink('/etc/passwd',join(root,'passwd.txt'));await link(join(root,'hello.txt'),join(root,'hard.txt'));await expect(workspaceRead(db,user,mapping,'passwd.txt')).rejects.toThrow();await expect(workspaceRead(db,user,mapping,'hard.txt')).rejects.toThrow();await rm(join(root,'hard.txt'));});
  it('requires human approval and refuses changed content/replay',async()=>{const change={operation:'create' as const,path:'approved.txt',content:'exact approved data'};const id=await approve(change);await expect(workspaceChange(db,user,mapping,{...change,content:'malicious replacement'},id)).rejects.toThrow();await workspaceChange(db,user,mapping,change,id);expect(await readFile(join(root,'approved.txt'),'utf8')).toBe(change.content);await expect(workspaceChange(db,user,mapping,change,id)).rejects.toThrow();});

@@ -45,10 +45,25 @@ describe('the harness context file', () => {
       expect(ctx.tools).toEqual(['create_task']);
       expect(ctx.databaseUrl).toBe('postgresql://josi@db:5432/josi');
       expect(ctx.callsPath).toBe(s.callsPath);
+      expect(ctx.workspaceEnabled).toBe(false);
+      expect(ctx.workspaceMode).toBe('ro');
       expect(statSync(s.callsPath).mode & 0o777).toBe(0o600);
     } finally {
       s.cleanup();
     }
+  });
+
+  it('captures workspace state only from the trusted server environment', () => {
+    const s = openHarnessSession({
+      serverPath: '/app/packages/agent/dist/mcp/server.js', tools: [A_TOOL],
+      toolContext: { userId: 'u1', workspaceEnabled: false } as never,
+      env: { JOSI_WORKSPACE_ENABLED: '1', JOSI_WORKSPACE_MODE: 'rw' },
+    });
+    try {
+      const ctx = JSON.parse(readFileSync(s.contextPath, 'utf8'));
+      expect(ctx.workspaceEnabled).toBe(true);
+      expect(ctx.workspaceMode).toBe('rw');
+    } finally { s.cleanup(); }
   });
 
   it('cleanup removes everything, including the calls file', () => {
@@ -180,6 +195,45 @@ describe('the codex provider with tools', () => {
     await expect(
       provider.chat({ messages: [{ role: 'user', content: 'x' }], tools: [A_TOOL] }),
     ).rejects.toThrow(/cannot call tools/);
+  });
+});
+
+describe('provider-specific harness configuration', () => {
+  const restore = (name: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  };
+
+  it('carries the same trusted workspace state through Codex TOML and Claude JSON paths', async () => {
+    const oldEnabled = process.env.JOSI_WORKSPACE_ENABLED;
+    const oldMode = process.env.JOSI_WORKSPACE_MODE;
+    process.env.JOSI_WORKSPACE_ENABLED = '1'; process.env.JOSI_WORKSPACE_MODE = 'rw';
+    try {
+      let codexContext: Record<string, unknown> | undefined;
+      const codexRunner: SpawnRunner = async ({ args }) => {
+        const override = args.find((value) => value.includes('JOSI_MCP_CONTEXT'))!;
+        codexContext = JSON.parse(readFileSync(JSON.parse(contextPathFrom(override)), 'utf8'));
+        return { code: 0, timedOut: false, stderr: '', stdout: `${JSON.stringify({ type: 'agent_message', message: 'done' })}\n` };
+      };
+      await codexCliProvider({ model: 'm', runner: codexRunner, mcpServerPath: '/srv/server.js' }).chat({
+        messages: [{ role: 'user', content: 'inspect workspace' }], tools: [A_TOOL],
+      });
+
+      let claudeContext: Record<string, unknown> | undefined;
+      const claudeRunner: SpawnRunner = async ({ args }) => {
+        const configPath = args[args.indexOf('--mcp-config') + 1]!;
+        const config = JSON.parse(readFileSync(configPath, 'utf8'));
+        claudeContext = JSON.parse(readFileSync(config.mcpServers.josi.env.JOSI_MCP_CONTEXT, 'utf8'));
+        return { code: 0, timedOut: false, stderr: '', stdout: JSON.stringify({ result: 'done', is_error: false, usage: {} }) };
+      };
+      await claudeCliProvider({ model: 'm', runner: claudeRunner, mcpServerPath: '/srv/server.js' }).chat({
+        messages: [{ role: 'user', content: 'inspect workspace' }], tools: [A_TOOL],
+      });
+
+      expect(codexContext).toMatchObject({ workspaceEnabled: true, workspaceMode: 'rw' });
+      expect(claudeContext).toMatchObject({ workspaceEnabled: true, workspaceMode: 'rw' });
+    } finally {
+      restore('JOSI_WORKSPACE_ENABLED', oldEnabled); restore('JOSI_WORKSPACE_MODE', oldMode);
+    }
   });
 });
 

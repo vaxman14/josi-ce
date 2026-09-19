@@ -71,6 +71,12 @@ export interface HarnessContext {
   durableLeaseToken: string | null;
   latestUserText: string | null;
   effectiveNow: string | null;
+  /** Non-secret installation state captured from Josi's server environment.
+   * The vendor cannot supply these through the chat request. The dedicated
+   * MCP child restores them so the shared workspace grant fails closed exactly
+   * as it does in the parent API process. */
+  workspaceEnabled: boolean;
+  workspaceMode: 'ro' | 'rw';
   /** Names the caller offered THIS turn. The server exposes only these (plus
    * its own probe tools), so a turn that offered nothing user-scoped cannot be
    * talked into task work by the model. */
@@ -99,6 +105,7 @@ export function openHarnessSession(args: {
   const dir = mkdtempSync(join(tmpdir(), 'josi-mcp-'));
   const contextPath = join(dir, 'context.json');
   const callsPath = join(dir, 'calls.jsonl');
+  const workspaceEnabled = env.JOSI_WORKSPACE_ENABLED === '1';
   const context: HarnessContext = {
     // Captured from OUR environment before `childEnvironment` strips them from
     // the CLI's. The server is our process and may hold our connection string;
@@ -113,6 +120,8 @@ export function openHarnessSession(args: {
     durableLeaseToken: args.toolContext?.durableLeaseToken ?? null,
     latestUserText: args.toolContext?.latestUserText ?? null,
     effectiveNow: args.toolContext?.effectiveNow ?? null,
+    workspaceEnabled,
+    workspaceMode: workspaceEnabled && env.JOSI_WORKSPACE_MODE === 'rw' ? 'rw' : 'ro',
     tools: args.tools.map((t) => t.name),
     callsPath,
   };

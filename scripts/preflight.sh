@@ -426,12 +426,19 @@ fi
 # reason `file_mode` refuses to guess.
 if [ -f secrets/master.key ]; then
   if MODE=$(file_mode secrets/master.key); then
+    DIR_MODE=$(file_mode secrets 2>/dev/null || true)
     if [ "$MODE" = "600" ] || [ "$MODE" = "400" ]; then
       record pass 'master key permissions' "mode $MODE"
+    elif [ "$MODE" = "644" ] && [ "$DIR_MODE" = "700" ]; then
+      # Compose bind-mounts this file for a non-root container user. The file
+      # must be readable there, while the owner-only parent prevents every
+      # other host account from traversing to it.
+      record pass 'master key permissions' 'mode 644 inside owner-only mode 700 secrets directory'
     else
-      record fail 'master key permissions' "mode $MODE" \
-        'The master key must not be readable by other accounts on this host:
-  chmod 600 secrets/master.key'
+      record fail 'master key permissions' "file mode $MODE, directory mode ${DIR_MODE:-unknown}" \
+        'Protect source installs with mode 600, or Compose file secrets with:
+  chmod 700 secrets
+  chmod 644 secrets/master.key secrets/db_password'
     fi
   else
     record warn 'master key permissions' 'this filesystem does not report POSIX permissions' \

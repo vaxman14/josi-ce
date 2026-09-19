@@ -11,7 +11,7 @@ export interface AdapterContext {
 }
 export function context(path: string, text: string, source: MigrationSource, sha256: string, items: MigrationItem[]): AdapterContext {
   return { path, text, source, emit(format, locator, item) {
-    if (items.length >= LIMITS.items) throw new MigrationError('More than 2,000 preview items. Split this export.', 413);
+    if (items.length >= LIMITS.items) throw new MigrationError('More than 10,000 preview items. Split this export.', 413);
     const provenance = { source, format, path, locator, sha256 };
     items.push({ ...item, provenance, id: hash(JSON.stringify(provenance)).slice(0, 32) });
   } };

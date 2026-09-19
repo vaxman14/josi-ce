@@ -159,6 +159,52 @@ jobs:
           docker buildx imagetools inspect \
             "${{ env.REGISTRY }}/${{ steps.owner.outputs.value }}/josi-ce:${{ steps.version.outputs.value }}"
 
+  # CLI releases are attached only to real version tags. The signing identity
+  # is the short-lived GitHub Actions OIDC certificate for this exact workflow
+  # and tag; there is no long-lived signing material to leak or rotate.
+  cli-release:
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      # v3 tag resolved and reviewed 2026-09-19; pin the action itself as well
+      # as the Cosign binary version used by the release boundary.
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: 'v2.4.1'
+      - name: Build and sign CLI release files
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sh -n get.heyjosi.com/install.sh
+          bash scripts/build-cli-release.sh \
+            --version "$version" \
+            --output-dir dist/cli \
+            --sign
+          install -m 0755 get.heyjosi.com/install.sh dist/cli/install.sh
+      - name: Retain the exact signed release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: josi-cli-${{ github.ref_name }}
+          path: dist/cli/*
+          if-no-files-found: error
+      - name: Publish CLI files on the numbered GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --title "Josi CE $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/cli/* --clobber
+
   dockerhub-mirror:
     needs: build
     runs-on: ubuntu-latest

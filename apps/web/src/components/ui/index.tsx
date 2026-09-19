@@ -68,6 +68,8 @@ export function CollapsibleCard({
   summary,
   status,
   defaultOpen = false,
+  open,
+  onOpenChange,
   children,
   className,
 }: {
@@ -75,12 +77,14 @@ export function CollapsibleCard({
   summary?: ReactNode;
   status?: ReactNode;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <Card className={className}>
-      <details open={defaultOpen || undefined} className="group">
+      <details open={open ?? (defaultOpen || undefined)} onToggle={event => onOpenChange?.(event.currentTarget.open)} className="group">
         <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
           <span className="min-w-0">
             <span className="block text-base font-semibold tracking-tight">{title}</span>
