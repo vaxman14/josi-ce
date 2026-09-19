@@ -167,6 +167,62 @@ describe('Expo push outbox',()=>{
     expect((await db.query<{revoked_at:string|null}>(`select revoked_at from mobile_devices where id=$1`,[d.id]))[0].revoked_at).toBeNull();
   });
 
+  it('captures a foreground completion and sends it after the device backgrounds before dispatch',async()=>{
+    const db=await testDb(),{u,t}=await owner(db,'foreground-background');const key=new MasterKey(Buffer.alloc(32,13));
+    const input={deviceIdentity:'13131313-1313-4131-8131-131313131313',platform:'ios' as const,expoToken:'ExpoPushToken[foreground_background]',privacyLocked:false,timezone:'UTC'};
+    const device=await upsertMobileDevice(db,key,u.id,{...input,appState:'foreground'});
+    const accepted=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'foreground-background',message:'finish while open'});
+    const turn=await claimDurableTurn(db,accepted.turn.id);await completeDurableTurn(db,{turnId:turn!.id,leaseToken:turn!.lease_token,reply:'done',toolReceipts:[]});
+    expect(await db.query(`select id from push_deliveries where device_id=$1 and event_key=$2 and status='queued'`,[device.id,`turn:${turn!.id}`])).toHaveLength(1);
+    await upsertMobileDevice(db,key,u.id,{...input,appState:'background'});
+    const sent:any[]=[];const fake=async(_u:any,init:any)=>{sent.push(...JSON.parse(init.body));return new Response(JSON.stringify({data:[{status:'ok',id:'foreground-background-ticket'}]}),{status:200,headers:{'content-type':'application/json'}})};
+    expect((await processPushBatch(db,key,fake as typeof fetch)).ticketed).toBe(1);expect(sent).toHaveLength(1);expect(sent[0].data).toEqual({route:'turn',id:turn!.id});
+  });
+
+  it('defers a completion while foreground without spending send attempts, then expires it boundedly',async()=>{
+    const db=await testDb(),{u,t}=await owner(db,'foreground-defer');const key=new MasterKey(Buffer.alloc(32,14));
+    const device=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'14141414-1414-4141-8141-141414141414',platform:'ios',expoToken:'ExpoPushToken[foreground_defer]',appState:'foreground',privacyLocked:false,timezone:'UTC'});
+    const accepted=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'foreground-defer',message:'stay open'});
+    const turn=await claimDurableTurn(db,accepted.turn.id);await completeDurableTurn(db,{turnId:turn!.id,leaseToken:turn!.lease_token,reply:'done',toolReceipts:[]});
+    const now=new Date();const noSend=(async()=>{throw new Error('must not send while foreground')}) as typeof fetch;
+    expect(await processPushBatch(db,key,noSend,now)).toMatchObject({sent:0,deferred:1,suppressed:0});
+    const [deferred]=await db.query<{status:string;attempts:number;last_error_code:string;next_attempt_at:string}>(`select status,attempts,last_error_code,next_attempt_at from push_deliveries where device_id=$1 and event_key=$2`,[device.id,`turn:${turn!.id}`]);
+    expect(deferred).toMatchObject({status:'retry',attempts:0,last_error_code:'foreground'});expect(new Date(deferred.next_attempt_at).getTime()).toBeGreaterThan(now.getTime());
+    await db.query(`update mobile_devices set app_state='background' where id=$1`,[device.id]);
+    await db.query(`update push_deliveries set created_at=$3,next_attempt_at=$4 where device_id=$1 and event_key=$2`,[device.id,`turn:${turn!.id}`,new Date(now.getTime()-11*60*1000),now]);
+    expect(await processPushBatch(db,key,noSend,now)).toMatchObject({sent:0,deferred:0,suppressed:1});
+    expect((await db.query<{status:string;last_error_code:string}>(`select status,last_error_code from push_deliveries where device_id=$1 and event_key=$2`,[device.id,`turn:${turn!.id}`]))[0]).toEqual({status:'suppressed',last_error_code:'foreground_expired'});
+  });
+
+  it('completes once and sends once across duplicate completion and worker retry attempts',async()=>{
+    const db=await testDb(),{u,t}=await owner(db,'completion-retry');const key=new MasterKey(Buffer.alloc(32,15));
+    await upsertMobileDevice(db,key,u.id,{deviceIdentity:'15151515-1515-4151-8151-151515151515',platform:'ios',expoToken:'ExpoPushToken[completion_retry]',appState:'background',privacyLocked:false,timezone:'UTC'});
+    const accepted=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'completion-retry',message:'finish once'});
+    const turn=await claimDurableTurn(db,accepted.turn.id);const completion={turnId:turn!.id,leaseToken:turn!.lease_token,reply:'done',toolReceipts:[]};
+    expect(await completeDurableTurn(db,completion)).toBeTruthy();expect(await completeDurableTurn(db,completion)).toBeNull();
+    expect(await db.query(`select id from push_deliveries where event_key=$1`,[`turn:${turn!.id}`])).toHaveLength(1);
+    let calls=0;expect(await processPushBatch(db,key,(async()=>{calls++;throw new Error('synthetic network failure')}) as typeof fetch)).toMatchObject({sent:0,retried:1});
+    await db.query(`update push_deliveries set next_attempt_at=now()-interval '1 second' where event_key=$1`,[`turn:${turn!.id}`]);
+    const succeeds=async()=>{calls++;return new Response(JSON.stringify({data:[{status:'ok',id:'completion-retry-ticket'}]}),{status:200,headers:{'content-type':'application/json'}})};
+    expect((await processPushBatch(db,key,succeeds as typeof fetch)).ticketed).toBe(1);expect((await processPushBatch(db,key,succeeds as typeof fetch)).sent).toBe(0);expect(calls).toBe(2);
+  });
+
+  it('rechecks completion revocation, category preferences, and quiet hours before any send',async()=>{
+    const db=await testDb(),{u,t}=await owner(db,'completion-policy');const key=new MasterKey(Buffer.alloc(32,16));
+    const disabled=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'16161616-1616-4161-8161-161616161616',platform:'ios',expoToken:'ExpoPushToken[completion_disabled]',appState:'background',privacyLocked:false,categories:{assistant:false},timezone:'UTC'});
+    const quiet=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'17171717-1717-4171-8171-171717171717',platform:'ios',expoToken:'ExpoPushToken[completion_quiet]',appState:'background',privacyLocked:false,quietStart:'22:00',quietEnd:'07:00',timezone:'UTC'});
+    const revoked=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'18181818-1818-4181-8181-181818181818',platform:'ios',expoToken:'ExpoPushToken[completion_revoked]',appState:'background',privacyLocked:false,timezone:'UTC'});
+    const accepted=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'completion-policy',message:'apply policy'});
+    const turn=await claimDurableTurn(db,accepted.turn.id);await completeDurableTurn(db,{turnId:turn!.id,leaseToken:turn!.lease_token,reply:'done',toolReceipts:[]});
+    expect(await db.query(`select id from push_deliveries where device_id=$1 and event_key=$2`,[disabled.id,`turn:${turn!.id}`])).toHaveLength(0);
+    expect(await db.query(`select id from push_deliveries where event_key=$1`,[`turn:${turn!.id}`])).toHaveLength(2);
+    expect(await revokeMobileDevice(db,u.id,revoked.id)).toBe(true);
+    const noSend=(async()=>{throw new Error('must not send against policy')}) as typeof fetch;
+    expect(await processPushBatch(db,key,noSend,new Date('2026-09-19T23:00:00Z'))).toMatchObject({sent:0,suppressed:1});
+    const states=await db.query<{device_id:string;status:string;last_error_code:string}>(`select device_id,status,last_error_code from push_deliveries where event_key=$1 order by device_id`,[`turn:${turn!.id}`]);
+    expect(states).toEqual(expect.arrayContaining([{device_id:quiet.id,status:'suppressed',last_error_code:'quiet_hours'},{device_id:revoked.id,status:'suppressed',last_error_code:'device_revoked'}]));
+  });
+
   it('continues accepted work through persistence into the push outbox after the client is gone',async()=>{
     const db=await testDb(),{u,t}=await owner(db);const key=new MasterKey(Buffer.alloc(32,9));
     await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'ios',expoToken:'ExpoPushToken[e2e]',appState:'background',privacyLocked:false,timezone:'UTC'});
@@ -241,12 +297,12 @@ describe('Expo push outbox',()=>{
     expect((await db.query<{status:string}>(`select status from push_deliveries where event_key='receipt-http-400'`))[0].status).toBe('failed');
   });
 
-  it('reclaims a sender crash and revokes DeviceNotRegistered while suppressing foreground banners',async()=>{
+  it('reclaims a sender crash and revokes DeviceNotRegistered while deferring foreground banners',async()=>{
     const db=await testDb(),{u,t}=await owner(db);const key=new MasterKey(Buffer.alloc(32,8));
     const d=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'android',expoToken:'ExponentPushToken[dead]',appState:'foreground',privacyLocked:false,timezone:'UTC'});
     await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body) values($1,$2,'fg','assistant','turn',$3,'Josi','ready')`,[u.id,d.id,t.id]);
     const noSend=(async()=>{throw new Error('must not send')}) as typeof fetch;
-    expect((await processPushBatch(db,key,noSend)).suppressed).toBe(1);
+    expect((await processPushBatch(db,key,noSend)).deferred).toBe(1);
     await db.query(`update mobile_devices set app_state='background' where id=$1`,[d.id]);
     await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body,status,updated_at) values($1,$2,'stale','assistant','turn',$3,'Josi','ready','sending',now()-interval '11 minutes')`,[u.id,d.id,t.id]);
     const stale=async()=>new Response(JSON.stringify({data:[{status:'ok',id:'stale-ticket'}]}),{status:200,headers:{'content-type':'application/json'}});expect((await processPushBatch(db,key,stale as typeof fetch)).ticketed).toBe(1);
