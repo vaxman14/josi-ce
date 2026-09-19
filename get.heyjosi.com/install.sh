@@ -12,7 +12,7 @@ usage() {
 Usage: install.sh --version VERSION [options]
 
 Required:
-  --version VERSION       Exact Josi CLI release, for example 0.1.52
+  --version VERSION       Exact Josi CLI release, for example 0.1.53
 
 Options:
   --install-dir DIR       Destination (default: /usr/local/bin as root,
@@ -62,7 +62,7 @@ case "$VERSION" in
   ''|*[!0-9A-Za-z.-]*) fail 'invalid version' ;;
 esac
 printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$' \
-  || fail 'version must be an explicit release version such as 0.1.52'
+  || fail 'version must be an explicit release version such as 0.1.53'
 
 [ "$(uname -s)" = Linux ] || fail 'only Linux is supported'
 case "$(uname -m)" in
@@ -165,8 +165,18 @@ printf 'Verifying the signed checksum manifest...\n'
   "$work/$checksums" >/dev/null \
   || fail 'release signature verification failed; nothing was installed'
 
-expected=$(awk -v name="$archive" '$2 == name && $1 ~ /^[0-9a-f]{64}$/ { print $1 }' "$work/$checksums")
-[ "$(printf '%s\n' "$expected" | grep -c '^[0-9a-f][0-9a-f]*$')" -eq 1 ] \
+# POSIX awk does not require interval regular expressions; Debian bookworm's
+# default mawk therefore treats `{64}` literally unless interval support was
+# enabled at build time. Validate the field by length and character exclusion,
+# require the exact archive filename, and emit a digest only for one match.
+expected=$(awk -v name="$archive" '
+  NF == 2 && $2 == name && length($1) == 64 && $1 !~ /[^0-9a-f]/ {
+    matches++
+    digest=$1
+  }
+  END { if (matches == 1) print digest }
+' "$work/$checksums")
+[ -n "$expected" ] \
   || fail 'signed manifest does not contain exactly one valid digest for this archive'
 actual=$(sha256_file "$work/$archive")
 [ "$actual" = "$expected" ] \

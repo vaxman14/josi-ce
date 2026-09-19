@@ -219,7 +219,7 @@ running_images_match(){
   for s in web worker migrate attachment-init; do id=$(container_id "$s"); [[ -n "$id" ]] || return 1; image=$(docker inspect -f '{{.Config.Image}}' "$id" 2>/dev/null) || return 1; [[ "$image" == *":$target" ]] || return 1; done
 }
 rollback_to(){
-  local target="$1" failed="${2:-}" db_before db_after expected_fingerprint fingerprint_file; [[ -n "$target" ]] || die 'no rollback version is recorded'; valid_version_pin "$target" || die 'rollback requires an explicit immutable release version such as 0.1.52'
+  local target="$1" failed="${2:-}" db_before db_after expected_fingerprint fingerprint_file; [[ -n "$target" ]] || die 'no rollback version is recorded'; valid_version_pin "$target" || die 'rollback requires an explicit immutable release version such as 0.1.53'
   db_before=$(migration_fingerprint) || die 'rollback refused: migration ledger is unreadable'
   fingerprint_file="$STATE/rollback-$target.migrations.sha256"; [[ -s "$fingerprint_file" ]] || die "rollback to $target refused: no recorded pre-update migration fingerprint exists for that release"
   expected_fingerprint=$(tr -d '[:space:]' < "$fingerprint_file"); [[ "$expected_fingerprint" =~ ^[0-9a-f]{64}$ ]] || die "rollback to $target refused: recorded migration fingerprint is invalid"
