@@ -172,6 +172,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       # v3 tag resolved and reviewed 2026-09-19; pin the action itself as well
       # as the Cosign binary version used by the release boundary.
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
@@ -182,6 +183,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           sh -n get.heyjosi.com/install.sh
+          npm run test:cli
           bash scripts/build-cli-release.sh \
             --version "$version" \
             --output-dir dist/cli \

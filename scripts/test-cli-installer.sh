@@ -10,6 +10,7 @@ printf '#!/bin/sh\n[ "${1:-}" = version ] && { echo 1.2.3; exit 0; }; echo insta
 tar -czf "$FIX/josi-cli-1.2.3-linux-amd64.tar.gz" -C "$TMP/stage" josi
 real_hash(){ if command -v sha256sum >/dev/null; then command sha256sum "$1" | awk '{print $1}'; else command shasum -a 256 "$1" | awk '{print $1}'; fi; }
 printf '%s  %s\n' "$(real_hash "$FIX/josi-cli-1.2.3-linux-amd64.tar.gz")" 'josi-cli-1.2.3-linux-amd64.tar.gz' > "$FIX/josi-cli-1.2.3-checksums.txt"
+GOOD_MANIFEST="$TMP/good-checksums.txt"; cp "$FIX/josi-cli-1.2.3-checksums.txt" "$GOOD_MANIFEST"
 printf 'signature\n' > "$FIX/josi-cli-1.2.3-checksums.txt.sig"; printf 'certificate\n' > "$FIX/josi-cli-1.2.3-checksums.txt.pem"
 cat > "$FIX/cosign" <<'EOF'
 #!/bin/sh
@@ -51,6 +52,19 @@ sh "$INSTALLER" --version 1.2.3 --install-dir "$DEST" --non-interactive >/dev/nu
 [[ -x "$DEST/josi" ]] || bad valid; ok 'valid signed/checksummed noninteractive install succeeds'
 installed_hash=$(real_hash "$DEST/josi"); FAKE_TAMPER=1 sh "$INSTALLER" --version 1.2.3 --install-dir "$DEST" --yes >/dev/null 2>&1 && bad tamper
 [[ "$(real_hash "$DEST/josi")" == "$installed_hash" ]] || bad tamper-write; ok 'archive tampering fails closed and preserves the prior atomic install'
+cp "$GOOD_MANIFEST" "$FIX/josi-cli-1.2.3-checksums.txt"; cat "$GOOD_MANIFEST" >> "$FIX/josi-cli-1.2.3-checksums.txt"
+sh "$INSTALLER" --version 1.2.3 --install-dir "$DEST" --yes >/dev/null 2>&1 && bad duplicate-digest
+[[ "$(real_hash "$DEST/josi")" == "$installed_hash" ]] || bad duplicate-write; ok 'duplicate valid manifest entries fail closed'
+tr 'a-f' 'A-F' < "$GOOD_MANIFEST" > "$FIX/josi-cli-1.2.3-checksums.txt"
+sh "$INSTALLER" --version 1.2.3 --install-dir "$DEST" --yes >/dev/null 2>&1 && bad uppercase-digest
+[[ "$(real_hash "$DEST/josi")" == "$installed_hash" ]] || bad uppercase-write; ok 'non-canonical digest characters fail closed'
+sed 's/josi-cli-1.2.3-linux-amd64.tar.gz/josi-cli-1.2.3-linux-amd64.tar.gz.extra/' "$GOOD_MANIFEST" > "$FIX/josi-cli-1.2.3-checksums.txt"
+sh "$INSTALLER" --version 1.2.3 --install-dir "$DEST" --yes >/dev/null 2>&1 && bad inexact-name
+[[ "$(real_hash "$DEST/josi")" == "$installed_hash" ]] || bad inexact-write; ok 'an inexact archive filename fails closed'
+awk '{ print substr($1, 1, 63), $2 }' "$GOOD_MANIFEST" > "$FIX/josi-cli-1.2.3-checksums.txt"
+sh "$INSTALLER" --version 1.2.3 --install-dir "$DEST" --yes >/dev/null 2>&1 && bad short-digest
+[[ "$(real_hash "$DEST/josi")" == "$installed_hash" ]] || bad short-write; ok 'a digest with the wrong length fails closed'
+cp "$GOOD_MANIFEST" "$FIX/josi-cli-1.2.3-checksums.txt"
 FAKE_SIGNATURE_OK=0 sh "$INSTALLER" --version 1.2.3 --install-dir "$DEST" --yes >/dev/null 2>&1 && bad signature
 [[ "$(real_hash "$DEST/josi")" == "$installed_hash" ]] || bad signature-write; ok 'detached signature failure refuses installation'
 FAKE_PARTIAL_FAIL=1 sh "$INSTALLER" --version 1.2.3 --install-dir "$DEST" --yes >/dev/null 2>&1 && bad partial
