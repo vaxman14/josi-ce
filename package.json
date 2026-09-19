@@ -14,6 +14,7 @@
     "scan": "bash scripts/scan-secrets.sh",
     "migrate": "node packages/db/migrate.mjs",
     "e2e": "node scripts/e2e-web.mjs",
+    "test:mcp-workspace": "node scripts/test-workspace-mcp-child.mjs",
     "typecheck": "tsc -b && tsc --noEmit -p apps/web/tsconfig.json"
   },
   "devDependencies": {
