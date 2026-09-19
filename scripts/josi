@@ -1,0 +1,397 @@
+#!/usr/bin/env bash
+# Josi CE operator CLI. Docker Compose remains the only runtime.
+set -uo pipefail
+IFS=$'\n\t'
+
+JOSI_CLI_VERSION="${JOSI_CLI_VERSION:-0.1.0}"
+BUNDLE_SCHEMA="josi.support.v1"
+MAX_LOG_BYTES="${JOSI_MAX_LOG_BYTES:-1048576}"
+MAX_BUNDLE_BYTES="${JOSI_MAX_BUNDLE_BYTES:-10485760}"
+DOCKER_BIN="${JOSI_DOCKER_BIN:-docker}"
+CURL_BIN="${JOSI_CURL_BIN:-curl}"
+
+say(){ printf '%s\n' "$*"; }
+warn(){ printf 'warning: %s\n' "$*" >&2; }
+die(){ printf 'error: %s\n' "$*" >&2; exit "${2:-1}"; }
+now(){ if [[ -n "${JOSI_NOW:-}" ]]; then printf '%s' "$JOSI_NOW"; else date -u +%Y-%m-%dT%H:%M:%SZ; fi; }
+sha256(){ if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
+mode(){ local v; v=$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || true); [[ "$v" =~ ^[0-7]+$ ]] && printf '%s' "$v"; }
+json(){ printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e $'s/\t/\\t/g' | tr '\r\n' '  '; }
+redact(){
+  sed -E \
+    -e 's/((password|passwd|secret|token|api[_-]?key|master[_-]?key|authorization|cookie)[[:space:]]*[:=][[:space:]]*)[^[:space:]",}]+/\1[REDACTED]/Ig' \
+    -e 's/(Bearer[[:space:]]+)[A-Za-z0-9._~+\/-]+/\1[REDACTED]/Ig' \
+    -e 's#(postgres(ql)?://[^:/@]+:)[^@/]+@#\1[REDACTED]@#Ig' \
+    -e 's/([A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD|KEY)[A-Za-z0-9_]*=).*/\1[REDACTED]/Ig'
+}
+docker(){ "$DOCKER_BIN" "$@"; }
+compose(){ docker compose --project-directory "$ROOT" -f "$COMPOSE_FILE" "$@"; }
+
+usage(){ cat <<'EOF'
+Usage: josi [--root DIR] <command> [options]
+Commands:
+  install                 preflight, generate secrets, start pinned Compose stack
+  status [--json]         container and direct/public readiness
+  doctor [options]        transactional inspection and deterministic repair
+  update VERSION          verified backup, pinned update, health check, rollback
+  backup                  create and verify a local database backup
+  logs [--since 30m]      bounded, redacted, timestamped service logs
+  rollback [VERSION]      restore the previously recorded pinned version
+  uninstall               remove containers; preserve data by default
+  support bundle [PATH]   structured, redacted support evidence
+
+Doctor options: --check-only, --dry-run, --yes, --ai-repair, --allow-ai,
+  --approve-ai-plan, --export-ai-context <dir|archive.tar.gz>
+Raw `docker compose` remains supported for expert operation.
+EOF
+}
+
+ROOT="${JOSI_HOME:-}"
+if [[ "${1:-}" == "--root" ]]; then [[ $# -ge 3 ]] || die '--root needs a directory' 2; ROOT="$2"; shift 2; fi
+find_root(){
+  [[ -n "$ROOT" ]] && return
+  local d="$PWD"
+  while [[ "$d" != / ]]; do
+    [[ -f "$d/docker-compose.yml" ]] && { ROOT="$d"; return; }
+    d=$(dirname "$d")
+  done
+  [[ -f /opt/josi/docker-compose.yml ]] && ROOT=/opt/josi || ROOT="$PWD"
+}
+find_root
+ROOT="$(cd "$ROOT" 2>/dev/null && pwd)" || die "installation root does not exist: $ROOT"
+if [[ -f "$ROOT/docker-compose.release.yml" && ! -f "$ROOT/docker-compose.yml" ]]; then COMPOSE_FILE="$ROOT/docker-compose.release.yml"; else COMPOSE_FILE="$ROOT/docker-compose.yml"; fi
+STATE="$ROOT/.josi"
+RECEIPTS="$STATE/receipts"
+BACKUPS="$ROOT/backups"
+
+require_runtime(){
+  command -v "$DOCKER_BIN" >/dev/null 2>&1 || die 'Docker Engine is required; install it yourself, then rerun. Josi never alters host prerequisites.'
+  docker version >/dev/null 2>&1 || die 'Docker Engine is installed but not reachable by this user.'
+  docker compose version >/dev/null 2>&1 || die 'Docker Compose v2 is required. Josi does not install or replace it.'
+  [[ -f "$COMPOSE_FILE" ]] || die "no docker-compose.yml at $ROOT"
+}
+arch(){ case "$(uname -m)" in x86_64|amd64) echo amd64;; aarch64|arm64) echo arm64;; *) echo unsupported;; esac; }
+env_get(){ local key="$1"; [[ -f "$ROOT/.env" ]] || return 0; sed -n "s/^${key}=//p" "$ROOT/.env" | tail -1; }
+health_url(){ local u; u=$(env_get JOSI_APP_URL); [[ -n "$u" ]] && printf '%s' "${u%/}" || printf 'http://127.0.0.1'; }
+http_code(){ local c; c=$("$CURL_BIN" -kfsS --max-time 8 -o /dev/null -w '%{http_code}' "$1" 2>/dev/null) || c=000; [[ "$c" =~ ^[0-9][0-9][0-9]$ ]] || c=000; printf '%s' "$c"; }
+container_id(){ compose ps -q "$1" 2>/dev/null | head -1; }
+container_state(){ local id; id=$(container_id "$1"); [[ -n "$id" ]] || { echo missing; return; }; docker inspect -f '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$id" 2>/dev/null || echo unknown; }
+expected_services(){ compose config --services 2>/dev/null | grep -Ev '^(ocr|clamav)$' || printf '%s\n' db migrate web worker caddy; }
+port_owner(){ local p="$1"; if command -v ss >/dev/null 2>&1; then ss -ltnp 2>/dev/null | grep -E "[:.]${p}[[:space:]]" | head -1; elif command -v lsof >/dev/null 2>&1; then lsof -nP -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | tail -1; fi; }
+wait_ready(){
+  local timeout="${1:-120}" start code direct
+  start=$(date +%s)
+  while (( $(date +%s) - start < timeout )); do
+    direct=$(compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && echo ok || echo fail)
+    code=$(http_code "$(health_url)/ready")
+    [[ "$direct" == ok && "$code" =~ ^2 ]] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+preflight_checks(){
+  local rc=0 a free path
+  a=$(arch); [[ "$a" != unsupported ]] || { warn "unsupported architecture $(uname -m); releases support linux/amd64 and linux/arm64"; rc=1; }
+  [[ "$(uname -s)" == Linux ]] || warn 'production is supported on Linux; this host is suitable only for evaluation/testing'
+  require_runtime
+  if [[ -x "$ROOT/preflight.sh" ]]; then "$ROOT/preflight.sh" || rc=1
+  elif [[ -x "$ROOT/scripts/preflight.sh" ]]; then "$ROOT/scripts/preflight.sh" || rc=1
+  else warn 'preflight.sh is missing'; rc=1
+  fi
+  for path in "$ROOT" "${JOSI_WORKSPACE_PATH:-}"; do
+    [[ -z "$path" ]] && continue
+    [[ -d "$path" && -r "$path" ]] || { warn "path unavailable: $path"; rc=1; }
+  done
+  free=$(df -Pk "$ROOT" 2>/dev/null | awk 'NR==2{print int($4/1024)}')
+  [[ "${free:-0}" -ge 5120 ]] || { warn "less than 5 GiB free at $ROOT"; rc=1; }
+  return "$rc"
+}
+
+cmd_install(){
+  local yes=0 prepare=0
+  while [[ $# -gt 0 ]]; do case "$1" in --yes|--non-interactive) yes=1;; --prepare-only) prepare=1;; *) die "unknown install option: $1" 2;; esac; shift; done
+  preflight_checks || die 'preflight found blockers; no installation changes were made'
+  umask 077; mkdir -p "$STATE" "$RECEIPTS" "$BACKUPS"; chmod 700 "$STATE" "$RECEIPTS" "$BACKUPS"
+  local installer="$ROOT/install.sh"; [[ -x "$installer" ]] || installer="$ROOT/scripts/install.sh"
+  [[ -x "$installer" ]] || die 'install.sh is missing'
+  (cd "$ROOT" && JOSI_COMPOSE_SECRETS=1 "$installer")
+  [[ -f "$ROOT/.env" ]] && chmod 600 "$ROOT/.env"
+  # Compose file secrets are read by non-root container users. The files are
+  # 0644 only inside an owner-only 0700 directory, so other host users cannot
+  # traverse to them; changing them to 0600 would make the runtime unreadable.
+  chmod 700 "$ROOT/secrets" 2>/dev/null || true; chmod 644 "$ROOT/secrets/"* 2>/dev/null || true
+  [[ "$prepare" == 1 ]] && { say 'installation prepared; services were not started'; return; }
+  [[ "$yes" == 1 || -t 0 ]] || die 'noninteractive install requires --yes'
+  compose pull
+  compose up -d
+  wait_ready "${JOSI_HEALTH_TIMEOUT:-180}" || die 'services started but readiness failed; run `josi doctor`'
+  say "Josi is ready at $(health_url)"
+}
+
+cmd_status(){
+  require_runtime
+  local as_json=0; [[ "${1:-}" == --json ]] && as_json=1
+  local direct public service state rows='' sep=''
+  direct=$(compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && echo pass || echo fail)
+  public=$(http_code "$(health_url)/ready")
+  while IFS= read -r service; do [[ -z "$service" ]] && continue; state=$(container_state "$service"); rows+="$sep{\"service\":\"$(json "$service")\",\"state\":\"$(json "$state")\"}"; sep=,; done < <(expected_services)
+  if [[ "$as_json" == 1 ]]; then printf '{"schema":"josi.status.v1","direct":"%s","public_http":"%s","containers":[%s]}\n' "$direct" "$public" "$rows"
+  else
+    say "Josi CLI $JOSI_CLI_VERSION"; say "root: $ROOT"; say "direct readiness: $direct"; say "public readiness: HTTP $public"
+    while IFS= read -r service; do [[ -n "$service" ]] && printf '  %-18s %s\n' "$service" "$(container_state "$service")"; done < <(expected_services)
+  fi
+  [[ "$direct" == pass && "$public" =~ ^2 ]]
+}
+
+cmd_logs(){
+  require_runtime
+  local since=30m service='' follow=0
+  while [[ $# -gt 0 ]]; do case "$1" in --since) since="${2:-}"; shift;; --service) service="${2:-}"; shift;; --follow|-f) follow=1;; *) die "unknown logs option: $1" 2;; esac; shift; done
+  [[ "$since" =~ ^[0-9]+(s|m|h|d)$ ]] || die '--since must look like 30m, 2h, or 1d'
+  local args=(logs --timestamps --since "$since" --no-color); [[ "$follow" == 1 ]] && args+=(-f); [[ -n "$service" ]] && args+=("$service")
+  if [[ "$follow" == 1 ]]; then compose "${args[@]}" 2>&1 | redact; else compose "${args[@]}" 2>&1 | redact | awk -v max="$MAX_LOG_BYTES" '{n+=length($0)+1;if(n<=max)print;else if(!t++){print "[TRUNCATED: log byte cap reached]"}}'; fi
+}
+
+backup_verify(){ local f="$1"; [[ -s "$f" ]] || return 1; gzip -t "$f" 2>/dev/null || return 1; [[ -f "$f.sha256" ]] || return 1; (cd "$(dirname "$f")" && printf '%s  %s\n' "$(cat "$(basename "$f").sha256")" "$(basename "$f")" | sha256sum -c - >/dev/null 2>&1) || [[ "$(sha256 "$f")" == "$(cat "$f.sha256")" ]]; }
+cmd_backup(){
+  require_runtime; umask 077; mkdir -p "$BACKUPS" "$RECEIPTS"; chmod 700 "$BACKUPS" "$RECEIPTS"
+  local stamp file tmp sum
+  stamp=$(now | tr ':T' '--' | tr -d 'Z'); file="$BACKUPS/josi-db-$stamp.sql.gz"; tmp="$file.partial"
+  compose exec -T db sh -c 'export PGPASSWORD="$(cat /run/secrets/josi_db_password)"; pg_dump -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" --no-owner --no-acl' | gzip -9 > "$tmp" || { rm -f "$tmp"; die 'database backup failed; no update may proceed'; }
+  mv "$tmp" "$file"; chmod 600 "$file"; sum=$(sha256 "$file"); printf '%s\n' "$sum" > "$file.sha256"; chmod 600 "$file.sha256"
+  backup_verify "$file" || die "backup verification failed: $file"
+  printf '{"schema":"josi.backup.v1","created_at":"%s","file":"%s","sha256":"%s","verified":true,"master_key_included":false}\n' "$(now)" "$(json "$file")" "$sum" > "$RECEIPTS/last-backup.json"
+  say "$file"; warn 'the master key is never included; keep secrets/master.key backed up separately'
+}
+
+set_env(){ local key="$1" value="$2" file="$ROOT/.env"; [[ -f "$file" ]] || touch "$file"; if grep -q "^${key}=" "$file"; then sed -i.bak "s#^${key}=.*#${key}=${value}#" "$file"; rm -f "$file.bak"; else printf '%s=%s\n' "$key" "$value" >> "$file"; fi; chmod 600 "$file"; }
+current_version(){ local v; v=$(env_get JOSI_TAG); printf '%s' "${v:-0.1.0}"; }
+rollback_to(){
+  local target="$1" failed="${2:-}"; [[ -n "$target" ]] || die 'no rollback version is recorded'
+  set_env JOSI_TAG "$target"; compose pull; compose up -d
+  wait_ready "${JOSI_HEALTH_TIMEOUT:-180}" || die "rollback to $target did not recover readiness"
+  printf '{"schema":"josi.rollback.v1","at":"%s","to":"%s","failed_version":"%s","healthy":true}\n' "$(now)" "$(json "$target")" "$(json "$failed")" > "$RECEIPTS/last-rollback.json"
+  say "rolled back to $target; data volumes and tunnel configuration were preserved"
+}
+cmd_update(){
+  require_runtime; local target="${1:-}"; shift || true; [[ -n "$target" && "$target" != -* && "$target" =~ ^[A-Za-z0-9._-]+$ ]] || die 'usage: josi update VERSION [--yes]'
+  local yes=0; while [[ $# -gt 0 ]]; do case "$1" in --yes|--non-interactive) yes=1;; *) die "unknown update option: $1" 2;; esac; shift; done
+  local old backup; old=$(current_version); [[ "$old" != "$target" ]] || { say "already pinned to $target"; return; }
+  [[ "$yes" == 1 ]] || { [[ -t 0 ]] || die 'noninteractive update requires --yes'; printf 'Update %s to %s after a verified backup? [y/N] ' "$old" "$target"; read -r a; [[ "$a" =~ ^[Yy]$ ]] || die 'update cancelled'; }
+  backup=$(cmd_backup | tail -1); backup_verify "$backup" || die 'verified pre-update backup is required'
+  mkdir -p "$STATE" "$RECEIPTS"; printf '%s\n' "$old" > "$STATE/previous-version"; chmod 600 "$STATE/previous-version"
+  set_env JOSI_TAG "$target"
+  if ! compose pull || ! compose up -d || ! wait_ready "${JOSI_HEALTH_TIMEOUT:-180}"; then
+    warn "update to $target failed health/readiness; starting bounded rollback to $old"
+    rollback_to "$old" "$target" || die "update failed and rollback failed; backup: $backup"
+    return 1
+  fi
+  printf '{"schema":"josi.update.v1","at":"%s","from":"%s","to":"%s","backup":"%s","healthy":true}\n' "$(now)" "$(json "$old")" "$(json "$target")" "$(json "$backup")" > "$RECEIPTS/last-update.json"
+  say "updated $old -> $target; readiness verified; backup: $backup"
+}
+cmd_rollback(){ require_runtime; local target="${1:-}"; [[ -n "$target" ]] || target=$(cat "$STATE/previous-version" 2>/dev/null || true); rollback_to "$target" "$(current_version)"; }
+
+collect_bundle(){
+  require_runtime
+  local out="$1" since="${2:-30m}" consent="${3:-0}" dir archive=0
+  if [[ "$out" == *.tar.gz || "$out" == *.tgz ]]; then archive=1; dir=$(mktemp -d "${TMPDIR:-/tmp}/josi-bundle.XXXXXX"); else dir="$out"; mkdir -p "$dir"; fi
+  umask 077; mkdir -p "$dir/logs"; chmod 700 "$dir" "$dir/logs"
+  local ts host a compose_v engine_v app_v direct public disk mem services service state restarts exitc health logf bytes truncated=false
+  ts=$(now); host=$(hostname 2>/dev/null || echo unknown); a=$(arch); compose_v=$(docker compose version --short 2>/dev/null || echo unknown); engine_v=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unknown); app_v=$(current_version)
+  direct=$(compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && echo pass || echo fail); public=$(http_code "$(health_url)/ready")
+  disk="${JOSI_DISK_FREE_BYTES:-$(df -Pk "$ROOT" 2>/dev/null | awk 'NR==2{print $4*1024}' || echo 0)}"; mem="${JOSI_MEMORY_BYTES:-$(awk '/MemTotal/{print $2*1024;exit}' /proc/meminfo 2>/dev/null || echo 0)}"
+  services=$(expected_services | sort); local rows='' sep='' cid image image_id
+  while IFS= read -r service; do
+    [[ -z "$service" ]] && continue; state=$(container_state "$service"); cid=$(container_id "$service"); restarts=0; exitc=''; health='none'; image=''; image_id=''
+    if [[ -n "$cid" ]]; then
+      IFS='|' read -r restarts exitc health image image_id < <(docker inspect -f '{{.RestartCount}}|{{.State.ExitCode}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.Config.Image}}|{{.Image}}' "$cid" 2>/dev/null || echo '0|||unknown|')
+    fi
+    logf="$dir/logs/${service}.log"; compose logs --timestamps --since "$since" --no-color "$service" 2>&1 | redact | awk -v max="$MAX_LOG_BYTES" '{n+=length($0)+1;if(n<=max)print;else if(!t++){print "[TRUNCATED: per-service byte cap reached]"}}' > "$logf" || true
+    bytes=$(wc -c < "$logf" | tr -d ' '); grep -q '^\[TRUNCATED:' "$logf" && truncated=true
+    grep -Ei 'error|fail|fatal|panic|unhealthy|migration|timeout|backlog|warning' "$logf" 2>/dev/null | awk '!seen[$0]++' > "$dir/logs/${service}.errors.log" || true
+    rows+="$sep{\"service\":\"$(json "$service")\",\"state\":\"$(json "$state")\",\"restarts\":${restarts:-0},\"exit_code\":\"$(json "$exitc")\",\"health\":\"$(json "$health")\",\"image\":\"$(json "$image")\",\"image_id\":\"$(json "$image_id")\",\"log\":\"logs/${service}.log\",\"errors\":\"logs/${service}.errors.log\",\"log_bytes\":${bytes:-0}}"; sep=,
+  done <<< "$services"
+  # IDs only, never message/file contents: enough to join a failed request to
+  # its worker event and receipt while keeping user content out of the bundle.
+  grep -rhoE '(assistant_turn_id|turn_id|request_id|receipt_id|event_id)[=: ][A-Za-z0-9._:-]+' "$dir/logs" 2>/dev/null | LC_ALL=C sort -u > "$dir/correlations.txt" || true
+  compose config --no-interpolate 2>/dev/null | redact > "$dir/compose.redacted.yml" || printf '[unavailable]\n' > "$dir/compose.redacted.yml"
+  { printf 'root_mode=%s\n' "$(mode "$ROOT")"; printf 'secrets_dir_mode=%s\n' "$(mode "$ROOT/secrets")"; for f in "$ROOT/secrets/"*; do [[ -e "$f" ]] && printf '%s mode=%s bytes=%s\n' "$(basename "$f")" "$(mode "$f")" "$(wc -c < "$f" | tr -d ' ')"; done; } > "$dir/permissions.txt" 2>/dev/null || true
+  { df -Pk "$ROOT" 2>/dev/null || true; docker system df 2>/dev/null || true; } | redact > "$dir/resources.txt"
+  { compose config --volumes 2>/dev/null || true; printf '\nworkspace_enabled=%s\nworkspace_path_present=%s\n' "$(env_get JOSI_WORKSPACE_ENABLED)" "$([[ -n "${JOSI_WORKSPACE_PATH:-}" && -e "${JOSI_WORKSPACE_PATH:-}" ]] && echo true || echo false)"; } > "$dir/mounts.txt"
+  { command -v ss >/dev/null && ss -ltnp 2>/dev/null || command -v lsof >/dev/null && lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null || true; } | redact > "$dir/ports.txt"
+  { getent hosts "$(env_get JOSI_DOMAIN)" 2>/dev/null || true; printf 'public_ready_http=%s\n' "$public"; printf 'tunnel_configured=%s\n' "$([[ -n "$(env_get JOSI_DOMAIN)" ]] && echo true || echo false)"; } > "$dir/network.txt"
+  { compose exec -T db sh -c 'export PGPASSWORD="$(cat /run/secrets/josi_db_password)"; psql -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -Atc "select version from schema_migrations order by version"' 2>/dev/null || true; } > "$dir/migrations.txt"
+  { compose exec -T db sh -c 'export PGPASSWORD="$(cat /run/secrets/josi_db_password)"; psql -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -Atc "select kind||\047=\047||count(*) from jobs where state in (\047queued\047,\047running\047,\047failed\047) group by kind order by kind"' 2>/dev/null || true; } | redact > "$dir/queues.txt"
+  { find "$BACKUPS" -maxdepth 1 -type f -name '*.sql.gz' -print 2>/dev/null | sort | while read -r b; do printf '%s %s %s\n' "$(basename "$b")" "$(sha256 "$b")" "$(backup_verify "$b" && echo valid || echo invalid)"; done; } > "$dir/backups.txt"
+  local compose_hash; compose_hash=$(sha256 "$dir/compose.redacted.yml")
+  cat > "$dir/manifest.json" <<EOF
+{"schema":"$BUNDLE_SCHEMA","created_at":"$(json "$ts")","collector":{"name":"josi","version":"$(json "$JOSI_CLI_VERSION")","command":"josi support bundle --since $(json "$since")"},"host":{"name":"$(json "$host")","architecture":"$(json "$a")","kernel":"$(json "$(uname -sr)")","memory_bytes":${mem:-0},"disk_free_bytes":${disk:-0}},"app":{"version":"$(json "$app_v")","compose_version":"$(json "$compose_v")","docker_version":"$(json "$engine_v")","compose_sha256":"$compose_hash","schema_versions_file":"migrations.txt"},"health":{"direct":"$direct","public_http":"$public"},"containers":[$rows],"evidence":{"compose":"compose.redacted.yml","permissions":"permissions.txt","mounts":"mounts.txt","resources":"resources.txt","ports":"ports.txt","network":"network.txt","queues":"queues.txt","backups":"backups.txt","correlations":"correlations.txt"},"privacy":{"content_included":$([[ "$consent" == 1 ]] && echo true || echo false),"secrets_redacted":true},"truncated":$truncated}
+EOF
+  cat > "$dir/README.md" <<EOF
+# Josi support bundle
+
+- Collected: $ts
+- Host: $host ($a)
+- Josi / CLI: $app_v / $JOSI_CLI_VERSION
+- Docker / Compose: $engine_v / $compose_v
+- Direct readiness: $direct
+- Public readiness: HTTP $public
+- Content included: $([[ "$consent" == 1 ]] && echo 'yes (explicit consent)' || echo 'no')
+
+This bundle contains bounded operational metadata and redacted logs. It excludes environment values, passwords, tokens, master keys, OAuth material, message bodies, and file contents. Missing services produce partial evidence rather than aborting collection. \`[TRUNCATED]\` notices mark byte caps.
+EOF
+  local total tail_bytes; total=$(du -sk "$dir" | awk '{print $1*1024}'); if (( total > MAX_BUNDLE_BYTES )); then
+    warn "bundle exceeds cap ($total > $MAX_BUNDLE_BYTES); retaining bounded log tails"
+    tail_bytes=$((MAX_BUNDLE_BYTES / 32)); (( tail_bytes < 1024 )) && tail_bytes=1024
+    for logf in "$dir"/logs/*.log; do tail -c "$tail_bytes" "$logf" > "$logf.tmp" && { printf '\n[TRUNCATED: total bundle byte cap reached]\n' >> "$logf.tmp"; mv "$logf.tmp" "$logf"; }; done
+    sed -i.bak 's/"truncated":false/"truncated":true/' "$dir/manifest.json" 2>/dev/null || sed -i '' 's/"truncated":false/"truncated":true/' "$dir/manifest.json"; rm -f "$dir/manifest.json.bak"
+  fi
+  (cd "$dir" && find . -type f ! -name SHA256SUMS -print | LC_ALL=C sort | while read -r f; do printf '%s  %s\n' "$(sha256 "$f")" "${f#./}"; done > SHA256SUMS)
+  if [[ "$archive" == 1 ]]; then tar -C "$dir" -czf "$out" .; chmod 600 "$out"; rm -rf "$dir"; say "$out"; else say "$dir"; fi
+}
+cmd_support(){ local sub="${1:-}"; shift || true; [[ "$sub" == bundle ]] || die 'usage: josi support bundle [PATH] [--since 30m] [--include-content]'; local out='' since=30m consent=0; while [[ $# -gt 0 ]]; do case "$1" in --since) since="${2:-}"; shift;; --include-content) consent=1;; -*) die "unknown support option: $1" 2;; *) [[ -z "$out" ]] || die 'only one output path is allowed'; out="$1";; esac; shift; done; [[ "$consent" == 0 || "${JOSI_CONTENT_CONSENT:-}" == I-CONSENT ]] || die 'content collection requires JOSI_CONTENT_CONSENT=I-CONSENT'; [[ -n "$out" ]] || out="$ROOT/josi-support-$(now | tr ':T' '--' | tr -d Z)"; collect_bundle "$out" "$since" "$consent"; }
+
+snapshot_state(){
+  umask 077; mkdir -p "$STATE/snapshots"; local d="$STATE/snapshots/$(now | tr ':T' '--' | tr -d Z)-$$"; mkdir -p "$d"; chmod 700 "$d"
+  for f in .env docker-compose.yml docker-compose.noproxy.yml Caddyfile; do [[ -f "$ROOT/$f" ]] && cp -p "$ROOT/$f" "$d/$f"; done
+  [[ -d "$ROOT/secrets" ]] && cp -Rp "$ROOT/secrets" "$d/secrets"
+  compose ps --all --format json > "$d/containers.before.json" 2>/dev/null || true
+  printf '%s' "$d"
+}
+doctor_check(){
+  local key="$1" status="$2" detail="$3" repair="${4:-}"; DOCTOR_ROWS+="${DOCTOR_SEP}{\"check\":\"$(json "$key")\",\"status\":\"$status\",\"detail\":\"$(json "$detail")\",\"repair\":\"$(json "$repair")\"}"; DOCTOR_SEP=,
+  if [[ "$status" == fail ]]; then DOCTOR_FAILED+=("$key"); DOCTOR_FAIL_COUNT=$((DOCTOR_FAIL_COUNT + 1)); DOCTOR_FAILED_TEXT="${DOCTOR_FAILED_TEXT:+$DOCTOR_FAILED_TEXT }$key"; fi
+  printf '  %-5s %-24s %s\n' "$(printf '%s' "$status" | tr '[:lower:]' '[:upper:]')" "$key" "$detail"
+}
+run_doctor_checks(){
+  DOCTOR_ROWS=''; DOCTOR_SEP=''; DOCTOR_FAILED=(); DOCTOR_FAIL_COUNT=0; DOCTOR_FAILED_TEXT=''; local a free s st m code domain path expected actual
+  a=$(arch); [[ "$a" != unsupported ]] && doctor_check architecture pass "$a" || doctor_check architecture fail "unsupported $(uname -m)"
+  if command -v "$DOCKER_BIN" >/dev/null 2>&1 && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then doctor_check runtime pass 'Docker Engine and Compose v2 reachable'; else doctor_check runtime fail 'Docker Engine or Compose v2 unavailable'; return; fi
+  [[ -f "$COMPOSE_FILE" ]] || { doctor_check install_path fail "compose file missing at $COMPOSE_FILE"; return; }
+  compose config -q >/dev/null 2>&1 && doctor_check compose_config pass valid || doctor_check compose_config fail invalid
+  m=$(mode "$ROOT/secrets"); [[ "$m" == 700 ]] && doctor_check secrets_directory pass 'mode 700' || doctor_check secrets_directory fail "unsafe mode ${m:-missing}" 'chmod 700'
+  for path in "$ROOT/secrets/master.key" "$ROOT/secrets/db_password"; do
+    if [[ ! -s "$path" ]]; then doctor_check "secret_$(basename "$path")" fail missing
+    else m=$(mode "$path"); [[ "$m" == 600 || "$m" == 400 || "$m" == 644 ]] && doctor_check "secret_$(basename "$path")" pass "present mode $m (protected by owner-only directory)" || doctor_check "secret_$(basename "$path")" fail "unsafe mode ${m:-unknown}" 'chmod 644 inside mode-700 directory'; fi
+  done
+  free=$(df -Pk "$ROOT" 2>/dev/null | awk 'NR==2{print int($4/1024)}'); [[ "${free:-0}" -ge 2048 ]] && doctor_check disk pass "${free} MiB free" || doctor_check disk fail "${free:-0} MiB free; manual cleanup required"
+  while IFS= read -r s; do [[ -z "$s" ]] && continue; st=$(container_state "$s"); case "$st" in running/healthy|running/none|exited/none) [[ "$s" == migrate || "$s" == attachment-init ]] && doctor_check "container_$s" pass "$st" || doctor_check "container_$s" pass "$st";; missing|exited/*|dead/*|created/*|restarting/*|running/unhealthy) doctor_check "container_$s" fail "$st" 'docker compose up -d';; *) doctor_check "container_$s" fail "$st";; esac; done < <(expected_services)
+  local caddy_state owner; caddy_state=$(container_state caddy)
+  if [[ "$caddy_state" != running/* ]]; then
+    owner=$(port_owner "$(env_get JOSI_HTTP_PORT)" || true); [[ -z "$owner" ]] || doctor_check port_collision fail "HTTP port owned by: $owner; unrelated processes are never killed automatically"
+    owner=$(port_owner "$(env_get JOSI_HTTPS_PORT)" || true); [[ -z "$owner" ]] || doctor_check port_collision fail "HTTPS port owned by: $owner; unrelated processes are never killed automatically"
+  fi
+  local web_id running_image target_version; web_id=$(container_id web); target_version=$(current_version); running_image=''; [[ -n "$web_id" ]] && running_image=$(docker inspect -f '{{.Config.Image}}' "$web_id" 2>/dev/null || true)
+  if [[ -n "$running_image" ]]; then case "$running_image" in *":$target_version") doctor_check image_drift pass "$running_image matches pin";; *) doctor_check image_drift fail "$running_image does not match JOSI_TAG=$target_version" 'recreate pinned services';; esac; fi
+  compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && doctor_check direct_health pass ready || doctor_check direct_health fail not-ready 'restart web dependencies'
+  code=$(http_code "$(health_url)/ready"); [[ "$code" =~ ^2 ]] && doctor_check public_health pass "HTTP $code" || doctor_check public_health fail "HTTP $code; route/DNS/TLS may require operator action"
+  domain=$(env_get JOSI_DOMAIN); if [[ -n "$domain" ]]; then getent hosts "$domain" >/dev/null 2>&1 && doctor_check domain_dns pass resolves || doctor_check domain_dns fail "cannot resolve $domain; tunnel/domain is never deleted automatically"; fi
+  if [[ "$(env_get JOSI_WORKSPACE_ENABLED)" == 1 ]]; then path="${JOSI_WORKSPACE_PATH:-}"; [[ -n "$path" && -d "$path" ]] && doctor_check workspace pass "$path available" || doctor_check workspace fail 'configured workspace path unavailable'; fi
+  if [[ -f "$RECEIPTS/last-backup.json" ]]; then
+    local newest; newest=$(find "$BACKUPS" -maxdepth 1 -type f -name '*.sql.gz' -print 2>/dev/null | LC_ALL=C sort | tail -1)
+    [[ -n "$newest" ]] && backup_verify "$newest" && doctor_check backup_integrity pass "$(basename "$newest") verified" || doctor_check backup_integrity fail 'latest backup or checksum is missing/corrupt'
+  else doctor_check backup_receipt warn 'no verified CLI backup receipt yet'; fi
+  compose exec -T db sh -c 'export PGPASSWORD="$(cat /run/secrets/josi_db_password)"; psql -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -Atc "select count(*) from schema_migrations"' >/dev/null 2>&1 && doctor_check migrations pass 'database reachable and migration ledger readable' || doctor_check migrations fail 'database/migration access failed; verified backup required before invasive repair'
+  local backlog; backlog=$(compose exec -T db sh -c 'export PGPASSWORD="$(cat /run/secrets/josi_db_password)"; psql -U "${POSTGRES_USER:-josi}" -d "${POSTGRES_DB:-josi}" -Atc "select count(*) from jobs where state in (\047queued\047,\047running\047,\047failed\047)"' 2>/dev/null | tail -1 || true)
+  if [[ "$backlog" =~ ^[0-9]+$ ]]; then [[ "$backlog" -lt 1000 ]] && doctor_check worker_backlog pass "$backlog pending/active/failed jobs" || doctor_check worker_backlog warn "$backlog jobs; inspect worker logs/queues"; fi
+}
+restore_snapshot(){ local d="$1"; for f in .env docker-compose.yml docker-compose.noproxy.yml Caddyfile; do [[ -f "$d/$f" ]] && cp -p "$d/$f" "$ROOT/$f"; done; [[ -d "$d/secrets" ]] && { local held="$STATE/secrets.pre-rollback.$(date +%s).$$"; mv "$ROOT/secrets" "$held" 2>/dev/null || true; cp -Rp "$d/secrets" "$ROOT/secrets"; }; compose up -d >/dev/null 2>&1 || true; }
+run_ai_repair(){
+  local allow="$1" approve="$2" context="$3"; [[ "$allow" == 1 ]] || die 'AI repair requires separate --allow-ai approval; --yes never permits it'
+  local provider="${JOSI_AI_PROVIDER:-}"
+  if [[ "$provider" == adapter ]]; then [[ "${JOSI_AI_TEST_ADAPTER:-0}" == 1 ]] || die 'the synthetic adapter is test-only';
+  elif [[ "$provider" != codex && "$provider" != ollama ]]; then die 'configure a host-local JOSI_AI_PROVIDER=codex|ollama; off-host providers are not accepted implicitly'; fi
+  [[ -n "$context" ]] || { context="$STATE/ai-context-$(now | tr ':T' '--' | tr -d Z)"; collect_bundle "$context" 30m 0 >/dev/null; }
+  [[ -d "$context" ]] || die 'AI repair requires a collected evidence directory, not an archive'
+  local plan="$STATE/ai-plan.txt" transcript="$RECEIPTS/ai-$(now | tr ':T' '--' | tr -d Z).log"; mkdir -p "$RECEIPTS"
+  local prompt="Read only the redacted evidence bundle at $context. Return a bounded repair plan using only: docker compose up -d SERVICE; docker compose restart SERVICE; chmod 600 FILE; chmod 700 DIR. Never request secrets, Docker socket access, file contents, network writes, or commands outside $ROOT. Failed checks: ${DOCTOR_FAILED_TEXT:-none}."
+  say "AI provider: $provider (planning is read-only; evidence is redacted)"
+  case "$provider" in
+    codex) command -v codex >/dev/null || die 'Codex CLI provider unavailable'; printf '%s\n' "$prompt" | codex exec --sandbox read-only -C "$context" - > "$plan";;
+    ollama) command -v ollama >/dev/null || die 'Ollama provider unavailable'; [[ -n "${JOSI_AI_MODEL:-}" ]] || die 'JOSI_AI_MODEL is required for Ollama'; case "${OLLAMA_HOST:-http://127.0.0.1:11434}" in http://127.0.0.1:*|http://localhost:*|http://\[::1\]:*) :;; *) warn 'OLLAMA_HOST is not loopback: redacted evidence may leave this host';; esac; { printf '%s\n\n--- REDACTED EVIDENCE ---\n' "$prompt"; find "$context" -type f -print | LC_ALL=C sort | while read -r evidence; do printf '\n### %s\n' "${evidence#$context/}"; cat "$evidence"; done; } | ollama run "$JOSI_AI_MODEL" > "$plan";;
+    adapter) [[ -x "${JOSI_AI_ADAPTER:-}" ]] || die 'JOSI_AI_ADAPTER is unavailable'; "$JOSI_AI_ADAPTER" "$context" "$plan";;
+  esac
+  redact < "$plan" > "$plan.redacted"; mv "$plan.redacted" "$plan"; chmod 600 "$plan"; say "AI proposed plan (not yet executed): $plan"; cat "$plan"
+  [[ "$approve" == 1 ]] || die 'AI plan requires a second approval: rerun with --approve-ai-plan after inspection'
+  # AI execution has a stricter boundary than deterministic repair: an exact
+  # config/state snapshot plus a newly verified database backup are mandatory.
+  local ai_snapshot ai_backup baseline_direct baseline_public
+  baseline_direct=$(compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && echo pass || echo fail)
+  baseline_public=$(http_code "$(health_url)/ready")
+  ai_snapshot=$(snapshot_state)
+  ai_backup=$(cmd_backup | tail -1)
+  backup_verify "$ai_backup" || die 'AI repair refused because its database snapshot did not verify'
+  printf 'snapshot=%s\nbackup=%s\n' "$ai_snapshot" "$ai_backup" >> "$transcript"
+  local line; while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    case "$line" in
+      'docker compose up -d '*) local svc="${line##* }"; [[ "$svc" =~ ^[a-zA-Z0-9_-]+$ ]] || die 'AI plan escaped service allowlist'; compose up -d "$svc" >> "$transcript" 2>&1;;
+      'docker compose restart '*) local svc="${line##* }"; [[ "$svc" =~ ^[a-zA-Z0-9_-]+$ ]] || die 'AI plan escaped service allowlist'; compose restart "$svc" >> "$transcript" 2>&1;;
+      'chmod 600 '*|'chmod 700 '*) local rest="${line#chmod }" m="${rest%% *}" p="${rest#* }"; [[ "$p" == "$ROOT"/* && "$p" != *'..'* ]] || die 'AI plan escaped path allowlist'; chmod "$m" "$p" >> "$transcript" 2>&1;;
+      *) die "AI plan contains non-allowlisted command: $line";;
+    esac
+  done < "$plan"
+  local post_direct post_public
+  post_direct=$(compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && echo pass || echo fail)
+  post_public=$(http_code "$(health_url)/ready")
+  if [[ "$baseline_direct" == pass && "$post_direct" != pass || "$baseline_public" =~ ^2 && ! "$post_public" =~ ^2 ]]; then
+    warn 'AI repair regressed readiness; rolling back its exact snapshot'
+    restore_snapshot "$ai_snapshot"
+    printf 'rollback=health-regression\n' >> "$transcript"
+    return 1
+  fi
+  printf 'provider=%s\nplan_sha256=%s\npost_direct=%s\npost_public=%s\n' "$provider" "$(sha256 "$plan")" "$post_direct" "$post_public" >> "$transcript"
+  chmod 600 "$transcript"
+  say "AI repair transcript: $transcript"
+}
+cmd_doctor(){
+  local check=0 dry=0 yes=0 ai=0 allow_ai=0 approve_ai=0 export='' arg
+  while [[ $# -gt 0 ]]; do arg="$1"; case "$arg" in --check-only) check=1;; --dry-run) dry=1;; --yes) yes=1;; --ai-repair) ai=1;; --allow-ai) allow_ai=1;; --approve-ai-plan) approve_ai=1;; --export-ai-context) export="${2:-}"; shift;; *) die "unknown doctor option: $arg" 2;; esac; shift; done
+  if [[ -n "$export" ]]; then collect_bundle "$export" 30m 0; [[ "$check" == 1 && "$ai" == 0 ]] && return; fi
+  say 'Josi doctor — inspect/classify'; run_doctor_checks
+  if [[ "$DOCTOR_FAIL_COUNT" -eq 0 ]]; then say 'healthy: no repairs required'; return 0; fi
+  [[ "$check" == 1 ]] && { say "non-repairable/read-only result: $DOCTOR_FAILED_TEXT"; return 1; }
+  local before_direct before_public snapshot='' actions=() f
+  before_direct=$(compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && echo pass || echo fail); before_public=$(http_code "$(health_url)/ready")
+  for f in "${DOCTOR_FAILED[@]}"; do case "$f" in secret_*|secrets_directory) actions+=("repair strict secret permissions");; container_*|direct_health) actions+=("docker compose up -d ${f#container_}");; image_drift) actions+=("recreate application services at pinned image");; *) :;; esac; done
+  printf 'repair plan:\n'; printf '  - %s\n' "${actions[@]:-no safe automatic repairs; operator action required}"
+  [[ "$dry" == 1 ]] && return 1
+  if [[ ${#actions[@]} -gt 0 ]]; then snapshot=$(snapshot_state); say "snapshot: $snapshot"; fi
+  for f in "${DOCTOR_FAILED[@]}"; do
+    case "$f" in
+      secrets_directory) chmod 700 "$ROOT/secrets"; actions+=("applied: chmod 700 secrets");;
+      secret_master.key) chmod 644 "$ROOT/secrets/master.key"; actions+=("applied: chmod 644 secrets/master.key inside mode-700 directory");;
+      secret_db_password) chmod 644 "$ROOT/secrets/db_password"; actions+=("applied: chmod 644 secrets/db_password inside mode-700 directory");;
+      container_*) compose up -d "${f#container_}"; actions+=("applied: start/recreate ${f#container_}");;
+      direct_health) compose up -d db migrate web worker; actions+=("applied: start web dependencies");;
+      image_drift) compose up -d migrate web worker; actions+=("applied: recreate application services at pinned image");;
+    esac
+  done
+  say 'rerunning every failed check'; run_doctor_checks
+  local after_direct after_public; after_direct=$(compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && echo pass || echo fail); after_public=$(http_code "$(health_url)/ready")
+  if [[ "$before_direct" == pass && "$after_direct" != pass || "$before_public" =~ ^2 && ! "$after_public" =~ ^2 ]]; then warn 'health regressed after repair; restoring exact pre-repair configuration/state snapshot'; [[ -n "$snapshot" ]] && restore_snapshot "$snapshot"; run_doctor_checks; fi
+  if [[ "$DOCTOR_FAIL_COUNT" -gt 0 && "$ai" == 1 ]]; then
+    run_ai_repair "$allow_ai" "$approve_ai" "$export"; run_doctor_checks
+  elif [[ "$DOCTOR_FAIL_COUNT" -gt 0 ]]; then
+    say 'Optional AI planning remains disabled. To explicitly opt in, configure a host-local provider and rerun with --ai-repair --allow-ai.'
+  fi
+  local failed_json=''; [[ -n "$DOCTOR_FAILED_TEXT" ]] && failed_json="\"$(printf '%s' "$DOCTOR_FAILED_TEXT" | sed 's/ /\",\"/g')\""
+  mkdir -p "$RECEIPTS"; printf '{"schema":"josi.doctor.v1","at":"%s","snapshot":"%s","failed":[%s],"checks":[%s]}\n' "$(now)" "$(json "$snapshot")" "$failed_json" "$DOCTOR_ROWS" > "$RECEIPTS/last-doctor.json"
+  if [[ "$DOCTOR_FAIL_COUNT" -eq 0 ]]; then say "healthy; receipt: $RECEIPTS/last-doctor.json"; else say "blockers: $DOCTOR_FAILED_TEXT"; return 1; fi
+}
+
+cmd_uninstall(){
+  require_runtime; local yes=0 purge=0 confirm=''
+  while [[ $# -gt 0 ]]; do case "$1" in --yes) yes=1;; --purge-data) purge=1;; --confirm) confirm="${2:-}"; shift;; *) die "unknown uninstall option: $1" 2;; esac; shift; done
+  if [[ "$purge" == 1 ]]; then [[ "$confirm" == DELETE-JOSI-DATA ]] || die 'data purge refused; pass --purge-data --confirm DELETE-JOSI-DATA'; compose down --volumes --remove-orphans; say 'containers and named data volumes removed; host backups, config, and tunnel/domain were not deleted'
+  else
+    if [[ "$yes" != 1 ]]; then [[ -t 0 ]] || die 'noninteractive uninstall requires --yes (data is kept)'; printf 'Type UNINSTALL to remove containers while keeping all data: '; read -r confirm; [[ "$confirm" == UNINSTALL ]] || die 'uninstall cancelled'; fi
+    compose down --remove-orphans; say 'containers removed; volumes, user data, backups, configuration, workspace binds, and tunnel/domain settings kept'
+  fi
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  install) cmd_install "$@";; status) cmd_status "$@";; doctor) cmd_doctor "$@";; update) cmd_update "$@";; backup) cmd_backup "$@";; logs) cmd_logs "$@";; rollback) cmd_rollback "$@";; uninstall) cmd_uninstall "$@";; support) cmd_support "$@";; help|--help|-h|'') usage;; version|--version) say "$JOSI_CLI_VERSION";; *) die "unknown command: $cmd" 2;;
+esac

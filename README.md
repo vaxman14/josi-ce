@@ -155,6 +155,15 @@ for this one-shot installer only because the published image is inspectable,
 version-pinned, and exits after Compose starts. Do not run it as a permanent
 service and do not give the socket to the Josi application containers.
 
+### Josi CLI
+
+The standalone Linux CLI is distributed as versioned `amd64` and `arm64`
+archives with SHA-256 checksums and a detached Sigstore signature. The installer
+requires an explicit version and verifies both the release signer and archive
+before writing anything. Prefer downloading and inspecting the installer before
+running it; see [`docs/CLI.md`](docs/CLI.md) for interactive, noninteractive,
+and manual verification instructions.
+
 ### Manual installation
 
 The complete operator guide is in

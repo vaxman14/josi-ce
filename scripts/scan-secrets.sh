@@ -107,6 +107,15 @@ while IFS= read -r file; do
     sed 's/roman@socalreceptionist\.com//g' "$file" > "$literal_tmp"
     literal_source="$literal_tmp"
   fi
+  # The release workflow must name the reviewed static installer artifact.
+  # Allow only that exact repository path there; every URL, bare host, and any
+  # other production-domain occurrence remains forbidden.
+  if [[ "$file" == '.github/workflows/release.yml' ]] && grep -Fq 'get.heyjosi.com/install.sh' "$literal_source"; then
+    [[ -n "$literal_tmp" ]] || literal_tmp="$(mktemp)"
+    sed 's#get\.heyjosi\.com/install\.sh##g' "$literal_source" > "$literal_tmp.next"
+    mv "$literal_tmp.next" "$literal_tmp"
+    literal_source="$literal_tmp"
+  fi
 
   for needle in "${FORBIDDEN_LITERAL[@]}"; do
     if grep -Fn -- "$needle" "$literal_source" >/dev/null 2>&1; then

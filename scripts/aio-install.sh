@@ -77,6 +77,7 @@ install_asset "$ASSETS/Caddyfile" Caddyfile 0644 preserve
 install_asset "$ASSETS/.env.example" .env.example 0644
 install_asset "$ASSETS/install.sh" install.sh 0755
 install_asset "$ASSETS/preflight.sh" preflight.sh 0755
+install_asset "$ASSETS/josi" josi 0755
 install_asset "$ASSETS/reset-password.sh" reset-password.sh 0755
 
 if [[ ! -e .env ]]; then

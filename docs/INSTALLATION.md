@@ -163,6 +163,11 @@ from source, an external PostgreSQL, running behind an existing reverse proxy,
 custom networks, firewall rules, backup and restore procedures, upgrades and
 rollback, and the full troubleshooting index.
 
+The separate command-line client is not required to run the server. If you want
+it, follow the pinned, signature-verifying installation in
+[`CLI.md`](CLI.md); do not copy the repository's development script directly
+onto an operational host.
+
 ---
 
 ## 1. What the standard installation creates

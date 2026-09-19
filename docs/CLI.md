@@ -1,0 +1,178 @@
+# Josi CLI installation
+
+The Josi CLI is a shell executable published for Linux `amd64` and `arm64`.
+Every release contains architecture-labelled archives, a SHA-256 manifest, and
+a detached Sigstore signature plus signing certificate. The payload is identical
+on both architectures, but separate archive names make platform selection and
+release auditing explicit.
+
+## Recommended: download, inspect, then run
+
+Pin one exact release. Do not substitute `latest`:
+
+```bash
+VERSION=0.1.48
+curl -fSLo josi-install.sh \
+  "https://github.com/vaxman14/josi-ce/releases/download/v${VERSION}/install.sh"
+less josi-install.sh
+sh josi-install.sh --version "$VERSION"
+rm josi-install.sh
+```
+
+The prompt shows the version and destination before writing. The default is
+`/usr/local/bin` for root or `$HOME/.local/bin` for an unprivileged account.
+Choose another absolute destination with `--install-dir`:
+
+```bash
+sh josi-install.sh --version "$VERSION" --install-dir "$HOME/bin"
+```
+
+The installer supports Linux only. It selects `amd64` or `arm64`, downloads the
+matching versioned archive, and then:
+
+1. authenticates a pinned Cosign verifier by its embedded SHA-256 digest;
+2. verifies the checksum manifest's detached signature, certificate, GitHub
+   Actions OIDC issuer, and exact tagged-release workflow identity;
+3. compares the archive with the SHA-256 digest in that signed manifest;
+4. rejects an archive containing anything except one regular `josi` file; and
+5. writes the executable atomically only after every check passes.
+
+A missing signature or certificate, an unknown signer, a digest mismatch, an
+unsupported platform, or an unavailable verification service fails closed.
+There is no flag to bypass verification and no unpinned `latest` mode.
+
+## Noninteractive install
+
+Automation must still pin the version and explicitly opt out of the prompt:
+
+```bash
+sh josi-install.sh \
+  --version 0.1.48 \
+  --install-dir /usr/local/bin \
+  --non-interactive
+```
+
+`--yes` is an equivalent shorter flag. The installer never invokes `sudo`; run
+it with an account that can write to the selected directory.
+
+## Optional pipe shorthand
+
+Downloading and inspecting the installer is preferred. If the release's
+installer has already been reviewed, this shorthand preserves the same explicit
+version pin and verification:
+
+```bash
+VERSION=0.1.48
+curl -fsSL \
+  "https://github.com/vaxman14/josi-ce/releases/download/v${VERSION}/install.sh" \
+  | sh -s -- --version "$VERSION" --yes
+```
+
+Never pipe an unversioned URL into a shell.
+
+## Verify or install manually
+
+Operators who do not want to run the installer can download these four files
+from the same numbered GitHub release:
+
+- `josi-cli-<version>-linux-<arch>.tar.gz`
+- `josi-cli-<version>-checksums.txt`
+- `josi-cli-<version>-checksums.txt.sig`
+- `josi-cli-<version>-checksums.txt.pem`
+
+Use Cosign to verify the manifest against the exact release workflow identity,
+then compare the archive's SHA-256 digest before extracting it. The installer is
+the canonical, auditable implementation of those steps.
+
+After installation:
+
+```bash
+josi --help
+```
+
+## Operating an installation
+
+Run the CLI from an installation directory, pass `--root /absolute/path`, or set
+`JOSI_HOME`. It remains a thin orchestration layer: Docker Compose is the only
+runtime, and experts can continue to use raw `docker compose` commands.
+
+- `josi install [--yes]` runs the existing read-only preflight and existing
+  secret generator, pulls the pinned images, starts Compose, and waits for real
+  `/ready` checks. It never installs Docker, Compose, or host packages.
+- `josi status [--json]` reports container state plus direct and public
+  readiness.
+- `josi logs --since 30m [--service NAME]` emits bounded, timestamped, redacted
+  Compose logs.
+- `josi backup` writes a compressed database backup, SHA-256 sidecar, and
+  verification receipt. The master key is deliberately separate.
+- `josi update VERSION [--yes]` requires a newly verified backup, records the
+  current pin, pulls and starts the requested pin, verifies direct/public
+  readiness, and rolls back to the previous pin on failure.
+- `josi rollback [VERSION]` restores an explicit or last-recorded pin and checks
+  readiness.
+- `josi uninstall [--yes]` removes containers but keeps volumes, data, backups,
+  config, workspace binds, and tunnel/domain settings. Data deletion requires
+  the separate `--purge-data --confirm DELETE-JOSI-DATA` phrase.
+- `josi support bundle [PATH]` and `josi doctor --export-ai-context PATH` use
+  the same versioned, bounded, secret-redacted collector.
+
+`josi doctor` is transactional. It classifies all checks, snapshots exact
+configuration/state before a repair, applies only safe reversible repairs by
+default, reruns checks, emits JSON/human receipts, and restores its snapshot if
+direct or public readiness regresses. `--check-only` never writes; `--dry-run`
+prints the exact deterministic plan. Risky or non-deterministic issues remain
+precise operator blockers rather than being guessed at.
+
+AI repair is disabled by default and runs only after deterministic repair is
+exhausted. `--ai-repair` still requires separate `--allow-ai`; `--yes` does not
+grant it. Only a configured host-local Codex CLI or Ollama model is accepted
+(the synthetic adapter exists only in the test harness). The provider receives the shared redacted evidence bundle first,
+can plan only from read-only evidence, and cannot execute until the plan is
+shown and separately approved with `--approve-ai-plan`. Execution is restricted
+to a small service/chmod allowlist, recorded, followed by all failed
+postconditions, and covered by the same snapshot/rollback boundary. Operators
+must assess any configured model endpoint: an Ollama-compatible endpoint that
+is not actually host-local can send the redacted evidence off-host.
+
+To remove only the standalone client, remove the single `josi` executable from
+the directory chosen at installation.
+
+## Existing-solutions preflight
+
+Objective 2 deliberately reuses project machinery rather than adopting a generic
+installer/updater that cannot preserve Josi's invariants:
+
+- `scripts/preflight.sh` remains the authoritative read-only host check.
+- `scripts/install.sh` remains the secret generator and never replaces the
+  master key.
+- `scripts/aio-install.sh` remains the browser-first release installer; it now
+  places the same CLI beside the installed Compose files.
+- `packages/ops/src/update.ts` supplied the backup-first, health-check, audit,
+  and rollback state-machine invariants mirrored at the host boundary.
+- release Compose remains version-pinned, multi-architecture, and the only
+  runtime.
+
+Maintained patterns reviewed were POSIX/Bash thin launchers, conventional
+architecture-labelled archives, SHA-256 manifests, and Sigstore/Cosign keyless
+GitHub Actions signing. A generic framework such as Commander would add a host
+Node.js prerequisite, while generic self-updaters cannot preserve the separate
+master-key, Compose-volume, tunnel, migration, and readiness rules. The CLI is
+therefore self-contained shell with injected synthetic adapters for tests.
+
+## Maintainer release process
+
+A tagged release runs `scripts/build-cli-release.sh` after the application image
+release succeeds. The script packages `scripts/josi` into both Linux archive
+names and creates the checksum manifest. In GitHub Actions, `--sign` uses the
+workflow's short-lived OIDC identity; it does not accept or load a private key.
+The workflow publishes the archives, manifest, detached signature, certificate,
+and reviewed installer as assets on the matching GitHub release.
+
+A local unsigned packaging check is available without release credentials:
+
+```bash
+bash scripts/build-cli-release.sh --version 0.1.48 --output-dir /tmp/josi-cli
+```
+
+Unsigned local output is not publishable. The installer requires the tagged
+workflow signature and will reject it.
