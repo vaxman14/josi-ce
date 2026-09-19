@@ -11,7 +11,7 @@ release auditing explicit.
 Pin one exact release. Do not substitute `latest`:
 
 ```bash
-VERSION=0.1.48
+VERSION=0.1.49
 curl -fSLo josi-install.sh https://get.heyjosi.com/install.sh
 curl -fSLo josi-install.sh.sha256 https://get.heyjosi.com/install.sh.sha256
 printf '%s  %s\n' "$(cat josi-install.sh.sha256)" josi-install.sh | sha256sum -c -
@@ -49,7 +49,7 @@ Automation must still pin the version and explicitly opt out of the prompt:
 
 ```bash
 sh josi-install.sh \
-  --version 0.1.48 \
+  --version 0.1.49 \
   --install-dir /usr/local/bin \
   --non-interactive
 ```
@@ -64,7 +64,7 @@ installer has already been reviewed, this shorthand preserves the same explicit
 version pin and verification:
 
 ```bash
-VERSION=0.1.48
+VERSION=0.1.49
 curl -fsSL https://get.heyjosi.com/install.sh \
   | sh -s -- --version "$VERSION" --yes
 ```
@@ -98,7 +98,11 @@ josi --help
 
 Run the CLI from an installation directory, pass `--root /absolute/path`, or set
 `JOSI_HOME`. It remains a thin orchestration layer: Docker Compose is the only
-runtime, and experts can continue to use raw `docker compose` commands.
+runtime, and experts can continue to use raw `docker compose` commands. A
+generated `docker-compose.workspace.yml` is included automatically in every
+lifecycle command so updates cannot drop existing workspace binds. Other custom
+overrides must be named explicitly, in order, with colon-separated absolute or
+installation-relative paths in `JOSI_COMPOSE_FILES`.
 
 - `josi install [--yes]` runs the existing read-only preflight and existing
   secret generator, pulls the pinned images, starts Compose, and waits for real
@@ -147,8 +151,8 @@ shown with its SHA-256 and separately approved with
 plan instead of asking the model to regenerate it. Execution is restricted
 to dependency-free start/restart operations for web, worker, and Caddy, recorded, followed by all failed
 postconditions, and covered by the same snapshot/rollback boundary. Operators
-to loopback Ollama or a read-only sandboxed local Codex CLI; non-loopback Ollama
-endpoints are refused.
+must use loopback Ollama or a read-only sandboxed local Codex CLI; non-loopback
+Ollama endpoints are refused.
 
 To remove only the standalone client, remove the single `josi` executable from
 the directory chosen at installation.
@@ -182,12 +186,15 @@ release succeeds. The script packages `scripts/josi` into both Linux archive
 names and creates the checksum manifest. In GitHub Actions, `--sign` uses the
 workflow's short-lived OIDC identity; it does not accept or load a private key.
 The workflow publishes the archives, manifest, detached signature, certificate,
-and reviewed installer as assets on the matching GitHub release.
+and reviewed installer as assets on the matching private GitHub release. The
+exact signed files are then mirrored without modification to the unauthenticated
+public origin at `https://get.heyjosi.com/releases/v<version>/`; the bootstrap
+never directs customers to private repository URLs.
 
 A local unsigned packaging check is available without release credentials:
 
 ```bash
-bash scripts/build-cli-release.sh --version 0.1.48 --output-dir /tmp/josi-cli
+bash scripts/build-cli-release.sh --version 0.1.49 --output-dir /tmp/josi-cli
 ```
 
 Unsigned local output is not publishable. The installer requires the tagged

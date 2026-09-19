@@ -12,7 +12,7 @@ usage() {
 Usage: install.sh --version VERSION [options]
 
 Required:
-  --version VERSION       Exact Josi CLI release, for example 0.1.48
+  --version VERSION       Exact Josi CLI release, for example 0.1.49
 
 Options:
   --install-dir DIR       Destination (default: /usr/local/bin as root,
@@ -62,7 +62,7 @@ case "$VERSION" in
   ''|*[!0-9A-Za-z.-]*) fail 'invalid version' ;;
 esac
 printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$' \
-  || fail 'version must be an explicit release version such as 0.1.48'
+  || fail 'version must be an explicit release version such as 0.1.49'
 
 [ "$(uname -s)" = Linux ] || fail 'only Linux is supported'
 case "$(uname -m)" in
