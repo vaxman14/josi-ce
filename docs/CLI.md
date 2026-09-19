@@ -11,7 +11,7 @@ release auditing explicit.
 Pin one exact release. Do not substitute `latest`:
 
 ```bash
-VERSION=0.1.49
+VERSION=0.1.50
 curl -fSLo josi-install.sh https://get.heyjosi.com/install.sh
 curl -fSLo josi-install.sh.sha256 https://get.heyjosi.com/install.sh.sha256
 printf '%s  %s\n' "$(cat josi-install.sh.sha256)" josi-install.sh | sha256sum -c -
@@ -49,7 +49,7 @@ Automation must still pin the version and explicitly opt out of the prompt:
 
 ```bash
 sh josi-install.sh \
-  --version 0.1.49 \
+  --version 0.1.50 \
   --install-dir /usr/local/bin \
   --non-interactive
 ```
@@ -64,7 +64,7 @@ installer has already been reviewed, this shorthand preserves the same explicit
 version pin and verification:
 
 ```bash
-VERSION=0.1.49
+VERSION=0.1.50
 curl -fsSL https://get.heyjosi.com/install.sh \
   | sh -s -- --version "$VERSION" --yes
 ```
@@ -194,7 +194,7 @@ never directs customers to private repository URLs.
 A local unsigned packaging check is available without release credentials:
 
 ```bash
-bash scripts/build-cli-release.sh --version 0.1.49 --output-dir /tmp/josi-cli
+bash scripts/build-cli-release.sh --version 0.1.50 --output-dir /tmp/josi-cli
 ```
 
 Unsigned local output is not publishable. The installer requires the tagged
