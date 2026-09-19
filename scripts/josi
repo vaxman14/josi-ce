@@ -34,7 +34,11 @@ redact(){
     -e 's/[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/[REDACTED JWT]/g'
 }
 docker(){ "$DOCKER_BIN" "$@"; }
-compose(){ docker compose --project-directory "$ROOT" -f "$COMPOSE_FILE" "$@"; }
+compose(){
+  local args=(compose --project-directory "$ROOT") file
+  for file in "${COMPOSE_FILES[@]}"; do args+=(-f "$file"); done
+  docker "${args[@]}" "$@"
+}
 
 usage(){ cat <<'EOF'
 Usage: josi [--root DIR] <command> [options]
@@ -70,6 +74,22 @@ find_root(){
 find_root
 ROOT="$(cd "$ROOT" 2>/dev/null && pwd)" || die "installation root does not exist: $ROOT"
 if [[ -f "$ROOT/docker-compose.release.yml" && ! -f "$ROOT/docker-compose.yml" ]]; then COMPOSE_FILE="$ROOT/docker-compose.release.yml"; else COMPOSE_FILE="$ROOT/docker-compose.yml"; fi
+COMPOSE_FILES=("$COMPOSE_FILE")
+if [[ -n "${JOSI_COMPOSE_FILES:-}" ]]; then
+  COMPOSE_FILES=()
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    [[ "$file" == /* ]] || file="$ROOT/$file"
+    [[ -f "$file" ]] || die "configured Compose file is missing: $file"
+    COMPOSE_FILES+=("$file")
+  done < <(printf '%s' "$JOSI_COMPOSE_FILES" | tr ':' '\n')
+  [[ ${#COMPOSE_FILES[@]} -gt 0 ]] || die 'JOSI_COMPOSE_FILES did not name any Compose files'
+elif [[ -f "$ROOT/docker-compose.workspace.yml" ]]; then
+  # The AIO/browser installer generates this override when workspace mounts are
+  # enabled. Every lifecycle command must keep using it or an update can
+  # silently recreate web/worker without the configured host binds.
+  COMPOSE_FILES+=("$ROOT/docker-compose.workspace.yml")
+fi
 STATE="$ROOT/.josi"
 RECEIPTS="$STATE/receipts"
 BACKUPS="$ROOT/backups"
@@ -199,7 +219,7 @@ running_images_match(){
   for s in web worker migrate attachment-init; do id=$(container_id "$s"); [[ -n "$id" ]] || return 1; image=$(docker inspect -f '{{.Config.Image}}' "$id" 2>/dev/null) || return 1; [[ "$image" == *":$target" ]] || return 1; done
 }
 rollback_to(){
-  local target="$1" failed="${2:-}" db_before db_after expected_fingerprint fingerprint_file; [[ -n "$target" ]] || die 'no rollback version is recorded'; valid_version_pin "$target" || die 'rollback requires an explicit immutable release version such as 0.1.48'
+  local target="$1" failed="${2:-}" db_before db_after expected_fingerprint fingerprint_file; [[ -n "$target" ]] || die 'no rollback version is recorded'; valid_version_pin "$target" || die 'rollback requires an explicit immutable release version such as 0.1.49'
   db_before=$(migration_fingerprint) || die 'rollback refused: migration ledger is unreadable'
   fingerprint_file="$STATE/rollback-$target.migrations.sha256"; [[ -s "$fingerprint_file" ]] || die "rollback to $target refused: no recorded pre-update migration fingerprint exists for that release"
   expected_fingerprint=$(tr -d '[:space:]' < "$fingerprint_file"); [[ "$expected_fingerprint" =~ ^[0-9a-f]{64}$ ]] || die "rollback to $target refused: recorded migration fingerprint is invalid"
