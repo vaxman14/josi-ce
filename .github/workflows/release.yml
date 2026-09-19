@@ -164,7 +164,8 @@ jobs:
   # and tag; there is no long-lived signing material to leak or rotate.
   cli-release:
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-    needs: build
+    # CLI publication is independently tested and signed; do not couple it to
+    # application-image build time or the Actions artifact-storage quota.
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -186,12 +187,6 @@ jobs:
             --output-dir dist/cli \
             --sign
           install -m 0755 get.heyjosi.com/install.sh dist/cli/install.sh
-      - name: Retain the exact signed release files
-        uses: actions/upload-artifact@v4
-        with:
-          name: josi-cli-${{ github.ref_name }}
-          path: dist/cli/*
-          if-no-files-found: error
       - name: Publish CLI files on the numbered GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
