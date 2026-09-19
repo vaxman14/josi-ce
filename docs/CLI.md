@@ -12,11 +12,12 @@ Pin one exact release. Do not substitute `latest`:
 
 ```bash
 VERSION=0.1.48
-curl -fSLo josi-install.sh \
-  "https://github.com/vaxman14/josi-ce/releases/download/v${VERSION}/install.sh"
+curl -fSLo josi-install.sh https://get.heyjosi.com/install.sh
+curl -fSLo josi-install.sh.sha256 https://get.heyjosi.com/install.sh.sha256
+printf '%s  %s\n' "$(cat josi-install.sh.sha256)" josi-install.sh | sha256sum -c -
 less josi-install.sh
 sh josi-install.sh --version "$VERSION"
-rm josi-install.sh
+rm josi-install.sh josi-install.sh.sha256
 ```
 
 The prompt shows the version and destination before writing. The default is
@@ -64,17 +65,19 @@ version pin and verification:
 
 ```bash
 VERSION=0.1.48
-curl -fsSL \
-  "https://github.com/vaxman14/josi-ce/releases/download/v${VERSION}/install.sh" \
+curl -fsSL https://get.heyjosi.com/install.sh \
   | sh -s -- --version "$VERSION" --yes
 ```
 
-Never pipe an unversioned URL into a shell.
+The bootstrap URL is stable, but it cannot install an unpinned payload: the
+required `--version` selects one immutable release directory and the bootstrap
+then verifies that release's signed checksum manifest before writing anything.
+Downloading, hashing, and inspecting the bootstrap first remains preferred.
 
 ## Verify or install manually
 
 Operators who do not want to run the installer can download these four files
-from the same numbered GitHub release:
+from `https://get.heyjosi.com/releases/v<version>/`:
 
 - `josi-cli-<version>-linux-<arch>.tar.gz`
 - `josi-cli-<version>-checksums.txt`

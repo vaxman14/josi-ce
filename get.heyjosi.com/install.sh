@@ -119,7 +119,10 @@ trap cleanup EXIT HUP INT TERM
 
 archive="josi-cli-${VERSION}-linux-${ARCH}.tar.gz"
 checksums="josi-cli-${VERSION}-checksums.txt"
-base_url="https://github.com/vaxman14/josi-ce/releases/download/v${VERSION}"
+# Release payloads are mirrored on the public installer origin. The source
+# repository is intentionally private, so unauthenticated hosts must never be
+# sent to GitHub's private release URLs.
+base_url="https://get.heyjosi.com/releases/v${VERSION}"
 
 fetch() {
   partial="$work/$1.partial"
