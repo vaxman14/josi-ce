@@ -65,6 +65,7 @@ VERSION=${VERSION#v}
 [[ -f "$SOURCE" ]] || die "CLI source not found: $SOURCE"
 [[ -r "$SOURCE" ]] || die "CLI source is not readable: $SOURCE"
 command -v tar >/dev/null 2>&1 || die 'tar is required'
+command -v python3 >/dev/null 2>&1 || die 'python3 is required to stamp the embedded CLI version'
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -82,6 +83,17 @@ stage=$(mktemp -d "${TMPDIR:-/tmp}/josi-cli-release.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 
 install -m 0755 "$SOURCE" "$stage/josi"
+python3 - "$stage/josi" "$VERSION" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); s=p.read_text()
+old='JOSI_CLI_VERSION="${JOSI_CLI_VERSION:-0.1.0}"'
+if s.count(old) != 1:
+    raise SystemExit('CLI version marker is missing or ambiguous')
+p.write_text(s.replace(old, f'JOSI_CLI_VERSION="${{JOSI_CLI_VERSION:-{sys.argv[2]}}}"'))
+PY
+bash -n "$stage/josi"
+[[ "$(env -u JOSI_CLI_VERSION "$stage/josi" version)" == "$VERSION" ]] || die 'staged CLI version does not match release version'
 
 # The CLI is a portable shell program. Publish both architecture names so an
 # installer can select a conventional target without pretending the payloads

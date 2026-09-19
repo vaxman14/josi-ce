@@ -83,7 +83,7 @@ case "$INSTALL_DIR" in
   *) fail '--install-dir must be an absolute path' ;;
 esac
 
-for command_name in curl tar grep awk wc mktemp install mv; do
+for command_name in curl tar grep awk wc mktemp install mv tr env; do
   command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
 done
 if command -v sha256sum >/dev/null 2>&1; then
@@ -122,10 +122,13 @@ checksums="josi-cli-${VERSION}-checksums.txt"
 base_url="https://github.com/vaxman14/josi-ce/releases/download/v${VERSION}"
 
 fetch() {
+  partial="$work/$1.partial"
+  rm -f "$partial"
   curl --fail --silent --show-error --location \
     --proto '=https' --tlsv1.2 \
-    --output "$work/$1" "$base_url/$1"
-  [ -s "$work/$1" ] || fail "downloaded file is empty: $1"
+    --output "$partial" "$base_url/$1" || { rm -f "$partial"; fail "download failed: $1"; }
+  [ -s "$partial" ] || { rm -f "$partial"; fail "downloaded file is empty: $1"; }
+  mv "$partial" "$work/$1"
 }
 
 printf 'Downloading Josi CLI %s for linux/%s...\n' "$VERSION" "$ARCH"
@@ -169,15 +172,21 @@ actual=$(sha256_file "$work/$archive")
 mkdir -p "$work/extract"
 entries=$(tar -tzf "$work/$archive") || fail 'archive cannot be read'
 [ "$entries" = josi ] || fail 'archive layout is unsafe; expected only the josi executable'
-tar -xzf "$work/$archive" -C "$work/extract"
-[ -f "$work/extract/josi" ] && [ ! -L "$work/extract/josi" ] \
-  || fail 'archive did not contain a regular josi executable'
+tar -xOzf "$work/$archive" josi > "$work/extract/josi.partial" \
+  || fail 'archive payload could not be read as a regular file'
+[ -s "$work/extract/josi.partial" ] || fail 'archive payload is empty or not a regular file'
+mv "$work/extract/josi.partial" "$work/extract/josi"
+chmod 0755 "$work/extract/josi"
+[ "$(env -u JOSI_CLI_VERSION "$work/extract/josi" version 2>/dev/null)" = "$VERSION" ] \
+  || fail 'signed archive contains a CLI with a different embedded version'
 
 mkdir -p "$INSTALL_DIR"
 [ -d "$INSTALL_DIR" ] && [ -w "$INSTALL_DIR" ] \
   || fail "install directory is not writable: $INSTALL_DIR"
-target_tmp="$INSTALL_DIR/.josi.install.$$"
+target_tmp=$(mktemp "$INSTALL_DIR/.josi.install.XXXXXX")
 install -m 0755 "$work/extract/josi" "$target_tmp"
+[ "$(sha256_file "$target_tmp")" = "$(sha256_file "$work/extract/josi")" ] \
+  || fail 'staged executable failed its pre-install digest check'
 mv -f "$target_tmp" "$INSTALL_DIR/josi"
 target_tmp=
 

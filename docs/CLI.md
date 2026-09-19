@@ -34,8 +34,9 @@ matching versioned archive, and then:
 2. verifies the checksum manifest's detached signature, certificate, GitHub
    Actions OIDC issuer, and exact tagged-release workflow identity;
 3. compares the archive with the SHA-256 digest in that signed manifest;
-4. rejects an archive containing anything except one regular `josi` file; and
-5. writes the executable atomically only after every check passes.
+4. rejects an archive containing anything except one regular `josi` file and
+   verifies that its embedded version equals the requested release; and
+5. verifies the staged executable's digest, then installs it with one atomic rename.
 
 A missing signature or certificate, an unknown signer, a digest mismatch, an
 unsupported platform, or an unavailable verification service fails closed.
@@ -105,34 +106,46 @@ runtime, and experts can continue to use raw `docker compose` commands.
   Compose logs.
 - `josi backup` writes a compressed database backup, SHA-256 sidecar, and
   verification receipt. The master key is deliberately separate.
-- `josi update VERSION [--yes]` requires a newly verified backup, records the
-  current pin, pulls and starts the requested pin, verifies direct/public
-  readiness, and rolls back to the previous pin on failure.
-- `josi rollback [VERSION]` restores an explicit or last-recorded pin and checks
-  readiness.
+- `josi update VERSION [--yes]` requires a newly verified backup and readable
+  migration fingerprint, then verifies readiness and exact running image pins.
+  It automatically rolls application images back only when the migration
+  ledger did not change. If migrations changed, restoring the pre-update
+  database backup and matching master key is required for a downgrade.
+- `josi rollback [VERSION]` rolls application images back and verifies the pin,
+  readiness, and the target release's recorded pre-update migration fingerprint.
+  If the current ledger differs, rollback is refused until the verified database
+  backup and matching master key are restored. It never claims to reverse migrations.
 - `josi uninstall [--yes]` removes containers but keeps volumes, data, backups,
   config, workspace binds, and tunnel/domain settings. Data deletion requires
   the separate `--purge-data --confirm DELETE-JOSI-DATA` phrase.
 - `josi support bundle [PATH]` and `josi doctor --export-ai-context PATH` use
-  the same versioned, bounded, secret-redacted collector.
+  the same versioned, bounded, secret-redacted collector. The collector records
+  per-file command/timestamp/truncation/hash provenance and queue/push summaries;
+  it never directly queries message bodies or files, and therefore rejects
+  `--include-content`. Application logs can still contain user-supplied paths,
+  names, URLs, or text; inspect a bundle before sharing it.
 
-`josi doctor` is transactional. It classifies all checks, snapshots exact
-configuration/state before a repair, applies only safe reversible repairs by
+`josi doctor` is transactional. It classifies all checks, captures configuration
+and running/stopped service state before a repair, applies only safe reversible repairs by
 default, reruns checks, emits JSON/human receipts, and restores its snapshot if
 direct or public readiness regresses. `--check-only` never writes; `--dry-run`
 prints the exact deterministic plan. Risky or non-deterministic issues remain
-precise operator blockers rather than being guessed at.
+precise operator blockers rather than being guessed at. A failed migration is
+rerun only with `--repair-migrations --yes`, after a fresh verified backup and
+with a bounded wait.
 
 AI repair is disabled by default and runs only after deterministic repair is
 exhausted. `--ai-repair` still requires separate `--allow-ai`; `--yes` does not
 grant it. Only a configured host-local Codex CLI or Ollama model is accepted
 (the synthetic adapter exists only in the test harness). The provider receives the shared redacted evidence bundle first,
 can plan only from read-only evidence, and cannot execute until the plan is
-shown and separately approved with `--approve-ai-plan`. Execution is restricted
-to a small service/chmod allowlist, recorded, followed by all failed
+shown with its SHA-256 and separately approved with
+`--approve-ai-plan <exact-sha256>`. The approval run loads that exact saved
+plan instead of asking the model to regenerate it. Execution is restricted
+to dependency-free start/restart operations for web, worker, and Caddy, recorded, followed by all failed
 postconditions, and covered by the same snapshot/rollback boundary. Operators
-must assess any configured model endpoint: an Ollama-compatible endpoint that
-is not actually host-local can send the redacted evidence off-host.
+to loopback Ollama or a read-only sandboxed local Codex CLI; non-loopback Ollama
+endpoints are refused.
 
 To remove only the standalone client, remove the single `josi` executable from
 the directory chosen at installation.
