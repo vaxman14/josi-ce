@@ -58,6 +58,24 @@ FORBIDDEN_REGEX=(
 # this looks for creator/author/by attributions specifically.
 ATTRIBUTION_REGEX='(created|authored|developed|made|built|published)[^.\n]{0,40}(by )?CTF Designs|CTF Designs[^.\n]{0,20}(is the|as the)?[^.\n]{0,20}(creator|author|publisher|maker)'
 
+strip_public_installer_host() {
+  # Permit the exact DNS hostname only. A label prefix, suffix or adjacent
+  # hostname character must remain visible to the heyjosi.com ban below.
+  sed -E 's#(^|[^[:alnum:].-])get\.heyjosi\.com([^[:alnum:].-]|$)#\1\2#g'
+}
+
+# Keep the exception narrower than its comment on both BSD and GNU sed.
+[[ "$(printf '%s\n' 'https://get.heyjosi.com/install.sh' | strip_public_installer_host)" == 'https:///install.sh' ]] || {
+  echo 'secret scan internal error: exact public installer hostname was not recognized' >&2
+  exit 1
+}
+for public_host_variant in notget.heyjosi.com get.heyjosi.com.evil.example ce.get.heyjosi.com; do
+  [[ "$(printf '%s\n' "https://$public_host_variant/payload" | strip_public_installer_host)" == "https://$public_host_variant/payload" ]] || {
+    echo "secret scan internal error: hostname exception accepted $public_host_variant" >&2
+    exit 1
+  }
+done
+
 # Files we never scan: the scanner's own ban-list, lockfiles, binaries.
 is_skippable() {
   case "$1" in
@@ -112,10 +130,10 @@ while IFS= read -r file; do
   # the reviewed installer implementation, its tests/docs, and release wiring.
   # ce.heyjosi.com and every other production-domain occurrence remain blocked.
   case "$file" in
-    .github/workflows/release.yml|docs/CLI.md|get.heyjosi.com/install.sh|scripts/test-cli-installer.sh|scripts/test-cli-installer-debian.sh)
+    .github/workflows/release.yml|docs/CLI.md|docs/HELP.md|docs-site/body.html|docs-site/index.html|get.heyjosi.com/install.sh|scripts/test-cli-installer.sh|scripts/test-cli-installer-debian.sh)
       if grep -Fq 'get.heyjosi.com' "$literal_source"; then
         [[ -n "$literal_tmp" ]] || literal_tmp="$(mktemp)"
-        sed 's#get\.heyjosi\.com##g' "$literal_source" > "$literal_tmp.next"
+        strip_public_installer_host < "$literal_source" > "$literal_tmp.next"
         mv "$literal_tmp.next" "$literal_tmp"
         literal_source="$literal_tmp"
       fi
