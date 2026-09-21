@@ -77,6 +77,11 @@ export interface AppConfig {
   /** Provider HTTP for connectors, injected by the tests so no suite ever
    * contacts Google or Microsoft. */
   connectorFetch?: typeof fetch;
+  /** Native Sign in with Apple audience. Unset disables the endpoint and keeps
+   * installations that do not own an Apple App ID from advertising it. */
+  appleNativeClientId?: string | null;
+  /** Apple JWKS HTTP, injected so tests never contact Apple. */
+  appleFetch?: typeof fetch;
   /** SMTP, injected by the tests so no suite ever contacts a mail server. */
   mailTransport?: import('@josi-ce/mail').SmtpTransport;
   /** How a subscription provider's local binary is run, injected by the tests
@@ -185,6 +190,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/auth', authRoutes({
     db, cookieSecure: cfg.cookieSecure, appUrl: cfg.appUrl,
     masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport, connectorFetch: cfg.connectorFetch,
+    appleNativeClientId: cfg.appleNativeClientId, appleFetch: cfg.appleFetch,
   }));
   // Phase 7 owns /connections now: the Phase 1 router proved the ownership
   // shape against a real table; this one actually connects accounts.

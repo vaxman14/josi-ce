@@ -75,6 +75,7 @@ describe('native Google authentication', () => {
     expect(body).toEqual({
       appUrl: 'https://native.ce.test',
       googleSignIn: true,
+      appleSignIn: false,
       nativeGoogleStart: 'https://native.ce.test/api/auth/google/native/start',
       enrollmentDeepLink: 'josi://enroll?server=https%3A%2F%2Fnative.ce.test',
     });

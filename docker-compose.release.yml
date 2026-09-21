@@ -115,6 +115,7 @@ services:
       # `https://${JOSI_DOMAIN:-localhost}` produced once the domain default
       # stopped being `localhost`.
       APP_URL: ${JOSI_APP_URL:-${JOSI_DOMAIN:+https://${JOSI_DOMAIN}}}
+      APPLE_NATIVE_CLIENT_ID: ${APPLE_NATIVE_CLIENT_ID:-}
       # The browser installer already collected and validated the deployment
       # address. The application setup wizard consumes this marker so it does
       # not ask the operator for the same address a second time.

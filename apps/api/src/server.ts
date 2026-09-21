@@ -64,6 +64,7 @@ const app = createApp(db, {
   // advanced override, not something the normal installer should require.
   cookieSecure,
   appUrl,
+  appleNativeClientId: process.env.APPLE_NATIVE_CLIENT_ID || null,
   webDir: process.env.WEB_DIR,
   backupWriter: pgBackupWriter(pgConn),
   restoreReader: pgRestoreReader(pgConn),

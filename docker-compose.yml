@@ -97,6 +97,7 @@ services:
       PGPASSWORD_FILE: /run/secrets/josi_db_password
       MASTER_KEY_FILE: /run/secrets/josi_master_key
       APP_URL: ${JOSI_APP_URL:-http://localhost:8080}
+      APPLE_NATIVE_CLIENT_ID: ${APPLE_NATIVE_CLIENT_ID:-}
       JOSI_INSTALLER_CONFIGURED: ${JOSI_INSTALLER_CONFIGURED:-}
       JOSI_ACCESS_MODE: ${JOSI_ACCESS_MODE:-}
       JOSI_SETUP_TOKEN_SHA256: ${JOSI_SETUP_TOKEN_SHA256:-}
