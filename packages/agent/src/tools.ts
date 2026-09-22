@@ -76,7 +76,7 @@ export const TASK_TOOLS: ToolSpec[] = [
   {
     def: {
       name: 'approve_task',
-      description: 'The user approves a task that is waiting on them; it becomes ready to attempt.',
+      description: 'Approve an existing generic task that is already waiting on the user. Never use this to create a new calendar event, email, contact change, or other action; use that action\'s draft tool instead.',
       parameters: {
         type: 'object',
         properties: { task_id: { type: 'string' } },

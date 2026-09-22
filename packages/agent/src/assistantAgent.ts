@@ -382,12 +382,23 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     catch (err) { console.error('native integration availability check failed', (err as Error).message); }
   }
   const workspaceNames = capabilities.toolCalling ? await workspaceToolNames(db,userId) : new Set<string>();
+  // `approve_task` is only meaningful when this owner already has a generic
+  // task waiting on them. Offering it on an ordinary request lets a model
+  // confuse "please create this calendar event" with approval of an unrelated
+  // task, which then trips the protected step-up gate before the real calendar
+  // draft is even prepared.
+  const [approvableTask] = capabilities.toolCalling
+    ? await db.query<{ present: boolean }>(`select true as present from tasks
+        where owner_user_id=$1 and state in ('awaiting_approval','awaiting_owner') limit 1`, [userId])
+    : [];
   const availableTaskTools = TASK_TOOLS.filter((t) =>
     (!t.def.name.startsWith('workspace_') || workspaceNames.has(t.def.name))
+    && (t.def.name !== 'approve_task' || !!approvableTask)
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
   const tools = capabilities.toolCalling
     ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools].map((t) => t.def)
     : undefined;
+  const offeredToolNames = new Set(tools?.map((tool) => tool.name) ?? []);
 
   let recalled = '';
   if (args.recall) {
@@ -657,12 +668,19 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     for (const call of res.toolCalls) {
       let result: unknown;
       try {
-        // The gate, in front of everything, keyed by tool name.
-        const decision = await checkStepUp(db, { userId, sessionKey, action: call.name });
-        if (!decision.allowed) {
-          result = { ok: false, error: decision.reason, message: decision.message };
+        // A provider may still emit a known tool it was not offered. In
+        // particular, never turn a hallucinated approve_task call into a
+        // reauthentication prompt when no owned task is awaiting approval.
+        if (call.name === 'approve_task' && !offeredToolNames.has(call.name)) {
+          result = { ok: false, error: 'tool_unavailable', message: 'No task is waiting for approval. Continue the requested action with its own tool.' };
         } else {
-          result = await execTool(args, call.name, call.input);
+          // The gate, in front of everything, keyed by tool name.
+          const decision = await checkStepUp(db, { userId, sessionKey, action: call.name });
+          if (!decision.allowed) {
+            result = { ok: false, error: decision.reason, message: decision.message };
+          } else {
+            result = await execTool(args, call.name, call.input);
+          }
         }
       } catch (err) {
         // The tool's own message, not a stack trace, and never a provider body.

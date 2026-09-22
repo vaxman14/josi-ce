@@ -148,7 +148,17 @@ describe('capability gating', () => {
     await turn();
     const request = requests[0];
     expect(request.tools.map((t: any) => t.function.name)).toContain('draft_calendar_event');
+    expect(request.tools.map((t: any) => t.function.name)).not.toContain('approve_task');
     expect(request.messages[0].content).not.toMatch(/not connected yet[^.]*calendar_write/);
+  });
+
+  it('offers approve_task only when an owned generic task is actually waiting', async () => {
+    await configureModel();
+    const task = await createTask(db, { ownerUserId: alice, templateKey: 'follow_up' });
+    await db.query(`update tasks set state='awaiting_approval' where id=$1`, [task.id]);
+    replies = [{ content: 'ok' }];
+    await turn();
+    expect(requests[0].tools.map((t: any) => t.function.name)).toContain('approve_task');
   });
 
   it('supplies scheduling defaults instead of making the model ask for known context', async () => {
@@ -299,6 +309,18 @@ describe('running tools', () => {
 });
 
 describe('the step-up gate sits in front of the tools', () => {
+  it('does not turn a hallucinated approval into reauthentication on a routine turn', async () => {
+    await configureModel();
+    replies = [
+      { content: null, tool_calls: [toolCall('approve_task', { task_id: '3f19baec-b6b9-42a5-bf7f-3bf1fba3eabf' })] },
+      { content: 'I will continue with the requested action instead.' },
+    ];
+    const result = await turn({ inbound: 'Add the attached invitation to my calendar.' });
+    expect(result.actions[0].result).toMatchObject({ ok: false, error: 'tool_unavailable' });
+    expect(result.reply).not.toMatch(/reauthentication|password/i);
+    expect(await db.query(`select id from events where kind='stepup.required'`)).toEqual([]);
+  });
+
   it('refuses a destructive tool until the session re-authenticates', async () => {
     await configureModel();
     const task = await createTask(db, { ownerUserId: alice, templateKey: 'follow_up' });
