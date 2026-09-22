@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ConnectorError, MAIL_BODY_CAP, MAIL_SEARCH_CAP,
-  getEvent, listEvents, readMail, searchMail,
+  createEvent, deleteEvent, getEvent, listEvents, readMail, searchMail, updateEvent,
 } from '../src/index.js';
 
 type Handler = (url: string, init?: RequestInit) => { status?: number; body?: unknown };
@@ -17,7 +17,7 @@ function fetchStub(handler: Handler): { fetchImpl: typeof fetch; urls: string[] 
   const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
     urls.push(String(url));
     const out = handler(String(url), init);
-    return new Response(JSON.stringify(out.body ?? {}), {
+    return new Response((out.status ?? 200) === 204 ? null : JSON.stringify(out.body ?? {}), {
       status: out.status ?? 200,
       headers: { 'content-type': 'application/json' },
     });
@@ -222,6 +222,7 @@ describe('google calendar', () => {
     const event = await getEvent('google', { accessToken: 'tok', id: 'ev1' }, { fetchImpl });
     expect(event?.description).toBeTruthy();
     expect(event!.description!.length).toBeLessThanOrEqual(4000);
+    expect(event!.descriptionTruncated).toBe(true);
     expect(await getEvent('google', { accessToken: 'tok', id: 'gone' }, { fetchImpl })).toBeNull();
   });
 });
@@ -261,6 +262,16 @@ describe('graph calendar', () => {
   });
 });
 
+describe('calendar mutations',()=>{
+ const timed={title:'DST review',allDay:false,start:'2026-11-01T08:30:00.000Z',end:'2026-11-01T10:30:00.000Z',timezone:'America/Los_Angeles',location:'Room / 1',description:'Notes'};
+ it('creates Google events with a stable id and exact encoded calendar URL',async()=>{let init:RequestInit|undefined;const {fetchImpl,urls}=fetchStub((_url,i)=>{init=i;return{body:{id:'stableevent',etag:'v1',summary:'DST review',start:{dateTime:timed.start},end:{dateTime:timed.end}}};});const event=await createEvent('google',{accessToken:'tok',calendarId:'shared/a@example.test',event:timed,idempotencyKey:'123e4567-e89b-42d3-a456-426614174000'},{fetchImpl});expect(urls[0]).toContain('/calendars/shared%2Fa%40example.test/events?sendUpdates=none');expect(init?.method).toBe('POST');const body=JSON.parse(String(init?.body));expect(body).toMatchObject({id:'123e4567e89b42d3a456426614174000',summary:'DST review',start:{dateTime:timed.start,timeZone:timed.timezone},location:'Room / 1'});expect(event.version).toBe('v1');});
+ it('converges a retried Google create on its deterministic event id',async()=>{let calls=0;const {fetchImpl,urls}=fetchStub(()=>++calls===1?{status:409}:{body:{id:'123e4567e89b42d3a456426614174000',etag:'v1',start:{date:'2026-09-01'},end:{date:'2026-09-02'}}});const event=await createEvent('google',{accessToken:'tok',calendarId:'chosen',event:{...timed,allDay:true,start:'2026-09-01',end:'2026-09-02'},idempotencyKey:'123e4567-e89b-42d3-a456-426614174000'},{fetchImpl});expect(event.sourceId).toBe('123e4567e89b42d3a456426614174000');expect(urls).toHaveLength(2);});
+ it('updates and deletes Google with concurrency and all-day semantics',async()=>{const seen:RequestInit[]=[];const {fetchImpl,urls}=fetchStub((_url,init)=>{seen.push(init??{});return init?.method==='DELETE'?{status:204}:{body:{id:'event/id',etag:'v2',summary:'Offsite',start:{date:'2026-09-05'},end:{date:'2026-09-07'}}};});const allDay={...timed,title:'Offsite',allDay:true,start:'2026-09-05',end:'2026-09-07'};await updateEvent('google',{accessToken:'tok',calendarId:'cal/a',id:'event/id',event:allDay,version:'v1'},{fetchImpl});await deleteEvent('google',{accessToken:'tok',calendarId:'cal/a',id:'event/id',version:'v2'},{fetchImpl});expect(urls.every(url=>url.includes('/calendars/cal%2Fa/events/event%2Fid'))).toBe(true);expect(urls.every(url=>url.includes('sendUpdates=all'))).toBe(true);expect((seen[0].headers as any)['If-Match']).toBe('v1');expect(JSON.parse(String(seen[0].body)).start).toEqual({date:'2026-09-05'});expect(seen[1].method).toBe('DELETE');});
+ it('uses Graph transactionId, named-zone wall times, encoded calendar and If-Match',async()=>{const seen:RequestInit[]=[];const {fetchImpl,urls}=fetchStub((_url,init)=>{seen.push(init??{});return init?.method==='DELETE'?{status:204}:{body:{id:'AAMkAG=',changeKey:'legacy-change-key','@odata.etag':'ck2',subject:'DST review',start:{dateTime:'2026-11-01T01:30:00'},end:{dateTime:'2026-11-01T02:30:00'}}};});await createEvent('microsoft',{accessToken:'tok',calendarId:'cal/id',event:timed,idempotencyKey:'123e4567-e89b-42d3-a456-426614174000'},{fetchImpl});await updateEvent('microsoft',{accessToken:'tok',calendarId:'cal/id',id:'AAMkAG=',event:timed,version:'ck1'},{fetchImpl});await deleteEvent('microsoft',{accessToken:'tok',calendarId:'cal/id',id:'AAMkAG=',version:'ck2'},{fetchImpl});expect(urls[0]).toContain('/calendars/cal%2Fid/events');const created=JSON.parse(String(seen[0].body));expect(created.transactionId).toBe('123e4567-e89b-42d3-a456-426614174000');expect(created.start).toEqual({dateTime:'2026-11-01T01:30:00',timeZone:'America/Los_Angeles'});expect((seen[1].headers as any)['If-Match']).toBe('ck1');});
+ it('preserves omitted descriptions and makes delete retries converge on absent',async()=>{const bodies:any[]=[];let status=200;const {fetchImpl}=fetchStub((_url,init)=>{if(init?.body)bodies.push(JSON.parse(String(init.body)));return status===404?{status:404}:{body:{id:'event',etag:'v2',subject:'event',start:{dateTime:'2026-09-01T10:00:00'},end:{dateTime:'2026-09-01T11:00:00'}}};});const preserved={...timed};delete (preserved as any).description;await updateEvent('google',{accessToken:'tok',calendarId:'c',id:'event',event:preserved,version:'v1'},{fetchImpl});expect(bodies[0]).not.toHaveProperty('description');await updateEvent('microsoft',{accessToken:'tok',calendarId:'c',id:'event',event:preserved,version:'v1'},{fetchImpl});expect(bodies[1]).not.toHaveProperty('body');status=404;await expect(deleteEvent('google',{accessToken:'tok',calendarId:'c',id:'event',version:'v2'},{fetchImpl})).resolves.toBeUndefined();await expect(deleteEvent('microsoft',{accessToken:'tok',calendarId:'c',id:'event',version:'v2'},{fetchImpl})).resolves.toBeUndefined();});
+ it('translates optimistic concurrency failures without leaking provider text',async()=>{const {fetchImpl}=fetchStub(()=>({status:412,body:{error:{message:'secret event data'}}}));await expect(updateEvent('google',{accessToken:'tok',calendarId:'c',id:'e',event:timed,version:'old'},{fetchImpl})).rejects.toThrow('changed or was removed');});
+});
+
 describe('complete calendar windows',()=>{
  it('follows Google pages and retains recurrence instance IDs',async()=>{
   let calls=0;const {fetchImpl,urls}=fetchStub(()=>({body:++calls===1?{items:[{id:'series_20260308',start:{dateTime:'2026-03-08T09:00:00Z'}}],nextPageToken:'next'}:{items:[{id:'series_20260309',start:{dateTime:'2026-03-09T09:00:00Z'}}]}}));
@@ -269,8 +280,10 @@ describe('complete calendar windows',()=>{
  it('refuses busy windows instead of returning a misleading partial calendar',async()=>{
   const {fetchImpl}=fetchStub(()=>({body:{items:[{id:'a'}],nextPageToken:'more'}}));await expect(listEvents('google',{accessToken:'tok',timeMin:'a',timeMax:'b',limit:1},{fetchImpl})).rejects.toThrow('shorter range');
  });
- it('marks Graph UTC instants and keeps all-day dates civil',async()=>{
-  const {fetchImpl}=fetchStub(()=>({body:{value:[{id:'timed',start:{dateTime:'2026-03-08T10:00:00.0000000'},end:{dateTime:'2026-03-08T11:00:00.0000000'}},{id:'all-day',isAllDay:true,start:{dateTime:'2026-03-08T00:00:00.0000000'},end:{dateTime:'2026-03-09T00:00:00.0000000'}}]}}));const rows=await listEvents('microsoft',{accessToken:'tok',timeMin:'a',timeMax:'b'},{fetchImpl});expect(rows[0].start).toBe('2026-03-08T10:00:00.0000000Z');expect(rows[1]).toMatchObject({start:'2026-03-08',end:'2026-03-09',allDay:true});
+ it('marks Graph UTC instants and recovers all-day civil dates in their original zone',async()=>{
+  const {fetchImpl}=fetchStub(()=>({body:{value:[{id:'timed',start:{dateTime:'2026-03-08T10:00:00.0000000'},end:{dateTime:'2026-03-08T11:00:00.0000000'}},{id:'all-day',isAllDay:true,originalStartTimeZone:'Pacific/Auckland',originalEndTimeZone:'Pacific/Auckland',start:{dateTime:'2026-03-07T11:00:00.0000000'},end:{dateTime:'2026-03-08T11:00:00.0000000'}}]}}));const rows=await listEvents('microsoft',{accessToken:'tok',timeMin:'a',timeMax:'b'},{fetchImpl});expect(rows[0].start).toBe('2026-03-08T10:00:00.0000000Z');expect(rows[1]).toMatchObject({start:'2026-03-08',end:'2026-03-09',allDay:true});
+ });
+ it('re-reads unknown Windows-zone all-day events in their provider timezone',async()=>{let calls=0;const {fetchImpl}=fetchStub((_url,init)=>{calls++;if(calls===1)return{body:{value:[{id:'india-day',isAllDay:true,originalStartTimeZone:'India Standard Time',originalEndTimeZone:'India Standard Time',start:{dateTime:'2026-03-07T18:30:00'},end:{dateTime:'2026-03-08T18:30:00'}}]}};expect((init?.headers as any).Prefer).toContain('India Standard Time');expect((init?.headers as any).Authorization).toBe('Bearer tok');return{body:{id:'india-day',isAllDay:true,originalStartTimeZone:'India Standard Time',originalEndTimeZone:'India Standard Time',start:{dateTime:'2026-03-08T00:00:00'},end:{dateTime:'2026-03-09T00:00:00'}}};});const rows=await listEvents('microsoft',{accessToken:'tok',timeMin:'a',timeMax:'b',calendarId:'calendar'},{fetchImpl});expect(calls).toBe(2);expect(rows[0]).toMatchObject({start:'2026-03-08',end:'2026-03-09',allDay:true});
  });
  it('does not forward authorization to a hostile Graph pagination host',async()=>{
   const {fetchImpl,urls}=fetchStub(()=>({body:{value:[],'@odata.nextLink':'https://attacker.test/page'}}));await expect(listEvents('microsoft',{accessToken:'tok',timeMin:'a',timeMax:'b'},{fetchImpl})).rejects.toThrow();expect(urls).toHaveLength(1);

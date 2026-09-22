@@ -23,6 +23,22 @@ describe('calendar page visual order', () => {
     expect(page.slice(sourceStart)).not.toMatch(/(?:^|\s)(?:order-|sm:order-|md:order-|lg:order-)/);
   });
 
+  it('exposes writable controls with an explicit named destructive confirmation and read-only guidance',()=>{
+    expect(page).toContain('>New event</Button>');
+    expect(page).toContain("detail.writable?<div");
+    expect(page).toContain('>Edit</Button>');
+    expect(page).toContain('>Delete</Button>');
+    expect(page).toContain('Delete “{detail.title||\'Untitled event\'}”?');
+    expect(page).toContain('This cannot be undone.');
+    expect(page).toContain('This calendar is read-only.');
+    expect(page).toContain('role="dialog" aria-modal="true"');
+    expect(page).toContain("if(e.key==='Escape'&&dismissible)");
+    expect(page).toContain('const requestId=useRef(crypto.randomUUID())');
+    expect(page).toContain('requestId:editable?undefined:requestId.current');
+    expect(page).toContain('dismissible={!busy}');
+    expect(page).toContain('dismissible={!mutationBusy}');
+  });
+
   it('uses the full practical member-content width without framing the schedule as a second app window', () => {
     expect(page).toContain('data-testid="calendar-page" className="w-full min-w-0 space-y-4"');
     expect(page).not.toMatch(/data-testid="calendar-page"[^>]+(?:max-w-|mx-auto)/);
