@@ -9,7 +9,11 @@
 //   * The super admin gets nothing here. Not a thread, not a task, not a
 //     message. Their surface is `/api/admin/assistant`, which returns counts.
 import { createHash, randomUUID } from 'node:crypto';
-import { extname, join } from 'node:path';
+import { extname } from 'node:path';
+import { mkdtempSync } from 'node:fs';
+import { readFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
@@ -30,7 +34,7 @@ import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import {
   ChatImageError, IMAGE_MEDIA_TYPES, extractRichSegments, AttachmentError,
   attachmentFailure, attachmentRoot, normalizeChatImage, validateAttachment,
-  writeAttachment, readAttachment, removeAttachment, CHAT_FILE_BYTES,
+  writeAttachment, writeAttachmentFromFile, readAttachment, removeAttachment, maxAttachmentLimit,
 } from '@josi-ce/storage';
 import { asyncRoute, param } from './async.js';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
@@ -125,7 +129,10 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   const { db } = ctx;
   r.use(requireAuth);
   const uploadDir = attachmentRoot();
-  const receive = multer({ storage: multer.memoryStorage(), limits: { fileSize: CHAT_FILE_BYTES, files: 1, fields: 0, parts: 2 } });
+  // Busboy streams multipart bytes into a private bounded staging directory;
+  // request bodies are never accumulated by multer.memoryStorage().
+  const stagingDir = mkdtempSync(join(tmpdir(), 'josi-attachment-staging-'));
+  const receive = multer({ storage: multer.diskStorage({ destination: stagingDir, filename: (_req,_file,done)=>done(null,randomUUID()) }), limits: { fileSize: maxAttachmentLimit(), files: 1, fields: 0, parts: 2 } });
 
   const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
     asyncRoute(async (req: Request, res: Response) => {
@@ -186,10 +193,15 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       if (!thread || thread.owner_user_id !== req.user!.id) throw new RouteError(404, 'not found');
       await new Promise<void>((resolve, reject) => receive.single('file')(req, res, error => error ? reject(error) : resolve())).catch(error => {
         if (error instanceof multer.MulterError) throw new AttachmentError(413, error.code,
-          error.code === 'LIMIT_FILE_SIZE' ? 'Choose a file no larger than 20 MB.' : 'Upload one file at a time without additional fields.');
+          error.code === 'LIMIT_FILE_SIZE' ? 'The upload exceeds the configured attachment size limit.' : 'Upload one file at a time without additional fields.');
         throw new AttachmentError(400, 'invalid_upload', 'The upload could not be read. Choose a file and retry.');
       });
       if (!req.file) throw new RouteError(400, 'choose a file first');
+      const stagedPath = req.file.path;
+      const removeStaging = () => { void unlink(stagedPath).catch(() => undefined); };
+      res.once('finish', removeStaging);
+      req.once('aborted', removeStaging);
+      const stagedBytes = await readFile(stagedPath);
       let originalname = req.file.originalname;
       // Multipart headers conventionally arrive as Latin-1; recover UTF-8
       // names without accepting invalid byte sequences.
@@ -199,26 +211,27 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         normalized = await normalizeChatImage({
           filename: originalname,
           declaredContentType: req.file.mimetype || 'application/octet-stream',
-          bytes: req.file.buffer,
+          bytes: stagedBytes,
         });
       } catch (error) {
         if (error instanceof ChatImageError) throw new AttachmentError(400, 'invalid_heic', error.message);
         throw error;
       }
       const { bytes } = normalized;
-      const { filename, contentType, extension } = validateAttachment(
+      const { filename, contentType, extension, analysis } = validateAttachment(
         normalized.filename,
         normalized.contentType,
         bytes,
       );
+      let finalAnalysis=analysis;
       const id = randomUUID();
       // Reserve counts/bytes in one database statement before writing bytes.
       // Database triggers serialize concurrent upload/delete quota changes.
       try {
         await db.query(`insert into chat_attachments
-          (id,owner_user_id,thread_id,filename,content_type,byte_size,storage_path,storage_state)
-          values($1,$2,$3,$4,$5,$6,$7,'pending')`,
-          [id,req.user!.id,thread.id,filename,contentType,bytes.length,join(uploadDir,id)]);
+          (id,owner_user_id,thread_id,filename,content_type,byte_size,storage_path,storage_state,analysis_status,analysis_code)
+          values($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9)`,
+          [id,req.user!.id,thread.id,filename,contentType,bytes.length,id,analysis.status,analysis.code??null]);
       } catch (error) {
         const message = (error as Error).message;
         if (message.includes('attachment_thread_quota')) throw new AttachmentError(413, 'thread_quota', 'This conversation has reached its 100-file limit. Delete an unused attachment or start another conversation.');
@@ -227,31 +240,30 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         throw error;
       }
       try {
-        await writeAttachment(id, bytes, uploadDir);
-        let segments;
-        try {
-          segments = await extractRichSegments({ extension, bytes });
-        } catch (error) {
-          // A broken parser/runtime is not the same thing as a valid file with
-          // no text layer. Keep the underlying detail in server logs and give
-          // the person an honest, retryable error instead of telling the model
-          // that a readable document contained no text.
-          console.error('chat attachment extraction failed', {
-            extension,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          throw new AttachmentError(422, 'extraction_failed',
-            'Josi could not process this file because its document parser failed. Retry once; if it fails again, ask the administrator to check the application logs.');
+        if (normalized.converted) await writeAttachment(id, bytes, uploadDir);
+        else await writeAttachmentFromFile(id, stagedPath, uploadDir);
+        let extractedText:string|null=null;
+        let analysisStatus:'available'|'unavailable'=analysis.status;
+        let analysisCode:string|null=analysis.code??null;
+        if (analysis.status==='available' && analysis.kind==='text') {
+          try {
+            const segments=await extractRichSegments({extension,bytes});
+            extractedText=segments?.map(s=>s.content).join('\n').slice(0,100_000)||null;
+          } catch (error) {
+            console.error('chat attachment extraction failed',{extension,error:error instanceof Error?error.message:String(error)});
+            analysisStatus='unavailable';analysisCode='analysis_parser_failed';
+            finalAnalysis={status:'unavailable',code:'analysis_parser_failed',reason:'Stored safely, but the approved parser failed.'};
+          }
         }
-        await db.query(`update chat_attachments set storage_state='ready',extracted_text=$2 where id=$1`,
-          [id,segments?.map(s => s.content).join('\n').slice(0,100_000) || null]);
+        await db.query(`update chat_attachments set storage_state='ready',extracted_text=$2,analysis_status=$3,analysis_code=$4 where id=$1`,
+          [id,extractedText,analysisStatus,analysisCode]);
       } catch (error) {
         await db.query(`delete from chat_attachments where id=$1 and storage_state='pending'`, [id]);
         await removeAttachment(id, uploadDir).catch(() => undefined);
         throw attachmentFailure(error);
       }
       await appendEvent(db,{actorUserId:req.user!.id,actor:'user',kind:'attachment.uploaded',subjectType:'thread',subjectId:thread.id,payload:{attachmentId:id,bytes:bytes.length}});
-      return res.status(201).json({ attachment: { id, filename, contentType, byteSize: bytes.length } });
+      return res.status(201).json({ attachment: { id, filename, contentType, byteSize: bytes.length, analysis:finalAnalysis } });
     }));
 
   r.get('/attachments/:attachmentId', handle(async (req, res) => {
@@ -326,18 +338,20 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     if(!clientMessageId)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');
     const duplicate=clientMessageId?!!(await db.query(`select 1 from assistant_turns where owner_user_id=$1 and thread_id=$2 and client_message_id=$3`,[req.user!.id,threadId,clientMessageId])).length:false;
     if(!duplicate){const rate=await consume(db,{limit:LIMITS.durable_turn,subject:`durable_turn:${req.user!.id}`});if(!rate.ok){res.set('Retry-After',String(rate.retryAfterSeconds));throw new RouteError(429,'Too many turns were submitted. Reconcile existing work before retrying.');}}
+    const attachmentIds=Array.isArray(req.body?.attachment_receipts)?req.body.attachment_receipts.map((x:unknown)=>str(x,80)):[];
     const accepted=await submitDurableTurn(db,{
       ownerUserId:req.user!.id,sessionId:req.user!.session_id,threadId,
       clientMessageId,
       message:str(req.body?.message,8000),
       replyToMessageId:str(req.body?.reply_to_message_id,80)||null,
-      attachmentIds:Array.isArray(req.body?.attachment_receipts)?req.body.attachment_receipts.map((x:unknown)=>str(x,80)):[],
+      attachmentIds,
       attemptOf:str(req.body?.attempt_of,80)||null,
     });
+    const attachmentReceipts=attachmentIds.length?await db.query<{id:string;filename:string;content_type:string;analysis_status:string;analysis_code:string|null}>(`select id,filename,content_type,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 order by id`,[attachmentIds,req.user!.id,threadId]):[];
     res.set('Cache-Control','no-store');
     res.set('Location',`/api/assistant/threads/${threadId}/turns`);
     const lifecycleState=mobileLifecycleState(accepted.turn.status);
-    return res.status(202).json({turn:{id:accepted.turn.id,job_id:accepted.turn.id,status:accepted.turn.status,lifecycle_state:lifecycleState,thread_id:threadId,client_message_id:accepted.turn.client_message_id,attempt_of:accepted.turn.attempt_of,error:accepted.turn.status==='failed'?{code:accepted.turn.error_code,retryable:accepted.turn.error_retryable}:null},duplicate:accepted.duplicate,telemetry:{state:lifecycleState,turn_id:accepted.turn.id,thread_id:threadId}});
+    return res.status(202).json({turn:{id:accepted.turn.id,job_id:accepted.turn.id,status:accepted.turn.status,lifecycle_state:lifecycleState,thread_id:threadId,client_message_id:accepted.turn.client_message_id,attempt_of:accepted.turn.attempt_of,attachment_receipts:attachmentReceipts.map(a=>({id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}})),error:accepted.turn.status==='failed'?{code:accepted.turn.error_code,retryable:accepted.turn.error_retryable}:null},duplicate:accepted.duplicate,telemetry:{state:lifecycleState,turn_id:accepted.turn.id,thread_id:threadId}});
   }));
 
   r.get('/threads/:id/turns',requireOwnership({db},{type:'thread',need:'owner'}),handle(async(req,res)=>{
@@ -348,8 +362,11 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     const cursor=typeof req.query.cursor==='string'?req.query.cursor:null;
     const turnId=typeof req.query.turn_id==='string'?req.query.turn_id:null;
     const turns=await listDurableTurns(db,{ownerUserId:req.user!.id,threadId,cursor,turnId});
+    const receiptIds=[...new Set(turns.flatMap(t=>t.attachment_ids))];
+    const receipts=receiptIds.length?await db.query<{id:string;filename:string;content_type:string;analysis_status:string;analysis_code:string|null}>(`select id,filename,content_type,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3`,[receiptIds,req.user!.id,threadId]):[];
+    const receiptById=new Map(receipts.map(a=>[a.id,a]));
     res.set('Cache-Control','no-store');
-    return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
+    return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,attachment_receipts:t.attachment_ids.flatMap(id=>{const a=receiptById.get(id);return a?[{id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}}]:[];}),error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
   }));
 
   r.put('/devices',handle(async(req,res)=>{
@@ -415,9 +432,9 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       }));
 
       const attachments = attachmentIds.length ? await db.query<{
-        id: string; filename: string; content_type: string; extracted_text: string | null; storage_path: string;
+        id: string; filename: string; content_type: string; extracted_text: string | null; analysis_status:string; analysis_code:string|null;
       }>(
-        `select id, filename, content_type, extracted_text, storage_path from chat_attachments
+        `select id, filename, content_type, extracted_text, analysis_status, analysis_code from chat_attachments
          where id = any($1::uuid[]) and thread_id = $2 and owner_user_id = $3 and storage_state = 'ready'`,
         [attachmentIds, threadId, thread.owner_user_id],
       ) : [];
@@ -445,7 +462,9 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       // only) rides along as context in the message.
       const attachmentContext = nonImageAttachments.map((a) => a.extracted_text
         ? `Attached file ${a.filename}:\n${a.extracted_text}`
-        : `Attached file ${a.filename} (${a.content_type}); no readable text was extracted.`).join('\n\n');
+        : a.analysis_status==='unavailable'
+          ? `Attached file ${a.filename} (${a.content_type}); analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`
+          : `Attached file ${a.filename} (${a.content_type}); no readable text was extracted.`).join('\n\n');
 
       // Image attachments are never described from pre-extracted text. Either
       // the bytes are read and handed to a model PROVEN to have vision, or
@@ -468,7 +487,8 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       }
 
       const modelInbound = [inbound, attachmentContext].filter(Boolean).join('\n\n');
-      const attachmentMeta = attachments.map((a) => ({ id: a.id, filename: a.filename, contentType: a.content_type }));
+      const attachmentMeta = attachments.map((a) => ({ id: a.id, filename: a.filename, contentType: a.content_type,
+        analysis:{status:a.analysis_status,code:a.analysis_code} }));
       const inboundMessage=await addMessage(db,{threadId,direction:'in',body:inbound||'Sent an attachment',meta:{attachments:attachmentMeta}});
       const result = await runAssistantTurn({
         db,

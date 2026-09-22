@@ -46,7 +46,7 @@ export async function submitDurableTurn(db:Db,args:{ownerUserId:string;sessionId
       select * from assistant_turns where owner_user_id=$1 and thread_id=$2 and client_message_id=$3
     ), inbound as (
       insert into messages(thread_id,direction,channel,body,meta)
-      select $2,'in','native',$4,jsonb_build_object('attachments',coalesce((select jsonb_agg(jsonb_build_object('id',a.id,'filename',a.filename,'contentType',a.content_type) order by a.id) from chat_attachments a where a.id=any($6::uuid[])),jsonb_build_array()))
+      select $2,'in','native',$4,jsonb_build_object('attachments',coalesce((select jsonb_agg(jsonb_build_object('id',a.id,'filename',a.filename,'contentType',a.content_type,'analysis',jsonb_build_object('status',a.analysis_status,'code',a.analysis_code)) order by a.id) from chat_attachments a where a.id=any($6::uuid[])),jsonb_build_array()))
       where exists(select 1 from owned) and not exists(select 1 from existing)
         and (select n from valid_attachments)=cardinality($6::uuid[]) and (select ok from valid_reply) and (select ok from valid_attempt)
       returning id

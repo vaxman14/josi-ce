@@ -16,18 +16,20 @@ describe('HEIC chat images', () => {
   it('converts iPhone HEIC uploads into model-compatible JPEG', async () => {
     const convert = vi.fn(async () => jpeg());
     const result = await normalizeChatImage({
-      filename: 'IMG_5059.HEIC', declaredContentType: 'application/octet-stream', bytes: heic(), convertHeic: convert,
+      filename: 'IMG_5059.HEIC', declaredContentType: 'image/heic', bytes: heic(), convertHeic: convert,
     });
     expect(convert).toHaveBeenCalledOnce();
     expect(result).toEqual(expect.objectContaining({ filename: 'IMG_5059.jpg', contentType: 'image/jpeg', converted: true }));
     expect(result.bytes).toEqual(jpeg());
   });
 
-  it('converts HEIF detected by content even when the filename is wrong', async () => {
-    const result = await normalizeChatImage({
+  it('rejects HEIF content when extension or declared MIME does not agree', async () => {
+    await expect(normalizeChatImage({
       filename: 'photo.bin', declaredContentType: 'application/octet-stream', bytes: heic('heix'), convertHeic: async () => jpeg(),
-    });
-    expect(result.filename).toBe('photo.jpg');
+    })).rejects.toThrow('must agree');
+    await expect(normalizeChatImage({
+      filename: 'photo.heic', declaredContentType: 'image/png', bytes: heic(), convertHeic: async () => jpeg(),
+    })).rejects.toThrow('must agree');
   });
 
   it('rejects a disguised file instead of trusting extension or MIME type', async () => {
