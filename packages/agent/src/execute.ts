@@ -14,8 +14,8 @@ import { EmailTemplateError, freezeEmailTemplate } from '@josi-ce/mail';
 // action, not the permission.
 import {
   ReminderError, activeCollectingAction, attachCollectingAction, cancelReminder, createReminder, createTask, enqueue, getTemplate, getTask, listRemindersFor,
-  listTasksFor, listTemplates, missingSlots, setSlots, transition,
-  mergeActionTask, prepareAction,
+  listTasksFor, listTemplates, missingSlots, reminderTimezoneFor, setSlots, transition, updateReminder,
+  authorizeActionByUserPolicy, mergeActionTask, needsApproval, prepareAction,
   type Db,
 } from '@josi-ce/core';
 import { citationLabel, folderSyncHealthFor, searchDocuments, type FolderSyncHealth } from '@josi-ce/storage';
@@ -35,6 +35,18 @@ function actionSummary(domain:string,operation:string,slots:Record<string,unknow
     return `${operation==='update'?'Update':'Create'} calendar event\nCalendar: ${String(source?.calendar_name??'Selected calendar')}\nTitle: ${String(slots.title)}\nStart: ${String(slots.start)}\nEnd: ${String(slots.end)}`;
   }
   return `${operation==='update'?'Update':'Create'} contact\nName: ${String(slots.name)}`;
+}
+
+function addMinutesToOffsetTimestamp(start:unknown,minutes:number):string|null{
+  if(typeof start!=='string')return null;
+  const match=/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2}(?:\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.exec(start);
+  const instant=Date.parse(start);
+  if(!match||!Number.isFinite(instant))return null;
+  if(match[2]==='Z')return new Date(instant+minutes*60_000).toISOString().replace('.000Z','Z');
+  const sign=match[2][0]==='-'?-1:1;
+  const offset=sign*(Number(match[2].slice(1,3))*60+Number(match[2].slice(4,6)));
+  const local=new Date(instant+minutes*60_000+offset*60_000).toISOString().slice(0,19);
+  return `${local}${match[2]}`;
 }
 
 export interface ToolExecutionContext {
@@ -109,6 +121,12 @@ export async function executeAssistantTool(
       let action = await activeCollectingAction(db,{ownerUserId:userId,threadId:ctx.threadId,domain,operation,sourceTurnId:ctx.turnId});
       let task = action ? await getTask(db,action.task_id) : null;
       let draftSlots = Object.fromEntries(Object.entries(input).filter(([,value])=>value!==undefined));
+      const requestedDuration=input.duration_minutes;
+      if(name==='draft_calendar_event'&&requestedDuration!==undefined
+        &&(typeof requestedDuration!=='number'||!Number.isInteger(requestedDuration)||requestedDuration<1||requestedDuration>24*60)){
+        return {ok:false,error:'bad_calendar_duration',message:'Event duration must be a whole number of minutes from 1 to 1440.'};
+      }
+      delete draftSlots.duration_minutes;
       let calendarTime: CalendarTimeResolution = {kind:'none'};
       if(name==='draft_calendar_event'){
         calendarTime=await resolveCalendarTimeIntent(db,{
@@ -119,6 +137,10 @@ export async function executeAssistantTool(
         else if(calendarTime.kind==='incomplete'){
           delete draftSlots.start;delete draftSlots.end;
           draftSlots={...draftSlots,calendar_time_intent:calendarTime.intent};
+        }
+        if(calendarTime.kind==='none'&&typeof requestedDuration==='number'){
+          const end=addMinutesToOffsetTimestamp(draftSlots.start??task?.slots.start,requestedDuration);
+          if(end)draftSlots={...draftSlots,end};
         }
       }
       if (name === 'draft_email') {
@@ -224,8 +246,14 @@ export async function executeAssistantTool(
       const missing=required.filter(key=>task.slots[key]===undefined||task.slots[key]===null||task.slots[key]==='');
       if(missing.length)return {ok:true,task_id:task.id,state:'collecting',missing_slots:missing,message:`Keep this ${domain} draft and ask only for: ${missing.join(', ')}.`};
       const summary=actionSummary(domain,operation,task.slots);
-      const prepared=await prepareAction(db,{actionState:action,task,summary,actionClass:name==='draft_email'?'email_send':name==='draft_calendar_event'?'calendar_write':'contacts_write',action:operation});
-      return {ok:true,task_id:task.id,state:'prepared',approval_id:prepared.approval.id,summary,
+      const actionClass=name==='draft_email'?'email_send':name==='draft_calendar_event'?'calendar_write':'contacts_write';
+      if(!await needsApproval(db,{userId,actionClass,action:operation})){
+        await authorizeActionByUserPolicy(db,{actionStateId:action.id,actionClass,action:operation});
+        return {ok:true,task_id:task.id,state:'approved',authorization:'user_policy',summary,
+          message:'Queued under your automatic approval preference. No approval request was created.'};
+      }
+      const prepared=await prepareAction(db,{actionState:action,task,summary,actionClass,action:operation});
+      return {ok:true,task_id:task.id,state:'prepared',approval_id:prepared.approval.id,expires_at:prepared.approval.expires_at,action:operation,action_class:actionClass,summary,
         message:'Prepared but not carried out. Display the exact summary and ask for an explicit yes or no.'};
     }
     case 'list_task_types': {
@@ -339,8 +367,9 @@ export async function executeAssistantTool(
       }
       let reminder;
       try {
+        const timezone = await reminderTimezoneFor(db, userId, typeof input.timezone === 'string' ? input.timezone : undefined);
         reminder = await createReminder(db, {
-          ownerUserId: userId, threadId: ctx.threadId, body: message, dueAt,
+          ownerUserId: userId, threadId: ctx.threadId, body: message, dueAt, timezone,
         });
       } catch (err) {
         // A refusal the model can relay in the person's own terms. Anything
@@ -353,6 +382,8 @@ export async function executeAssistantTool(
         reminder_id: reminder.id,
         ...(calendarSource ? {calendar_source:calendarSource}:{}),
         due_at: reminder.due_at,
+        timezone: reminder.timezone,
+        revision: Number(reminder.revision),
         // Stated so the model does not promise more than delivery: the message
         // comes back, it is not an autonomous action.
         will_be_delivered: 'Josi will send this message back to the user at that time.',
@@ -445,12 +476,38 @@ export async function executeAssistantTool(
       };
     }
 
+    case 'update_reminder': {
+      const reminderId = String(input.reminder_id ?? '');
+      const dueAt = input.due_at !== undefined || input.in_minutes !== undefined ? reminderDueAt(input) : undefined;
+      if ((input.due_at !== undefined || input.in_minutes !== undefined) && !dueAt) {
+        return { ok: false, error: 'bad_time', message: 'Choose a valid future due_at or positive in_minutes.' };
+      }
+      try {
+        const timezone = input.timezone === undefined
+          ? undefined
+          : await reminderTimezoneFor(db, userId, typeof input.timezone === 'string' ? input.timezone : undefined);
+        const reminder = await updateReminder(db, {
+          ownerUserId: userId, reminderId,
+          ...(input.message === undefined ? {} : { body: String(input.message) }),
+          ...(dueAt ? { dueAt } : {}),
+          ...(timezone ? { timezone } : {}),
+        });
+        if (!reminder) return { ok: false, error: 'not_found', message: 'There is no scheduled reminder with that id.' };
+        return { ok: true, reminder_id: reminder.id, status: reminder.status, due_at: reminder.due_at,
+          timezone: reminder.timezone, revision: Number(reminder.revision) };
+      } catch (err) {
+        if (err instanceof ReminderError) return { ok: false, error: 'bad_reminder', message: err.message };
+        throw err;
+      }
+    }
+
     case 'list_reminders': {
       const reminders = await listRemindersFor(db, { ownerUserId: userId });
       return {
         ok: true,
         reminders: reminders.map((r) => ({
-          reminder_id: r.id, message: r.body, due_at: r.due_at, status: r.status,
+          reminder_id: r.id, message: r.body, due_at: r.due_at, timezone: r.timezone,
+          revision: Number(r.revision), status: r.status,
         })),
       };
     }
@@ -461,7 +518,8 @@ export async function executeAssistantTool(
       // Same sentence for "someone else's", "never existed" and "already
       // settled" — the reasoning behind NOT_YOURS, applied to reminders.
       if (!cancelled) return { ok: false, error: 'not_found', message: 'There is no scheduled reminder with that id.' };
-      return { ok: true, reminder_id: cancelled.id, status: cancelled.status };
+      return { ok: true, reminder_id: cancelled.id, status: cancelled.status,
+        revision: Number(cancelled.revision) };
     }
 
     default:

@@ -31,20 +31,23 @@ const STRICTNESS: Record<ApprovalLevel, number> = {
  * installation nobody configured is one where Josi acts unasked. */
 export const DEFAULT_APPROVAL_LEVEL: ApprovalLevel = 'always_ask';
 
-/** The ceiling that applies when the administrator has set none.
- *
- * This was `automatic` — "no policy set = no ceiling" — and that was a
- * fail-OPEN default hiding behind a fail-closed one. The user default is
- * `always_ask`, so an unconfigured installation looked safe; but the ceiling is
- * the only thing standing between a user who selects `automatic` for themselves
- * and Josi sending mail on their behalf with nobody having decided that was
- * allowed. A fresh installation must refuse, not defer.
- *
- * Migration 0016 also seeds an explicit row per action class, so this constant
- * is the second line rather than the only one. */
-export const DEFAULT_ADMIN_CEILING: ApprovalLevel = 'always_ask';
+/** No managed administrator ceiling exists until one is explicitly set. */
+export const DEFAULT_ADMIN_CEILING: ApprovalLevel | null = null;
 
-export class ApprovalError extends Error {}
+export type ApprovalErrorCode =
+  | 'invalid_policy'
+  | 'policy_conflict'
+  | 'not_found'
+  | 'not_owner'
+  | 'already_decided'
+  | 'expired'
+  | 'race';
+
+export class ApprovalError extends Error {
+  constructor(message: string, readonly code: ApprovalErrorCode = 'invalid_policy') {
+    super(message);
+  }
+}
 
 // ------------------------------------------------------------ action classes
 
@@ -57,101 +60,83 @@ export interface ActionClassSpec {
   label: string;
   description: string;
   impact: ActionImpact;
-  /** The loosest level a FRESH installation permits for this class. */
-  factoryCeiling: ApprovalLevel;
 }
 
-/** Every class of action an approval level can be set for.
- *
- * The list is here rather than in the admin page because a class the server
- * does not know about is a class with no factory ceiling, and a class with no
- * factory ceiling falls back to `DEFAULT_ADMIN_CEILING` — safe, but invisible
- * to the operator, who then cannot see that it exists to configure.
- *
- * Every factory ceiling is `always_ask`. That is the point of the row: a fresh
- * installation asks about everything, and loosening any of it is a decision
- * somebody has to make on purpose and is recorded making. */
+/** Every class of action an approval level can be set for. Unknown classes are refused. */
 export const ACTION_CLASSES: readonly ActionClassSpec[] = Object.freeze([
   {
     key: 'email_send',
     label: 'Sending email',
     description: 'Sending a message to somebody on your behalf.',
     impact: 'routine',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'calendar_write',
     label: 'Creating and changing calendar events',
     description: 'Adding, moving or editing an event, including ones other people attend.',
     impact: 'routine',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'contacts_write',
     label: 'Creating and changing contacts',
     description: 'Adding or editing a person in a connected address book.',
     impact: 'routine',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'task_management',
     label: 'Creating and changing tasks',
     description: 'Work Josi tracks for you. Nothing leaves this installation.',
     impact: 'routine',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'delete_data',
     label: 'Deleting anything',
     description: 'Removing a message, event, document or record. The one a mistake cannot be talked back from.',
     impact: 'high',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'cancel_commitment',
     label: 'Cancelling a commitment',
     description: 'Calling off a meeting, booking or arrangement other people are relying on.',
     impact: 'high',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'invite_external',
     label: 'Involving people outside the organisation',
     description: 'Adding an outside address to a thread, meeting or shared item.',
     impact: 'high',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'publish_public',
     label: 'Publishing anything publicly',
     description: 'Making something visible outside this installation.',
     impact: 'high',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'spend_money',
     label: 'Spending money',
     description: 'Any action that incurs a charge.',
     impact: 'high',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'sign_agreement',
     label: 'Signing or accepting terms',
     description: 'Agreeing to anything on your behalf.',
     impact: 'high',
-    factoryCeiling: 'always_ask',
   },
   {
     key: 'change_access',
     label: 'Changing who can see or do what',
     description: 'Sharing, permissions, connected accounts and account access.',
     impact: 'high',
-    factoryCeiling: 'always_ask',
   },
 ]);
 
 const BY_KEY = new Map(ACTION_CLASSES.map((c) => [c.key, c]));
+
+export function isApprovalLevel(value: unknown): value is ApprovalLevel {
+  return value === 'always_ask' || value === 'risky_only' || value === 'automatic';
+}
 
 export function actionClassSpec(key: string): ActionClassSpec | null {
   return BY_KEY.get(key) ?? null;
@@ -175,10 +160,16 @@ export function effectiveApprovalLevel(
   userChoice: ApprovalLevel | null | undefined,
   adminCeiling: ApprovalLevel | null | undefined,
 ): ApprovalLevel {
-  const user = userChoice ?? DEFAULT_APPROVAL_LEVEL;
-  // No policy set is NOT "no ceiling". See DEFAULT_ADMIN_CEILING: an
-  // installation nobody has configured refuses rather than defers.
-  const admin = adminCeiling ?? DEFAULT_ADMIN_CEILING;
+  // TypeScript cannot protect this boundary from malformed legacy rows or a
+  // manually changed database. Unknown values must become the strictest level,
+  // never flow through STRICTNESS as `undefined` and accidentally widen access.
+  const user = isApprovalLevel(userChoice) ? userChoice : DEFAULT_APPROVAL_LEVEL;
+  // A ceiling exists only when an administrator explicitly configured one.
+  // The user's own missing preference remains fail-closed above.
+  const admin = adminCeiling === null || adminCeiling === undefined
+    ? DEFAULT_ADMIN_CEILING
+    : isApprovalLevel(adminCeiling) ? adminCeiling : DEFAULT_APPROVAL_LEVEL;
+  if (!admin) return user;
   return STRICTNESS[user] <= STRICTNESS[admin] ? user : admin;
 }
 
@@ -187,40 +178,66 @@ export function isRelaxation(
   current: ApprovalLevel | null | undefined,
   next: ApprovalLevel,
 ): boolean {
-  return STRICTNESS[next] > STRICTNESS[current ?? DEFAULT_ADMIN_CEILING];
+  return current ? STRICTNESS[next] > STRICTNESS[current] : false;
+}
+
+/** Only a row explicitly marked by an administrator change is managed policy.
+ * Migration 0060 marks historical rows only when matching audit evidence
+ * exists. Runtime policy no longer depends on event retention or a JSON scan. */
+async function explicitAdminCeiling(db:Db,actionClass:string):Promise<ApprovalLevel|null>{
+  const [policy]=await db.query<{max_level:unknown}>(`select max_level from admin_approval_policy
+    where action_class=$1 and managed_explicitly is true limit 1`,[actionClass]);
+  if(!policy)return null;
+  return isApprovalLevel(policy.max_level) ? policy.max_level : DEFAULT_APPROVAL_LEVEL;
 }
 
 export async function getApprovalLevel(
   db: Db,
   args: { userId: string; actionClass: string },
-): Promise<{ level: ApprovalLevel; userChoice: ApprovalLevel; adminCeiling: ApprovalLevel }> {
-  const [pref] = await db.query<{ level: ApprovalLevel }>(
+): Promise<{ level: ApprovalLevel; userChoice: ApprovalLevel; adminCeiling: ApprovalLevel | null; managedPolicy: boolean }> {
+  if (!BY_KEY.has(args.actionClass)) {
+    return { level: DEFAULT_APPROVAL_LEVEL, userChoice: DEFAULT_APPROVAL_LEVEL, adminCeiling: null, managedPolicy: false };
+  }
+  const [pref] = await db.query<{ level: unknown }>(
     `select level from user_approval_prefs where user_id = $1 and action_class = $2`,
     [args.userId, args.actionClass],
   );
-  const [policy] = await db.query<{ max_level: ApprovalLevel }>(
-    `select max_level from admin_approval_policy where action_class = $1`,
-    [args.actionClass],
-  );
-  const userChoice = pref?.level ?? DEFAULT_APPROVAL_LEVEL;
-  const adminCeiling = policy?.max_level ?? DEFAULT_ADMIN_CEILING;
-  return { level: effectiveApprovalLevel(userChoice, adminCeiling), userChoice, adminCeiling };
+  const userChoice = isApprovalLevel(pref?.level) ? pref.level : DEFAULT_APPROVAL_LEVEL;
+  const adminCeiling = await explicitAdminCeiling(db,args.actionClass);
+  return {
+    level: effectiveApprovalLevel(userChoice, adminCeiling), userChoice, adminCeiling,
+    managedPolicy: adminCeiling !== null,
+  };
 }
 
 export async function setUserApprovalLevel(
   db: Db,
   args: { userId: string; actionClass: string; level: ApprovalLevel },
 ): Promise<void> {
-  await db.query(
+  if (!BY_KEY.has(args.actionClass) || !isApprovalLevel(args.level)) {
+    throw new ApprovalError(`there is no valid approval policy for "${args.actionClass}"`, 'invalid_policy');
+  }
+  if(!db.transaction)throw new ApprovalError('approval preference changes require transaction support','policy_conflict');
+  await db.transaction(async tx=>{
+  // Serialize preference and managed-policy writers with automatic
+  // authorization. A preference can therefore never commit just after a
+  // ceiling it did not see and become a silently ignored choice.
+  await tx.query(`lock table admin_approval_policy, user_approval_prefs in share row exclusive mode`);
+  const ceiling = await explicitAdminCeiling(tx,args.actionClass);
+  if (ceiling && effectiveApprovalLevel(args.level, ceiling) !== args.level) {
+    throw new ApprovalError(`the managed workspace policy permits at most ${ceiling}`,'policy_conflict');
+  }
+  await tx.query(
     `insert into user_approval_prefs (user_id, action_class, level) values ($1, $2, $3)
      on conflict (user_id, action_class) do update set level = excluded.level`,
     [args.userId, args.actionClass, args.level],
   );
-  await appendEvent(db, {
+  await appendEvent(tx, {
     actorUserId: args.userId,
     actor: 'user',
     kind: 'approval.level_set',
     payload: { actionClass: args.actionClass, level: args.level },
+  });
   });
 }
 
@@ -244,28 +261,47 @@ export async function setAdminApprovalCeiling(
     confirmRelaxation?: boolean;
   },
 ): Promise<{ previous: ApprovalLevel | null; relaxed: boolean }> {
-  if (!BY_KEY.has(args.actionClass)) {
+  if(!db.transaction)throw new ApprovalError('managed policy changes require transaction support');
+  return db.transaction(tx=>setAdminApprovalCeilingInTransaction(tx,args));
+}
+
+async function setAdminApprovalCeilingInTransaction(
+  db:Db,
+  args:{actorUserId:string;actionClass:string;maxLevel:ApprovalLevel;confirmRelaxation?:boolean},
+):Promise<{previous:ApprovalLevel|null;relaxed:boolean}>{
+  await db.query(`lock table admin_approval_policy, user_approval_prefs in share row exclusive mode`);
+  if (!BY_KEY.has(args.actionClass) || !isApprovalLevel(args.maxLevel)) {
     // An unknown class would store a row nothing reads and no screen shows.
-    throw new ApprovalError(`there is no action class called "${args.actionClass}"`);
+    throw new ApprovalError(`there is no valid managed policy for "${args.actionClass}"`,'invalid_policy');
   }
 
-  const [existing] = await db.query<{ max_level: ApprovalLevel }>(
-    `select max_level from admin_approval_policy where action_class = $1`,
-    [args.actionClass],
-  );
-  const previous = existing?.max_level ?? null;
+  const previous = await explicitAdminCeiling(db,args.actionClass);
   const relaxed = isRelaxation(previous, args.maxLevel);
 
   if (relaxed && args.confirmRelaxation !== true) {
     throw new ApprovalError(
       'loosening an approval ceiling has to be confirmed explicitly, because it lets Josi '
       + 'act without asking first',
+      'policy_conflict',
     );
   }
 
+  // `automatic` means the administrator is returning control to each person,
+  // not installing a managed policy that happens to have no effect.
+  if (args.maxLevel === 'automatic') {
+    await db.query(`delete from admin_approval_policy where action_class = $1`, [args.actionClass]);
+    await appendEvent(db, {
+      actorUserId: args.actorUserId,
+      actor: 'super_admin',
+      kind: 'approval.ceiling_removed',
+      payload: { actionClass: args.actionClass, previousMaxLevel: previous },
+    });
+    return { previous, relaxed };
+  }
+
   await db.query(
-    `insert into admin_approval_policy (action_class, max_level) values ($1, $2)
-     on conflict (action_class) do update set max_level = excluded.max_level`,
+    `insert into admin_approval_policy (action_class, max_level, managed_explicitly) values ($1, $2, true)
+     on conflict (action_class) do update set max_level = excluded.max_level, managed_explicitly = true`,
     [args.actionClass, args.maxLevel],
   );
   await appendEvent(db, {
@@ -359,10 +395,14 @@ export async function needsApproval(
   db: Db,
   args: { userId: string; actionClass: string; action: string },
 ): Promise<boolean> {
+  if (!BY_KEY.has(args.actionClass)) return true;
   if (isRiskyAction(args.action)) return true;
   if (isHighImpactClass(args.actionClass)) return true;
   const { level } = await getApprovalLevel(db, { userId: args.userId, actionClass: args.actionClass });
-  return level !== 'automatic';
+  // A risky_only preference is a real middle setting: routine actions run,
+  // while the explicit risky-action and high-impact-class floors above still
+  // ask. Treating it like always_ask makes the saved choice ineffective.
+  return level === 'always_ask';
 }
 
 /** Binds an approval to exactly what was described.
@@ -438,7 +478,7 @@ export async function requestApproval(
   ];
   const given = subjects.filter(([, id]) => id);
   if (given.length !== 1) {
-    throw new ApprovalError('an approval belongs to exactly one subject');
+    throw new ApprovalError('an approval belongs to exactly one subject','invalid_policy');
   }
   const [subjectType, subjectId] = given[0] as [ApprovalSubject, string];
 
@@ -476,19 +516,19 @@ export async function decideApproval(
   args: { approvalId: string; decidedBy: string; approve: boolean },
 ): Promise<Approval> {
   const [existing] = await db.query<Approval>(`select * from approvals where id = $1`, [args.approvalId]);
-  if (!existing) throw new ApprovalError('no such approval');
+  if (!existing) throw new ApprovalError('no such approval','not_found');
   if (existing.owner_user_id !== args.decidedBy) {
-    throw new ApprovalError('only the person the action would be taken for can approve it');
+    throw new ApprovalError('only the person the action would be taken for can approve it','not_owner');
   }
   if (existing.status !== 'pending') {
-    throw new ApprovalError(`that request was already ${existing.status}`);
+    throw new ApprovalError(`that request was already ${existing.status}`,existing.status==='expired'?'expired':'already_decided');
   }
   const rows = await db.query<Approval>(
     `update approvals set status = $2, decided_at = now(), decided_by = $3
      where id = $1 and status = 'pending' returning *`,
     [args.approvalId, args.approve ? 'approved' : 'denied', args.decidedBy],
   );
-  if (!rows.length) throw new ApprovalError('that request was decided by someone else first');
+  if (!rows.length) throw new ApprovalError('that request was decided by someone else first','race');
   await appendEvent(db, {
     actorUserId: args.decidedBy,
     actor: 'user',

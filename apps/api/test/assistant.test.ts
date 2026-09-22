@@ -15,7 +15,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { createReminder, seal, MasterKey } from '@josi-ce/core';
+import { createReminder, json, seal, MasterKey } from '@josi-ce/core';
 import { ensureInternalCalendar, saveClient, setCapability, upsertConnection } from '@josi-ce/connectors';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
@@ -185,7 +185,8 @@ describe('durable native turns and devices',()=>{
     const registered=await call('/api/assistant/devices',{method:'PUT',jar:cookies.alice,body:{device_identity:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',platform:'ios',expo_token:'ExpoPushToken[api_test]',app_state:'background',privacy_locked:true,categories:{assistant:true},quiet_start:'22:00',quiet_end:'07:00',timezone:'America/Los_Angeles'}});
     expect(registered.status).toBe(200);
     const listed=await call('/api/assistant/devices',{jar:cookies.alice});expect(JSON.stringify(listed.body)).not.toContain('api_test');expect(JSON.stringify(listed.body)).not.toContain('expo_token_enc');
-    const [stored]=await db.query<{expo_token_enc:string}>(`select expo_token_enc from mobile_devices where id=$1`,[registered.body.device.id]);expect(stored.expo_token_enc).not.toContain('api_test');
+    const [stored]=await db.query<{expo_token_enc:string;owner_binding:string}>(`select expo_token_enc,owner_binding from mobile_devices where id=$1`,[registered.body.device.id]);expect(stored.expo_token_enc).not.toContain('api_test');expect(stored.owner_binding).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(listed.body)).not.toContain('owner_binding');
     expect((await call(`/api/assistant/devices/${registered.body.device.id}`,{method:'DELETE',jar:cookies.bob})).status).toBe(404);
   });
 });
@@ -501,13 +502,6 @@ describe('approval levels over the wire', () => {
   });
 
   it('reports the EFFECTIVE level, not the wish, when the admin is stricter', async () => {
-    // Migration 0016 seeds `always_ask` for every class, so the ceiling has to
-    // be opened deliberately before a member's `automatic` is visible at all.
-    // That is LB10.1's fail-closed default; this test is about what the endpoint
-    // reports once an administrator tightens again.
-    await call('/api/admin/assistant/approval-policy/email_send', {
-      method: 'PUT', jar: cookies.admin, body: { maxLevel: 'automatic', confirmRelaxation: true },
-    });
     await call('/api/assistant/approval-levels/email_send', {
       method: 'PUT', jar: cookies.alice, body: { level: 'automatic' },
     });
@@ -522,6 +516,12 @@ describe('approval levels over the wire', () => {
     const after = await call('/api/assistant/approval-levels/email_send', { jar: cookies.alice });
     expect(after.body.level).toBe('always_ask');
     expect(after.body.userChoice).toBe('automatic');
+    expect(after.body).toMatchObject({adminCeiling:'always_ask',managedPolicy:true});
+    const ignored=await call('/api/assistant/approval-levels/email_send',{
+      method:'PUT',jar:cookies.alice,body:{level:'automatic'},
+    });
+    expect(ignored.status).toBe(409);
+    expect((await call('/api/assistant/approval-levels/email_send',{jar:cookies.alice})).body.userChoice).toBe('automatic');
   });
 
   it('does not let the admin loosen a member choice', async () => {
@@ -570,6 +570,50 @@ describe('approvals over the wire', () => {
     }
     const [row] = await db.query<{ status: string }>(`select status from approvals where id = $1`, [approval.id]);
     expect(row.status).toBe('pending');
+  });
+
+  it('returns canonical terminal status when another device already decided', async () => {
+    const [task] = await db.query<{ id: string }>(
+      `insert into tasks (owner_user_id, template_key) values ($1,'follow_up') returning id`, [ids.alice],
+    );
+    const [approval] = await db.query<{ id: string }>(
+      `insert into approvals (subject_type, subject_id, owner_user_id, action_class, action, summary, payload_hash)
+       values ('task',$1,$2,'email_send','send_email','summary','h') returning id`, [task.id,ids.alice],
+    );
+    expect((await call(`/api/assistant/approvals/${approval.id}/decide`,{method:'POST',jar:cookies.alice,body:{approve:false}})).status).toBe(200);
+    const conflict=await call(`/api/assistant/approvals/${approval.id}/decide`,{method:'POST',jar:cookies.alice,body:{approve:true}});
+    expect(conflict.status).toBe(409);
+    expect(conflict.body.approvalStatus).toBe('denied');
+
+    const [otherTask]=await db.query<{id:string}>(`insert into tasks(owner_user_id,template_key) values($1,'follow_up') returning id`,[ids.alice]);
+    const [other]=await db.query<{id:string}>(`insert into approvals(subject_type,subject_id,owner_user_id,action_class,action,summary,payload_hash)
+      values('task',$1,$2,'email_send','send_email','summary','h2') returning id`,[otherTask.id,ids.alice]);
+    expect((await call(`/api/assistant/approvals/${other.id}/decide`,{method:'POST',jar:cookies.alice,body:{approve:true}})).status).toBe(200);
+    const approvedConflict=await call(`/api/assistant/approvals/${other.id}/decide`,{method:'POST',jar:cookies.alice,body:{approve:false}});
+    expect(approvedConflict.status).toBe(409);
+    expect(approvedConflict.body.approvalStatus).toBe('approved');
+  });
+
+  it('requires an explicit decision boolean and persists truthful expiry state',async()=>{
+    const [thread]=await db.query<{id:string}>(`insert into threads(owner_user_id,title) values($1,'Expiry') returning id`,[ids.alice]);
+    const [task]=await db.query<{id:string}>(`insert into tasks(owner_user_id,thread_id,template_key,state,slots)
+      values($1,$2,'schedule_appointment','awaiting_approval','{}') returning id`,[ids.alice,thread.id]);
+    const [approval]=await db.query<{id:string}>(`insert into approvals(subject_type,subject_id,owner_user_id,action_class,action,summary,payload_hash,expires_at)
+      values('task',$1,$2,'calendar_write','create','expired event','h',now()-interval '1 minute') returning id`,[task.id,ids.alice]);
+    const [message]=await db.query<{id:string}>(`insert into messages(thread_id,direction,body,meta) values($1,'out','Review',jsonb_build_object('nativeApproval',jsonb_build_object('status','pending'))) returning id`,[thread.id]);
+    await db.query(`insert into assistant_action_states(owner_user_id,thread_id,domain,operation,status,task_id,approval_id,presented_turn_id,expires_at)
+      values($1,$2,'calendar','create','prepared',$3,$4,$5,now()-interval '1 minute')`,[ids.alice,thread.id,task.id,approval.id,message.id]);
+
+    const missing=await call(`/api/assistant/approvals/${approval.id}/decide`,{method:'POST',jar:cookies.alice,body:{}});
+    expect(missing.status).toBe(400);
+    expect((await db.query<{status:string}>(`select status from approvals where id=$1`,[approval.id]))[0].status).toBe('pending');
+
+    const expired=await call(`/api/assistant/approvals/${approval.id}/decide`,{method:'POST',jar:cookies.alice,body:{approve:true}});
+    expect(expired.status).toBe(409);
+    expect(expired.body.approvalStatus).toBe('expired');
+    expect((await db.query<{status:string}>(`select status from assistant_action_states where approval_id=$1`,[approval.id]))[0].status).toBe('expired');
+    expect((await db.query<{state:string}>(`select state from tasks where id=$1`,[task.id]))[0].state).toBe('cancelled');
+    expect((await db.query<{status:string}>(`select meta->'nativeApproval'->>'status' status from messages where id=$1`,[message.id]))[0].status).toBe('expired');
   });
 });
 
@@ -621,6 +665,40 @@ describe('reminders over the wire', () => {
     const list = await call('/api/assistant/reminders', { jar: cookies.alice });
     expect(list.body.upcoming).toHaveLength(0);
     expect(list.body.recent.map((x: { status: string }) => x.status)).toEqual(['cancelled']);
+  });
+
+  it('returns content-free monotonic reminder intents without transferring server delivery ownership', async () => {
+    const threadId=await threadWith('alice');
+    const r=await createReminder(db,{ownerUserId:ids.alice,threadId,body:'PRIVATE SNAPSHOT BODY',
+      dueAt:inMinutes(45),timezone:'America/Los_Angeles'});
+    const snapshot=await call('/api/assistant/reminders/native-actions',{jar:cookies.alice});
+    expect(snapshot.status).toBe(200);expect(snapshot.headers.get('cache-control')).toMatch(/no-store/);
+    expect(snapshot.body.actions).toHaveLength(1);
+    expect(snapshot.body.actions[0]).toMatchObject({version:1,id:r.id,threadId,revision:1,operation:'upsert',timezone:'America/Los_Angeles'});
+    expect(JSON.stringify(snapshot.body)).not.toContain('PRIVATE SNAPSHOT BODY');
+    expect((await call('/api/assistant/reminders/native-actions',{jar:cookies.bob})).body.actions).toEqual([]);
+    const edit=await call(`/api/assistant/reminders/${r.id}`,{method:'PUT',jar:cookies.alice,body:{due_at:inMinutes(90).toISOString(),timezone:'UTC'}});
+    expect(edit.body.reminder).toMatchObject({id:r.id,revision:2,timezone:'UTC'});
+    expect(edit.body).not.toHaveProperty('native_action');
+    expect((await call('/api/assistant/reminders/native-actions',{jar:cookies.alice})).body.actions[0]).toMatchObject({id:r.id,revision:2,operation:'upsert',timezone:'UTC'});
+    expect((await call(`/api/assistant/reminders/${r.id}`,{method:'PUT',jar:cookies.bob,body:{message:'steal'}})).status).toBe(404);
+    const cancel=await call(`/api/assistant/reminders/${r.id}/cancel`,{method:'POST',jar:cookies.alice});
+    expect(cancel.body.reminder).toMatchObject({id:r.id,revision:3,status:'cancelled'});
+    expect(cancel.body).not.toHaveProperty('native_action');
+    expect((await call('/api/assistant/reminders/native-actions',{jar:cookies.alice})).body.actions).toEqual([
+      {version:1,id:r.id,threadId,revision:3,operation:'cancel'},
+    ]);
+  });
+
+  it('does not expose stale or hand-written native scheduling claims in thread history',async()=>{
+    const threadId=await threadWith('alice');
+    const valid={version:1,id:'opaque-1',threadId,revision:1,operation:'cancel'};
+    await db.query(`insert into messages(thread_id,direction,body,meta) values($1,'out','safe',$2)`,
+      [threadId,json({nativeActions:[valid,{...valid,body:'leak'}],internal_secret:'hidden'})]);
+    const detail=await call(`/api/assistant/threads/${threadId}`,{jar:cookies.alice});
+    expect(detail.body.messages.at(-1).meta).toEqual({});
+    expect(JSON.stringify(detail.body)).not.toContain('internal_secret');
+    expect((await call(`/api/assistant/threads/${threadId}`,{jar:cookies.bob})).status).toBe(404);
   });
 
   it('a colleague\u2019s reminder or a settled one is 404, and nothing changes', async () => {

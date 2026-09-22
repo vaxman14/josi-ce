@@ -20,8 +20,11 @@ const LEVELS = [
 interface LevelState {
   level: string;
   userChoice: string;
-  adminCeiling: string;
+  adminCeiling: string | null;
+  managedPolicy: boolean;
 }
+
+const LEVEL_RANK: Record<string, number> = { always_ask: 0, risky_only: 1, automatic: 2 };
 
 export function Settings() {
   const [levels, setLevels] = useState<Record<string, LevelState>>({});
@@ -54,7 +57,7 @@ export function Settings() {
       <CollapsibleCard
         title="What Josi may do without asking"
         summary="Approval behavior for email, calendar, contacts, and tasks"
-        status={Object.values(levels).some((state) => state.level !== state.userChoice)
+        status={Object.values(levels).some((state) => state.managedPolicy)
           ? <Badge tone="primary">Admin limits apply</Badge>
           : <Badge tone="muted">Your choices</Badge>}
         defaultOpen
@@ -66,25 +69,28 @@ export function Settings() {
         <div className="space-y-4">
           {ACTION_CLASSES.map((cls) => {
             const state = levels[cls.key];
-            const tightened = state && state.level !== state.userChoice;
+            const available = state?.managedPolicy && state.adminCeiling
+              ? LEVELS.filter((level) => LEVEL_RANK[level.value] <= LEVEL_RANK[state.adminCeiling!])
+              : LEVELS;
             return (
               <div key={cls.key}>
                 <label className="mb-1 block text-sm font-medium" htmlFor={`lvl-${cls.key}`}>{cls.label}</label>
                 <select
                   id={`lvl-${cls.key}`}
-                  value={state?.userChoice ?? 'always_ask'}
+                  aria-describedby={state?.managedPolicy ? `lvl-${cls.key}-managed` : undefined}
+                  value={state?.managedPolicy ? state.level : (state?.userChoice ?? 'always_ask')}
                   onChange={(e) => void change(cls.key, e.target.value)}
                   className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
                 >
-                  {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                  {available.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
                 </select>
                 {/* M33: an administrator may tighten this and may never loosen
                     it. When they have, the person is told what will actually
                     happen rather than what they asked for. */}
-                {tightened ? (
-                  <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <Badge tone="primary">In effect: {state.level.replace(/_/g, ' ')}</Badge>
-                    An administrator has set a stricter limit for this workspace.
+                {state?.managedPolicy ? (
+                  <p id={`lvl-${cls.key}-managed`} className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <Badge tone="primary">Managed policy lock</Badge>
+                    Maximum allowed: {state.adminCeiling?.replace(/_/g, ' ')}. Choices this lock would ignore are not offered.
                   </p>
                 ) : null}
               </div>

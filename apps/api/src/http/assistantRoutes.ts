@@ -8,17 +8,18 @@
 //     confirm a colleague has one.
 //   * The super admin gets nothing here. Not a thread, not a task, not a
 //     message. Their surface is `/api/admin/assistant`, which returns counts.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { extname, join } from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
-  addMessage, appendEvent, createContact, createTask, createThread, decideActionApproval, markActionsPresented,
+  addMessage, appendEvent, ApprovalError, createContact, createTask, createThread, decideActionApproval, markActionsPresented,
   getTask, getTemplate, getThread, listContactsFor, listMessages, listPendingApprovals,
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
-  canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder,
-  checkChildAccess, encodeTurnCursor, json, submitDurableTurn, listDurableTurns, upsertMobileDevice, revokeMobileDevice, MobileError, consume, LIMITS,
+  canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder, updateReminder,
+  checkChildAccess, encodeTurnCursor, listNativeReminderActions,
+  json, submitDurableTurn, listDurableTurns, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -36,6 +37,7 @@ import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './
 
 export interface AssistantRoutesCtx {
   db: Db;
+  appUrl?: string;
   masterKey?: LoadOptions | false;
   fetchImpl?: typeof fetch;
   resolve?: (hostname: string) => Promise<string[]>;
@@ -50,7 +52,7 @@ export interface AssistantRoutesCtx {
 }
 
 class RouteError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly details:Record<string,unknown>={}) {
     super(message);
   }
 }
@@ -91,11 +93,31 @@ function historyContent(message: { direction: 'in' | 'out'; body: string; meta: 
   return `${message.body}\n\n[Verified calendar receipts from this prior turn. Preserve the named event, event_id, source_id, account, and calendar in follow-up actions; do not transfer a requested edit to another event.]\n${JSON.stringify(message.meta.calendar_receipts).slice(0, 12_000)}`;
 }
 
+const APPROVAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function presentNativeApproval(value: unknown): Record<string, unknown> | undefined {
+  if(!value||typeof value!=='object'||Array.isArray(value))return undefined;
+  const candidate=value as Record<string,unknown>;
+  if(typeof candidate.approvalId!=='string'||!APPROVAL_ID.test(candidate.approvalId))return undefined;
+  if(typeof candidate.summary!=='string'||!candidate.summary.trim()||candidate.summary.length>8_000)return undefined;
+  if(typeof candidate.action!=='string'||typeof candidate.actionClass!=='string')return undefined;
+  if(!['pending','approved','denied','expired'].includes(String(candidate.status)))return undefined;
+  return {
+    approvalId:candidate.approvalId,summary:candidate.summary,action:candidate.action,
+    actionClass:candidate.actionClass,expiresAt:typeof candidate.expiresAt==='string'?candidate.expiresAt:null,
+    requiresDeviceAuth:true,status:candidate.status,
+  };
+}
+
 /** Public message shape. Metadata is private by default: only fields the chat
  * UI deliberately renders cross the HTTP presentation boundary. */
 function presentMessage<T extends { meta: Record<string, unknown> }>(message: T): T {
   const attachments = Array.isArray(message.meta?.attachments) ? message.meta.attachments : undefined;
-  return { ...message, meta: attachments ? { attachments } : {} };
+  const nativeApproval = presentNativeApproval(message.meta?.nativeApproval);
+  return { ...message, meta: {
+    ...(attachments ? { attachments } : {}),
+    ...(nativeApproval ? { nativeApproval } : {}),
+  } };
 }
 
 export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
@@ -112,7 +134,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       } catch (err: unknown) {
         if (err instanceof AttachmentError) return res.status(err.status).json({ error: err.message, code: err.code });
         if (err instanceof MobileError) {if(err.code==='turn_queue_full')res.set('Retry-After','30');return res.status(err.code==='idempotency_conflict'?409:err.code==='turn_queue_full'?429:400).json({error:err.message,code:err.code});}
-        if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
+        if (err instanceof RouteError) return res.status(err.status).json({ error: err.message, ...err.details });
         throw err;
       }
     });
@@ -331,6 +353,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   }));
 
   r.put('/devices',handle(async(req,res)=>{
+    if(!ctx.appUrl)throw new RouteError(503,'Push registration is unavailable because the deployment identity is unavailable.');
     let key;try{key=ctx.masterKey===false?null:loadMasterKey(ctx.masterKey??{});}catch{key=null;}
     if(!key)throw new RouteError(503,'Push registration is unavailable because secure token storage is unavailable.');
     const device=await upsertMobileDevice(db,key,req.user!.id,{
@@ -339,6 +362,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       privacyLocked:req.body?.privacy_locked===true,categories:req.body?.categories,
       quietStart:str(req.body?.quiet_start,8)||null,quietEnd:str(req.body?.quiet_end,8)||null,
       timezone:str(req.body?.timezone,100)||'UTC',
+      ownerBinding:createHash('sha256').update(JSON.stringify([new URL(ctx.appUrl).origin,req.user!.id])).digest('hex'),
     });
     return res.status(200).json({device:{id:device.id}});
   }));
@@ -571,6 +595,26 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       res.json(await reminderOverview(db, { ownerUserId: req.user!.id }))),
   );
 
+  // Content-free account snapshot for durable status and explicit calendar
+  // export. It is not an alarm acknowledgement or delivery-owner transfer.
+  r.get('/reminders/native-actions', handle(async(req,res)=>{
+    res.set('Cache-Control','private, no-store');
+    return res.json({version:1,snapshot_at:new Date().toISOString(),actions:await listNativeReminderActions(db,{ownerUserId:req.user!.id})});
+  }));
+
+  r.put('/reminders/:id', handle(async(req,res)=>{
+    const dueRaw=typeof req.body?.due_at==='string'?req.body.due_at.trim():'';
+    const dueAt=dueRaw?new Date(dueRaw):undefined;
+    if(dueRaw&&Number.isNaN(dueAt!.getTime()))throw new RouteError(400,'Choose a valid due_at instant.');
+    try{
+      const reminder=await updateReminder(db,{ownerUserId:req.user!.id,reminderId:param(req,'id'),
+        ...(req.body?.message===undefined?{}:{body:String(req.body.message)}),...(dueAt?{dueAt}:{}),
+        ...(typeof req.body?.timezone==='string'?{timezone:req.body.timezone}:{})});
+      if(!reminder)throw new RouteError(404,'not found');
+      return res.json({reminder});
+    }catch(error){if(error instanceof ReminderError)throw new RouteError(400,error.message);throw error;}
+  }));
+
   r.post(
     '/reminders/:id/cancel',
     handle(async (req, res) => {
@@ -594,16 +638,23 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   r.post(
     '/approvals/:id/decide',
     handle(async (req, res) => {
+      if(typeof req.body?.approve!=='boolean')throw new RouteError(400,'choose approve or deny');
       try {
         const {approval} = await decideActionApproval(db, {
           approvalId: param(req, 'id'),
           decidedBy: req.user!.id,
-          approve: req.body?.approve === true,
+          approve: req.body.approve,
         });
         return res.json({ approval });
       } catch (err) {
-        // "Not yours" and "does not exist" answer the same way here too.
-        throw new RouteError(404, 'not found');
+        if (err instanceof ApprovalError) {
+          const [approval]=await db.query<{status:string}>(`select status from approvals where id=$1 and owner_user_id=$2`,[param(req,'id'),req.user!.id]);
+          if(!approval)throw new RouteError(404,'not found');
+          throw new RouteError(409,
+            ['approved','denied','expired'].includes(approval.status)?`that request is already ${approval.status}`:'that request could not be decided',
+            {approvalStatus:approval.status});
+        }
+        throw err;
       }
     }),
   );
@@ -624,11 +675,12 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       if (!['always_ask', 'risky_only', 'automatic'].includes(level)) {
         throw new RouteError(400, 'choose always_ask, risky_only or automatic');
       }
-      await setUserApprovalLevel(db, {
-        userId: req.user!.id,
-        actionClass: param(req, 'actionClass'),
-        level,
-      });
+      try {
+        await setUserApprovalLevel(db, { userId: req.user!.id, actionClass: param(req, 'actionClass'), level });
+      } catch (err) {
+        if (err instanceof Error) throw new RouteError(409, err.message);
+        throw err;
+      }
       // Returns the EFFECTIVE level, not the stored preference: if the admin's
       // ceiling is stricter, the person is told what will actually happen
       // rather than what they asked for.
@@ -771,7 +823,8 @@ export function adminAssistantRoutes(ctx: AssistantRoutesCtx): Router {
     asyncRoute(async (_req, res) => {
       const { ACTION_CLASSES, DEFAULT_ADMIN_CEILING, pendingPolicyMigration } = await import('@josi-ce/core');
       const rows = await db.query<{ action_class: string; max_level: ApprovalLevel }>(
-        `select action_class, max_level from admin_approval_policy`,
+        `select action_class,max_level from admin_approval_policy
+         where managed_explicitly is true and max_level in ('always_ask','risky_only')`,
       );
       const set = new Map(rows.map((row) => [row.action_class, row.max_level]));
       return res.json({
@@ -781,7 +834,6 @@ export function adminAssistantRoutes(ctx: AssistantRoutesCtx): Router {
           label: c.label,
           description: c.description,
           impact: c.impact,
-          factoryCeiling: c.factoryCeiling,
           maxLevel: set.get(c.key) ?? DEFAULT_ADMIN_CEILING,
           explicit: set.has(c.key),
         })),

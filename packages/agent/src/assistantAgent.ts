@@ -211,7 +211,7 @@ function systemPrompt(args: {
         ? 'An image was attached to this message and you can see it — describe or answer about what is actually in it.'
         : 'An image was attached to this message, but this model has not been shown to understand images, so you were NOT shown it and have no idea what it contains. Say plainly that you cannot see images with the current model — do not guess, and do not describe a filename or file type as if it were the picture\'s content.')
       : '',
-    'Some actions need the person to confirm their password first. If a tool tells you that, relay it exactly and do not attempt the action again on your own.',
+    'Never ask for, repeat, or accept a password in conversation. If a tool requires secure reauthentication, direct the person to the protected reauthentication control in Settings and do not attempt the action again on your own.',
   ].filter(Boolean).join(' ');
 }
 
@@ -637,8 +637,19 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       reply = presentToolBackedReply(reply, actions);
       const prepared=actions.map(action=>action.result).filter((result):result is {state:string;summary:string}=>
         !!result&&typeof result==='object'&&(result as {state?:unknown}).state==='prepared'&&typeof (result as {summary?:unknown}).summary==='string');
-      if(prepared.length===1)reply=`${prepared[0].summary}\n\nApprove this exact action? Reply yes or no.`;
+      if(prepared.length===1)reply=args.requireApprovalReplyTarget
+        ? `${prepared[0].summary}\n\nUse the Approve or Deny control below for this exact action.`
+        : `${prepared[0].summary}\n\nApprove this exact action? Reply yes or no.`;
       else if(prepared.length>1)reply='More than one consequential action was prepared together. Name which one you want to review; a bare yes will not approve either.';
+      else {
+        const automatic=actions.map(action=>action.result).filter((result):result is {state:string;summary:string;authorization:string}=>
+          !!result&&typeof result==='object'&&(result as {state?:unknown}).state==='approved'&&(result as {authorization?:unknown}).authorization==='user_policy'&&typeof (result as {summary?:unknown}).summary==='string');
+        if(automatic.length===1)reply=`${automatic[0].summary}\n\nQueued automatically using your approval preference.`;
+      }
+      const secureReauth=actions.map(action=>action.result).find((result):result is {error:string;message?:string}=>
+        !!result&&typeof result==='object'&&['needs_reauth','locked_out'].includes(String((result as {error?:unknown}).error)));
+      if(secureReauth)reply=secureReauth.message
+        ?? 'Use the protected reauthentication control in Settings to continue. Never send your password in chat.';
       return { reply, actions, memoriesUsed, learned, imagesDroppedNoVision, retry };
     }
 

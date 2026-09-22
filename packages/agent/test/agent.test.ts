@@ -216,6 +216,21 @@ describe('running tools', () => {
     expect(await db.query(`select id from job_queue`)).toHaveLength(0);
   });
 
+  it('directs native clients to exact approval controls instead of an unthreaded yes',async()=>{
+    await configureModel();
+    const connection=await upsertConnection(db,key,{ownerUserId:alice,provider:'google',providerAccountId:'native-approval',accountEmail:'native@example.test',
+      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/gmail.send'},requestedCapabilities:['google.mail.send']});
+    await setCapability(db,{connection,capability:'google.mail.send',enabled:true,actorUserId:alice});
+    replies=[
+      {content:null,tool_calls:[toolCall('draft_email',{recipient:'recipient@example.test',subject:'Exact subject',body:'Exact body'})]},
+      {content:'Type yes to approve.'},
+    ];
+    const result=await turn({inbound:'Send the exact email',requireApprovalReplyTarget:true});
+    expect(result.reply).toMatch(/Use the Approve or Deny control below/i);
+    expect(result.reply).not.toMatch(/reply yes|type yes/i);
+    expect(result.actions[0].result).toMatchObject({state:'prepared',approval_id:expect.any(String)});
+  });
+
   it('feeds tool results back in the provider dialect the adapter expects', async () => {
     await configureModel();
     replies = [
@@ -289,12 +304,15 @@ describe('the step-up gate sits in front of the tools', () => {
     const task = await createTask(db, { ownerUserId: alice, templateKey: 'follow_up' });
     replies = [
       { content: null, tool_calls: [toolCall('cancel_task', { task_id: task.id })] },
-      { content: 'I need you to confirm your password first.' },
+      { content: 'Type your password here and I will continue.' },
     ];
     const result = await turn();
     const action = result.actions[0].result as any;
     expect(action.ok).toBe(false);
     expect(action.error).toBe('needs_reauth');
+    expect(result.reply).toMatch(/protected reauthentication control in Settings/i);
+    expect(result.reply).toMatch(/never send your password in chat/i);
+    expect(result.reply).not.toMatch(/type your password|confirm your password/i);
     // And the task really was not cancelled.
     const [row] = await db.query<{ state: string }>(`select state from tasks where id = $1`, [task.id]);
     expect(row.state).toBe('drafting');

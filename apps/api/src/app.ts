@@ -221,7 +221,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // Mounted before /admin so the more specific prefix wins; both are behind
   // requireSuperAdmin either way.
   api.use('/assistant', assistantRoutes({
-    db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
+    db, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
     codexRunner: cfg.codexRunner, connectorFetch: cfg.connectorFetch,
     customApiFetch: cfg.customApiFetch, outboundResolve: cfg.outboundResolve,
   }));
