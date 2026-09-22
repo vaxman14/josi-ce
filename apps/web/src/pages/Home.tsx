@@ -4,19 +4,25 @@ import { Link } from 'react-router-dom';
 import { api, type Approval, type LlmStatus, type Task } from '@/lib/api';
 import { Badge, Card, CardTitle, Empty } from '@/components/ui';
 import { plain } from '@/lib/plainLanguage';
+import { watchApprovals, type ApprovalSnapshot } from '@/lib/approvalRefresh';
 import { useAuth } from '@/lib/auth';
 
 export function Home() {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [approvalCount, setApprovalCount] = useState(0);
   const [status, setStatus] = useState<LlmStatus | null>(null);
 
   useEffect(() => {
     void api.get<{ tasks: Task[] }>('/assistant/tasks').then((r) => setTasks(r.tasks)).catch(() => undefined);
-    void api.get<{ approvals: Approval[] }>('/assistant/approvals').then((r) => setApprovals(r.approvals)).catch(() => undefined);
     void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => undefined);
   }, []);
+
+  useEffect(() => watchApprovals(
+    () => api.get<ApprovalSnapshot<Approval>>('/assistant/approvals'),
+    snapshot => { setApprovals(snapshot.approvals); setApprovalCount(snapshot.count); },
+  ), []);
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
@@ -38,7 +44,7 @@ export function Home() {
       <div className="grid gap-3 sm:grid-cols-2">
         <Card>
           <CardTitle>Waiting on you</CardTitle>
-          {approvals.length === 0 ? (
+          {approvalCount === 0 ? (
             <p className="text-sm text-muted-foreground">Nothing needs your approval.</p>
           ) : (
             <ul className="space-y-1">
@@ -76,7 +82,7 @@ export function Home() {
         </Card>
       </div>
 
-      {tasks.length === 0 && approvals.length === 0 ? (
+      {tasks.length === 0 && approvalCount === 0 ? (
         <Empty title="Nothing is waiting">
           <span className="block">Start by telling Josi what you need.</span>
           <Link

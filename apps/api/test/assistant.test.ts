@@ -546,6 +546,29 @@ describe('approval levels over the wire', () => {
 });
 
 describe('approvals over the wire', () => {
+  it('returns an uncached backend count/list refreshed after expiry and exact-ID decisions', async () => {
+    const approvals: string[] = [];
+    for (let i=0;i<3;i++) {
+      const [task]=await db.query<{id:string}>(`insert into tasks(owner_user_id,template_key,state)
+        values($1,'follow_up','awaiting_approval') returning id`,[ids.alice]);
+      const [approval]=await db.query<{id:string}>(`insert into approvals(subject_type,subject_id,owner_user_id,action_class,action,summary,payload_hash)
+        values('task',$1,$2,'email_send','send','Identical summary','h') returning id`,[task.id,ids.alice]);
+      approvals.push(approval.id);
+    }
+    const initial=await call('/api/assistant/approvals',{jar:cookies.alice});
+    expect(initial.headers.get('cache-control')).toBe('private, no-store');
+    expect(initial.body.count).toBe(3); expect(initial.body.refreshAfterMs).toBe(2000);
+    expect(initial.body.approvals.map((a:{id:string})=>a.id).sort()).toEqual([...approvals].sort());
+    expect((await call(`/api/assistant/approvals/${approvals[1]}/decide`,{method:'POST',jar:cookies.alice,body:{approve:false}})).body.approval.id).toBe(approvals[1]);
+    expect((await call(`/api/assistant/approvals/${approvals[0]}/decide`,{method:'POST',jar:cookies.alice,body:{approve:true}})).body.approval.id).toBe(approvals[0]);
+    const remaining=await call('/api/assistant/approvals',{jar:cookies.alice});
+    expect(remaining.body.count).toBe(1); expect(remaining.body.approvals[0].id).toBe(approvals[2]);
+    await db.query(`update approvals set expires_at=now() where id=$1`,[approvals[2]]);
+    const expired=await call('/api/assistant/approvals',{jar:cookies.alice});
+    expect(expired.body.count).toBe(0); expect(expired.body.approvals).toEqual([]);
+    expect(await db.query(`select id from approvals where id=any($1::uuid[])`,[approvals])).toHaveLength(3);
+  });
+
   it('shows a member only their own pending approvals, and lets nobody else decide', async () => {
     const [task] = await db.query<{ id: string }>(
       `insert into tasks (owner_user_id, template_key) values ($1,'follow_up') returning id`,

@@ -14,7 +14,7 @@ import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
   addMessage, appendEvent, ApprovalError, createContact, createTask, createThread, decideActionApproval, markActionsPresented,
-  getTask, getTemplate, getThread, listContactsFor, listMessages, listPendingApprovals,
+  getTask, getTemplate, getThread, listContactsFor, listMessages, pendingApprovalSnapshot,
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder, updateReminder,
@@ -632,7 +632,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   r.get(
     '/approvals',
     handle(async (req, res) =>
-      res.json({ approvals: await listPendingApprovals(db, req.user!.id) })),
+      res.set('Cache-Control', 'private, no-store').json(await pendingApprovalSnapshot(db, req.user!.id))),
   );
 
   r.post(

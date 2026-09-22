@@ -524,8 +524,8 @@ export async function decideApproval(
     throw new ApprovalError(`that request was already ${existing.status}`,existing.status==='expired'?'expired':'already_decided');
   }
   const rows = await db.query<Approval>(
-    `update approvals set status = $2, decided_at = now(), decided_by = $3
-     where id = $1 and status = 'pending' returning *`,
+    `update approvals a set status = $2, decided_at = now(), decided_by = $3
+     where a.id = $1 and (${ACTIONABLE_PENDING_APPROVAL_SQL}) returning a.*`,
     [args.approvalId, args.approve ? 'approved' : 'denied', args.decidedBy],
   );
   if (!rows.length) throw new ApprovalError('that request was decided by someone else first','race');
@@ -571,12 +571,89 @@ export async function consumeApproval(
   return { ok: true };
 }
 
+/** Canonical dashboard predicate. Alias `a` always denotes the approval.
+ * Legacy task approvals can be requested while drafting; prepared actions must
+ * also pin this exact approval, owner and payload, and still await a decision.
+ * No presentation/"latest message" heuristic may hide another valid request. */
+export const ACTIONABLE_PENDING_APPROVAL_SQL = `
+  a.status = 'pending' and (a.expires_at is null or a.expires_at > now())
+  and case a.subject_type
+    when 'task' then exists (
+      select 1 from tasks t where t.id=a.subject_id and t.owner_user_id=a.owner_user_id
+        and t.state in ('drafting','awaiting_approval')
+        and not exists (
+          select 1 from assistant_action_states s where s.task_id=t.id
+          and not (s.status='prepared' and s.approval_id is not distinct from a.id
+            and s.owner_user_id=a.owner_user_id and s.payload_hash is not distinct from a.payload_hash
+            and s.authorization_kind='approval' and s.executed_at is null
+            and (s.expires_at is null or s.expires_at>now()) and t.state='awaiting_approval')
+        )
+    )
+    when 'email_thread' then exists (
+      select 1 from email_threads t where t.id=a.subject_id
+        and t.owner_user_id=a.owner_user_id and t.deleted_at is null
+    )
+    when 'folder_mapping' then exists (
+      select 1 from folder_mappings m where m.id=a.subject_id
+        and m.owner_user_id=a.owner_user_id and m.status='active'
+    )
+    when 'document' then exists (
+      select 1 from documents d join folder_mappings m on m.id=d.mapping_id
+      where d.id=a.subject_id and d.owner_user_id=a.owner_user_id
+        and m.owner_user_id=a.owner_user_id and m.status='active'
+    )
+    else false end`;
+
+/** Retire only conclusively stale pending rows. Paused mappings and actions
+ * being prepared are hidden but not expired: those can become actionable again.
+ * A single conditional UPDATE cannot overwrite a concurrent owner decision.
+ * Keep the original row, payload and decision fields, plus an audit event. */
+async function reconcilePendingApprovals(db: Db, ownerUserId: string): Promise<number> {
+  const rows = await db.query<Approval>(`
+    update approvals a set status='expired'
+    where a.owner_user_id=$1 and a.status='pending' and (
+      a.expires_at<=now()
+      or (a.subject_type='task' and (
+        not exists (select 1 from tasks t where t.id=a.subject_id)
+        or exists (select 1 from tasks t where t.id=a.subject_id
+          and t.state in ('confirmed','failed','cancelled','closed'))
+        or exists (select 1 from assistant_action_states s where s.task_id=a.subject_id
+          and (s.status in ('approved','executing','succeeded','failed','denied','expired','superseded')
+            or (s.status='prepared' and (s.expires_at<=now() or s.approval_id<>a.id))))
+      ))
+      or (a.subject_type='email_thread' and not exists (select 1 from email_threads t where t.id=a.subject_id))
+      or (a.subject_type='folder_mapping' and not exists (select 1 from folder_mappings m where m.id=a.subject_id))
+      or (a.subject_type='document' and not exists (select 1 from documents d where d.id=a.subject_id))
+    ) returning a.*`, [ownerUserId]);
+  for (const row of rows) await appendEvent(db, {
+    actor: 'system', actorUserId: ownerUserId, kind: 'approval.reconciled',
+    subjectType: row.subject_type, subjectId: row.subject_id,
+    payload: { approvalId: row.id, reason: 'no_longer_actionable' },
+  });
+  return rows.length;
+}
+
+export async function pendingApprovalSnapshot(db: Db, ownerUserId: string): Promise<{
+  approvals: Approval[]; count: number; refreshAfterMs: number;
+}> {
+  // Reconciliation and its audit evidence commit together. The read remains
+  // independently correct even before reconciliation or worker expiry runs.
+  if (!db.transaction) throw new Error('approval reconciliation requires transaction support');
+  return db.transaction(async tx => {
+    await reconcilePendingApprovals(tx, ownerUserId);
+    const rows = await tx.query<Approval & { total: string }>(`
+      select a.*, count(*) over ()::text as total from approvals a
+      where a.owner_user_id=$1 and (${ACTIONABLE_PENDING_APPROVAL_SQL})
+      order by a.created_at desc, a.id desc limit 100`, [ownerUserId]);
+    return {
+      approvals: rows.map(({ total: _total, ...approval }) => approval),
+      count: Number(rows[0]?.total ?? 0), refreshAfterMs: 2000,
+    };
+  });
+}
+
 export async function listPendingApprovals(db: Db, ownerUserId: string): Promise<Approval[]> {
-  return db.query<Approval>(
-    `select * from approvals where owner_user_id = $1 and status = 'pending'
-     order by created_at desc limit 100`,
-    [ownerUserId],
-  );
+  return (await pendingApprovalSnapshot(db, ownerUserId)).approvals;
 }
 
 /** Expire approvals nobody answered. Run by the worker. */
