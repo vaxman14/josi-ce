@@ -4,6 +4,7 @@ import {createUser} from '../../auth/src/users.js';
 import {addMessage,createThread,getTask,markActionsPresented,MasterKey,setUserApprovalLevel} from '@josi-ce/core';
 import {ensureInternalCalendar,setCapability,upsertConnection} from '@josi-ce/connectors';
 import {executeAssistantTool} from '../src/execute.js';
+import {formatCalendarRange} from '../src/calendarPresentation.js';
 
 let db:TestDb;
 let user:string;
@@ -93,8 +94,12 @@ describe('action drafts are merged only inside their namespace',()=>{
     const completed=await executeAssistantTool(db,{...ctx(),latestUserText:'2 hours'},'draft_calendar_event',{duration_minutes:120}) as any;
     expect(completed,JSON.stringify(completed)).toMatchObject({state:'approved',authorization:'user_policy'});
     expect(completed.summary).toContain('Calendar: Vaxman Kids');
-    expect(completed.summary).toContain('Start: 2026-11-14T16:30:00-08:00');
-    expect(completed.summary).toContain('End: 2026-11-14T18:30:00-08:00');
+    expect(completed.summary).toContain('Date: Saturday, November 14, 2026');
+    expect(completed.summary).toContain('Time: 4:30–6:30 PM PST');
+    expect(completed.summary).not.toContain('2026-11-14T');
+    expect(formatCalendarRange('2026-11-14T23:30:00Z','2026-11-15T01:00:00Z',{locale:'invalid_locale',timeZone:'invalid/zone'}))
+      .toBe('Start: Saturday, November 14, 2026 at 11:30 PM UTC\nEnd: Sunday, November 15, 2026 at 1:00 AM UTC');
+    expect(formatCalendarRange(undefined,'bad',{timeZone:null})).toBe('Start: Not specified\nEnd: Not specified');
     const task=await getTask(db,completed.task_id);
     expect(task.slots).toMatchObject({start:'2026-11-14T16:30:00-08:00',end:'2026-11-14T18:30:00-08:00'});
     expect(await db.query(`select id from approvals where subject_type='task' and subject_id=$1`,[task.id])).toEqual([]);

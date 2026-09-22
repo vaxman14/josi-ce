@@ -27,12 +27,15 @@ import { executeCustomApiTool, isCustomApiTool } from './customApiTools.js';
 import { executeWorkflowTool, WORKFLOW_TOOL_NAMES } from './workflowTools.js';
 import { executeObsidianTool, DEVELOPER_INTEGRATION_TOOL, executeDeveloperIntegrationTool, executeDeveloperResourceTool } from './developerIntegrationTools.js';
 import { resolveCalendarTimeIntent, validateAbsoluteCalendarRange, type CalendarTimeResolution } from './calendarTimeIntent.js';
+import { effectiveTimeContext } from './timeContext.js';
+import { formatCalendarRange } from './calendarPresentation.js';
 
-function actionSummary(domain:string,operation:string,slots:Record<string,unknown>):string{
+async function actionSummary(db:Db,userId:string,domain:string,operation:string,slots:Record<string,unknown>):Promise<string>{
   if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}${Array.isArray(slots.cc) && slots.cc.length ? `\nCc: ${slots.cc.join(', ')}` : ''}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
   if(domain==='calendar'){
     const source=slots.calendar_source as {calendar_name?:unknown}|undefined;
-    return `${operation==='update'?'Update':'Create'} calendar event\nCalendar: ${String(source?.calendar_name??'Selected calendar')}\nTitle: ${String(slots.title)}\nStart: ${String(slots.start)}\nEnd: ${String(slots.end)}`;
+    const {locale,timeZone}=await effectiveTimeContext(db,userId);
+    return `${operation==='update'?'Update':'Create'} calendar event\nCalendar: ${String(source?.calendar_name??'Selected calendar')}\nTitle: ${String(slots.title)}\n${formatCalendarRange(slots.start,slots.end,{locale,timeZone})}`;
   }
   return `${operation==='update'?'Update':'Create'} contact\nName: ${String(slots.name)}`;
 }
@@ -171,7 +174,7 @@ export async function executeAssistantTool(
         if(prepared){
           const previous=await getTask(db,prepared.task_id);
           const unchanged=Object.entries(draftSlots).every(([key,value])=>JSON.stringify(previous.slots[key])===JSON.stringify(value));
-          if(unchanged)return {ok:true,task_id:previous.id,state:'prepared',approval_id:prepared.approval_id,summary:actionSummary(domain,operation,previous.slots),message:'This exact action is already prepared and waiting for approval.'};
+          if(unchanged)return {ok:true,task_id:previous.id,state:'prepared',approval_id:prepared.approval_id,summary:await actionSummary(db,userId,domain,operation,previous.slots),message:'This exact action is already prepared and waiting for approval.'};
           await db.query(`update assistant_action_states set status='superseded' where id=$1 and status='prepared'`,[prepared.id]);
           if(prepared.approval_id)await db.query(`update approvals set status='expired' where id=$1 and status='pending'`,[prepared.approval_id]);
           if(previous.state==='awaiting_approval')await transition(db,previous.id,'cancelled',{actor:'user',actorUserId:userId});
@@ -245,7 +248,7 @@ export async function executeAssistantTool(
         : template.contract.slots.required;
       const missing=required.filter(key=>task.slots[key]===undefined||task.slots[key]===null||task.slots[key]==='');
       if(missing.length)return {ok:true,task_id:task.id,state:'collecting',missing_slots:missing,message:`Keep this ${domain} draft and ask only for: ${missing.join(', ')}.`};
-      const summary=actionSummary(domain,operation,task.slots);
+      const summary=await actionSummary(db,userId,domain,operation,task.slots);
       const actionClass=name==='draft_email'?'email_send':name==='draft_calendar_event'?'calendar_write':'contacts_write';
       if(!await needsApproval(db,{userId,actionClass,action:operation})){
         await authorizeActionByUserPolicy(db,{actionStateId:action.id,actionClass,action:operation});

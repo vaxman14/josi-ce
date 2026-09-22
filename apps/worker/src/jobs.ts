@@ -31,7 +31,7 @@ import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk,
 } from '@josi-ce/channels';
 import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
-import { runAssistantTurn } from '@josi-ce/agent';
+import { effectiveTimeContext, formatCalendarRange, runAssistantTurn } from '@josi-ce/agent';
 import { IMAGE_MEDIA_TYPES, readAttachment } from '@josi-ce/storage';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import { extname } from 'node:path';
@@ -437,16 +437,6 @@ function safeTaskError(err: unknown): string {
   return message.slice(0, 300);
 }
 
-function calendarTimeForPerson(value:unknown):string{
-  if(typeof value!=='string')return 'an unspecified time';
-  const match=value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?([+-]\d{2}:\d{2}|Z)?$/);
-  if(!match)return value.slice(0,80);
-  const [,year,month,day,hour,minute,offset='']=match;
-  const wallClock=new Date(Date.UTC(Number(year),Number(month)-1,Number(day),Number(hour),Number(minute)));
-  const shown=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',dateStyle:'long',timeStyle:'short'}).format(wallClock);
-  return offset&&offset!=='Z'?`${shown} (${offset})`:shown;
-}
-
 async function reportCalendarTaskOutcome(db:Db,task:WritableTask,succeeded:boolean,error?:unknown):Promise<void>{
   if(task.template_key!=='schedule_appointment'||!task.thread_id)return;
   const source=task.slots.calendar_source&&typeof task.slots.calendar_source==='object'
@@ -455,8 +445,9 @@ async function reportCalendarTaskOutcome(db:Db,task:WritableTask,succeeded:boole
     ? source.calendar_name.trim()
     : typeof source.calendar_id==='string'&&source.calendar_id.trim()?source.calendar_id.trim():'the selected calendar';
   const title=textSlot(task,'title')||'Untitled event';
+  const {locale,timeZone}=await effectiveTimeContext(db,task.owner_user_id);
   const body=succeeded
-    ? `Saved “${title}” in Josi for ${calendar}, from ${calendarTimeForPerson(task.slots.start)} to ${calendarTimeForPerson(task.slots.end)}. It is queued to sync with the connected calendar.`
+    ? `Saved “${title}” in Josi for ${calendar}.\n${formatCalendarRange(task.slots.start,task.slots.end,{locale,timeZone})}\nIt is queued to sync with the connected calendar.`
     : `The calendar action could not be completed. ${safeTaskError(error)}`;
   await addMessage(db,{threadId:task.thread_id,direction:'out',body,meta:{action_status_domain:'calendar',task_result:{taskId:task.id,status:succeeded?'succeeded':'failed'}}});
 }

@@ -19,6 +19,17 @@ function parsedProfile(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function validLocale(value: unknown): string | null {
+  const locale = typeof value === 'string' ? value.trim() : '';
+  if (!locale) return null;
+  try {
+    new Intl.DateTimeFormat(locale).format(0);
+    return locale;
+  } catch {
+    return null;
+  }
+}
+
 export function localDateKey(now: Date, timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
@@ -36,6 +47,7 @@ export function shiftCivilDate(date: string, days: number): string {
 
 export interface EffectiveTimeContext {
   timeZone: string;
+  locale: string;
   currentLocal: string;
   today: string;
   tomorrow: string;
@@ -48,10 +60,12 @@ export async function effectiveTimeContext(db: Db, userId: string, now = new Dat
     `select parsed from persona_profiles where owner_user_id=$1 and kind='user'`, [userId],
   );
   const [workspace] = await db.query<{ timezone: string }>(`select timezone from workspace where id=true`);
-  const profileZone = validZone(parsedProfile(profile?.parsed).timezone);
+  const parsed = parsedProfile(profile?.parsed);
+  const profileZone = validZone(parsed.timezone);
   const timeZone = profileZone ?? validZone(workspace?.timezone) ?? 'UTC';
+  const locale = validLocale(parsed.locale) ?? 'en-US';
   const today = localDateKey(now, timeZone);
-  const currentLocal = new Intl.DateTimeFormat('en-US', {
+  const currentLocal = new Intl.DateTimeFormat(locale, {
     timeZone,
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true,
@@ -60,7 +74,7 @@ export async function effectiveTimeContext(db: Db, userId: string, now = new Dat
   const tomorrow = shiftCivilDate(today, 1);
   const yesterday = shiftCivilDate(today, -1);
   return {
-    timeZone, currentLocal, today, tomorrow, yesterday,
+    timeZone, locale, currentLocal, today, tomorrow, yesterday,
     prompt: `The effective timezone is ${timeZone}. The current local date and time is ${currentLocal}. `
       + `Today is ${today}, tomorrow is ${tomorrow}, and yesterday was ${yesterday}. `
       + 'Resolve relative dates from these local civil dates, not by adding 24 hours; daylight-saving changes can make a local day 23 or 25 hours. '
