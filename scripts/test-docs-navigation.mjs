@@ -1,23 +1,25 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const html = fs.readFileSync(new URL('../docs-site/index.html', import.meta.url), 'utf8');
-const topNav = html.match(/<nav class="top-links">([\s\S]*?)<\/nav>/)?.[1] ?? '';
-const sidebar = html.match(/<aside class="side">([\s\S]*?)<\/aside>/)?.[1] ?? '';
+const root = new URL('../docs-site/public/', import.meta.url);
+const home = fs.readFileSync(new URL('index.html', root), 'utf8');
+const install = fs.readFileSync(new URL('install/index.html', root), 'utf8');
+const legal = fs.readFileSync(new URL('legal/index.html', root), 'utf8');
+const topNav = home.match(/<nav class="top-links">([\s\S]*?)<\/nav>/)?.[1] ?? '';
+const homeSidebar = home.match(/<aside class="side">([\s\S]*?)<\/aside>/)?.[1] ?? '';
+const installSidebar = install.match(/<aside class="side">([\s\S]*?)<\/aside>/)?.[1] ?? '';
+const legalSidebar = legal.match(/<aside class="side">([\s\S]*?)<\/aside>/)?.[1] ?? '';
 
-for (const [label, anchor] of [
-  ['Installation guide', 'installation'],
-  ['Configuration options', 'configuration'],
-]) {
-  assert.match(topNav, new RegExp(`href="#${anchor}"`), `${label} must be in the top navigation`);
-  assert.match(sidebar, new RegExp(`href="#${anchor}"`), `${label} must be in the sidebar`);
-  assert.match(html, new RegExp(`<h2 id="${anchor}">`), `${label} must have a real heading target`);
-}
-
-assert.ok(sidebar.indexOf('href="#installation"') < sidebar.indexOf('href="#terms-of-use"'), 'Installation should appear before legal links in the sidebar');
-assert.ok(sidebar.indexOf('href="#configuration"') < sidebar.indexOf('href="#terms-of-use"'), 'Configuration should appear before legal links in the sidebar');
-assert.match(topNav, /Start installing<\/a>/, 'The start-installing shortcut should remain visible');
-assert.match(topNav, /href="#installation"[^>]*>Start installing<\/a>/, 'Start installing must land on the guide');
-assert.ok(html.indexOf('id="installation"') < html.indexOf('id="terms-of-use"'), 'Installation should precede the legal section');
-assert.ok(html.indexOf('id="configuration"') > html.indexOf('id="installation"'), 'Configuration should be within the guide');
+assert.match(topNav, /href="install\/#installation"[^>]*>Installation guide<\/a>/);
+assert.match(topNav, /href="install\/#configuration"[^>]*>Configuration options<\/a>/);
+assert.match(topNav, /href="install\/#installation"[^>]*>Start installing<\/a>/);
+assert.match(topNav, /href="legal\/#terms-of-use"[^>]*>Terms<\/a>/);
+assert.match(homeSidebar, /href="#family-parental-controls-beta"/, 'Help features should have a usable index');
+assert.match(installSidebar, /href="#installation"/);
+assert.match(installSidebar, /href="#configuration"/);
+assert.match(installSidebar, /href="#troubleshooting"/);
+assert.doesNotMatch(installSidebar, /href="#terms-of-use"/);
+assert.match(legalSidebar, /href="#terms-of-use"/);
+assert.match(legalSidebar, /href="#privacy-notice"/);
+assert.doesNotMatch(legalSidebar, /href="#installation"/);
 console.log('docs_install_navigation=pass');
