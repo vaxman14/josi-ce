@@ -66,11 +66,13 @@ export function AdminModel() {
    * same false impression as testing on open. */
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState('');
+  const [changeOpen, setChangeOpen] = useState(false);
+  const [changeProvider, setChangeProvider] = useState('openai_compatible');
 
   const load = () => api.get<AdminLlm>('/admin/llm').then(setData).catch(() => undefined);
   useEffect(() => { void load(); }, []);
 
-  /** Switches the primary slot to a subscription provider.
+  /** Quick switch for Claude; ChatGPT uses the shared model picker instead.
    *
    * Deliberately does NOT auto-probe afterwards. The probe runs the operator's
    * own Codex binary, which may not be installed or signed in, and a save that
@@ -82,9 +84,7 @@ export function AdminModel() {
     try {
       await api.put('/admin/llm/providers/primary', {
         provider,
-        // Empty on purpose: the CLI uses the plan's own model. Hardcoding
-        // `gpt-5-codex` here is how a Claude row once ended up carrying
-        // another provider's model name.
+        // Empty for Claude's CLI default; the ChatGPT path does not call this.
         model: '',
         externalAcknowledged: true,
       });
@@ -211,14 +211,18 @@ export function AdminModel() {
         </CollapsibleCard>
       ) : null}
 
-      <CollapsibleCard title="Change the model" summary="Switch provider, credentials, or model">
+      <div id="change-model-card">
+      <CollapsibleCard title="Change the model" summary="Switch provider, credentials, or model"
+                       open={changeOpen} onOpenChange={setChangeOpen}>
         <p className="mb-3 text-sm text-muted-foreground">
           The same choices as during installation — a model on your own hardware, an API key, or a
           subscription — switchable in any direction, any time. Saving replaces the primary model and
           Josi will not use the new one until it has been tested.
         </p>
-        <ChangeModelForm catalog={data.providerCatalog ?? []} onSaved={() => void load()} />
+        <ChangeModelForm catalog={data.providerCatalog ?? []} initialProvider={changeProvider}
+                         onSaved={() => void load()} />
       </CollapsibleCard>
+      </div>
 
       <CollapsibleCard title="Using a Claude or ChatGPT subscription" summary="Subscription-based model options">
         <p className="mb-3 text-sm text-muted-foreground">
@@ -245,13 +249,20 @@ export function AdminModel() {
                   {o.provider === 'openai_subscription' ? <CodexConnection /> : null}
                   {o.provider === 'anthropic_subscription'
                     ? <ClaudeSignIn basePath="/admin/llm/subscription/claude" /> : null}
-                  <Button
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => void useSubscription(o.provider!)}
-                  >
-                    Use this for the primary model
-                  </Button>
+                  {o.provider === 'openai_subscription' ? (
+                    <Button variant="secondary" onClick={() => {
+                      setChangeProvider('openai_subscription');
+                      setChangeOpen(true);
+                      document.getElementById('change-model-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}>
+                      Choose ChatGPT model
+                    </Button>
+                  ) : (
+                    <Button variant="secondary" disabled={busy}
+                            onClick={() => void useSubscription(o.provider!)}>
+                      Use this for the primary model
+                    </Button>
+                  )}
                 </div>
               ) : null}
             </li>
@@ -266,7 +277,9 @@ export function AdminModel() {
 
 /** The wizard's provider form, pointed at the admin endpoints. */
 function ChangeModelForm(
-  { catalog, onSaved }: { catalog: ProviderCatalogEntry[]; onSaved: () => void },
+  { catalog, onSaved, initialProvider }: {
+    catalog: ProviderCatalogEntry[]; onSaved: () => void; initialProvider: string;
+  },
 ) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -282,6 +295,7 @@ function ChangeModelForm(
       ) : null}
       <ProviderForm
         busy={busy}
+        initialProvider={initialProvider}
         catalog={catalog}
         paths={{
           models: '/admin/llm/models',

@@ -81,6 +81,7 @@ export interface ProviderCatalogEntry {
 
 export interface ProviderFormProps {
   busy: boolean;
+  initialProvider?: string;
   /** Every provider this build will actually accept, in the order it sent
    * them. Empty until the page's own fetch resolves. */
   catalog: ProviderCatalogEntry[];
@@ -93,9 +94,9 @@ export interface ProviderFormProps {
 }
 
 export function ProviderForm({
-  busy, catalog, paths, loadSubscriptionInfo, onSubmit, submitLabel,
+  busy, catalog, paths, loadSubscriptionInfo, onSubmit, submitLabel, initialProvider,
 }: ProviderFormProps) {
-  const [provider, setProvider] = useState('openai_compatible');
+  const [provider, setProvider] = useState(initialProvider ?? 'openai_compatible');
   /** Every credential field the chosen provider takes, keyed by the catalogue's
    * own field key. One bag rather than a variable per field: which fields exist
    * is the server's answer, so this component cannot enumerate them. */
@@ -107,6 +108,7 @@ export function ProviderForm({
   >(null);
   const [looking, setLooking] = useState(false);
   const [chosen, setChosen] = useState('');
+  const [manualModel, setManualModel] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [showIds, setShowIds] = useState(false);
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
@@ -136,14 +138,18 @@ export function ProviderForm({
   }, [provider]);
 
   // Anything that changes which account we are asking invalidates the answer.
-  useEffect(() => { setModels(null); setDiscovery(null); setChosen(''); }, [provider, values, baseUrl]);
+  useEffect(() => {
+    setModels(null); setDiscovery(null); setChosen(''); setManualModel('');
+  }, [provider, values, baseUrl]);
+  useEffect(() => { if (initialProvider) setProvider(initialProvider); }, [initialProvider]);
 
   const setField = (key: string, value: string) => setValues((v) => ({ ...v, [key]: value }));
 
   /** Everything the provider needs before it is worth asking it anything. */
   const missingRequired = fields.filter((f) => f.required && !(values[f.key] ?? '').trim());
   const needsBaseUrl = entry?.baseUrlMode === 'required' && !baseUrl.trim();
-  const canDiscover = !isSubscription && !missingRequired.length && !needsBaseUrl;
+  const canDiscover = provider === 'openai_subscription'
+    || (!isSubscription && !missingRequired.length && !needsBaseUrl);
 
   /** The credential and settings as the routes read them: every catalogue field
    * by its own key, alongside the provider and endpoint. */
@@ -165,7 +171,12 @@ export function ProviderForm({
         fromCatalog?: boolean; catalogVersion?: string | null;
       }>(paths.models, credentialBody());
       setModels(r.models);
-      setChosen(r.models.find((m) => m.recommended)?.id ?? r.models.find((m) => !m.likelyNonChat)?.id ?? '');
+      if (provider === 'openai_subscription') {
+        // Listing candidates must never silently replace Automatic with one.
+        setChosen(current => r.models.some(m => m.id === current) ? current : '');
+      } else {
+        setChosen(r.models.find((m) => m.recommended)?.id ?? r.models.find((m) => !m.likelyNonChat)?.id ?? '');
+      }
       if (r.message) {
         setDiscovery({
           message: r.message,
@@ -190,7 +201,8 @@ export function ProviderForm({
   const usable = (models ?? []).filter((m) => showAll || !m.likelyNonChat);
   // A provider whose list Josi ships rather than reads can always be given a
   // name the catalogue does not carry — a model released after this build.
-  const allowsTypedModel = !!models && (discovery?.fromCatalog || (discovery?.unsupported && !external));
+  const allowsTypedModel = provider !== 'openai_subscription'
+    && !!models && (discovery?.fromCatalog || (discovery?.unsupported && !external));
 
   return (
     <form
@@ -199,7 +211,7 @@ export function ProviderForm({
         const f = new FormData(event.currentTarget);
         void onSubmit({
           ...credentialBody(),
-          model: chosen || f.get('manualModel') || '',
+          model: manualModel.trim() || chosen || '',
           externalAcknowledged: f.get('ack') === 'on',
         });
       }}
@@ -292,10 +304,11 @@ export function ProviderForm({
         </div>
       )) : null}
 
-      <div className={isSubscription ? 'hidden' : ''}>
+      {provider !== 'anthropic_subscription' ? <div>
         <Button type="button" variant="secondary" disabled={busy || looking || !canDiscover}
                 onClick={() => void findModels()}>
-          {looking ? 'Asking…' : models ? 'Look again' : `Show me my ${modelNoun}s`}
+          {looking ? 'Asking…' : models ? 'Look again'
+            : provider === 'openai_subscription' ? 'Show ChatGPT models' : `Show me my ${modelNoun}s`}
         </Button>
         {!canDiscover ? (
           <p className="mt-1 text-xs text-muted-foreground">
@@ -304,17 +317,37 @@ export function ProviderForm({
               : `Enter your ${missingRequired.map((f) => f.label.toLowerCase()).join(' and ')} first.`}
           </p>
         ) : null}
-      </div>
+      </div> : null}
 
       {discovery ? (
         <p className="text-sm text-muted-foreground">{discovery.message}</p>
       ) : null}
 
-      {models && usable.length ? (
+      {provider === 'openai_subscription' ? (
+        <div className="space-y-2">
+          <label className="block text-sm" htmlFor="chatgpt-model">ChatGPT model</label>
+          <select id="chatgpt-model" value={chosen}
+                  onChange={(e) => { setChosen(e.target.value); setManualModel(''); }}
+                  className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm">
+            <option value="">Automatic (Codex chooses)</option>
+            {usable.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+          <p className="text-xs text-muted-foreground">
+            Listed models are Codex CLI candidates, not a guarantee for your plan. Run the model test after saving.
+          </p>
+          <label className="block text-sm" htmlFor="manualModel">
+            Or enter an exact ChatGPT model ID (optional)
+          </label>
+          <Input id="manualModel" name="manualModel" autoCapitalize="none" value={manualModel}
+                 onChange={(e) => { setManualModel(e.target.value); if (e.target.value) setChosen(''); }} />
+        </div>
+      ) : null}
+
+      {provider !== 'openai_subscription' && models && usable.length ? (
         <div>
           <label className="mb-1 block text-sm capitalize" htmlFor="model">{modelNoun}</label>
           <select
-            id="model" value={chosen} onChange={(e) => setChosen(e.target.value)}
+            id="model" value={chosen} onChange={(e) => { setChosen(e.target.value); setManualModel(''); }}
             className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
           >
             {usable.map((m) => (
@@ -368,7 +401,8 @@ export function ProviderForm({
           <label className="mb-1 block text-sm" htmlFor="manualModel">
             {usable.length ? `Or type a ${modelNoun} name` : `${modelNoun} name on your server`}
           </label>
-          <Input id="manualModel" name="manualModel" required={!usable.length} autoCapitalize="none" />
+          <Input id="manualModel" name="manualModel" required={!usable.length} autoCapitalize="none"
+                 value={manualModel} onChange={(e) => setManualModel(e.target.value)} />
           <p className="mt-1 text-xs text-muted-foreground">
             This cannot be checked against a list before it is saved. Josi will still send a real
             message to it before treating it as working.

@@ -44,6 +44,7 @@ import { listAzureDeployments } from './providers/azureAi.js';
 import { listBedrockModels } from './providers/bedrock.js';
 import { readServiceAccount, verifyVertexCredential } from './providers/vertexAi.js';
 import { verifyErnieCredential } from './providers/ernie.js';
+import { listCodexModels, type CodexListedModel } from './providers/codexModels.js';
 
 export interface DiscoveredModel {
   /** Exactly what the provider calls it. This is what gets stored and sent. */
@@ -96,6 +97,9 @@ export interface DiscoverOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   resolve?: SafeFetchOptions['resolve'];
+  /** Override for tests; the live path asks the signed-in Codex app-server. */
+  codexModelList?: () => Promise<CodexListedModel[]>;
+  codexCommand?: string;
 }
 
 /** Model families that are not chat models, whatever else they are.
@@ -217,17 +221,34 @@ function fromCatalog(descriptor: ProviderDescriptor, message: string): Discovery
 /** Ask the provider what this credential may use. */
 export async function discoverModels(opts: DiscoverOptions): Promise<DiscoveryResult> {
   if (opts.provider === 'openai_subscription') {
-    // There is no listing interface here and inventing one would mean guessing.
-    // The Codex CLI selects the model for the operator's plan; Josi does not
-    // choose it and does not pretend to offer a choice.
-    return {
-      ok: true,
-      models: [],
-      unsupported: true,
-      message:
-        'The Codex CLI chooses the model for your ChatGPT plan. There is nothing to select here, '
-        + 'and Josi will confirm it works by making a real request.',
-    };
+    try {
+      const listed = await (opts.codexModelList ?? (() => listCodexModels({ command: opts.codexCommand })))();
+      const models: DiscoveredModel[] = listed.filter(row => !row.hidden).map(row => ({
+        id: row.id,
+        label: row.displayName || row.id,
+        fromProvider: true,
+        recommended: row.isDefault,
+        likelyNonChat: false,
+      }));
+      return {
+        ok: true,
+        models,
+        unsupported: models.length === 0,
+        allowsCustomModel: true,
+        message: models.length
+          ? 'These choices are listed by the signed-in Codex CLI. Your plan may not run every one; Josi will test the selected model with a real request before activation.'
+          : 'The Codex CLI returned no visible models. Automatic still works, or enter an exact model identifier; Josi will test it with a real request before activation.',
+      };
+    } catch {
+      // Never forward CLI errors or credential-bearing output to a browser.
+      return {
+        ok: true,
+        models: [],
+        unsupported: true,
+        allowsCustomModel: true,
+        message: 'Could not list ChatGPT models from the Codex CLI. Automatic still works, or enter an exact model identifier; Josi will test it with a real request before activation.',
+      };
+    }
   }
 
   if (opts.provider === 'anthropic_subscription') {

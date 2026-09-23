@@ -182,11 +182,15 @@ describe('configuring it (L3.4)', () => {
       provider: 'openai_subscription', model: 'gpt-5-codex', externalAcknowledged: true,
     });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    const [row] = await db.query<{ api_key_enc: string | null; subscription_command: string }>(
-      `select api_key_enc, subscription_command from llm_providers where role = 'primary'`,
+    const [row] = await db.query<{
+      api_key_enc: string | null; subscription_command: string; model: string; activated_at: string | null;
+    }>(
+      `select api_key_enc, subscription_command, model, activated_at from llm_providers where role = 'primary'`,
     );
     expect(row.api_key_enc).toBeNull();
     expect(row.subscription_command).toBe('codex');
+    expect(row.model).toBe('gpt-5-codex');
+    expect(row.activated_at).toBeNull(); // A choice is not active until the real probe succeeds.
   });
 
   it('REFUSES an API key rather than ignoring it', async () => {
@@ -272,6 +276,10 @@ describe('configuring it (L3.4)', () => {
   it('allows an empty model on both subscription kinds — the CLI chooses', async () => {
     const chatgpt = await save({ provider: 'openai_subscription', externalAcknowledged: true });
     expect(chatgpt.status).toBe(200);
+    const [automatic] = await db.query<{ model: string }>(
+      `select model from llm_providers where role = 'primary'`,
+    );
+    expect(automatic.model).toBe('');
     const claude = await save({ provider: 'anthropic_subscription', externalAcknowledged: true });
     expect(claude.status).toBe(200);
     // A NON-subscription provider still needs a name.
