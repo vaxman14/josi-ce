@@ -28,8 +28,12 @@ let db: TestDb;
 const cookies: Record<string, string> = {};
 
 let runnerCalls: Array<Parameters<SpawnRunner>[0]> = [];
+let holdFirstProbe: Promise<void> | null = null;
+let onProbeEntered: (() => void) | null = null;
 const codexRunner: SpawnRunner = async (args) => {
   runnerCalls.push(args);
+  const gate = holdFirstProbe;
+  if (gate) { holdFirstProbe = null; onProbeEntered?.(); await gate; }
   return {
     code: 0,
     stdout: JSON.stringify({ type: 'agent_message', message: 'Answered by Codex.' }),
@@ -111,6 +115,8 @@ afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); 
 
 beforeEach(async () => {
   runnerCalls = [];
+  holdFirstProbe = null;
+  onProbeEntered = null;
   await db.query(`delete from llm_providers`);
   await db.query(`delete from llm_usage`);
   await db.query(`delete from rate_limits`);
@@ -323,6 +329,33 @@ describe('using it (L3.2)', () => {
     expect(runnerCalls.length).toBeGreaterThan(0);
     expect(runnerCalls[0].command).toBe('codex');
     expect(runnerCalls[0].args).toContain('exec');
+  });
+
+  it('an older probe cannot activate a newly saved model', async () => {
+    let release!: () => void;
+    holdFirstProbe = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    onProbeEntered = started;
+    const oldProbe = call('/api/admin/llm/providers/primary/probe', { method: 'POST', jar: cookies.admin });
+    try {
+      await entered;
+      const saved = await call('/api/admin/llm/providers/primary', {
+        method: 'PUT', jar: cookies.admin,
+        body: { provider: 'openai_subscription', model: 'replacement-model', externalAcknowledged: true },
+      });
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    } finally {
+      release();
+    }
+    const result = await oldProbe;
+    expect(result.status).toBe(409);
+    const [row] = await db.query<{ model: string; activated_at: string | null; probed_at: string | null }>(
+      `select model, activated_at, probed_at from llm_providers where role = 'primary'`,
+    );
+    expect(row.model).toBe('replacement-model');
+    expect(row.activated_at).toBeNull();
+    expect(row.probed_at).toBeNull();
   });
 
   it('the probe finds tool calling absent, so dependent features stay off', async () => {

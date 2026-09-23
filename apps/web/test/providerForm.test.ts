@@ -12,20 +12,23 @@ const chatgpt: ProviderCatalogEntry = {
 function renderForm() {
   return renderToStaticMarkup(React.createElement(ProviderForm, {
     busy: false,
+    compact: true,
     catalog: [chatgpt],
     initialProvider: 'openai_subscription',
     paths: { models: '/admin/llm/models', codexBase: '/admin/llm/subscription', claudeBase: '/admin/llm/subscription/claude' },
     loadSubscriptionInfo: async () => null,
     onSubmit: async () => undefined,
+    submitLabel: 'Save & test',
   }));
 }
 
 describe('ChatGPT subscription model choice', () => {
-  it('shows an explicit Automatic option and a way to list signed-in Codex models', () => {
+  it('shows Automatic as a visible model choice without an extra discovery button', () => {
     const html = renderForm();
-    expect(html).toContain('ChatGPT model');
+    expect(html).toContain('role="radiogroup"');
     expect(html).toContain('Automatic (Codex chooses)');
-    expect(html).toContain('Show ChatGPT models');
+    expect(html).not.toContain('Show ChatGPT models');
+    expect(html).toContain('Save &amp; test');
     expect(html).toContain('exact ChatGPT model ID');
   });
 });
