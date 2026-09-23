@@ -1,6 +1,4 @@
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const index = require('./help-index.json');
+import index from './help-index.json' with { type: 'json' };
 
 const WINDOW_MS = 10 * 60 * 1000;
 const hits = new Map();
