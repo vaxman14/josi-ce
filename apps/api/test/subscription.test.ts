@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { computeProfile } from '@josi-ce/core';
-import type { SpawnRunner } from '@josi-ce/llm';
+import { loadStoredProvider, type SpawnRunner } from '@josi-ce/llm';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 import { requireCapability } from '../src/http/authz.js';
@@ -329,6 +329,14 @@ describe('using it (L3.2)', () => {
     expect(runnerCalls.length).toBeGreaterThan(0);
     expect(runnerCalls[0].command).toBe('codex');
     expect(runnerCalls[0].args).toContain('exec');
+  });
+
+  it('retains the full database timestamp for the probe change guard', async () => {
+    const stored = await loadStoredProvider(db, 'primary');
+    const [row] = await db.query<{ exact: string }>(
+      `select updated_at::text as exact from llm_providers where role = $1`, ['primary'],
+    );
+    expect(stored?.updated_at).toBe(row.exact);
   });
 
   it('an older probe cannot activate a newly saved model', async () => {

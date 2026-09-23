@@ -84,7 +84,8 @@ export async function loadStoredProvider(
   role: 'primary' | 'fallback',
 ): Promise<StoredProvider | null> {
   const rows = await db.query<StoredProvider>(
-    `select role, provider, model, base_url, api_key_enc, external_acknowledged, activated_at, updated_at,
+    `select role, provider, model, base_url, api_key_enc, external_acknowledged, activated_at,
+            updated_at::text as updated_at,
             probed_at, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens,
             subscription_command, provider_config
      from llm_providers where role = $1`,

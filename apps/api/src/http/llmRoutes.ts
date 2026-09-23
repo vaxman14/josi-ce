@@ -715,7 +715,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
            probed_at = $2, probe_steps = $3,
            cap_chat = $4, cap_structured_output = $5, cap_tool_calling = $6, cap_vision = $7, cap_context_tokens = $8,
            activated_at = case when $4 then coalesce(activated_at, now()) else null end
-         where role = $1 and updated_at = $9 returning role`,
+         where role = $1 and updated_at::text = $9::text returning role`,
         [
           // json(), not JSON.stringify + ::jsonb. Hand-serialising is what
           // db.ts warns about: postgres.js types a JS string as text, so the
