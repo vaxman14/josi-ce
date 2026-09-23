@@ -14,10 +14,12 @@
 <body>
   <header class="top"><div class="top-inner">
     <a class="brand" href="#top"><img src="brand/josi-mark.png" alt=""><span>Josi CE<small>Community Preview</small></span></a>
-    <nav class="top-links"><a href="#help">Help</a><a href="#terms-of-use">Terms</a><a href="#privacy-notice">Privacy</a><a class="pill" href="#obtain-the-source">Start installing</a></nav>
+    <nav class="top-links"><a href="#help">Help</a><a href="#installation">Installation guide</a><a href="#configuration">Configuration options</a><a href="#terms-of-use">Terms</a><a href="#privacy-notice">Privacy</a><a class="pill" href="#installation">Start installing</a></nav>
   </div></header>
   <div class="layout" id="top">
     <aside class="side"><strong>On this page</strong><a href="#help">Help and current features</a>
+<a href="#installation">1. What the standard installation creates</a>
+<a href="#configuration">6. Configure .env</a>
 <a href="#terms-of-use">Terms of Use</a>
 <a href="#privacy-notice">Privacy Notice</a>
 <a href="#cookie-notice">Cookie Notice</a>
@@ -106,7 +108,7 @@ removal is a separate confirmed action.</p>
 <p>Admin → Integrations groups code, deployment, data, monitoring, knowledge, and project-management
 connections. Custom API connects unsupported HTTPS REST services through an explicit endpoint
 allowlist. Credentials remain in the Master Vault; writes and deletes require approval.</p>
-<h2>1. What the standard installation creates</h2>
+<h2 id="installation">1. What the standard installation creates</h2>
 <p>The default Compose deployment creates five service roles:</p>
 <table>
 <thead>
@@ -387,7 +389,7 @@ git checkout &lt;RELEASE-TAG&gt;
 <pre><code class="language-bash">docker compose config --quiet
 </code></pre>
 <p>This command expands configuration but does not start containers.</p>
-<h2>6. Configure <code>.env</code></h2>
+<h2 id="configuration">6. Configure <code>.env</code></h2>
 <p>Copy the example and restrict its permissions:</p>
 <pre><code class="language-bash">cp .env.example .env
 chmod 600 .env

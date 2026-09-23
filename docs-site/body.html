@@ -76,7 +76,7 @@ removal is a separate confirmed action.</p>
 <p>Admin → Integrations groups code, deployment, data, monitoring, knowledge, and project-management
 connections. Custom API connects unsupported HTTPS REST services through an explicit endpoint
 allowlist. Credentials remain in the Master Vault; writes and deletes require approval.</p>
-<h2>1. What the standard installation creates</h2>
+<h2 id="installation">1. What the standard installation creates</h2>
 <p>The default Compose deployment creates five service roles:</p>
 <table>
 <thead>
@@ -357,7 +357,7 @@ git checkout &lt;RELEASE-TAG&gt;
 <pre><code class="language-bash">docker compose config --quiet
 </code></pre>
 <p>This command expands configuration but does not start containers.</p>
-<h2>6. Configure <code>.env</code></h2>
+<h2 id="configuration">6. Configure <code>.env</code></h2>
 <p>Copy the example and restrict its permissions:</p>
 <pre><code class="language-bash">cp .env.example .env
 chmod 600 .env
