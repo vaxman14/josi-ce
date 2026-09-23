@@ -36,6 +36,8 @@ assert.doesNotMatch(legal, /Confirm each dependency:/, 'Do not include installat
 assert.equal(visibleText(legal.match(/<article>([\s\S]*?)<\/article>/)?.[1] ?? ''), visibleText(legalOriginal), 'Legal notice text must remain unchanged');
 
 for (const [name, page] of [['home', home], ['installation', install], ['legal', legal]]) {
+  const canonicalPath = name === 'home' ? '' : name === 'installation' ? 'install/' : 'legal/';
+  assert.match(page, new RegExp(`<link rel="canonical" href="https://help\\.heyjosi\\.com/${canonicalPath}">`), `${name}: canonical Help domain`);
   const sidebar = page.match(/<aside class="side">([\s\S]*?)<\/aside>/)?.[1] ?? '';
   const ids = [...page.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
   assert.equal(ids.length, new Set(ids).size, `${name}: duplicate IDs`);

@@ -21,7 +21,6 @@ FORBIDDEN_LITERAL=(
   '+19514776060' '+19513958776' '+19514254567' '+19517177772'
   '9514776060' '9513958776' '9514254567' '9517177772'
   # Production endpoints and hosts belonging to the hosted product.
-  'heyjosi.com'
   'socalreceptionist.com'
   '10.10.1.3'
   '10.10.1.5'
@@ -148,6 +147,27 @@ while IFS= read -r file; do
     fi
   done
   [[ -z "$literal_tmp" ]] || rm -f "$literal_tmp"
+
+  # The public CE Help hostname is approved; all other production hosts are not.
+  if grep -Fn -- 'heyjosi.com' "$file" >/dev/null 2>&1; then
+    while IFS= read -r hit; do
+      rest="$hit"
+      while [[ "$rest" == *heyjosi.com* ]]; do
+        before="${rest%%heyjosi.com*}"
+        after="${rest#*heyjosi.com}"
+        allowed=0
+        if [[ "$before" == *help. ]]; then
+          prefix="${before%help.}"
+          if { [[ -z "$prefix" ]] || [[ ! "${prefix: -1}" =~ [[:alnum:].-] ]]; } \
+             && { [[ -z "$after" ]] || [[ ! "${after:0:1}" =~ [[:alnum:].-] ]]; }; then
+            allowed=1
+          fi
+        fi
+        [[ "$allowed" -eq 1 ]] || report "$file:${hit%%:*}  forbidden production hostname"
+        rest="$after"
+      done
+    done < <(grep -Fn -- 'heyjosi.com' "$file")
+  fi
 
   for pattern in "${FORBIDDEN_REGEX[@]}"; do
     if grep -En -- "$pattern" "$file" >/dev/null 2>&1; then

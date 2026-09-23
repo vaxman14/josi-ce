@@ -80,6 +80,21 @@ for (const [filename, html] of pages) {
   fs.mkdirSync(path.dirname(output), { recursive: true });
   fs.writeFileSync(output, html);
 }
+const plain = (html) => html.replace(/<[^>]*>/g, ' ').replace(/&(?:quot|#39|amp|lt|gt);/g, (entity) => ({
+  '&quot;': '"', '&#39;': "'", '&amp;': '&', '&lt;': '<', '&gt;': '>',
+})[entity]).replace(/\s+/g, ' ').trim();
+const helpIndex = pages.flatMap(([filename, html]) => {
+  const article = html.match(/<article>([\s\S]*?)<\/article>/)?.[1] ?? '';
+  const headings = [...article.matchAll(/<h([23]) id="([^"]+)">([\s\S]*?)<\/h\1>/g)];
+  const pathname = filename === 'index.html' ? '' : filename.replace('index.html', '');
+  return headings.map((heading, i) => ({
+    title: plain(heading[3]),
+    url: `https://help.heyjosi.com/${pathname}#${heading[2]}`,
+    text: plain(article.slice(heading.index + heading[0].length, headings[i + 1]?.index ?? article.length)).slice(0, 2200),
+  }));
+});
+fs.mkdirSync('docs-site/netlify/functions', { recursive: true });
+fs.writeFileSync('docs-site/netlify/functions/help-index.json', JSON.stringify(helpIndex));
 fs.mkdirSync('docs-site/public/brand', { recursive: true });
 fs.copyFileSync('docs-site/brand/josi-mark.png', 'docs-site/public/brand/josi-mark.png');
 fs.writeFileSync('docs-site/index.html', pages[0][1]);
