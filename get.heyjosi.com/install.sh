@@ -12,7 +12,7 @@ usage() {
 Usage: install.sh --version VERSION [options]
 
 Required:
-  --version VERSION       Exact Josi CLI release, for example 0.1.54
+  --version VERSION       Exact Josi CLI release, for example 0.1.65
 
 Options:
   --install-dir DIR       Destination (default: /usr/local/bin as root,
@@ -62,7 +62,7 @@ case "$VERSION" in
   ''|*[!0-9A-Za-z.-]*) fail 'invalid version' ;;
 esac
 printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$' \
-  || fail 'version must be an explicit release version such as 0.1.54'
+  || fail 'version must be an explicit release version such as 0.1.65'
 
 [ "$(uname -s)" = Linux ] || fail 'only Linux is supported'
 case "$(uname -m)" in
@@ -119,10 +119,8 @@ trap cleanup EXIT HUP INT TERM
 
 archive="josi-cli-${VERSION}-linux-${ARCH}.tar.gz"
 checksums="josi-cli-${VERSION}-checksums.txt"
-# Release payloads are mirrored on the public installer origin. The source
-# repository is intentionally private, so unauthenticated hosts must never be
-# sent to GitHub's private release URLs.
-base_url="https://get.heyjosi.com/releases/v${VERSION}"
+# Versioned payloads are published by the clean, public source repository.
+base_url="https://github.com/vaxman14/josi-ce-public/releases/download/v${VERSION}"
 
 fetch() {
   partial="$work/$1.partial"
@@ -155,7 +153,7 @@ curl --fail --silent --show-error --location \
   || fail 'cosign verifier digest did not match; refusing to continue'
 chmod 0700 "$work/cosign"
 
-certificate_identity="https://github.com/vaxman14/josi-ce/.github/workflows/release.yml@refs/tags/v${VERSION}"
+certificate_identity="https://github.com/vaxman14/josi-ce-public/.github/workflows/release.yml@refs/tags/v${VERSION}"
 printf 'Verifying the signed checksum manifest...\n'
 "$work/cosign" verify-blob \
   --certificate "$work/$checksums.pem" \

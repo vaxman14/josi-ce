@@ -49,7 +49,7 @@ describe('strict common attachment contract',()=>{
     expect(validateAttachment('a.mp4','video/mp4',valid.mp4).analysis).toMatchObject({status:'unavailable',code:'analysis_unavailable'});
     expect(validateAttachment('a.txt','text/plain',valid.txt).analysis).toMatchObject({status:'available',kind:'text'});
   });
-  it('rejects credentials before persistence',()=>expect(()=>validateAttachment('a.txt','text/plain',Buffer.from('password=123456789abc'))).toThrowError(expect.objectContaining({code:'sensitive_file'})));
+  it('rejects credentials before persistence',()=>expect(()=>validateAttachment('a.txt','text/plain',Buffer.from('password=abcabcabcabc'))).toThrowError(expect.objectContaining({code:'sensitive_file'})));
 });
 describe('real persistent filesystem operations',()=>{
   it('probes storage and reports missing provisioning',async()=>{expect(await probeAttachmentStorage(root)).toEqual({ok:true});expect(await probeAttachmentStorage(join(root,'missing'))).toMatchObject({ok:false,code:'storage_missing'});});

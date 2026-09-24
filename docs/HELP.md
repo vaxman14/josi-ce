@@ -34,8 +34,8 @@ uninstallation, diagnosis, and repair. Install the current verified Linux
 `amd64` or `arm64` release with:
 
 ```bash
-curl -fsSL https://get.heyjosi.com/install.sh |
-  sudo bash -s -- --version 0.1.54 --yes
+curl -fsSL https://github.com/vaxman14/josi-ce-public/releases/download/v0.1.65/install.sh |
+  sudo bash -s -- --version 0.1.65 --yes
 ```
 
 The installer requires an explicit version, verifies its own pinned verifier,

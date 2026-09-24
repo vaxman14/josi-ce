@@ -438,11 +438,11 @@ describe('step-up re-authentication', () => {
   });
 
   it('never records the password, right or wrong', async () => {
-    await verifyStepUp(db, { userId: alice, sessionKey: 'S1', password: 'hunter2-SECRET', verifyPassword: no });
-    await verifyStepUp(db, { userId: alice, sessionKey: 'S1', password: 'hunter2-SECRET', verifyPassword: yes });
+    await verifyStepUp(db, { userId: alice, sessionKey: 'S1', password: 'testing-password', verifyPassword: no });
+    await verifyStepUp(db, { userId: alice, sessionKey: 'S1', password: 'testing-password', verifyPassword: yes });
     const dump = JSON.stringify(await db.query(`select * from events`))
       + JSON.stringify(await db.query(`select * from step_up_verifications`));
-    expect(dump).not.toContain('hunter2-SECRET');
+    expect(dump).not.toContain('testing-password');
   });
 });
 

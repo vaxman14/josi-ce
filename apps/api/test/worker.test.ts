@@ -142,6 +142,7 @@ describe('the worker drains the queue', () => {
 describe('user-policy-authorized calendar execution',()=>{
   const key=new MasterKey(Buffer.alloc(32,19));
   async function automaticCalendar(){
+    await db.query(`insert into workspace(id,name,timezone) values(true,'Test','America/Los_Angeles') on conflict(id) do update set timezone=excluded.timezone`);
     await setUserApprovalLevel(db,{userId:owner,actionClass:'calendar_write',level:'automatic'});
     const connection=await upsertConnection(db,key,{ownerUserId:owner,provider:'google',providerAccountId:'calendar-worker',accountEmail:'calendar@example.test',tokens:{accessToken:'calendar-access',refreshToken:'calendar-refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar'},requestedCapabilities:['google.calendar.write']});
     await setCapability(db,{connection,capability:'google.calendar.write',enabled:true,actorUserId:owner});
@@ -164,7 +165,8 @@ describe('user-policy-authorized calendar execution',()=>{
     expect((await db.query<{status:string}>(`select status from assistant_action_states where task_id=$1`,[task.id]))[0].status).toBe('succeeded');
     const [result]=await db.query<{body:string}>(`select body from messages where thread_id=$1 and direction='out' order by created_at desc limit 1`,[thread]);
     expect(result.body).toContain('Vaxman Kids');
-    expect(result.body).toContain('November 14, 2026 at 6:30 PM');
+    expect(result.body).toContain('Saturday, November 14, 2026');
+    expect(result.body).toContain('4:30–6:30 PM PST');
     expect(result.body).toContain('queued to sync');
   });
 

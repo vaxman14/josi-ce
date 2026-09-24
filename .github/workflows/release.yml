@@ -26,6 +26,7 @@ on:
         type: boolean
         default: false
 
+
 permissions:
   contents: read
   # What lets GITHUB_TOKEN push to ghcr.io. Nothing else needs widening: no
@@ -37,9 +38,18 @@ env:
 
 jobs:
   build:
+    if: ${{ github.repository == 'vaxman14/josi-ce' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - id: source
+        name: Verify the public source is this exact tree
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 https://github.com/vaxman14/josi-ce-public.git main
+          test "$(git rev-parse 'FETCH_HEAD^{tree}')" = "$(git rev-parse 'HEAD^{tree}')"
+          echo "sha=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_OUTPUT"
 
       # The version being published, from the tag or from the manual input.
       - id: version
@@ -106,13 +116,13 @@ jobs:
           # CE image is CE permanently.
           build-args: |
             JOSI_EDITION=ce
-            JOSI_BUILD_ID=${{ github.sha }}
+            JOSI_BUILD_ID=${{ steps.source.outputs.sha }}
             JOSI_LICENCE_KEY=${{ steps.licence-key.outputs.value }}
           tags: |
             ${{ env.REGISTRY }}/${{ steps.owner.outputs.value }}/josi-ce:${{ steps.version.outputs.value }}
           labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/vaxman14/josi-ce-public
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
             org.opencontainers.image.licenses=AGPL-3.0-or-later
           # No `latest` tag, deliberately. An appliance that changes version
@@ -133,8 +143,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ steps.owner.outputs.value }}/josi-ce-installer:${{ steps.version.outputs.value }}
           labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/vaxman14/josi-ce-public
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
             org.opencontainers.image.licenses=AGPL-3.0-or-later
           provenance: true
@@ -163,7 +173,7 @@ jobs:
   # is the short-lived GitHub Actions OIDC certificate for this exact workflow
   # and tag; there is no long-lived signing material to leak or rotate.
   cli-release:
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.repository == 'vaxman14/josi-ce-public' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     # CLI publication is independently tested and signed; do not couple it to
     # application-image build time or the Actions artifact-storage quota.
     runs-on: ubuntu-latest
@@ -189,6 +199,7 @@ jobs:
             --output-dir dist/cli \
             --sign
           install -m 0755 get.heyjosi.com/install.sh dist/cli/install.sh
+          sha256sum dist/cli/install.sh | awk '{print $1}' > dist/cli/install.sh.sha256
       - name: Publish CLI files on the numbered GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -205,7 +216,7 @@ jobs:
   dockerhub-mirror:
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ vars.DOCKERHUB_MIRROR_ENABLED == 'true' }}
+    if: ${{ github.repository == 'vaxman14/josi-ce' && github.event_name == 'workflow_dispatch' && vars.DOCKERHUB_MIRROR_ENABLED == 'true' }}
     steps:
       - id: version
         run: |
