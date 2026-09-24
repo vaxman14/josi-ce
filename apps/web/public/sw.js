@@ -9,7 +9,7 @@
 //
 // So the rule is absolute and there is exactly one function that decides it:
 //
-//     BUILD ASSETS AND THE OFFLINE SHELL ARE CACHED. NOTHING ELSE IS.
+//     BUILD ASSETS, THE OFFLINE SHELL, AND EXACT PUBLIC HELP FILES ARE CACHED. NOTHING ELSE IS.
 //
 // No `/api` response is cached, read from cache, or served from cache — not a
 // 200, not a GET, not while offline. Not the user list, not a conversation, not
@@ -26,7 +26,7 @@
 // Bumped whenever the caching rules change. An old worker's caches are deleted
 // on activate, so a rule that gets tightened takes effect for everybody rather
 // than only for new installs.
-const CACHE_VERSION = 'josi-v1';
+const CACHE_VERSION = 'josi-v2';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 
@@ -39,6 +39,11 @@ const SHELL_FILES = [
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/icons/icon-maskable-512.png',
+  // Explicit public, script-free files. Never cache a /help/ prefix or SPA page.
+  '/help/index.html',
+  '/help/install/index.html',
+  '/help/legal/index.html',
+  '/help/brand/josi-mark.png',
 ];
 
 /**
@@ -50,7 +55,7 @@ const SHELL_FILES = [
  *                      hash, so a cached copy can never be stale.
  *   'navigation'     — network first, and the OFFLINE SHELL on failure. Never
  *                      a cached copy of the real page.
- *   'shell'          — the precached static files above.
+ *   'shell'          — the precached static files above, including public Help.
  *
  * Exported through `self.__josiSwInternals` and tested directly, because this
  * function is the entire security boundary of the file.
@@ -99,6 +104,10 @@ function decide(request, scopeOrigin) {
   if (url.pathname === '/health' || url.pathname === '/ready') return 'network-only';
 
   if (SHELL_FILES.includes(url.pathname)) return 'shell';
+
+  // Unknown Help paths and directory aliases must not silently inherit the
+  // generic SPA offline fallback. Only the exact files above are offline Help.
+  if (url.pathname === '/help' || url.pathname.startsWith('/help/')) return 'network-only';
 
   // Hashed build output. Vite writes `/assets/index-<hash>.js`, so the name
   // changes whenever the content does and a cached copy cannot go stale.

@@ -181,7 +181,7 @@ export function licenceCovers(status: LicenceStatus, feature: LicensedFeature): 
 export const SUPPORTED_BUILD_ROUTE = {
   publisher: 'SOCAL RECEPTIONIST LLC',
   image: 'ghcr.io/vaxman14/josi-ce:latest',
-  docs: 'https://github.com/vaxman14/josi-ce/blob/main/docs/INSTALLATION.md',
+  docs: 'https://github.com/vaxman14/josi-ce-public/blob/main/docs/INSTALLATION.md',
   steps: [
     'Stop this installation with `docker compose down` (your data volumes are not touched).',
     'Set `JOSI_TAG=latest` in the installer directory, or point the Josi services at ghcr.io/vaxman14/josi-ce:latest.',

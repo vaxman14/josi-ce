@@ -97,6 +97,9 @@
 <a class="level-3" href="#managing-connector-permissions">Managing connector permissions</a>
 <a class="level-2" href="#security-checklist">18. Security checklist</a>
 <a class="level-2" href="#collecting-useful-support-information">19. Collecting useful support information</a>
+<a class="level-2" href="#offline-password-recovery">Offline password recovery</a>
+<a class="level-2" href="#developer-workspace">Optional developer workspace</a>
+<a class="level-2" href="#setup-recovery-key">Setup recovery key and model test</a>
 <a class="level-2" href="#uninstallation">20. Uninstallation</a></aside>
     <main>
       <section class="hero"><div class="eyebrow">Official Josi CE documentation</div><h1>Installation and operations</h1><p>The complete operator guide, indexed by chapter.</p><div class="meta"><span>Community Preview</span><span>Docker Compose</span><span>AMD64 + ARM64</span><span>Self-hosted</span></div></section>
@@ -151,6 +154,9 @@
 <a class="level-3" href="#managing-connector-permissions">Managing connector permissions</a>
 <a class="level-2" href="#security-checklist">18. Security checklist</a>
 <a class="level-2" href="#collecting-useful-support-information">19. Collecting useful support information</a>
+<a class="level-2" href="#offline-password-recovery">Offline password recovery</a>
+<a class="level-2" href="#developer-workspace">Optional developer workspace</a>
+<a class="level-2" href="#setup-recovery-key">Setup recovery key and model test</a>
 <a class="level-2" href="#uninstallation">20. Uninstallation</a></nav></details>
       <article><h1>Josi CE installation and operations manual</h1>
 <p>This manual describes how to install the Josi CE Community Preview from this
@@ -755,6 +761,15 @@ An out-of-memory kill appears in container state and host kernel logs.</p>
 connector features members are allowed to enable for their own accounts.
 Allowing a permission does not turn it on for anyone or grant access by itself;
 each member must still connect their own account and enable the feature.</p>
+<p>Google, Microsoft, Dropbox, and Box show one provider consent screen for the
+complete set of features Josi currently supports. Those provider permissions do
+not turn features on inside Josi: members still use the local On/Off controls.
+Older connections with partial permissions show one account-level
+<strong>Upgrade permissions / Reconnect</strong> action instead of approval buttons
+beside individual features.</p>
+<p>OAuth application forms only enable <strong>Save</strong> after a valid change.
+Wait for the named saved confirmation before leaving the page; secrets remain
+masked and are never shown again.</p>
 <h2 id="security-checklist">18. Security checklist</h2>
 <p>Before considering an installation reachable by other people, confirm:</p>
 <ul>
@@ -801,6 +816,25 @@ docker version
 docker compose version
 docker compose ps -a
 </code></pre>
+<h2 id="offline-password-recovery">Offline password recovery</h2>
+<p>If reset email is unavailable, run <code>./reset-password.sh USERNAME_OR_EMAIL</code>
+from the installation directory. The command accepts the new password through a
+hidden prompt, changes exactly one active account, and invalidates its existing
+sessions and unused reset links. Reset-email links use the exact browser-facing
+origin selected in the installer, including LAN HTTP and non-default ports.</p>
+<h2 id="developer-workspace">Optional developer workspace</h2>
+<p>The browser installer can optionally bind one host project folder into Josi at
+<code>/workspace</code>. Skip it unless coding connectors need local files. Choose
+read-only access for inspection or read/write for editing, tests, and Git. The
+installer validates the requested capability and refuses system, credential,
+secret, and Josi installation paths. Normal Josi containers never receive the
+Docker socket.</p>
+<h2 id="setup-recovery-key">Setup recovery key and model test</h2>
+<p>The Vault key is displayed only as a masked preview ending in its true final
+four characters. Use the explicit Copy or Download action and store it offline.
+The launch checklist reuses that acknowledgement. The Language Model step saves
+the configuration and runs the full five-part capability test before setup may
+advance.</p>
 <h2 id="uninstallation">20. Uninstallation</h2>
 <p>There is no supported uninstall-and-preserve-data wizard yet.</p>
 <p>Stopping the installation is reversible:</p>

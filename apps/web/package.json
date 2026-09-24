@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node ../../scripts/sync-offline-help.mjs",
     "dev": "vite",
+    "prebuild": "node ../../scripts/sync-offline-help.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },

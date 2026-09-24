@@ -213,7 +213,7 @@ four things an operator actually does.
 ### Fresh install
 
 ```bash
-git clone https://github.com/vaxman14/josi-ce.git && cd josi-ce
+git clone https://github.com/vaxman14/josi-ce-public.git && cd josi-ce-public
 cp .env.example .env          # set JOSI_DOMAIN and JOSI_APP_URL
 ./scripts/install.sh          # generates the master key and database password
 docker compose up -d

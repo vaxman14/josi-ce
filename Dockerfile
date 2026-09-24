@@ -37,6 +37,7 @@ COPY tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
 COPY apps ./apps
 COPY scripts ./scripts
+COPY docs-site ./docs-site
 
 # The edition capability boundary, stamped BEFORE the compile so it becomes a
 # constant in the bundle rather than something read from the environment at

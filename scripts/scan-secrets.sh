@@ -128,8 +128,10 @@ while IFS= read -r file; do
   # not a hosted-product endpoint. Permit only that exact hostname and only in
   # the reviewed installer implementation, its tests/docs, and release wiring.
   # ce.heyjosi.com and every other production-domain occurrence remain blocked.
+  public_installer_file=0
   case "$file" in
-    .github/workflows/release.yml|docs/CLI.md|docs/HELP.md|docs-site/body.html|docs-site/index.html|get.heyjosi.com/install.sh|scripts/test-cli-installer.sh|scripts/test-cli-installer-debian.sh)
+    .github/workflows/release.yml|docs/CLI.md|docs/HELP.md|docs-site/body.html|docs-site/index.html|docs-site/public/index.html|docs-site/netlify/functions/help-index.json|docs-site/offline/index.html|apps/web/public/help/index.html|get.heyjosi.com/install.sh|scripts/test-cli-installer.sh|scripts/test-cli-installer-debian.sh)
+      public_installer_file=1
       if grep -Fq 'get.heyjosi.com' "$literal_source"; then
         [[ -n "$literal_tmp" ]] || literal_tmp="$(mktemp)"
         strip_public_installer_host < "$literal_source" > "$literal_tmp.next"
@@ -148,7 +150,8 @@ while IFS= read -r file; do
   done
   [[ -z "$literal_tmp" ]] || rm -f "$literal_tmp"
 
-  # The public CE Help hostname is approved; all other production hosts are not.
+  # The public CE Help hostname and the exact installer host in reviewed files
+  # are approved; all other production hosts are not.
   if grep -Fn -- 'heyjosi.com' "$file" >/dev/null 2>&1; then
     while IFS= read -r hit; do
       rest="$hit"
@@ -156,8 +159,8 @@ while IFS= read -r file; do
         before="${rest%%heyjosi.com*}"
         after="${rest#*heyjosi.com}"
         allowed=0
-        if [[ "$before" == *help. ]]; then
-          prefix="${before%help.}"
+        if [[ "$before" == *help. ]] || { [[ "$public_installer_file" -eq 1 ]] && [[ "$before" == *get. ]]; }; then
+          if [[ "$before" == *help. ]]; then prefix="${before%help.}"; else prefix="${before%get.}"; fi
           if { [[ -z "$prefix" ]] || [[ ! "${prefix: -1}" =~ [[:alnum:].-] ]]; } \
              && { [[ -z "$after" ]] || [[ ! "${after:0:1}" =~ [[:alnum:].-] ]]; }; then
             allowed=1
