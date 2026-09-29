@@ -231,7 +231,10 @@ export function quietNow(now:Date,timeZone:string,start:string|null,end:string|n
 
 export interface PushFetchResult{sent:number;ticketed:number;retried:number;deferred:number;suppressed:number;}
 const FOREGROUND_GRACE_MS=10*60*1000;
-const FOREGROUND_RECHECK_SECONDS=30;
+// A completion can race the native app's background-state update by a few
+// milliseconds. Recheck promptly instead of making a finished reply wait for
+// the old scheduler-sized 30-second window.
+const FOREGROUND_RECHECK_SECONDS=1;
 function coalesceCategory(categories:unknown,category:string):boolean{return !categories||typeof categories!=='object'||(categories as Record<string,unknown>)[category]!==false;}
 const EXPO_ERROR_CODES=new Set(['DeviceNotRegistered','MessageTooBig','MessageRateExceeded','MismatchSenderId','InvalidCredentials']);
 const PERMANENT_EXPO_ERRORS=new Set(['DeviceNotRegistered','MessageTooBig','MismatchSenderId','InvalidCredentials']);
