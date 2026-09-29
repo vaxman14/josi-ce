@@ -1,7 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import {testDb} from './helpers.js';
 import {MasterKey} from '../src/masterKey.js';
-import {attachCollectingAction,beginDurableToolEffect,claimDurableTurn,completeDurableToolEffect,completeDurableTurn,createTask,durableTurnHasIncompleteEffects,failDurableTurn,listDurableTurns,looksSealed,markActionsPresented,prepareAction,processPushBatch,processPushReceipts,quietNow,revokeMobileDevice,submitDurableTurn,upsertMobileDevice} from '../src/index.js';
+import {acknowledgeDurableTurnObserved,attachCollectingAction,beginDurableToolEffect,claimDurableTurn,completeDurableToolEffect,completeDurableTurn,createTask,durableTurnHasIncompleteEffects,failDurableTurn,listDurableTurns,looksSealed,markActionsPresented,prepareAction,processPushBatch,processPushReceipts,quietNow,revokeMobileDevice,submitDurableTurn,upsertMobileDevice} from '../src/index.js';
 
 async function owner(db:Awaited<ReturnType<typeof testDb>>,name='alice'){
   const [u]=await db.query<{id:string}>(`insert into users(email,username,role) values($1,$2,'member') returning id`,[`${name}@example.test`,name]);
@@ -209,6 +209,22 @@ describe('Expo push outbox',()=>{
     await db.query(`update push_deliveries set created_at=$3,next_attempt_at=$4 where device_id=$1 and event_key=$2`,[device.id,`turn:${turn!.id}`,new Date(now.getTime()-11*60*1000),now]);
     expect(await processPushBatch(db,key,noSend,now)).toMatchObject({sent:0,deferred:0,suppressed:1});
     expect((await db.query<{status:string;last_error_code:string}>(`select status,last_error_code from push_deliveries where device_id=$1 and event_key=$2`,[device.id,`turn:${turn!.id}`]))[0]).toEqual({status:'suppressed',last_error_code:'foreground_expired'});
+  });
+
+  it('cancels a deferred completion after the foreground UI observes it',async()=>{
+    const db=await testDb(),{u,t}=await owner(db,'foreground-observed');const key=new MasterKey(Buffer.alloc(32,19));
+    const input={deviceIdentity:'19191919-1919-4191-8191-191919191919',platform:'ios' as const,expoToken:'ExpoPushToken[foreground_observed]',privacyLocked:false,timezone:'UTC'};
+    const device=await upsertMobileDevice(db,key,u.id,{...input,appState:'foreground'});
+    const accepted=await submitDurableTurn(db,{ownerUserId:u.id,threadId:t.id,clientMessageId:'foreground-observed',message:'show it live'});
+    const turn=await claimDurableTurn(db,accepted.turn.id);await completeDurableTurn(db,{turnId:turn!.id,leaseToken:turn!.lease_token,reply:'done',toolReceipts:[]});
+    const noSend=(async()=>{throw new Error('must not send while foreground')}) as typeof fetch;
+    expect(await processPushBatch(db,key,noSend)).toMatchObject({sent:0,deferred:1});
+    expect(await acknowledgeDurableTurnObserved(db,{ownerUserId:u.id,threadId:t.id,turnId:turn!.id})).toBe(true);
+    expect((await db.query<{status:string;last_error_code:string}>(`select status,last_error_code from push_deliveries where device_id=$1 and event_key=$2`,[device.id,`turn:${turn!.id}`]))[0]).toEqual({status:'suppressed',last_error_code:'observed_foreground'});
+    await upsertMobileDevice(db,key,u.id,{...input,appState:'background'});
+    expect((await processPushBatch(db,key,noSend)).sent).toBe(0);
+    const stranger=await owner(db,'foreground-stranger');
+    expect(await acknowledgeDurableTurnObserved(db,{ownerUserId:stranger.u.id,threadId:stranger.t.id,turnId:turn!.id})).toBe(false);
   });
 
   it('completes once and sends once across duplicate completion and worker retry attempts',async()=>{
