@@ -868,9 +868,10 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
 
 /** What a signed-in member is allowed to know about the model.
  *
- * Deliberately thin. A member needs to know which features work and how much of
- * their own allowance is left; they do not need the provider, the model name,
- * the endpoint, or anyone else's usage. */
+ * Deliberately thin. A member needs the provider's human-readable identity to
+ * make an informed data-sharing choice before a native client sends personal
+ * content. The model name, endpoint, credential and other members' usage stay
+ * private. */
 export function llmRoutes(ctx: LlmRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
@@ -881,6 +882,7 @@ export function llmRoutes(ctx: LlmRoutesCtx): Router {
     asyncRoute(async (req, res) => {
       const primary = await loadStoredProvider(db, 'primary');
       const capabilities = capabilitiesOf(primary);
+      const provider = primary ? describeProvider(primary.provider) : null;
       return res.json({
         // Whether Josi can answer at all, and if not, why not.
         ready: !!primary?.activated_at && capabilities?.chat === true,
@@ -890,6 +892,21 @@ export function llmRoutes(ctx: LlmRoutesCtx): Router {
         // from a parameter, so a member cannot ask about somebody else.
         usage: await usageSummary(db, req.user!.id),
         cap: await checkCaps(db, req.user!.id),
+        aiProcessing: {
+          disclosureVersion: 'ai-data-sharing-2026-09-28',
+          provider: provider ? {
+            id: provider.kind,
+            name: provider.label,
+            external: provider.external,
+          } : null,
+          dataCategories: [
+            'Messages you send',
+            'Attachments you choose to send',
+            'Voice transcripts you choose to send',
+            'Email, calendar, contact, task, and other connected-service context used only when needed for your request',
+          ],
+          purpose: 'To generate the response or carry out the action you request.',
+        },
       });
     }),
   );

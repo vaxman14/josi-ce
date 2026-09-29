@@ -467,15 +467,26 @@ describe('caps', () => {
 });
 
 describe('what a member is told', () => {
-  it('is which features work, not how the model is configured', async () => {
+  it('names the AI recipient for consent without leaking model configuration', async () => {
     await configure();
     await call('/api/admin/llm/providers/primary/probe', { method: 'POST', jar: cookies.admin });
 
     const res = await call('/api/llm/status', { jar: cookies.alice });
     expect(res.status).toBe(200);
     expect(res.body.ready).toBe(true);
+    expect(res.body.aiProcessing).toEqual({
+      disclosureVersion: 'ai-data-sharing-2026-09-28',
+      provider: { id: 'openai', name: 'OpenAI', external: true },
+      dataCategories: [
+        'Messages you send',
+        'Attachments you choose to send',
+        'Voice transcripts you choose to send',
+        'Email, calendar, contact, task, and other connected-service context used only when needed for your request',
+      ],
+      purpose: 'To generate the response or carry out the action you request.',
+    });
     const dump = JSON.stringify(res.body);
-    for (const leak of ['gpt-test', 'openai', SECRET_KEY, 'apiKey']) {
+    for (const leak of ['gpt-test', SECRET_KEY, 'apiKey']) {
       expect(dump, leak).not.toContain(leak);
     }
   });
