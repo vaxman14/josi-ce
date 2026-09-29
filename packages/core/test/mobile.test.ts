@@ -204,7 +204,8 @@ describe('Expo push outbox',()=>{
     const now=new Date();const noSend=(async()=>{throw new Error('must not send while foreground')}) as typeof fetch;
     expect(await processPushBatch(db,key,noSend,now)).toMatchObject({sent:0,deferred:1,suppressed:0});
     const [deferred]=await db.query<{status:string;attempts:number;last_error_code:string;next_attempt_at:string}>(`select status,attempts,last_error_code,next_attempt_at from push_deliveries where device_id=$1 and event_key=$2`,[device.id,`turn:${turn!.id}`]);
-    expect(deferred).toMatchObject({status:'retry',attempts:0,last_error_code:'foreground'});expect(new Date(deferred.next_attempt_at).getTime()).toBeGreaterThan(now.getTime());
+    expect(deferred).toMatchObject({status:'retry',attempts:0,last_error_code:'foreground'});
+    expect(new Date(deferred.next_attempt_at).getTime()-now.getTime()).toBe(1_000);
     await db.query(`update mobile_devices set app_state='background' where id=$1`,[device.id]);
     await db.query(`update push_deliveries set created_at=$3,next_attempt_at=$4 where device_id=$1 and event_key=$2`,[device.id,`turn:${turn!.id}`,new Date(now.getTime()-11*60*1000),now]);
     expect(await processPushBatch(db,key,noSend,now)).toMatchObject({sent:0,deferred:0,suppressed:1});
