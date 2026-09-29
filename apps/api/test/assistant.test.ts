@@ -189,6 +189,17 @@ describe('durable native turns and devices',()=>{
     expect(JSON.stringify(listed.body)).not.toContain('owner_binding');
     expect((await call(`/api/assistant/devices/${registered.body.device.id}`,{method:'DELETE',jar:cookies.bob})).status).toBe(404);
   });
+
+  it('suppresses a deferred completion only after its foreground owner observes it',async()=>{
+    const threadId=await threadWith('alice');
+    const registered=await call('/api/assistant/devices',{method:'PUT',jar:cookies.alice,body:{device_identity:'abababab-abab-4bab-8bab-abababababab',platform:'ios',expo_token:'ExpoPushToken[observed_api]',app_state:'foreground',privacy_locked:false,timezone:'UTC'}});
+    const accepted=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body:{client_message_id:'observed-api',message:'show me live'}});
+    await db.query(`update assistant_turns set status='completed',completed_at=now() where id=$1`,[accepted.body.turn.id]);
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body,status,last_error_code) select owner_user_id,$2,'turn:'||id,'assistant','turn',id,'Josi','done','retry','foreground' from assistant_turns where id=$1`,[accepted.body.turn.id,registered.body.device.id]);
+    expect((await call(`/api/assistant/threads/${threadId}/turns/${accepted.body.turn.id}/observed`,{method:'POST',jar:cookies.bob})).status).toBe(404);
+    expect((await call(`/api/assistant/threads/${threadId}/turns/${accepted.body.turn.id}/observed`,{method:'POST',jar:cookies.alice})).status).toBe(204);
+    expect((await db.query<{status:string;last_error_code:string}>(`select status,last_error_code from push_deliveries where event_key=$1`,[`turn:${accepted.body.turn.id}`]))[0]).toEqual({status:'suppressed',last_error_code:'observed_foreground'});
+  });
 });
 
 describe('anonymous callers', () => {
