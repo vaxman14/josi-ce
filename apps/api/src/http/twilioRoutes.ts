@@ -221,7 +221,10 @@ export class TwilioMediaBridge {
     })().catch((err) => { console.error('twilio media failed', (err as Error).message); ws.close(1011); }); });
     ws.on('close', () => { clearTimeout(timer); if (state) { state.closed = true;
       if (this.activeCallSid === state.call.call_sid) this.activeCallSid = null;
-      void this.ctx.voiceHelper('/close', { session: state.voiceSession }).catch(() => undefined); } });
+      void Promise.all([
+        this.ctx.voiceHelper('/close', { session: state.voiceSession }).catch(() => undefined),
+        this.ctx.db.query("update twilio_call_sessions set state='completed',ended_at=coalesce(ended_at,now()),updated_at=now() where call_sid=$1 and state in ('created','ringing','connected')", [state.call.call_sid]).catch(() => undefined),
+      ]); } });
   }
 
   private async start(message: Record<string, any>): Promise<TwilioSocketState> {

@@ -133,5 +133,14 @@ describe('Twilio public webhook boundary', () => {
     for (let tries = 0; tries < 100 && outbound.filter((event) => event.event === 'mark').length < 2; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
     expect(outbound.filter((event) => event.event === 'mark')).toHaveLength(2);
     ws.close();
+    for (let tries = 0; tries < 100; tries++) {
+      const [closed] = await db.query<{ state: string; ended: boolean }>(
+        'select state,ended_at is not null as ended from twilio_call_sessions where call_sid=$1', [callSid]);
+      if (closed?.state === 'completed' && closed.ended) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const [closed] = await db.query<{ state: string; ended: boolean }>(
+      'select state,ended_at is not null as ended from twilio_call_sessions where call_sid=$1', [callSid]);
+    expect(closed).toEqual({ state: 'completed', ended: true });
   });
 });
