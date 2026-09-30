@@ -99,8 +99,8 @@ export async function startTwilioCall(args: { credentials: Record<string, string
   voiceUrl: string; statusCallback: string; fetchImpl?: typeof fetch }): Promise<string> {
   const credentials = twilioCredentials(args.credentials);
   const body = new URLSearchParams({ To: args.to, From: credentials.phoneNumber, Url: args.voiceUrl,
-    Method: 'POST', StatusCallback: args.statusCallback, StatusCallbackMethod: 'POST',
-    StatusCallbackEvent: 'initiated ringing answered completed' });
+    Method: 'POST', StatusCallback: args.statusCallback, StatusCallbackMethod: 'POST' });
+  for (const event of ['initiated', 'ringing', 'answered', 'completed']) body.append('StatusCallbackEvent', event);
   const result = await responseJson(args.fetchImpl ?? fetch,
     `https://api.twilio.com/2010-04-01/Accounts/${credentials.accountSid}/Calls.json`, {
       method: 'POST', headers: { Authorization: auth(credentials), 'Content-Type': 'application/x-www-form-urlencoded' }, body,

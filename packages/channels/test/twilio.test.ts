@@ -51,6 +51,7 @@ describe('Twilio channel boundary', () => {
         return new Response(JSON.stringify({ sid: `SM${'6'.repeat(32)}` }), { status: 201 });
       }
       expect(url).toMatch(/\/Calls\.json$/); expect(body).toContain('From=%2B19517177772');
+      for (const event of ['initiated', 'ringing', 'answered', 'completed']) expect(body).toContain(`StatusCallbackEvent=${event}`);
       return new Response(JSON.stringify({ sid: `CA${'7'.repeat(32)}` }), { status: 201 });
     }) as unknown as typeof fetch;
     await expect(sendTwilioSms({ credentials, to: '+19515149294', text: 'hi', statusCallback: 'https://josi.test/status', fetchImpl }))

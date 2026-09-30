@@ -189,7 +189,10 @@ export class TwilioMediaBridge {
         if (url.pathname !== '/channels/twilio/voice/stream') return;
         const secrets = await secretsOf(this.ctx);
         const signature = Array.isArray(req.headers['x-twilio-signature']) ? req.headers['x-twilio-signature'][0] : req.headers['x-twilio-signature'];
-        if (!secrets || !verifyTwilioSignature(secrets.authToken, signature, `${this.ctx.appUrl}${url.pathname}`, {})) return socket.destroy();
+        const httpsUrl = `${this.ctx.appUrl}${url.pathname}`;
+        const websocketUrl = httpsUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
+        const signedUrls = [httpsUrl, websocketUrl, `${httpsUrl}/`, `${websocketUrl}/`];
+        if (!secrets || !signedUrls.some((candidate) => verifyTwilioSignature(secrets.authToken, signature, candidate, {}))) return socket.destroy();
         this.wss.handleUpgrade(req, socket, head, (ws) => this.wss.emit('connection', ws, req));
       })().catch(() => socket.destroy());
     });

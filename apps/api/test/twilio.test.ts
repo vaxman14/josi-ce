@@ -104,7 +104,7 @@ describe('Twilio public webhook boundary', () => {
     await db.query(`insert into twilio_call_sessions(call_sid,user_id,external_identity,direction,stream_token_hash)
       values($1,$2,$3,'inbound',$4)`, [callSid, adminId, phone, createHash('sha256').update(token).digest('hex')]);
     const path = '/channels/twilio/voice/stream';
-    const signature = twilio.getExpectedTwilioSignature(credentials.authToken, appUrl + path, {});
+    const signature = twilio.getExpectedTwilioSignature(credentials.authToken, appUrl.replace(/^https:/, 'wss:') + path, {});
     const address = server.address() as AddressInfo;
     const ws = new WebSocket(`ws://127.0.0.1:${address.port}${path}`, { headers: { 'X-Twilio-Signature': signature } });
     const outbound: Array<Record<string, unknown>> = [];
