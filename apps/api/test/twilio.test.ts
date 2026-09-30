@@ -27,6 +27,8 @@ const credentials = {
 };
 
 let db: TestDb; let server: Server; let base = ''; let adminId = ''; const helperCalls: string[] = [];
+const llmBodies: string[] = [];
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 function silenceWav(): Buffer {
   const samples = Buffer.alloc(2400 * 2); const wav = Buffer.alloc(44 + samples.length);
   wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
@@ -60,9 +62,26 @@ beforeAll(async () => {
   await setExternalProbe(db, 'twilio', true, null); await setExternalEnabled(db, 'twilio', true);
   await db.query(`insert into llm_providers
     (role,provider,model,api_key_enc,external_acknowledged,activated_at,probed_at,
-     cap_chat,cap_structured_output,cap_tool_calling,cap_context_tokens)
-    values ('primary','openai','gpt-test',$1,true,now(),now(),true,false,false,8000)`, [seal(key, { apiKey: 'test' })]);
-  const app = createApp(db, { cookieSecure: false, appUrl, masterKeyCheck: { path: keyPath }, voiceBoxHelper: voiceHelper });
+     cap_chat,cap_structured_output,cap_tool_calling,cap_vision,cap_context_tokens)
+    values ('primary','openai','gpt-test',$1,true,now(),now(),true,false,false,true,8000)`, [seal(key, { apiKey: 'test' })]);
+  const connectorFetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith('https://api.twilio.com/') && url.includes('/Media/'))
+      return new Response(null, { status: 307, headers: { location: 'https://mms.twiliocdn.com/test-image' } });
+    if (url === 'https://mms.twiliocdn.com/test-image')
+      return new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(png.length) } });
+    if (url.endsWith('/Messages.json') && init?.method === 'POST')
+      return new Response(JSON.stringify({ sid: `SM${'a'.repeat(32)}` }), { status: 201 });
+    throw new Error(`unexpected connector fetch: ${url}`);
+  };
+  const llmFetch = async (_input: string | URL | Request, init?: RequestInit) => {
+    llmBodies.push(String(init?.body ?? ''));
+    return new Response(JSON.stringify({ id: 'answer', model: 'gpt-test',
+      choices: [{ message: { role: 'assistant', content: 'I can see the image.' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const app = createApp(db, { cookieSecure: false, appUrl, masterKeyCheck: { path: keyPath }, voiceBoxHelper: voiceHelper,
+    connectorFetch: connectorFetch as typeof fetch, llmFetch: llmFetch as typeof fetch, llmResolve: async () => ['203.0.113.10'] });
   server = createServer(app);
   new TwilioMediaBridge({ db, appUrl, masterKey: { path: keyPath }, voiceHelper,
     llmResolve: async () => ['203.0.113.10'], llmFetch: async () => new Response(JSON.stringify({
@@ -86,6 +105,29 @@ describe('Twilio public webhook boundary', () => {
       From: 'invalid', To: credentials.phoneNumber, Body: '', NumMedia: '0' });
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('<Response></Response>');
+  });
+
+  it('accepts a real MMS, downloads its image, and passes it to the vision model', async () => {
+    const phone = '+19515149293';
+    const code = await mintExternalLinkCode(db, 'twilio', adminId);
+    expect(await consumeExternalLinkCode(db, { provider: 'twilio', code: code.code,
+      externalIdentity: phone, conversationId: phone })).not.toBeNull();
+    const messageSid = `MM${'b'.repeat(32)}`; const mediaSid = `ME${'c'.repeat(32)}`;
+    const mediaUrl = `https://api.twilio.com/2010-04-01/Accounts/${credentials.accountSid}/Messages/${messageSid}/Media/${mediaSid}`;
+    const response = await post('/channels/twilio/webhook', { MessageSid: messageSid, From: phone,
+      To: credentials.phoneNumber, Body: 'What is it?', NumMedia: '1', MediaUrl0: mediaUrl,
+      MediaContentType0: 'image/png' });
+    expect(response.status).toBe(200);
+    for (let tries = 0; tries < 100; tries++) {
+      const [event] = await db.query<{ outcome: string }>(
+        "select outcome from external_channel_events where provider='twilio' and event_id=$1", [messageSid]);
+      if (event?.outcome === 'accepted') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const [event] = await db.query<{ outcome: string }>(
+      "select outcome from external_channel_events where provider='twilio' and event_id=$1", [messageSid]);
+    expect(event?.outcome).toBe('accepted');
+    expect(llmBodies.some((body) => body.includes('data:image/png;base64,'))).toBe(true);
   });
 
   it('refuses an unlinked caller without opening a local voice session', async () => {

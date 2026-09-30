@@ -15,6 +15,11 @@ export interface TwilioProbe {
   voice: boolean;
 }
 
+export interface TwilioMedia {
+  bytes: Buffer;
+  contentType: string;
+}
+
 const sid = (value: string, prefix: string) => new RegExp(`^${prefix}[0-9a-fA-F]{32}$`).test(value);
 export const normalizeE164 = (value: string): string | null => /^\+[1-9][0-9]{7,14}$/.test(value.trim()) ? value.trim() : null;
 
@@ -75,11 +80,57 @@ export function normalizeTwilioSms(body: Record<string, unknown>): NormalizedMes
   const eventId = typeof body.MessageSid === 'string' ? body.MessageSid : '';
   const from = typeof body.From === 'string' ? normalizeE164(body.From) : null;
   const to = typeof body.To === 'string' ? normalizeE164(body.To) : null;
-  if (!sid(eventId, 'SM') || !from || !to) return [];
+  // Twilio assigns SM... identifiers to SMS and MM... identifiers to MMS.
+  // Treating every inbound message as SM silently discarded every real MMS.
+  if (!(sid(eventId, 'SM') || sid(eventId, 'MM')) || !from || !to) return [];
   const mediaCount = Math.min(10, Math.max(0, Number(body.NumMedia ?? 0) || 0));
-  const attachmentIds = Array.from({ length: mediaCount }, (_, index) => String(body[`MediaSid${index}`] ?? body[`MediaUrl${index}`] ?? '')).filter(Boolean);
+  const attachmentIds = Array.from({ length: mediaCount }, (_, index) => String(body[`MediaUrl${index}`] ?? '')).filter(Boolean);
   return [{ channel: 'twilio', eventId, externalIdentity: from, conversationId: from,
     text: typeof body.Body === 'string' ? body.Body.trim().slice(0, 4000) : '', replyTo: null, attachmentIds }];
+}
+
+async function boundedBody(response: Response, maxBytes: number): Promise<Buffer> {
+  const declared = Number(response.headers.get('content-length') ?? 0);
+  if (declared > maxBytes) throw new Error('Twilio media exceeds the attachment limit');
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader(); const chunks: Buffer[] = []; let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) { await reader.cancel(); throw new Error('Twilio media exceeds the attachment limit'); }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, size);
+}
+
+/** Fetch one authenticated MMS object without turning Twilio's supplied URL
+ * into an SSRF primitive or leaking Basic auth across its CDN redirect. */
+export async function fetchTwilioMedia(args: { credentials: Record<string, string>; mediaUrl: string;
+  maxBytes: number; fetchImpl?: typeof fetch }): Promise<TwilioMedia> {
+  const credentials = twilioCredentials(args.credentials);
+  let url: URL;
+  try { url = new URL(args.mediaUrl); } catch { throw new Error('Twilio supplied an invalid media URL'); }
+  const expected = new RegExp(`^/2010-04-01/Accounts/${credentials.accountSid}/Messages/(?:SM|MM)[0-9a-fA-F]{32}/Media/ME[0-9a-fA-F]{32}$`);
+  if (url.protocol !== 'https:' || url.hostname !== 'api.twilio.com' || url.username || url.password
+    || url.search || url.hash || !expected.test(url.pathname)) throw new Error('Twilio supplied an untrusted media URL');
+  const authHeader = `Basic ${Buffer.from(`${credentials.accountSid}:${credentials.authToken}`).toString('base64')}`;
+  const first = await (args.fetchImpl ?? fetch)(url, { headers: { Authorization: authHeader }, redirect: 'manual' });
+  let response = first;
+  if ([301, 302, 303, 307, 308].includes(first.status)) {
+    const location = first.headers.get('location');
+    if (!location) throw new Error('Twilio media redirect was incomplete');
+    const redirected = new URL(location, url);
+    if (redirected.protocol !== 'https:' || redirected.hostname !== 'mms.twiliocdn.com'
+      || redirected.username || redirected.password) throw new Error('Twilio media redirect was untrusted');
+    // Do not forward the Account SID/Auth Token to the CDN.
+    response = await (args.fetchImpl ?? fetch)(redirected, { redirect: 'error' });
+  }
+  if (!response.ok) throw new Error(`Twilio media download failed (${response.status})`);
+  const contentType = (response.headers.get('content-type') ?? 'application/octet-stream').split(';', 1)[0].trim().toLowerCase();
+  const bytes = await boundedBody(response, args.maxBytes);
+  if (!bytes.length) throw new Error('Twilio media was empty');
+  return { bytes, contentType };
 }
 
 export async function sendTwilioSms(args: { credentials: Record<string, string>; to: string; text: string;

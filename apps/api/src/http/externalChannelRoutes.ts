@@ -1,4 +1,5 @@
 import { Router, type Express, type Request, type Response } from 'express';
+import { extname } from 'node:path';
 import {
   appendEvent, createThread, listMessages, loadMasterKey, markActionsPresented, recordExchange,
   type Db, type LoadOptions, type MasterKey,
@@ -8,6 +9,7 @@ import {
   finishExternalEvent, listExternalLinks, loadExternalConfig, mintExternalLinkCode,
   normalizeSignal, normalizeSlack, normalizeWhatsApp, openExternalConfig,
   probeTwilio,
+  fetchTwilioMedia,
   resolveExternalLink, revokeExternalLink, sendSignal, sendSlack, sendWhatsApp,
   sendTwilioSms,
   setExternalEnabled, setExternalProbe, storeExternalConfig, verifySignalBridge,
@@ -16,6 +18,7 @@ import {
 } from '@josi-ce/channels';
 import { runAssistantTurn } from '@josi-ce/agent';
 import { mailPolicy } from '@josi-ce/mail';
+import { IMAGE_MEDIA_TYPES, maxAttachmentLimit, normalizeChatImage, validateAttachment } from '@josi-ce/storage';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
@@ -148,9 +151,35 @@ export async function processInbound(ctx: ExternalChannelCtx, secrets: Record<st
   }
   const link = await resolveExternalLink(ctx.db, message.channel, message.externalIdentity);
   if (!link) { await sendExternal(ctx, secrets, message, 'This identity is not linked. Sign in to Josi, create a one-time link code, then send “link CODE” here.'); return finish('unlinked'); }
-  if (message.attachmentIds.length && !message.text) { await sendExternal(ctx, secrets, message, 'Josi cannot read files from this channel yet. Use the web app for attachments.'); return finish('refused'); }
-  if (!message.text) return finish('ignored');
-  const turn = await runLinkedExternalTurn(ctx, link, message.text, message.channel);
+  let images: Array<{ mediaType: string; base64: string }> | undefined;
+  if (message.attachmentIds.length) {
+    if (message.channel !== 'twilio') {
+      if (!message.text) { await sendExternal(ctx, secrets, message, 'Josi cannot read files from this channel yet. Use the web app for attachments.'); return finish('refused'); }
+    } else try {
+      images = [];
+      for (const mediaUrl of message.attachmentIds) {
+        const downloaded = await fetchTwilioMedia({ credentials: secrets, mediaUrl,
+          maxBytes: maxAttachmentLimit(), fetchImpl: ctx.fetchImpl });
+        const extension = downloaded.contentType === 'image/png' ? 'png'
+          : downloaded.contentType === 'image/jpeg' ? 'jpg'
+          : downloaded.contentType === 'image/heic' || downloaded.contentType === 'image/heif' ? 'heic' : 'bin';
+        const normalized = await normalizeChatImage({ filename: `twilio-image.${extension}`,
+          declaredContentType: downloaded.contentType, bytes: downloaded.bytes });
+        const checked = validateAttachment(normalized.filename, normalized.contentType, normalized.bytes);
+        const normalizedExtension = extname(checked.filename).replace(/^\./, '').toLowerCase();
+        const mediaType = IMAGE_MEDIA_TYPES[normalizedExtension];
+        if (!mediaType) throw new Error('Twilio attachment is not a supported image');
+        images.push({ mediaType, base64: normalized.bytes.toString('base64') });
+      }
+    } catch (error) {
+      console.error('twilio mms failed', (error as Error).message);
+      await sendExternal(ctx, secrets, message, 'I received the image, but could not read it safely. Please resend it as a JPEG or PNG.');
+      return finish('refused');
+    }
+  }
+  const inbound = message.text || (images?.length ? 'Describe this image.' : '');
+  if (!inbound) return finish('ignored');
+  const turn = await runLinkedExternalTurn(ctx, link, inbound, message.channel, images);
   const disclosure = (await mailPolicy(ctx.db)).disclosure.replace('{user}', 'you');
   await sendExternal(ctx, secrets, message, `${turn.reply}\n\n${disclosure}`);
   await ctx.db.query('update external_channel_links set last_inbound_at=now(),last_outbound_at=now() where id=$1', [link.id]);
@@ -158,10 +187,10 @@ export async function processInbound(ctx: ExternalChannelCtx, secrets: Record<st
 }
 
 export async function runLinkedExternalTurn(ctx: ExternalChannelCtx, link: ExternalLinkRow,
-  inbound: string, channel: ExternalChannel): Promise<{ reply: string; refused: boolean; threadId: string }> {
+  inbound: string, channel: ExternalChannel, images?: Array<{ mediaType: string; base64: string }>): Promise<{ reply: string; refused: boolean; threadId: string }> {
   const threadId = await externalThread(ctx.db, link);
   const history = (await listMessages(ctx.db, { threadId, limit: 40 })).map((m) => ({ role: m.direction === 'in' ? 'user' as const : 'assistant' as const, content: m.body }));
-  const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound, connectorFetch: ctx.connectorFetch, channel: 'external', sessionKey: threadId });
+  const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound, images, connectorFetch: ctx.connectorFetch, channel: 'external', sessionKey: threadId });
   const reply = result.refusal?.message ?? result.reply;
   const actionState=result.actions.find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
   const outboundMeta:Record<string,unknown>={};
