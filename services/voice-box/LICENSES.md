@@ -10,6 +10,7 @@ and no third-party TTS web service receives audio or text.
 
 | Component | Pinned artifact | Terms and evidence | Packaging decision |
 | --- | --- | --- | --- |
+| Kitten TTS Nano model and eight voice vectors | v0.8 ONNX; revision `7a1db645b1f3ab9420761d87428e042b9cec3f26` | [Pinned model repository](https://huggingface.co/KittenML/kitten-tts-nano-0.8/tree/7a1db645b1f3ab9420761d87428e042b9cec3f26) declares Apache-2.0 | Bundle the checksum-pinned model, voice archive, config, model card and Apache license; no voice cloning |
 | Kokoro neural model | v1.0 quantized ONNX; revision `1939ad2a8e416c0acfeecc08a694d14ef25f2231` | [Converted model repository](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/tree/1939ad2a8e416c0acfeecc08a694d14ef25f2231) and [original model card](https://huggingface.co/hexgrad/Kokoro-82M/blob/f3ff3571791e39611d31c381e3a41a3af07b4987/README.md) declare Apache-2.0 | Bundle with model cards, attribution and Apache license |
 | Kokoro Heart and Bella voice vectors | `af_heart.bin`, `af_bella.bin`, same converted revision | Included in the same Apache-2.0 model repository; the original model card describes the training provenance and attribution | Bundle only these two reviewed vectors, each separately SHA-256 pinned; no voice cloning |
 | Kokoro inference | ONNX Runtime 1.22.1 | [MIT](https://github.com/microsoft/onnxruntime/blob/v1.22.1/LICENSE) | Keep wheel license and third-party notices |
@@ -29,7 +30,7 @@ explicit first-install notice and a checksum-pinned download after acceptance.
 
 ## Artifact-level CPU distribution conclusion
 
-The v1 CPU builds for Linux amd64 and arm64 use Kokoro as their only TTS engine.
+The previously authorized v1 CPU builds for Linux amd64 and arm64 use Kokoro as their only TTS engine. Builds that add Kitten Nano require a new artifact review before publication; local operator testing does not authorize publication.
 The exact final image identities and SBOM hashes are recorded outside the image
 in `docs/voice-box/artifacts.json`; this avoids a circular image-digest claim.
 The later publication authorization covers only the reviewed CPU image recorded

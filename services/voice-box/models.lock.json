@@ -1,6 +1,34 @@
 {
   "files": [
     {
+      "path": "kitten-nano/model.onnx",
+      "url": "https://huggingface.co/KittenML/kitten-tts-nano-0.8/resolve/7a1db645b1f3ab9420761d87428e042b9cec3f26/kitten_tts_nano_v0_8.onnx",
+      "sha256": "320564d2615f235de972ca27a7f39551c94185cfa24ca85b07a29084135f1e5e",
+      "size": 56767095,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "kitten-nano/voices.npz",
+      "url": "https://huggingface.co/KittenML/kitten-tts-nano-0.8/resolve/7a1db645b1f3ab9420761d87428e042b9cec3f26/voices.npz",
+      "sha256": "8aa7cee235abb0739cb51e6559685f65a4dacd95568833d05699b1633f519b3f",
+      "size": 3278902,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "kitten-nano/config.json",
+      "url": "https://huggingface.co/KittenML/kitten-tts-nano-0.8/resolve/7a1db645b1f3ab9420761d87428e042b9cec3f26/config.json",
+      "sha256": "b66006ccbeccd4de5fc3c9272059c47f5725df7215fd889785c03602652fab64",
+      "size": 688,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "licenses/kitten-tts-nano.md",
+      "url": "https://huggingface.co/KittenML/kitten-tts-nano-0.8/resolve/7a1db645b1f3ab9420761d87428e042b9cec3f26/README.md",
+      "sha256": "fed4ce2ecae0e6522a191660a145753a09af0190afdc047ff22f960efe9b2538",
+      "size": 739,
+      "license": "Apache-2.0"
+    },
+    {
       "path": "kokoro/model.onnx",
       "url": "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/1939ad2a8e416c0acfeecc08a694d14ef25f2231/onnx/model_quantized.onnx",
       "sha256": "fbae9257e1e05ffc727e951ef9b9c98418e6d79f1c9b6b13bd59f5c9028a1478",

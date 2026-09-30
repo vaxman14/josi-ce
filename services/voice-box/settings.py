@@ -8,7 +8,9 @@ def validate(value):
         raise ValueError("Provide only the supported Voice Box settings")
     if value["model"] not in ("tiny.en", "base.en"):
         raise ValueError("Unsupported transcription model")
-    if value["voice"] not in ("af_heart", "af_bella"):
+    if value["voice"] not in ("af_heart", "af_bella", "kitten_bella", "kitten_jasper",
+                               "kitten_luna", "kitten_bruno", "kitten_rosie", "kitten_hugo",
+                               "kitten_kiki", "kitten_leo"):
         raise ValueError("Unsupported voice")
     if value["device"] not in ("cpu", "cuda"):
         raise ValueError("Unsupported device")

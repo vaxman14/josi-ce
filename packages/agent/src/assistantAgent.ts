@@ -142,6 +142,9 @@ export interface TurnArgs {
    * minute honestly — "45 minutes with Josi" should not read as "45 minutes in
    * the web app" when half of it was Telegram. */
   channel?: ActivityChannel;
+  /** Public correspondents may converse and send images, but never inherit the
+   * owner's persona, memory, connected data, tools, or pending approvals. */
+  publicAudience?: boolean;
   /** What a step-up unlock is scoped to. Defaults to the thread, so verifying
    * in one conversation does not silently unlock another. */
   sessionKey?: string;
@@ -161,18 +164,23 @@ function systemPrompt(args: {
   customApis?: string[];
   imagesAttached?: boolean;
   temporalContext: string;
+  publicAudience?: boolean;
 }): string {
   return [
-    'You are Josi, an assistant working for one person inside a small shared workspace.',
-    'You are talking to that person. Everything you create belongs to them and nobody else in the workspace sees it unless they share it.',
+    args.publicAudience
+      ? 'You are Josi, Roman’s AI assistant, speaking with a member of the public on Roman’s behalf.'
+      : 'You are Josi, an assistant working for one person inside a small shared workspace.',
+    args.publicAudience
+      ? 'You have no access to Roman’s private information, memory, accounts, files, tools, or pending actions. Never imply otherwise. Help conversationally and ask the sender to contact Roman directly when private knowledge or action is required.'
+      : 'You are talking to that person. Everything you create belongs to them and nobody else in the workspace sees it unless they share it.',
     'Be brief and direct: lead with the answer, no filler, no preamble.',
     'Plain text only — no markdown, no asterisks, no headings.',
-    'You do work through tasks. Fill every required slot BEFORE anything is attempted; if a required slot is missing, ask for it. Never start work with a hole in it.',
-    'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn. Email availability is stricter: call check_email_availability and claim availability only when its live provider request succeeds; connection metadata is never live proof. Use evidence internally, but never show receipts, observation timestamps, account metadata, internal identifiers, or raw status records. Summarize only the useful human-facing answer and source/provider name. Never infer runtime state from prior chat.',
+    args.publicAudience ? '' : 'You do work through tasks. Fill every required slot BEFORE anything is attempted; if a required slot is missing, ask for it. Never start work with a hole in it.',
+    args.publicAudience ? '' : 'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn. Email availability is stricter: call check_email_availability and claim availability only when its live provider request succeeds; connection metadata is never live proof. Use evidence internally, but never show receipts, observation timestamps, account metadata, internal identifiers, or raw status records. Summarize only the useful human-facing answer and source/provider name. Never infer runtime state from prior chat.',
     'Never invent a name, number, address or time. If you do not know something, ask or say you do not know.',
     `${args.temporalContext} Ask only for scheduling details that are genuinely missing, such as duration when no end time or duration was given.`,
-    'For calendar follow-ups, preserve the exact named subject and verified event receipt from the prior turn. “Move/push the EDD call” modifies the EDD event, never the newly proposed event. Keep the existing event on its original calendar and inherit the verified/default calendar for a new event instead of asking again when the receipt already identifies it.',
-    args.templateNames.length
+    args.publicAudience ? '' : 'For calendar follow-ups, preserve the exact named subject and verified event receipt from the prior turn. “Move/push the EDD call” modifies the EDD event, never the newly proposed event. Keep the existing event on its original calendar and inherit the verified/default calendar for a new event instead of asking again when the receipt already identifies it.',
+    args.publicAudience ? '' : args.templateNames.length
       ? `The kinds of work you can start: ${args.templateNames.join(', ')}.`
       : 'No kinds of work are enabled on this installation, so you cannot start a task.',
     // The honest half. Phase 5 ships the task machinery but nothing that
@@ -184,7 +192,9 @@ function systemPrompt(args: {
       : '',
     args.capabilities.toolCalling
       ? ''
-      : 'You cannot call tools on this installation, so you can talk but cannot create or change anything. Say so if asked to do something.',
+      : args.publicAudience
+        ? 'This public conversation has no tools. You can talk but cannot access private information or create or change anything for Roman.'
+        : 'You cannot call tools on this installation, so you can talk but cannot create or change anything. Say so if asked to do something.',
     // Connected data, stated honestly in both directions. What is ON is a
     // real ability backed by a tool; what is OFF is named with the exact
     // switch that fixes it, so "can you read my email" never gets a guess.
@@ -283,7 +293,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // It may repeat only the exact typed read stored on the immediately preceding
   // assistant message. No metadata means no target: old approvals, succeeded
   // writes and nouns in conversation history are deliberately invisible here.
-  if (GENERIC_RETRY.test(args.inbound.trim())) {
+  if (!args.publicAudience && GENERIC_RETRY.test(args.inbound.trim())) {
     const target = await immediatelyPrecedingRetryTarget(db, {
       ownerUserId: userId,
       threadId: args.threadId,
@@ -309,9 +319,9 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // provider names and old calendar subjects in model history are irrelevant.
   const resolveAction=()=>resolveConversationalAction(db,{ownerUserId:userId,threadId:args.threadId,inbound:args.inbound,replyToMessageId:args.replyToMessageId,requireReplyTarget:args.requireApprovalReplyTarget});
   const mayDecideAction=/^(?:yes|yes please|please do|do it|send it|approve|confirmed?|no|no thanks|don't|do not|cancel|deny)\s*[.!]?$/i.test(args.inbound.trim());
-  const deterministic=args.durableTurnId&&args.durableLeaseToken&&mayDecideAction
+  const deterministic=!args.publicAudience&&args.durableTurnId&&args.durableLeaseToken&&mayDecideAction
     ? await runDurableEffect(args.db,{turnId:args.durableTurnId,leaseToken:args.durableLeaseToken},'assistant_action_resolution',{inbound:args.inbound,replyToMessageId:args.replyToMessageId??null},resolveAction)
-    : await resolveAction();
+    : args.publicAudience ? { handled: false } : await resolveAction();
   if(deterministic.handled){
     return {reply:deterministic.reply??'',actions:deterministic.action?[{tool:'assistant_action_state',result:{ok:true,domain:deterministic.action.domain,status:deterministic.action.status,task_id:deterministic.action.task_id}}]:[]};
   }
@@ -339,13 +349,14 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       refusal: { reason: 'cannot_chat', message: 'The configured model could not hold a basic conversation when it was tested, so Josi cannot answer with it.' },
     };
   }
+  const turnCapabilities = { ...capabilities, toolCalling: capabilities.toolCalling && !args.publicAudience };
 
   // ---- what may be offered ----------------------------------------------
   // Tools only if the model was PROVEN to call them. Not "probably supports",
   // not inferred from the model name.
-  const templates = await listTemplates(db);
+  const templates = args.publicAudience ? [] : await listTemplates(db);
   let writeCapabilities = new Set<string>();
-  if (capabilities.toolCalling) {
+  if (turnCapabilities.toolCalling) {
     try { writeCapabilities = await writeActionCapabilities(db, userId); }
     catch (err) { console.error('write capability availability check failed', (err as Error).message); }
   }
@@ -356,7 +367,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // offering is per turn: flip a switch off between turns and the tool is
   // gone from the next list; execution re-checks anyway for the same turn.
   let data: DataToolAvailability = { specs: [], granted: [], denied: [] };
-  if (capabilities.toolCalling) {
+  if (turnCapabilities.toolCalling) {
     try {
       data = await dataToolAvailability(db, userId);
     } catch (err) {
@@ -368,26 +379,26 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   let customApis: CustomApiAvailability = { specs: [], connectionNames: [] };
   let workflowTools = [] as import('./tools.js').ToolSpec[];
   let developerIntegrationTools = [] as import('./tools.js').ToolSpec[];
-  if (capabilities.toolCalling) {
+  if (turnCapabilities.toolCalling) {
     try {
       customApis = await customApiToolAvailability(db);
     } catch (err) {
       console.error('custom api tool availability check failed', (err as Error).message);
     }
   }
-  if (capabilities.toolCalling) {
+  if (turnCapabilities.toolCalling) {
     try { workflowTools = await workflowToolAvailability(db); }
     catch (err) { console.error('native workflow availability check failed', (err as Error).message); }
     try { developerIntegrationTools = await developerIntegrationToolAvailability(db,userId); }
     catch (err) { console.error('native integration availability check failed', (err as Error).message); }
   }
-  const workspaceNames = capabilities.toolCalling ? await workspaceToolNames(db,userId) : new Set<string>();
+  const workspaceNames = turnCapabilities.toolCalling ? await workspaceToolNames(db,userId) : new Set<string>();
   // `approve_task` is only meaningful when this owner already has a generic
   // task waiting on them. Offering it on an ordinary request lets a model
   // confuse "please create this calendar event" with approval of an unrelated
   // task, which then trips the protected step-up gate before the real calendar
   // draft is even prepared.
-  const [approvableTask] = capabilities.toolCalling
+  const [approvableTask] = turnCapabilities.toolCalling
     ? await db.query<{ present: boolean }>(`select true as present from tasks
         where owner_user_id=$1 and state in ('awaiting_approval','awaiting_owner') limit 1`, [userId])
     : [];
@@ -395,13 +406,13 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     (!t.def.name.startsWith('workspace_') || workspaceNames.has(t.def.name))
     && (t.def.name !== 'approve_task' || !!approvableTask)
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
-  const tools = capabilities.toolCalling
+  const tools = turnCapabilities.toolCalling
     ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools].map((t) => t.def)
     : undefined;
   const offeredToolNames = new Set(tools?.map((tool) => tool.name) ?? []);
 
   let recalled = '';
-  if (args.recall) {
+  if (args.recall && !args.publicAudience) {
     // Best effort: a recall outage must not cost someone their turn.
     try {
       recalled = await args.recall(args.inbound);
@@ -416,7 +427,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   const imagesAttached = !!args.images?.length;
   const temporal = await effectiveTimeContext(db, userId, args.now ?? new Date());
   const core = systemPrompt({
-    capabilities,
+    capabilities: turnCapabilities,
     templateNames: templates.map((t) => t.key),
     hasRecall: !!args.recall && !!recalled,
     unavailable,
@@ -424,6 +435,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     customApis: customApis.connectionNames,
     imagesAttached,
     temporalContext: temporal.prompt,
+    publicAudience: args.publicAudience,
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '');
 
   // The person's own layers, in the order the plan fixes. A failure here costs
@@ -432,6 +444,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   let system = core;
   let memoriesUsed: Array<{ id: string; content: string }> = [];
   try {
+    if (args.publicAudience) throw new Error('public audience has no owner personalization');
     const layers = await loadAll(db, userId);
     const { effective } = narrowPolicy(layers.agents_admin, layers.agents_user, CAUTION_ORDER);
     const memories = await relevantMemories(db, { ownerUserId: userId, request: args.inbound });
@@ -446,7 +459,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       memories: memories.map((m: Memory) => ({ content: m.content, provenance: m.provenance })),
     }).text;
   } catch (err) {
-    console.error('personalization unavailable for this turn', (err as Error).message);
+    if (!args.publicAudience) console.error('personalization unavailable for this turn', (err as Error).message);
   }
 
   // The request stays where it belongs: one user message, not repeated in the
@@ -560,7 +573,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
           subjectType: 'thread',
           subjectId: args.threadId,
         });
-        const learnedOnFabrication = await learnFromTurn(db, { userId, inbound: args.inbound });
+        const learnedOnFabrication = args.publicAudience ? undefined : await learnFromTurn(db, { userId, inbound: args.inbound });
         return {
           reply: NARRATED_SEARCH_GUARD_FALLBACK, actions, memoriesUsed, learned: learnedOnFabrication,
           imagesDroppedNoVision, retry,
@@ -641,7 +654,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
 
       // A completed exchange, so there is something to learn from — and only
       // ever from what the PERSON wrote. Never the reply, never tool output.
-      const learned = await learnFromTurn(db, { userId, inbound: args.inbound });
+      const learned = args.publicAudience ? undefined : await learnFromTurn(db, { userId, inbound: args.inbound });
       // Guards inspect the original model text against intact receipts above.
       // Presentation happens only after those checks, once, at the shared
       // agent boundary used by web and every external channel.

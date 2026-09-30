@@ -60,7 +60,7 @@ export function AdminVoiceBox() {
   const inputClass = 'block min-h-11 w-full rounded border border-input bg-background p-2';
   return <div className="mx-auto max-w-2xl space-y-5">
     <h1 className="text-xl font-semibold">Voice Box</h1>
-    <p>Optional local voice chat for Josi. Kokoro provides neural speech on your CPU. Audio stays on this installation; transcripts go through your configured Josi model and its existing permissions.</p>
+    <p>Optional local voice chat for Josi. Kitten Nano and Kokoro provide neural speech on your CPU. Audio stays on this installation; transcripts go through your configured Josi model and its existing permissions.</p>
     {error && <ErrorNote>{error}</ErrorNote>}
     {!status ? <p>Checking Voice Box…</p> : <>
       <p role="status">{working ? 'Applying changes and checking speech models…' : status.healthy ? 'Speech models are ready' : status.apiReady ? 'API is ready; speech models are not ready' : status.phase === 'absent' ? 'Voice Box is not installed' : 'Voice Box is not ready'}</p>
@@ -68,7 +68,7 @@ export function AdminVoiceBox() {
       {!status.verified ? <section className="space-y-3 rounded border border-border p-4">
         <h2 className="font-semibold">Before you install</h2>
         <ul className="list-disc space-y-1 pl-5">{status.requirements.map((item) => <li key={item}>{item}</li>)}</ul>
-        <p className="text-sm">Kokoro weights and the included Heart and Bella voices use Apache-2.0 terms. Whisper uses MIT terms. Third-party notices accompany the pinned image. Installation downloads the image; no microphone audio is sent to a speech provider.</p>
+        <p className="text-sm">Kitten Nano and Kokoro voices use Apache-2.0 terms. Whisper uses MIT terms. Third-party notices accompany the pinned image. Installation downloads the image; no microphone audio is sent to a speech provider.</p>
         {!status.helperAvailable && <p>The host operator must enable the optional Voice Box helper once. Follow the repository’s Voice Box setup guide.</p>}
         {status.helperAvailable && !status.releaseAvailable && <p>A Voice Box image has not yet been authorized for release.</p>}
         <Button disabled={working || !status.helperAvailable || !status.releaseAvailable} onClick={() => void operation('install')}>Install Voice Box</Button>
@@ -76,7 +76,7 @@ export function AdminVoiceBox() {
         <h2 className="font-semibold">Speech settings</h2>
         <fieldset disabled={working || !status.healthy} className="grid gap-4 sm:grid-cols-2">
           <label>Voice<select aria-label="Voice" className={inputClass} value={settings.voice} onChange={(e) => setSettings({ ...settings, voice: e.target.value })}>
-            <option value="af_heart">Heart — US English</option><option value="af_bella">Bella — US English</option>
+            <optgroup label="Kitten Nano — new model"><option value="kitten_bella">Bella</option><option value="kitten_jasper">Jasper</option><option value="kitten_luna">Luna</option><option value="kitten_bruno">Bruno</option><option value="kitten_rosie">Rosie</option><option value="kitten_hugo">Hugo</option><option value="kitten_kiki">Kiki</option><option value="kitten_leo">Leo</option></optgroup><optgroup label="Kokoro — legacy rollback"><option value="af_heart">Heart</option><option value="af_bella">Bella</option></optgroup>
           </select></label>
           <label>Transcription model<select className={inputClass} value={settings.model} onChange={(e) => setSettings({ ...settings, model: e.target.value })}><option value="base.en">Whisper Base — English</option><option value="tiny.en">Whisper Tiny — lighter English model</option></select></label>
           <label>Transcription acceleration<select className={inputClass} value={settings.device} onChange={(e) => setSettings({ ...settings, device: e.target.value as Settings['device'] })}><option value="cpu">CPU</option><option value="cuda" disabled={!status.gpuAvailable}>NVIDIA GPU (optional)</option></select></label>

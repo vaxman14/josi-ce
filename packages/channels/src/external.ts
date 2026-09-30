@@ -17,6 +17,7 @@ export interface ExternalConfigRow {
 export interface ExternalLinkRow {
   id: string; provider: ExternalChannel; user_id: string; external_identity: string;
   conversation_id: string; thread_id: string | null; status: 'active' | 'revoked';
+  public_access: boolean;
   linked_at: string; revoked_at: string | null; last_inbound_at: string | null;
   last_outbound_at: string | null;
 }
@@ -110,6 +111,26 @@ export async function consumeExternalLinkCode(db: Db, args: { provider: External
 export async function resolveExternalLink(db: Db, provider: ExternalChannel, identity: string): Promise<ExternalLinkRow | null> {
   const [row] = await db.query<ExternalLinkRow>("select * from external_channel_links where provider=$1 and external_identity=$2 and status='active'", [provider, identity]);
   return row ?? null;
+}
+
+export async function ensurePublicTwilioLink(db: Db, externalIdentity: string,
+  conversationId: string): Promise<ExternalLinkRow> {
+  const existing = await resolveExternalLink(db, 'twilio', externalIdentity);
+  if (existing) return existing;
+  const [owner] = await db.query<{ id: string }>(
+    "select id from users where role='super_admin' and status='active' limit 1");
+  if (!owner) throw new ExternalChannelError('the installation has no active owner', 'not_configured');
+  try {
+    const [created] = await db.query<ExternalLinkRow>(
+      `insert into external_channel_links(provider,user_id,external_identity,conversation_id,public_access)
+       values('twilio',$1,$2,$3,true) returning *`,
+      [owner.id, externalIdentity, conversationId]);
+    return created;
+  } catch (error) {
+    const raced = await resolveExternalLink(db, 'twilio', externalIdentity);
+    if (raced) return raced;
+    throw error;
+  }
 }
 
 export async function listExternalLinks(db: Db, userId: string): Promise<ExternalLinkRow[]> {

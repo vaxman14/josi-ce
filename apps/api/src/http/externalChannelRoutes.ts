@@ -6,6 +6,7 @@ import {
 } from '@josi-ce/core';
 import {
   SIGNAL_RISK_NOTICE, claimExternalEvent, consumeExternalLinkCode, describeExternalConfig,
+  ensurePublicTwilioLink,
   finishExternalEvent, listExternalLinks, loadExternalConfig, mintExternalLinkCode,
   normalizeSignal, normalizeSlack, normalizeWhatsApp, openExternalConfig,
   probeTwilio,
@@ -149,8 +150,22 @@ export async function processInbound(ctx: ExternalChannelCtx, secrets: Record<st
     await sendExternal(ctx, secrets, message, link ? 'Linked. You can talk to Josi here now.' : 'That link code is invalid or expired. Generate a new one in Josi.');
     return finish(link ? 'accepted' : 'refused');
   }
-  const link = await resolveExternalLink(ctx.db, message.channel, message.externalIdentity);
+  let link = await resolveExternalLink(ctx.db, message.channel, message.externalIdentity);
+  if (!link && message.channel === 'twilio') {
+    link = await ensurePublicTwilioLink(ctx.db, message.externalIdentity, message.conversationId);
+  }
   if (!link) { await sendExternal(ctx, secrets, message, 'This identity is not linked. Sign in to Josi, create a one-time link code, then send “link CODE” here.'); return finish('unlinked'); }
+  if (link.public_access) {
+    const [usage] = await ctx.db.query<{ minute_count: string; day_count: string }>(
+      `select count(*) filter (where received_at > now()-interval '1 minute')::text as minute_count,
+              count(*) filter (where received_at > now()-interval '1 day')::text as day_count
+         from external_channel_events where provider='twilio' and conversation_id=$1`,
+      [message.conversationId]);
+    if (Number(usage?.minute_count ?? 0) > 12 || Number(usage?.day_count ?? 0) > 120) {
+      await sendExternal(ctx, secrets, message, 'Too many messages from this number. Please try again later.');
+      return finish('refused');
+    }
+  }
   let images: Array<{ mediaType: string; base64: string }> | undefined;
   if (message.attachmentIds.length) {
     if (message.channel !== 'twilio') {
@@ -180,7 +195,10 @@ export async function processInbound(ctx: ExternalChannelCtx, secrets: Record<st
   const inbound = message.text || (images?.length ? 'Describe this image.' : '');
   if (!inbound) return finish('ignored');
   const turn = await runLinkedExternalTurn(ctx, link, inbound, message.channel, images);
-  const disclosure = (await mailPolicy(ctx.db)).disclosure.replace('{user}', 'you');
+  const [owner] = await ctx.db.query<{ display_name: string | null; username: string }>(
+    'select display_name,username from users where id=$1', [link.user_id]);
+  const ownerLabel = (owner?.display_name?.trim() || owner?.username?.trim() || 'the account owner').split(/\s+/, 1)[0];
+  const disclosure = (await mailPolicy(ctx.db)).disclosure.replace('{user}', ownerLabel);
   await sendExternal(ctx, secrets, message, `${turn.reply}\n\n${disclosure}`);
   await ctx.db.query('update external_channel_links set last_inbound_at=now(),last_outbound_at=now() where id=$1', [link.id]);
   return finish(turn.refused ? 'refused' : 'accepted');
@@ -190,7 +208,7 @@ export async function runLinkedExternalTurn(ctx: ExternalChannelCtx, link: Exter
   inbound: string, channel: ExternalChannel, images?: Array<{ mediaType: string; base64: string }>): Promise<{ reply: string; refused: boolean; threadId: string }> {
   const threadId = await externalThread(ctx.db, link);
   const history = (await listMessages(ctx.db, { threadId, limit: 40 })).map((m) => ({ role: m.direction === 'in' ? 'user' as const : 'assistant' as const, content: m.body }));
-  const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound, images, connectorFetch: ctx.connectorFetch, channel: 'external', sessionKey: threadId });
+  const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound, images, connectorFetch: ctx.connectorFetch, channel: 'external', sessionKey: threadId, publicAudience: link.public_access });
   const reply = result.refusal?.message ?? result.reply;
   const actionState=result.actions.find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
   const outboundMeta:Record<string,unknown>={};

@@ -19,7 +19,11 @@ def smoke():
     segments, _ = model.transcribe(audio, language='en', beam_size=1, vad_filter=True)
     text = ' '.join(part.text for part in segments).lower()
     assert 'apples' in text and 'tomorrow' in text, text
-    print('PASS Kokoro PCM WAV → Silero VAD → faster-whisper CPU transcription')
+    kitten = dict(DEFAULTS, voice='kitten_hugo')
+    with wave.open(io.BytesIO(NeuralSpeech(kitten).speech('Hi. Josi here. How can I help?'))) as wav:
+        kitten_audio = np.frombuffer(wav.readframes(wav.getnframes()), dtype='<i2')
+        assert wav.getframerate() == 24000 and len(kitten_audio) > 12000 and np.max(np.abs(kitten_audio)) > 100
+    print('PASS Kokoro and Kitten PCM WAV → Silero VAD → faster-whisper CPU transcription')
 
 
 if __name__ == '__main__':

@@ -28,6 +28,7 @@ const credentials = {
 
 let db: TestDb; let server: Server; let base = ''; let adminId = ''; const helperCalls: string[] = [];
 const llmBodies: string[] = [];
+const sentSmsBodies: string[] = [];
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 function silenceWav(): Buffer {
   const samples = Buffer.alloc(2400 * 2); const wav = Buffer.alloc(44 + samples.length);
@@ -56,22 +57,24 @@ async function post(path: string, body: Record<string, string>, valid = true) {
 
 beforeAll(async () => {
   db = await testDb(); await ensureWorkspace(db);
-  const admin = await createUser(db, { email: 'admin@twilio.test', username: 'twilio-admin', role: 'super_admin', password: 'twilio-test-password-123' });
+  const admin = await createUser(db, { email: 'admin@twilio.test', username: 'twilio-admin', displayName: 'Roman Tester', role: 'super_admin', password: 'twilio-test-password-123' });
   adminId = admin.id;
   await storeExternalConfig(db, { provider: 'twilio', masterKey: key, actorUserId: admin.id, credentials });
   await setExternalProbe(db, 'twilio', true, null); await setExternalEnabled(db, 'twilio', true);
   await db.query(`insert into llm_providers
     (role,provider,model,api_key_enc,external_acknowledged,activated_at,probed_at,
      cap_chat,cap_structured_output,cap_tool_calling,cap_vision,cap_context_tokens)
-    values ('primary','openai','gpt-test',$1,true,now(),now(),true,false,false,true,8000)`, [seal(key, { apiKey: 'test' })]);
+    values ('primary','openai','gpt-test',$1,true,now(),now(),true,false,true,true,8000)`, [seal(key, { apiKey: 'test' })]);
   const connectorFetch = async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith('https://api.twilio.com/') && url.includes('/Media/'))
       return new Response(null, { status: 307, headers: { location: 'https://mms.twiliocdn.com/test-image' } });
     if (url === 'https://mms.twiliocdn.com/test-image')
       return new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(png.length) } });
-    if (url.endsWith('/Messages.json') && init?.method === 'POST')
+    if (url.endsWith('/Messages.json') && init?.method === 'POST') {
+      sentSmsBodies.push(new URLSearchParams(String(init.body)).get('Body') ?? '');
       return new Response(JSON.stringify({ sid: `SM${'a'.repeat(32)}` }), { status: 201 });
+    }
     throw new Error(`unexpected connector fetch: ${url}`);
   };
   const llmFetch = async (_input: string | URL | Request, init?: RequestInit) => {
@@ -128,6 +131,29 @@ describe('Twilio public webhook boundary', () => {
       "select outcome from external_channel_events where provider='twilio' and event_id=$1", [messageSid]);
     expect(event?.outcome).toBe('accepted');
     expect(llmBodies.some((body) => body.includes('data:image/png;base64,'))).toBe(true);
+    expect(sentSmsBodies.at(-1)).toContain('on behalf of Roman.');
+  });
+
+  it('opens SMS to an unlinked sender without exposing owner tools or personalization', async () => {
+    const phone = '+19515149292'; const messageSid = `SM${'d'.repeat(32)}`;
+    const beforeBodies = llmBodies.length;
+    const response = await post('/channels/twilio/webhook', { MessageSid: messageSid, From: phone,
+      To: credentials.phoneNumber, Body: 'Can you help?', NumMedia: '0' });
+    expect(response.status).toBe(200);
+    for (let tries = 0; tries < 100; tries++) {
+      const [event] = await db.query<{ outcome: string }>(
+        "select outcome from external_channel_events where provider='twilio' and event_id=$1", [messageSid]);
+      if (event?.outcome === 'accepted') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const [link] = await db.query<{ public_access: boolean }>(
+      "select public_access from external_channel_links where provider='twilio' and external_identity=$1 and status='active'", [phone]);
+    expect(link?.public_access).toBe(true);
+    const request = JSON.parse(llmBodies.slice(beforeBodies).at(-1) ?? '{}') as { tools?: unknown; messages?: Array<{ content?: string }> };
+    expect(request.tools).toBeUndefined();
+    expect(JSON.stringify(request.messages)).toContain('member of the public');
+    expect(JSON.stringify(request.messages)).toContain('no access to Roman');
+    expect(sentSmsBodies.at(-1)).toContain('on behalf of Roman.');
   });
 
   it('refuses an unlinked caller without opening a local voice session', async () => {
