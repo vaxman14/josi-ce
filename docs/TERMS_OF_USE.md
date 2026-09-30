@@ -43,7 +43,7 @@ alter data outside the application; choose an operator you trust.
 Josi may provide conversations, tasks, approvals, contacts, personalization,
 memory, usage reporting, mail, document storage/search, backups, telemetry,
 support bundles, Google/Microsoft and developer-service connections, external
-messaging channels including Telegram/Slack/WhatsApp/Signal, local or hosted AI
+messaging channels including Telegram/Slack/WhatsApp/Signal/Twilio, local or hosted AI
 providers, PWA installation, optional Voice Box, system checkups and licensed
 modules. Availability depends on configuration and third parties. When an
 operator or user connects a provider, the necessary data is processed under

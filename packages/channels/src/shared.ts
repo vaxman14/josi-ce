@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 
-export type ExternalChannel = 'whatsapp' | 'slack' | 'signal';
+export type ExternalChannel = 'whatsapp' | 'slack' | 'signal' | 'twilio';
 export interface NormalizedMessage {
   channel: ExternalChannel;
   eventId: string;

@@ -1,9 +1,12 @@
 // Josi CE API entrypoint.
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
 import { createApp } from './app.js';
+import { TwilioMediaBridge } from './http/twilioRoutes.js';
+import { voiceHelper } from './http/voiceBoxRoutes.js';
 import { publicAddressFromEnvironment, reconcilePublicAddress } from './setup/publicAddress.js';
 
 const attachmentStorage = await probeAttachmentStorage();
@@ -57,6 +60,7 @@ const cookieSecure = process.env.COOKIE_SECURE === 'true'
     ? false
     : new URL(appUrl).protocol === 'https:';
 
+const localVoiceHelper = voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET);
 const app = createApp(db, {
   attachmentStorageRoot: attachmentRoot(),
   // Empty/unset follows APP_URL. This keeps first-run LAN HTTP usable without
@@ -71,9 +75,12 @@ const app = createApp(db, {
   // M115: no gateway ships. An operator who wants one sets it.
   supportGatewayUrl: process.env.JOSI_SUPPORT_GATEWAY || null,
   setupTokenSha256: process.env.JOSI_SETUP_TOKEN_SHA256 || null,
+  voiceBoxHelper: localVoiceHelper,
 });
 
-const server = app.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));
+const server = createServer(app);
+new TwilioMediaBridge({ db, appUrl, voiceHelper: localVoiceHelper }).attach(server);
+server.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));
 
 /** Stop accepting connections, drain, then close the pool. Without this a
  * `docker compose up -d` redeploy cuts requests off mid-flight. */

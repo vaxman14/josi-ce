@@ -36,7 +36,8 @@ lawful basis, notices, retention and users for a self-hosted installation.
 Data stays on the installation except when a user or operator enables or uses a
 destination. Necessary data may then go to: the selected AI provider; Google or
 Microsoft for connected accounts; configured SMTP/mail services; Telegram,
-Slack, WhatsApp or Signal for external messaging; configured storage/backup
+Slack, WhatsApp, Signal or an operator-owned Twilio account for external
+messaging and calls; configured storage/backup
 providers; configured GitHub, Netlify, Vercel, Supabase or other developer
 services; an operator-selected telemetry or support gateway; recipients and
 shared-workspace users authorized by the user; and public documentation/Groq

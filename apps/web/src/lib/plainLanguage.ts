@@ -26,8 +26,8 @@ export interface Vocabulary {
 
 export const VOCABULARIES: Record<string, Vocabulary> = {
   external_channel: {
-    source: { literal: ['whatsapp', 'slack'] },
-    labels: { whatsapp: 'WhatsApp', slack: 'Slack' },
+    source: { literal: ['whatsapp', 'slack', 'twilio'] },
+    labels: { whatsapp: 'WhatsApp', slack: 'Slack', twilio: 'Twilio SMS' },
   },
 
   calendar_provider: {

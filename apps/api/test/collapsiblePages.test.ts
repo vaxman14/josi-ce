@@ -76,7 +76,7 @@ describe('compact settings disclosures', () => {
   it('keeps Telegram beside every existing admin channel', () => {
     const channels = read('apps/web/src/pages/admin/Channels.tsx');
     expect(channels).toContain('to="/admin/telegram"');
-    expect(channels).toContain("['whatsapp','slack']");
+    expect(channels).toContain("['whatsapp','slack','twilio']");
   });
 
   it('binds backup destination styling and actions to one controlled selection', () => {

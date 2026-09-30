@@ -211,6 +211,8 @@ after native apps ship.
 
 Initial channels:
 
+- Twilio SMS and bidirectional voice through an operator-owned account, with
+  local faster-whisper and Kokoro available through the optional Voice Box
 - WhatsApp through the official WhatsApp Business Platform / Cloud API
 - Slack through an installed Slack app
 - Signal through an explicitly configured self-hosted bridge; Signal does not
@@ -240,8 +242,8 @@ Required behavior:
 
 Acceptance:
 
-- A linked user can hold a continuous Josi conversation on WhatsApp, Slack or
-  Signal and see consistent conversation state when returning to the web app.
+- A linked user can hold a continuous Josi conversation on Twilio, WhatsApp,
+  Slack or Signal and see consistent conversation state when returning to the web app.
 - An unlinked or incorrectly linked identity cannot read another user's
   conversation, invoke their tools or approve their actions.
 - Replayed webhooks and provider retries do not duplicate messages or actions.

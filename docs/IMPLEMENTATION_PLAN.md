@@ -995,7 +995,7 @@ policy surface built in 3.
 
 ## Deliberately not built in 0.1
 
-Voice/SMS receptionist (Twilio optional and unwired), audio/video transcription
+Operator-owned Twilio SMS and linked-user local-voice calling, audio/video transcription
 (map 66), plugin sideloading/marketplace, paid support packaging (map 92),
 enterprise/white-label/fleet/hosted billing, Box/Dropbox connectors (Coming soon
 only), companion app binaries (Coming soon only).

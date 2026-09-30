@@ -7,7 +7,9 @@ import {
   SIGNAL_RISK_NOTICE, claimExternalEvent, consumeExternalLinkCode, describeExternalConfig,
   finishExternalEvent, listExternalLinks, loadExternalConfig, mintExternalLinkCode,
   normalizeSignal, normalizeSlack, normalizeWhatsApp, openExternalConfig,
+  probeTwilio,
   resolveExternalLink, revokeExternalLink, sendSignal, sendSlack, sendWhatsApp,
+  sendTwilioSms,
   setExternalEnabled, setExternalProbe, storeExternalConfig, verifySignalBridge,
   verifySlackSignature, verifyWhatsAppChallenge, verifyWhatsAppSignature,
   type ExternalChannel, type ExternalLinkRow, type NormalizedMessage,
@@ -23,7 +25,7 @@ export interface ExternalChannelCtx {
   connectorFetch?: typeof fetch;
 }
 
-const PROVIDERS = new Set<ExternalChannel>(['whatsapp', 'slack']);
+const PROVIDERS = new Set<ExternalChannel>(['whatsapp', 'slack', 'twilio']);
 const providerOf = (value: unknown): ExternalChannel | null => typeof value === 'string' && PROVIDERS.has(value as ExternalChannel) ? value as ExternalChannel : null;
 const text = (value: unknown, max = 4000) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 
@@ -90,6 +92,7 @@ export function adminExternalChannelRoutes(ctx: ExternalChannelCtx): Router {
 function credentialsFrom(provider: ExternalChannel, body: Record<string, unknown> | undefined): Record<string, string> {
   if (provider === 'whatsapp') return { appSecret: text(body?.appSecret, 500), accessToken: text(body?.accessToken, 1000), phoneNumberId: text(body?.phoneNumberId, 100) };
   if (provider === 'slack') return { signingSecret: text(body?.signingSecret, 500), botToken: text(body?.botToken, 1000) };
+  if (provider === 'twilio') return { accountSid: text(body?.accountSid, 100), authToken: text(body?.authToken, 500), messagingServiceSid: text(body?.messagingServiceSid, 100), phoneNumber: text(body?.phoneNumber, 30) };
   return { bridgeUrl: text(body?.bridgeUrl, 1000), account: text(body?.account, 200), bridgeSecret: text(body?.bridgeSecret, 500) };
 }
 
@@ -100,6 +103,10 @@ async function probe(provider: ExternalChannel, s: Record<string, string>, fetch
   if (provider === 'slack') {
     const r = await fetchImpl('https://slack.com/api/auth.test', { method: 'POST', headers: { Authorization: `Bearer ${s.botToken}` } });
     const body = await r.json().catch(() => ({})) as { ok?: boolean }; return r.ok && body.ok === true;
+  }
+  if (provider === 'twilio') {
+    const result = await probeTwilio(s, fetchImpl);
+    return result.sms && result.voice;
   }
   const r = await fetchImpl(`${s.bridgeUrl.replace(/\/$/, '')}/v1/about`, { headers: { 'X-Josi-Signature': s.bridgeSecret } }); return r.ok;
 }
@@ -130,7 +137,7 @@ export function mountExternalChannelWebhooks(app: Express, ctx: ExternalChannelC
   }));
 }
 
-async function processInbound(ctx: ExternalChannelCtx, secrets: Record<string, string>, message: NormalizedMessage): Promise<void> {
+export async function processInbound(ctx: ExternalChannelCtx, secrets: Record<string, string>, message: NormalizedMessage): Promise<void> {
   if (!await claimExternalEvent(ctx.db, message.channel, message.eventId, message.conversationId)) return;
   const finish = (outcome: string) => finishExternalEvent(ctx.db, message.channel, message.eventId, outcome);
   const match = /^link\s+([A-Za-z0-9_-]{20,128})$/i.exec(message.text);
@@ -143,28 +150,34 @@ async function processInbound(ctx: ExternalChannelCtx, secrets: Record<string, s
   if (!link) { await sendExternal(ctx, secrets, message, 'This identity is not linked. Sign in to Josi, create a one-time link code, then send “link CODE” here.'); return finish('unlinked'); }
   if (message.attachmentIds.length && !message.text) { await sendExternal(ctx, secrets, message, 'Josi cannot read files from this channel yet. Use the web app for attachments.'); return finish('refused'); }
   if (!message.text) return finish('ignored');
+  const turn = await runLinkedExternalTurn(ctx, link, message.text, message.channel);
+  const disclosure = (await mailPolicy(ctx.db)).disclosure.replace('{user}', 'you');
+  await sendExternal(ctx, secrets, message, `${turn.reply}\n\n${disclosure}`);
+  await ctx.db.query('update external_channel_links set last_inbound_at=now(),last_outbound_at=now() where id=$1', [link.id]);
+  return finish(turn.refused ? 'refused' : 'accepted');
+}
+
+export async function runLinkedExternalTurn(ctx: ExternalChannelCtx, link: ExternalLinkRow,
+  inbound: string, channel: ExternalChannel): Promise<{ reply: string; refused: boolean; threadId: string }> {
   const threadId = await externalThread(ctx.db, link);
   const history = (await listMessages(ctx.db, { threadId, limit: 40 })).map((m) => ({ role: m.direction === 'in' ? 'user' as const : 'assistant' as const, content: m.body }));
-  const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound: message.text, connectorFetch: ctx.connectorFetch, channel: 'external', sessionKey: threadId });
+  const result = await runAssistantTurn({ db: ctx.db, registry: { db: ctx.db, masterKey: keyOf(ctx), fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, userId: link.user_id, threadId, history, inbound, connectorFetch: ctx.connectorFetch, channel: 'external', sessionKey: threadId });
   const reply = result.refusal?.message ?? result.reply;
   const actionState=result.actions.find(action=>action.tool==='assistant_action_state'&&action.result&&typeof action.result==='object')?.result as {domain?:unknown}|undefined;
   const outboundMeta:Record<string,unknown>={};
   if(actionState?.domain==='email'||actionState?.domain==='calendar')outboundMeta.action_status_domain=actionState.domain;
   if(result.retry)outboundMeta.retry=result.retry;
   if(result.mediaResult)outboundMeta.media_result=result.mediaResult;
-  const exchange=await recordExchange(ctx.db, { ownerUserId: link.user_id, threadId, channel: message.channel, inbound: message.text, reply,
+  const exchange=await recordExchange(ctx.db, { ownerUserId: link.user_id, threadId, channel, inbound, reply,
     inboundMeta:result.mediaRequest?{media_request:result.mediaRequest}:undefined,
     outboundMeta:Object.keys(outboundMeta).length?outboundMeta:undefined });
   const presentedTaskIds=result.actions.map(action=>action.result).filter((value):value is {state:string;task_id:string}=>
     !!value&&typeof value==='object'&&['collecting','prepared'].includes(String((value as {state?:unknown}).state))&&typeof (value as {task_id?:unknown}).task_id==='string').map(value=>value.task_id);
   await markActionsPresented(ctx.db,{ownerUserId:link.user_id,threadId,taskIds:presentedTaskIds,messageId:exchange.outbound.id});
-  const disclosure = (await mailPolicy(ctx.db)).disclosure.replace('{user}', 'you');
-  await sendExternal(ctx, secrets, message, `${reply}\n\n${disclosure}`);
-  await ctx.db.query('update external_channel_links set last_inbound_at=now(),last_outbound_at=now() where id=$1', [link.id]);
-  return finish(result.refusal ? 'refused' : 'accepted');
+  return { reply, refused: !!result.refusal, threadId };
 }
 
-async function externalThread(db: Db, link: ExternalLinkRow): Promise<string> {
+export async function externalThread(db: Db, link: ExternalLinkRow): Promise<string> {
   if (link.thread_id) { const [row] = await db.query<{ id: string }>('select id from threads where id=$1', [link.thread_id]); if (row) return row.id; }
   const thread = await createThread(db, { ownerUserId: link.user_id, title: link.provider[0].toUpperCase() + link.provider.slice(1) });
   await db.query('update external_channel_links set thread_id=$2 where id=$1', [link.id, thread.id]); return thread.id;
@@ -177,6 +190,8 @@ async function sendExternal(ctx: ExternalChannelCtx, s: Record<string, string>, 
     let id = '';
     if (message.channel === 'whatsapp') id = await sendWhatsApp({ phoneNumberId: s.phoneNumberId, token: s.accessToken, to: message.externalIdentity, text: body, fetchImpl: ctx.fetchImpl });
     else if (message.channel === 'slack') id = await sendSlack({ botToken: s.botToken, channel: message.conversationId.split(':').slice(1).join(':'), text: body, threadTs: message.replyTo, fetchImpl: ctx.fetchImpl });
+    else if (message.channel === 'twilio') id = await sendTwilioSms({ credentials: s, to: message.externalIdentity, text: body,
+      statusCallback: `${ctx.appUrl}/channels/twilio/status`, fetchImpl: ctx.fetchImpl });
     else await sendSignal({ bridgeUrl: s.bridgeUrl, account: s.account, recipient: message.externalIdentity, text: body, secret: s.bridgeSecret, fetchImpl: ctx.fetchImpl });
     await ctx.db.query("update external_channel_outbound set state='sent',attempts=$2,provider_message_id=$3,sent_at=now() where id=$1", [queued.id, attempt, id || null]); return;
   } catch (err) { last = err; await ctx.db.query('update external_channel_outbound set attempts=$2 where id=$1', [queued.id, attempt]); }

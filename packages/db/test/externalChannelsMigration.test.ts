@@ -7,13 +7,13 @@ import { fileURLToPath } from 'node:url';
 const migrations = join(dirname(fileURLToPath(import.meta.url)), '../migrations');
 
 describe('external channel migrations', () => {
-  it('apply after the complete current schema and expose only WhatsApp and Slack', async () => {
+  it('applies the complete schema and adds the optional Twilio channel', async () => {
     const pg = new PGlite();
     for (const file of readdirSync(migrations).filter((name) => name.endsWith('.sql')).sort()) {
       await pg.exec(readFileSync(join(migrations, file), 'utf8'));
     }
     const providers = await pg.query<{ provider: string }>('select provider from external_channel_configs order by provider');
-    expect(providers.rows.map((row) => row.provider)).toEqual(['slack', 'whatsapp']);
+    expect(providers.rows.map((row) => row.provider)).toEqual(['slack', 'twilio', 'whatsapp']);
     const tables = await pg.query<{ table_name: string }>(
       "select table_name from information_schema.tables where table_schema='public' and table_name like 'external_channel%' order by table_name",
     );
@@ -21,6 +21,10 @@ describe('external channel migrations', () => {
       'external_channel_configs', 'external_channel_events', 'external_channel_link_codes',
       'external_channel_links', 'external_channel_outbound',
     ]);
+    const callTables = await pg.query<{ table_name: string }>(
+      "select table_name from information_schema.tables where table_schema='public' and table_name like 'twilio_call%' order by table_name",
+    );
+    expect(callTables.rows.map((row) => row.table_name)).toEqual(['twilio_call_intents', 'twilio_call_sessions']);
     await pg.close();
   });
 

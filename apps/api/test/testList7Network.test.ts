@@ -34,7 +34,7 @@ describe('Test List 7 network and canonical address contracts', () => {
     expect(sync).toContain("'/api/connections/' || provider || '/callback'");
     expect(sync).toContain("$3 || '/telegram/webhook'");
     expect(sync).toContain('webhook_set_at = null');
-    expect(server.indexOf('await reconcilePublicAddress')).toBeLessThan(server.indexOf('app.listen'));
+    expect(server.indexOf('await reconcilePublicAddress')).toBeLessThan(server.indexOf('server.listen'));
   });
 
   it('makes failed readiness restore files, proxy shape, and previous metadata', () => {

@@ -38,6 +38,7 @@ import { setupGate } from './http/setupGate.js';
 import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
 import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
+import { mountTwilioWebhooks, twilioAdminRoutes, twilioMemberRoutes } from './http/twilioRoutes.js';
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
 import { nasController } from './http/nasController.js';
 import { maintenanceRoutes } from './http/maintenanceRoutes.js';
@@ -113,6 +114,7 @@ export interface AppConfig {
 
 export function createApp(db: Db, cfg: AppConfig): Express {
   const app = express();
+  const localVoiceHelper = cfg.voiceBoxHelper ?? voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET);
 
   // A request body is the only unbounded input here; 1 MB is generous for JSON
   // and small enough that a hostile client cannot exhaust memory.
@@ -160,6 +162,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     connectorFetch: cfg.connectorFetch,
     retry: cfg.telegramRetry,
   });
+  const twilioCtx = {
+    db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
+    llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
+    voiceHelper: localVoiceHelper,
+  };
+  mountTwilioWebhooks(app, twilioCtx);
   mountExternalChannelWebhooks(app, {
     db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
@@ -173,7 +181,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // Before the routes, after CSRF: an unconfigured installation refuses
   // everything except the wizard, and a configured one refuses the wizard.
   api.use(setupGate(db, cfg.setupTokenSha256));
-  const voiceBox = voiceBoxRoutes(cfg.voiceBoxHelper ?? voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET));
+  const voiceBox = voiceBoxRoutes(localVoiceHelper);
   api.use('/admin/voice-box', voiceBox.admin);
   api.use('/voice', voiceBox.voice);
 
@@ -245,6 +253,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   }));
+  api.use('/admin/channels/twilio', twilioAdminRoutes(twilioCtx));
   api.use('/admin/parental-controls', adminParentalRoutes({
     db,
     appUrl: cfg.appUrl,
@@ -276,6 +285,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.connectorFetch,
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, connectorFetch: cfg.connectorFetch,
   }));
+  api.use('/channels/twilio', twilioMemberRoutes(twilioCtx));
   api.use('/migrations', migrationRoutes(db));
   api.use('/persona', personaRoutes({
     db,
