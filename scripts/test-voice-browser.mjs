@@ -102,14 +102,14 @@ try {
   await page.getByRole('button', { name: 'Install Voice Box' }).waitFor();
   assert.equal(await page.getByLabel('Voice', { exact: true }).count(), 0);
   await page.getByRole('button', { name: 'Install Voice Box' }).click();
-  await page.getByLabel('Voice', { exact: true }).waitFor();
-  assert.equal(await page.getByLabel('Voice', { exact: true }).inputValue(), 'af_heart');
-  await page.getByLabel('Voice', { exact: true }).selectOption('af_bella');
+  await page.getByText('The Neighbor', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('Voice', { exact: true }).count(), 0);
+  assert.equal(await page.getByText('The Neighbor', { exact: true }).count(), 1);
   await page.getByRole('button', { name: 'Save and verify' }).click();
   await page.getByRole('button', { name: 'Preview voice' }).click();
   await page.getByRole('button', { name: 'Playing preview…' }).waitFor();
   await page.getByRole('button', { name: 'Preview voice' }).waitFor();
-  assert.equal(settings.voice, 'af_bella'); assert.ok(speeches > 0);
+  assert.equal(settings.voice, 'af_heart'); assert.ok(speeches > 0);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Admin page overflows at 390px');
   console.log('PASS admin install gate, voice settings, real WAV preview and mobile layout');
   await context.clearCookies();

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -8,7 +8,8 @@ import express from 'express';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
-import type { VoiceHelper } from '../src/http/voiceBoxRoutes.js';
+import { neighborSpeechHelper, type VoiceHelper } from '../src/http/voiceBoxRoutes.js';
+import { twilioPhonePreviewWav } from '../src/http/twilioRoutes.js';
 import { speechChunks, takeVoiceFrame } from '../../web/src/lib/voiceAudio.js';
 import { mountWebApp } from '../src/http/staticApp.js';
 
@@ -26,6 +27,41 @@ describe('Voice Box capture backpressure', () => {
 
   it('rejects a capture frame larger than the gateway limit', () => {
     expect(() => takeVoiceFrame([new Uint8Array(32_001)])).toThrow(/oversized/);
+  });
+});
+
+describe('Neighbor speech and phone conversion', () => {
+  it('uses the private Neighbor endpoint for speech and retains local fallback', async () => {
+    const local = vi.fn<VoiceHelper>(async () => ({ status: 200, type: 'audio/wav', data: Buffer.from('local') }));
+    const remote = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(Buffer.from('neighbor'), {
+      status: 200, headers: { 'content-type': 'audio/wav' },
+    })).mockRejectedValueOnce(new Error('offline'));
+    const helper = neighborSpeechHelper(local, 'http://10.10.1.30:3911', 'x'.repeat(64));
+    expect((await helper('/speech', { text: 'hello' })).data.toString()).toBe('neighbor');
+    expect((await helper('/speech', { text: 'hello again' })).data.toString()).toBe('local');
+    expect((await helper('/status')).data.toString()).toBe('local');
+    expect(remote).toHaveBeenCalledTimes(2);
+    remote.mockRestore();
+  });
+
+  it('anti-aliases 24 kHz speech before Twilio mu-law conversion', () => {
+    const tone = (frequency: number) => {
+      const samples = Buffer.alloc(12000 * 2);
+      for (let index = 0; index < 12000; index++) samples.writeInt16LE(
+        Math.round(Math.sin(2 * Math.PI * frequency * index / 24000) * 20000), index * 2);
+      const wav = Buffer.alloc(44 + samples.length);
+      wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+      wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+      wav.writeUInt32LE(24000, 24); wav.writeUInt32LE(48000, 28); wav.writeUInt16LE(2, 32);
+      wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(samples.length, 40); samples.copy(wav, 44);
+      return twilioPhonePreviewWav(wav).subarray(44);
+    };
+    const rms = (pcm: Buffer) => {
+      let energy = 0;
+      for (let offset = 200; offset < pcm.length - 200; offset += 2) energy += pcm.readInt16LE(offset) ** 2;
+      return Math.sqrt(energy / ((pcm.length - 400) / 2));
+    };
+    expect(rms(tone(6000))).toBeLessThan(rms(tone(1000)) * 0.1);
   });
 });
 const jars: Record<string, string> = {};

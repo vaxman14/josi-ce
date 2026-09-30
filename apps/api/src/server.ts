@@ -6,7 +6,7 @@ import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
 import { createApp } from './app.js';
 import { TwilioMediaBridge } from './http/twilioRoutes.js';
-import { voiceHelper } from './http/voiceBoxRoutes.js';
+import { neighborSpeechHelper, voiceHelper } from './http/voiceBoxRoutes.js';
 import { publicAddressFromEnvironment, reconcilePublicAddress } from './setup/publicAddress.js';
 
 const attachmentStorage = await probeAttachmentStorage();
@@ -60,7 +60,13 @@ const cookieSecure = process.env.COOKIE_SECURE === 'true'
     ? false
     : new URL(appUrl).protocol === 'https:';
 
-const localVoiceHelper = voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET);
+const localVoiceHelper = neighborSpeechHelper(
+  voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET),
+  process.env.JOSI_NEIGHBOR_VOICE_URL,
+  process.env.JOSI_NEIGHBOR_VOICE_TOKEN_FILE
+    ? readFileSync(process.env.JOSI_NEIGHBOR_VOICE_TOKEN_FILE, 'utf8').trim()
+    : undefined,
+);
 const app = createApp(db, {
   attachmentStorageRoot: attachmentRoot(),
   // Empty/unset follows APP_URL. This keeps first-run LAN HTTP usable without

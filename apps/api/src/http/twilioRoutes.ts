@@ -337,6 +337,43 @@ function encodeMulaw(sample: number): number {
   return ~(sign | (exponent << 4) | mantissa) & 0xff;
 }
 
+const PHONE_RESAMPLE_FACTOR = 3;
+const PHONE_LOWPASS_TAPS = (() => {
+  const count = 63;
+  const half = (count - 1) / 2;
+  // Keep ordinary telephone speech below 3.4 kHz and reject frequencies that
+  // would alias when 24 kHz speech is reduced to Twilio's 8 kHz stream.
+  const cutoff = 3400 / 24000;
+  const taps = Array.from({ length: count }, (_, index) => {
+    const offset = index - half;
+    const sinc = offset === 0
+      ? 2 * cutoff
+      : Math.sin(2 * Math.PI * cutoff * offset) / (Math.PI * offset);
+    const hamming = 0.54 - 0.46 * Math.cos((2 * Math.PI * index) / (count - 1));
+    return sinc * hamming;
+  });
+  const gain = taps.reduce((sum, tap) => sum + tap, 0);
+  return taps.map((tap) => tap / gain);
+})();
+
+function resample24kPcmTo8k(pcm: Buffer): Int16Array {
+  const inputSamples = Math.floor(pcm.length / 2);
+  const output = new Int16Array(Math.floor(inputSamples / PHONE_RESAMPLE_FACTOR));
+  const half = (PHONE_LOWPASS_TAPS.length - 1) / 2;
+  for (let out = 0; out < output.length; out++) {
+    const center = out * PHONE_RESAMPLE_FACTOR;
+    let filtered = 0;
+    for (let tap = 0; tap < PHONE_LOWPASS_TAPS.length; tap++) {
+      const source = center + tap - half;
+      if (source >= 0 && source < inputSamples) {
+        filtered += pcm.readInt16LE(source * 2) * PHONE_LOWPASS_TAPS[tap];
+      }
+    }
+    output[out] = Math.max(-32768, Math.min(32767, Math.round(filtered)));
+  }
+  return output;
+}
+
 function wavToMulaw(wav: Buffer): Buffer {
   if (wav.length < 44 || wav.toString('ascii', 0, 4) !== 'RIFF') throw new Error('invalid speech audio');
   const rate = wav.readUInt32LE(24); const channels = wav.readUInt16LE(22); const bits = wav.readUInt16LE(34);
@@ -345,8 +382,9 @@ function wavToMulaw(wav: Buffer): Buffer {
   if (dataAt < 0 || dataAt + 8 > wav.length) throw new Error('missing speech audio');
   const length = Math.min(wav.readUInt32LE(dataAt + 4), wav.length - dataAt - 8);
   const pcm = wav.subarray(dataAt + 8, dataAt + 8 + length);
-  const output = Buffer.alloc(Math.floor(pcm.length / 6));
-  for (let out = 0, offset = 0; out < output.length; out++, offset += 6) output[out] = encodeMulaw(pcm.readInt16LE(offset));
+  const resampled = resample24kPcmTo8k(pcm);
+  const output = Buffer.alloc(resampled.length);
+  for (let index = 0; index < output.length; index++) output[index] = encodeMulaw(resampled[index]);
   return output;
 }
 

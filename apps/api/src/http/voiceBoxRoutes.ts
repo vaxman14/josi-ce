@@ -6,6 +6,27 @@ import { asyncRoute } from './async.js';
 export interface VoiceReply { status: number; type: string; data: Buffer }
 export type VoiceHelper = (path: string, body?: unknown) => Promise<VoiceReply>;
 
+/** Prefer the installation's private Neighbor synthesizer for speech while
+ * retaining the local Voice Box as a fail-safe for calls and all STT work. */
+export function neighborSpeechHelper(local: VoiceHelper, url?: string, token?: string): VoiceHelper {
+  if (!url || !token) return local;
+  const endpoint = new URL('/speech', url.endsWith('/') ? url : `${url}/`);
+  return async (path, body) => {
+    if (path !== '/speech') return local(path, body);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST', signal: AbortSignal.timeout(50_000),
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = Buffer.from(await response.arrayBuffer());
+      if (response.ok && data.length <= 4 * 1024 * 1024)
+        return { status: response.status, type: response.headers.get('content-type') ?? 'audio/wav', data };
+    } catch { /* The local rollback below keeps calls usable if the Mac is unavailable. */ }
+    return local(path, body);
+  };
+}
+
 /** The app receives access to this one socket, never a Docker capability. */
 export function voiceHelper(socketPath?: string): VoiceHelper {
   return (path, body) => new Promise((resolve, reject) => {

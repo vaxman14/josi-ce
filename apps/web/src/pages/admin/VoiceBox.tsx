@@ -60,7 +60,7 @@ export function AdminVoiceBox() {
   const inputClass = 'block min-h-11 w-full rounded border border-input bg-background p-2';
   return <div className="mx-auto max-w-2xl space-y-5">
     <h1 className="text-xl font-semibold">Voice Box</h1>
-    <p>Optional local voice chat for Josi. Kitten Nano and Kokoro provide neural speech on your CPU. Audio stays on this installation; transcripts go through your configured Josi model and its existing permissions.</p>
+    <p>Optional local voice chat for Josi. The Neighbor is Josi’s fixed speaking voice; the local Voice Box provides transcription and an emergency speech fallback.</p>
     {error && <ErrorNote>{error}</ErrorNote>}
     {!status ? <p>Checking Voice Box…</p> : <>
       <p role="status">{working ? 'Applying changes and checking speech models…' : status.healthy ? 'Speech models are ready' : status.apiReady ? 'API is ready; speech models are not ready' : status.phase === 'absent' ? 'Voice Box is not installed' : 'Voice Box is not ready'}</p>
@@ -75,9 +75,7 @@ export function AdminVoiceBox() {
       </section> : settings && <section className="space-y-4 rounded border border-border p-4">
         <h2 className="font-semibold">Speech settings</h2>
         <fieldset disabled={working || !status.healthy} className="grid gap-4 sm:grid-cols-2">
-          <label>Voice<select aria-label="Voice" className={inputClass} value={settings.voice} onChange={(e) => setSettings({ ...settings, voice: e.target.value })}>
-            <optgroup label="Kitten Nano — new model"><option value="kitten_bella">Bella</option><option value="kitten_jasper">Jasper</option><option value="kitten_luna">Luna</option><option value="kitten_bruno">Bruno</option><option value="kitten_rosie">Rosie</option><option value="kitten_hugo">Hugo</option><option value="kitten_kiki">Kiki</option><option value="kitten_leo">Leo</option></optgroup><optgroup label="Kokoro — legacy rollback"><option value="af_heart">Heart</option><option value="af_bella">Bella</option></optgroup>
-          </select></label>
+          <p><span className="font-medium">Speaking voice</span><span className="mt-1 block text-sm text-muted-foreground">The Neighbor</span></p>
           <label>Transcription model<select className={inputClass} value={settings.model} onChange={(e) => setSettings({ ...settings, model: e.target.value })}><option value="base.en">Whisper Base — English</option><option value="tiny.en">Whisper Tiny — lighter English model</option></select></label>
           <label>Transcription acceleration<select className={inputClass} value={settings.device} onChange={(e) => setSettings({ ...settings, device: e.target.value as Settings['device'] })}><option value="cpu">CPU</option><option value="cuda" disabled={!status.gpuAvailable}>NVIDIA GPU (optional)</option></select></label>
           <label>Speech detection threshold<input className={inputClass} type="number" min="0.2" max="0.9" step="0.05" value={settings.threshold} onChange={(e) => setSettings({ ...settings, threshold: Number(e.target.value) })} /></label>

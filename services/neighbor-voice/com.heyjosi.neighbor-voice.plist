@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.heyjosi.neighbor-voice</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Volumes/JosiOS/JosiDrive/services/neighbor-voice/run.sh</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Volumes/JosiOS/JosiDrive/services/neighbor-voice</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HF_HUB_OFFLINE</key><string>1</string>
+    <key>PYTHONDONTWRITEBYTECODE</key><string>1</string>
+    <key>PYTORCH_ENABLE_MPS_FALLBACK</key><string>1</string>
+  </dict>
+  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/Users/roman/Library/Logs/josi-neighbor-voice.log</string>
+  <key>StandardErrorPath</key><string>/Users/roman/Library/Logs/josi-neighbor-voice.err.log</string>
+</dict>
+</plist>

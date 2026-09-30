@@ -13,11 +13,11 @@ const label = (p: Provider) => p === 'whatsapp' ? 'WhatsApp' : p === 'slack' ? '
 export function AdminChannels() {
   const [channels, setChannels] = useState<Channel[]>([]); const [selected, setSelected] = useState<Provider>('whatsapp');
   const [form, setForm] = useState<Record<string,string>>({}); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [busy, setBusy] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>(); const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(); const [previewing, setPreviewing] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>(); const [previewing, setPreviewing] = useState(false);
   const preview = useRef<{ context?: AudioContext; abort?: AbortController }>({});
   const load = useCallback(async () => setChannels((await api.get<{ channels: Channel[] }>('/admin/channels')).channels), []);
   const loadVoice = useCallback(async () => {
-    const value = await api.get<VoiceStatus>('/admin/voice-box'); setVoiceStatus(value); setVoiceSettings((old) => old ?? value.settings); return value;
+    const value = await api.get<VoiceStatus>('/admin/voice-box'); setVoiceStatus(value); return value;
   }, []);
   useEffect(() => { void load().catch((e) => setError(e instanceof Error ? e.message : 'Could not load channels')); }, [load]);
   useEffect(() => {
@@ -32,13 +32,6 @@ export function AdminChannels() {
     : selected === 'slack' ? [['signingSecret','Signing secret'],['botToken','Bot token']]
     : [['accountSid','Account SID'],['authToken','Auth Token'],['messagingServiceSid','Messaging Service SID'],['phoneNumber','Twilio phone number (E.164)']];
   async function run(fn: () => Promise<unknown>, ok: string) { setBusy(true); setError(''); setNotice(''); try { await fn(); setNotice(ok); await load(); } catch(e) { setError(e instanceof Error ? e.message : 'That did not work'); } finally { setBusy(false); } }
-  async function saveVoice() {
-    if (!voiceSettings) return;
-    setBusy(true); setError(''); setNotice('');
-    try { await api.post('/admin/voice-box/settings', voiceSettings); setNotice('Voice change started. Preview unlocks after the local models are verified.'); await loadVoice(); }
-    catch (e) { setError(e instanceof Error ? e.message : 'The voice could not be changed'); }
-    finally { setBusy(false); }
-  }
   async function playVoicePreview() {
     if (previewing) return;
     setPreviewing(true); setError('');
@@ -51,7 +44,6 @@ export function AdminChannels() {
     } catch (e) { if (!abort.signal.aborted) setError(e instanceof Error ? e.message : 'The preview could not be played'); }
     finally { if (context.state !== 'closed') await context.close(); setPreviewing(false); }
   }
-  const savedVoice = JSON.stringify(voiceStatus?.settings); const editedVoice = JSON.stringify(voiceSettings);
   return <div className="mx-auto max-w-3xl space-y-4"><div><h1 className="text-xl font-semibold">Messaging channels</h1><p className="text-sm text-muted-foreground">Credentials are encrypted and never returned after saving.</p></div>{error ? <ErrorNote>{error}</ErrorNote> : null}{notice ? <p className="text-sm text-emerald-300">{notice}</p> : null}
     <div className="flex flex-wrap gap-2">
       <Link className="inline-flex min-h-11 items-center justify-center rounded-md bg-secondary px-4 text-sm font-medium hover:bg-secondary/80" to="/admin/telegram">Telegram</Link>
@@ -62,12 +54,10 @@ export function AdminChannels() {
       <div className="flex flex-wrap gap-2"><Button disabled={busy || fields.some(([n]) => !form[n]?.trim())} onClick={() => void run(() => api.post(`/admin/channels/${selected}/config`, form), 'Configuration saved. Test it before enabling.')}>Save</Button><Button variant="secondary" disabled={busy || !current?.configured} onClick={() => void run(() => api.post(`/admin/channels/${selected}/probe`), 'Provider connection tested.')}>Test</Button><Button disabled={busy || !current?.probeOk} onClick={() => void run(() => api.post(`/admin/channels/${selected}/enabled`, {enabled:!current?.enabled}), current?.enabled ? 'Channel turned off.' : 'Channel turned on.')}>{current?.enabled ? 'Turn off' : 'Turn on'}</Button>{selected === 'twilio' ? <Button variant="secondary" disabled={busy || !current?.enabled} onClick={() => void run(() => api.post('/admin/channels/twilio/register-webhooks'), 'SMS and voice webhooks registered on the Twilio number.')}>Register webhooks</Button> : null}</div></div>
     </Card>
     {selected === 'twilio' ? <Card><CardTitle>Call voice</CardTitle>
-      {!voiceStatus?.verified || !voiceSettings ? <p className="text-sm text-muted-foreground">Install and verify <Link className="underline" to="/admin/voice-box">Voice Box</Link> before previewing call voices.</p> : <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">Choose a voice, save it, then hear the exact greeting after Twilio’s 8 kHz phone-quality conversion. Previewing does not place a call.</p>
-        <label className="block text-sm font-medium">Voice<select aria-label="Twilio call voice" className="block min-h-11 w-full rounded border border-input bg-background p-2" disabled={busy || voiceStatus.phase === 'working'} value={voiceSettings.voice} onChange={(e) => setVoiceSettings({ ...voiceSettings, voice: e.target.value })}>
-          <optgroup label="Kitten Nano — new model"><option value="kitten_bella">Bella</option><option value="kitten_jasper">Jasper</option><option value="kitten_luna">Luna</option><option value="kitten_bruno">Bruno</option><option value="kitten_rosie">Rosie</option><option value="kitten_hugo">Hugo</option><option value="kitten_kiki">Kiki</option><option value="kitten_leo">Leo</option></optgroup><optgroup label="Kokoro — legacy rollback"><option value="af_heart">Heart</option><option value="af_bella">Bella</option></optgroup>
-        </select></label>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy || voiceStatus.phase === 'working' || editedVoice === savedVoice} onClick={() => void saveVoice()}>Save and verify voice</Button><Button variant="secondary" disabled={busy || previewing || !voiceStatus.healthy || voiceStatus.phase !== 'ready' || editedVoice !== savedVoice} onClick={() => void playVoicePreview()}>{previewing ? 'Playing phone preview…' : 'Preview call greeting'}</Button></div>
+      {!voiceStatus?.verified ? <p className="text-sm text-muted-foreground">Install and verify <Link className="underline" to="/admin/voice-box">Voice Box</Link> before previewing calls.</p> : <div className="space-y-3">
+        <p className="font-medium">The Neighbor</p>
+        <p className="text-sm text-muted-foreground">Josi’s fixed call voice. Previewing uses the exact greeting and corrected 8 kHz phone conversion without placing a call.</p>
+        <div className="flex flex-wrap gap-2"><Button variant="secondary" disabled={busy || previewing || !voiceStatus.healthy || voiceStatus.phase !== 'ready'} onClick={() => void playVoicePreview()}>{previewing ? 'Playing phone preview…' : 'Preview call greeting'}</Button></div>
         <p role="status" className="text-sm">{voiceStatus.phase === 'working' ? 'Applying the voice and checking local speech models…' : voiceStatus.healthy ? 'Voice Box is ready.' : 'Voice Box is not ready.'}</p>
       </div>}
     </Card> : null}
