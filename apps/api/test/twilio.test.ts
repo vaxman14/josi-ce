@@ -119,13 +119,19 @@ describe('Twilio public webhook boundary', () => {
     const [row] = await db.query<{ state: string; stream_sid: string }>('select state,stream_sid from twilio_call_sessions where call_sid=$1', [callSid]);
     expect(row).toEqual({ state: 'connected', stream_sid: streamSid });
     expect(helperCalls).toContain('/session');
+    for (let tries = 0; tries < 100 && !outbound.some((event) => event.event === 'mark'); tries++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(outbound.some((event) => event.event === 'media')).toBe(true);
+    expect(outbound.filter((event) => event.event === 'mark')).toHaveLength(1);
+    const greetingSpeechCalls = helperCalls.filter((path) => path === '/speech').length;
     for (let index = 0; index < 25; index++) ws.send(JSON.stringify({ event: 'media', streamSid,
       media: { track: 'inbound', payload: Buffer.alloc(160, 0xff).toString('base64') } }));
-    for (let tries = 0; tries < 100 && !outbound.some((event) => event.event === 'mark'); tries++) await new Promise((resolve) => setTimeout(resolve, 10));
+    for (let tries = 0; tries < 100 && !helperCalls.includes('/audio'); tries++) await new Promise((resolve) => setTimeout(resolve, 10));
+    for (let tries = 0; tries < 100 && helperCalls.filter((path) => path === '/speech').length === greetingSpeechCalls; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
     expect(helperCalls).toContain('/audio');
-    expect(helperCalls).toContain('/speech');
+    expect(helperCalls.filter((path) => path === '/speech').length).toBeGreaterThan(greetingSpeechCalls);
     expect(outbound.some((event) => event.event === 'media')).toBe(true);
-    expect(outbound.some((event) => event.event === 'mark')).toBe(true);
+    for (let tries = 0; tries < 100 && outbound.filter((event) => event.event === 'mark').length < 2; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(outbound.filter((event) => event.event === 'mark')).toHaveLength(2);
     ws.close();
   });
 });

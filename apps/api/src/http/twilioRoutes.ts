@@ -207,6 +207,7 @@ export class TwilioMediaBridge {
       if (message.event === 'start' && !state) {
         state = await this.start(message);
         clearTimeout(timer);
+        await this.speak(ws, state, 'Hi, this is Josi. How can I help?');
         return;
       }
       if (!state) return;
@@ -268,7 +269,11 @@ export class TwilioMediaBridge {
 
   private async answer(ws: WebSocket, state: TwilioSocketState, inbound: string): Promise<void> {
     const turn = await runLinkedExternalTurn(this.ctx, state.link, inbound, 'twilio');
-    for (const part of speechParts(turn.reply)) {
+    await this.speak(ws, state, turn.reply);
+  }
+
+  private async speak(ws: WebSocket, state: TwilioSocketState, text: string): Promise<void> {
+    for (const part of speechParts(text)) {
       if (state.closed) return;
       const speech = await this.ctx.voiceHelper('/speech', { text: part });
       if (speech.status !== 200) throw new Error('speech synthesis unavailable');
