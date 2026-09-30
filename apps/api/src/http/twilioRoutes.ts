@@ -18,6 +18,7 @@ export interface TwilioRoutesCtx extends ExternalChannelCtx { voiceHelper: Voice
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const xml = (value: string) => value.replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]!));
 const twiml = (body = '') => `<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`;
+export const TWILIO_GREETING = 'Hi. Josi here. How can I help?';
 
 function keyOf(ctx: TwilioRoutesCtx): MasterKey | null {
   if (ctx.masterKey === false) return null;
@@ -137,6 +138,19 @@ export function twilioAdminRoutes(ctx: TwilioRoutesCtx): Router {
       voiceUrl: `${ctx.appUrl}/channels/twilio/voice`, fetchImpl: ctx.fetchImpl });
     res.json({ registered: true });
   }));
+  r.post('/voice-preview', asyncRoute(async (req, res) => {
+    if (Object.keys(req.body ?? {}).length) return res.status(400).json({ error: 'Voice preview accepts no parameters' });
+    const statusReply = await ctx.voiceHelper('/status');
+    const status = statusReply.status === 200
+      ? JSON.parse(statusReply.data.toString()) as { verified?: boolean; healthy?: boolean; phase?: string }
+      : {};
+    if (!status.verified || !status.healthy || status.phase !== 'ready')
+      return res.status(409).json({ error: 'Wait for healthy speech models before previewing' });
+    const speech = await ctx.voiceHelper('/speech', { text: TWILIO_GREETING });
+    if (speech.status !== 200) return res.status(speech.status).type(speech.type).send(speech.data);
+    res.set('Cache-Control', 'no-store');
+    return res.type('audio/wav').send(twilioPhonePreviewWav(speech.data));
+  }));
   return r;
 }
 
@@ -207,7 +221,7 @@ export class TwilioMediaBridge {
       if (message.event === 'start' && !state) {
         state = await this.start(message);
         clearTimeout(timer);
-        await this.speak(ws, state, 'Hi, this is Josi. How can I help?');
+        await this.speak(ws, state, TWILIO_GREETING);
         return;
       }
       if (!state) return;
@@ -333,5 +347,18 @@ function wavToMulaw(wav: Buffer): Buffer {
   const pcm = wav.subarray(dataAt + 8, dataAt + 8 + length);
   const output = Buffer.alloc(Math.floor(pcm.length / 6));
   for (let out = 0, offset = 0; out < output.length; out++, offset += 6) output[out] = encodeMulaw(pcm.readInt16LE(offset));
+  return output;
+}
+
+/** Reproduce Twilio's narrowband codec and return a browser-friendly PCM WAV. */
+export function twilioPhonePreviewWav(wav: Buffer): Buffer {
+  const mulaw = wavToMulaw(wav);
+  const pcm = Buffer.allocUnsafe(mulaw.length * 2);
+  for (let index = 0; index < mulaw.length; index++) pcm.writeInt16LE(decodeMulaw(mulaw[index]), index * 2);
+  const output = Buffer.alloc(44 + pcm.length);
+  output.write('RIFF', 0); output.writeUInt32LE(output.length - 8, 4); output.write('WAVEfmt ', 8);
+  output.writeUInt32LE(16, 16); output.writeUInt16LE(1, 20); output.writeUInt16LE(1, 22);
+  output.writeUInt32LE(8000, 24); output.writeUInt32LE(16000, 28); output.writeUInt16LE(2, 32);
+  output.writeUInt16LE(16, 34); output.write('data', 36); output.writeUInt32LE(pcm.length, 40); pcm.copy(output, 44);
   return output;
 }

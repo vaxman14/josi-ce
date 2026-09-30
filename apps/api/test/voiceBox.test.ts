@@ -33,9 +33,17 @@ const calls: { path: string; body: unknown }[] = [];
 let ready = false;
 let helperDown = false;
 let serial = 0;
+function silenceWav(): Buffer {
+  const samples = Buffer.alloc(2400 * 2); const wav = Buffer.alloc(44 + samples.length);
+  wav.write('RIFF', 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(24000, 24);
+  wav.writeUInt32LE(48000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36);
+  wav.writeUInt32LE(samples.length, 40); samples.copy(wav, 44); return wav;
+}
 const helper: VoiceHelper = async (path, body) => {
   calls.push({ path, body });
   if (helperDown) throw new Error('private socket error');
+  if (path === '/speech') return { status: 200, type: 'audio/wav', data: silenceWav() };
   const data = path === '/status' ? { healthy: ready, verified: ready, phase: ready ? 'ready' : 'absent', privateHost: 'should not reach members' }
     : path === '/session' ? { session: (++serial).toString(16).padStart(48, '0') }
     : path === '/audio' ? { events: [{ type: 'final', text: 'hello' }] } : { ok: true };
@@ -75,6 +83,8 @@ describe('Voice Box API security and lifecycle', () => {
       expect((await call('/admin/voice-box' + suffix, undefined, suffix ? {} : undefined)).status).toBeGreaterThanOrEqual(400);
       expect(calls.length).toBe(before);
     }
+    expect((await call('/admin/channels/twilio/voice-preview', 'alice', {})).status).toBe(403);
+    expect((await call('/admin/channels/twilio/voice-preview', undefined, {})).status).toBeGreaterThanOrEqual(400);
     expect((await call('/voice/status')).status).toBe(401);
   });
   it('refuses CSRF, arbitrary operations and installation arguments', async () => {
@@ -94,6 +104,17 @@ describe('Voice Box API security and lifecycle', () => {
     expect(await (await call('/voice/status', 'alice')).json()).toEqual({ available: true });
     expect((await call('/admin/voice-box/preview', 'admin', {})).status).toBe(200);
     expect(calls.at(-1)?.path).toBe('/speech');
+  });
+  it('previews the exact Twilio greeting through an 8 kHz phone-quality WAV without placing a call', async () => {
+    ready = true;
+    const response = await call('/admin/channels/twilio/voice-preview', 'admin', {});
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('audio/wav');
+    const wav = Buffer.from(await response.arrayBuffer());
+    expect(wav.toString('ascii', 0, 4)).toBe('RIFF');
+    expect(wav.readUInt32LE(24)).toBe(8000);
+    expect(wav.readUInt16LE(34)).toBe(16);
+    expect(calls.at(-1)).toEqual({ path: '/speech', body: { text: 'Hi. Josi here. How can I help?' } });
   });
   it('binds audio and close requests to the signed-in session owner, including against admins', async () => {
     const { session } = await (await call('/voice/session', 'alice', {})).json() as { session: string };
