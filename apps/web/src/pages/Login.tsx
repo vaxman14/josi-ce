@@ -87,11 +87,16 @@ export function Login() {
             {error ? <ErrorNote>{error}</ErrorNote> : null}
             <Button type="submit" className="w-full" disabled={busy}>{busy ? 'Signing in…' : challenge ? 'Verify' : 'Sign in'}</Button>
             <a className="block text-center text-sm text-primary underline" href="/forgot-password">Forgot password?</a>
-            <a className="block text-center text-sm text-primary underline" href="/api/auth/google/start">Sign in with Google</a>
+            <a
+              className="inline-flex min-h-11 w-full items-center justify-center rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
+              href="/api/auth/google/start"
+            >
+              Sign in with Google
+            </a>
           </form>
         </Card>
         <p className="mt-6 text-center text-xs text-muted-foreground">
-          Josi CE 0.1 — Community Preview. Created and published by SOCAL RECEPTIONIST LLC.
+          Josi CE — Community Preview. Created and published by SOCAL RECEPTIONIST LLC.
         </p>
         <p className="mt-2 text-center text-xs text-muted-foreground">
           By using this installation, you agree to its Terms and acknowledge its Privacy and Cookie Notices.

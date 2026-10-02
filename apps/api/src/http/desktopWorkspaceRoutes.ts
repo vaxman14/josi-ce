@@ -6,6 +6,17 @@ import { asyncRoute, param } from './async.js';
 const ID=/^[A-Za-z0-9_-]{16,200}$/;
 function text(value:unknown,max=200){const result=String(value??'').trim();if(!result||result.length>max)throw new Error('Invalid desktop workspace value');return result;}
 
+/** Keep the value that will be written to PostgreSQL as structured JSON.
+ *
+ * JSON.stringify is used only to enforce the byte limit. Passing that string
+ * to a jsonb parameter stores a JSON string, so the browser receives text
+ * instead of `{ entries, permissions }` and crashes when it renders a folder.
+ */
+export function prepareDesktopWorkspaceResult(value:unknown){
+ const result=value??null;
+ return {result,bytes:Buffer.byteLength(JSON.stringify(result))};
+}
+
 export function desktopWorkspaceRoutes({db}:{db:Db}){
  const r=Router();r.use(requireAuth);
  r.get('/mappings',asyncRoute(async(req,res)=>{
@@ -66,11 +77,11 @@ export function desktopWorkspaceRoutes({db}:{db:Db}){
  }));
  r.post('/requests/:id/result',asyncRoute(async(req,res)=>{
   const clientId=text(req.body.clientId);if(!ID.test(clientId))return void res.status(400).json({error:'Invalid desktop workspace identity'});
-  const encoded=JSON.stringify(req.body.result??null);if(Buffer.byteLength(encoded)>900*1024)return void res.status(413).json({error:'Desktop workspace result is too large'});
+  const prepared=prepareDesktopWorkspaceResult(req.body.result);if(prepared.bytes>900*1024)return void res.status(413).json({error:'Desktop workspace result is too large'});
   const ok=req.body.ok===true,error=ok?null:String(req.body.error??'Desktop workspace operation failed').slice(0,500);
   const rows=await db.query<{id:string;mapping_id:string;operation:string}>(`update desktop_workspace_requests q set status=$4,response=$5,error=$6,completed_at=now()
     from desktop_workspace_mappings m where q.id=$1 and q.mapping_id=m.id and q.owner_user_id=$2 and m.owner_user_id=$2 and m.client_id=$3 and q.status='claimed' and q.expires_at>now()
-    returning q.id,q.mapping_id,q.operation`,[param(req,'id'),req.user!.id,clientId,ok?'completed':'failed',ok?encoded:null,error]);
+    returning q.id,q.mapping_id,q.operation`,[param(req,'id'),req.user!.id,clientId,ok?prepared.result:null,error]);
   if(!rows.length)return void res.status(404).json({error:'Request is no longer active'});
   const completed=rows[0];await appendEvent(db,{actor:'user',actorUserId:req.user!.id,kind:ok?'desktop_workspace.completed':'desktop_workspace.failed',subjectType:'desktop_workspace_mapping',subjectId:completed.mapping_id,payload:{requestId:completed.id,operation:completed.operation}});
   res.json({ok:true});
