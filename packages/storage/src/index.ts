@@ -49,6 +49,7 @@ export {
   type SharingPolicy, type SyncPolicy,
 } from './versions.js';
 export { workspacePath, withWorkspaceDirectory, workspaceGrant, workspaceList, workspaceRead, workspaceChange, type WorkspaceChange } from './localWorkspace.js';
+export { activeDesktopWorkspaceMappings, desktopWorkspaceMapping, desktopWorkspaceList, desktopWorkspaceRead, desktopWorkspaceChange, requestDesktopWorkspace, type DesktopWorkspaceMapping } from './desktopWorkspace.js';
 export {
   WORKSPACE_MOUNT_PATH, linuxWorkspaceMountProbe, reconcileWorkspaceMount,
   workspaceMountConfiguration, workspaceMountRootAllowed,

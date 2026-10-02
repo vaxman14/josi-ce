@@ -44,6 +44,7 @@ import { AdminChannels } from '@/pages/admin/Channels';
 import { AdminVault } from '@/pages/admin/Vault';
 import { AdminNetwork } from '@/pages/admin/Network';
 import { setupHandoffHeaders } from '@/lib/api';
+import { useDesktopWorkspaceRelay } from '@/lib/desktopWorkspace';
 
 /** Routing is convenience, not security.
  *
@@ -126,6 +127,8 @@ function useSetupNeeded(): boolean | null {
 }
 
 export function App() {
+  const { user } = useAuth();
+  useDesktopWorkspaceRelay(Boolean(user));
   const setupNeeded = useSetupNeeded();
   useFirstRunRedirect();
   if (setupNeeded === null) return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
