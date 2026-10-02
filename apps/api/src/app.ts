@@ -19,6 +19,7 @@ import { adminConnectorRoutes, connectorRoutes } from './http/connectorRoutes.js
 import { calendarRoutes } from './http/calendarRoutes.js';
 import { adminMailRoutes, mailRoutes } from './http/mailRoutes.js';
 import { localWorkspaceRoutes } from './http/localWorkspaceRoutes.js';
+import { desktopWorkspaceRoutes } from './http/desktopWorkspaceRoutes.js';
 import { storageRoutes } from './http/storageRoutes.js';
 import { opsRoutes } from './http/opsRoutes.js';
 import { licenceRoutes } from './http/licenceRoutes.js';
@@ -278,6 +279,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/connections', adminConnectionRoutes({ db }));
   api.use('/storage', storageRoutes({ db }));
   api.use('/workspace', localWorkspaceRoutes({ db }));
+  api.use('/desktop-workspace', desktopWorkspaceRoutes({ db }));
   api.use('/telegram', telegramRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.telegramFetch, appUrl: cfg.appUrl,
   }));

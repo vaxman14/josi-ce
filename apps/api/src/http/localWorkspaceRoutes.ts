@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { appendEvent, decideApproval, type Db } from '@josi-ce/core';
-import { proposeCodingRun, getCodingRun, startCodingRun, codingRunStatus, workspaceList, workspaceRead, workspaceChange, PathEscape, type WorkspaceChange } from '@josi-ce/storage';
+import { proposeCodingRun, getCodingRun, startCodingRun, codingRunStatus, workspaceList, workspaceRead, workspaceChange, desktopWorkspaceMapping, desktopWorkspaceList, desktopWorkspaceRead, desktopWorkspaceChange, PathEscape, type WorkspaceChange } from '@josi-ce/storage';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
 export function localWorkspaceRoutes({db}:{db:Db}) {
@@ -9,15 +9,16 @@ export function localWorkspaceRoutes({db}:{db:Db}) {
   const code=(e as NodeJS.ErrnoException).code;
   res.status(e instanceof PathEscape?403:code==='ENOENT'?404:code==='EEXIST'?409:code==='ENOSPC'?507:400).json({error:e instanceof PathEscape?e.message:code==='EEXIST'?'A file already exists at that destination':code==='ENOENT'?'File or folder no longer exists':code==='ENOSPC'?'Storage is full':code==='EROFS'?'Workspace storage is read-only':'Workspace operation failed. Check access and storage permissions.'});
  }});
- r.get('/:id/list',wrap(async(req,res)=>{res.set('Cache-Control','no-store').json(await workspaceList(db,req.user!.id,param(req,'id'),String(req.query.path??'')));}));
- r.get('/:id/file',wrap(async(req,res)=>{const file=await workspaceRead(db,req.user!.id,param(req,'id'),String(req.query.path??''));
+ r.get('/:id/list',wrap(async(req,res)=>{const id=param(req,'id'),desktop=await desktopWorkspaceMapping(db,req.user!.id,id);res.set('Cache-Control','no-store').json(desktop?await desktopWorkspaceList(db,req.user!.id,id,String(req.query.path??'')):await workspaceList(db,req.user!.id,id,String(req.query.path??'')));}));
+ r.get('/:id/file',wrap(async(req,res)=>{const id=param(req,'id'),desktop=await desktopWorkspaceMapping(db,req.user!.id,id);if(desktop){const file=await desktopWorkspaceRead(db,req.user!.id,id,String(req.query.path??'')) as {text?:string};const data=Buffer.from(String(file.text??''),'utf8');return void res.set({'Cache-Control':'no-store','Content-Type':'text/plain; charset=utf-8','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'",'Content-Disposition':"attachment; filename*=UTF-8''workspace.txt"}).send(data);}
+  const file=await workspaceRead(db,req.user!.id,id,String(req.query.path??''));
   res.set({'Cache-Control':'no-store','Content-Type':'application/octet-stream','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'",'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`}).send(file.data);
  }));
- r.get('/:id/preview',wrap(async(req,res)=>{const file=await workspaceRead(db,req.user!.id,param(req,'id'),String(req.query.path??''));
+ r.get('/:id/preview',wrap(async(req,res)=>{const id=param(req,'id'),desktop=await desktopWorkspaceMapping(db,req.user!.id,id);if(desktop){const file=await desktopWorkspaceRead(db,req.user!.id,id,String(req.query.path??'')) as {text?:string;size?:number;modified?:string};return void res.set('Cache-Control','no-store').json({name:String(req.query.path??'').split('/').pop(),size:file.size,modified:file.modified,text:String(file.text??'').slice(0,50000),truncated:Number(file.size??0)>50000});}const file=await workspaceRead(db,req.user!.id,id,String(req.query.path??''));
   if(!/\.(txt|md|csv|json|log)$/i.test(file.name)||file.data.includes(0))throw new PathEscape('Preview supports plain text, Markdown, CSV, JSON and logs');
   res.set('Cache-Control','no-store').json({name:file.name,size:file.size,modified:file.modified,text:file.data.toString('utf8').slice(0,50000),truncated:file.size>50000});
  }));
- r.post('/:id/change',wrap(async(req,res)=>{res.json(await workspaceChange(db,req.user!.id,param(req,'id'),req.body as WorkspaceChange));}));
+ r.post('/:id/change',wrap(async(req,res)=>{const id=param(req,'id'),desktop=await desktopWorkspaceMapping(db,req.user!.id,id);res.json(desktop?await desktopWorkspaceChange(db,req.user!.id,id,req.body as WorkspaceChange):await workspaceChange(db,req.user!.id,id,req.body as WorkspaceChange));}));
  r.post('/:id/change/:approvalId',wrap(async(req,res)=>{
   if(req.body?.confirm!==true)throw new PathEscape('Confirm this exact operation to continue');
   await decideApproval(db,{approvalId:param(req,'approvalId'),decidedBy:req.user!.id,approve:true});

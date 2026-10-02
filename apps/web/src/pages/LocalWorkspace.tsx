@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceCode } from '@/components/WorkspaceCode';
 import { api } from '@/lib/api';
+import { desktopWorkspaceBridge, registerDesktopRoots, type DesktopRoot } from '@/lib/desktopWorkspace';
 interface Mapping {id:string;provider:string;display_path:string}
 interface Entry {name:string;kind:string;size?:number;modified?:string}
 interface Change {operation:string;path:string;destination?:string;content?:string}
@@ -9,13 +10,18 @@ export function LocalWorkspace() {
  const [mappings,setMappings]=useState<Mapping[]>([]),[id,setId]=useState(''),[path,setPath]=useState(''),[entries,setEntries]=useState<Entry[]>([]),[filter,setFilter]=useState(''),[sort,setSort]=useState('asc');
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[preview,setPreview]=useState(''),[permissions,setPermissions]=useState<Record<string,boolean>>({});
  const [name,setName]=useState(''),[content,setContent]=useState(''),[destination,setDestination]=useState(''),[editing,setEditing]=useState(false),[pending,setPending]=useState<{id:string;change:Change}|null>(null),[receipt,setReceipt]=useState('');
+ const [desktopRoots,setDesktopRoots]=useState<DesktopRoot[]>([]);const bridge=desktopWorkspaceBridge();
+ async function refreshDesktop(){if(!bridge)return;const state=await bridge.state();setDesktopRoots(state.roots);await registerDesktopRoots(state);}
+ useEffect(()=>{void refreshDesktop().catch(e=>setError((e as Error).message));},[]);
  async function refresh(){if(!id)return;setBusy(true);setError('');try{const data=await api.get<{entries:Entry[];permissions:Record<string,boolean>}>(`/workspace/${id}/list?path=${encodeURIComponent(path)}`);setEntries(data.entries);setPermissions(data.permissions);}catch(e){setEntries([]);setError((e as Error).message);}finally{setBusy(false);}}
- useEffect(()=>{void api.get<{mappings:Mapping[]}>('/storage/mappings').then(x=>setMappings(x.mappings.filter(m=>m.provider==='local'))).catch(e=>setError(e.message));},[]);
+ async function refreshMappings(){try{const [stored,desktop]=await Promise.all([api.get<{mappings:Mapping[]}>('/storage/mappings'),api.get<{mappings:Array<{id:string;label:string}>}>('/desktop-workspace/mappings')]);setMappings([...stored.mappings.filter(m=>m.provider==='local'),...desktop.mappings.map(m=>({id:m.id,provider:'desktop',display_path:`${m.label} (this device)`}))]);}catch(e){setError((e as Error).message);}}
+ useEffect(()=>{void refreshMappings();},[]);
  useEffect(()=>{setPreview('');setPending(null);void refresh();},[id,path]);
  const full=(n:string)=>[path,n].filter(Boolean).join('/');
- async function propose(change:Change){setError('');try{const x=await api.post<{approval:{id:string}}>(`/workspace/${id}/change`,change);setPending({id:x.approval.id,change});}catch(e){setError((e as Error).message);}}
+ async function propose(change:Change){setError('');try{const x=await api.post<{approval?:{id:string};receipt?:string;completed?:boolean}>(`/workspace/${id}/change`,change);if(x.approval)setPending({id:x.approval.id,change});else if(x.completed){setReceipt(x.receipt??'desktop');await refresh();}}catch(e){setError((e as Error).message);}}
  return <main className="mx-auto w-full max-w-5xl space-y-4 p-4 sm:p-6"><h1 className="text-2xl font-semibold">Local Workspace</h1>
  <p>Browse folders you explicitly connected. Files are never instructions to grant access. <Link className="underline" to="/app/connections">Manage folder access</Link>.</p>
+ {bridge&&<section className="space-y-3 rounded border p-4"><h2 className="font-semibold">Folders on this device</h2><p className="text-sm text-muted-foreground">Josi can use only folders you choose. Read/write changes still require a native one-time confirmation.</p><div className="flex flex-wrap gap-3"><button onClick={()=>void bridge.selectFolder(false).then(()=>refreshDesktop()).catch(e=>setError(e.message))}>Choose read-only folder</button><button onClick={()=>void bridge.selectFolder(true).then(()=>refreshDesktop()).catch(e=>setError(e.message))}>Choose read/write folder</button></div>{desktopRoots.length?<ul className="divide-y">{desktopRoots.map(root=><li key={root.id} className="flex items-center gap-3 py-2"><span className="flex-1">{root.label} · {root.writable?'read/write':'read-only'}</span><button onClick={()=>void bridge.revoke(root.id).then(()=>refreshDesktop()).catch(e=>setError(e.message))}>Revoke</button></li>)}</ul>:<p>No folders from this device are connected.</p>}</section>}
  {error&&<p role="alert" className="text-destructive">{error}</p>}{receipt&&<p role="status">Completed. Receipt: {receipt}</p>}
  <label className="block">Connected folder<select className="ml-2 rounded border bg-background p-2" value={id} onChange={e=>{setId(e.target.value);setPath('');setEntries([]);}}><option value="">Choose a folder</option>{mappings.map(m=><option key={m.id} value={m.id}>{m.display_path}</option>)}</select></label>
  {!mappings.length&&<p>No local folders connected. Ask your administrator to enable local mapping, then connect a configured root in Connections.</p>}
