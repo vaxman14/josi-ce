@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createUser } from '../../auth/src/users.js';
+import { createThread } from '@josi-ce/core';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { isLocalWorkspaceDiscoveryRequest, runAssistantTurn } from '../src/assistantAgent.js';
 import { executeWorkspaceTool, WORKSPACE_TOOLS, workspaceToolNames } from '../src/workspaceTools.js';
 
 let db: TestDb;
@@ -38,5 +40,21 @@ describe('workspace mapping discovery', () => {
     expect(read.parameters.properties).toHaveProperty('mapping_id');
     expect(read.parameters.properties).not.toHaveProperty('mappingId');
     expect(read.description).toContain('list_workspace_mappings');
+  });
+
+  it('deterministically verifies local-folder questions with a real discovery receipt', async () => {
+    const thread = await createThread(db, { ownerUserId: owner });
+    const result = await runAssistantTurn({
+      db, userId: owner, threadId: thread.id, history: [],
+      inbound: 'What local folders can you see?', registry: { db, masterKey: null },
+    });
+    expect(result.actions).toEqual([{tool:'list_workspace_mappings',result:expect.objectContaining({mappings:expect.any(Array)})}]);
+    expect(result.reply).toContain('/workspace (read/write)');
+    expect(result.reply).not.toMatch(/no tool result/i);
+  });
+
+  it('does not treat a request to connect a folder as a status lookup', () => {
+    expect(isLocalWorkspaceDiscoveryRequest('Connect a local folder for me')).toBe(false);
+    expect(isLocalWorkspaceDiscoveryRequest('Can you access my local folders?')).toBe(true);
   });
 });

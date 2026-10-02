@@ -32,8 +32,11 @@ export function useDesktopWorkspaceRelay(signedIn:boolean){
   };
   const poll=async()=>{
    try{
-    state??=await bridge.state();await registerDesktopRoots(state);
-    await api.post('/desktop-workspace/heartbeat',{clientId:state.clientId});
+    // Read state on every pass. A folder can be added or revoked while the
+    // relay is already running; caching the first snapshot left the server
+    // advertising ghost roots until the whole app restarted.
+    state=await bridge.state();await registerDesktopRoots(state);
+    await api.post('/desktop-workspace/heartbeat',{clientId:state.clientId,rootIds:state.roots.map(root=>root.id)});
     const next=await api.get<{request:DesktopRequest|null}>(`/desktop-workspace/requests?clientId=${encodeURIComponent(state.clientId)}`);
     if(next.request){try{await result(next.request,true,await bridge.execute({rootId:next.request.root_id,operation:next.request.operation,payload:next.request.payload}));}catch(error){await result(next.request,false,error);}}
    }catch{/* Offline, signed out, or an old server: retry without weakening access. */}

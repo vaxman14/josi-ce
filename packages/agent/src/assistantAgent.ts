@@ -152,6 +152,33 @@ export interface TurnArgs {
 
 const HOP_LIMIT = 6;
 
+/** Folder-availability questions are cheap, owner-scoped reads. Resolve them
+ * deterministically so a model cannot answer "I have no tool result" after
+ * being offered the exact discovery tool. Requests to add or change access
+ * still go through the normal UI/tool flow. */
+export function isLocalWorkspaceDiscoveryRequest(input: string): boolean {
+  const text = input.trim();
+  const subject = /\b(?:local workspace|local folders?|desktop folders?|folders?\s+(?:on|from)\s+(?:this|my|the)\s+(?:device|computer|pc))\b/i.test(text);
+  const asksState = /\b(?:what|which|list|show|any|do you|can you|are there|connected|available|access|see|mapped)\b/i.test(text);
+  const asksMutation = /\b(?:connect|add|choose|grant|give)\b[^.!?]{0,40}\bfolders?\b/i.test(text);
+  return subject && asksState && !asksMutation;
+}
+
+function localWorkspaceDiscoveryReply(result: unknown): string {
+  const mappings = result && typeof result === 'object' && Array.isArray((result as {mappings?:unknown}).mappings)
+    ? (result as {mappings:Array<{name?:unknown;permissions?:Record<string,unknown>}>}).mappings : [];
+  if (!mappings.length) {
+    return 'No local folders are connected right now. Open Local Workspace and choose a read-only or read/write folder.';
+  }
+  const folders = mappings.map(mapping => {
+    const name = String(mapping.name ?? 'Unnamed folder').replace(/\s+/g, ' ').slice(0, 120);
+    const permissions = mapping.permissions ?? {};
+    const writable = ['create', 'edit', 'move', 'delete'].some(key => permissions[key] === true);
+    return `${name} (${writable ? 'read/write' : 'read-only'})`;
+  });
+  return `I can access ${folders.length} local folder${folders.length === 1 ? '' : 's'}: ${folders.join(', ')}.`;
+}
+
 function systemPrompt(args: {
   capabilities: Capabilities;
   templateNames: string[];
@@ -168,7 +195,7 @@ function systemPrompt(args: {
     'Be brief and direct: lead with the answer, no filler, no preamble.',
     'Plain text only — no markdown, no asterisks, no headings.',
     'You do work through tasks. Fill every required slot BEFORE anything is attempted; if a required slot is missing, ask for it. Never start work with a hole in it.',
-    'For any claim about connected providers, storage availability or indexing, call get_provider_status this turn. Email availability is stricter: call check_email_availability and claim availability only when its live provider request succeeds; connection metadata is never live proof. Use evidence internally, but never show receipts, observation timestamps, account metadata, internal identifiers, or raw status records. Summarize only the useful human-facing answer and source/provider name. Never infer runtime state from prior chat.',
+    'For claims about connected providers, cloud/server storage availability or indexing, call get_provider_status this turn. For local workspace folders on this device, call list_workspace_mappings this turn. Email availability is stricter: call check_email_availability and claim availability only when its live provider request succeeds; connection metadata is never live proof. Use evidence internally, but never show receipts, observation timestamps, account metadata, internal identifiers, or raw status records. Summarize only the useful human-facing answer and source/provider name. Never infer runtime state from prior chat.',
     'Never invent a name, number, address or time. If you do not know something, ask or say you do not know.',
     `${args.temporalContext} Ask only for scheduling details that are genuinely missing, such as duration when no end time or duration was given.`,
     'For calendar follow-ups, preserve the exact named subject and verified event receipt from the prior turn. “Move/push the EDD call” modifies the EDD event, never the newly proposed event. Keep the existing event on its original calendar and inherit the verified/default calendar for a new event instead of asking again when the receipt already identifies it.',
@@ -314,6 +341,21 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     : await resolveAction();
   if(deterministic.handled){
     return {reply:deterministic.reply??'',actions:deterministic.action?[{tool:'assistant_action_state',result:{ok:true,domain:deterministic.action.domain,status:deterministic.action.status,task_id:deterministic.action.task_id}}]:[]};
+  }
+
+  if (isLocalWorkspaceDiscoveryRequest(args.inbound)) {
+    const tool = 'list_workspace_mappings';
+    const input: Record<string, unknown> = {};
+    const decision = await checkStepUp(db, { userId, sessionKey, action: tool });
+    const result = decision.allowed
+      ? await execTool(args, tool, input)
+      : { ok: false, error: decision.reason, message: decision.message };
+    actions.push({ tool, result });
+    return {
+      reply: decision.allowed ? localWorkspaceDiscoveryReply(result) : (decision.message ?? 'Local Workspace needs verification before I can check it.'),
+      actions,
+      retry: retryTargetFor(tool, input),
+    };
   }
 
   // ---- can we run at all? ------------------------------------------------

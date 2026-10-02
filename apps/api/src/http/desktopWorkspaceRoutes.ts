@@ -17,15 +17,33 @@ export function desktopWorkspaceRoutes({db}:{db:Db}){
   const clientId=text(req.body.clientId),rootId=text(req.body.rootId),label=text(req.body.label);
   if(!ID.test(clientId)||!ID.test(rootId))return void res.status(400).json({error:'Invalid desktop workspace identity'});
   const writable=req.body.writable===true;
+  const [existing]=await db.query<{label:string;writable:boolean;status:string}>(`select label,writable,status from desktop_workspace_mappings
+    where owner_user_id=$1 and client_id=$2 and root_id=$3`,[req.user!.id,clientId,rootId]);
   const [mapping]=await db.query<{id:string;client_id:string;root_id:string;label:string;writable:boolean;status:string;last_seen_at:string}>(`insert into desktop_workspace_mappings(owner_user_id,client_id,root_id,label,writable)
     values($1,$2,$3,$4,$5) on conflict(owner_user_id,client_id,root_id) do update set label=excluded.label,writable=excluded.writable,status='active',last_seen_at=now(),updated_at=now()
     returning id,client_id,root_id,label,writable,status,last_seen_at`,[req.user!.id,clientId,rootId,label,writable]);
-  await appendEvent(db,{actor:'user',actorUserId:req.user!.id,kind:'desktop_workspace.connected',subjectType:'desktop_workspace_mapping',subjectId:mapping.id,payload:{writable}});
+  if(!existing||existing.label!==label||existing.writable!==writable||existing.status!=='active'){
+   await appendEvent(db,{actor:'user',actorUserId:req.user!.id,kind:'desktop_workspace.connected',subjectType:'desktop_workspace_mapping',subjectId:mapping.id,payload:{writable}});
+  }
   res.status(201).json({mapping});
  }));
  r.post('/heartbeat',asyncRoute(async(req,res)=>{
   const clientId=text(req.body.clientId);if(!ID.test(clientId))return void res.status(400).json({error:'Invalid desktop workspace identity'});
-  await db.query(`update desktop_workspace_mappings set last_seen_at=now(),updated_at=now() where owner_user_id=$1 and client_id=$2 and status='active'`,[req.user!.id,clientId]);
+  const rootIds=Array.isArray(req.body.rootIds)?[...new Set<string>(req.body.rootIds.map((value:unknown)=>String(value)))]:null;
+  if(rootIds&&!rootIds.every(rootId=>ID.test(rootId)))return void res.status(400).json({error:'Invalid desktop workspace identity'});
+  if(rootIds){
+   await db.query(`update desktop_workspace_mappings set last_seen_at=now(),updated_at=now()
+     where owner_user_id=$1 and client_id=$2 and status='active' and root_id=any($3::text[])`,[req.user!.id,clientId,rootIds]);
+   const revoked=await db.query<{id:string}>(`update desktop_workspace_mappings set status='revoked',updated_at=now()
+     where owner_user_id=$1 and client_id=$2 and status='active' and not(root_id=any($3::text[])) returning id`,[req.user!.id,clientId,rootIds]);
+   for(const mapping of revoked){
+    await db.query(`update desktop_workspace_requests set status='cancelled' where mapping_id=$1 and status in ('queued','claimed')`,[mapping.id]);
+    await appendEvent(db,{actor:'user',actorUserId:req.user!.id,kind:'desktop_workspace.revoked',subjectType:'desktop_workspace_mapping',subjectId:mapping.id,payload:{}});
+   }
+  }else{
+   // Compatibility for an older already-installed desktop renderer.
+   await db.query(`update desktop_workspace_mappings set last_seen_at=now(),updated_at=now() where owner_user_id=$1 and client_id=$2 and status='active'`,[req.user!.id,clientId]);
+  }
   res.json({ok:true});
  }));
  r.delete('/mappings/:id',asyncRoute(async(req,res)=>{
