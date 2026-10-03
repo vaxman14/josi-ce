@@ -98,6 +98,27 @@ Use Josi's **Admin** screens for normal management:
 Keep Docker running. On a dedicated Mac mini, enable Docker Desktop at login so
 Josi returns after a restart.
 
+## Use Josi on your devices
+
+Your Josi server is the home for every client. The web app and native apps use
+the same account, workspace, conversations, memory, and tools.
+
+- **Android:** [Install Josi CE from Google Play](https://play.google.com/store/apps/details?id=com.socalreceptionist.josice).
+- **iPhone and iPad:** The App Store release is coming soon.
+- **macOS, Windows, and Linux:** Desktop downloads are in final device testing.
+  Links will appear here when each build is approved.
+
+To connect a native app:
+
+1. Open Josi CE.
+2. Choose **Public URL** or **Tailscale**.
+3. Paste the Josi URL shown during server setup.
+4. Select **Verify and continue**.
+5. Sign in with the same Josi account you created in the browser.
+
+The app connects to the Josi server you just installed. It does not install or
+create another server.
+
 ## Updating Josi
 
 Run the same installer command again. The browser installer detects the existing
