@@ -25,6 +25,8 @@ describe('Test List 7 network and canonical address contracts', () => {
     expect(helper).toContain("'--user',f'{self.uid}:{self.gid}'");
     expect(helper).toContain("'--group-add',str(self.docker_gid)");
     expect(helper).toContain("'COMPOSE_PROJECT_NAME':self.project");
+    expect(helper).toContain("deadline=time.monotonic()+60");
+    expect(helper).toContain("report=self.run_doctor(False)");
     const controller = read('services/installer/controller.py');
     expect(controller).toContain('socket_mount = "/run/josi-maintenance-host"');
     expect(controller).toContain('"--project",PROJECT');

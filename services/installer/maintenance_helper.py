@@ -53,6 +53,17 @@ class Manager:
  def doctor(self,repair=False):
   if repair and not self.doctor_lock.acquire(blocking=False): raise RuntimeError('a repair is already running')
   try:
+   report=self.run_doctor(repair)
+   if repair and not report.get('healthy'):
+    deadline=time.monotonic()+60
+    while time.monotonic()<deadline:
+     time.sleep(2)
+     report=self.run_doctor(False)
+     if report.get('healthy'): break
+   return report
+  finally:
+   if repair:self.doctor_lock.release()
+ def run_doctor(self,repair=False):
    executable=self.root/'josi'
    if not executable.is_file(): raise RuntimeError('Josi Doctor is unavailable; rerun the installer once')
    command=['bash',str(executable),'--root',str(self.root),'doctor','--json']
@@ -67,8 +78,6 @@ class Manager:
     except (json.JSONDecodeError,AttributeError): pass
    if report is None: raise RuntimeError('Josi Doctor did not return a valid report')
    return report
-  finally:
-   if repair:self.doctor_lock.release()
 
 class Handler(BaseHTTPRequestHandler):
  manager=None
