@@ -57,6 +57,7 @@
   </div></header>
   <div class="layout" id="top">
     <aside class="side"><strong>On this page</strong><a class="level-2" href="#help">Help and current features</a>
+<a class="level-3" href="#local-workspace">Local Workspace</a>
 <a class="level-3" href="#family-parental-controls-beta">Family / Parental Controls BETA</a>
 <a class="level-3" href="#voice-box">Voice Box</a>
 <a class="level-3" href="#backups-and-system-checkup">Backups and system checkup</a>
@@ -65,6 +66,7 @@
     <main>
       <section class="hero"><div class="eyebrow">Official Josi CE documentation</div><h1>Josi CE Help</h1><p>Choose a guide, or browse help for the current features.</p><div class="meta"><span>Community Preview</span><span>Docker Compose</span><span>AMD64 + ARM64</span><span>Self-hosted</span></div></section>
       <details class="mobile-index"><summary>On this page</summary><nav aria-label="Page sections"><a class="level-2" href="#help">Help and current features</a>
+<a class="level-3" href="#local-workspace">Local Workspace</a>
 <a class="level-3" href="#family-parental-controls-beta">Family / Parental Controls BETA</a>
 <a class="level-3" href="#voice-box">Voice Box</a>
 <a class="level-3" href="#backups-and-system-checkup">Backups and system checkup</a>
@@ -94,6 +96,30 @@ and licensed Family BETA controls.</p>
 <p>Administrators configure infrastructure under <strong>Admin</strong>. Members
 use their own accounts under <strong>Workspace</strong>. Every signed-in page has
 a persistent <strong>Help</strong> link back to this guide.</p>
+<h3 id="local-workspace">Local Workspace</h3>
+<p>Open <strong>Workspace → Local Workspace</strong> in the Josi CE desktop app
+to connect a folder from that computer. A desktop folder is available only to
+the specific signed-in desktop session that connected it. It does not become
+account-wide: another computer, a browser, or a mobile app cannot discover,
+browse, or use it. Close or sign out of the desktop app and that folder is
+unavailable.</p>
+<p>Storage attached to the Josi CE server is different. Server folders—such as a
+NAS mount, Google Drive connection, passthrough folder, or
+<code>/workspace</code>—remain available through the server according to their
+configured permissions. The Local Workspace screen labels each entry
+<strong>This device</strong> or <strong>Server folder</strong> so you can tell
+which boundary applies.</p>
+<p>Read-only is the safer default. Read/write access lets Josi propose a change,
+but every write still requires one-time approval on the desktop that owns the
+folder. Revoking a desktop folder removes Josi's access without deleting the
+folder or its contents.</p>
+<p><strong>Create or edit a text file</strong> is a deliberately limited text
+editor, not a general file uploader. Enter a filename and contents to create a
+file, or use <strong>Load a text file</strong> to place a <code>.txt</code>,
+<code>.md</code>, <code>.csv</code>, <code>.json</code>, or
+<code>.log</code> file of at most 256 KiB into the editor. You can inspect or
+change the text before approving the exact write. Loading a file does not share
+the selected folder with another device.</p>
 <h3 id="family-parental-controls-beta">Family / Parental Controls BETA</h3>
 <blockquote><p><strong>BETA — do not trust or rely on these controls for a child's
 safety.</strong> They are experimental and may fail, be delayed or behave

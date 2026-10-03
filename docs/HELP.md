@@ -26,6 +26,32 @@ connections, and licensed Family BETA controls.
 * [Security model](THREAT_MODEL.md)
 * [Legal and policy index](LEGAL.md)
 
+## Local Workspace
+
+Open **Workspace → Local Workspace** in the Josi CE desktop app to connect a
+folder from that computer. A desktop folder is available only to the specific
+signed-in desktop session that connected it. It does not become account-wide:
+another computer, a browser, or a mobile app cannot discover, browse, or use it.
+Close or sign out of the desktop app and that folder is unavailable.
+
+Storage attached to the Josi CE server is different. Server folders—such as a
+NAS mount, Google Drive connection, passthrough folder, or `/workspace`—remain
+available through the server according to their configured permissions. The
+Local Workspace screen labels each entry **This device** or **Server folder** so
+you can tell which boundary applies.
+
+Read-only is the safer default. Read/write access lets Josi propose a change,
+but every write still requires one-time approval on the desktop that owns the
+folder. Revoking a desktop folder removes Josi's access without deleting the
+folder or its contents.
+
+**Create or edit a text file** is a deliberately limited text editor, not a
+general file uploader. Enter a filename and contents to create a file, or use
+**Load a text file** to place a `.txt`, `.md`, `.csv`, `.json`, or `.log` file
+of at most 256 KiB into the editor. You can inspect or change the text before
+approving the exact write. Loading a file does not share the selected folder
+with another device.
+
 ## Josi CLI and one-line installer
 
 The signed Josi CLI keeps Docker Compose as the only runtime while providing
