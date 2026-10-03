@@ -6,23 +6,25 @@ import { PathEscape } from './paths.js';
 
 export interface DesktopWorkspaceMapping {
   id:string; owner_user_id:string; client_id:string; root_id:string; label:string;
-  writable:boolean; status:string; last_seen_at:string;
+  writable:boolean; status:string; last_seen_at:string; session_id:string|null;
 }
 
 const delay=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 const ACTIVE_SECONDS=15;
 const REQUEST_SECONDS=35;
 
-export async function desktopWorkspaceMapping(db:Db,userId:string,id:string):Promise<DesktopWorkspaceMapping|null>{
-  const [mapping]=await db.query<DesktopWorkspaceMapping>(`select id,owner_user_id,client_id,root_id,label,writable,status,last_seen_at
-    from desktop_workspace_mappings where id=$1 and owner_user_id=$2 and status='active'`,[id,userId]);
+export async function desktopWorkspaceMapping(db:Db,userId:string,id:string,sessionId:string|null):Promise<DesktopWorkspaceMapping|null>{
+  if(!sessionId)return null;
+  const [mapping]=await db.query<DesktopWorkspaceMapping>(`select id,owner_user_id,client_id,root_id,label,writable,status,last_seen_at,session_id
+    from desktop_workspace_mappings where id=$1 and owner_user_id=$2 and session_id=$3 and status='active'`,[id,userId,sessionId]);
   return mapping??null;
 }
 
-export async function activeDesktopWorkspaceMappings(db:Db,userId:string){
-  return db.query<DesktopWorkspaceMapping>(`select id,owner_user_id,client_id,root_id,label,writable,status,last_seen_at
-    from desktop_workspace_mappings where owner_user_id=$1 and status='active'
-      and last_seen_at > now()-($2::text||' seconds')::interval order by label,id`,[userId,ACTIVE_SECONDS]);
+export async function activeDesktopWorkspaceMappings(db:Db,userId:string,sessionId:string|null){
+  if(!sessionId)return [];
+  return db.query<DesktopWorkspaceMapping>(`select id,owner_user_id,client_id,root_id,label,writable,status,last_seen_at,session_id
+    from desktop_workspace_mappings where owner_user_id=$1 and session_id=$2 and status='active'
+      and last_seen_at > now()-($3::text||' seconds')::interval order by label,id`,[userId,sessionId,ACTIVE_SECONDS]);
 }
 
 function validatePayload(operation:string,payload:Record<string,unknown>){
@@ -39,8 +41,8 @@ function validatePayload(operation:string,payload:Record<string,unknown>){
   return {path,...(destination?{destination}:{}),...(content!==undefined?{content}:{})};
 }
 
-export async function requestDesktopWorkspace(db:Db,userId:string,mappingId:string,operation:string,payload:Record<string,unknown>){
-  const mapping=await desktopWorkspaceMapping(db,userId,mappingId);
+export async function requestDesktopWorkspace(db:Db,userId:string,sessionId:string|null,mappingId:string,operation:string,payload:Record<string,unknown>){
+  const mapping=await desktopWorkspaceMapping(db,userId,mappingId,sessionId);
   if(!mapping||Date.now()-new Date(mapping.last_seen_at).getTime()>ACTIVE_SECONDS*1000)throw new PathEscape('Desktop workspace is offline. Keep Josi CE open on that device.');
   if(!mapping.writable&&['create','edit','mkdir','move','delete'].includes(operation))throw new PathEscape('This desktop workspace is read-only');
   const safe=validatePayload(operation,payload);const id=randomUUID();
@@ -60,12 +62,12 @@ export async function requestDesktopWorkspace(db:Db,userId:string,mappingId:stri
   throw new PathEscape('Desktop workspace did not respond. Keep Josi CE open on that device.');
 }
 
-export async function desktopWorkspaceList(db:Db,userId:string,mappingId:string,path=''){
-  return requestDesktopWorkspace(db,userId,mappingId,'list',{path});
+export async function desktopWorkspaceList(db:Db,userId:string,sessionId:string|null,mappingId:string,path=''){
+  return requestDesktopWorkspace(db,userId,sessionId,mappingId,'list',{path});
 }
-export async function desktopWorkspaceRead(db:Db,userId:string,mappingId:string,path:string){
-  return requestDesktopWorkspace(db,userId,mappingId,'read',{path});
+export async function desktopWorkspaceRead(db:Db,userId:string,sessionId:string|null,mappingId:string,path:string){
+  return requestDesktopWorkspace(db,userId,sessionId,mappingId,'read',{path});
 }
-export async function desktopWorkspaceChange(db:Db,userId:string,mappingId:string,input:WorkspaceChange){
-  return requestDesktopWorkspace(db,userId,mappingId,input.operation,input as unknown as Record<string,unknown>);
+export async function desktopWorkspaceChange(db:Db,userId:string,sessionId:string|null,mappingId:string,input:WorkspaceChange){
+  return requestDesktopWorkspace(db,userId,sessionId,mappingId,input.operation,input as unknown as Record<string,unknown>);
 }

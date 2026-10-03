@@ -12,6 +12,8 @@ describe('Local Workspace dashboard', () => {
     expect(page).toContain('Recommended');
     expect(page).toContain('Read and write');
     expect(page).toContain('Every write still needs your native one-time approval');
+    expect(page).toContain('Folders on this device, plus storage attached to your Josi server.');
+    expect(page).not.toContain('Folders available to your Josi account.');
   });
 
   it('refreshes the native state and reconciles revoked roots while the relay is running', () => {

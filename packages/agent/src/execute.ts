@@ -42,6 +42,9 @@ export interface ToolExecutionContext {
    * from a request body — the HTTP caller takes it from the session, the MCP
    * server from the context file the provider wrote. */
   userId: string;
+  /** Authenticated desktop session that may exercise device-local folders.
+   * Null for mobile, chat channels, browsers, and every other device. */
+  desktopSessionId?: string | null;
   /** The conversation the work came from, when there is one to link. */
   threadId: string | null;
   /** The inbound message that caused this tool call. It namespaces partial
@@ -64,7 +67,7 @@ export async function executeAssistantTool(
   input: Record<string, unknown>,
 ): Promise<unknown> {
   const { userId } = ctx;
-  if (WORKSPACE_TOOLS.some(t=>t.def.name===name)) return executeWorkspaceTool(db,userId,name,input);
+  if (WORKSPACE_TOOLS.some(t=>t.def.name===name)) return executeWorkspaceTool(db,userId,name,input,{desktopSessionId:ctx.desktopSessionId});
   if (name === 'get_provider_status') return providerStatus(db, userId);
 
   // Connected-data reads live in their own module; every one of them

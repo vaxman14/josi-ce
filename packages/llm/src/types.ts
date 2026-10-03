@@ -112,6 +112,7 @@ export interface ToolContext {
   userId: string | null;
   sessionKey: string | null;
   threadId: string | null;
+  desktopSessionId?: string | null;
   /** Server-only durable execution capability forwarded to Josi's MCP server.
    * It is never model input and never accepted from a client request. */
   durableTurnId?: string | null;

@@ -132,6 +132,7 @@ export function buildCore(ctx: McpHarnessContext, connect: () => Promise<Db>): M
         conn,
         {
           userId: ctx.userId!, threadId: ctx.threadId, connectors: connectors(),
+          desktopSessionId: ctx.desktopSessionId,
           latestUserText: ctx.latestUserText ?? undefined,
           effectiveNow: ctx.effectiveNow ? new Date(ctx.effectiveNow) : undefined,
         },

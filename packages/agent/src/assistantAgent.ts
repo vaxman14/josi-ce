@@ -111,6 +111,9 @@ export interface TurnArgs {
   /** Whose turn this is. Everything the agent creates belongs to them, and
    * whose personalization is loaded. Never a value from a request body. */
   userId: string;
+  /** Authenticated desktop session whose device-local folders may be used.
+   * Absent for mobile, external channels, and ordinary browsers. */
+  desktopSessionId?: string|null;
   threadId: string;
   /** Persisted inbound message id for action-state turn scoping. */
   inboundMessageId?: string;
@@ -423,7 +426,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     try { developerIntegrationTools = await developerIntegrationToolAvailability(db,userId); }
     catch (err) { console.error('native integration availability check failed', (err as Error).message); }
   }
-  const workspaceNames = capabilities.toolCalling ? await workspaceToolNames(db,userId) : new Set<string>();
+  const workspaceNames = capabilities.toolCalling ? await workspaceToolNames(db,userId,{desktopSessionId:args.desktopSessionId}) : new Set<string>();
   const availableTaskTools = TASK_TOOLS.filter((t) =>
     (!t.def.name.startsWith('workspace_') || workspaceNames.has(t.def.name))
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
@@ -526,6 +529,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
           // From the session, never from a request body.
           toolContext: {
             userId, sessionKey, threadId: args.threadId,
+            desktopSessionId: args.desktopSessionId ?? null,
             durableTurnId: args.durableTurnId ?? null,
             durableLeaseToken: args.durableLeaseToken ?? null,
             latestUserText: args.inbound,
@@ -789,6 +793,7 @@ async function execTool(
     const masterKey = args.registry.masterKey;
     return executeAssistantTool(args.db, {
       userId: args.userId,
+      desktopSessionId: args.desktopSessionId,
       threadId: args.threadId,
       turnId: args.inboundMessageId,
       latestUserText: args.inbound,

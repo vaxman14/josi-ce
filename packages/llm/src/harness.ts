@@ -67,6 +67,7 @@ export interface HarnessContext {
   userId: string | null;
   sessionKey: string | null;
   threadId: string | null;
+  desktopSessionId: string | null;
   durableTurnId: string | null;
   durableLeaseToken: string | null;
   latestUserText: string | null;
@@ -116,6 +117,7 @@ export function openHarnessSession(args: {
     userId: args.toolContext?.userId ?? null,
     sessionKey: args.toolContext?.sessionKey ?? null,
     threadId: args.toolContext?.threadId ?? null,
+    desktopSessionId: args.toolContext?.desktopSessionId ?? null,
     durableTurnId: args.toolContext?.durableTurnId ?? null,
     durableLeaseToken: args.toolContext?.durableLeaseToken ?? null,
     latestUserText: args.toolContext?.latestUserText ?? null,

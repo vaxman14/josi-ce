@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createUser } from '../../auth/src/users.js';
+import { createSession } from '../../auth/src/sessions.js';
 import { createThread } from '@josi-ce/core';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { isLocalWorkspaceDiscoveryRequest, runAssistantTurn } from '../src/assistantAgent.js';
@@ -32,6 +33,26 @@ describe('workspace mapping discovery', () => {
     expect(result.mappings[0]).not.toHaveProperty('mappingId');
     expect(JSON.stringify(result)).not.toContain('private-host-path');
     expect(JSON.stringify(result)).not.toContain('Other person');
+  });
+
+  it('never discovers another desktop session while retaining server-attached storage', async () => {
+    const macSession=(await createSession(db,{userId:owner})).sessionId;
+    const windowsSession=(await createSession(db,{userId:owner})).sessionId;
+    await db.query(`insert into desktop_workspace_mappings(owner_user_id,client_id,root_id,label,writable,session_id)
+      values($1,'desktop_macbook_abcdefghijkl','root_macbook_abcdefghijkl','MacBook MyStuff',false,$2),
+            ($1,'desktop_windows_abcdefghijk','root_windows_abcdefghijk','Windows Documents',true,$3)`,
+      [owner,macSession,windowsSession]);
+    expect(macSession).not.toBe(windowsSession);
+    expect(await db.query<{label:string}>(`select label from desktop_workspace_mappings where owner_user_id=$1 and session_id=$2 order by label`,[owner,windowsSession])).toEqual([{label:'Windows Documents'}]);
+
+    const windows=await executeWorkspaceTool(db,owner,'list_workspace_mappings',{}, {desktopSessionId:windowsSession}) as {mappings:Array<{name:string}>};
+    expect(windows.mappings.map(mapping=>mapping.name)).toEqual(['/workspace','Windows Documents (this device)']);
+    expect(JSON.stringify(windows)).not.toContain('MacBook MyStuff');
+
+    const browser=await executeWorkspaceTool(db,owner,'list_workspace_mappings',{}) as {mappings:Array<{name:string}>};
+    expect(browser.mappings.map(mapping=>mapping.name)).toEqual(['/workspace']);
+    expect(JSON.stringify(browser)).not.toContain('MacBook MyStuff');
+    expect(JSON.stringify(browser)).not.toContain('Windows Documents');
   });
 
   it('advertises canonical mapping_id requests and does not advertise the compatibility alias', () => {

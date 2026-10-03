@@ -450,6 +450,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         db,
         registry: registryOptions(ctx),
         userId: thread.owner_user_id,
+        desktopSessionId: req.user!.id===thread.owner_user_id?req.user!.session_id:null,
         threadId,
         history,
         inbound: modelInbound,
