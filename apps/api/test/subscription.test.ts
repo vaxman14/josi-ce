@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { computeProfile } from '@josi-ce/core';
-import type { SpawnRunner } from '@josi-ce/llm';
+import { loadStoredProvider, type SpawnRunner } from '@josi-ce/llm';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 import { requireCapability } from '../src/http/authz.js';
@@ -28,8 +28,12 @@ let db: TestDb;
 const cookies: Record<string, string> = {};
 
 let runnerCalls: Array<Parameters<SpawnRunner>[0]> = [];
+let holdFirstProbe: Promise<void> | null = null;
+let onProbeEntered: (() => void) | null = null;
 const codexRunner: SpawnRunner = async (args) => {
   runnerCalls.push(args);
+  const gate = holdFirstProbe;
+  if (gate) { holdFirstProbe = null; onProbeEntered?.(); await gate; }
   return {
     code: 0,
     stdout: JSON.stringify({ type: 'agent_message', message: 'Answered by Codex.' }),
@@ -111,6 +115,8 @@ afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); 
 
 beforeEach(async () => {
   runnerCalls = [];
+  holdFirstProbe = null;
+  onProbeEntered = null;
   await db.query(`delete from llm_providers`);
   await db.query(`delete from llm_usage`);
   await db.query(`delete from rate_limits`);
@@ -182,11 +188,15 @@ describe('configuring it (L3.4)', () => {
       provider: 'openai_subscription', model: 'gpt-5-codex', externalAcknowledged: true,
     });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    const [row] = await db.query<{ api_key_enc: string | null; subscription_command: string }>(
-      `select api_key_enc, subscription_command from llm_providers where role = 'primary'`,
+    const [row] = await db.query<{
+      api_key_enc: string | null; subscription_command: string; model: string; activated_at: string | null;
+    }>(
+      `select api_key_enc, subscription_command, model, activated_at from llm_providers where role = 'primary'`,
     );
     expect(row.api_key_enc).toBeNull();
     expect(row.subscription_command).toBe('codex');
+    expect(row.model).toBe('gpt-5-codex');
+    expect(row.activated_at).toBeNull(); // A choice is not active until the real probe succeeds.
   });
 
   it('REFUSES an API key rather than ignoring it', async () => {
@@ -272,6 +282,10 @@ describe('configuring it (L3.4)', () => {
   it('allows an empty model on both subscription kinds — the CLI chooses', async () => {
     const chatgpt = await save({ provider: 'openai_subscription', externalAcknowledged: true });
     expect(chatgpt.status).toBe(200);
+    const [automatic] = await db.query<{ model: string }>(
+      `select model from llm_providers where role = 'primary'`,
+    );
+    expect(automatic.model).toBe('');
     const claude = await save({ provider: 'anthropic_subscription', externalAcknowledged: true });
     expect(claude.status).toBe(200);
     // A NON-subscription provider still needs a name.
@@ -315,6 +329,41 @@ describe('using it (L3.2)', () => {
     expect(runnerCalls.length).toBeGreaterThan(0);
     expect(runnerCalls[0].command).toBe('codex');
     expect(runnerCalls[0].args).toContain('exec');
+  });
+
+  it('retains the full database timestamp for the probe change guard', async () => {
+    const stored = await loadStoredProvider(db, 'primary');
+    const [row] = await db.query<{ exact: string }>(
+      `select updated_at::text as exact from llm_providers where role = $1`, ['primary'],
+    );
+    expect(stored?.updated_at).toBe(row.exact);
+  });
+
+  it('an older probe cannot activate a newly saved model', async () => {
+    let release!: () => void;
+    holdFirstProbe = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    onProbeEntered = started;
+    const oldProbe = call('/api/admin/llm/providers/primary/probe', { method: 'POST', jar: cookies.admin });
+    try {
+      await entered;
+      const saved = await call('/api/admin/llm/providers/primary', {
+        method: 'PUT', jar: cookies.admin,
+        body: { provider: 'openai_subscription', model: 'replacement-model', externalAcknowledged: true },
+      });
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    } finally {
+      release();
+    }
+    const result = await oldProbe;
+    expect(result.status).toBe(409);
+    const [row] = await db.query<{ model: string; activated_at: string | null; probed_at: string | null }>(
+      `select model, activated_at, probed_at from llm_providers where role = 'primary'`,
+    );
+    expect(row.model).toBe('replacement-model');
+    expect(row.activated_at).toBeNull();
+    expect(row.probed_at).toBeNull();
   });
 
   it('the probe finds tool calling absent, so dependent features stay off', async () => {

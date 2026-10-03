@@ -23,14 +23,16 @@ it:
 | The brand images and app icons | Conversations, tasks, contacts, mail, documents |
 | The manifest | Your name, your account, your session |
 | A static "Josi is offline" page | The signed-in page itself |
+| Exact, public Help/installation/legal pages and their brand image | Any other route under `/help/` |
 
 Not a 200. Not a GET. Not "just the harmless ones". Not even while offline.
 
-**Offline, Josi shows a page that says it is offline.** That page contains no
-information at all: no script, no image request, no cached data. For an
-assistant holding somebody's private mail, that is the honest offline
-experience — the alternative is a phone in a drawer still displaying last
-week's conversation to whoever finds it.
+**Offline, private app routes show a page that says Josi is offline.** It
+contains no script, no image request, and no cached account data. The exact
+public `/help/index.html`, `/help/install/index.html`, and
+`/help/legal/index.html` pages remain readable offline. These standalone,
+script-free pages link to live chat on `help.heyjosi.com`, which needs a
+connection. No signed-in view, API response, or personal content is cached.
 
 ## Installing
 
@@ -105,7 +107,7 @@ curl -s https://your.domain/offline.html | grep -c '<script'
 
 In the browser's developer tools, **Application → Service Workers** should show
 one registered worker at scope `/`, and **Application → Cache Storage** should
-contain `josi-v1-shell` and `josi-v1-assets` — and **no entry whose URL starts
+contain `josi-v2-shell` and `josi-v2-assets` — and **no entry whose URL starts
 with `/api`**. That last one is the check worth doing after any upgrade.
 
 ## Troubleshooting
@@ -139,6 +141,7 @@ workers require HTTPS (or `localhost`).
 | Manifest | `apps/web/public/manifest.webmanifest` |
 | Icons, derived from the approved mark | `apps/web/public/icons/` |
 | Offline shell | `apps/web/public/offline.html` |
+| Public offline Help generation | `scripts/build-offline-docs.mjs`, `scripts/sync-offline-help.mjs` |
 | Registration, install and update UX | `apps/web/src/lib/pwa.tsx` |
 | Headers, CSP, `no-store` on the worker | `apps/api/src/http/staticApp.ts` |
 | Tests, run against the shipped `sw.js` | `apps/api/test/pwa.test.ts` |

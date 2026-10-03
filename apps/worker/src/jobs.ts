@@ -10,10 +10,10 @@
 // because Phase 7 has not happened yet would read, to the person waiting on it,
 // exactly like Josi tried and could not.
 import {
-  claimJobs, claimReadyTask, completeJob, consumeApproval, enqueue,
+  addMessage, approvalHash, claimJobs, claimReadyTask, completeJob, consumeApproval, enqueue,
   expireApprovals, expireHolds, failJob, getTask, tickSchedules,
   claimDurableTurn, completeDurableTurn, durableTurnHasEffects, durableTurnHasIncompleteEffects, failDurableTurn, renewDurableTurnLease, renewJobLease, processPushBatch, processPushReceipts, deliverReminderPersisted, json,
-  settleActionForTask, transition, type Db, type Job, type MasterKey,
+  expirePreparedActionApprovals, settleActionForTask, transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
   accessTokenFor, can, connectionsWithCapability, createInternalEvent, dueCalendarOrigins, dueCloudMappings, dueOrigins, expireCustomApiCalls,
@@ -31,7 +31,7 @@ import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk,
 } from '@josi-ce/channels';
 import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
-import { runAssistantTurn } from '@josi-ce/agent';
+import { effectiveTimeContext, formatCalendarRange, runAssistantTurn } from '@josi-ce/agent';
 import { IMAGE_MEDIA_TYPES, readAttachment } from '@josi-ce/storage';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import { extname } from 'node:path';
@@ -88,10 +88,10 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
         if(!inbound)throw new Error('durable inbound message is unavailable');
         const preceding=await db.query<{direction:'in'|'out';body:string;meta:Record<string,unknown>}>(`select direction,body,meta from messages where thread_id=$1 and id<>$2 and created_at<=$3 order by created_at desc,id desc limit 40`,[turn.thread_id,inbound.id,inbound.created_at]);
         const history=preceding.reverse().map(m=>({role:m.direction==='in'?('user' as const):('assistant' as const),content:durableHistoryContent(m)}));
-        const attachments=turn.attachment_ids.length?await db.query<{id:string;filename:string;extracted_text:string|null}>(`select id,filename,extracted_text from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 and storage_state='ready' order by id`,[turn.attachment_ids,turn.owner_user_id,turn.thread_id]):[];
+        const attachments=turn.attachment_ids.length?await db.query<{id:string;filename:string;extracted_text:string|null;analysis_status:string;analysis_code:string|null}>(`select id,filename,extracted_text,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 and storage_state='ready' order by id`,[turn.attachment_ids,turn.owner_user_id,turn.thread_id]):[];
         const mediaType=(name:string)=>IMAGE_MEDIA_TYPES[extname(name).replace(/^\./,'').toLowerCase()];
         const textAttachments=attachments.filter(a=>!mediaType(a.filename));
-        const context=textAttachments.map(a=>a.extracted_text?`Attached file ${a.filename}:\n${a.extracted_text}`:`Attached file ${a.filename}; no readable text was extracted.`).join('\n\n');
+        const context=textAttachments.map(a=>a.extracted_text?`Attached file ${a.filename}:\n${a.extracted_text}`:a.analysis_status==='unavailable'?`Attached file ${a.filename}; analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`:`Attached file ${a.filename}; no readable text was extracted.`).join('\n\n');
         const provider=await loadStoredProvider(db,'primary');
         const images=capabilitiesOf(provider)?.vision===true?await Promise.all(attachments.filter(a=>mediaType(a.filename)).map(async a=>({mediaType:mediaType(a.filename),base64:(await readAttachment(a.id)).toString('base64')}))):undefined;
         const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},userId:turn.owner_user_id,threadId:turn.thread_id,history,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,replyToMessageId:turn.reply_to_message_id,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.accepted_session_id});
@@ -102,6 +102,9 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
         const taskIds=result.actions.map(a=>a.result).filter((v):v is {state:string;task_id:string}=>!!v&&typeof v==='object'&&['collecting','prepared'].includes(String((v as any).state))&&typeof (v as any).task_id==='string').map(v=>v.task_id);
         const calendarReceipts=result.actions.filter(a=>DURABLE_CALENDAR_CONTINUITY_TOOLS.has(a.tool)).slice(-6);
         const replyMeta:Record<string,unknown>={};
+        const nativeApproval=result.actions.map(a=>a.result).find((value):value is {state:string;approval_id:string;summary:string;action?:string;action_class?:string;expires_at?:string|null}=>
+          !!value&&typeof value==='object'&&String((value as any).state)==='prepared'&&typeof (value as any).approval_id==='string'&&typeof (value as any).summary==='string');
+        if(nativeApproval)replyMeta.nativeApproval={approvalId:nativeApproval.approval_id,summary:nativeApproval.summary,action:nativeApproval.action??'approve',actionClass:nativeApproval.action_class??'',expiresAt:nativeApproval.expires_at??null,requiresDeviceAuth:true,status:'pending'};
         if(calendarReceipts.length)replyMeta.calendar_receipts=calendarReceipts;
         const actionStatusDomain=result.actions.find(a=>a.tool==='assistant_action_state'&&a.result&&typeof a.result==='object')?.result as {domain?:unknown}|undefined;
         if(actionStatusDomain?.domain==='email'||actionStatusDomain?.domain==='calendar')replyMeta.action_status_domain=actionStatusDomain.domain;
@@ -120,7 +123,7 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       // rather than a wake that quietly did nothing.
       const pending = await getTask(db, taskId);
       if (pending.state !== 'ready') return;
-      const [preparedAction]=await db.query<{approval_id:string|null}>(`select approval_id from assistant_action_states where task_id=$1`,[pending.id]);
+      const [preparedAction]=await db.query<{approval_id:string|null;authorization_kind:'approval'|'user_policy';payload_hash:string|null}>(`select approval_id,authorization_kind,payload_hash from assistant_action_states where task_id=$1`,[pending.id]);
       // Legacy ready tasks still wait for a capability. A conversational action
       // was explicitly approved, so a withdrawn/unavailable provider must
       // settle it as an authoritative domain failure rather than leave it
@@ -136,20 +139,28 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       try {
         if (task.slots.rendered_email && !preparedAction) throw new Error('Template email requires an exact prepared approval.');
         if(preparedAction){
-          if(!preparedAction.approval_id)throw new Error('The prepared action has no approval.');
-          const approval=await consumeApproval(db,{approvalId:preparedAction.approval_id,payload:task.slots});
-          if(!approval.ok){
-            if(approval.reason==='expired')await db.query(`update assistant_action_states set status='expired' where task_id=$1 and status='approved'`,[task.id]);
-            throw new Error(`The prepared action approval is not usable (${approval.reason}).`);
+          if(preparedAction.authorization_kind==='approval'){
+            if(!preparedAction.approval_id)throw new Error('The prepared action has no approval.');
+            const approval=await consumeApproval(db,{approvalId:preparedAction.approval_id,payload:task.slots});
+            if(!approval.ok){
+              if(approval.reason==='expired')await db.query(`update assistant_action_states set status='expired' where task_id=$1 and status='approved'`,[task.id]);
+              throw new Error(`The prepared action approval is not usable (${approval.reason}).`);
+            }
+          }else if(preparedAction.authorization_kind!=='user_policy'){
+            throw new Error('The prepared action has no valid authorization.');
+          }else if(preparedAction.payload_hash!==approvalHash(task.slots)){
+            throw new Error('The user-policy-authorized action payload changed after authorization.');
           }
           await db.query(`update assistant_action_states set status='executing' where task_id=$1 and status='approved'`,[task.id]);
         }
         await executeWriteTask(db, task, ctx);
         await transition(db, task.id, 'confirmed', { actor: 'system' });
         await settleActionForTask(db,task.id,'succeeded');
+        await reportCalendarTaskOutcome(db,task,true).catch(()=>undefined);
       } catch (err) {
         await transition(db, task.id, 'failed', { actor: 'system', reason: safeTaskError(err) });
         await settleActionForTask(db,task.id,'failed');
+        await reportCalendarTaskOutcome(db,task,false,err).catch(()=>undefined);
       }
       return;
     }
@@ -160,6 +171,7 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
     }
 
     case 'approvals.expire': {
+      await expirePreparedActionApprovals(db);
       await expireApprovals(db);
       await expireCustomApiCalls(db);
       return;
@@ -278,8 +290,9 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
 
     case 'reminder.deliver': {
       const reminderId = String((job.payload as { reminderId?: unknown }).reminderId ?? '');
-      if (!reminderId) throw new Error('reminder.deliver without a reminderId');
-      await deliverReminder(db, reminderId, ctx);
+      const revision = Number((job.payload as { revision?: unknown }).revision);
+      if (!reminderId || !Number.isSafeInteger(revision) || revision < 1) throw new Error('reminder.deliver without a valid reminder revision');
+      await deliverReminder(db, reminderId, revision, ctx);
       return;
     }
 
@@ -424,15 +437,30 @@ function safeTaskError(err: unknown): string {
   return message.slice(0, 300);
 }
 
+async function reportCalendarTaskOutcome(db:Db,task:WritableTask,succeeded:boolean,error?:unknown):Promise<void>{
+  if(task.template_key!=='schedule_appointment'||!task.thread_id)return;
+  const source=task.slots.calendar_source&&typeof task.slots.calendar_source==='object'
+    ? task.slots.calendar_source as {calendar_name?:unknown;calendar_id?:unknown}:{};
+  const calendar=typeof source.calendar_name==='string'&&source.calendar_name.trim()
+    ? source.calendar_name.trim()
+    : typeof source.calendar_id==='string'&&source.calendar_id.trim()?source.calendar_id.trim():'the selected calendar';
+  const title=textSlot(task,'title')||'Untitled event';
+  const {locale,timeZone}=await effectiveTimeContext(db,task.owner_user_id);
+  const body=succeeded
+    ? `Saved “${title}” in Josi for ${calendar}.\n${formatCalendarRange(task.slots.start,task.slots.end,{locale,timeZone})}\nIt is queued to sync with the connected calendar.`
+    : `The calendar action could not be completed. ${safeTaskError(error)}`;
+  await addMessage(db,{threadId:task.thread_id,direction:'out',body,meta:{action_status_domain:'calendar',task_result:{taskId:task.id,status:succeeded?'succeeded':'failed'}}});
+}
+
 /** Deliver one due reminder. Chat persistence and native push outbox creation
  * share one database statement; Telegram remains best-effort after that
  * authoritative local delivery. */
-async function deliverReminder(db: Db, reminderId: string, ctx: WorkerContext): Promise<void> {
-  const [pending]=await db.query<{body:string}>(`select body from reminders where id=$1 and status='scheduled'`,[reminderId]);
+async function deliverReminder(db: Db, reminderId: string, revision: number, ctx: WorkerContext): Promise<void> {
+  const [pending]=await db.query<{body:string}>(`select body from reminders where id=$1 and revision=$2 and status='scheduled' and due_at<=now()`,[reminderId,revision]);
   if(!pending)return;
   const text=`Reminder: ${pending.body}`;
   const calendarReminder=text.includes('\nCalendar source:');
-  const reminder=await deliverReminderPersisted(db,{reminderId,text,category:calendarReminder?'calendar':'reminder',pushBody:calendarReminder?text.split('\nCalendar source:')[0]:text});
+  const reminder=await deliverReminderPersisted(db,{reminderId,revision,text,category:calendarReminder?'calendar':'reminder',pushBody:calendarReminder?text.split('\nCalendar source:')[0]:text});
   if(!reminder)return;
 
   await deliverReminderToTelegram(db, reminder.owner_user_id, text, ctx).catch(() => {

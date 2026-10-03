@@ -11,7 +11,7 @@ TMP="$(mktemp -d "$ROOT/.tmp-cli-installer.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 FIX="$TMP/fixture"
 VERSION=1.2.3
-RELEASE="$FIX/public/get.heyjosi.com/releases/v$VERSION"
+RELEASE="$FIX/public/github.com/vaxman14/josi-ce-public/releases/download/v$VERSION"
 mkdir -p "$RELEASE" "$FIX/public/github.com/sigstore/cosign/releases/download/v2.4.1" "$FIX/manifests" "$FIX/bin" "$TMP/payload"
 
 cat > "$TMP/payload/josi" <<'EOF'
@@ -44,7 +44,7 @@ cat > "$FIX/cosign" <<'EOF'
 #!/bin/sh
 args=$*
 case "$args" in
-  *"--certificate-identity https://github.com/vaxman14/josi-ce/.github/workflows/release.yml@refs/tags/v1.2.3"*) ;;
+  *"--certificate-identity https://github.com/vaxman14/josi-ce-public/.github/workflows/release.yml@refs/tags/v1.2.3"*) ;;
   *) exit 1 ;;
 esac
 case "$args" in
@@ -71,10 +71,10 @@ case "$url" in
   https://get.heyjosi.com/install.sh)
     source=/source/get.heyjosi.com/install.sh
     ;;
-  https://get.heyjosi.com/releases/v1.2.3/josi-cli-1.2.3-checksums.txt)
+  https://github.com/vaxman14/josi-ce-public/releases/download/v1.2.3/josi-cli-1.2.3-checksums.txt)
     source="/fixture/manifests/${FIXTURE_VARIANT:-good}"
     ;;
-  https://get.heyjosi.com/releases/v1.2.3/*)
+  https://github.com/vaxman14/josi-ce-public/releases/download/v1.2.3/*)
     source="/fixture/public/${url#https://}"
     ;;
   https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64|https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-arm64)

@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type Approval } from '@/lib/api';
 import { Badge, Button, Card, Empty, ErrorNote } from '@/components/ui';
+import { watchApprovals, type ApprovalSnapshot } from '@/lib/approvalRefresh';
 import { plain } from '@/lib/plainLanguage';
 
 interface PendingCall {
@@ -61,6 +62,10 @@ export function Approvals() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => watchApprovals(
+    () => api.get<ApprovalSnapshot<Approval>>('/assistant/approvals'),
+    snapshot => setApprovals(snapshot.approvals),
+  ), []);
 
   async function decide(id: string, approve: boolean) {
     setBusy(id);
@@ -71,6 +76,7 @@ export function Approvals() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not record that');
+      await load();
     } finally {
       setBusy(null);
     }

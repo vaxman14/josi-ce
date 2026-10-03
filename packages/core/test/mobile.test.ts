@@ -257,18 +257,19 @@ describe('Expo push outbox',()=>{
 
   it('suppresses ordinary quiet-hour delivery while an explicit reminder bypasses it',async()=>{
     const db=await testDb(),{u,t}=await owner(db);const key=new MasterKey(Buffer.alloc(32,3));
-    const d=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'ios',expoToken:'ExpoPushToken[quiet]',appState:'background',privacyLocked:false,quietStart:'22:00',quietEnd:'07:00',timezone:'UTC'});
-    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body,explicit_reminder,next_attempt_at) values($1,$2,'ordinary','assistant','turn',$3,'Josi','ordinary',false,$4),($1,$2,'explicit','reminder','reminder',$3,'Josi reminder','explicit',true,$4)`,[u.id,d.id,t.id,new Date('2026-09-18T22:59:00Z')]);
+    const d=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',platform:'ios',expoToken:'ExpoPushToken[quiet]',appState:'foreground',privacyLocked:false,quietStart:'22:00',quietEnd:'07:00',timezone:'UTC',ownerBinding:'owner-hash'});
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,route_thread_id,title,body,explicit_reminder,next_attempt_at) values($1,$2,'ordinary','assistant','turn',$3,null,'Josi','ordinary',false,$4),($1,$2,'reminder:'||($3::uuid)::text||':7','reminder','reminder',$3,$3,'Josi reminder','explicit',true,$4)`,[u.id,d.id,t.id,new Date('2026-09-18T22:59:00Z')]);
     let messages:any[]=[];const send=async(_url:any,init:any)=>{messages=JSON.parse(init.body);return new Response(JSON.stringify({data:[{status:'ok',id:'quiet-ticket'}]}),{status:200,headers:{'content-type':'application/json'}})};
-    const result=await processPushBatch(db,key,send as typeof fetch,new Date('2026-09-18T23:00:00Z'));expect(result).toMatchObject({suppressed:1,ticketed:1});expect(messages).toHaveLength(1);expect(messages[0]).toMatchObject({title:'Josi',body:'explicit',data:{route:'reminder',id:t.id}});
+    const result=await processPushBatch(db,key,send as typeof fetch,new Date('2026-09-18T23:00:00Z'));expect(result).toMatchObject({suppressed:1,ticketed:1});expect(messages).toHaveLength(1);expect(messages[0]).toMatchObject({title:'Josi',body:'explicit',data:{route:'reminder',id:t.id,threadId:t.id,owner:'owner-hash',revision:7}});
   });
 
   it('preserves supplied reminder and calendar bodies for unlocked devices',async()=>{
     const db=await testDb(),{u,t}=await owner(db,'supplied-push-body');const key=new MasterKey(Buffer.alloc(32,18));
-    const d=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'20202020-2020-4202-8202-202020202020',platform:'ios',expoToken:'ExpoPushToken[supplied_bodies]',appState:'background',privacyLocked:false,timezone:'UTC'});
-    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,title,body,explicit_reminder) values($1,$2,'supplied-reminder','reminder','reminder',$3,'Josi reminder','Call Alex at 3 PM',true),($1,$2,'supplied-calendar','calendar','task',$3,'Josi','Dentist starts in 15 minutes',false)`,[u.id,d.id,t.id]);
+    const d=await upsertMobileDevice(db,key,u.id,{deviceIdentity:'20202020-2020-4202-8202-202020202020',platform:'ios',expoToken:'ExpoPushToken[supplied_bodies]',appState:'background',privacyLocked:false,timezone:'UTC',ownerBinding:'owner-hash'});
+    await db.query(`insert into push_deliveries(owner_user_id,device_id,event_key,category,route_type,route_id,route_thread_id,title,body,explicit_reminder) values($1,$2,'reminder:'||($3::uuid)::text||':9','reminder','reminder',$3,$3,'Josi reminder','Call Alex at 3 PM',true),($1,$2,'supplied-calendar','calendar','task',$3,null,'Josi','Dentist starts in 15 minutes',false)`,[u.id,d.id,t.id]);
     let messages:any[]=[];const send=async(_url:any,init:any)=>{messages=JSON.parse(init.body);return new Response(JSON.stringify({data:[{status:'ok',id:'supplied-1'},{status:'ok',id:'supplied-2'}]}),{status:200,headers:{'content-type':'application/json'}})};
     expect((await processPushBatch(db,key,send as typeof fetch)).ticketed).toBe(2);expect(messages.map(message=>message.body).sort()).toEqual(['Call Alex at 3 PM','Dentist starts in 15 minutes']);
+    expect(messages.find(message=>message.body==='Call Alex at 3 PM').data).toEqual({route:'reminder',id:t.id,threadId:t.id,owner:'owner-hash',revision:9});
   });
 
   it('creates approval outbox only when the exact request is presented',async()=>{

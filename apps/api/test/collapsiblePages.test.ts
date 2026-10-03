@@ -39,6 +39,16 @@ describe('compact settings disclosures', () => {
     expect(overview).toContain('navigate(item.href)');
   });
 
+  it('shows effective approval policy locks and removes choices the server would ignore',()=>{
+    const settings=read('apps/web/src/pages/Settings.tsx');
+    expect(settings).toContain('Managed policy lock');
+    expect(settings).toContain('Choices this lock would ignore are not offered');
+    expect(settings).toContain('LEVEL_RANK[level.value] <= LEVEL_RANK[state.adminCeiling!]');
+    const admin=read('apps/web/src/pages/admin/Policy.tsx');
+    expect(admin).toContain('No managed limits');
+    expect(admin).toContain('exists only after you set');
+  });
+
   it('shows parental controls only as an honest disabled coming-soon teaser', () => {
     const shell = read('apps/web/src/components/layout/Shell.tsx');
     const admin = read('apps/web/src/pages/admin/ParentalControls.tsx');

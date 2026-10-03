@@ -2,9 +2,9 @@
 <!--
   The offline shell.
 
-  This page is deliberately the ONLY thing Josi shows when the network is gone,
-  and it deliberately contains no information. Not a cached conversation, not a
-  task count, not a name — nothing.
+  This page is deliberately the ONLY private-app view Josi shows when the
+  network is gone. Public Help is available separately. No cached conversation,
+  task count, name, or other account information is shown here.
 
   A service worker cache is origin-scoped and outlives sign-out. Anything shown
   here would still be shown to whoever picks up the device next, after the
@@ -81,6 +81,7 @@
                color:#e6edf6;text-decoration:none;font-size:.95rem"
         >Try again</a
       >
+      <a href="/help/index.html" style="color:#f0a52a;min-height:44px;display:inline-flex;align-items:center">Read offline Help</a>
     </main>
   </body>
 </html>

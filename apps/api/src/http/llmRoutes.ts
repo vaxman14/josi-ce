@@ -686,6 +686,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
 
       const stored = await loadStoredProvider(db, role);
       if (!stored) throw new RouteError(404, 'that provider is not configured');
+      if (!stored.updated_at) throw new RouteError(409, 'the model configuration could not be verified');
 
       let result;
       try {
@@ -709,12 +710,12 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         return res.status(409).json({ error: message });
       }
 
-      await db.query(
+      const updated = await db.query<{ role: string }>(
         `update llm_providers set
            probed_at = $2, probe_steps = $3,
            cap_chat = $4, cap_structured_output = $5, cap_tool_calling = $6, cap_vision = $7, cap_context_tokens = $8,
            activated_at = case when $4 then coalesce(activated_at, now()) else null end
-         where role = $1`,
+         where role = $1 and updated_at::text = $9::text returning role`,
         [
           // json(), not JSON.stringify + ::jsonb. Hand-serialising is what
           // db.ts warns about: postgres.js types a JS string as text, so the
@@ -725,8 +726,12 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
           role, result.probedAt, json(result.steps),
           result.capabilities.chat, result.capabilities.structuredOutput,
           result.capabilities.toolCalling, result.capabilities.vision, result.capabilities.contextTokens,
+          stored.updated_at,
         ],
       );
+      if (!updated.length) {
+        return res.status(409).json({ error: 'The model changed during the test. Test the current selection again.' });
+      }
 
       await appendEvent(db, {
         actorUserId: req.user!.id,

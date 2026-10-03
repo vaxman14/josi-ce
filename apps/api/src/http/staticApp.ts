@@ -97,6 +97,13 @@ export function mountWebApp(app: Express, opts: StaticAppOptions = {}): boolean 
   app.use('/assets', express.static(join(dir, 'assets'), {
     immutable: true, maxAge: '1y', fallthrough: true,
   }));
+  // Before express.static: its implicit directory redirect would otherwise
+  // turn /help into /help/ before we can canonicalize to the precached file.
+  for (const section of ['', 'install', 'legal']) {
+    const alias = section ? `/help/${section}/` : '/help/';
+    app.get(alias, (_req, res) => res.redirect(302, `${alias}index.html`));
+  }
+  app.get('/help', (_req, res) => res.redirect(302, '/help/index.html'));
   app.use(express.static(dir, {
     index: false,
     maxAge: '1h',
@@ -110,6 +117,13 @@ export function mountWebApp(app: Express, opts: StaticAppOptions = {}): boolean 
       }
     },
   }));
+
+  // Public Help is standalone, never a fallback rendering of the private SPA.
+  // Unknown Help paths must not inherit the authenticated SPA fallback.
+  app.get(/^\/help\/.*$/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(404).type('text/plain').send('Help page not found');
+  });
 
   // Client-side routing: anything that is not an API call and not a file gets
   // the shell. `/api` is excluded so a mistyped endpoint still returns the

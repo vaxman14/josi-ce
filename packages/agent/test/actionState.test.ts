@@ -1,9 +1,10 @@
 import {beforeEach,describe,expect,it} from 'vitest';
 import {testDb,type TestDb} from '../../core/test/helpers.js';
 import {createUser} from '../../auth/src/users.js';
-import {addMessage,createThread,getTask,markActionsPresented,MasterKey} from '@josi-ce/core';
+import {addMessage,createThread,getTask,markActionsPresented,MasterKey,setUserApprovalLevel} from '@josi-ce/core';
 import {ensureInternalCalendar,setCapability,upsertConnection} from '@josi-ce/connectors';
 import {executeAssistantTool} from '../src/execute.js';
+import {formatCalendarRange} from '../src/calendarPresentation.js';
 
 let db:TestDb;
 let user:string;
@@ -52,16 +53,56 @@ describe('action drafts are merged only inside their namespace',()=>{
     const other=await ensureInternalCalendar(db,{ownerUserId:user,connectionId:connection.id,provider:'google',providerCalendarId:'other'});
     await db.query(`update calendar_sync_origins set last_sync_at=now() where id in($1,$2)`,[primary.id,other.id]);
 
-    const first=await executeAssistantTool(db,ctx(),'draft_calendar_event',{
-      title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00',
+    await setUserApprovalLevel(db,{userId:user,actionClass:'calendar_write',level:'automatic'});
+    const first=await executeAssistantTool(db,ctx(),'draft_calendar_event',{title:'Phone call with EDD'}) as any;
+    expect(first).toMatchObject({state:'collecting',missing_slots:['start','end']});
+    await present(first,'What time should I use?');
+    const completed=await executeAssistantTool(db,ctx(),'draft_calendar_event',{
+      start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00',
     }) as any;
-    expect(first.state,JSON.stringify(first)).toBe('prepared');
-    expect(first.summary).toContain('Calendar: Main calendar');
-    expect(first.summary).toContain('Title: Phone call with EDD');
-    expect(first.summary).not.toContain('LexisNexis');
-    const task=await getTask(db,first.task_id);
+    expect(completed,JSON.stringify(completed)).toMatchObject({state:'approved',authorization:'user_policy'});
+    expect(completed.summary).toContain('Calendar: Main calendar');
+    expect(completed.summary).toContain('Title: Phone call with EDD');
+    expect(completed.summary).not.toContain('LexisNexis');
+    const task=await getTask(db,completed.task_id);
+    expect(task.state).toBe('ready');
     expect(task.slots).not.toHaveProperty('event_id');
     expect(task.slots.calendar_source).toMatchObject({calendar_id:'primary',calendar_name:'Main calendar'});
+    expect(await db.query(`select id from approvals where subject_type='task' and subject_id=$1`,[task.id])).toEqual([]);
+    expect(await db.query(`select id from job_queue where kind='task.wake' and payload->>'taskId'=$1`,[task.id])).toHaveLength(1);
+  });
+
+  it('keeps the no-approval preference while a missing duration completes the Vaxman Kids event',async()=>{
+    await db.query(`insert into workspace(id,name,timezone) values(true,'Test','America/Los_Angeles') on conflict(id) do update set timezone=excluded.timezone`);
+    const connection=await upsertConnection(db,key,{ownerUserId:user,provider:'google',providerAccountId:'vaxman-kids',accountEmail:'kids@example.test',
+      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.readonly'},
+      requestedCapabilities:['google.calendar.read','google.calendar.write']});
+    await setCapability(db,{connection,capability:'google.calendar.write',enabled:true,actorUserId:user});
+    await setCapability(db,{connection,capability:'google.calendar.read',enabled:true,actorUserId:user});
+    const [source]=await db.query<{id:string}>(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name,is_primary,writable,is_write_default)
+      values($1,$2,'vaxman-kids','Vaxman Kids',true,true,true) returning id`,[user,connection.id]);
+    const origin=await ensureInternalCalendar(db,{ownerUserId:user,connectionId:connection.id,provider:'google',providerCalendarId:'vaxman-kids'});
+    await db.query(`update calendar_sync_origins set last_sync_at=now() where id=$1`,[origin.id]);
+    await setUserApprovalLevel(db,{userId:user,actionClass:'calendar_write',level:'automatic'});
+
+    const first=await executeAssistantTool(db,{...ctx(),latestUserText:'November 14, 2026 at 4:30 PM'},'draft_calendar_event',{
+      source_id:source.id,title:'Vaxman Kids event',start:'2026-11-14T16:30:00-08:00',
+    }) as any;
+    expect(first).toMatchObject({state:'collecting',missing_slots:['end']});
+    await present(first,'How long should it last?');
+
+    const completed=await executeAssistantTool(db,{...ctx(),latestUserText:'2 hours'},'draft_calendar_event',{duration_minutes:120}) as any;
+    expect(completed,JSON.stringify(completed)).toMatchObject({state:'approved',authorization:'user_policy'});
+    expect(completed.summary).toContain('Calendar: Vaxman Kids');
+    expect(completed.summary).toContain('Date: Saturday, November 14, 2026');
+    expect(completed.summary).toContain('Time: 4:30–6:30 PM PST');
+    expect(completed.summary).not.toContain('2026-11-14T');
+    expect(formatCalendarRange('2026-11-14T23:30:00Z','2026-11-15T01:00:00Z',{locale:'invalid_locale',timeZone:'invalid/zone'}))
+      .toBe('Start: Saturday, November 14, 2026 at 11:30 PM UTC\nEnd: Sunday, November 15, 2026 at 1:00 AM UTC');
+    expect(formatCalendarRange(undefined,'bad',{timeZone:null})).toBe('Start: Not specified\nEnd: Not specified');
+    const task=await getTask(db,completed.task_id);
+    expect(task.slots).toMatchObject({start:'2026-11-14T16:30:00-08:00',end:'2026-11-14T18:30:00-08:00'});
+    expect(await db.query(`select id from approvals where subject_type='task' and subject_id=$1`,[task.id])).toEqual([]);
   });
 
   it('discards a superseded pre-migration source id when primary intent resolves the current write default',async()=>{

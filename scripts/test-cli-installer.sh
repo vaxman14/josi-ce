@@ -45,7 +45,7 @@ chmod +x "$BIN/"*
 export PATH="$BIN:$ORIGINAL_PATH" FAKE_FIX="$FIX" REAL_SHA256SUM REAL_SHASUM
 INSTALLER="$ROOT/get.""hey""josi.com""/install.sh"
 pass=0; ok(){ pass=$((pass+1)); echo "ok $pass - $1"; }; bad(){ echo "not ok - $1" >&2; exit 1; }
-grep -q 'base_url="https://get.heyjosi.com/releases/v${VERSION}"' "$INSTALLER" || bad public-origin
+grep -q 'base_url="https://github.com/vaxman14/josi-ce-public/releases/download/v${VERSION}"' "$INSTALLER" || bad public-origin
 grep -q 'github.com/vaxman14/josi-ce/releases/download' "$INSTALLER" && bad private-origin
 ok 'unauthenticated installs use the public versioned artifact origin'
 sh "$INSTALLER" --version 1.2.3 --install-dir "$DEST" --non-interactive >/dev/null

@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
-import { MasterKey, addMessage, attachCollectingAction, createTask, createThread, enqueue, markActionsPresented, placeHold, prepareAction, requestApproval, resolveConversationalAction, transition } from '@josi-ce/core';
+import { MasterKey, addMessage, attachCollectingAction, authorizeActionByUserPolicy, createTask, createThread, enqueue, markActionsPresented, placeHold, prepareAction, requestApproval, resolveConversationalAction, setSlots, setUserApprovalLevel, transition } from '@josi-ce/core';
 import { saveClient, setCapability, setSyncMode, upsertConnection } from '@josi-ce/connectors';
 import { processQueue } from '../../worker/src/jobs.js';
 
@@ -91,6 +91,24 @@ describe('the worker drains the queue', () => {
     expect(row.status).toBe('expired');
   });
 
+  it('expires the exact native card and cancels its waiting task',async()=>{
+    const thread=(await createThread(db,{ownerUserId:owner})).id;
+    const task=await createTask(db,{ownerUserId:owner,threadId:thread,templateKey:'schedule_appointment',slots:{title:'Expired event',start:'2026-11-14T16:30:00-08:00',end:'2026-11-14T18:30:00-08:00'}});
+    const action=await attachCollectingAction(db,{ownerUserId:owner,threadId:thread,domain:'calendar',operation:'create',taskId:task.id});
+    const prepared=await prepareAction(db,{actionState:action,task,summary:'Expired event',actionClass:'calendar_write',action:'create'});
+    const message=(await addMessage(db,{threadId:thread,direction:'out',body:'Review',meta:{nativeApproval:{approvalId:prepared.approval.id,status:'pending'}}})).id;
+    await markActionsPresented(db,{ownerUserId:owner,threadId:thread,taskIds:[task.id],messageId:message});
+    await db.query(`update approvals set expires_at=now()-interval '1 minute' where id=$1`,[prepared.approval.id]);
+    await db.query(`update assistant_action_states set expires_at=now()-interval '1 minute' where id=$1`,[action.id]);
+    await enqueue(db,{kind:'approvals.expire'});
+
+    await processQueue(db,'expire-native');
+    expect((await db.query<{status:string}>(`select status from approvals where id=$1`,[prepared.approval.id]))[0].status).toBe('expired');
+    expect((await db.query<{status:string}>(`select status from assistant_action_states where id=$1`,[action.id]))[0].status).toBe('expired');
+    expect((await db.query<{state:string}>(`select state from tasks where id=$1`,[task.id]))[0].state).toBe('cancelled');
+    expect((await db.query<{status:string}>(`select meta->'nativeApproval'->>'status' status from messages where id=$1`,[message]))[0].status).toBe('expired');
+  });
+
   it('promotes a due schedule into a job', async () => {
     await db.query(
       `insert into schedules (kind, interval_seconds, next_run_at) values ('holds.expire', 60, now() - interval '1 minute')`,
@@ -118,6 +136,46 @@ describe('the worker drains the queue', () => {
     await enqueue(db, { kind: 'task.wake', payload: { taskId: task.id } });
     const dump = JSON.stringify(await db.query(`select * from job_queue`));
     expect(dump).not.toContain('PRIVATE-SLOT');
+  });
+});
+
+describe('user-policy-authorized calendar execution',()=>{
+  const key=new MasterKey(Buffer.alloc(32,19));
+  async function automaticCalendar(){
+    await db.query(`insert into workspace(id,name,timezone) values(true,'Test','America/Los_Angeles') on conflict(id) do update set timezone=excluded.timezone`);
+    await setUserApprovalLevel(db,{userId:owner,actionClass:'calendar_write',level:'automatic'});
+    const connection=await upsertConnection(db,key,{ownerUserId:owner,provider:'google',providerAccountId:'calendar-worker',accountEmail:'calendar@example.test',tokens:{accessToken:'calendar-access',refreshToken:'calendar-refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar'},requestedCapabilities:['google.calendar.write']});
+    await setCapability(db,{connection,capability:'google.calendar.write',enabled:true,actorUserId:owner});
+    const thread=(await createThread(db,{ownerUserId:owner})).id;
+    const slots={title:'Vaxman Kids event',start:'2026-11-14T16:30:00-08:00',end:'2026-11-14T18:30:00-08:00',calendar_source:{provider:'google',account_id:connection.id,calendar_id:'vaxman-kids',calendar_name:'Vaxman Kids'}};
+    const task=await createTask(db,{ownerUserId:owner,threadId:thread,templateKey:'schedule_appointment',slots});
+    const action=await attachCollectingAction(db,{ownerUserId:owner,threadId:thread,domain:'calendar',operation:'create',taskId:task.id});
+    await authorizeActionByUserPolicy(db,{actionStateId:action.id,actionClass:'calendar_write',action:'create'});
+    return {task,thread};
+  }
+  it('executes a complete calendar write without creating or consuming an approval',async()=>{
+    const {task,thread}=await automaticCalendar();
+    expect(await db.query(`select id from approvals where subject_type='task' and subject_id=$1`,[task.id])).toEqual([]);
+    expect(await processQueue(db,'calendar-policy',20,{masterKey:key})).toMatchObject({done:1,failed:0});
+    expect((await db.query<{state:string}>(`select state from tasks where id=$1`,[task.id]))[0].state).toBe('confirmed');
+    const [event]=await db.query<{title:string;starts_at:string;ends_at:string}>(`select title,starts_at,ends_at from calendar_events where owner_user_id=$1 and title='Vaxman Kids event'`,[owner]);
+    expect(event).toBeTruthy();
+    expect(new Date(event.starts_at).toISOString()).toBe('2026-11-15T00:30:00.000Z');
+    expect(new Date(event.ends_at).toISOString()).toBe('2026-11-15T02:30:00.000Z');
+    expect((await db.query<{status:string}>(`select status from assistant_action_states where task_id=$1`,[task.id]))[0].status).toBe('succeeded');
+    const [result]=await db.query<{body:string}>(`select body from messages where thread_id=$1 and direction='out' order by created_at desc limit 1`,[thread]);
+    expect(result.body).toContain('Vaxman Kids');
+    expect(result.body).toContain('Saturday, November 14, 2026');
+    expect(result.body).toContain('4:30–6:30 PM PST');
+    expect(result.body).toContain('queued to sync');
+  });
+
+  it('refuses a payload changed after automatic authorization',async()=>{
+    const {task}=await automaticCalendar();
+    await setSlots(db,task.id,{title:'Changed after authorization'},{actor:'user',actorUserId:owner});
+    expect(await processQueue(db,'calendar-policy-mutated',20,{masterKey:key})).toMatchObject({done:1,failed:0});
+    expect((await db.query<{state:string}>(`select state from tasks where id=$1`,[task.id]))[0].state).toBe('failed');
+    expect(await db.query(`select id from calendar_events where owner_user_id=$1 and title='Changed after authorization'`,[owner])).toEqual([]);
   });
 });
 

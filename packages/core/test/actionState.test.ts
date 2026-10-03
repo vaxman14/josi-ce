@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb } from './helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import {
-  activeCollectingAction, addMessage, attachCollectingAction, createTask, getTask, markActionsPresented, prepareAction,
+  activeCollectingAction, addMessage, attachCollectingAction, createTask, decideActionApproval, getTask, markActionsPresented, prepareAction,
   resolveConversationalAction, type AssistantActionState, type Db, type Task,
 } from '../src/index.js';
 
@@ -38,6 +38,21 @@ describe('transactional conversational action state',()=>{
     expect(await db.query(`select id from job_queue where kind='task.wake' and payload->>'taskId'=$1`,[task.id])).toHaveLength(1);
     expect((await db.query<{status:string}>(`select status from approvals where id=$1`,[state.approval.id]))[0].status).toBe('approved');
     expect((await db.query<{kind:string}>(`select kind from events where subject_id=$1 order by created_at`,[task.id])).map(x=>x.kind)).toEqual(expect.arrayContaining(['approval.requested','approval.granted']));
+  });
+
+  it('rolls back every approval write when queueing fails',async()=>{
+    const {task,state}=await prepared('email',emailSlots);
+    const failing:Db={query:db.query,transaction:work=>db.transaction!(tx=>work({
+      query:async<T>(sql:string,params?:unknown[])=>{
+        if(/insert into job_queue/i.test(sql))throw new Error('synthetic queue failure');
+        return tx.query<T>(sql,params);
+      },
+    }))};
+    await expect(decideActionApproval(failing,{approvalId:state.approval.id,decidedBy:owner,approve:true}))
+      .rejects.toThrow(/synthetic queue failure/);
+    expect((await db.query<{status:string}>(`select status from approvals where id=$1`,[state.approval.id]))[0].status).toBe('pending');
+    expect((await getTask(db,task.id)).state).toBe('awaiting_approval');
+    expect((await db.query<{status:string}>(`select status from assistant_action_states where task_id=$1`,[task.id]))[0].status).toBe('prepared');
   });
 
   it('requires a durable queued yes to target the exact presented approval message',async()=>{
@@ -85,7 +100,8 @@ describe('transactional conversational action state',()=>{
     await db.query(`update assistant_action_states set expires_at=now()-interval '1 minute' where task_id=$1`,[fresh.task.id]);
     const expired=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes'});
     expect(expired.reply).toMatch(/expired/i);
-    expect((await getTask(db,fresh.task.id)).state).toBe('awaiting_approval');
+    expect((await getTask(db,fresh.task.id)).state).toBe('cancelled');
+    expect((await db.query<{status:string}>(`select status from approvals where id=$1`,[fresh.state.approval.id]))[0].status).toBe('expired');
   });
 
   it('answers email execution status from email state, never stale calendar names',async()=>{

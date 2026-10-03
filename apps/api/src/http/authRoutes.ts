@@ -12,6 +12,7 @@ import QRCode from 'qrcode';
 import { asyncRoute, param } from './async.js';
 import { clearSessionCookie, clientIp, isNativeClient, issueCsrfToken, setSessionCookie } from './cookies.js';
 import { requireAuth } from './authz.js';
+import { verifyAppleIdentityToken } from './appleIdentity.js';
 
 export interface AuthRoutesCtx {
   db: Db;
@@ -20,6 +21,8 @@ export interface AuthRoutesCtx {
   masterKey?: LoadOptions | false;
   mailTransport?: SmtpTransport;
   connectorFetch?: typeof fetch;
+  appleNativeClientId?: string | null;
+  appleFetch?: typeof fetch;
 }
 
 export function authRoutes(ctx: AuthRoutesCtx): Router {
@@ -204,6 +207,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return res.json({
       appUrl,
       googleSignIn,
+      appleSignIn: !!ctx.appleNativeClientId,
       nativeGoogleStart: `${appUrl}/api/auth/google/native/start`,
       enrollmentDeepLink,
     });
@@ -375,6 +379,139 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     });
     await appendEvent(db, { actorUserId: redeemed.user_id, actor: 'user', kind: 'auth.google_native_login', subjectType: 'user', subjectId: redeemed.user_id });
     return res.json({ user: publicUser(redeemed), sessionToken: token });
+  }));
+
+  r.post('/apple/native/exchange', asyncRoute(async (req, res) => {
+    if (!isNativeClient(req)) return res.status(403).json({ error: 'native client required' });
+    if (!ctx.appleNativeClientId) return res.status(503).json({ error: 'Sign in with Apple is not configured.' });
+    const identityToken = typeof req.body?.identityToken === 'string' ? req.body.identityToken : '';
+    const nonce = typeof req.body?.nonce === 'string' ? req.body.nonce : '';
+    const appleUser = typeof req.body?.appleUser === 'string' ? req.body.appleUser : '';
+    if (!identityToken || identityToken.length > 16_384 || !/^[A-Za-z0-9_-]{43}$/.test(nonce)) {
+      return res.status(400).json({ error: 'invalid Apple credential' });
+    }
+    let identity;
+    try {
+      identity = await verifyAppleIdentityToken({
+        token: identityToken,
+        nonce,
+        clientId: ctx.appleNativeClientId,
+        fetchImpl: ctx.appleFetch,
+      });
+    } catch {
+      return res.status(401).json({ error: 'Apple could not verify this sign-in.' });
+    }
+    if (appleUser && appleUser !== identity.subject) {
+      return res.status(401).json({ error: 'Apple could not verify this sign-in.' });
+    }
+
+    const [user] = await db.query<{
+      id: string; email: string; username: string; role: string; display_name: string | null; mfa_enabled_at: string | null;
+    }>(
+      `select u.id,u.email,u.username,u.role,u.display_name,u.mfa_enabled_at
+       from auth_identities i join users u on u.id=i.user_id
+       where i.provider='apple' and i.provider_subject=$1 and u.status='active'`,
+      [identity.subject],
+    );
+    if (!user || user.mfa_enabled_at) {
+      const challenge = randomBytes(32).toString('base64url');
+      await db.query(
+        `insert into auth_apple_challenges
+           (challenge_hash,purpose,provider_subject,verified_email,private_relay,user_id,expires_at)
+         values($1,$2,$3,$4,$5,$6,now()+interval '5 minutes')`,
+        [createHash('sha256').update(challenge).digest('hex'), user ? 'mfa_login' : 'link',
+          identity.subject, identity.email, identity.privateRelay, user?.id ?? null],
+      );
+      return res.status(202).json(user
+        ? { mfaRequired: true, challenge }
+        : { linkRequired: true, challenge });
+    }
+
+    await db.query(
+      `update auth_identities set verified_email=coalesce($2,verified_email),private_relay=$3,last_login_at=now()
+       where provider='apple' and provider_subject=$1`,
+      [identity.subject, identity.email, identity.privateRelay],
+    );
+    const { token } = await createSession(db, {
+      userId: user.id, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds: SESSION_TTL_SECONDS,
+    });
+    await appendEvent(db, {
+      actorUserId: user.id, actor: 'user', kind: 'auth.apple_native_login', subjectType: 'user', subjectId: user.id,
+      payload: { privateRelay: identity.privateRelay },
+    });
+    return res.json({ user: publicUser(user), sessionToken: token });
+  }));
+
+  r.post('/apple/native/complete', asyncRoute(async (req, res) => {
+    if (!isNativeClient(req)) return res.status(403).json({ error: 'native client required' });
+    const challenge = typeof req.body?.challenge === 'string' ? req.body.challenge : '';
+    const identifier = typeof req.body?.identifier === 'string' ? req.body.identifier.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const mfaCode = typeof req.body?.mfaCode === 'string' ? req.body.mfaCode.replace(/\s/g, '') : '';
+    const [pending] = await db.query<{
+      purpose: 'link' | 'mfa_login'; provider_subject: string; verified_email: string | null;
+      private_relay: boolean; user_id: string | null;
+    }>(
+      `select purpose,provider_subject,verified_email,private_relay,user_id
+       from auth_apple_challenges where challenge_hash=$1 and used_at is null and expires_at>now() and attempts<5`,
+      [createHash('sha256').update(challenge).digest('hex')],
+    );
+    if (!pending) return res.status(401).json({ error: 'That Apple sign-in expired. Start again.' });
+
+    let userId = pending.user_id;
+    if (pending.purpose === 'link') {
+      if (!identifier || !password) return res.status(400).json({ error: 'Enter your existing workspace credentials to link Apple.' });
+      const result = await login(db, { identifier, password, ip: clientIp(req) });
+      if (!result.ok) {
+        if (result.reason === 'rate_limited') {
+          res.set('Retry-After', String(result.verdict.retryAfterSeconds));
+          return res.status(429).json({ error: 'too many attempts, try again later' });
+        }
+        return res.status(401).json({ error: 'wrong username or password' });
+      }
+      userId = result.user.id;
+    }
+    if (!userId) return res.status(401).json({ error: 'That Apple sign-in expired. Start again.' });
+
+    const [account] = await db.query<{ totp_secret_enc: string | null; mfa_enabled_at: string | null }>(
+      `select totp_secret_enc,mfa_enabled_at from users where id=$1 and status='active'`, [userId],
+    );
+    if (!account) return res.status(401).json({ error: 'That Apple sign-in expired. Start again.' });
+    if (account.totp_secret_enc && account.mfa_enabled_at) {
+      if (!mfaCode || ctx.masterKey === false) return res.status(202).json({ mfaRequired: true, challenge });
+      const secret = openSealed<{ secret: string }>(loadMasterKey(ctx.masterKey ?? {}), account.totp_secret_enc).secret;
+      if (!(await verify({ secret, token: mfaCode, epochTolerance: 30 })).valid) {
+        await db.query(`update auth_apple_challenges set attempts=least(attempts+1,5) where challenge_hash=$1`, [
+          createHash('sha256').update(challenge).digest('hex'),
+        ]);
+        return res.status(401).json({ error: 'That verification code did not work.' });
+      }
+    }
+
+    const claimed = await db.query<{ provider_subject: string }>(
+      `update auth_apple_challenges set used_at=now()
+       where challenge_hash=$1 and used_at is null and expires_at>now() returning provider_subject`,
+      [createHash('sha256').update(challenge).digest('hex')],
+    );
+    if (!claimed[0]) return res.status(401).json({ error: 'That Apple sign-in expired. Start again.' });
+    if (pending.purpose === 'link') {
+      const linked = await db.query<{ user_id: string }>(
+        `insert into auth_identities(user_id,provider,provider_subject,verified_email,private_relay)
+         values($1,'apple',$2,$3,$4) on conflict do nothing returning user_id`,
+        [userId, pending.provider_subject, pending.verified_email, pending.private_relay],
+      );
+      if (!linked[0]) return res.status(409).json({ error: 'Apple is already linked to another workspace account.' });
+      await appendEvent(db, { actorUserId: userId, actor: 'user', kind: 'auth.apple_linked', subjectType: 'user', subjectId: userId });
+    }
+    const [user] = await db.query<{
+      id: string; email: string; username: string; role: string; display_name: string | null;
+    }>(`select id,email,username,role,display_name from users where id=$1 and status='active'`, [userId]);
+    if (!user) return res.status(401).json({ error: 'That Apple sign-in expired. Start again.' });
+    const { token } = await createSession(db, {
+      userId, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds: SESSION_TTL_SECONDS,
+    });
+    await appendEvent(db, { actorUserId: userId, actor: 'user', kind: 'auth.apple_native_login', subjectType: 'user', subjectId: userId });
+    return res.json({ user: publicUser(user), sessionToken: token });
   }));
 
   r.get('/me', requireAuth, (req, res) => {

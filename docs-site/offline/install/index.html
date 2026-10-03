@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#07101f">
+  <title>Install Josi CE | Josi CE</title>
+  <meta name="description" content="Install Josi CE with Docker, then finish setup in your browser.">
+  <link rel="icon" type="image/png" href="../brand/josi-mark.png">
+  <style>
+    :root{--bg:#07101f;--panel:#0d192b;--panel2:#111f34;--text:#eef4fb;--muted:#9badc3;--line:#26374f;--orange:#f58220;--gold:#f5ad42;--code:#050b15;--max:860px}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.68 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--gold);text-decoration-thickness:1px;text-underline-offset:3px}a:hover{color:#ffc46b}.top{position:sticky;top:0;z-index:20;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(7,16,31,.92);backdrop-filter:blur(16px)}.top-inner{max-width:1180px;margin:auto;height:68px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{display:flex;align-items:center;gap:12px;color:var(--text);text-decoration:none;font-weight:750;letter-spacing:-.02em}.brand img{width:38px;height:38px;object-fit:contain}.brand span small{display:block;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}.top-links{display:flex;gap:16px;align-items:center;font-size:14px}.pill{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 15px;border-radius:999px;background:var(--orange);color:#111827!important;font-weight:800;text-decoration:none}.layout{max-width:1180px;margin:auto;display:grid;grid-template-columns:250px minmax(0,var(--max));gap:54px;padding:48px 24px 96px}.side{position:sticky;top:96px;align-self:start;max-height:calc(100vh - 120px);overflow:auto;padding-right:16px}.side strong{display:block;margin-bottom:12px;color:#fff;font-size:13px;text-transform:uppercase;letter-spacing:.09em}.side a{display:block;padding:5px 0;color:var(--muted);font-size:13px;text-decoration:none}.side a:hover{color:var(--orange)}main{min-width:0}.hero{padding:42px 0 36px;border-bottom:1px solid var(--line);margin-bottom:42px}.eyebrow{color:var(--orange);font-size:13px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.hero h1{margin:8px 0 14px;font-size:clamp(42px,8vw,72px);line-height:.98;letter-spacing:-.055em}.hero p{max-width:680px;color:var(--muted);font-size:19px}.meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}.meta span{border:1px solid var(--line);border-radius:999px;padding:7px 11px;color:#bfd0e3;font-size:12px}article h1{display:none}article h2{margin:64px 0 18px;padding-top:20px;border-top:1px solid var(--line);font-size:30px;line-height:1.2;letter-spacing:-.025em;scroll-margin-top:92px}article h3{margin:38px 0 12px;font-size:21px;line-height:1.3;scroll-margin-top:92px}article p,article li{color:#d5dfeb}article strong{color:#fff}article blockquote{margin:24px 0;padding:18px 22px;border-left:4px solid var(--orange);border-radius:0 12px 12px 0;background:var(--panel);color:#dbe6f3}article blockquote p{margin:0}article ul,article ol{padding-left:24px}article li+li{margin-top:6px}pre{overflow:auto;margin:18px 0 26px;padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:var(--code);box-shadow:0 14px 34px rgba(0,0,0,.16)}code{font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#ffd393}p code,li code,td code{padding:2px 5px;border-radius:5px;background:var(--panel2)}table{display:block;overflow-x:auto;width:100%;border-collapse:collapse;margin:22px 0}th,td{padding:11px 13px;border:1px solid var(--line);text-align:left;vertical-align:top}th{background:var(--panel2);color:#fff}td{color:#cad7e6}.copy{float:right;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--muted);padding:5px 8px;font-size:11px;cursor:pointer}.copy:hover{color:#fff}.footer{max-width:var(--max);margin:0 auto;padding:30px 24px 60px;color:var(--muted);border-top:1px solid var(--line);font-size:13px}@media(max-width:900px){.layout{display:block;padding-top:24px}.side{display:none}.top-links a:not(.pill){display:none}.hero{padding-top:26px}article h2{font-size:26px}}@media(max-width:520px){.top-inner{padding:0 16px}.layout{padding-left:16px;padding-right:16px}.brand span small{display:none}.pill{padding:0 12px}.hero h1{font-size:44px}pre{margin-left:-4px;margin-right:-4px;padding:15px}}
+  </style>
+  <style>
+    .topic-index{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin:0 0 40px}
+    .topic-index a{display:block;padding:20px;border:1px solid var(--line);border-radius:12px;background:var(--panel);font-weight:750;text-decoration:none}
+    .topic-index a span{display:block;margin-top:6px;color:var(--muted);font-size:14px;font-weight:400}
+    .side a.level-3{padding-left:14px;font-size:12px}
+    .mobile-index{display:none;margin-bottom:30px;padding:14px 18px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+    .mobile-index summary{cursor:pointer;font-weight:700;color:var(--gold)}
+    .mobile-index nav{display:grid;gap:9px;max-height:55vh;overflow:auto;padding-top:15px}
+    .mobile-index a{text-decoration:none;font-size:14px}
+    .mobile-index a.level-3{padding-left:14px;font-size:13px;color:var(--muted)}
+    @media(max-width:900px){.mobile-index{display:block}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="top-inner">
+    <a class="brand" href="../index.html"><img src="../brand/josi-mark.png" alt=""><span>Josi CE<small>Community Preview</small></span></a>
+    <nav class="top-links"><a href="../index.html#help">Help</a><a href="../install/index.html#installation">Install</a><a href="../install/index.html#troubleshooting">Troubleshooting</a><a href="../legal/index.html#terms-of-use">Terms</a><a href="../legal/index.html#privacy-notice">Privacy</a><a class="pill" href="../install/index.html#installation">Install Josi</a></nav>
+  </div></header>
+  <p role="note" class="offline-notice" style="max-width:1180px;margin:16px auto 0;padding:0 24px;color:var(--muted)">Offline copy — Help, installation, and legal notices are available without a connection. <a href="https://help.heyjosi.com/">Live online chat</a> requires a connection.</p>
+  <div class="layout" id="top">
+    <aside class="side"><strong>On this page</strong><a class="level-2" href="#installation">1. Run the installer</a>
+<a class="level-3" href="#mac">Mac</a>
+<a class="level-3" href="#linux">Linux</a>
+<a class="level-2" href="#finish-setup-in-your-browser">2. Finish setup in your browser</a>
+<a class="level-2" href="#open-josi">3. Open Josi</a>
+<a class="level-2" href="#confirm-it-works">4. Confirm it works</a>
+<a class="level-2" href="#after-installation">After installation</a>
+<a class="level-2" href="#updating-josi">Updating Josi</a>
+<a class="level-2" href="#backups">Backups</a>
+<a class="level-2" href="#troubleshooting">Troubleshooting</a>
+<a class="level-3" href="#docker-is-not-running">Docker is not running</a>
+<a class="level-3" href="#the-mac-reports-that-the-docker-socket-does-not-exist">The Mac reports that the Docker socket does not exist</a>
+<a class="level-3" href="#port-8080-is-already-in-use">Port 8080 is already in use</a>
+<a class="level-3" href="#the-browser-warns-that-the-setup-page-is-not-private">The browser warns that the setup page is not private</a>
+<a class="level-3" href="#setup-was-interrupted">Setup was interrupted</a>
+<a class="level-3" href="#josi-installed-but-does-not-open">Josi installed but does not open</a>
+<a class="level-2" href="#source-code-and-licence">Source code and licence</a></aside>
+    <main>
+      <section class="hero"><div class="eyebrow">Official Josi CE documentation</div><h1>Install Josi CE</h1><p>One Docker command. The rest happens in your browser.</p><div class="meta"><span>Community Preview</span><span>Docker Compose</span><span>AMD64 + ARM64</span><span>Self-hosted</span></div></section>
+      <details class="mobile-index"><summary>On this page</summary><nav aria-label="Page sections"><a class="level-2" href="#installation">1. Run the installer</a>
+<a class="level-3" href="#mac">Mac</a>
+<a class="level-3" href="#linux">Linux</a>
+<a class="level-2" href="#finish-setup-in-your-browser">2. Finish setup in your browser</a>
+<a class="level-2" href="#open-josi">3. Open Josi</a>
+<a class="level-2" href="#confirm-it-works">4. Confirm it works</a>
+<a class="level-2" href="#after-installation">After installation</a>
+<a class="level-2" href="#updating-josi">Updating Josi</a>
+<a class="level-2" href="#backups">Backups</a>
+<a class="level-2" href="#troubleshooting">Troubleshooting</a>
+<a class="level-3" href="#docker-is-not-running">Docker is not running</a>
+<a class="level-3" href="#the-mac-reports-that-the-docker-socket-does-not-exist">The Mac reports that the Docker socket does not exist</a>
+<a class="level-3" href="#port-8080-is-already-in-use">Port 8080 is already in use</a>
+<a class="level-3" href="#the-browser-warns-that-the-setup-page-is-not-private">The browser warns that the setup page is not private</a>
+<a class="level-3" href="#setup-was-interrupted">Setup was interrupted</a>
+<a class="level-3" href="#josi-installed-but-does-not-open">Josi installed but does not open</a>
+<a class="level-2" href="#source-code-and-licence">Source code and licence</a></nav></details>
+      <article><h1>Josi CE Help</h1>
+<p>Install Josi with Docker, finish setup in your browser, and manage the normal
+day-to-day work inside Josi.</p>
+<blockquote>
+<p><strong>Community Preview warning</strong></p>
+<p>Josi CE 0.1 is beta-quality software. Features may be incomplete, unavailable,
+delayed, inaccurate or changed without notice. Do not use Josi as the sole
+system for emergencies, safety, healthcare, legal, financial, compliance,
+access control or backups. Review AI output and consequential actions yourself.</p>
+</blockquote>
+
+<h2 id="installation">1. Run the installer</h2>
+<p>Install and open Docker first. You do not need Git, Node.js, a source checkout,
+or a Josi command-line tool.</p>
+<p>Choose the command for your computer and paste the whole block into Terminal.</p>
+<h3 id="mac">Mac</h3>
+<pre><code class="language-bash">mkdir -p "$HOME/josi-ce" &amp;&amp; cd "$HOME/josi-ce" &amp;&amp; \
+docker run --rm \
+  -p 8080:8080 \
+  -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
+  -v "$PWD:$PWD" -w "$PWD" \
+  docker.io/romanvaxman/josi-ce-installer:latest
+</code></pre>
+<h3 id="linux">Linux</h3>
+<pre><code class="language-bash">mkdir -p "$HOME/josi-ce" &amp;&amp; cd "$HOME/josi-ce" &amp;&amp; \
+docker run --rm \
+  -p 8080:8080 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD:$PWD" -w "$PWD" \
+  docker.io/romanvaxman/josi-ce-installer:latest
+</code></pre>
+<p>The installer prints a private setup URL and a one-time setup code. Leave the
+Terminal window open while setup is running.</p>
+<p>The temporary installer can control Docker so it can create the Josi services.
+It exits when installation finishes. Normal Josi services do not receive the
+Docker socket.</p>
+
+<h2 id="finish-setup-in-your-browser">2. Finish setup in your browser</h2>
+<ol>
+<li>Open the setup URL printed in Terminal.</li>
+<li>Accept the temporary local-certificate warning.</li>
+<li>Enter the one-time setup code.</li>
+<li>Choose whether Josi is available on this computer, your local network, a
+public domain, or through an existing proxy or tunnel.</li>
+<li>Optionally choose one project folder for coding features. Skip it if you do
+not need Josi to work with local files.</li>
+<li>Review the choices and select <strong>Install Josi</strong>.</li>
+</ol>
+<p>The browser installer writes the configuration, generates the installation
+secrets, downloads the published images, starts Josi, and checks that it opens.</p>
+
+<h2 id="open-josi">3. Open Josi</h2>
+<p>When installation succeeds, select <strong>Open Josi</strong>. The first person
+through setup becomes the administrator.</p>
+<p>Josi walks through the account, AI provider, privacy choices, and optional
+connections. When the recovery key appears, copy or download it and store it
+somewhere other than the Josi computer.</p>
+
+<h2 id="confirm-it-works">4. Confirm it works</h2>
+<p>Open the Josi URL and send a message. If Josi opens and answers using the
+provider configured during setup, the installation works. You do not need to
+inspect containers or call health endpoints.</p>
+
+<h2 id="after-installation">After installation</h2>
+<p>Use Josi's <strong>Admin</strong> screens for normal management:</p>
+<ul>
+<li><strong>Overview</strong> shows status and recommendations.</li>
+<li><strong>Network &amp; address</strong> changes local, LAN, domain, proxy, or tunnel access.</li>
+<li><strong>Backups</strong> creates backups and configures storage.</li>
+<li><strong>Integrations</strong> connects providers and services.</li>
+<li><strong>Users</strong> manages workspace access.</li>
+</ul>
+<p>Keep Docker running. On a dedicated Mac mini, enable Docker Desktop at login
+so Josi returns after a restart.</p>
+
+<h2 id="updating-josi">Updating Josi</h2>
+<p>Run the same installer command again. The browser installer detects the
+existing installation, preserves its configuration, and applies the published
+update. Do not delete the <code>josi-ce</code> folder or Docker volumes during an
+update.</p>
+
+<h2 id="backups">Backups</h2>
+<p>Open <strong>Admin → Backups</strong> to create a backup or configure SMB/NFS
+storage. Keep the recovery key separately from the backup destination. A backup
+and the key protect different things, so you need both.</p>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="docker-is-not-running">Docker is not running</h3>
+<p>Open Docker Desktop on Mac, or start Docker Engine on Linux, then run the same
+installer command again.</p>
+<h3 id="the-mac-reports-that-the-docker-socket-does-not-exist">The Mac reports that the Docker socket does not exist</h3>
+<p>Wait until Docker Desktop says the engine is running, then retry. Josi uses
+Docker Desktop's user socket at <code>$HOME/.docker/run/docker.sock</code>.</p>
+<h3 id="port-8080-is-already-in-use">Port 8080 is already in use</h3>
+<p>Stop the program using port 8080, then run the installer again. That port is
+used only for the temporary setup page.</p>
+<h3 id="the-browser-warns-that-the-setup-page-is-not-private">The browser warns that the setup page is not private</h3>
+<p>This is expected for the temporary local setup certificate. Confirm that the
+address matches the one printed by the installer before continuing.</p>
+<h3 id="setup-was-interrupted">Setup was interrupted</h3>
+<p>Run the same installer command again. It reuses the
+<code>$HOME/josi-ce</code> directory and preserves completed configuration.</p>
+<h3 id="josi-installed-but-does-not-open">Josi installed but does not open</h3>
+<p>Return to the installer window and use its reported error. If Josi previously
+worked, open <strong>Admin → Overview</strong> for the system checkup. Do not
+delete Docker volumes or the installation directory while troubleshooting.</p>
+
+<h2 id="source-code-and-licence">Source code and licence</h2>
+<p>Josi CE is licensed under GNU AGPL v3. Source code, licence terms, security
+reporting, and developer documentation are published separately from this
+end-user installation path.</p>
+
+</article>
+    </main>
+  </div>
+  <footer class="footer">Josi CE is created and published by SOCAL RECEPTIONIST LLC. <a href="../legal/index.html#terms-of-use">Terms</a> · <a href="../legal/index.html#privacy-notice">Privacy</a> · <a href="../legal/index.html#cookie-notice">Cookies</a> · <a href="../legal/index.html#software-and-paid-feature-licences">Licences</a>. Community Preview software carries no support entitlement or SLA.</footer>
+</body>
+</html>

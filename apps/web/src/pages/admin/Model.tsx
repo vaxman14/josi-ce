@@ -12,9 +12,8 @@
 // never a disabled button that looks pressable.
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Copyable } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, ErrorNote, Copyable } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
-import { ClaudeSignIn } from '@/components/ClaudeSignIn';
 import {
   ProviderForm, type ProviderCatalogEntry, type SubscriptionInfo,
 } from '@/components/ProviderForm';
@@ -57,44 +56,14 @@ interface DeviceLoginState {
 
 export function AdminModel() {
   const [data, setData] = useState<AdminLlm | null>(null);
-  const [busy, setBusy] = useState(false);
-  /** Only ever true while a test this person asked for is in flight.
-   *
-   * Kept apart from `busy`, which also covers switching to a subscription
-   * provider. Sharing one flag made the Test button read "Testing…" during a
-   * save — the screen reporting a test that nobody had started, which is the
-   * same false impression as testing on open. */
   const [probing, setProbing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [changeOpen, setChangeOpen] = useState(false);
 
   const load = () => api.get<AdminLlm>('/admin/llm').then(setData).catch(() => undefined);
   useEffect(() => { void load(); }, []);
 
-  /** Switches the primary slot to a subscription provider.
-   *
-   * Deliberately does NOT auto-probe afterwards. The probe runs the operator's
-   * own Codex binary, which may not be installed or signed in, and a save that
-   * silently fails a probe would read as "saving broke". They press Test next,
-   * and get the real reason if it is not ready. */
-  async function useSubscription(provider: string) {
-    setBusy(true);
-    setError('');
-    try {
-      await api.put('/admin/llm/providers/primary', {
-        provider,
-        // Empty on purpose: the CLI uses the plan's own model. Hardcoding
-        // `gpt-5-codex` here is how a Claude row once ended up carrying
-        // another provider's model name.
-        model: '',
-        externalAcknowledged: true,
-      });
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not switch to that');
-    } finally {
-      setBusy(false);
-    }
-  }
 
   /** Runs ONLY from the button below.
    *
@@ -117,171 +86,120 @@ export function AdminModel() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      {/* The heading renders before the data does. A page that withholds its
-          own title until a fetch resolves leaves the person looking at bare
-          "Loading…" with no idea where they are, and gives a screen reader
-          nothing to announce. */}
-      <h1 className="text-xl font-semibold tracking-tight">Model</h1>
+    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-5">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Model</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Choose what Josi uses to respond.</p>
+      </div>
       {!data ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
-      {data ? (
-        <>
-
-      <Card>
-        <CardTitle>Primary</CardTitle>
-        {data.primary ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm">{plain('model_provider', data.primary.provider)}</span>
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+      {data ? <>
+        <Card className="space-y-4 p-5 sm:p-6">
+          <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Currently using</div>
+          {data.primary ? <>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-muted-foreground">
+                  {data.providerCatalog?.find((p) => p.kind === data.primary?.provider)?.label
+                    ?? plain('model_provider', data.primary.provider)}
+                </p>
+                <p className="break-words text-xl font-semibold tracking-tight">
+                  {data.primary.model || (data.primary.provider === 'openai_subscription'
+                    ? 'Automatic (Codex chooses)' : data.primary.provider === 'anthropic_subscription'
+                      ? 'Automatic (Claude chooses)' : 'Provider default')}
+                </p>
+              </div>
               <Badge tone={data.primary.active ? 'ok' : 'danger'}>
-                {data.primary.active ? 'tested and in use' : 'not tested'}
+                {data.primary.active ? 'Working' : 'Not tested'}
               </Badge>
             </div>
-            {/* LB12.2. The exact model identifier is what a support
-                conversation needs and what nobody should have to read to see
-                whether their model works. It is one disclosure away, with a
-                way to copy it. */}
-            <details className="mt-2 text-sm">
-              <summary className="cursor-pointer text-xs text-muted-foreground">
-                Show technical details
-              </summary>
-              <div className="mt-2">
-                <Copyable label="Model identifier" value={data.primary.model} />
-                {plainDetail('model_provider', data.primary.provider) ? (
-                  <p className="text-xs text-muted-foreground">
-                    {plainDetail('model_provider', data.primary.provider)}
-                  </p>
-                ) : null}
-              </div>
-            </details>
-            {!data.primary.active ? (
-              <p className="mt-2 text-sm text-muted-foreground">
-                Josi will not use a model it has not tested. Run the test to see what it can actually do.
-              </p>
-            ) : null}
-            {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
-            <div className="mt-3">
-              {/* Two different sentences for two different situations. A model
-                  that has never been tested needs one; a model already tested
-                  and in use does not, and offering "Test this model" there
-                  reads as outstanding work. Saving a change clears the tested
-                  state on the server, so this returns to the first form
-                  exactly when a retest genuinely is required. */}
-              <Button onClick={() => void probe()} disabled={busy || probing}>
-                {probing
-                  ? 'Testing…'
-                  : data.primary.active ? 'Test again' : 'Test this model'}
-              </Button>
-              {data.primary.active && !probing ? (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Optional. This model was tested with a real request and Josi is using it. Testing
-                  again is only needed if you change the provider, its credentials, its address or
-                  the model, or if it starts failing.
-                </p>
-              ) : null}
-            </div>
-            {/* Array.isArray, not `?.length` — a string has a length too,
-                which is exactly how a double-encoded jsonb column got past
-                this guard and threw on .map. */}
-            {Array.isArray(data.primary.probeSteps) && data.primary.probeSteps.length ? (
-              <ul className="mt-3 space-y-1 text-sm">
-                {data.primary.probeSteps.map((s) => (
-                  <li key={s.id} className="flex min-w-0 gap-2">
-                    <span aria-hidden>{s.passed ? '✓' : '✗'}</span>
-                    <span className="min-w-0 break-words">
-                      <span className="font-medium">{s.label}</span> — {s.detail}
-                    </span>
-                  </li>
-                ))}
+            {!data.primary.active ? <p className="text-sm text-muted-foreground">
+              Josi will not use this model until it passes a real test.
+            </p> : null}
+          </> : <p className="text-sm text-muted-foreground">No model is configured yet.</p>}
+          <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+            <Button type="button" onClick={() => setChangeOpen(true)} disabled={probing || saving}>Change model</Button>
+            {data.primary && !data.primary.active ? <Button type="button" variant="secondary"
+              onClick={() => void probe()} disabled={probing || saving}>{probing ? 'Testing…' : 'Test this model'}</Button> : null}
+          </div>
+        </Card>
+
+        {changeOpen ? <Card className="space-y-4 p-5 sm:p-6">
+          <div>
+            <CardTitle>Change model</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Models load automatically. Nothing changes until you save and test.
+            </p>
+          </div>
+          <ChangeModelForm catalog={data.providerCatalog ?? []}
+            initialProvider={data.primary?.provider ?? 'openai_compatible'}
+            blocked={probing} onBusyChange={setSaving}
+            onCancel={() => setChangeOpen(false)}
+            onSaved={(passed) => { void load(); if (passed) setChangeOpen(false); }} />
+        </Card> : null}
+
+        <details className="rounded-lg border border-border bg-card p-5 text-sm sm:p-6">
+          <summary className="min-h-11 cursor-pointer font-medium">Connection &amp; advanced</summary>
+          <div className="space-y-5 border-t border-border pt-4">
+            {data.subscriptionOptions.some((o) => o.available && o.provider === 'openai_subscription')
+              ? <div className="space-y-2"><h2 className="font-medium">ChatGPT connection</h2><CodexConnection /></div>
+              : null}
+            {data.primary ? <div className="space-y-2">
+              <h2 className="font-medium">Current model details</h2>
+              {data.primary.model ? <Copyable label="Model identifier" value={data.primary.model} />
+                : <p className="text-muted-foreground">The provider chooses the model automatically.</p>}
+              {plainDetail('model_provider', data.primary.provider)
+                ? <p className="text-muted-foreground">{plainDetail('model_provider', data.primary.provider)}</p> : null}
+              {data.primary.active ? <Button type="button" variant="secondary"
+                disabled={probing || saving} onClick={() => void probe()}>{probing ? 'Testing…' : 'Test again'}</Button> : null}
+              {Array.isArray(data.primary.probeSteps) && data.primary.probeSteps.length ? <ul className="space-y-1">
+                {data.primary.probeSteps.map((s) => <li key={s.id} className="break-words">
+                  {s.passed ? '✓' : '✗'} {s.label} — {s.detail}
+                </li>)}
+              </ul> : null}
+            </div> : null}
+            {data.disabledFeatures.length ? <div className="space-y-2">
+              <h2 className="font-medium">Unavailable features</h2>
+              <ul className="space-y-1 text-muted-foreground">
+                {data.disabledFeatures.map((f) => <li key={f.feature}>
+                  {f.feature === 'chat_vision' ? 'Image understanding' : f.feature.replace(/_/g, ' ')} — {f.reason}
+                </li>)}
               </ul>
-            ) : null}
-          </>
-        ) : (
-          <p className="text-sm text-muted-foreground">No model is configured. It is set during installation.</p>
-        )}
-      </Card>
-
-      {data.disabledFeatures.length ? (
-        <CollapsibleCard title="Unavailable features" summary={`${data.disabledFeatures.length} ${data.disabledFeatures.length === 1 ? 'feature' : 'features'}`}>
-          <ul className="space-y-2 text-sm text-muted-foreground">
-            {data.disabledFeatures.map((f) => (
-              <li key={f.feature}><span className="font-medium text-foreground">{f.feature === 'chat_vision' ? 'Image understanding' : f.feature.replace(/_/g, ' ')}</span> — {f.reason}</li>
-            ))}
-          </ul>
-        </CollapsibleCard>
-      ) : null}
-
-      <CollapsibleCard title="Change the model" summary="Switch provider, credentials, or model">
-        <p className="mb-3 text-sm text-muted-foreground">
-          The same choices as during installation — a model on your own hardware, an API key, or a
-          subscription — switchable in any direction, any time. Saving replaces the primary model and
-          Josi will not use the new one until it has been tested.
-        </p>
-        <ChangeModelForm catalog={data.providerCatalog ?? []} onSaved={() => void load()} />
-      </CollapsibleCard>
-
-      <CollapsibleCard title="Using a Claude or ChatGPT subscription" summary="Subscription-based model options">
-        <p className="mb-3 text-sm text-muted-foreground">
-          What each provider currently permits, and nothing more optimistic than that.
-          This is a <span className="font-medium text-foreground">{data.edition.edition}</span> build.
-        </p>
-        <ul className="space-y-4">
-          {data.subscriptionOptions.map((o) => (
-            <li key={o.id}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={o.available ? 'text-sm font-medium' : 'text-sm font-medium text-muted-foreground'}>
-                  {o.label}
-                </span>
-                <Badge tone={o.available ? 'ok' : 'muted'}>
-                  {o.available ? 'available' : 'unavailable'}
-                </Badge>
-              </div>
-              {/* For an unavailable option: not a disabled button. There is
-                  nothing to press, and the reason is the real one rather than
-                  "coming soon". */}
-              <p className="mt-1 text-sm text-muted-foreground">{o.reason}</p>
-              {o.available && o.provider ? (
-                <div className="mt-2 space-y-3">
-                  {o.provider === 'openai_subscription' ? <CodexConnection /> : null}
-                  {o.provider === 'anthropic_subscription'
-                    ? <ClaudeSignIn basePath="/admin/llm/subscription/claude" /> : null}
-                  <Button
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => void useSubscription(o.provider!)}
-                  >
-                    Use this for the primary model
-                  </Button>
-                </div>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </CollapsibleCard>
-        </>
-      ) : null}
+            </div> : null}
+            {data.subscriptionOptions.some((o) => !o.available) ? <div className="space-y-2">
+              <h2 className="font-medium">Other subscription options</h2>
+              <ul className="space-y-1 text-muted-foreground">
+                {data.subscriptionOptions.filter((o) => !o.available).map((o) => <li key={o.id}>
+                  {o.label} — {o.reason}
+                </li>)}
+              </ul>
+            </div> : null}
+          </div>
+        </details>
+      </> : null}
     </div>
   );
 }
 
 /** The wizard's provider form, pointed at the admin endpoints. */
 function ChangeModelForm(
-  { catalog, onSaved }: { catalog: ProviderCatalogEntry[]; onSaved: () => void },
+  { catalog, onSaved, initialProvider, onCancel, blocked, onBusyChange }: {
+    catalog: ProviderCatalogEntry[]; onSaved: (passed: boolean) => void; initialProvider: string;
+    onCancel: () => void; blocked: boolean; onBusyChange: (value: boolean) => void;
+  },
 ) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
+
 
   return (
     <div className="space-y-2">
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {saved ? (
-        <p className="text-sm text-emerald-400">
-          Saved. Run the test above so Josi will actually use it.
-        </p>
-      ) : null}
       <ProviderForm
-        busy={busy}
+        busy={busy || blocked}
+        compact
+        onCancel={onCancel}
+        initialProvider={initialProvider}
         catalog={catalog}
         paths={{
           models: '/admin/llm/models',
@@ -301,20 +219,31 @@ function ChangeModelForm(
             return null;
           }
         }}
-        submitLabel="Use this as the primary model"
+        submitLabel={busy ? 'Saving and testing…' : 'Save & test'}
         onSubmit={async (body) => {
           setBusy(true);
+          onBusyChange(true);
           setError('');
-          setSaved(false);
+          let stored = false;
           try {
             await api.put('/admin/llm/providers/primary', body);
-            setSaved(true);
-            onSaved();
+            stored = true;
+            const test = await api.post<{ provider: Provider | null; result: { fatal: string | null } }>(
+              '/admin/llm/providers/primary/probe', {},
+            );
+            if (!test.provider?.active) {
+              onSaved(false);
+              setError(`Saved, but the test did not pass. ${test.result?.fatal ?? 'The model could not respond.'}`);
+              return;
+            }
+            onSaved(true);
           } catch (err) {
-            // The server writes its refusals for people; pass one through.
-            setError(err instanceof Error ? err.message : 'That could not be saved');
+            if (stored) onSaved(false);
+            const reason = err instanceof Error ? err.message : 'The request could not be completed';
+            setError(stored ? `Saved, but the test could not run: ${reason}` : `Could not save: ${reason}`);
           } finally {
             setBusy(false);
+            onBusyChange(false);
           }
         }}
       />

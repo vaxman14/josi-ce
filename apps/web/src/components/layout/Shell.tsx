@@ -16,7 +16,7 @@ import { cn } from '@/lib/cn';
 import { PwaPrompts } from '@/lib/pwa';
 import { Button } from '@/components/ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { HELP_URL, LegalLinks } from '@/components/LegalLinks';
+import { HELP_URL, LIVE_HELP_URL, LegalLinks } from '@/components/LegalLinks';
 import { PHONE_MORE_LABELS, PHONE_PRIMARY_LABELS, routeMatches } from './mobileNavigation';
 
 const MEMBER_NAV = [
@@ -173,6 +173,7 @@ export function Shell() {
           >
             Help
           </a>
+          <a href={LIVE_HELP_URL} target="_blank" rel="noreferrer noopener" className="hidden min-h-11 items-center rounded-md px-3 text-sm font-medium hover:bg-secondary sm:inline-flex">Live Help chat</a>
           {user?.role === 'super_admin' ? (
             <Link
               to={isAdminArea ? '/app' : '/admin'}
