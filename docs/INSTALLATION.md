@@ -145,6 +145,7 @@ volumes or the installation directory while troubleshooting.
 
 ## Source code and licence
 
-Josi CE is licensed under the GNU AGPL v3. Source code, licence terms, security
-reporting, and developer documentation are published separately from this
-end-user installation path.
+Josi CE is licensed under the GNU AGPL v3. The
+[source code is available on GitHub](https://github.com/vaxman14/josi-ce).
+Licence terms, security reporting, and developer documentation are kept
+separate from this end-user installation path.
