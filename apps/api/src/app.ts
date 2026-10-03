@@ -42,6 +42,7 @@ import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
 import { nasController } from './http/nasController.js';
 import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
+import { doctorHelper, doctorRoutes, type DoctorHelper } from './http/doctorRoutes.js';
 
 export interface AppConfig {
   /** Production enables a real persistent-volume readiness probe. */
@@ -87,6 +88,8 @@ export interface AppConfig {
   /** How a subscription provider's local binary is run, injected by the tests
    * so no suite ever executes a program. Unset in production. */
   codexRunner?: import('@josi-ce/llm').SpawnRunner;
+  /** Narrow Unix-socket Josi Doctor helper. Tests inject it; production uses the installer-managed helper. */
+  doctorHelper?: DoctorHelper;
   /** Telegram Bot API HTTP, injected by the tests so no suite ever contacts
    * api.telegram.org. Unset in production. */
   telegramFetch?: typeof fetch;
@@ -258,6 +261,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   api.use('/admin/workflows', adminWorkflowRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch }));
   api.use('/admin/maintenance', maintenanceRoutes({ db }));
+  api.use('/admin/doctor', doctorRoutes({
+    db, masterKey: cfg.masterKeyCheck, helper: cfg.doctorHelper ?? doctorHelper(),
+    llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, codexRunner: cfg.codexRunner,
+  }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));

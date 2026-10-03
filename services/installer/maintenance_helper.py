@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Narrow supervisor that may only launch the short-lived Josi installer UI."""
-import argparse, hashlib, ipaddress, json, os, re, secrets, socket, socketserver, ssl, subprocess, time, urllib.request
+"""Narrow supervisor for installer recovery and allowlisted Josi Doctor actions."""
+import argparse, hashlib, ipaddress, json, os, re, secrets, socket, socketserver, ssl, subprocess, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 HOST=re.compile(r'^[A-Za-z0-9.-]{1,253}$')
 class Manager:
- def __init__(self,root:Path,image:str,uid:int,gid:int,docker_gid:int): self.root=root.resolve();self.image=image;self.uid=uid;self.gid=gid;self.docker_gid=docker_gid;self.name='josi-ce-maintenance-'+hashlib.sha256(str(self.root).encode()).hexdigest()[:12]
+ def __init__(self,root:Path,image:str,uid:int,gid:int,docker_gid:int): self.root=root.resolve();self.image=image;self.uid=uid;self.gid=gid;self.docker_gid=docker_gid;self.name='josi-ce-maintenance-'+hashlib.sha256(str(self.root).encode()).hexdigest()[:12];self.doctor_lock=threading.Lock()
  def launch(self,body):
   host=str(body.get('host','')).strip()
   if not HOST.fullmatch(host): raise ValueError('browser host is invalid')
@@ -50,17 +50,46 @@ class Manager:
    if result.returncode==0:return
    time.sleep(.5)
   raise RuntimeError('temporary controller readiness timed out')
+ def doctor(self,repair=False):
+  if repair and not self.doctor_lock.acquire(blocking=False): raise RuntimeError('a repair is already running')
+  try:
+   executable=self.root/'josi'
+   if not executable.is_file(): raise RuntimeError('Josi Doctor is unavailable; rerun the installer once')
+   command=['bash',str(executable),'--root',str(self.root),'doctor','--json']
+   if not repair: command.append('--check-only')
+   env={'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':str(self.root),'JOSI_HOME':str(self.root),'JOSI_DOCKER_BIN':'docker','JOSI_DOCTOR_LOCAL_ONLY':'1'}
+   result=subprocess.run(command,cwd=self.root,env=env,capture_output=True,text=True,timeout=600)
+   report=None
+   for line in reversed(result.stdout.splitlines()):
+    try:
+     candidate=json.loads(line)
+     if candidate.get('schema')=='josi.doctor.v2': report=candidate;break
+    except (json.JSONDecodeError,AttributeError): pass
+   if report is None: raise RuntimeError('Josi Doctor did not return a valid report')
+   return report
+  finally:
+   if repair:self.doctor_lock.release()
 
 class Handler(BaseHTTPRequestHandler):
  manager=None
+ def do_GET(self):
+  if self.path!='/doctor/check': self.send_error(404);return
+  try:self.reply(200,self.manager.doctor(False))
+  except Exception:self.reply(503,{'error':'Josi Doctor is unavailable. Rerun the installer once to refresh its repair helper.'})
  def do_POST(self):
   try:
-   if self.path!='/launch': self.send_error(404);return
    size=int(self.headers.get('content-length','0'))
    if size>4096: raise ValueError('request is too large')
-   result=self.manager.launch(json.loads(self.rfile.read(size) or b'{}'));self.send_response(201)
-  except Exception as exc: result={'error':str(exc)};self.send_response(400)
-  self.send_header('content-type','application/json');self.end_headers();self.wfile.write(json.dumps(result).encode())
+   body=json.loads(self.rfile.read(size) or b'{}')
+   if self.path=='/launch': self.reply(201,self.manager.launch(body));return
+   if self.path=='/doctor/repair':
+    if body!={'operation':'safe_repair'}: raise ValueError('unsupported repair operation')
+    self.reply(200,self.manager.doctor(True));return
+   self.send_error(404)
+  except ValueError as exc:self.reply(400,{'error':str(exc)})
+  except Exception:self.reply(503,{'error':'The maintenance helper could not complete that operation.'})
+ def reply(self,status,result):
+  data=json.dumps(result).encode();self.send_response(status);self.send_header('content-type','application/json');self.send_header('cache-control','no-store');self.send_header('content-length',str(len(data)));self.end_headers();self.wfile.write(data)
  def log_message(self,*_): pass
 def main():
  p=argparse.ArgumentParser();p.add_argument('--root',required=True);p.add_argument('--socket',required=True);p.add_argument('--image',required=True);p.add_argument('--uid',type=int,required=True);p.add_argument('--gid',type=int,required=True);p.add_argument('--docker-gid',type=int,required=True);p.add_argument('--socket-gid',type=int,required=True);a=p.parse_args();Handler.manager=Manager(Path(a.root),a.image,a.uid,a.gid,a.docker_gid);path=Path(a.socket);path.unlink(missing_ok=True);path.parent.mkdir(parents=True,exist_ok=True)

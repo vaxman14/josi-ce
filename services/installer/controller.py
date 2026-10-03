@@ -284,7 +284,10 @@ def provision_storage_helper() -> None:
 def provision_maintenance_helper() -> None:
     uid, gid = os.environ["JOSI_INSTALL_UID"], os.environ["JOSI_INSTALL_GID"]
     app_gid, docker_gid, image = os.environ["JOSI_APP_GID"], os.environ["JOSI_DOCKER_GID"], os.environ["JOSI_INSTALLER_IMAGE"]
-    path = ROOT / "maintenance-helper-socket"; path.mkdir(exist_ok=True); os.chmod(path, 0o750); os.chown(path, int(uid), int(gid))
+    # The web container runs as the application gid, which may differ from the
+    # host operator's primary gid (notably uid 501/gid 20 on macOS). Give that
+    # group traversal of the socket directory, while leaving everyone else out.
+    path = ROOT / "maintenance-helper-socket"; path.mkdir(exist_ok=True); os.chmod(path, 0o750); os.chown(path, int(uid), int(app_gid))
     name = f"josi-ce-maintenance-helper-{hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]}"
     run(["docker","rm","-f",name],check=False,timeout=30)
     run(["docker","run","-d","--name",name,"--restart","unless-stopped","--read-only","--network","none",
@@ -332,7 +335,10 @@ def install(plan: dict[str, object]) -> None:
             if os.environ.get("JOSI_EXISTING_INSTALL") != "1":
                 provision_voice_helper()
                 provision_storage_helper()
-                provision_maintenance_helper()
+            # Stateless and security-sensitive: refresh this narrow helper on
+            # every install or update so an older installation gains the exact
+            # Doctor allowlist shipped by the new installer image.
+            provision_maintenance_helper()
             compose = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml")]
             if (ROOT / "docker-compose.workspace.yml").exists():
                 compose += ["-f", str(ROOT / "docker-compose.workspace.yml")]
