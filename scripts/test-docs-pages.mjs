@@ -7,31 +7,34 @@ const read = (path) => fs.readFileSync(new URL(path, root), 'utf8');
 const home = read('index.html');
 const install = read('install/index.html');
 const legal = read('legal/index.html');
-const legalOriginal = source.slice(source.indexOf('<h2 id="terms-of-use">'), source.indexOf('<p>Confirm each dependency:</p>'));
+const legalOriginal = source.slice(source.indexOf('<h2 id="terms-of-use">'));
 const visibleText = (html) => html.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 
 assert.match(home, /<h2 id="help">Help and current features<\/h2>/);
 assert.match(home, /beta-quality software/, 'Keep the preview safety warning visible in Help');
-assert.match(home, /href="install\/"[^>]*>Installation guide<span>/);
+assert.match(home, /href="install\/"[^>]*>Install Josi<span>/);
 assert.match(home, /href="legal\/"[^>]*>Legal notices<span>/);
 assert.doesNotMatch(home, /<h2 id="terms-of-use">/);
-assert.doesNotMatch(home, /What the standard installation creates/);
+assert.doesNotMatch(home, /<h2 id="installation">/);
 assert.match(home, /case 'terms-of-use':|['"]terms-of-use['"]/, 'old app legal hashes must redirect');
 
-assert.match(install, /<h2 id="installation">1\. What the standard installation creates<\/h2>/);
-assert.match(install, /<h2 id="configuration">6\. Configure <code>\.env<\/code><\/h2>/);
-assert.match(install, /<h2 id="troubleshooting">17\. Troubleshooting<\/h2>/);
-assert.match(install, /href="#configuration"/);
-assert.match(install, /href="#domain-and-application-url"/, 'Index installation subsections');
-assert.match(install, /<details class="mobile-index">[\s\S]*?href="#configuration"[\s\S]*?<\/details>/, 'Guide index must be available on phones');
-assert.match(install, /Confirm each dependency:/, 'Keep installation text after the legal insert');
+assert.match(install, /<h2 id="installation">1\. Run the installer<\/h2>/);
+assert.match(install, /<h2 id="troubleshooting">Troubleshooting<\/h2>/);
+assert.match(install, /Docker Desktop/);
+assert.match(install, /docker\.io\/romanvaxman\/josi-ce-installer:latest/);
+assert.match(install, /\.docker\/run\/docker\.sock/);
+assert.match(install, /\/var\/run\/docker\.sock/);
+assert.match(install, /copy or download it/);
+assert.match(install, /Open the Josi URL and send a message/);
+assert.match(install, /<details class="mobile-index">[\s\S]*?href="#troubleshooting"[\s\S]*?<\/details>/, 'Guide index must be available on phones');
+assert.doesNotMatch(install, /<REPOSITORY-URL>|git clone|josi doctor|\/health|\/ready|Confirm each dependency:/);
 assert.doesNotMatch(install, /<h2 id="terms-of-use">/);
 
 for (const id of ['terms-of-use', 'privacy-notice', 'cookie-notice', 'software-and-paid-feature-licences']) {
   assert.match(legal, new RegExp(`<h2 id="${id}">`));
   assert.match(legal, new RegExp(`href="#${id}"`));
 }
-assert.doesNotMatch(legal, /What the standard installation creates/);
+assert.doesNotMatch(legal, /1\. Run the installer/);
 assert.doesNotMatch(legal, /Confirm each dependency:/, 'Do not include installation material on notices');
 assert.equal(visibleText(legal.match(/<article>([\s\S]*?)<\/article>/)?.[1] ?? ''), visibleText(legalOriginal), 'Legal notice text must remain unchanged');
 

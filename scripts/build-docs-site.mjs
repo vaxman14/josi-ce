@@ -11,8 +11,7 @@ const at = (marker) => {
 const helpStart = at('<h2 id="help">');
 const installStart = at('<h2 id="installation">');
 const legalStart = at('<h2 id="terms-of-use">');
-const legalEnd = at('<p>Confirm each dependency:</p>');
-if (!(helpStart < installStart && installStart < legalStart && legalStart < legalEnd)) {
+if (!(helpStart < installStart && installStart < legalStart)) {
   throw new Error('The help, installation, and legal source sections changed order');
 }
 
@@ -21,11 +20,11 @@ const warningStart = prefix.indexOf('<blockquote>');
 const warningEnd = prefix.indexOf('</blockquote>', warningStart);
 if (warningStart < 0 || warningEnd < 0) throw new Error('Community Preview warning is missing');
 const help = prefix.slice(warningStart, warningEnd + '</blockquote>'.length) + '\n' + source.slice(helpStart, installStart);
-const installation = source.slice(0, helpStart) + source.slice(installStart, legalStart) + source.slice(legalEnd);
-const legal = source.slice(legalStart, legalEnd);
+const installation = source.slice(0, helpStart) + source.slice(installStart, legalStart);
+const legal = source.slice(legalStart);
 const home = `<nav class="topic-index" aria-label="Documentation sections">
-  <a href="install/">Installation guide<span>Server setup, deployment shapes, operations, and troubleshooting</span></a>
-  <a href="install/#configuration">Configuration options<span>Domain, ports, database, images, and optional services</span></a>
+  <a href="install/">Install Josi<span>One Docker command, then finish setup in your browser</span></a>
+  <a href="install/#troubleshooting">Installation help<span>Simple answers when setup does not finish</span></a>
   <a href="legal/">Legal notices<span>Terms, privacy, cookies, and licences on their own page</span></a>
 </nav>\n${help}`;
 
@@ -47,8 +46,10 @@ const redirectOldLinks = `<script>
     const hash = location.hash.slice(1);
     if (['terms-of-use', 'privacy-notice', 'cookie-notice', 'software-and-paid-feature-licences'].includes(hash)) {
       location.replace('legal/' + location.hash);
-    } else if (['installation', 'configuration', 'troubleshooting'].includes(hash)) {
+    } else if (['installation', 'troubleshooting'].includes(hash)) {
       location.replace('install/' + location.hash);
+    } else if (hash === 'configuration') {
+      location.replace('install/#installation');
     }
   })();
 </script>`;
@@ -72,7 +73,7 @@ function render({ content, root, title, description, hero, intro, canonicalPath,
 
 const pages = [
   ['index.html', render({ content: home, root: '', title: 'Help', description: 'Josi CE help and links to installation and legal guides.', hero: 'Josi CE Help', intro: 'Choose a guide, or browse help for the current features.', canonicalPath: '', legacyRedirect: redirectOldLinks })],
-  ['install/index.html', render({ content: installation, root: '../', title: 'Installation and operations', description: 'Josi CE installation choices, configuration, operations, and troubleshooting.', hero: 'Installation and operations', intro: 'The complete operator guide, indexed by chapter.', canonicalPath: 'install/' })],
+  ['install/index.html', render({ content: installation, root: '../', title: 'Install Josi CE', description: 'Install Josi CE with Docker, then finish setup in your browser.', hero: 'Install Josi CE', intro: 'One Docker command. The rest happens in your browser.', canonicalPath: 'install/' })],
   ['legal/index.html', render({ content: legal, root: '../', title: 'Legal notices', description: 'Josi CE terms of use, privacy notice, cookie notice, and licences.', hero: 'Legal notices', intro: 'Terms, privacy, cookies, and licences in one separate legal section.', canonicalPath: 'legal/' })],
 ];
 for (const [filename, html] of pages) {
