@@ -13,7 +13,11 @@ describe('Local Workspace dashboard', () => {
     expect(page).toContain('Read and write');
     expect(page).toContain('Every write still needs your native one-time approval');
     expect(page).toContain('Folders on this device, plus storage attached to your Josi server.');
+    expect(page).toContain('Create or edit a text file');
+    expect(page).toContain('Load a text file (256 KiB maximum)');
     expect(page).not.toContain('Folders available to your Josi account.');
+    expect(page).not.toContain('Create or upload text');
+    expect(page).not.toContain('Upload text (256 KiB maximum)');
   });
 
   it('refreshes the native state and reconciles revoked roots while the relay is running', () => {
