@@ -45,6 +45,7 @@ const FAMILY_NAV: { to: string; label: string; end?: boolean } = {
 
 const ADMIN_NAV = [
   { to: '/admin', label: 'Overview', end: true },
+  { to: '/admin/diagnostics', label: 'System checkup' },
   // First for as long as it matters. An administrator who dismissed the
   // first-run redirect still has to be able to find the thing they dismissed.
   { to: '/admin/launch', label: 'Getting started' },

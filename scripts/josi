@@ -106,7 +106,15 @@ health_url(){ local u; u=$(env_get JOSI_APP_URL); [[ -n "$u" ]] && printf '%s' "
 http_code(){ local c; c=$("$CURL_BIN" -fsS --max-time 8 -o /dev/null -w '%{http_code}' "$1" 2>/dev/null) || c=000; [[ "$c" =~ ^[0-9][0-9][0-9]$ ]] || c=000; printf '%s' "$c"; }
 container_id(){ compose ps --all -q "$1" 2>/dev/null | head -1; }
 container_state(){ local id; id=$(container_id "$1"); [[ -n "$id" ]] || { echo missing; return; }; docker inspect -f '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}/{{.State.ExitCode}}' "$id" 2>/dev/null || echo unknown; }
-expected_services(){ compose config --services 2>/dev/null | grep -Ev '^(ocr|clamav)$' || printf '%s\n' db migrate web worker caddy; }
+expected_services(){
+  local access services; access=$(env_get JOSI_ACCESS_MODE)
+  services=$(compose config --services 2>/dev/null || printf '%s\n' db migrate web worker caddy)
+  while IFS= read -r service; do
+    [[ "$service" == ocr || "$service" == clamav ]] && continue
+    [[ "$service" == caddy && "$access" == proxy ]] && continue
+    printf '%s\n' "$service"
+  done <<< "$services"
+}
 one_shot_service(){ [[ "$1" == migrate || "$1" == attachment-init ]]; }
 service_ok(){
   local service="$1" state="$2"
@@ -339,8 +347,20 @@ doctor_check(){
   if [[ "$status" == fail ]]; then DOCTOR_FAILED+=("$key"); DOCTOR_FAIL_COUNT=$((DOCTOR_FAIL_COUNT + 1)); DOCTOR_FAILED_TEXT="${DOCTOR_FAILED_TEXT:+$DOCTOR_FAILED_TEXT }$key"; fi
   printf '  %-5s %-24s %s\n' "$(printf '%s' "$status" | tr '[:lower:]' '[:upper:]')" "$key" "$detail"
 }
+doctor_json(){
+  local failed_json='' repairable=false f healthy=false
+  [[ "$DOCTOR_FAIL_COUNT" -eq 0 ]] && healthy=true
+  [[ -n "$DOCTOR_FAILED_TEXT" ]] && failed_json="\"$(printf '%s' "$DOCTOR_FAILED_TEXT" | sed 's/ /\",\"/g')\""
+  for f in "${DOCTOR_FAILED[@]}"; do
+    case "$f" in
+      secret_*|secrets_directory|container_*|direct_health|image_drift) repairable=true;;
+    esac
+  done
+  printf '{"schema":"josi.doctor.v2","checkedAt":"%s","healthy":%s,"safeRepairAvailable":%s,"failed":[%s],"checks":[%s]}\n' \
+    "$(now)" "$healthy" "$repairable" "$failed_json" "$DOCTOR_ROWS"
+}
 run_doctor_checks(){
-  DOCTOR_ROWS=''; DOCTOR_SEP=''; DOCTOR_FAILED=(); DOCTOR_FAIL_COUNT=0; DOCTOR_FAILED_TEXT=''; local a free s st m code domain path expected actual
+  DOCTOR_ROWS=''; DOCTOR_SEP=''; DOCTOR_FAILED=(); DOCTOR_FAIL_COUNT=0; DOCTOR_FAILED_TEXT=''; local a free s st m code domain path expected actual local_only="${JOSI_DOCTOR_LOCAL_ONLY:-0}"
   a=$(arch); [[ "$a" != unsupported ]] && doctor_check architecture pass "$a" || doctor_check architecture fail "unsupported $(uname -m)"
   if command -v "$DOCKER_BIN" >/dev/null 2>&1 && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then doctor_check runtime pass 'Docker Engine and Compose v2 reachable'; else doctor_check runtime fail 'Docker Engine or Compose v2 unavailable'; return; fi
   [[ -f "$COMPOSE_FILE" ]] || { doctor_check install_path fail "compose file missing at $COMPOSE_FILE"; return; }
@@ -353,7 +373,7 @@ run_doctor_checks(){
   free=$(df -Pk "$ROOT" 2>/dev/null | awk 'NR==2{print int($4/1024)}'); [[ "${free:-0}" -ge 2048 ]] && doctor_check disk pass "${free} MiB free" || doctor_check disk fail "${free:-0} MiB free; manual cleanup required"
   while IFS= read -r s; do [[ -z "$s" ]] && continue; st=$(container_state "$s"); if service_ok "$s" "$st"; then doctor_check "container_$s" pass "$st"; else doctor_check "container_$s" fail "$st" "$([[ "$s" == migrate ]] && echo 'verified backup + bounded migration rerun' || echo 'docker compose up -d')"; fi; done < <(expected_services)
   local caddy_state owner http_port https_port; caddy_state=$(container_state caddy); http_port=$(env_get JOSI_HTTP_PORT); http_port=${http_port:-80}; https_port=$(env_get JOSI_HTTPS_PORT); https_port=${https_port:-443}
-  if [[ "$caddy_state" != running/* ]]; then
+  if [[ "$local_only" != 1 && "$caddy_state" != running/* ]]; then
     owner=$(port_owner "$http_port" || true); [[ -z "$owner" ]] || doctor_check port_collision_http fail "HTTP port $http_port owned by: $owner; unrelated processes are never killed automatically"
     owner=$(port_owner "$https_port" || true); [[ -z "$owner" ]] || doctor_check port_collision_https fail "HTTPS port $https_port owned by: $owner; unrelated processes are never killed automatically"
   fi
@@ -368,8 +388,10 @@ run_doctor_checks(){
   [[ -z "$arch_bad" ]] && doctor_check image_architecture pass "$a for all application images" || doctor_check image_architecture fail "architecture mismatch: $arch_bad; host $a"
   compose exec -T web sh -c 'for d in /data/versions /data/backups /data/diagnostics /data/codex /data/claude /data/chat-attachments; do test -d "$d" -a -w "$d" || exit 1; done' >/dev/null 2>&1 && doctor_check writable_data pass 'application data mounts exist and uid 1000 can write them' || doctor_check writable_data fail 'one or more application data mounts are missing or not writable by the application user; repair ownership explicitly'
   compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && doctor_check direct_health pass ready || doctor_check direct_health fail not-ready 'restart web dependencies'
-  code=$(http_code "$(health_url)/ready"); [[ "$code" =~ ^2 ]] && doctor_check public_health pass "HTTP $code" || doctor_check public_health fail "HTTP $code; route/DNS/TLS may require operator action"
-  domain=$(env_get JOSI_DOMAIN); if [[ -n "$domain" ]]; then getent hosts "$domain" >/dev/null 2>&1 && doctor_check domain_dns pass resolves || doctor_check domain_dns fail "cannot resolve $domain; tunnel/domain is never deleted automatically"; fi
+  if [[ "$local_only" != 1 ]]; then
+    code=$(http_code "$(health_url)/ready"); [[ "$code" =~ ^2 ]] && doctor_check public_health pass "HTTP $code" || doctor_check public_health fail "HTTP $code; route/DNS/TLS may require operator action"
+    domain=$(env_get JOSI_DOMAIN); if [[ -n "$domain" ]]; then getent hosts "$domain" >/dev/null 2>&1 && doctor_check domain_dns pass resolves || doctor_check domain_dns fail "cannot resolve $domain; tunnel/domain is never deleted automatically"; fi
+  fi
   if [[ "$(env_get JOSI_WORKSPACE_ENABLED)" == 1 ]]; then
     local mounts worker_mounts bad_mount=0 roots=0 source dest rw worker_id workspace_mode normalized_web normalized_worker
     mounts=$(docker inspect -f '{{range .Mounts}}{{printf "%s|%s|%t\n" .Source .Destination .RW}}{{end}}' "$web_id" 2>/dev/null || true); worker_id=$(container_id worker); worker_mounts=$(docker inspect -f '{{range .Mounts}}{{printf "%s|%s|%t\n" .Source .Destination .RW}}{{end}}' "$worker_id" 2>/dev/null || true); workspace_mode=$(env_get JOSI_WORKSPACE_MODE); workspace_mode=${workspace_mode:-ro}
@@ -473,17 +495,17 @@ run_ai_repair(){
   say "AI repair transcript: $transcript"
 }
 cmd_doctor(){
-  local check=0 dry=0 yes=0 ai=0 allow_ai=0 approve_ai='' repair_migrations=0 export='' arg
-  while [[ $# -gt 0 ]]; do arg="$1"; case "$arg" in --check-only) check=1;; --dry-run) dry=1;; --yes) yes=1;; --repair-migrations) repair_migrations=1;; --ai-repair) ai=1;; --allow-ai) allow_ai=1;; --approve-ai-plan) approve_ai="${2:-}"; [[ -n "$approve_ai" ]] || die '--approve-ai-plan needs a SHA-256'; shift;; --export-ai-context) export="${2:-}"; [[ -n "$export" ]] || die '--export-ai-context needs a path'; shift;; *) die "unknown doctor option: $arg" 2;; esac; shift; done
+  local check=0 dry=0 yes=0 ai=0 allow_ai=0 approve_ai='' repair_migrations=0 export='' json_output=0 arg
+  while [[ $# -gt 0 ]]; do arg="$1"; case "$arg" in --check-only) check=1;; --dry-run) dry=1;; --json) json_output=1;; --yes) yes=1;; --repair-migrations) repair_migrations=1;; --ai-repair) ai=1;; --allow-ai) allow_ai=1;; --approve-ai-plan) approve_ai="${2:-}"; [[ -n "$approve_ai" ]] || die '--approve-ai-plan needs a SHA-256'; shift;; --export-ai-context) export="${2:-}"; [[ -n "$export" ]] || die '--export-ai-context needs a path'; shift;; *) die "unknown doctor option: $arg" 2;; esac; shift; done
   if [[ -n "$export" ]]; then [[ ! -e "$export" ]] || die "AI context output already exists: $export"; collect_bundle "$export" 30m 0; [[ "$check" == 1 && "$ai" == 0 ]] && return; fi
   say 'Josi doctor — inspect/classify'; run_doctor_checks
-  if [[ "$DOCTOR_FAIL_COUNT" -eq 0 ]]; then say 'healthy: no repairs required'; return 0; fi
-  [[ "$check" == 1 ]] && { say "non-repairable/read-only result: $DOCTOR_FAILED_TEXT"; return 1; }
+  if [[ "$DOCTOR_FAIL_COUNT" -eq 0 ]]; then say 'healthy: no repairs required'; [[ "$json_output" == 1 ]] && doctor_json; return 0; fi
+  [[ "$check" == 1 ]] && { say "non-repairable/read-only result: $DOCTOR_FAILED_TEXT"; [[ "$json_output" == 1 ]] && doctor_json; return 1; }
   local before_direct before_public snapshot='' actions=() f rollback_attempted=false rollback_verified=false migration_ran=0
   before_direct=$(compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && echo pass || echo fail); before_public=$(http_code "$(health_url)/ready")
   for f in "${DOCTOR_FAILED[@]}"; do case "$f" in secret_*|secrets_directory) actions+=("repair strict secret permissions");; container_migrate|migrations) [[ "$repair_migrations" == 1 ]] && actions+=("verified backup then bounded migration rerun");; container_*|direct_health) actions+=("docker compose up -d ${f#container_}");; image_drift) actions+=("recreate application services at pinned image");; *) :;; esac; done
   printf 'repair plan:\n'; printf '  - %s\n' "${actions[@]:-no safe automatic repairs; operator action required}"
-  [[ "$dry" == 1 ]] && return 1
+  [[ "$dry" == 1 ]] && { [[ "$json_output" == 1 ]] && doctor_json; return 1; }
   [[ "$repair_migrations" == 0 || "$yes" == 1 ]] || die '--repair-migrations is risky and requires --yes in addition to the verified backup'
   if [[ ${#actions[@]} -gt 0 ]]; then snapshot=$(snapshot_state); say "snapshot: $snapshot"; fi
   for f in "${DOCTOR_FAILED[@]}"; do
@@ -514,6 +536,7 @@ cmd_doctor(){
   fi
   local failed_json=''; [[ -n "$DOCTOR_FAILED_TEXT" ]] && failed_json="\"$(printf '%s' "$DOCTOR_FAILED_TEXT" | sed 's/ /\",\"/g')\""
   mkdir -p "$RECEIPTS"; printf '{"schema":"josi.doctor.v2","at":"%s","snapshot":"%s","rollback_attempted":%s,"rollback_verified":%s,"failed":[%s],"checks":[%s]}\n' "$(now)" "$(json "$snapshot")" "$rollback_attempted" "$rollback_verified" "$failed_json" "$DOCTOR_ROWS" > "$RECEIPTS/last-doctor.json"; chmod 600 "$RECEIPTS/last-doctor.json"
+  if [[ "$json_output" == 1 ]]; then doctor_json; fi
   if [[ "$DOCTOR_FAIL_COUNT" -eq 0 ]]; then say "healthy; receipt: $RECEIPTS/last-doctor.json"; else say "blockers: $DOCTOR_FAILED_TEXT"; return 1; fi
 }
 

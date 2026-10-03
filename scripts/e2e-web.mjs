@@ -23,7 +23,7 @@ const MEMBER_PAGES = [
   '/app/apps',
 ];
 const ADMIN_PAGES = [
-  '/admin', '/admin/people', '/admin/model', '/admin/policy', '/admin/connectors',
+  '/admin', '/admin/diagnostics', '/admin/people', '/admin/model', '/admin/policy', '/admin/connectors',
   '/admin/telegram', '/admin/backups', '/admin/developer-services', '/admin/parental-controls', '/admin/workspace',
 ];
 

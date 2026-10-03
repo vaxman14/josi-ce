@@ -90,6 +90,7 @@ inspect containers or call health endpoints.
 Use Josi's **Admin** screens for normal management:
 
 - **Overview** shows installation status and recommendations.
+- **System checkup** runs Josi Doctor, explains problems, and offers bounded automatic repairs for your approval.
 - **Network & address** changes local, LAN, domain, proxy, or tunnel access.
 - **Backups** creates backups and configures storage destinations.
 - **Integrations** connects AI providers and external services.
@@ -161,7 +162,7 @@ Run the same installer command again from the same computer. It reuses the
 ### Josi installed but does not open
 
 Return to the installer window and use its reported error. If Josi previously
-worked, open **Admin → Overview** for the system checkup. Do not delete Docker
+worked, open **Admin → System checkup**. Do not delete Docker
 volumes or the installation directory while troubleshooting.
 
 ## Source code and licence
