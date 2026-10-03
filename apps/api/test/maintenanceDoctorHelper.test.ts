@@ -11,6 +11,7 @@ describe('isolated Doctor maintenance helper', () => {
     writeFileSync(cli, `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${root}/calls"
 printf '%s\\n' "\${JOSI_DOCTOR_LOCAL_ONLY:-missing}" >> "${root}/mode"
+printf '%s\\n' "\${COMPOSE_PROJECT_NAME:-missing}" >> "${root}/project"
 printf '%s\\n' '{"schema":"josi.doctor.v2","checkedAt":"2026-10-03T00:00:00Z","healthy":true,"safeRepairAvailable":false,"failed":[],"checks":[]}'
 `);
     chmodSync(cli, 0o700);
@@ -20,7 +21,7 @@ import importlib.util, json
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('maintenance_helper', ${JSON.stringify(helperPath)})
 module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-manager=module.Manager(Path(${JSON.stringify(root)}), 'unused', 1, 1, 1)
+manager=module.Manager(Path(${JSON.stringify(root)}), 'unused', 1, 1, 1, 'josi-acceptance')
 print(json.dumps([manager.doctor(False), manager.doctor(True)]))
 `;
     const result = spawnSync('python3', ['-c', program], { encoding: 'utf8' });
@@ -33,5 +34,6 @@ print(json.dumps([manager.doctor(False), manager.doctor(True)]))
     expect(text).not.toContain('--ai-repair');
     expect(text).not.toContain('--repair-migrations');
     expect(readFileSync(join(root, 'mode'), 'utf8').trim().split('\n')).toEqual(['1', '1']);
+    expect(readFileSync(join(root, 'project'), 'utf8').trim().split('\n')).toEqual(['josi-acceptance', 'josi-acceptance']);
   });
 });

@@ -290,12 +290,25 @@ def provision_maintenance_helper() -> None:
     path = ROOT / "maintenance-helper-socket"; path.mkdir(exist_ok=True); os.chmod(path, 0o750); os.chown(path, int(uid), int(app_gid))
     name = f"josi-ce-maintenance-helper-{hashlib.sha256(str(ROOT).encode()).hexdigest()[:12]}"
     run(["docker","rm","-f",name],check=False,timeout=30)
+    socket_mount = "/run/josi-maintenance-host"
     run(["docker","run","-d","--name",name,"--restart","unless-stopped","--read-only","--network","none",
          "--security-opt","no-new-privileges","--cap-drop","ALL","--user",f"{uid}:{gid}","--group-add",docker_gid,"--group-add",app_gid,
          "--tmpfs","/tmp:size=16m,mode=1777","-v","/var/run/docker.sock:/var/run/docker.sock","-v",f"{ROOT}:{ROOT}",
+         "-v",f"{path}:{socket_mount}",
          "--entrypoint","python3",image,"/opt/josi-installer/maintenance_helper.py","--root",str(ROOT),
-         "--socket",f"{ROOT}/maintenance-helper-socket/helper.sock","--image",image,"--uid",uid,"--gid",gid,
-         "--docker-gid",docker_gid,"--socket-gid",app_gid],timeout=60)
+         "--socket",f"{socket_mount}/helper.sock","--image",image,"--uid",uid,"--gid",gid,
+         "--docker-gid",docker_gid,"--socket-gid",app_gid,"--project",PROJECT],timeout=60)
+    socket_path = path / "helper.sock"
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if socket_path.exists():
+            return
+        running = run(["docker", "inspect", "-f", "{{.State.Running}}", name], check=False, timeout=5)
+        if running.stdout.strip() != "true":
+            break
+        time.sleep(0.2)
+    run(["docker", "rm", "-f", name], check=False, timeout=30)
+    raise RuntimeError("Josi Doctor repair helper failed to start")
 
 
 def address_metadata(action: str, snapshot=None):
