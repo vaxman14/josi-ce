@@ -121,7 +121,7 @@ class Manager:
   try:
    executable=self.root/'josi'
    if not executable.is_file(): raise RuntimeError('updater unavailable')
-   env={'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':str(self.root),'JOSI_HOME':str(self.root),'JOSI_DOCKER_BIN':'docker','COMPOSE_PROJECT_NAME':self.project}
+   env={'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':str(self.root),'JOSI_HOME':str(self.root),'JOSI_DOCKER_BIN':'docker','JOSI_UPDATE_LOCAL_ONLY':'1','COMPOSE_PROJECT_NAME':self.project}
    result=subprocess.run(['bash',str(executable),'--root',str(self.root),'update',version,'--yes'],cwd=self.root,env=env,capture_output=True,text=True,timeout=3600)
    installed=self.current_version();state='complete' if result.returncode==0 and installed==version else 'rolled_back' if installed==current else 'failed'
    message='Update completed and Josi passed its health checks.' if state=='complete' else 'The update failed, so Josi restored the previous version.' if state=='rolled_back' else 'The update failed and needs manual attention. The pre-update backup was preserved.'

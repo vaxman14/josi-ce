@@ -128,6 +128,7 @@ wait_ready(){
   start=$(date +%s)
   while (( $(date +%s) - start < timeout )); do
     direct=$(compose exec -T web sh -c 'curl -fsS http://127.0.0.1:8080/ready >/dev/null' 2>/dev/null && echo ok || echo fail)
+    if [[ "${JOSI_UPDATE_LOCAL_ONLY:-0}" == 1 && "$direct" == ok ]]; then return 0; fi
     code=$(http_code "$(health_url)/ready")
     [[ "$direct" == ok && "$code" =~ ^2 ]] && return 0
     sleep 2
