@@ -36,4 +36,37 @@ print(json.dumps([manager.doctor(False), manager.doctor(True)]))
     expect(readFileSync(join(root, 'mode'), 'utf8').trim().split('\n')).toEqual(['1', '1']);
     expect(readFileSync(join(root, 'project'), 'utf8').trim().split('\n')).toEqual(['josi-acceptance', 'josi-acceptance']);
   });
+
+  it('accepts only an exact version approval and persists a successful background update', () => {
+    const root = mkdtempSync(join(tmpdir(), 'josi-update-helper-'));
+    writeFileSync(join(root, '.env'), 'JOSI_TAG=0.1.68\n');
+    const cli = join(root, 'josi');
+    writeFileSync(cli, `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${root}/calls"
+sed -i 's/JOSI_TAG=0.1.68/JOSI_TAG=0.1.69/' "${root}/.env"
+`);
+    chmodSync(cli, 0o700);
+    const helperPath = resolve('services/installer/maintenance_helper.py');
+    const program = `
+import importlib.util,json,time
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('maintenance_helper',${JSON.stringify(helperPath)})
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+manager=module.Manager(Path(${JSON.stringify(root)}),'unused',1,1,1,'josi-acceptance')
+try: manager.start_update({'operation':'update','version':'0.1.69','confirm':'yes'})
+except ValueError: pass
+started=manager.start_update({'operation':'update','version':'0.1.69','confirm':'UPDATE 0.1.69'})
+for _ in range(100):
+ status=manager.update_status()
+ if status['state']!='running':break
+ time.sleep(.02)
+print(json.dumps({'started':started,'status':status}))
+`;
+    const result = spawnSync('python3', ['-c', program], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.started.state).toBe('running');
+    expect(output.status).toMatchObject({ state: 'complete', currentVersion: '0.1.69', targetVersion: '0.1.69' });
+    expect(readFileSync(join(root, 'calls'), 'utf8').trim()).toContain('update 0.1.69 --yes');
+  });
 });

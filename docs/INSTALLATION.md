@@ -90,7 +90,7 @@ inspect containers or call health endpoints.
 Use Josi's **Admin** screens for normal management:
 
 - **Overview** shows installation status and recommendations.
-- **System checkup** runs Josi Doctor, explains problems, and offers bounded automatic repairs for your approval.
+- **System checkup** runs Josi Doctor, explains problems, offers bounded automatic repairs, and installs approved stable updates with backup and health verification.
 - **Network & address** changes local, LAN, domain, proxy, or tunnel access.
 - **Backups** creates backups and configures storage destinations.
 - **Integrations** connects AI providers and external services.
@@ -122,9 +122,15 @@ create another server.
 
 ## Updating Josi
 
-Run the same installer command again. The browser installer detects the existing
-installation, preserves its configuration, and applies the published update.
-Do not delete the `josi-ce` folder or Docker volumes during an update.
+Open **Admin → System checkup** as a super-admin, select **Check for updates**,
+review the release notes, enter the exact confirmation shown, and approve the
+update. Josi creates a backup, applies the pinned release, verifies health, and
+rolls back automatically when a safe rollback is possible.
+
+If Josi cannot open or the maintenance helper is unavailable, run the same
+installer command again. The browser installer detects the existing
+installation and preserves its configuration and data. Do not delete the
+`josi-ce` folder or Docker volumes during an update.
 
 ## Backups
 

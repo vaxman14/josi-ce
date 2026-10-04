@@ -90,6 +90,8 @@ export interface AppConfig {
   codexRunner?: import('@josi-ce/llm').SpawnRunner;
   /** Narrow Unix-socket Josi Doctor helper. Tests inject it; production uses the installer-managed helper. */
   doctorHelper?: DoctorHelper;
+  /** Fixed public stable-release channel HTTP. Injected so tests never contact GitHub. */
+  releaseFetch?: typeof fetch;
   /** Telegram Bot API HTTP, injected by the tests so no suite ever contacts
    * api.telegram.org. Unset in production. */
   telegramFetch?: typeof fetch;
@@ -264,6 +266,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/doctor', doctorRoutes({
     db, masterKey: cfg.masterKeyCheck, helper: cfg.doctorHelper ?? doctorHelper(),
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, codexRunner: cfg.codexRunner,
+    releaseFetch: cfg.releaseFetch,
   }));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.

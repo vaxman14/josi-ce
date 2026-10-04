@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Narrow supervisor for installer recovery and allowlisted Josi Doctor actions."""
-import argparse, hashlib, ipaddress, json, os, re, secrets, socket, socketserver, ssl, subprocess, threading, time, urllib.request
+import argparse, datetime, hashlib, ipaddress, json, os, re, secrets, socket, socketserver, ssl, subprocess, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 HOST=re.compile(r'^[A-Za-z0-9.-]{1,253}$')
+VERSION=re.compile(r'^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?$')
 class Manager:
- def __init__(self,root:Path,image:str,uid:int,gid:int,docker_gid:int,project:str='josi-ce'): self.root=root.resolve();self.image=image;self.uid=uid;self.gid=gid;self.docker_gid=docker_gid;self.project=project;self.name='josi-ce-maintenance-'+hashlib.sha256(str(self.root).encode()).hexdigest()[:12];self.doctor_lock=threading.Lock()
+ def __init__(self,root:Path,image:str,uid:int,gid:int,docker_gid:int,project:str='josi-ce'):
+  self.root=root.resolve();self.image=image;self.uid=uid;self.gid=gid;self.docker_gid=docker_gid;self.project=project;self.name='josi-ce-maintenance-'+hashlib.sha256(str(self.root).encode()).hexdigest()[:12];self.doctor_lock=threading.Lock();self.update_lock=threading.Lock();self.update_file=self.root/'installer-state'/'update-status.json'
  def launch(self,body):
   host=str(body.get('host','')).strip()
   if not HOST.fullmatch(host): raise ValueError('browser host is invalid')
@@ -78,12 +80,61 @@ class Manager:
     except (json.JSONDecodeError,AttributeError): pass
    if report is None: raise RuntimeError('Josi Doctor did not return a valid report')
    return report
+ def now(self): return datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z')
+ def current_version(self):
+  env=self.root/'.env'
+  try:
+   for line in env.read_text().splitlines():
+    if line.startswith('JOSI_TAG='):
+     value=line.split('=',1)[1].strip()
+     if VERSION.fullmatch(value): return value
+  except OSError: pass
+  return '0.1.0'
+ def save_update(self,value):
+  self.update_file.parent.mkdir(mode=0o700,exist_ok=True);os.chmod(self.update_file.parent,0o700)
+  tmp=self.update_file.with_suffix('.tmp');tmp.write_text(json.dumps(value,separators=(',',':')));os.chmod(tmp,0o600);os.replace(tmp,self.update_file)
+ def update_status(self):
+  try:
+   value=json.loads(self.update_file.read_text())
+   if isinstance(value,dict) and value.get('state') in {'running','complete','rolled_back','failed'}:
+    if value.get('state')=='running' and not self.update_lock.locked():
+     value.update(state='failed',currentVersion=self.current_version(),finishedAt=self.now(),message='The updater stopped before it could report completion. The pre-update backup and rollback evidence were preserved.')
+     self.save_update(value)
+    return value
+  except (OSError,json.JSONDecodeError): pass
+  return {'state':'idle','currentVersion':self.current_version(),'targetVersion':None,'startedAt':None,'finishedAt':None,'message':'No update is running.'}
+ def newer(self,candidate,current):
+  def parts(value): return tuple(int(item) for item in value.split('-',1)[0].split('.',2))
+  return parts(candidate)>parts(current)
+ def start_update(self,body):
+  if set(body)!= {'operation','version','confirm'} or body.get('operation')!='update': raise ValueError('unsupported update request')
+  version=str(body.get('version','')).strip();confirm=str(body.get('confirm','')).strip()
+  if not VERSION.fullmatch(version) or confirm!=f'UPDATE {version}': raise ValueError('approve the exact update version shown in Josi')
+  if not self.update_lock.acquire(blocking=False): raise RuntimeError('an update is already running')
+  current=self.current_version()
+  if not self.newer(version,current): self.update_lock.release();raise ValueError('only a newer release can be installed')
+  value={'state':'running','currentVersion':current,'targetVersion':version,'startedAt':self.now(),'finishedAt':None,'message':'Backing up and applying the approved update.'}
+  self.save_update(value)
+  threading.Thread(target=self.run_update,args=(current,version),daemon=True).start()
+  return value
+ def run_update(self,current,version):
+  try:
+   executable=self.root/'josi'
+   if not executable.is_file(): raise RuntimeError('updater unavailable')
+   env={'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':str(self.root),'JOSI_HOME':str(self.root),'JOSI_DOCKER_BIN':'docker','COMPOSE_PROJECT_NAME':self.project}
+   result=subprocess.run(['bash',str(executable),'--root',str(self.root),'update',version,'--yes'],cwd=self.root,env=env,capture_output=True,text=True,timeout=3600)
+   installed=self.current_version();state='complete' if result.returncode==0 and installed==version else 'rolled_back' if installed==current else 'failed'
+   message='Update completed and Josi passed its health checks.' if state=='complete' else 'The update failed, so Josi restored the previous version.' if state=='rolled_back' else 'The update failed and needs manual attention. The pre-update backup was preserved.'
+   self.save_update({'state':state,'currentVersion':installed,'targetVersion':version,'startedAt':self.update_status().get('startedAt'),'finishedAt':self.now(),'message':message})
+  except Exception:
+   self.save_update({'state':'failed','currentVersion':self.current_version(),'targetVersion':version,'startedAt':self.update_status().get('startedAt'),'finishedAt':self.now(),'message':'The update could not finish. The pre-update backup and rollback evidence were preserved.'})
+  finally:self.update_lock.release()
 
 class Handler(BaseHTTPRequestHandler):
  manager=None
  def do_GET(self):
-  if self.path!='/doctor/check': self.send_error(404);return
-  try:self.reply(200,self.manager.doctor(False))
+  if self.path not in {'/doctor/check','/update/status'}: self.send_error(404);return
+  try:self.reply(200,self.manager.doctor(False) if self.path=='/doctor/check' else self.manager.update_status())
   except Exception:self.reply(503,{'error':'Josi Doctor is unavailable. Rerun the installer once to refresh its repair helper.'})
  def do_POST(self):
   try:
@@ -94,6 +145,7 @@ class Handler(BaseHTTPRequestHandler):
    if self.path=='/doctor/repair':
     if body!={'operation':'safe_repair'}: raise ValueError('unsupported repair operation')
     self.reply(200,self.manager.doctor(True));return
+   if self.path=='/update/start': self.reply(202,self.manager.start_update(body));return
    self.send_error(404)
   except ValueError as exc:self.reply(400,{'error':str(exc)})
   except Exception:self.reply(503,{'error':'The maintenance helper could not complete that operation.'})
