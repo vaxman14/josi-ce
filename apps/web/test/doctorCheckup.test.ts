@@ -23,7 +23,7 @@ describe('Josi Doctor checkup navigation', () => {
   it('sends actionable failures to the relevant settings page', () => {
     expect(doctorCheckDestination('disk')).toEqual({ to: '/admin/storage', action: 'Open storage settings' });
     expect(doctorCheckDestination('domain_dns')).toEqual({ to: '/admin/network', action: 'Open network settings' });
-    expect(doctorCheckDestination('workspace')).toEqual({ to: '/admin/workspace', action: 'Open workspace settings' });
+    expect(doctorCheckDestination('workspace')).toEqual({ to: '/app/workspace', action: 'Open Local Workspace' });
     expect(doctorCheckDestination('backup_integrity')).toEqual({ to: '/admin/backups', action: 'Open backup settings' });
     expect(doctorCheckDestination('push_delivery')).toEqual({ to: '/admin/channels', action: 'Open channel settings' });
   });
