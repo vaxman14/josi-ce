@@ -17,7 +17,7 @@ const CHECK_DESTINATIONS: Record<string, DoctorCheckDestination> = {
   domain_dns: { to: '/admin/network', action: 'Open network settings' },
   port_collision_http: { to: '/admin/network', action: 'Open network settings' },
   port_collision_https: { to: '/admin/network', action: 'Open network settings' },
-  workspace: { to: '/admin/workspace', action: 'Open workspace settings' },
+  workspace: { to: '/app/workspace', action: 'Open Local Workspace' },
   backup_integrity: { to: '/admin/backups', action: 'Open backup settings' },
   backup_receipt: { to: '/admin/backups', action: 'Open backup settings' },
   push_delivery: { to: '/admin/channels', action: 'Open channel settings' },
