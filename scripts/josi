@@ -82,7 +82,7 @@ if [[ -n "${JOSI_COMPOSE_FILES:-}" ]]; then
     [[ "$file" == /* ]] || file="$ROOT/$file"
     [[ -f "$file" ]] || die "configured Compose file is missing: $file"
     COMPOSE_FILES+=("$file")
-  done < <(printf '%s' "$JOSI_COMPOSE_FILES" | tr ':' '\n')
+  done < <(printf '%s\n' "$JOSI_COMPOSE_FILES" | tr ':' '\n')
   [[ ${#COMPOSE_FILES[@]} -gt 0 ]] || die 'JOSI_COMPOSE_FILES did not name any Compose files'
 elif [[ -f "$ROOT/docker-compose.workspace.yml" ]]; then
   # The AIO/browser installer generates this override when workspace mounts are

@@ -69,6 +69,10 @@ run status --json | grep -q '"direct":"pass"' || fail status; ok 'status reports
 printf 'services: {}\n' > "$INSTALL/docker-compose.workspace.yml"; : > "$STATE/calls"; run status --json >/dev/null
 grep -q 'docker-compose.workspace.yml' "$STATE/calls" || fail compose-workspace-override
 rm -f "$INSTALL/docker-compose.workspace.yml"; ok 'every lifecycle command automatically preserves the generated workspace Compose override'
+printf 'services: {}\n' > "$INSTALL/docker-compose.last.yml"; : > "$STATE/calls"
+JOSI_COMPOSE_FILES='docker-compose.yml:docker-compose.last.yml' run status --json >/dev/null
+grep -q 'docker-compose.last.yml' "$STATE/calls" || fail compose-final-override
+rm -f "$INSTALL/docker-compose.last.yml"; ok 'an explicit Compose list preserves its final entry without requiring a trailing newline'
 runtime_out=$(JOSI_DOCKER_BIN="$TMP/missing-docker" "$ROOT_SRC/scripts/josi" --root "$INSTALL" doctor --check-only 2>&1 || true); [[ "$runtime_out" == *'runtime'* && "$runtime_out" == *'Docker Engine or Compose v2 unavailable'* ]] || fail runtime-blocker; ok 'doctor reports a precise runtime blocker when Docker/Compose is unavailable'
 : > "$STATE/calls"; (export FAKE_PREFLIGHT_RC=1; run install --yes >/dev/null 2>&1) && fail install-preflight; ! grep -q 'compose .* up ' "$STATE/calls" || fail install-mutated; ok 'install fails before mutation when preflight blocks'
 : > "$STATE/calls"; run install >/dev/null 2>&1 && fail install-consent; [[ ! -e "$INSTALL/.josi" ]] && ! grep -q 'compose .* up ' "$STATE/calls" || fail install-consent-mutation; ok 'noninteractive install enforces consent before creating state or secrets'
