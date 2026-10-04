@@ -120,7 +120,7 @@ Install and open Docker, then copy the command for your computer.
 ```bash
 mkdir -p "$HOME/josi-ce" && cd "$HOME/josi-ce" && \
 docker run --rm \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
   docker.io/romanvaxman/josi-ce-installer:latest
@@ -137,9 +137,9 @@ docker run --rm \
   docker.io/romanvaxman/josi-ce-installer:latest
 ```
 
-The installer prints a local setup address and one-time code. Open that address,
-enter the code, and finish setup in your browser. Save the recovery key when the
-browser shows it. No Git checkout, source build, or separate CLI is required.
+The installer prints one private setup link. Open it and finish everything in
+the browser, including the domain choice and recovery-key handling. No Git
+checkout, source build, `.env` editing, or separate Josi CLI is required.
 
 The complete walkthrough is in
 [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
