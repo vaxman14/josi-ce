@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, ErrorNote } from '@/components/ui';
+import { doctorCheckDestination, orderDoctorChecks } from '@/lib/doctorChecks';
 
 type DoctorState = 'pass' | 'warn' | 'fail';
 
@@ -11,7 +13,7 @@ interface DoctorCheck {
   detail: string;
 }
 
-interface DoctorDiagnosis {
+export interface DoctorDiagnosis {
   checkedAt: string;
   healthy: boolean;
   safeRepairAvailable: boolean;
@@ -66,29 +68,65 @@ const STATE_LABEL: Record<DoctorState, string> = {
   pass: 'Working', warn: 'Attention', fail: 'Needs repair',
 };
 
-function Diagnosis({ value }: { value: DoctorDiagnosis }) {
+export function Diagnosis({ value }: { value: DoctorDiagnosis }) {
+  const checks = orderDoctorChecks(value.checks);
+  const failures = checks.filter((check) => check.state === 'fail');
+  const remaining = checks.filter((check) => check.state !== 'fail');
   return (
+    <div id="doctor-checks">
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <CardTitle>What Josi checked</CardTitle>
         <span className="text-xs text-muted-foreground">{new Date(value.checkedAt).toLocaleString()}</span>
       </div>
-      <ul className="mt-2 divide-y divide-border">
-        {value.checks.map((check) => (
-          <li key={check.key} className="flex flex-col gap-1 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">{check.label}</span>
-              <span className="block text-sm text-muted-foreground">{check.detail}</span>
-            </span>
-            <span className="shrink-0">
-              <Badge tone={check.state === 'pass' ? 'ok' : check.state === 'fail' ? 'danger' : 'muted'}>
-                {STATE_LABEL[check.state]}
-              </Badge>
-            </span>
-          </li>
-        ))}
-      </ul>
+      {failures.length ? (
+        <ul className="mt-3 space-y-2" aria-label="Checks needing repair">
+          {failures.map((check) => {
+            const destination = doctorCheckDestination(check.key);
+            return (
+              <li key={check.key}>
+                <Link to={destination.to} className="group flex min-h-11 flex-col gap-2 rounded-md border border-destructive/60 bg-destructive/10 p-3 hover:bg-destructive/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{check.label}</span>
+                    <span className="mt-1 block text-sm text-muted-foreground">{check.detail}</span>
+                    <span className="mt-2 block text-xs font-medium text-destructive group-hover:underline">{destination.action} →</span>
+                  </span>
+                  <span className="shrink-0">
+                    <Badge tone="danger">{STATE_LABEL.fail}</Badge>
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {remaining.length ? (
+        <details className="mt-3 rounded-md border border-border">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+            <span>{failures.length ? `${remaining.length} other checks` : `All ${remaining.length} checks`}</span>
+            <span className="text-xs text-muted-foreground">Click to expand</span>
+          </summary>
+          <ul className="divide-y divide-border border-t border-border">
+            {remaining.map((check) => (
+              <li key={check.key}>
+                <details>
+                  <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                    <span className="min-w-0 text-sm font-medium">{check.label}</span>
+                    <span className="shrink-0">
+                      <Badge tone={check.state === 'pass' ? 'ok' : 'muted'}>
+                        {STATE_LABEL[check.state]}
+                      </Badge>
+                    </span>
+                  </summary>
+                  <div className="border-t border-border/70 px-3 py-3 text-sm text-muted-foreground">{check.detail}</div>
+                </details>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </Card>
+    </div>
   );
 }
 
@@ -223,6 +261,7 @@ export function AdminDiagnostics() {
         <div className="mt-4"><Button type="button" variant="secondary" disabled={updateBusy !== null || update?.job.state === 'running'} onClick={() => void checkUpdate()}>{updateBusy === 'check' || updateBusy === 'load' ? 'Checking…' : 'Check for updates'}</Button></div>
       </Card>
 
+      <div id="doctor-actions">
       {unavailable ? (
         <Card>
           <CardTitle>Josi Doctor needs one refresh</CardTitle>
@@ -242,6 +281,7 @@ export function AdminDiagnostics() {
           {diagnosis && !diagnosis.healthy && !diagnosis.safeRepairAvailable ? <p className="mt-3 text-sm text-muted-foreground">This problem is outside Doctor's safe repair boundary. It will not guess or change unrelated software.</p> : null}
         </Card>
       )}
+      </div>
 
       {plan ? (
         <Card className="border-primary/50">
