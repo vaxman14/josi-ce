@@ -42,6 +42,26 @@ interface RepairResult {
   diagnosis: DoctorDiagnosis;
 }
 
+interface UpdateJob {
+  state: 'idle' | 'running' | 'complete' | 'rolled_back' | 'failed';
+  currentVersion: string;
+  targetVersion: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  message: string;
+}
+interface StableRelease { version: string; name: string; notes: string; url: string; publishedAt: string }
+interface UpdateStatus {
+  currentVersion: string;
+  availableVersion: string | null;
+  updateAvailable: boolean;
+  lastCheckAt?: string | null;
+  lastCheckOk?: boolean | null;
+  automatic: false;
+  job: UpdateJob;
+  release?: StableRelease;
+}
+
 const STATE_LABEL: Record<DoctorState, string> = {
   pass: 'Working', warn: 'Attention', fail: 'Needs repair',
 };
@@ -82,6 +102,10 @@ export function AdminDiagnostics() {
   const [busy, setBusy] = useState<'load' | 'check' | 'plan' | 'repair' | null>('load');
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  const [updateBusy, setUpdateBusy] = useState<'load' | 'check' | 'start' | null>('load');
+  const [updateError, setUpdateError] = useState('');
+  const [confirmation, setConfirmation] = useState('');
 
   const load = useCallback(async () => {
     setError('');
@@ -94,6 +118,36 @@ export function AdminDiagnostics() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadUpdate = useCallback(async () => {
+    try { setUpdate(await api.get<UpdateStatus>('/admin/doctor/update')); setUpdateError(''); }
+    catch (err) { setUpdateError(err instanceof Error ? err.message : 'The updater could not load.'); }
+    finally { setUpdateBusy(null); }
+  }, []);
+
+  useEffect(() => { void loadUpdate(); }, [loadUpdate]);
+  useEffect(() => {
+    if (update?.job.state !== 'running') return;
+    const timer = window.setInterval(() => { void loadUpdate(); }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [loadUpdate, update?.job.state]);
+
+  async function checkUpdate() {
+    setUpdateBusy('check'); setUpdateError(''); setConfirmation('');
+    try { setUpdate(await api.post<UpdateStatus>('/admin/doctor/update/check')); }
+    catch (err) { setUpdateError(err instanceof Error ? err.message : 'The update check did not finish.'); }
+    finally { setUpdateBusy(null); }
+  }
+
+  async function startUpdate() {
+    if (!update?.availableVersion) return;
+    setUpdateBusy('start'); setUpdateError('');
+    try {
+      const result = await api.post<{ job: UpdateJob; message: string }>('/admin/doctor/update/start', { version: update.availableVersion, confirm: confirmation });
+      setUpdate({ ...update, job: result.job }); setConfirmation('');
+    } catch (err) { setUpdateError(err instanceof Error ? err.message : 'The updater could not start.'); }
+    finally { setUpdateBusy(null); }
+  }
 
   async function runCheck() {
     setBusy('check'); setError(''); setNote(''); setPlan(null);
@@ -143,6 +197,31 @@ export function AdminDiagnostics() {
       </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {note ? <p role="status" className="rounded-lg border border-border bg-card p-3 text-sm">{note}</p> : null}
+
+      <Card>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><CardTitle>Josi updates</CardTitle><p className="mt-1 text-sm text-muted-foreground">Updates never install automatically. Josi backs up first, verifies the new release, and rolls back when it safely can.</p></div>
+          {update ? <Badge tone={update.job.state === 'failed' ? 'danger' : update.updateAvailable ? 'primary' : 'ok'}>{update.job.state === 'running' ? 'Updating' : update.updateAvailable ? 'Available' : `v${update.currentVersion}`}</Badge> : null}
+        </div>
+        {updateError ? <div className="mt-3"><ErrorNote>{updateError}</ErrorNote></div> : null}
+        {update?.job.state === 'running' ? (
+          <div className="mt-3 rounded-md border border-border p-3" role="status"><p className="text-sm font-medium">Updating to {update.job.targetVersion}</p><p className="mt-1 text-sm text-muted-foreground">{update.job.message} Josi may briefly disconnect while its containers restart; this page will reconnect automatically.</p></div>
+        ) : update?.job.state === 'rolled_back' || update?.job.state === 'failed' || update?.job.state === 'complete' ? (
+          <p className="mt-3 text-sm" role="status">{update.job.message}</p>
+        ) : null}
+        {update?.updateAvailable && update.availableVersion ? (
+          <div className="mt-4 rounded-md border border-primary/40 p-3">
+            <p className="text-sm font-medium">Version {update.availableVersion} is available</p>
+            {update.release?.name ? <p className="mt-1 text-sm text-muted-foreground">{update.release.name}</p> : null}
+            {update.release?.notes ? <pre className="mt-3 max-h-44 overflow-auto whitespace-pre-wrap rounded bg-secondary/40 p-3 text-xs">{update.release.notes}</pre> : null}
+            {update.release?.url ? <a className="mt-2 inline-block text-sm underline" href={update.release.url} target="_blank" rel="noreferrer">Open release notes</a> : null}
+            <label className="mt-4 block text-sm font-medium" htmlFor="update-confirm">Type <span className="font-mono">UPDATE {update.availableVersion}</span> to approve</label>
+            <input id="update-confirm" className="mt-2 min-h-11 w-full rounded-md border border-input bg-background px-3 font-mono text-sm" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={updateBusy !== null} autoComplete="off" />
+            <div className="mt-3 flex flex-wrap gap-2"><Button type="button" disabled={updateBusy !== null || confirmation !== `UPDATE ${update.availableVersion}`} onClick={() => void startUpdate()}>{updateBusy === 'start' ? 'Starting…' : `Back up and update to ${update.availableVersion}`}</Button></div>
+          </div>
+        ) : null}
+        <div className="mt-4"><Button type="button" variant="secondary" disabled={updateBusy !== null || update?.job.state === 'running'} onClick={() => void checkUpdate()}>{updateBusy === 'check' || updateBusy === 'load' ? 'Checking…' : 'Check for updates'}</Button></div>
+      </Card>
 
       {unavailable ? (
         <Card>

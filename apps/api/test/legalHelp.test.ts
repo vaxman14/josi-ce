@@ -20,7 +20,7 @@ describe('public help and legal coverage', () => {
   it('keeps Help persistent in the signed-in shell', () => {
     expect(shell).toContain('href={HELP_URL}');
     expect(shell).toContain('Help');
-    expect(read('apps/web/src/components/LegalLinks.tsx')).toContain('#help');
+    expect(read('apps/web/src/components/LegalLinks.tsx')).toContain("HELP_URL = '/help/index.html'");
   });
 
   it('shows legal notices before setup completion and at sign-in', () => {

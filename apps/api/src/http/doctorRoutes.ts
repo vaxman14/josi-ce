@@ -6,6 +6,7 @@ import {
   type Db, type Limit, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import { chat, LlmError, type SpawnRunner } from '@josi-ce/llm';
+import { isNewer } from '@josi-ce/ops';
 import { asyncRoute } from './async.js';
 import { requireSuperAdmin } from './authz.js';
 
@@ -20,7 +21,7 @@ export interface DoctorDiagnosis {
   fingerprint: string;
 }
 export interface DoctorReply { status: number; data: unknown }
-export type DoctorHelper = (path: '/doctor/check' | '/doctor/repair', body?: unknown) => Promise<DoctorReply>;
+export type DoctorHelper = (path: '/doctor/check' | '/doctor/repair' | '/update/status' | '/update/start', body?: unknown) => Promise<DoctorReply>;
 
 export interface DoctorRoutesCtx {
   db: Db;
@@ -29,6 +30,50 @@ export interface DoctorRoutesCtx {
   llmFetch?: typeof fetch;
   llmResolve?: (hostname: string) => Promise<string[]>;
   codexRunner?: SpawnRunner;
+  releaseFetch?: typeof fetch;
+}
+
+type UpdateJobState = 'idle' | 'running' | 'complete' | 'rolled_back' | 'failed';
+interface UpdateJob { state: UpdateJobState; currentVersion: string; targetVersion: string | null; startedAt: string | null; finishedAt: string | null; message: string }
+interface StableRelease { version: string; name: string; notes: string; url: string; publishedAt: string }
+const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?$/;
+const RELEASE_URL = 'https://api.github.com/repos/vaxman14/josi-ce/releases/latest';
+
+function updateJob(value: unknown): UpdateJob {
+  const row = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const state = row.state === 'idle' || row.state === 'running' || row.state === 'complete' || row.state === 'rolled_back' || row.state === 'failed' ? row.state : 'failed';
+  const currentVersion = typeof row.currentVersion === 'string' && VERSION.test(row.currentVersion) ? row.currentVersion : '0.1.0';
+  const targetVersion = typeof row.targetVersion === 'string' && VERSION.test(row.targetVersion) ? row.targetVersion : null;
+  const date = (input: unknown) => typeof input === 'string' && !Number.isNaN(Date.parse(input)) ? input : null;
+  const message = typeof row.message === 'string' ? row.message.slice(0, 300) : 'Update status is unavailable.';
+  return { state, currentVersion, targetVersion, startedAt: date(row.startedAt), finishedAt: date(row.finishedAt), message };
+}
+
+async function helperUpdateStatus(helper: DoctorHelper): Promise<UpdateJob> {
+  const reply = await helper('/update/status');
+  if (reply.status !== 200) throw new Error('helper refused update status');
+  return updateJob(reply.data);
+}
+
+export async function fetchStableRelease(fetchImpl: typeof fetch = fetch): Promise<StableRelease> {
+  const response = await fetchImpl(RELEASE_URL, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'josi-ce-update-check/1' },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error('release channel unavailable');
+  const raw = await response.json() as Record<string, unknown>;
+  const tag = typeof raw.tag_name === 'string' ? raw.tag_name : '';
+  const version = tag.startsWith('v') ? tag.slice(1) : tag;
+  const url = typeof raw.html_url === 'string' ? raw.html_url : '';
+  if (!VERSION.test(version) || raw.draft === true || raw.prerelease === true || url !== `https://github.com/vaxman14/josi-ce/releases/tag/v${version}`)
+    throw new Error('release channel returned an invalid stable release');
+  return {
+    version,
+    name: (typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : `Josi CE ${version}`).slice(0, 160),
+    notes: (typeof raw.body === 'string' ? raw.body.trim() : '').slice(0, 8_000),
+    url,
+    publishedAt: typeof raw.published_at === 'string' && !Number.isNaN(Date.parse(raw.published_at)) ? raw.published_at : new Date(0).toISOString(),
+  };
 }
 
 const CHECKS: Record<string, { label: string; pass: string; warn?: string; fail: string }> = {
@@ -147,6 +192,82 @@ async function check(helper: DoctorHelper): Promise<DoctorDiagnosis> {
 export function doctorRoutes(ctx: DoctorRoutesCtx): Router {
   const r = Router(); const helper = ctx.helper ?? doctorHelper();
   r.use(requireSuperAdmin);
+
+  const syncUpdate = async (job: UpdateJob) => {
+    await ctx.db.query(`update update_state set current_version=$1 where id=true and current_version<>$1`, [job.currentVersion]);
+    if (!job.targetVersion || job.state === 'idle' || job.state === 'running') {
+      if (job.state === 'running' && job.targetVersion)
+        await ctx.db.query(`update update_runs set state='applying' where id=(select id from update_runs where to_version=$1 order by started_at desc limit 1) and state in ('pending','backing_up','applying')`, [job.targetVersion]);
+      return;
+    }
+    const [run] = await ctx.db.query<{ id: string; state: string }>(
+      `select id,state from update_runs where to_version=$1 order by started_at desc limit 1`, [job.targetVersion],
+    );
+    if (!run || ['complete', 'rolled_back', 'failed'].includes(run.state)) return;
+    const state = job.state === 'complete' ? 'complete' : job.state === 'rolled_back' ? 'rolled_back' : 'failed';
+    const failure = state === 'rolled_back' ? 'health_check_failed' : state === 'failed' ? 'unknown' : null;
+    await ctx.db.query(`update update_runs set state=$2,failure_category=$3,finished_at=now() where id=$1`, [run.id, state, failure]);
+    if (state === 'complete') await ctx.db.query(`update update_state set current_version=$1,available_version=null where id=true`, [job.currentVersion]);
+    await appendEvent(ctx.db, { actorUserId: null, actor: 'system', kind: `update.${state}`, subjectType: 'update_run', subjectId: run.id,
+      payload: { toVersion: job.targetVersion, currentVersion: job.currentVersion } });
+  };
+
+  r.get('/update', asyncRoute(async (_req, res) => {
+    let job: UpdateJob;
+    try { job = await helperUpdateStatus(helper); await syncUpdate(job); }
+    catch { return res.status(503).json({ error: 'The isolated updater is unavailable. Run the current installer once to refresh it.' }); }
+    const [state] = await ctx.db.query<{ current_version: string; available_version: string | null; last_check_at: string | null; last_check_ok: boolean | null }>(
+      `select current_version,available_version,last_check_at::text,last_check_ok from update_state where id=true`,
+    );
+    return res.json({ currentVersion: job.currentVersion, availableVersion: state?.available_version ?? null,
+      updateAvailable: !!state?.available_version && isNewer(state.available_version, job.currentVersion),
+      lastCheckAt: state?.last_check_at ?? null, lastCheckOk: state?.last_check_ok ?? null, automatic: false, job });
+  }));
+
+  r.post('/update/check', asyncRoute(async (req, res) => {
+    if (Object.keys(req.body ?? {}).length) return res.status(400).json({ error: 'Update checks accept no options.' });
+    if (!(await limited(ctx.db, req, res, LIMITS.update_check))) return;
+    let job: UpdateJob;
+    try { job = await helperUpdateStatus(helper); await syncUpdate(job); }
+    catch { return res.status(503).json({ error: 'The isolated updater is unavailable. Run the current installer once to refresh it.' }); }
+    try {
+      const release = await fetchStableRelease(ctx.releaseFetch);
+      await ctx.db.query(`update update_state set current_version=$1,available_version=$2,last_check_at=now(),last_check_ok=true where id=true`, [job.currentVersion, release.version]);
+      return res.json({ currentVersion: job.currentVersion, availableVersion: release.version,
+        updateAvailable: isNewer(release.version, job.currentVersion), release, automatic: false, job });
+    } catch {
+      await ctx.db.query(`update update_state set available_version=null,last_check_at=now(),last_check_ok=false where id=true`);
+      return res.status(503).json({ error: 'Josi could not verify the stable release channel. Nothing was changed.' });
+    }
+  }));
+
+  r.post('/update/start', asyncRoute(async (req, res) => {
+    if (!(await limited(ctx.db, req, res, LIMITS.update_apply))) return;
+    const version = typeof req.body?.version === 'string' && VERSION.test(req.body.version) ? req.body.version : '';
+    const confirm = typeof req.body?.confirm === 'string' ? req.body.confirm : '';
+    if (!version || confirm !== `UPDATE ${version}` || Object.keys(req.body ?? {}).sort().join(',') !== 'confirm,version')
+      return res.status(400).json({ error: 'Type the exact update confirmation shown in Josi.' });
+    const [state] = await ctx.db.query<{ available_version: string | null }>(`select available_version from update_state where id=true`);
+    if (state?.available_version !== version) return res.status(409).json({ error: 'That release is no longer the verified available update. Check again.' });
+    let before: UpdateJob;
+    try { before = await helperUpdateStatus(helper); }
+    catch { return res.status(503).json({ error: 'The isolated updater is unavailable. Run the current installer once to refresh it.' }); }
+    if (before.state === 'running') return res.status(409).json({ error: 'An update is already running.' });
+    if (!isNewer(version, before.currentVersion)) return res.status(409).json({ error: 'That version is not newer than the installed release.' });
+    const [run] = await ctx.db.query<{ id: string }>(
+      `insert into update_runs(from_version,to_version,approved_by,state) values($1,$2,$3,'pending') returning id`,
+      [before.currentVersion, version, req.user!.id],
+    );
+    await appendEvent(ctx.db, { actorUserId: req.user!.id, actor: 'super_admin', kind: 'update.approved', subjectType: 'update_run', subjectId: run.id, payload: { fromVersion: before.currentVersion, toVersion: version } });
+    try {
+      const reply = await helper('/update/start', { operation: 'update', version, confirm });
+      if (reply.status !== 202) throw new Error('helper refused update');
+      return res.status(202).json({ runId: run.id, job: updateJob(reply.data), message: 'Josi is backing up and applying the approved update. This page will reconnect after the service restarts.' });
+    } catch {
+      await ctx.db.query(`update update_runs set state='failed',failure_category='unknown',finished_at=now() where id=$1`, [run.id]);
+      return res.status(503).json({ error: 'The updater could not start. Nothing was changed.' });
+    }
+  }));
 
   r.get('/', asyncRoute(async (_req, res) => {
     const [last] = await ctx.db.query<{ id: string; status: string; model_used: boolean; created_at: string; applied_at: string | null }>(

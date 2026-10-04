@@ -12,7 +12,7 @@
 // never a disabled button that looks pressable.
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote, Copyable } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Copyable } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 import {
   ProviderForm, type ProviderCatalogEntry, type SubscriptionInfo,
@@ -138,9 +138,8 @@ export function AdminModel() {
             onSaved={(passed) => { void load(); if (passed) setChangeOpen(false); }} />
         </Card> : null}
 
-        <details className="rounded-lg border border-border bg-card p-5 text-sm sm:p-6">
-          <summary className="min-h-11 cursor-pointer font-medium">Connection &amp; advanced</summary>
-          <div className="space-y-5 border-t border-border pt-4">
+        <CollapsibleCard title="Connection & advanced" summary="Optional. Review connection details or test a working model again." className="text-sm">
+          <div className="space-y-5">
             {data.subscriptionOptions.some((o) => o.available && o.provider === 'openai_subscription')
               ? <div className="space-y-2"><h2 className="font-medium">ChatGPT connection</h2><CodexConnection /></div>
               : null}
@@ -175,7 +174,7 @@ export function AdminModel() {
               </ul>
             </div> : null}
           </div>
-        </details>
+        </CollapsibleCard>
       </> : null}
     </div>
   );

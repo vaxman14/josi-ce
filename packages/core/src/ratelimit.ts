@@ -36,6 +36,10 @@ export const LIMITS = {
   doctor_plan: { bucket: 'doctor_plan', max: 10, windowSeconds: 3600 },
   /** May restart/recreate allowlisted Josi services; deliberately tight. */
   doctor_repair: { bucket: 'doctor_repair', max: 5, windowSeconds: 3600 },
+  /** Reads the fixed public stable-release channel. */
+  update_check: { bucket: 'update_check', max: 20, windowSeconds: 3600 },
+  /** Starts a backup-gated container replacement; deliberately very tight. */
+  update_apply: { bucket: 'update_apply', max: 3, windowSeconds: 3600 },
   /** Full-text search across somebody's documents. */
   search: { bucket: 'search', max: 120, windowSeconds: 60 },
   /** Inbound Telegram messages from one chat.

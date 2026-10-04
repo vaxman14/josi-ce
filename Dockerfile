@@ -72,6 +72,9 @@ RUN npm prune --omit=dev --ignore-scripts
 # -------------------------------------------------------------- runtime stage
 FROM node:22-bookworm-slim AS runtime
 
+ARG JOSI_VERSION=0.1.0
+ENV JOSI_VERSION=$JOSI_VERSION
+
 # tini reaps zombies and forwards signals, so `docker stop` is a clean shutdown
 # rather than a ten-second wait for SIGKILL. curl is here for the container
 # healthcheck. postgresql-client is here for backup and restore — without it the

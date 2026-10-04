@@ -99,6 +99,7 @@ services:
       APP_URL: ${JOSI_APP_URL:-http://localhost:8080}
       APPLE_NATIVE_CLIENT_ID: ${APPLE_NATIVE_CLIENT_ID:-}
       JOSI_INSTALLER_CONFIGURED: ${JOSI_INSTALLER_CONFIGURED:-}
+      JOSI_VERSION: ${JOSI_TAG:-0.1.0}
       JOSI_ACCESS_MODE: ${JOSI_ACCESS_MODE:-}
       JOSI_SETUP_TOKEN_SHA256: ${JOSI_SETUP_TOKEN_SHA256:-}
       # Set only by the installer alongside docker-compose.workspace.yml. The

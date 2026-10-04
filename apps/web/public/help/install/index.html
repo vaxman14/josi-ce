@@ -136,7 +136,7 @@ inspect containers or call health endpoints.</p>
 <p>Use Josi's <strong>Admin</strong> screens for normal management:</p>
 <ul>
 <li><strong>Overview</strong> shows status and recommendations.</li>
-<li><strong>System checkup</strong> explains problems and offers safe automatic repairs for approval.</li>
+<li><strong>System checkup</strong> explains problems, offers safe automatic repairs, and installs approved stable updates.</li>
 <li><strong>Network &amp; address</strong> changes local, LAN, domain, proxy, or tunnel access.</li>
 <li><strong>Backups</strong> creates backups and configures storage.</li>
 <li><strong>Integrations</strong> connects providers and services.</li>
@@ -166,10 +166,15 @@ device testing. Links will appear here when each build is approved.</li>
 or create another server.</p>
 
 <h2 id="updating-josi">Updating Josi</h2>
-<p>Run the same installer command again. The browser installer detects the
-existing installation, preserves its configuration, and applies the published
-update. Do not delete the <code>josi-ce</code> folder or Docker volumes during an
-update.</p>
+<p>Open <strong>Admin → System checkup</strong> as a super-admin, select
+<strong>Check for updates</strong>, review the release notes, enter the exact
+confirmation shown, and approve the update. Josi creates a backup, applies the
+pinned release, verifies health, and rolls back automatically when a safe
+rollback is possible.</p>
+<p>If Josi cannot open or the maintenance helper is unavailable, run the same
+installer command again. The browser installer detects the existing installation
+and preserves its configuration and data. Do not delete the
+<code>josi-ce</code> folder or Docker volumes during an update.</p>
 
 <h2 id="backups">Backups</h2>
 <p>Open <strong>Admin → Backups</strong> to create a backup or configure SMB/NFS

@@ -48,8 +48,15 @@ const failing = () => ({
 });
 
 let currentReport: ReturnType<typeof passing> | ReturnType<typeof failing> = passing();
+let updater = { state: 'idle', currentVersion: '0.1.68', targetVersion: null as string | null, startedAt: null as string | null, finishedAt: null as string | null, message: 'No update is running.' };
 const helper: DoctorHelper = async (path, body) => {
   helperCalls.push({ path, body });
+  if (path === '/update/status') return { status: 200, data: updater };
+  if (path === '/update/start') {
+    const request = body as { version: string };
+    updater = { state: 'running', currentVersion: updater.currentVersion, targetVersion: request.version, startedAt: new Date().toISOString(), finishedAt: null, message: 'Backing up and updating.' };
+    return { status: 202, data: updater };
+  }
   if (path === '/doctor/repair') {
     currentReport = passing();
     return { status: 200, data: currentReport };
@@ -86,6 +93,7 @@ beforeAll(async () => {
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000', masterKeyCheck: { path: keyPath }, doctorHelper: helper,
     llmFetch, llmResolve: async () => ['203.0.113.10'],
+    releaseFetch: (async () => new Response(JSON.stringify({ tag_name: 'v0.1.69', name: 'Josi CE 0.1.69', body: 'GUI updater', html_url: 'https://github.com/vaxman14/josi-ce/releases/tag/v0.1.69', published_at: '2026-10-03T18:00:00Z', draft: false, prerelease: false }), { status: 200 })) as typeof fetch,
   });
   await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -95,7 +103,10 @@ beforeAll(async () => {
 afterAll(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); });
 beforeEach(async () => {
   currentReport = passing(); helperCalls = []; modelCalls = [];
+  updater = { state: 'idle', currentVersion: '0.1.68', targetVersion: null, startedAt: null, finishedAt: null, message: 'No update is running.' };
   await db.query(`delete from doctor_plans`);
+  await db.query(`delete from update_runs`);
+  await db.query(`update update_state set current_version='0.1.0',available_version=null,last_check_at=null,last_check_ok=null where id=true`);
   await db.query(`delete from llm_providers`);
   await db.query(`delete from rate_limits where bucket like 'doctor_%'`);
 });
@@ -168,5 +179,31 @@ describe('Josi Doctor browser routes', () => {
     expect(stale.status).toBe(409);
     expect(stale.body.error).toMatch(/system changed/i);
     expect(helperCalls.filter((entry) => entry.path === '/doctor/repair')).toHaveLength(0);
+  });
+
+  it('checks the fixed stable channel without applying anything', async () => {
+    const checked = await call('/api/admin/doctor/update/check', { method: 'POST', body: {}, jar: jars.admin });
+    expect(checked.status).toBe(200);
+    expect(checked.body).toMatchObject({ currentVersion: '0.1.68', availableVersion: '0.1.69', updateAvailable: true, automatic: false });
+    expect(helperCalls.filter((entry) => entry.path === '/update/start')).toHaveLength(0);
+    expect(await db.query(`select 1 from update_runs`)).toHaveLength(0);
+  });
+
+  it('requires exact approval, starts only the bounded helper action, and reconciles completion', async () => {
+    await call('/api/admin/doctor/update/check', { method: 'POST', body: {}, jar: jars.admin });
+    expect((await call('/api/admin/doctor/update/start', { method: 'POST', jar: jars.admin, body: { version: '0.1.69', confirm: 'yes' } })).status).toBe(400);
+    const started = await call('/api/admin/doctor/update/start', { method: 'POST', jar: jars.admin, body: { version: '0.1.69', confirm: 'UPDATE 0.1.69' } });
+    expect(started.status).toBe(202);
+    expect(helperCalls.at(-1)).toEqual({ path: '/update/start', body: { operation: 'update', version: '0.1.69', confirm: 'UPDATE 0.1.69' } });
+    updater = { ...updater, state: 'complete', currentVersion: '0.1.69', finishedAt: new Date().toISOString(), message: 'Update completed and Josi passed its health checks.' };
+    const status = await call('/api/admin/doctor/update', { jar: jars.admin });
+    expect(status.body.job.state).toBe('complete');
+    expect((await db.query<{ current_version: string }>(`select current_version from update_state where id=true`))[0].current_version).toBe('0.1.69');
+    expect((await db.query<{ state: string }>(`select state from update_runs`))[0].state).toBe('complete');
+  });
+
+  it('keeps update controls super-admin only', async () => {
+    expect((await call('/api/admin/doctor/update', { jar: jars.member })).status).toBe(403);
+    expect((await call('/api/admin/doctor/update/check', { method: 'POST', body: {}, jar: jars.member })).status).toBe(403);
   });
 });

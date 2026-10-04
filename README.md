@@ -155,10 +155,15 @@ See [the backup guide](docs/BACKUPS.md) for recovery and advanced storage.
 
 ## Using and updating Josi
 
-Use Josi's administration screens for everyday management. To update an
-existing installation, rerun the same installer command above. It detects the
-installation and preserves its configuration. When it finishes, open Josi and
-send a message. If that works, Josi works. No endpoint inspection required.
+Use Josi's administration screens for everyday management. A super-admin can
+open **Admin → System checkup**, check the stable release channel, review the
+release notes, and approve an update with the exact confirmation shown there.
+Josi creates a backup, applies the pinned release, verifies health, and rolls
+back automatically when a safe rollback is possible.
+
+If Josi cannot open or the maintenance helper is unavailable, rerun the same
+installer command above as the recovery update path. It detects the existing
+installation and preserves its configuration and data.
 
 ## Privacy
 
