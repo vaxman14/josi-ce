@@ -65,12 +65,18 @@ class Manager:
    return report
   finally:
    if repair:self.doctor_lock.release()
+ def operation_env(self,mode):
+  env={'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':str(self.root),'JOSI_HOME':str(self.root),'JOSI_DOCKER_BIN':'docker','COMPOSE_PROJECT_NAME':self.project}
+  env['JOSI_DOCTOR_LOCAL_ONLY' if mode=='doctor' else 'JOSI_UPDATE_LOCAL_ONLY']='1'
+  compose_files=os.environ.get('JOSI_COMPOSE_FILES','').strip()
+  if compose_files: env['JOSI_COMPOSE_FILES']=compose_files
+  return env
  def run_doctor(self,repair=False):
    executable=self.root/'josi'
    if not executable.is_file(): raise RuntimeError('Josi Doctor is unavailable; rerun the installer once')
    command=['bash',str(executable),'--root',str(self.root),'doctor','--json']
    if not repair: command.append('--check-only')
-   env={'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':str(self.root),'JOSI_HOME':str(self.root),'JOSI_DOCKER_BIN':'docker','JOSI_DOCTOR_LOCAL_ONLY':'1','COMPOSE_PROJECT_NAME':self.project}
+   env=self.operation_env('doctor')
    result=subprocess.run(command,cwd=self.root,env=env,capture_output=True,text=True,timeout=600)
    report=None
    for line in reversed(result.stdout.splitlines()):
@@ -121,7 +127,7 @@ class Manager:
   try:
    executable=self.root/'josi'
    if not executable.is_file(): raise RuntimeError('updater unavailable')
-   env={'PATH':'/usr/local/bin:/usr/bin:/bin','HOME':str(self.root),'JOSI_HOME':str(self.root),'JOSI_DOCKER_BIN':'docker','JOSI_UPDATE_LOCAL_ONLY':'1','COMPOSE_PROJECT_NAME':self.project}
+   env=self.operation_env('update')
    result=subprocess.run(['bash',str(executable),'--root',str(self.root),'update',version,'--yes'],cwd=self.root,env=env,capture_output=True,text=True,timeout=3600)
    installed=self.current_version();state='complete' if result.returncode==0 and installed==version else 'rolled_back' if installed==current else 'failed'
    message='Update completed and Josi passed its health checks.' if state=='complete' else 'The update failed, so Josi restored the previous version.' if state=='rolled_back' else 'The update failed and needs manual attention. The pre-update backup was preserved.'
