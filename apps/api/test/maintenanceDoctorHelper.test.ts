@@ -43,6 +43,7 @@ print(json.dumps([manager.doctor(False), manager.doctor(True)]))
     const cli = join(root, 'josi');
     writeFileSync(cli, `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${root}/calls"
+printf '%s\\n' "\${JOSI_UPDATE_LOCAL_ONLY:-missing}" >> "${root}/update-mode"
 sed -i 's/JOSI_TAG=0.1.68/JOSI_TAG=0.1.69/' "${root}/.env"
 `);
     chmodSync(cli, 0o700);
@@ -68,5 +69,6 @@ print(json.dumps({'started':started,'status':status}))
     expect(output.started.state).toBe('running');
     expect(output.status).toMatchObject({ state: 'complete', currentVersion: '0.1.69', targetVersion: '0.1.69' });
     expect(readFileSync(join(root, 'calls'), 'utf8').trim()).toContain('update 0.1.69 --yes');
+    expect(readFileSync(join(root, 'update-mode'), 'utf8').trim()).toBe('1');
   });
 });
