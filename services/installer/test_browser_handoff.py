@@ -13,6 +13,8 @@ class BrowserHandoff(unittest.TestCase):
         self.assertIn('JOSI_COMPOSE_SECRETS=1 bash ./install.sh >/dev/null', script)
         self.assertIn('daemon_os="$(docker info --format', script)
         self.assertIn('setup_host=localhost', script)
+        self.assertIn('JOSI_INSTALLER_HOSTNAME', script)
+        self.assertIn('subjectAltName=${installer_san}', script)
         self.assertIn('/#setup=${setup_token}', script)
         self.assertNotIn('say "Setup code:', script)
         self.assertNotIn('say "  1. Set JOSI_DOMAIN', script)
