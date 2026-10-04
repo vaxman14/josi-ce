@@ -122,18 +122,11 @@ if [[ ! -f installer-state/bootstrap-token ]]; then
   openssl rand -hex 16 > installer-state/bootstrap-token
   chown "$INSTALL_UID:$INSTALL_GID" installer-state/bootstrap-token
 fi
-if [[ ! -f installer-state/tls.key || ! -f installer-state/tls.crt ]] \
-   || ! openssl x509 -checkend 86400 -noout -in installer-state/tls.crt >/dev/null 2>&1; then
-  umask 077
-  openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
-    -subj '/CN=Josi Local Installer' \
-    -keyout installer-state/tls.key -out installer-state/tls.crt >/dev/null 2>&1
-  chown "$INSTALL_UID:$INSTALL_GID" installer-state/tls.key installer-state/tls.crt
-fi
-
 daemon_os="$(docker info --format '{{.OperatingSystem}}' 2>/dev/null || true)"
 if [[ -n "${JOSI_INSTALLER_HOSTNAME:-}" ]]; then
   setup_host="$JOSI_INSTALLER_HOSTNAME"
+  python3 -c 'import ipaddress,sys; a=ipaddress.ip_address(sys.argv[1]); assert a.version == 4 and a.is_private and not a.is_loopback and not a.is_link_local' "$setup_host" \
+    || fail 'JOSI_INSTALLER_HOSTNAME must be this computer\'s private LAN IPv4 address'
 elif [[ "$daemon_os" == *"Docker Desktop"* ]]; then
   # Docker Desktop's host-network route reports the hidden Linux VM gateway
   # (for example 192.168.65.3). The published port is actually on this Mac or
@@ -143,6 +136,18 @@ else
   setup_host="$({ docker run --rm --network host alpine:3.22 sh -c 'ip -4 route get 1.1.1.1 2>/dev/null' || true; } | awk '{for(i=1;i<=NF;i++) if($i=="src") {print $(i+1); exit}}')"
   [[ -n "$setup_host" ]] || setup_host=localhost
 fi
+
+# The setup certificate remains intentionally local and self-signed, but its
+# subjectAltName must still match the address printed below. Regenerate it on
+# each temporary installer run because DHCP may have changed the host address.
+installer_san='DNS:localhost'
+[[ "$setup_host" == localhost ]] || installer_san+=",IP:${setup_host}"
+umask 077
+openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+  -subj '/CN=Josi Local Installer' -addext "subjectAltName=${installer_san}" \
+  -keyout installer-state/tls.key -out installer-state/tls.crt >/dev/null 2>&1
+chown "$INSTALL_UID:$INSTALL_GID" installer-state/tls.key installer-state/tls.crt
+
 setup_token="$(tr -d '\r\n' < installer-state/bootstrap-token)"
 say ''
 say "Open Josi Setup: https://${setup_host}:${INSTALLER_PORT}/#setup=${setup_token}"

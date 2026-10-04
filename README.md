@@ -118,9 +118,11 @@ Install and open Docker, then copy the command for your computer.
 ### Mac
 
 ```bash
+JOSI_HOST_IP="$(ipconfig getifaddr "$(route -n get default | awk '/interface:/{print $2;exit}')")" && \
+test -n "$JOSI_HOST_IP" && \
 mkdir -p "$HOME/josi-ce" && cd "$HOME/josi-ce" && \
 docker run --rm \
-  -p 127.0.0.1:8080:8080 \
+  -e JOSI_INSTALLER_HOSTNAME="$JOSI_HOST_IP" -p 8080:8080 \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
   docker.io/romanvaxman/josi-ce-installer:latest
@@ -129,9 +131,11 @@ docker run --rm \
 ### Linux
 
 ```bash
+JOSI_HOST_IP="$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}')" && \
+test -n "$JOSI_HOST_IP" && \
 mkdir -p "$HOME/josi-ce" && cd "$HOME/josi-ce" && \
 docker run --rm \
-  -p 8080:8080 \
+  -e JOSI_INSTALLER_HOSTNAME="$JOSI_HOST_IP" -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
   docker.io/romanvaxman/josi-ce-installer:latest

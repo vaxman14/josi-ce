@@ -23,6 +23,28 @@ function python(source: string, installRoot: string) {
 }
 
 describe('browser installer controller', () => {
+  it('uses the host-provided LAN address and never offers Docker Desktop\'s VM gateway', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
+    try {
+      const result = python(`
+import importlib.util, json, os
+s=importlib.util.spec_from_file_location('c', ${JSON.stringify(controller)})
+m=importlib.util.module_from_spec(s); s.loader.exec_module(m)
+class R:
+ def __init__(self,stdout='',returncode=0): self.stdout=stdout; self.returncode=returncode
+os.environ['JOSI_INSTALLER_HOSTNAME']='192.168.50.25'
+m.run=lambda *_args,**_kwargs:R('Docker Desktop 4.x')
+provided=m.detected_addresses()
+del os.environ['JOSI_INSTALLER_HOSTNAME']
+m.run=lambda *_args,**_kwargs:R('Docker Desktop 4.x')
+desktop=m.detected_addresses()
+print(json.dumps({'provided':provided,'desktop':desktop}))
+`, dir);
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ provided: ['192.168.50.25'], desktop: [] });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('commits only after the browser-facing origin passes health verification', () => {
     const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
     try {
@@ -151,6 +173,7 @@ print(json.dumps({'env':(p/'.env').read_text(), 'backups':len(list(p.glob('.env.
     expect(page).toContain('Step ${p.step||1} of ${p.totalSteps||5}');
     expect(source).toContain('"percent": 100');
     expect(source).toContain('"totalSteps": 5');
+    expect(source).toContain('Josi is ready: {plan[\'appUrl\']}');
   });
 
   it('keeps Open Josi hidden until installation completes', () => {

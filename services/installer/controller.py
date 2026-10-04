@@ -65,6 +65,24 @@ def verify_public_origin(origin: str, timeout: int = 90) -> None:
 
 
 def detected_addresses() -> list[str]:
+    configured = os.environ.get("JOSI_INSTALLER_HOSTNAME", "").strip()
+    if configured:
+        try:
+            address = ipaddress.ip_address(configured)
+        except ValueError:
+            address = None
+        if address is not None and address.version == 4 and address.is_private \
+                and not address.is_loopback and not address.is_link_local:
+            return [configured]
+
+    # Host networking on Docker Desktop means the hidden Linux VM, not the Mac
+    # or Windows host. Its route commonly reports 192.168.65.3, which is valid
+    # private syntax but unreachable from another LAN device. Never offer it.
+    daemon = run(["docker", "info", "--format", "{{.OperatingSystem}}"],
+                 check=False, timeout=15)
+    if daemon.returncode == 0 and "Docker Desktop" in daemon.stdout:
+        return []
+
     result = run(["docker", "run", "--rm", "--network", "host", "alpine:3.22", "sh", "-c",
                   "ip -4 route get 1.1.1.1 2>/dev/null"], check=False, timeout=30)
     found: set[str] = set()
@@ -371,6 +389,7 @@ def install(plan: dict[str, object]) -> None:
             address_metadata("verify", metadata)
             PROGRESS.update({"state": "complete", "message": "Installation complete", "percent": 100,
                              "appUrl": f"{plan['appUrl']}/#setup={setup_token}"})
+            print(f"Josi is ready: {plan['appUrl']}", flush=True)
             # Give the browser enough time to receive the handoff, then remove
             # Docker authority from the running installation by exiting.
             threading.Timer(45, lambda: os._exit(0)).start()
