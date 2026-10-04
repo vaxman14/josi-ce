@@ -45,7 +45,7 @@ or a Josi command-line tool.</p>
 <h3>Mac</h3>
 <pre><code class="language-bash">mkdir -p "$HOME/josi-ce" &amp;&amp; cd "$HOME/josi-ce" &amp;&amp; \
 docker run --rm \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
   docker.io/romanvaxman/josi-ce-installer:latest
@@ -58,8 +58,9 @@ docker run --rm \
   -v "$PWD:$PWD" -w "$PWD" \
   docker.io/romanvaxman/josi-ce-installer:latest
 </code></pre>
-<p>The installer prints a private setup URL and a one-time setup code. Leave the
-Terminal window open while setup is running.</p>
+<p>The installer prints one private setup link. Leave the Terminal window open
+while setup is running. On Docker Desktop the link uses <code>localhost</code>,
+never Docker's hidden Linux-VM address.</p>
 <p>The temporary installer can control Docker so it can create the Josi services.
 It exits when installation finishes. Normal Josi services do not receive the
 Docker socket.</p>
@@ -68,7 +69,7 @@ Docker socket.</p>
 <ol>
 <li>Open the setup URL printed in Terminal.</li>
 <li>Accept the temporary local-certificate warning.</li>
-<li>Enter the one-time setup code.</li>
+<li>The private link connects to the installer automatically.</li>
 <li>Choose whether Josi is available on this computer, your local network, a
 public domain, or through an existing proxy or tunnel.</li>
 <li>Optionally choose one project folder for coding features. Skip it if you do
@@ -77,6 +78,8 @@ not need Josi to work with local files.</li>
 </ol>
 <p>The browser installer writes the configuration, generates the installation
 secrets, downloads the published images, starts Josi, and checks that it opens.</p>
+<p>You do not edit <code>.env</code>, run Compose, or use the Josi management CLI
+during the normal installation path.</p>
 
 <h2>3. Open Josi</h2>
 <p>When installation succeeds, select <strong>Open Josi</strong>. The first person
