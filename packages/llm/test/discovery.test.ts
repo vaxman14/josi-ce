@@ -6,6 +6,9 @@
 // found out at the first real request — after setup had already said the model
 // was configured.
 import { describe, expect, it } from 'vitest';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   categorizeFailure, discoverModels, discoveryError, explainCategory, humanizeModelId,
   safeErrorCode,
@@ -146,12 +149,76 @@ describe('LB3.2 — nothing is invented', () => {
     expect(result.models).toEqual([]);
   });
 
-  it('does not pretend the subscription path has a model to choose', async () => {
-    const result = await discoverModels({ ...base, provider: 'openai_subscription' });
+  it('offers only visible models listed by the signed-in Codex CLI', async () => {
+    const result = await discoverModels({
+      ...base, provider: 'openai_subscription',
+      codexModelList: async () => [
+        { id: 'visible-fast', displayName: 'Visible Fast', isDefault: true, hidden: false },
+        { id: 'hidden-internal', displayName: 'Internal', isDefault: false, hidden: true },
+        { id: 'visible-deep', displayName: 'Visible Deep', isDefault: false, hidden: false },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    expect(result.unsupported).not.toBe(true);
+    expect(result.fromCatalog).not.toBe(true);
+    expect(result.models.map((m) => m.id)).toEqual(['visible-fast', 'visible-deep']);
+    expect(result.models[0]).toMatchObject({ label: 'Visible Fast', fromProvider: true, recommended: true });
+    expect(result.allowsCustomModel).toBe(true);
+    expect(result.message).toMatch(/test.*real request/i);
+  });
+
+  it('keeps Automatic usable and never leaks CLI errors when the list fails', async () => {
+    const result = await discoverModels({
+      ...base, provider: 'openai_subscription',
+      codexModelList: async () => { throw new Error('secret-token-should-not-leak'); },
+    });
     expect(result.ok).toBe(true);
     expect(result.unsupported).toBe(true);
     expect(result.models).toEqual([]);
-    expect(result.message).toMatch(/chooses the model/i);
+    expect(result.allowsCustomModel).toBe(true);
+    expect(result.message).toMatch(/could not list/i);
+    expect(JSON.stringify(result)).not.toContain('secret-token-should-not-leak');
+  });
+
+  it('asks the signed-in Codex app-server for visible models without passing an API key', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'josi-codex-model-list-'));
+    const command = join(dir, 'codex-fixture');
+    const prior = process.env.OPENAI_API_KEY;
+    try {
+      await writeFile(command, `#!/usr/bin/env node
+if (process.argv.slice(2).join(' ') !== 'app-server --stdio') process.exit(2);
+let ready = false;
+let initialized = false;
+require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    ready = true;
+    process.stdout.write(JSON.stringify({ id: message.id, result: {} }) + '\\n');
+  } else if (message.method === 'initialized') {
+    initialized = true;
+  } else if (message.method === 'model/list') {
+    const bad = !ready || !initialized || message.params?.includeHidden !== false || !!process.env.OPENAI_API_KEY;
+    process.stdout.write(JSON.stringify(bad
+      ? { id: message.id, error: { code: -1, message: 'bad handshake or API key leaked' } }
+      : { id: message.id, result: { data: [
+          { id: 'cli-visible', displayName: 'Visible in CLI', hidden: false, isDefault: true },
+          { id: 'hidden-internal', displayName: 'Hidden', hidden: true, isDefault: false },
+        ], nextCursor: null } }) + '\\n');
+  }
+});
+`);
+      await chmod(command, 0o700);
+      process.env.OPENAI_API_KEY = 'test-secret-should-not-reach-child';
+      const result = await discoverModels({ ...base, provider: 'openai_subscription', codexCommand: command });
+      expect(result.ok).toBe(true);
+      expect(result.models.map(m => m.id)).toEqual(['cli-visible']);
+      expect(result.models[0].label).toBe('Visible in CLI');
+      expect(JSON.stringify(result)).not.toContain('test-secret-should-not-reach-child');
+    } finally {
+      if (prior === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = prior;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -70,6 +70,9 @@ export async function normalizeChatImage(args: {
   if (!actualHeic) {
     throw new ChatImageError('That file is named as a HEIC image, but its contents are not a valid HEIC/HEIF image.');
   }
+  if (!HEIC_EXTENSIONS.has(extension) || !HEIC_MEDIA_TYPES.has(declared)) {
+    throw new ChatImageError('The HEIC/HEIF extension, declared MIME type, and file signature must agree.');
+  }
 
   const output = await (args.convertHeic ?? convertHeicInWorker)(args.bytes);
   if (output.length < 4 || output[0] !== 0xff || output[1] !== 0xd8 || output.at(-2) !== 0xff || output.at(-1) !== 0xd9) {

@@ -11,8 +11,7 @@ connections, and licensed Family BETA controls.
 ## Start and operate
 
 * [Quick start](QUICK_START.md)
-* [Complete installation and operations manual](INSTALLATION.md)
-* [Josi CLI, one-line installer, repair doctor, and support bundles](CLI.md)
+* [Installation and setup](INSTALLATION.md)
 * [PWA installation and cache behavior](PWA.md)
 * [Telegram setup and troubleshooting](TELEGRAM.md)
 * [Contact synchronization](CONTACT_SYNC.md)
@@ -51,38 +50,6 @@ general file uploader. Enter a filename and contents to create a file, or use
 of at most 256 KiB into the editor. You can inspect or change the text before
 approving the exact write. Loading a file does not share the selected folder
 with another device.
-
-## Josi CLI and one-line installer
-
-The signed Josi CLI keeps Docker Compose as the only runtime while providing
-operator commands for installation, status, updates, backups, logs, rollback,
-uninstallation, diagnosis, and repair. Install the current verified Linux
-`amd64` or `arm64` release with:
-
-```bash
-curl -fsSL https://get.heyjosi.com/install.sh |
-  sudo bash -s -- --version 0.1.54 --yes
-```
-
-The installer requires an explicit version, verifies its own pinned verifier,
-the release's Sigstore workflow identity, and the signed SHA-256 manifest before
-installing anything. Download and inspect the script instead of piping it when
-that better fits your security policy.
-
-Use `josi doctor` to back up state, apply safe deterministic repairs, verify the
-real postcondition, and roll back repairs that regress readiness. Use
-`josi doctor --check-only` for a read-only audit or `--dry-run` for the exact
-repair plan. `--yes` does not authorize AI repair.
-
-Use `josi logs --since 30m`, `josi support bundle`, or
-`josi doctor --export-ai-context PATH` to collect a bounded, structured,
-secret-redacted diagnostic bundle. After deterministic repair is exhausted,
-`josi doctor --ai-repair --allow-ai` can offer a separately approved local
-Codex or loopback Ollama investigation. It presents the exact plan and requires
-a second approval bound to that plan before executing allowlisted changes.
-
-See the [complete CLI guide](CLI.md) and the
-[public installer provenance](https://get.heyjosi.com/provenance.json).
 
 ## Family / Parental Controls BETA
 

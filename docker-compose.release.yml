@@ -120,6 +120,7 @@ services:
       # address. The application setup wizard consumes this marker so it does
       # not ask the operator for the same address a second time.
       JOSI_INSTALLER_CONFIGURED: ${JOSI_INSTALLER_CONFIGURED:-}
+      JOSI_VERSION: ${JOSI_TAG:-0.1.0}
       JOSI_ACCESS_MODE: ${JOSI_ACCESS_MODE:-}
       JOSI_SETUP_TOKEN_SHA256: ${JOSI_SETUP_TOKEN_SHA256:-}
       JOSI_WORKSPACE_ENABLED: ${JOSI_WORKSPACE_ENABLED:-0}
@@ -138,6 +139,7 @@ services:
       CLAUDE_CONFIG_DIR: /data/claude
       JOSI_VOICE_HELPER_SOCKET: /run/josi-voice/helper.sock
       JOSI_STORAGE_HELPER_SOCKET: /run/josi-storage/helper.sock
+      JOSI_MAINTENANCE_HELPER_SOCKET: /run/josi-maintenance/helper.sock
     secrets:
       - josi_master_key
       - josi_db_password
@@ -168,6 +170,7 @@ services:
       - josi_chat_attachments:/data/chat-attachments
       - ${JOSI_VOICE_SOCKET_DIR:-./voice-helper-socket}:/run/josi-voice:ro
       - ${JOSI_STORAGE_SOCKET_DIR:-./storage-helper-socket}:/run/josi-storage:ro
+      - ${JOSI_MAINTENANCE_SOCKET_DIR:-./maintenance-helper-socket}:/run/josi-maintenance:ro
       # Shared folders. Deny-by-default: nothing is mounted here unless an
       # operator writes it, and mounting alone grants nothing — a root must also
       # be registered inside Josi before it will touch anything.

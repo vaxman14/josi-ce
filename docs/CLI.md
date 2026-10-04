@@ -11,9 +11,9 @@ release auditing explicit.
 Pin one exact release. Do not substitute `latest`:
 
 ```bash
-VERSION=0.1.54
-curl -fSLo josi-install.sh https://get.heyjosi.com/install.sh
-curl -fSLo josi-install.sh.sha256 https://get.heyjosi.com/install.sh.sha256
+VERSION=0.1.65
+curl -fSLo josi-install.sh "https://github.com/vaxman14/josi-ce-public/releases/download/v${VERSION}/install.sh"
+curl -fSLo josi-install.sh.sha256 "https://github.com/vaxman14/josi-ce-public/releases/download/v${VERSION}/install.sh.sha256"
 printf '%s  %s\n' "$(cat josi-install.sh.sha256)" josi-install.sh | sha256sum -c -
 less josi-install.sh
 sh josi-install.sh --version "$VERSION"
@@ -49,7 +49,7 @@ Automation must still pin the version and explicitly opt out of the prompt:
 
 ```bash
 sh josi-install.sh \
-  --version 0.1.54 \
+  --version 0.1.65 \
   --install-dir /usr/local/bin \
   --non-interactive
 ```
@@ -64,20 +64,19 @@ installer has already been reviewed, this shorthand preserves the same explicit
 version pin and verification:
 
 ```bash
-VERSION=0.1.54
-curl -fsSL https://get.heyjosi.com/install.sh \
+VERSION=0.1.65
+curl -fsSL "https://github.com/vaxman14/josi-ce-public/releases/download/v${VERSION}/install.sh" \
   | sh -s -- --version "$VERSION" --yes
 ```
 
-The bootstrap URL is stable, but it cannot install an unpinned payload: the
-required `--version` selects one immutable release directory and the bootstrap
-then verifies that release's signed checksum manifest before writing anything.
+The release URL is pinned by version, and the installer cannot install an
+unpinned payload: `--version` must match the release assets it verifies.
 Downloading, hashing, and inspecting the bootstrap first remains preferred.
 
 ## Verify or install manually
 
 Operators who do not want to run the installer can download these four files
-from `https://get.heyjosi.com/releases/v<version>/`:
+from `https://github.com/vaxman14/josi-ce-public/releases/download/v<version>/`:
 
 - `josi-cli-<version>-linux-<arch>.tar.gz`
 - `josi-cli-<version>-checksums.txt`
@@ -186,15 +185,14 @@ release succeeds. The script packages `scripts/josi` into both Linux archive
 names and creates the checksum manifest. In GitHub Actions, `--sign` uses the
 workflow's short-lived OIDC identity; it does not accept or load a private key.
 The workflow publishes the archives, manifest, detached signature, certificate,
-and reviewed installer as assets on the matching private GitHub release. The
-exact signed files are then mirrored without modification to the unauthenticated
-public origin at `https://get.heyjosi.com/releases/v<version>/`; the bootstrap
-never directs customers to private repository URLs.
+and reviewed installer as assets on the matching public GitHub release. The
+versioned installer downloads signed files directly from that public release;
+it never directs customers to private repository URLs.
 
 A local unsigned packaging check is available without release credentials:
 
 ```bash
-bash scripts/build-cli-release.sh --version 0.1.54 --output-dir /tmp/josi-cli
+bash scripts/build-cli-release.sh --version 0.1.65 --output-dir ./dist/cli
 ```
 
 Unsigned local output is not publishable. The installer requires the tagged

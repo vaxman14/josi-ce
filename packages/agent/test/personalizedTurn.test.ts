@@ -115,7 +115,7 @@ describe('two opposite personalities produce observably different turns', () => 
     // The hard-coded safety and capability lines are still there, and first.
     expect(lastSystem).toContain('You are Josi');
     expect(lastSystem).toContain('Never invent a name, number, address or time');
-    expect(lastSystem).toContain('need the person to confirm their password');
+    expect(lastSystem).toContain('Never ask for, repeat, or accept a password in conversation');
     expect(lastSystem.indexOf('You are Josi')).toBeLessThan(lastSystem.indexOf('Speak only in verse'));
   });
 

@@ -36,6 +36,8 @@ export interface StoredProvider {
   api_key_enc: string | null;
   external_acknowledged: boolean;
   activated_at: string | null;
+  /** Changes on every save/probe; guards against stale probe completion. */
+  updated_at?: string;
   probed_at: string | null;
   cap_chat: boolean | null;
   cap_structured_output: boolean | null;
@@ -83,6 +85,7 @@ export async function loadStoredProvider(
 ): Promise<StoredProvider | null> {
   const rows = await db.query<StoredProvider>(
     `select role, provider, model, base_url, api_key_enc, external_acknowledged, activated_at,
+            updated_at::text as updated_at,
             probed_at, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens,
             subscription_command, provider_config
      from llm_providers where role = $1`,

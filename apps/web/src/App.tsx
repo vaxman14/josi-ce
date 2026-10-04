@@ -26,6 +26,7 @@ import { Channels } from '@/pages/Channels';
 import { Apps } from '@/pages/Apps';
 import { Family } from '@/pages/Family';
 import { AdminOverview } from '@/pages/admin/Overview';
+import { AdminDiagnostics } from '@/pages/admin/Diagnostics';
 import { AdminPeople } from '@/pages/admin/People';
 import { AdminModel } from '@/pages/admin/Model';
 import { AdminPolicy } from '@/pages/admin/Policy';
@@ -174,6 +175,7 @@ export function App() {
 
       <Route path="/admin" element={<RequireAuth admin><Shell /></RequireAuth>}>
         <Route index element={<AdminOverview />} />
+        <Route path="diagnostics" element={<AdminDiagnostics />} />
         <Route path="people" element={<AdminPeople />} />
         <Route path="model" element={<AdminModel />} />
         <Route path="voice-box" element={<AdminVoiceBox />} />

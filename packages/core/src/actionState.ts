@@ -12,7 +12,35 @@ export interface AssistantActionState {
   id:string; owner_user_id:string; thread_id:string; domain:ActionDomain; operation:ActionOperation;
   status:ActionStatus; task_id:string; approval_id:string|null; source_turn_id:string|null;
   presented_turn_id:string|null; payload_hash:string|null; expires_at:string|null; executed_at:string|null;
-  created_at:string; updated_at:string;
+  created_at:string; updated_at:string; authorization_kind?:'approval'|'user_policy';
+}
+
+/** Queue a complete routine action because this owner explicitly selected an
+ * automatic policy and no managed ceiling overrides it. This path creates no
+ * approval request; its separate authorization kind is checked by the worker. */
+export async function authorizeActionByUserPolicy(db:Db,args:{actionStateId:string;actionClass:string;action:string}){
+  if(!db.transaction)throw new Error('automatic action authorization requires transaction support');
+  return db.transaction(async tx=>{
+    // A concurrent preference/policy write must finish before this decision is
+    // made, and cannot begin until the authorization is durably queued.
+    await tx.query(`lock table admin_approval_policy, user_approval_prefs in share mode`);
+    const [actionState]=await tx.query<AssistantActionState>(`select * from assistant_action_states where id=$1 for update`,[args.actionStateId]);
+    if(!actionState||actionState.status!=='collecting')throw new Error('That draft changed before its policy could be applied.');
+    const [task]=await tx.query<Task>(`select * from tasks where id=$1 for update`,[actionState.task_id]);
+    if(!task||task.state!=='drafting')throw new Error('That draft is no longer available for automatic authorization.');
+    const { needsApproval }=await import('./approvals.js');
+    if(await needsApproval(tx,{userId:actionState.owner_user_id,actionClass:args.actionClass,action:args.action})){
+      throw new ApprovalError('The effective approval policy changed. Review this action before approving it.');
+    }
+    const [row]=await tx.query<AssistantActionState>(`update assistant_action_states
+      set status='approved',authorization_kind='user_policy',payload_hash=$2
+      where id=$1 and status='collecting' returning *`,[actionState.id,approvalHash(task.slots)]);
+    if(!row)throw new Error('That draft changed before its policy could be applied.');
+    await transition(tx,task.id,'ready',{actor:'user',actorUserId:actionState.owner_user_id});
+    await appendEvent(tx,{actorUserId:actionState.owner_user_id,actor:'user',kind:'assistant_action.authorized_by_user_policy',subjectType:'task',subjectId:task.id,payload:{actionStateId:row.id,actionClass:args.actionClass,action:args.action}});
+    await enqueue(tx,{kind:'task.wake',payload:{taskId:task.id}});
+    return row;
+  });
 }
 
 export async function activeCollectingAction(db:Db,args:{ownerUserId:string;threadId:string;domain:ActionDomain;operation:ActionOperation;sourceTurnId?:string|null}) {
@@ -108,21 +136,59 @@ function statusReply(action:AssistantActionState,task:Task):string{
  * Generic approvals keep their existing behaviour; action approvals also move
  * the pinned task and enqueue at most once. */
 export async function decideActionApproval(db:Db,args:{approvalId:string;decidedBy:string;approve:boolean}):Promise<{approval:Approval;action:AssistantActionState|null;task:Task|null}>{
-  const [before]=await db.query<AssistantActionState>(`select * from assistant_action_states where approval_id=$1`,[args.approvalId]);
-  if(before?.status==='prepared'&&before.expires_at&&new Date(before.expires_at)<=new Date()){
-    await db.query(`update assistant_action_states set status='expired' where id=$1 and status='prepared'`,[before.id]);
-    await db.query(`update approvals set status='expired' where id=$1 and status='pending'`,[args.approvalId]);
-    throw new ApprovalError('that request expired');
-  }
-  const approval=await decideApproval(db,args);
-  const action=before;
-  if(!action)return {approval,action:null,task:null};
-  const task=await getTask(db,action.task_id);
-  const [claimed]=await db.query<AssistantActionState>(`update assistant_action_states set status=$2 where id=$1 and status='prepared' returning *`,[action.id,args.approve?'approved':'denied']);
-  if(!claimed)return {approval,action,task};
-  await transition(db,task.id,args.approve?'ready':'cancelled',{actor:'user',actorUserId:args.decidedBy});
-  if(args.approve)await enqueue(db,{kind:'task.wake',payload:{taskId:task.id}});
-  return {approval,action:claimed,task};
+  if(!db.transaction)throw new Error('action approval decisions require transaction support');
+  const result=await db.transaction(async tx=>{
+    const [before]=await tx.query<AssistantActionState>(`select * from assistant_action_states where approval_id=$1 for update`,[args.approvalId]);
+    if(before?.status==='prepared'&&before.expires_at&&new Date(before.expires_at)<=new Date()){
+      await tx.query(`update assistant_action_states set status='expired' where id=$1 and status='prepared'`,[before.id]);
+      const [approval]=await tx.query<Approval>(`update approvals set status='expired' where id=$1 and status='pending' returning *`,[args.approvalId]);
+      if(before.presented_turn_id)await tx.query(`update messages set meta=jsonb_set(meta,'{nativeApproval,status}',to_jsonb('expired'::text),true) where id=$1`,[before.presented_turn_id]);
+      const task=await getTask(tx,before.task_id);
+      if(task.state==='awaiting_approval')await transition(tx,task.id,'cancelled',{actor:'system'});
+      return {approval:approval!,action:{...before,status:'expired' as const},task,terminal:'expired' as const};
+    }
+    const approval=await decideApproval(tx,args);
+    const action=before;
+    if(!action)return {approval,action:null,task:null,terminal:null};
+    const task=await getTask(tx,action.task_id);
+    const [claimed]=await tx.query<AssistantActionState>(`update assistant_action_states set status=$2 where id=$1 and status='prepared' returning *`,[action.id,args.approve?'approved':'denied']);
+    if(!claimed)throw new ApprovalError('that request was already decided','already_decided');
+    await transition(tx,task.id,args.approve?'ready':'cancelled',{actor:'user',actorUserId:args.decidedBy});
+    if(args.approve)await enqueue(tx,{kind:'task.wake',payload:{taskId:task.id}});
+    if(action.presented_turn_id)await tx.query(`update messages set meta=jsonb_set(meta,'{nativeApproval,status}',to_jsonb($2::text),true) where id=$1`,[action.presented_turn_id,approval.status]);
+    return {approval,action:claimed,task,terminal:null};
+  });
+  // Throw only after the transaction commits the durable terminal state. The
+  // previous implementation threw inside the callback, rolling every expiry
+  // update back while the API claimed the request had expired.
+  if(result.terminal==='expired')throw new ApprovalError('that request expired','expired');
+  return {approval:result.approval,action:result.action,task:result.task};
+}
+
+/** Bring naturally expired action approvals to one durable terminal state.
+ *
+ * Expiring only the generic approval row leaves the task waiting and a native
+ * card claiming it is still actionable. The scheduler uses this routine first
+ * so the approval row, action, task, and presented card agree atomically. */
+export async function expirePreparedActionApprovals(db:Db):Promise<number>{
+  if(!db.transaction)throw new Error('action approval expiry requires transaction support');
+  return db.transaction(async tx=>{
+    const due=await tx.query<AssistantActionState>(`select * from assistant_action_states
+      where status='prepared' and expires_at is not null and expires_at<now()
+      order by expires_at for update`);
+    for(const action of due){
+      if(action.approval_id)await tx.query(`update approvals set status='expired'
+        where id=$1 and status='pending'`,[action.approval_id]);
+      await tx.query(`update assistant_action_states set status='expired'
+        where id=$1 and status='prepared'`,[action.id]);
+      if(action.presented_turn_id)await tx.query(`update messages
+        set meta=jsonb_set(meta,'{nativeApproval,status}',to_jsonb('expired'::text),true)
+        where id=$1`,[action.presented_turn_id]);
+      const task=await getTask(tx,action.task_id);
+      if(task.state==='awaiting_approval')await transition(tx,task.id,'cancelled',{actor:'system'});
+    }
+    return due.length;
+  });
 }
 
 export async function resolveConversationalAction(db:Db,args:{ownerUserId:string;threadId:string;inbound:string;replyToMessageId?:string|null;requireReplyTarget?:boolean}):Promise<ConversationalDecision>{
@@ -142,21 +208,21 @@ export async function resolveConversationalAction(db:Db,args:{ownerUserId:string
     if(sameTurn.length!==1)return {handled:true,reply:'That answer is ambiguous because more than one action was prepared together. Name the email or calendar action you mean.'};
     const action=sameTurn[0];
     if(action.expires_at&&new Date(action.expires_at)<=new Date()){
-      await db.query(`update assistant_action_states set status='expired' where id=$1 and status='prepared'`,[action.id]);
-      if(action.approval_id)await db.query(`update approvals set status='expired' where id=$1 and status='pending'`,[action.approval_id]);
-      return {handled:true,reply:'That approval expired. Review and prepare the action again before approving it.',action};
+      if(action.approval_id)try{await decideActionApproval(db,{approvalId:action.approval_id,decidedBy:args.ownerUserId,approve:YES.test(text)});}
+      catch(error){if(!(error instanceof ApprovalError)||error.code!=='expired')throw error;}
+      return {handled:true,reply:'That approval expired. Review and prepare the action again before approving it.',action:{...action,status:'expired'}};
     }
     const task=await getTask(db,action.task_id);
     if(NO.test(text)){
       let decidedAction=action;
       if(action.approval_id)try{decidedAction=(await decideActionApproval(db,{approvalId:action.approval_id,decidedBy:args.ownerUserId,approve:false})).action??action;}
-      catch(error){if(error instanceof ApprovalError)return {handled:true,reply:'That action was already decided.',action,task};throw error;}
+      catch(error){if(error instanceof ApprovalError)return {handled:true,reply:error.code==='expired'?'That approval expired. Review the action again.':'That action was already decided.',action,task};throw error;}
       return {handled:true,reply:`Denied. The ${action.domain==='email'?'email was not sent':'calendar was not changed'}.`,action:decidedAction,task};
     }
     if(!action.approval_id)return {handled:true,reply:'That prepared action has no valid approval request. Review it again.'};
     let decidedAction=action;
     try{decidedAction=(await decideActionApproval(db,{approvalId:action.approval_id,decidedBy:args.ownerUserId,approve:true})).action??action;}
-    catch(error){if(error instanceof ApprovalError)return {handled:true,reply:'That action was already decided.',action,task};throw error;}
+    catch(error){if(error instanceof ApprovalError)return {handled:true,reply:error.code==='expired'?'That approval expired. Review the action again.':'That action was already decided.',action,task};throw error;}
     return {handled:true,reply:`Approved. I queued the exact ${action.domain==='email'?'email':'calendar event'} you reviewed.`,action:decidedAction,task};
   }
   let emailStatusQuestion=EMAIL_STATUS.test(text);

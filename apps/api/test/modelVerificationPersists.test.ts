@@ -165,9 +165,11 @@ describe('Admin -> Model does not re-test on its own', () => {
   });
 
   it('presents a retest as optional once the model is in use', () => {
-    expect(model).toContain("data.primary.active ? 'Test again' : 'Test this model'");
+    expect(model).toContain("data.primary.active ? <Button");
+    expect(model).toContain("'Test again'");
+    expect(model).toContain("'Test this model'");
     expect(model).toMatch(/Optional\./);
     // And does not tell somebody with a working model that Josi will not use it.
-    expect(model).toContain('{!data.primary.active ? (');
+    expect(model).toContain('{!data.primary.active ? <p');
   });
 });

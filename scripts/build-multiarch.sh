@@ -21,6 +21,9 @@ PLATFORMS="linux/amd64,linux/arm64"
 BUILDER="josi-ce-builder"
 IMAGE="${JOSI_IMAGE:-josi-ce}"
 TAG="${JOSI_TAG:-local}"
+BUILD_ID="${JOSI_BUILD_ID:-source}"
+LICENCE_KEY="${JOSI_LICENCE_KEY:-$(tr -d '\r\n' < publisher/licence-verification-key.b64)}"
+BUILD_ARGS=(--build-arg "JOSI_VERSION=$TAG" --build-arg "JOSI_BUILD_ID=$BUILD_ID" --build-arg "JOSI_LICENCE_KEY=$LICENCE_KEY")
 
 command -v docker >/dev/null 2>&1 || { echo "docker is not installed"; exit 2; }
 docker buildx version >/dev/null 2>&1 || { echo "docker buildx is required"; exit 2; }
@@ -28,7 +31,7 @@ docker buildx version >/dev/null 2>&1 || { echo "docker buildx is required"; exi
 if [[ "${1:-}" == "--load-native" ]]; then
   native="linux/$(docker info --format '{{.Architecture}}' | sed 's/x86_64/amd64/; s/aarch64/arm64/')"
   echo "==> building $native only, loading into the local daemon"
-  docker buildx build --platform "$native" --tag "${IMAGE}:${TAG}" --load .
+  docker buildx build --platform "$native" "${BUILD_ARGS[@]}" --tag "${IMAGE}:${TAG}" --load .
   docker image inspect "${IMAGE}:${TAG}" --format 'built {{.Os}}/{{.Architecture}}  {{.Size}} bytes'
   exit 0
 fi
@@ -49,12 +52,12 @@ docker buildx inspect --bootstrap "$BUILDER" | grep -i platforms || true
 if [[ "${1:-}" == "--push" ]]; then
   registry="${2:?usage: --push <registry/namespace>}"
   echo "==> building ${PLATFORMS} and pushing ${registry}/${IMAGE}:${TAG}"
-  docker buildx build --platform "$PLATFORMS" --tag "${registry}/${IMAGE}:${TAG}" --push .
+  docker buildx build --platform "$PLATFORMS" "${BUILD_ARGS[@]}" --tag "${registry}/${IMAGE}:${TAG}" --push .
   echo "==> manifest"
   docker buildx imagetools inspect "${registry}/${IMAGE}:${TAG}"
 else
   echo "==> building ${PLATFORMS} (cache only; use --push to publish a manifest)"
-  docker buildx build --platform "$PLATFORMS" --tag "${IMAGE}:${TAG}" .
+  docker buildx build --platform "$PLATFORMS" "${BUILD_ARGS[@]}" --tag "${IMAGE}:${TAG}" .
   echo
   echo "Both architectures built. Neither was loaded into the local daemon:"
   echo "a multi-platform result cannot be --load'ed, only pushed to a registry."

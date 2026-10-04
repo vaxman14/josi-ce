@@ -69,6 +69,7 @@ describe('it delegates to the documented CLI and nothing else (L3.2)', () => {
       'exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check',
       '--model', 'gpt-5-codex', '-',
     ]);
+    expect(codexArgs('')).not.toContain('--model');
   });
 
   it('gives the model no way to touch the machine', () => {

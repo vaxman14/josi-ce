@@ -241,7 +241,7 @@ function systemPrompt(args: {
         ? 'An image was attached to this message and you can see it — describe or answer about what is actually in it.'
         : 'An image was attached to this message, but this model has not been shown to understand images, so you were NOT shown it and have no idea what it contains. Say plainly that you cannot see images with the current model — do not guess, and do not describe a filename or file type as if it were the picture\'s content.')
       : '',
-    'Some actions need the person to confirm their password first. If a tool tells you that, relay it exactly and do not attempt the action again on your own.',
+    'Never ask for, repeat, or accept a password in conversation. If a tool requires secure reauthentication, direct the person to the protected reauthentication control in Settings and do not attempt the action again on your own.',
   ].filter(Boolean).join(' ');
 }
 
@@ -427,12 +427,23 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     catch (err) { console.error('native integration availability check failed', (err as Error).message); }
   }
   const workspaceNames = capabilities.toolCalling ? await workspaceToolNames(db,userId,{desktopSessionId:args.desktopSessionId}) : new Set<string>();
+  // `approve_task` is only meaningful when this owner already has a generic
+  // task waiting on them. Offering it on an ordinary request lets a model
+  // confuse "please create this calendar event" with approval of an unrelated
+  // task, which then trips the protected step-up gate before the real calendar
+  // draft is even prepared.
+  const [approvableTask] = capabilities.toolCalling
+     ? await db.query<{ present: boolean }>(`select true as present from tasks
+         where owner_user_id=$1 and state in ('awaiting_approval','awaiting_owner') limit 1`, [userId])
+     : [];
   const availableTaskTools = TASK_TOOLS.filter((t) =>
     (!t.def.name.startsWith('workspace_') || workspaceNames.has(t.def.name))
+    && (t.def.name !== 'approve_task' || !!approvableTask)
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
   const tools = capabilities.toolCalling
     ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools].map((t) => t.def)
     : undefined;
+  const offeredToolNames = new Set(tools?.map((tool) => tool.name) ?? []);
 
   let recalled = '';
   if (args.recall) {
@@ -683,8 +694,19 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       reply = presentToolBackedReply(reply, actions);
       const prepared=actions.map(action=>action.result).filter((result):result is {state:string;summary:string}=>
         !!result&&typeof result==='object'&&(result as {state?:unknown}).state==='prepared'&&typeof (result as {summary?:unknown}).summary==='string');
-      if(prepared.length===1)reply=`${prepared[0].summary}\n\nApprove this exact action? Reply yes or no.`;
+      if(prepared.length===1)reply=args.requireApprovalReplyTarget
+        ? `${prepared[0].summary}\n\nUse the Approve or Deny control below for this exact action.`
+        : `${prepared[0].summary}\n\nApprove this exact action? Reply yes or no.`;
       else if(prepared.length>1)reply='More than one consequential action was prepared together. Name which one you want to review; a bare yes will not approve either.';
+      else {
+        const automatic=actions.map(action=>action.result).filter((result):result is {state:string;summary:string;authorization:string}=>
+          !!result&&typeof result==='object'&&(result as {state?:unknown}).state==='approved'&&(result as {authorization?:unknown}).authorization==='user_policy'&&typeof (result as {summary?:unknown}).summary==='string');
+        if(automatic.length===1)reply=`${automatic[0].summary}\n\nQueued automatically using your approval preference.`;
+      }
+      const secureReauth=actions.map(action=>action.result).find((result):result is {error:string;message?:string}=>
+        !!result&&typeof result==='object'&&['needs_reauth','locked_out'].includes(String((result as {error?:unknown}).error)));
+      if(secureReauth)reply=secureReauth.message
+        ?? 'Use the protected reauthentication control in Settings to continue. Never send your password in chat.';
       return { reply, actions, memoriesUsed, learned, imagesDroppedNoVision, retry };
     }
 
@@ -692,12 +714,19 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     for (const call of res.toolCalls) {
       let result: unknown;
       try {
-        // The gate, in front of everything, keyed by tool name.
-        const decision = await checkStepUp(db, { userId, sessionKey, action: call.name });
-        if (!decision.allowed) {
-          result = { ok: false, error: decision.reason, message: decision.message };
+        // A provider may still emit a known tool it was not offered. In
+        // particular, never turn a hallucinated approve_task call into a
+        // reauthentication prompt when no owned task is awaiting approval.
+        if (call.name === 'approve_task' && !offeredToolNames.has(call.name)) {
+          result = { ok: false, error: 'tool_unavailable', message: 'No task is waiting for approval. Continue the requested action with its own tool.' };
         } else {
-          result = await execTool(args, call.name, call.input);
+          // The gate, in front of everything, keyed by tool name.
+          const decision = await checkStepUp(db, { userId, sessionKey, action: call.name });
+          if (!decision.allowed) {
+            result = { ok: false, error: decision.reason, message: decision.message };
+          } else {
+            result = await execTool(args, call.name, call.input);
+          }
         }
       } catch (err) {
         // The tool's own message, not a stack trace, and never a provider body.

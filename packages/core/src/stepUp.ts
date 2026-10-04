@@ -149,14 +149,14 @@ export async function checkStepUp(
     return {
       allowed: false,
       reason: 'locked_out',
-      message: 'Too many failed attempts. Wait a few minutes, then confirm your password again.',
+      message: 'Too many failed secure reauthentication attempts. Wait a few minutes, then use the protected control in Settings. Never send your password in chat.',
     };
   }
   return {
     allowed: false,
     reason: 'needs_reauth',
     method: 'password',
-    message: 'Confirm your password to continue.',
+    message: 'Use the protected reauthentication control in Settings to continue. Never send your password in chat.',
   };
 }
 

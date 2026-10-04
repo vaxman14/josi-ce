@@ -301,6 +301,7 @@ beforeAll(async () => {
   cpSync(join(PUBLIC, 'manifest.webmanifest'), join(webDir, 'manifest.webmanifest'));
   cpSync(join(PUBLIC, 'offline.html'), join(webDir, 'offline.html'));
   cpSync(join(PUBLIC, 'icons'), join(webDir, 'icons'), { recursive: true });
+  cpSync(join(PUBLIC, 'help'), join(webDir, 'help'), { recursive: true });
 
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'https://josi.example', masterKeyCheck: false, webDir,
@@ -341,6 +342,29 @@ describe('how the server hands the PWA out (L2.3, L2.8)', () => {
     const res = await fetch(`${base}/offline.html`);
     expect(res.status).toBe(200);
     expect(await res.text()).toContain('Josi is offline');
+  });
+
+  it('serves standalone public Help, installation, legal, and brand files from this origin', async () => {
+    for (const file of ['/help/index.html', '/help/install/index.html', '/help/legal/index.html', '/help/brand/josi-mark.png']) {
+      const res = await fetch(`${base}${file}`);
+      expect(res.status, file).toBe(200);
+      expect(Buffer.from(await res.arrayBuffer()), file).toEqual(readFileSync(join(PUBLIC, file)));
+      expect(res.headers.get('content-security-policy'), file).toBe(CONTENT_SECURITY_POLICY);
+    }
+  });
+
+  it('redirects Help directory aliases to exact offline-cache file URLs', async () => {
+    for (const [alias, target] of [['/help', '/help/index.html'], ['/help/', '/help/index.html'], ['/help/install/', '/help/install/index.html'], ['/help/legal/', '/help/legal/index.html']]) {
+      const res = await fetch(`${base}${alias}`, { redirect: 'manual' });
+      expect(res.status, alias).toBe(302);
+      expect(res.headers.get('location'), alias).toBe(target);
+    }
+  });
+
+  it('does not turn unknown Help files into the signed-in SPA', async () => {
+    const res = await fetch(`${base}/help/unknown.html`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
   it('permits a worker and a manifest in the CSP, and still nothing external', async () => {

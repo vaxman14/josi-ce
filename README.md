@@ -113,148 +113,57 @@ supported within realistic limits.
 
 ## Installation
 
-For the shortest verified path, see [`docs/QUICK_START.md`](docs/QUICK_START.md).
+Install and open Docker, then copy the command for your computer.
 
-### Browser installer (recommended for Community Preview)
-
-Create an empty directory, enter it, and run the installer container. The same
-absolute directory is mounted into the container because Docker Compose passes
-the secret-file paths to the host daemon. The installer uses the Docker socket
-only while its local HTTPS wizard writes the reviewed release files, generates
-the two local secrets, validates the chosen address and ports, and starts the
-normal isolated services. It then exits; no privileged controller remains.
+### Mac
 
 ```bash
-mkdir josi-ce && cd josi-ce
-# Linux:
-docker run --rm \
-  -p 8080:8080 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD:$PWD" -w "$PWD" \
-  romanvaxman/josi-ce-installer:latest
-```
-
-On macOS with Docker Desktop, use its user socket instead:
-
-```bash
+mkdir -p "$HOME/josi-ce" && cd "$HOME/josi-ce" && \
 docker run --rm \
   -p 8080:8080 \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
-  romanvaxman/josi-ce-installer:latest
+  docker.io/romanvaxman/josi-ce-installer:latest
 ```
 
-Open the HTTPS LAN address printed by the container, accept its temporary local
-certificate, and enter the one-time setup code. Address, domain, proxy, and
-port choices are completed in the browser and persisted to `.env`. The final
-**Open Josi** handoff binds first-admin creation to that paired browser; only a
-hash is stored and the raw token is removed from the address immediately.
-
-The socket mount is root-equivalent access to the Docker host. It is acceptable
-for this one-shot installer only because the published image is inspectable,
-version-pinned, and exits after Compose starts. Do not run it as a permanent
-service and do not give the socket to the Josi application containers.
-
-### Josi CLI
-
-The standalone Linux CLI is distributed as versioned `amd64` and `arm64`
-archives with SHA-256 checksums and a detached Sigstore signature. The installer
-requires an explicit version and verifies both the release signer and archive
-before writing anything. Prefer downloading and inspecting the installer before
-running it; see [`docs/CLI.md`](docs/CLI.md) for interactive, noninteractive,
-and manual verification instructions.
-
-### Manual installation
-
-The complete operator guide is in
-[`docs/INSTALLATION.md`](docs/INSTALLATION.md). It covers prerequisites, DNS,
-every supplied environment setting, secret generation, bundled Caddy, an
-existing reverse proxy, optional OCR and ClamAV profiles, verification,
-operations, security, and troubleshooting. Where a workflow is not implemented
-it says so explicitly rather than inventing commands for features that do not
-exist yet.
-
-For a local evaluation after reading the guide:
+### Linux
 
 ```bash
-cp .env.example .env
-./scripts/install.sh
-docker compose up -d
+mkdir -p "$HOME/josi-ce" && cd "$HOME/josi-ce" && \
+docker run --rm \
+  -p 8080:8080 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD:$PWD" -w "$PWD" \
+  docker.io/romanvaxman/josi-ce-installer:latest
 ```
 
-## Backups and the master key
+The installer prints a local setup address and one-time code. Open that address,
+enter the code, and finish setup in your browser. Save the recovery key when the
+browser shows it. No Git checkout, source build, or separate CLI is required.
 
-The Backups page includes a persistent **Back up now** progress display, guided SMB/NFS setup,
-off-site encryption, and non-destructive destination editing. See [the backup guide](docs/BACKUPS.md).
+The complete walkthrough is in
+[`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
-Runtime credentials — LLM keys, OAuth secrets, SMTP passwords — are encrypted in
-PostgreSQL using an installation master key that is stored **outside the
-database**, as a Docker secret.
+## Backups and recovery
 
-**A database backup alone cannot restore your credentials.** Back up the master
-key separately and keep it somewhere you would still have it if the server were
-gone.
+Create and manage backups from **Administration → Backups**. During first-time
+browser setup, Josi shows the recovery key once and offers **Copy** and
+**Download** actions. Save it somewhere separate from the Mac or Linux computer
+running Josi. There is no manual shell key-copy step in the normal setup flow.
 
-This is deliberate, and it has been measured rather than assumed. Josi's backup
-tooling never puts the key in an archive, so a stolen backup is useless — and
-the acceptance test drops the database, restores it, and proves the credentials
-decrypt with the key and are unusable without it. The cost of that property is
-the warning above: restore your data without the key and your saved provider
-keys, connected accounts and mail passwords do not come back.
+See [the backup guide](docs/BACKUPS.md) for recovery and advanced storage.
 
-See [`docs/PHASE_10_EVIDENCE.md`](docs/PHASE_10_EVIDENCE.md) for what was
-proven and what was not.
+## Using and updating Josi
 
-## Running it
+Use Josi's administration screens for everyday management. A super-admin can
+open **Admin → System checkup**, check the stable release channel, review the
+release notes, and approve an update with the exact confirmation shown there.
+Josi creates a backup, applies the pinned release, verifies health, and rolls
+back automatically when a safe rollback is possible.
 
-Full detail is in [`docs/INSTALLATION.md`](docs/INSTALLATION.md). These are the
-four things an operator actually does.
-
-### Fresh install
-
-```bash
-git clone https://github.com/vaxman14/josi-ce.git && cd josi-ce
-cp .env.example .env          # set JOSI_DOMAIN and JOSI_APP_URL
-./scripts/install.sh          # generates the master key and database password
-docker compose up -d
-```
-
-Then open the domain and complete the setup wizard. The first person through it
-becomes the super admin, and setup cannot be run twice.
-
-### Back up
-
-```bash
-# Settings → Administration → Backups, or:
-POST /api/ops/admin/backups   {"kind":"full","masterKeyConfirmed":true}
-```
-
-**Copy the archive off the host, and back up `secrets/master.key` separately.**
-The key is never inside a backup — that is what makes a stolen archive useless,
-and it is also why an archive restored without the key returns your data but not
-your credentials.
-
-### Restore
-
-```bash
-POST /api/ops/admin/restore   {"backupId":"<id>","confirm":"restore"}
-```
-
-The reply reports `rowsRestored` and `credentialsRecovered` separately, because
-they are different facts. If the second is `false`, put the original key back
-and the credentials work again.
-
-### Upgrade and roll back
-
-**Josi never updates itself.** There is no setting that enables automatic
-updating. When an update is applied it backs up first and refuses to proceed if
-that fails, health-checks afterwards, and rolls back on failure keeping the
-recorded version at the old one.
-
-> **Not implemented yet:** nothing downloads a release, so there is no
-> in-product upgrade. Until there is, take a `full` backup, confirm you hold the
-> master key separately, then pull and rebuild — and be prepared to restore,
-> because migrations are not reversible.
+If Josi cannot open or the maintenance helper is unavailable, rerun the same
+installer command above as the recovery update path. It detects the existing
+installation and preserves its configuration and data.
 
 ## Privacy
 

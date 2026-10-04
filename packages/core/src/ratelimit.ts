@@ -30,6 +30,16 @@ export const LIMITS = {
   support_submit: { bucket: 'support_submit', max: 10, windowSeconds: 86_400 },
   /** Reaches an external provider to check a credential. */
   provider_probe: { bucket: 'provider_probe', max: 20, windowSeconds: 3600 },
+  /** Reads bounded host/container metadata through the isolated helper. */
+  doctor_check: { bucket: 'doctor_check', max: 30, windowSeconds: 3600 },
+  /** Sends one redacted diagnosis to the configured model for explanation. */
+  doctor_plan: { bucket: 'doctor_plan', max: 10, windowSeconds: 3600 },
+  /** May restart/recreate allowlisted Josi services; deliberately tight. */
+  doctor_repair: { bucket: 'doctor_repair', max: 5, windowSeconds: 3600 },
+  /** Reads the fixed public stable-release channel. */
+  update_check: { bucket: 'update_check', max: 20, windowSeconds: 3600 },
+  /** Starts a backup-gated container replacement; deliberately very tight. */
+  update_apply: { bucket: 'update_apply', max: 3, windowSeconds: 3600 },
   /** Full-text search across somebody's documents. */
   search: { bucket: 'search', max: 120, windowSeconds: 60 },
   /** Inbound Telegram messages from one chat.

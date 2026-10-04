@@ -76,7 +76,7 @@ export const TASK_TOOLS: ToolSpec[] = [
   {
     def: {
       name: 'approve_task',
-      description: 'The user approves a task that is waiting on them; it becomes ready to attempt.',
+      description: 'Approve an existing generic task that is already waiting on the user. Never use this to create a new calendar event, email, contact change, or other action; use that action\'s draft tool instead.',
       parameters: {
         type: 'object',
         properties: { task_id: { type: 'string' } },
@@ -110,7 +110,8 @@ export const TASK_TOOLS: ToolSpec[] = [
           message: { type: 'string', description: 'What to say when the reminder fires.' },
           calendar_event_id: { type: 'string', description: 'For a calendar-related reminder, copy the exact event_id from query_calendar. The original calendar/account source is verified and retained.' },
           in_minutes: { type: 'number', description: 'Deliver this many minutes from now. Use for "in 5 minutes".' },
-          due_at: { type: 'string', description: 'Exact delivery time, ISO 8601 with timezone. Use for "at 3pm".' },
+          due_at: { type: 'string', description: 'Exact delivery time, ISO 8601 with explicit offset. Use for "at 3pm".' },
+          timezone: { type: 'string', description: 'IANA timezone for the requested local time, such as America/Los_Angeles. Omit only when the registered device timezone should be used.' },
         },
         required: ['message'],
       },
@@ -149,6 +150,24 @@ export const TASK_TOOLS: ToolSpec[] = [
   },
   {
     def: {
+      name: 'update_reminder',
+      description: 'Edit one scheduled reminder. Preserve its id and conversation while increasing its revision. Supply only fields the user explicitly changes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reminder_id: { type: 'string' },
+          message: { type: 'string' },
+          in_minutes: { type: 'number' },
+          due_at: { type: 'string', description: 'Exact ISO 8601 instant with explicit offset.' },
+          timezone: { type: 'string', description: 'IANA timezone for the requested local time.' },
+        },
+        required: ['reminder_id'],
+      },
+    },
+    actionClass: 'task_management',
+  },
+  {
+    def: {
       name: 'list_reminders',
       description: "List the user's own upcoming reminders, with each one's id and delivery time.",
       parameters: { type: 'object', properties: {} },
@@ -175,7 +194,7 @@ export const TASK_TOOLS: ToolSpec[] = [
   },
   {
     def: { name: 'draft_calendar_event', description: 'Create or continue the current calendar draft. Omitted fields are preserved only from the active calendar operation in this conversation. Use event_id only for an explicit edit/replacement; a new event remains separate.', parameters: {
-      type: 'object', properties: { source_id: { type: 'string', description: 'Exact source_id from a calendar receipt.' }, calendar: {type:'string',description:'The user\'s calendar choice, such as “the main one”; the server resolves it only against primary/default metadata.'}, event_id: { type: 'string', description: 'Exact event_id receipt for an explicit edit.' }, title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' }, attendees: { type: 'array', items: { type: 'string' } } },
+      type: 'object', properties: { source_id: { type: 'string', description: 'Exact source_id from a calendar receipt.' }, calendar: {type:'string',description:'The user\'s calendar choice, such as “the main one”; the server resolves it only against primary/default metadata.'}, event_id: { type: 'string', description: 'Exact event_id receipt for an explicit edit.' }, title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, duration_minutes: {type:'number',description:'Whole minutes supplied by the user. Use this when continuing a draft that already has a start but still needs its end.'}, description: { type: 'string' }, location: { type: 'string' }, attendees: { type: 'array', items: { type: 'string' } } },
       required: [],
     } }, actionClass: 'calendar_write', requiresCapability: 'calendar_write',
   },

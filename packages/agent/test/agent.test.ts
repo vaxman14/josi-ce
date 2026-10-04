@@ -148,7 +148,17 @@ describe('capability gating', () => {
     await turn();
     const request = requests[0];
     expect(request.tools.map((t: any) => t.function.name)).toContain('draft_calendar_event');
+    expect(request.tools.map((t: any) => t.function.name)).not.toContain('approve_task');
     expect(request.messages[0].content).not.toMatch(/not connected yet[^.]*calendar_write/);
+  });
+
+  it('offers approve_task only when an owned generic task is actually waiting', async () => {
+    await configureModel();
+    const task = await createTask(db, { ownerUserId: alice, templateKey: 'follow_up' });
+    await db.query(`update tasks set state='awaiting_approval' where id=$1`, [task.id]);
+    replies = [{ content: 'ok' }];
+    await turn();
+    expect(requests[0].tools.map((t: any) => t.function.name)).toContain('approve_task');
   });
 
   it('supplies scheduling defaults instead of making the model ask for known context', async () => {
@@ -214,6 +224,21 @@ describe('running tools', () => {
     expect(action.waiting_on).toBe('email_send');
     // Nothing was queued, because nothing can run it.
     expect(await db.query(`select id from job_queue`)).toHaveLength(0);
+  });
+
+  it('directs native clients to exact approval controls instead of an unthreaded yes',async()=>{
+    await configureModel();
+    const connection=await upsertConnection(db,key,{ownerUserId:alice,provider:'google',providerAccountId:'native-approval',accountEmail:'native@example.test',
+      tokens:{accessToken:'access',refreshToken:'refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/gmail.send'},requestedCapabilities:['google.mail.send']});
+    await setCapability(db,{connection,capability:'google.mail.send',enabled:true,actorUserId:alice});
+    replies=[
+      {content:null,tool_calls:[toolCall('draft_email',{recipient:'recipient@example.test',subject:'Exact subject',body:'Exact body'})]},
+      {content:'Type yes to approve.'},
+    ];
+    const result=await turn({inbound:'Send the exact email',requireApprovalReplyTarget:true});
+    expect(result.reply).toMatch(/Use the Approve or Deny control below/i);
+    expect(result.reply).not.toMatch(/reply yes|type yes/i);
+    expect(result.actions[0].result).toMatchObject({state:'prepared',approval_id:expect.any(String)});
   });
 
   it('feeds tool results back in the provider dialect the adapter expects', async () => {
@@ -284,17 +309,32 @@ describe('running tools', () => {
 });
 
 describe('the step-up gate sits in front of the tools', () => {
+  it('does not turn a hallucinated approval into reauthentication on a routine turn', async () => {
+    await configureModel();
+    replies = [
+      { content: null, tool_calls: [toolCall('approve_task', { task_id: '3f19baec-b6b9-42a5-bf7f-3bf1fba3eabf' })] },
+      { content: 'I will continue with the requested action instead.' },
+    ];
+    const result = await turn({ inbound: 'Add the attached invitation to my calendar.' });
+    expect(result.actions[0].result).toMatchObject({ ok: false, error: 'tool_unavailable' });
+    expect(result.reply).not.toMatch(/reauthentication|password/i);
+    expect(await db.query(`select id from events where kind='stepup.required'`)).toEqual([]);
+  });
+
   it('refuses a destructive tool until the session re-authenticates', async () => {
     await configureModel();
     const task = await createTask(db, { ownerUserId: alice, templateKey: 'follow_up' });
     replies = [
       { content: null, tool_calls: [toolCall('cancel_task', { task_id: task.id })] },
-      { content: 'I need you to confirm your password first.' },
+      { content: 'Type your password here and I will continue.' },
     ];
     const result = await turn();
     const action = result.actions[0].result as any;
     expect(action.ok).toBe(false);
     expect(action.error).toBe('needs_reauth');
+    expect(result.reply).toMatch(/protected reauthentication control in Settings/i);
+    expect(result.reply).toMatch(/never send your password in chat/i);
+    expect(result.reply).not.toMatch(/type your password|confirm your password/i);
     // And the task really was not cancelled.
     const [row] = await db.query<{ state: string }>(`select state from tasks where id = $1`, [task.id]);
     expect(row.state).toBe('drafting');

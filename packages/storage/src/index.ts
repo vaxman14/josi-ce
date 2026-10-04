@@ -55,8 +55,11 @@ export {
   workspaceMountConfiguration, workspaceMountRootAllowed,
   type WorkspaceMountConfiguration, type WorkspaceMountProbe, type WorkspaceMountReconcileResult,
 } from './workspaceMount.js';
+export { ATTACHMENT_CAPABILITIES, attachmentLimit, maxAttachmentLimit,
+  type AttachmentAnalysis, type AttachmentCapability, type AttachmentCategory,
+} from './attachmentContract.js';
 export { AttachmentError, attachmentFailure, attachmentRoot, validateAttachment,
-  writeAttachment, readAttachment, removeAttachment, probeAttachmentStorage, cleanupAttachments,
+  writeAttachment, writeAttachmentFromFile, readAttachment, removeAttachment, probeAttachmentStorage, cleanupAttachments,
   CHAT_FILE_BYTES, CHAT_USER_BYTES, CHAT_USER_FILES, CHAT_THREAD_FILES, CHAT_TENANT_BYTES,
 } from './chatAttachments.js';
 export { proposeCodingRun, getCodingRun, startCodingRun, codingRunStatus } from './workspaceCoding.js';

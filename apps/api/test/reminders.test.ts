@@ -9,7 +9,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
 import {
-  MasterKey, ReminderError, cancelReminder, createReminder, createThread, listRemindersFor, seal,
+  MasterKey, ReminderError, cancelReminder, createReminder, createThread,
+  listNativeReminderActions, listRemindersFor, reminderInstant, seal, updateReminder, upsertMobileDevice,
 } from '@josi-ce/core';
 import { executeAssistantTool } from '../../../packages/agent/src/execute.js';
 import { TASK_TOOLS } from '../../../packages/agent/src/tools.js';
@@ -30,6 +31,7 @@ beforeEach(async () => {
 /** Reminders are delivered when due, not when created. Tests pull the queued
  * job's run_at back so `processQueue` can claim it without sleeping. */
 async function makeDue() {
+  await db.query(`update reminders set due_at = now() - interval '1 second' where status='scheduled'`);
   await db.query(`update job_queue set run_at = now() where kind = 'reminder.deliver'`);
 }
 
@@ -49,7 +51,7 @@ describe('createReminder', () => {
     expect(job.kind).toBe('reminder.deliver');
     // The payload carries the id and NOTHING else — a queue row is
     // infrastructure and must not become a side channel for content.
-    expect(job.payload).toEqual({ reminderId: reminder.id });
+    expect(job.payload).toEqual({ reminderId: reminder.id, revision: 1 });
     expect(Math.abs(new Date(job.run_at).getTime() - due.getTime())).toBeLessThan(2000);
   });
 
@@ -61,6 +63,30 @@ describe('createReminder', () => {
       .rejects.toThrow(/something to say/);
     await expect(createReminder(db, { ...args, dueAt: new Date(Date.now() + 400 * 24 * 3600_000) }))
       .rejects.toThrow(/more than a year/);
+  });
+
+  it('formats exact instants for timezone/DST folds and rejects invalid zones', async () => {
+    expect(reminderInstant(new Date('2026-11-01T08:30:00Z'), 'America/Los_Angeles')).toBe('2026-11-01T01:30:00-07:00');
+    expect(reminderInstant(new Date('2026-11-01T09:30:00Z'), 'America/Los_Angeles')).toBe('2026-11-01T01:30:00-08:00');
+    expect(() => reminderInstant(new Date(), 'Bad/Zone')).toThrow(ReminderError);
+  });
+
+  it('edits monotonically and leaves old jobs harmless', async () => {
+    const first = await createReminder(db, { ownerUserId: owner, threadId, body: 'first',
+      dueAt: new Date(Date.now() + 60_000), timezone: 'America/Los_Angeles' });
+    const edited = await updateReminder(db, { ownerUserId: owner, reminderId: first.id, body: 'second',
+      dueAt: new Date(Date.now() + 120_000) });
+    expect(edited).toMatchObject({ id: first.id, revision: 2, body: 'second', thread_id: threadId });
+    const jobs = await db.query<{payload:any}>(`select payload from job_queue where kind='reminder.deliver' order by id`);
+    expect(jobs.map(j=>j.payload.revision)).toEqual([1,2]);
+    await db.query(`update job_queue set run_at=now() where kind='reminder.deliver' and (payload->>'revision')::int=1`);
+    expect(await processQueue(db,'stale-revision',1)).toMatchObject({done:1,failed:0});
+    expect(await db.query(`select id from messages`)).toHaveLength(0);
+    expect((await db.query<{status:string}>(`select status from reminders where id=$1`,[first.id]))[0].status).toBe('scheduled');
+    expect(await listNativeReminderActions(db,{ownerUserId:owner})).toEqual([expect.objectContaining({id:first.id,threadId,revision:2,operation:'upsert'})]);
+    const cancelled = await cancelReminder(db,{ownerUserId:owner,reminderId:first.id});
+    expect(cancelled).toMatchObject({id:first.id,revision:3,status:'cancelled'});
+    expect(await listNativeReminderActions(db,{ownerUserId:owner})).toEqual([{version:1,id:first.id,threadId,revision:3,operation:'cancel'}]);
   });
 
   it('cancels only the owner\u2019s own scheduled reminder', async () => {
@@ -87,6 +113,7 @@ describe('the schedule_reminder tool', () => {
     // executeAssistantTool, so presence here is presence in both.
     const names = TASK_TOOLS.map((t) => t.def.name);
     expect(names).toContain('schedule_reminder');
+    expect(names).toContain('update_reminder');
     expect(names).toContain('list_reminders');
     expect(names).toContain('cancel_reminder');
   });
@@ -108,7 +135,22 @@ describe('the schedule_reminder tool', () => {
       message: 'call the vet', due_at: due,
     }) as any;
     expect(result.ok).toBe(true);
-    expect(new Date(result.due_at).toISOString()).toBe(due);
+    expect(Math.abs(new Date(result.due_at).getTime()-new Date(due).getTime())).toBeLessThan(1000);
+  });
+
+  it('updates and cancels with monotonic server revisions without claiming native scheduling', async () => {
+    const scheduled = await executeAssistantTool(db, ctx(), 'schedule_reminder', {
+      message: 'first', due_at: new Date(Date.now()+3600_000).toISOString(), timezone: 'America/Los_Angeles',
+    }) as any;
+    expect(scheduled).not.toHaveProperty('native_action');
+    const edited = await executeAssistantTool(db,ctx(),'update_reminder',{
+      reminder_id:scheduled.reminder_id,message:'second',in_minutes:120,
+    }) as any;
+    expect(edited).toMatchObject({ok:true,revision:2});
+    expect(edited).not.toHaveProperty('native_action');
+    const cancelled = await executeAssistantTool(db,ctx(),'cancel_reminder',{reminder_id:scheduled.reminder_id}) as any;
+    expect(cancelled).toMatchObject({revision:3,status:'cancelled'});
+    expect(cancelled).not.toHaveProperty('native_action');
   });
 
   it('refuses a missing time with instructions rather than guessing one', async () => {
@@ -166,6 +208,18 @@ describe('the worker delivers reminders', () => {
     );
     expect(row.status).toBe('delivered');
     expect(row.delivered_at).not.toBeNull();
+  });
+
+  it('server delivery covers every capable device, including foreground, and remains revision-deduplicated', async()=>{
+    const background=await upsertMobileDevice(db,KEY,owner,{deviceIdentity:'10101010-1010-4010-8010-101010101010',platform:'ios',expoToken:'ExpoPushToken[reminder_background]',appState:'background',privacyLocked:false,timezone:'UTC'});
+    const foreground=await upsertMobileDevice(db,KEY,owner,{deviceIdentity:'11111111-1111-4111-8111-111111111111',platform:'ios',expoToken:'ExpoPushToken[reminder_foreground]',appState:'foreground',privacyLocked:false,timezone:'UTC'});
+    const server=await createReminder(db,{ownerUserId:owner,threadId,body:'server owned',dueAt:new Date(Date.now()+60_000),timezone:'UTC'});
+    await makeDue();await processQueue(db,'server-owner',10);
+    const pushes=await db.query<{device_id:string;route_thread_id:string}>(`select device_id,route_thread_id from push_deliveries where event_key like $1`,[`reminder:${server.id}:%`]);
+    expect(pushes).toEqual(expect.arrayContaining([{device_id:background.id,route_thread_id:threadId},{device_id:foreground.id,route_thread_id:threadId}]));
+    expect(pushes).toHaveLength(2);
+    await processQueue(db,'duplicate-server-owner',10);
+    expect(await db.query(`select id from push_deliveries where event_key like $1`,[`reminder:${server.id}:%`])).toHaveLength(2);
   });
 
   it('does NOT deliver a cancelled reminder, even though its job still fires', async () => {

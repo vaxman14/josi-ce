@@ -8,17 +8,22 @@
 //     confirm a colleague has one.
 //   * The super admin gets nothing here. Not a thread, not a task, not a
 //     message. Their surface is `/api/admin/assistant`, which returns counts.
-import { randomUUID } from 'node:crypto';
-import { extname, join } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { extname } from 'node:path';
+import { mkdtempSync } from 'node:fs';
+import { readFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
-  addMessage, appendEvent, createContact, createTask, createThread, decideActionApproval, markActionsPresented,
-  getTask, getTemplate, getThread, listContactsFor, listMessages, listPendingApprovals,
+  addMessage, appendEvent, ApprovalError, createContact, createTask, createThread, decideActionApproval, markActionsPresented,
+  getTask, getTemplate, getThread, listContactsFor, listMessages, pendingApprovalSnapshot,
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
   setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
-  canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder,
-  checkChildAccess, encodeTurnCursor, json, submitDurableTurn, listDurableTurns, upsertMobileDevice, revokeMobileDevice, MobileError, consume, LIMITS,
+  canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder, updateReminder,
+  checkChildAccess, encodeTurnCursor, listNativeReminderActions,
+  json, submitDurableTurn, listDurableTurns, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -29,13 +34,14 @@ import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import {
   ChatImageError, IMAGE_MEDIA_TYPES, extractRichSegments, AttachmentError,
   attachmentFailure, attachmentRoot, normalizeChatImage, validateAttachment,
-  writeAttachment, readAttachment, removeAttachment, CHAT_FILE_BYTES,
+  writeAttachment, writeAttachmentFromFile, readAttachment, removeAttachment, maxAttachmentLimit,
 } from '@josi-ce/storage';
 import { asyncRoute, param } from './async.js';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
 
 export interface AssistantRoutesCtx {
   db: Db;
+  appUrl?: string;
   masterKey?: LoadOptions | false;
   fetchImpl?: typeof fetch;
   resolve?: (hostname: string) => Promise<string[]>;
@@ -50,7 +56,7 @@ export interface AssistantRoutesCtx {
 }
 
 class RouteError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly details:Record<string,unknown>={}) {
     super(message);
   }
 }
@@ -91,11 +97,31 @@ function historyContent(message: { direction: 'in' | 'out'; body: string; meta: 
   return `${message.body}\n\n[Verified calendar receipts from this prior turn. Preserve the named event, event_id, source_id, account, and calendar in follow-up actions; do not transfer a requested edit to another event.]\n${JSON.stringify(message.meta.calendar_receipts).slice(0, 12_000)}`;
 }
 
+const APPROVAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function presentNativeApproval(value: unknown): Record<string, unknown> | undefined {
+  if(!value||typeof value!=='object'||Array.isArray(value))return undefined;
+  const candidate=value as Record<string,unknown>;
+  if(typeof candidate.approvalId!=='string'||!APPROVAL_ID.test(candidate.approvalId))return undefined;
+  if(typeof candidate.summary!=='string'||!candidate.summary.trim()||candidate.summary.length>8_000)return undefined;
+  if(typeof candidate.action!=='string'||typeof candidate.actionClass!=='string')return undefined;
+  if(!['pending','approved','denied','expired'].includes(String(candidate.status)))return undefined;
+  return {
+    approvalId:candidate.approvalId,summary:candidate.summary,action:candidate.action,
+    actionClass:candidate.actionClass,expiresAt:typeof candidate.expiresAt==='string'?candidate.expiresAt:null,
+    requiresDeviceAuth:true,status:candidate.status,
+  };
+}
+
 /** Public message shape. Metadata is private by default: only fields the chat
  * UI deliberately renders cross the HTTP presentation boundary. */
 function presentMessage<T extends { meta: Record<string, unknown> }>(message: T): T {
   const attachments = Array.isArray(message.meta?.attachments) ? message.meta.attachments : undefined;
-  return { ...message, meta: attachments ? { attachments } : {} };
+  const nativeApproval = presentNativeApproval(message.meta?.nativeApproval);
+  return { ...message, meta: {
+    ...(attachments ? { attachments } : {}),
+    ...(nativeApproval ? { nativeApproval } : {}),
+  } };
 }
 
 export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
@@ -103,7 +129,10 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   const { db } = ctx;
   r.use(requireAuth);
   const uploadDir = attachmentRoot();
-  const receive = multer({ storage: multer.memoryStorage(), limits: { fileSize: CHAT_FILE_BYTES, files: 1, fields: 0, parts: 2 } });
+  // Busboy streams multipart bytes into a private bounded staging directory;
+  // request bodies are never accumulated by multer.memoryStorage().
+  const stagingDir = mkdtempSync(join(tmpdir(), 'josi-attachment-staging-'));
+  const receive = multer({ storage: multer.diskStorage({ destination: stagingDir, filename: (_req,_file,done)=>done(null,randomUUID()) }), limits: { fileSize: maxAttachmentLimit(), files: 1, fields: 0, parts: 2 } });
 
   const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
     asyncRoute(async (req: Request, res: Response) => {
@@ -112,7 +141,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       } catch (err: unknown) {
         if (err instanceof AttachmentError) return res.status(err.status).json({ error: err.message, code: err.code });
         if (err instanceof MobileError) {if(err.code==='turn_queue_full')res.set('Retry-After','30');return res.status(err.code==='idempotency_conflict'?409:err.code==='turn_queue_full'?429:400).json({error:err.message,code:err.code});}
-        if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
+        if (err instanceof RouteError) return res.status(err.status).json({ error: err.message, ...err.details });
         throw err;
       }
     });
@@ -164,10 +193,15 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       if (!thread || thread.owner_user_id !== req.user!.id) throw new RouteError(404, 'not found');
       await new Promise<void>((resolve, reject) => receive.single('file')(req, res, error => error ? reject(error) : resolve())).catch(error => {
         if (error instanceof multer.MulterError) throw new AttachmentError(413, error.code,
-          error.code === 'LIMIT_FILE_SIZE' ? 'Choose a file no larger than 20 MB.' : 'Upload one file at a time without additional fields.');
+          error.code === 'LIMIT_FILE_SIZE' ? 'The upload exceeds the configured attachment size limit.' : 'Upload one file at a time without additional fields.');
         throw new AttachmentError(400, 'invalid_upload', 'The upload could not be read. Choose a file and retry.');
       });
       if (!req.file) throw new RouteError(400, 'choose a file first');
+      const stagedPath = req.file.path;
+      const removeStaging = () => { void unlink(stagedPath).catch(() => undefined); };
+      res.once('finish', removeStaging);
+      req.once('aborted', removeStaging);
+      const stagedBytes = await readFile(stagedPath);
       let originalname = req.file.originalname;
       // Multipart headers conventionally arrive as Latin-1; recover UTF-8
       // names without accepting invalid byte sequences.
@@ -177,26 +211,27 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         normalized = await normalizeChatImage({
           filename: originalname,
           declaredContentType: req.file.mimetype || 'application/octet-stream',
-          bytes: req.file.buffer,
+          bytes: stagedBytes,
         });
       } catch (error) {
         if (error instanceof ChatImageError) throw new AttachmentError(400, 'invalid_heic', error.message);
         throw error;
       }
       const { bytes } = normalized;
-      const { filename, contentType, extension } = validateAttachment(
+      const { filename, contentType, extension, analysis } = validateAttachment(
         normalized.filename,
         normalized.contentType,
         bytes,
       );
+      let finalAnalysis=analysis;
       const id = randomUUID();
       // Reserve counts/bytes in one database statement before writing bytes.
       // Database triggers serialize concurrent upload/delete quota changes.
       try {
         await db.query(`insert into chat_attachments
-          (id,owner_user_id,thread_id,filename,content_type,byte_size,storage_path,storage_state)
-          values($1,$2,$3,$4,$5,$6,$7,'pending')`,
-          [id,req.user!.id,thread.id,filename,contentType,bytes.length,join(uploadDir,id)]);
+          (id,owner_user_id,thread_id,filename,content_type,byte_size,storage_path,storage_state,analysis_status,analysis_code)
+          values($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9)`,
+          [id,req.user!.id,thread.id,filename,contentType,bytes.length,id,analysis.status,analysis.code??null]);
       } catch (error) {
         const message = (error as Error).message;
         if (message.includes('attachment_thread_quota')) throw new AttachmentError(413, 'thread_quota', 'This conversation has reached its 100-file limit. Delete an unused attachment or start another conversation.');
@@ -205,31 +240,30 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         throw error;
       }
       try {
-        await writeAttachment(id, bytes, uploadDir);
-        let segments;
-        try {
-          segments = await extractRichSegments({ extension, bytes });
-        } catch (error) {
-          // A broken parser/runtime is not the same thing as a valid file with
-          // no text layer. Keep the underlying detail in server logs and give
-          // the person an honest, retryable error instead of telling the model
-          // that a readable document contained no text.
-          console.error('chat attachment extraction failed', {
-            extension,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          throw new AttachmentError(422, 'extraction_failed',
-            'Josi could not process this file because its document parser failed. Retry once; if it fails again, ask the administrator to check the application logs.');
+        if (normalized.converted) await writeAttachment(id, bytes, uploadDir);
+        else await writeAttachmentFromFile(id, stagedPath, uploadDir);
+        let extractedText:string|null=null;
+        let analysisStatus:'available'|'unavailable'=analysis.status;
+        let analysisCode:string|null=analysis.code??null;
+        if (analysis.status==='available' && analysis.kind==='text') {
+          try {
+            const segments=await extractRichSegments({extension,bytes});
+            extractedText=segments?.map(s=>s.content).join('\n').slice(0,100_000)||null;
+          } catch (error) {
+            console.error('chat attachment extraction failed',{extension,error:error instanceof Error?error.message:String(error)});
+            analysisStatus='unavailable';analysisCode='analysis_parser_failed';
+            finalAnalysis={status:'unavailable',code:'analysis_parser_failed',reason:'Stored safely, but the approved parser failed.'};
+          }
         }
-        await db.query(`update chat_attachments set storage_state='ready',extracted_text=$2 where id=$1`,
-          [id,segments?.map(s => s.content).join('\n').slice(0,100_000) || null]);
+        await db.query(`update chat_attachments set storage_state='ready',extracted_text=$2,analysis_status=$3,analysis_code=$4 where id=$1`,
+          [id,extractedText,analysisStatus,analysisCode]);
       } catch (error) {
         await db.query(`delete from chat_attachments where id=$1 and storage_state='pending'`, [id]);
         await removeAttachment(id, uploadDir).catch(() => undefined);
         throw attachmentFailure(error);
       }
       await appendEvent(db,{actorUserId:req.user!.id,actor:'user',kind:'attachment.uploaded',subjectType:'thread',subjectId:thread.id,payload:{attachmentId:id,bytes:bytes.length}});
-      return res.status(201).json({ attachment: { id, filename, contentType, byteSize: bytes.length } });
+      return res.status(201).json({ attachment: { id, filename, contentType, byteSize: bytes.length, analysis:finalAnalysis } });
     }));
 
   r.get('/attachments/:attachmentId', handle(async (req, res) => {
@@ -304,18 +338,20 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     if(!clientMessageId)throw new MobileError('invalid_idempotency_key','A client_message_id of at most 128 characters is required.');
     const duplicate=clientMessageId?!!(await db.query(`select 1 from assistant_turns where owner_user_id=$1 and thread_id=$2 and client_message_id=$3`,[req.user!.id,threadId,clientMessageId])).length:false;
     if(!duplicate){const rate=await consume(db,{limit:LIMITS.durable_turn,subject:`durable_turn:${req.user!.id}`});if(!rate.ok){res.set('Retry-After',String(rate.retryAfterSeconds));throw new RouteError(429,'Too many turns were submitted. Reconcile existing work before retrying.');}}
+    const attachmentIds=Array.isArray(req.body?.attachment_receipts)?req.body.attachment_receipts.map((x:unknown)=>str(x,80)):[];
     const accepted=await submitDurableTurn(db,{
       ownerUserId:req.user!.id,sessionId:req.user!.session_id,threadId,
       clientMessageId,
       message:str(req.body?.message,8000),
       replyToMessageId:str(req.body?.reply_to_message_id,80)||null,
-      attachmentIds:Array.isArray(req.body?.attachment_receipts)?req.body.attachment_receipts.map((x:unknown)=>str(x,80)):[],
+      attachmentIds,
       attemptOf:str(req.body?.attempt_of,80)||null,
     });
+    const attachmentReceipts=attachmentIds.length?await db.query<{id:string;filename:string;content_type:string;analysis_status:string;analysis_code:string|null}>(`select id,filename,content_type,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 order by id`,[attachmentIds,req.user!.id,threadId]):[];
     res.set('Cache-Control','no-store');
     res.set('Location',`/api/assistant/threads/${threadId}/turns`);
     const lifecycleState=mobileLifecycleState(accepted.turn.status);
-    return res.status(202).json({turn:{id:accepted.turn.id,job_id:accepted.turn.id,status:accepted.turn.status,lifecycle_state:lifecycleState,thread_id:threadId,client_message_id:accepted.turn.client_message_id,attempt_of:accepted.turn.attempt_of,error:accepted.turn.status==='failed'?{code:accepted.turn.error_code,retryable:accepted.turn.error_retryable}:null},duplicate:accepted.duplicate,telemetry:{state:lifecycleState,turn_id:accepted.turn.id,thread_id:threadId}});
+    return res.status(202).json({turn:{id:accepted.turn.id,job_id:accepted.turn.id,status:accepted.turn.status,lifecycle_state:lifecycleState,thread_id:threadId,client_message_id:accepted.turn.client_message_id,attempt_of:accepted.turn.attempt_of,attachment_receipts:attachmentReceipts.map(a=>({id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}})),error:accepted.turn.status==='failed'?{code:accepted.turn.error_code,retryable:accepted.turn.error_retryable}:null},duplicate:accepted.duplicate,telemetry:{state:lifecycleState,turn_id:accepted.turn.id,thread_id:threadId}});
   }));
 
   r.get('/threads/:id/turns',requireOwnership({db},{type:'thread',need:'owner'}),handle(async(req,res)=>{
@@ -326,11 +362,15 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     const cursor=typeof req.query.cursor==='string'?req.query.cursor:null;
     const turnId=typeof req.query.turn_id==='string'?req.query.turn_id:null;
     const turns=await listDurableTurns(db,{ownerUserId:req.user!.id,threadId,cursor,turnId});
+    const receiptIds=[...new Set(turns.flatMap(t=>t.attachment_ids))];
+    const receipts=receiptIds.length?await db.query<{id:string;filename:string;content_type:string;analysis_status:string;analysis_code:string|null}>(`select id,filename,content_type,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3`,[receiptIds,req.user!.id,threadId]):[];
+    const receiptById=new Map(receipts.map(a=>[a.id,a]));
     res.set('Cache-Control','no-store');
-    return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
+    return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,attachment_receipts:t.attachment_ids.flatMap(id=>{const a=receiptById.get(id);return a?[{id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}}]:[];}),error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
   }));
 
   r.put('/devices',handle(async(req,res)=>{
+    if(!ctx.appUrl)throw new RouteError(503,'Push registration is unavailable because the deployment identity is unavailable.');
     let key;try{key=ctx.masterKey===false?null:loadMasterKey(ctx.masterKey??{});}catch{key=null;}
     if(!key)throw new RouteError(503,'Push registration is unavailable because secure token storage is unavailable.');
     const device=await upsertMobileDevice(db,key,req.user!.id,{
@@ -339,6 +379,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       privacyLocked:req.body?.privacy_locked===true,categories:req.body?.categories,
       quietStart:str(req.body?.quiet_start,8)||null,quietEnd:str(req.body?.quiet_end,8)||null,
       timezone:str(req.body?.timezone,100)||'UTC',
+      ownerBinding:createHash('sha256').update(JSON.stringify([new URL(ctx.appUrl).origin,req.user!.id])).digest('hex'),
     });
     return res.status(200).json({device:{id:device.id}});
   }));
@@ -391,9 +432,9 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       }));
 
       const attachments = attachmentIds.length ? await db.query<{
-        id: string; filename: string; content_type: string; extracted_text: string | null; storage_path: string;
+        id: string; filename: string; content_type: string; extracted_text: string | null; analysis_status:string; analysis_code:string|null;
       }>(
-        `select id, filename, content_type, extracted_text, storage_path from chat_attachments
+        `select id, filename, content_type, extracted_text, analysis_status, analysis_code from chat_attachments
          where id = any($1::uuid[]) and thread_id = $2 and owner_user_id = $3 and storage_state = 'ready'`,
         [attachmentIds, threadId, thread.owner_user_id],
       ) : [];
@@ -421,7 +462,9 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       // only) rides along as context in the message.
       const attachmentContext = nonImageAttachments.map((a) => a.extracted_text
         ? `Attached file ${a.filename}:\n${a.extracted_text}`
-        : `Attached file ${a.filename} (${a.content_type}); no readable text was extracted.`).join('\n\n');
+        : a.analysis_status==='unavailable'
+          ? `Attached file ${a.filename} (${a.content_type}); analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`
+          : `Attached file ${a.filename} (${a.content_type}); no readable text was extracted.`).join('\n\n');
 
       // Image attachments are never described from pre-extracted text. Either
       // the bytes are read and handed to a model PROVEN to have vision, or
@@ -444,7 +487,8 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       }
 
       const modelInbound = [inbound, attachmentContext].filter(Boolean).join('\n\n');
-      const attachmentMeta = attachments.map((a) => ({ id: a.id, filename: a.filename, contentType: a.content_type }));
+      const attachmentMeta = attachments.map((a) => ({ id: a.id, filename: a.filename, contentType: a.content_type,
+        analysis:{status:a.analysis_status,code:a.analysis_code} }));
       const inboundMessage=await addMessage(db,{threadId,direction:'in',body:inbound||'Sent an attachment',meta:{attachments:attachmentMeta}});
       const result = await runAssistantTurn({
         db,
@@ -572,6 +616,26 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       res.json(await reminderOverview(db, { ownerUserId: req.user!.id }))),
   );
 
+  // Content-free account snapshot for durable status and explicit calendar
+  // export. It is not an alarm acknowledgement or delivery-owner transfer.
+  r.get('/reminders/native-actions', handle(async(req,res)=>{
+    res.set('Cache-Control','private, no-store');
+    return res.json({version:1,snapshot_at:new Date().toISOString(),actions:await listNativeReminderActions(db,{ownerUserId:req.user!.id})});
+  }));
+
+  r.put('/reminders/:id', handle(async(req,res)=>{
+    const dueRaw=typeof req.body?.due_at==='string'?req.body.due_at.trim():'';
+    const dueAt=dueRaw?new Date(dueRaw):undefined;
+    if(dueRaw&&Number.isNaN(dueAt!.getTime()))throw new RouteError(400,'Choose a valid due_at instant.');
+    try{
+      const reminder=await updateReminder(db,{ownerUserId:req.user!.id,reminderId:param(req,'id'),
+        ...(req.body?.message===undefined?{}:{body:String(req.body.message)}),...(dueAt?{dueAt}:{}),
+        ...(typeof req.body?.timezone==='string'?{timezone:req.body.timezone}:{})});
+      if(!reminder)throw new RouteError(404,'not found');
+      return res.json({reminder});
+    }catch(error){if(error instanceof ReminderError)throw new RouteError(400,error.message);throw error;}
+  }));
+
   r.post(
     '/reminders/:id/cancel',
     handle(async (req, res) => {
@@ -589,22 +653,29 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   r.get(
     '/approvals',
     handle(async (req, res) =>
-      res.json({ approvals: await listPendingApprovals(db, req.user!.id) })),
+      res.set('Cache-Control', 'private, no-store').json(await pendingApprovalSnapshot(db, req.user!.id))),
   );
 
   r.post(
     '/approvals/:id/decide',
     handle(async (req, res) => {
+      if(typeof req.body?.approve!=='boolean')throw new RouteError(400,'choose approve or deny');
       try {
         const {approval} = await decideActionApproval(db, {
           approvalId: param(req, 'id'),
           decidedBy: req.user!.id,
-          approve: req.body?.approve === true,
+          approve: req.body.approve,
         });
         return res.json({ approval });
       } catch (err) {
-        // "Not yours" and "does not exist" answer the same way here too.
-        throw new RouteError(404, 'not found');
+        if (err instanceof ApprovalError) {
+          const [approval]=await db.query<{status:string}>(`select status from approvals where id=$1 and owner_user_id=$2`,[param(req,'id'),req.user!.id]);
+          if(!approval)throw new RouteError(404,'not found');
+          throw new RouteError(409,
+            ['approved','denied','expired'].includes(approval.status)?`that request is already ${approval.status}`:'that request could not be decided',
+            {approvalStatus:approval.status});
+        }
+        throw err;
       }
     }),
   );
@@ -625,11 +696,12 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       if (!['always_ask', 'risky_only', 'automatic'].includes(level)) {
         throw new RouteError(400, 'choose always_ask, risky_only or automatic');
       }
-      await setUserApprovalLevel(db, {
-        userId: req.user!.id,
-        actionClass: param(req, 'actionClass'),
-        level,
-      });
+      try {
+        await setUserApprovalLevel(db, { userId: req.user!.id, actionClass: param(req, 'actionClass'), level });
+      } catch (err) {
+        if (err instanceof Error) throw new RouteError(409, err.message);
+        throw err;
+      }
       // Returns the EFFECTIVE level, not the stored preference: if the admin's
       // ceiling is stricter, the person is told what will actually happen
       // rather than what they asked for.
@@ -772,7 +844,8 @@ export function adminAssistantRoutes(ctx: AssistantRoutesCtx): Router {
     asyncRoute(async (_req, res) => {
       const { ACTION_CLASSES, DEFAULT_ADMIN_CEILING, pendingPolicyMigration } = await import('@josi-ce/core');
       const rows = await db.query<{ action_class: string; max_level: ApprovalLevel }>(
-        `select action_class, max_level from admin_approval_policy`,
+        `select action_class,max_level from admin_approval_policy
+         where managed_explicitly is true and max_level in ('always_ask','risky_only')`,
       );
       const set = new Map(rows.map((row) => [row.action_class, row.max_level]));
       return res.json({
@@ -782,7 +855,6 @@ export function adminAssistantRoutes(ctx: AssistantRoutesCtx): Router {
           label: c.label,
           description: c.description,
           impact: c.impact,
-          factoryCeiling: c.factoryCeiling,
           maxLevel: set.get(c.key) ?? DEFAULT_ADMIN_CEILING,
           explicit: set.has(c.key),
         })),

@@ -7,8 +7,8 @@
 //      sets "each person decides" has not switched anyone to automatic; they
 //      have returned the choice, and somebody who asked to be consulted every
 //      time still will be.
-//   2. A FRESH installation asks about everything. That is the fail-closed
-//      default, and loosening it is a deliberate act that gets recorded.
+//   2. A fresh user's own preference asks about everything. No administrator
+//      ceiling exists until an administrator deliberately creates one.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Badge, Button, Card, CollapsibleCard, ErrorNote } from '@/components/ui';
@@ -18,8 +18,7 @@ interface PolicyClass {
   label: string;
   description: string;
   impact: 'routine' | 'high';
-  factoryCeiling: string;
-  maxLevel: string;
+  maxLevel: string | null;
   explicit: boolean;
 }
 
@@ -31,7 +30,7 @@ interface MigrationRow {
 }
 
 interface PolicyPayload {
-  defaultCeiling: string;
+  defaultCeiling: string | null;
   classes: PolicyClass[];
   migration: MigrationRow[];
 }
@@ -68,12 +67,13 @@ export function AdminPolicy() {
   useEffect(() => { void load(); }, [load]);
 
   async function set(cls: PolicyClass, maxLevel: string) {
-    if (maxLevel === cls.maxLevel) return;
+    const current = cls.maxLevel ?? 'automatic';
+    if (maxLevel === current) return;
     setError('');
 
     // Loosening is confirmed here AND refused by the server without the flag,
     // so a client that forgets to ask cannot quietly relax a ceiling.
-    const relaxing = rankOf(maxLevel) > rankOf(cls.maxLevel);
+    const relaxing = rankOf(maxLevel) > rankOf(current);
     if (relaxing) {
       const to = LEVELS.find((l) => l.value === maxLevel)?.label ?? maxLevel;
       const extra = cls.impact === 'high'
@@ -150,8 +150,8 @@ export function AdminPolicy() {
 
           <CollapsibleCard title="What is the loosest anyone may choose?"
             summary="Administrator ceilings for every action class"
-            status={<Badge tone={data.classes.some((cls) => cls.maxLevel === 'automatic') ? 'primary' : 'ok'}>
-              {data.classes.some((cls) => cls.maxLevel === 'automatic') ? 'Review relaxed limits' : 'Approval required'}
+            status={<Badge tone={data.classes.some((cls) => cls.explicit) ? 'primary' : 'muted'}>
+              {data.classes.some((cls) => cls.explicit) ? 'Managed limits active' : 'No managed limits'}
             </Badge>}
             defaultOpen>
             <p className="mb-1 text-sm text-muted-foreground">
@@ -159,8 +159,8 @@ export function AdminPolicy() {
               automatic — somebody who asked to be consulted every time still will be.
             </p>
             <p className="mb-4 text-sm text-muted-foreground">
-              A new installation asks about everything. Loosening any of these is recorded against
-              your account.
+              A new user asks about everything by default. A managed limit exists only after you set
+              one here, and every change is recorded against your account.
             </p>
             {error ? <ErrorNote>{error}</ErrorNote> : null}
             <div className="space-y-5">
@@ -177,7 +177,7 @@ export function AdminPolicy() {
                   <p className="mb-1.5 text-xs text-muted-foreground">{cls.description}</p>
                   <select
                     id={`pol-${cls.key}`}
-                    value={cls.maxLevel}
+                    value={cls.maxLevel ?? 'automatic'}
                     disabled={busy === cls.key}
                     onChange={(e) => void set(cls, e.target.value)}
                     className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"

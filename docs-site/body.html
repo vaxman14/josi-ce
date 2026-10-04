@@ -1,7 +1,6 @@
-<h1>Josi CE installation and operations manual</h1>
-<p>This manual describes how to install the Josi CE Community Preview from this
-repository. It is intentionally explicit. Commands are written for a Linux
-server unless a section says otherwise.</p>
+<h1>Josi CE Help</h1>
+<p>Install Josi with Docker, finish setup in your browser, and manage the normal
+day-to-day work inside Josi.</p>
 <blockquote>
 <p><strong>Community Preview warning</strong></p>
 <p>Josi CE 0.1 is beta-quality software. Features may be incomplete, unavailable,
@@ -9,161 +8,164 @@ delayed, inaccurate or changed without notice. Do not use Josi as the sole
 system for emergencies, safety, healthcare, legal, financial, compliance,
 access control or backups. Review AI output and consequential actions yourself.</p>
 </blockquote>
+
 <h2 id="help">Help and current features</h2>
-<p>Josi CE currently provides one self-hosted workspace; account roles, password
-recovery and MFA; conversations, tasks and approvals; contacts; personalization
-and memory; usage and cost limits; hosted or local model providers; Google and
-Microsoft connections; contact synchronization; operational mail; document
-storage, extraction, search and citations; Telegram, Slack, WhatsApp and Signal
-channels; backups, restore, export and diagnostics; optional telemetry; system
-checkups; an installable PWA; optional Voice Box; developer-service connections;
-and licensed Family BETA controls.</p>
-<p>Administrators configure infrastructure under <strong>Admin</strong>. Members
-use their own accounts under <strong>Workspace</strong>. Every signed-in page has
-a persistent <strong>Help</strong> link back to this guide.</p>
-<h3>Family / Parental Controls BETA</h3>
-<blockquote><p><strong>BETA — do not trust or rely on these controls for a child's
-safety.</strong> They are experimental and may fail, be delayed or behave
-unexpectedly. They control only access to Josi. They do not lock a device, block
-other apps or websites, monitor location or actual screen time, contact emergency
-services, or replace active adult supervision and proven device-level controls.
-Verify important restrictions independently.</p></blockquote>
-<p>Use <strong>Admin → Parental controls (BETA)</strong> to activate or manage the
-publisher-issued licence. Use <strong>Workspace → Family (BETA)</strong> to create
-a new managed child account, set Josi-only schedules and message-minute limits,
-review usage and—through an explicit parent-child relationship—view that child's
-Josi conversations. The child sees who supervises the account, what can be seen,
-and parental access events.</p>
-<h3>Voice Box</h3>
-<p>Voice Box is an optional local speech service. The host operator must provision
-the guarded helper before the Admin install control can work. Browser microphone
-permission is required. Voice Box is not an emergency calling or recording
-service and should not be treated as one.</p>
+<p>Josi CE provides one self-hosted workspace with conversations, tasks,
+approvals, contacts, memory, model providers, connected accounts, operational
+mail, documents, external messaging channels, backups, diagnostics, an
+installable web app, optional Voice Box, and integrations.</p>
+<p>Administrators configure the installation under <strong>Admin</strong>.
+Members use their own accounts under <strong>Workspace</strong>.</p>
+<h3>First-run recovery key</h3>
+<p>The setup wizard shows the recovery key once. Select <strong>Copy key</strong>
+or <strong>Download key</strong>, store it away from the Josi computer, and then
+confirm that it was saved. There is no separate terminal command for this step.</p>
 <h3>Backups and system checkup</h3>
-<p>Admin → Overview includes a system checkup and recommendations. It is a useful
-diagnostic snapshot, not continuous monitoring or a warranty that the system is
-safe. Backups exclude the installation master key: keep that key separately and
-test restores.</p>
-<h3>Josi CLI and one-line installer</h3>
-<p>The signed Josi CLI keeps Docker Compose as the only runtime while providing
-operator commands for installation, status, updates, backups, logs, rollback,
-uninstallation, diagnosis, and repair. Install the current verified Linux
-<code>amd64</code> or <code>arm64</code> release with:</p>
-<pre><code>curl -fsSL https://get.heyjosi.com/install.sh |
-  sudo bash -s -- --version 0.1.54 --yes</code></pre>
-<p>The installer requires an explicit version and verifies its pinned verifier,
-the release's Sigstore workflow identity, and the signed SHA-256 manifest before
-installing anything. You can instead download and inspect the script first.</p>
-<p><code>josi doctor</code> backs up state, applies safe deterministic repairs,
-verifies the real postcondition, and rolls back repairs that regress readiness.
-Use <code>josi doctor --check-only</code> for a read-only audit or
-<code>--dry-run</code> for the exact repair plan. <code>--yes</code> does not
-authorize AI repair.</p>
-<p>Use <code>josi logs --since 30m</code>, <code>josi support bundle</code>, or
-<code>josi doctor --export-ai-context PATH</code> to collect a bounded,
-structured, secret-redacted diagnostic bundle. After deterministic repair is
-exhausted, <code>josi doctor --ai-repair --allow-ai</code> can offer a separately
-approved local Codex or loopback Ollama investigation. The exact plan requires a
-second approval before any allowlisted change executes.</p>
-<p><a href="https://github.com/vaxman14/josi-ce/blob/v0.1.54/docs/CLI.md">Complete CLI guide</a>
-· <a href="https://get.heyjosi.com/provenance.json">Public installer provenance</a></p>
-<p>Admin → Backups provides a persistent progress display and guided SMB/NFS setup. Enter the NAS
-address and share, authenticate, browse to a folder, and let the restricted storage controller
-manage the Docker mount. Off-site encryption is enabled by default; save its one-time recovery key
-away from the backup destination. “Change” preserves saved settings until Save succeeds, while
-removal is a separate confirmed action.</p>
+<p><strong>Admin → Overview</strong> shows installation status and recommendations.
+<strong>Admin → System checkup</strong> runs Josi Doctor. It explains problems,
+offers only bounded automatic repairs, asks for approval, and verifies the result.
+It also checks the stable release channel and applies an exactly approved update
+only after creating a backup.
+<strong>Admin → Backups</strong> creates backups and configures SMB or NFS storage.
+Keep the recovery key separately from the backup destination.</p>
 <h3>Integrations</h3>
-<p>Admin → Integrations groups code, deployment, data, monitoring, knowledge, and project-management
-connections. Custom API connects unsupported HTTPS REST services through an explicit endpoint
-allowlist. Credentials remain in the Master Vault; writes and deletes require approval.</p>
-<h2>1. What the standard installation creates</h2>
-<p>The default Compose deployment creates five service roles:</p>
-<table>
-<thead>
-<tr>
-<th>Service</th>
-<th>Purpose</th>
-<th>Host exposure</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>db</code></td>
-<td>PostgreSQL 16 database</td>
-<td>None</td>
-</tr>
-<tr>
-<td><code>migrate</code></td>
-<td>Applies database migrations, then exits</td>
-<td>None</td>
-</tr>
-<tr>
-<td><code>web</code></td>
-<td>API and browser application</td>
-<td>Through Caddy only</td>
-</tr>
-<tr>
-<td><code>worker</code></td>
-<td>Background jobs</td>
-<td>None</td>
-</tr>
-<tr>
-<td><code>caddy</code></td>
-<td>HTTP/HTTPS reverse proxy and certificate renewal</td>
-<td>Ports 80 and 443</td>
-</tr>
-</tbody></table>
-<p>Two optional services are disabled unless explicitly selected:</p>
-<table>
-<thead>
-<tr>
-<th>Service</th>
-<th>Compose profile</th>
-<th>Purpose</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>ocr</code></td>
-<td><code>ocr</code></td>
-<td>Optical character recognition</td>
-</tr>
-<tr>
-<td><code>clamav</code></td>
-<td><code>clamav</code></td>
-<td>Malware scanning</td>
-</tr>
-</tbody></table>
-<p>The database is attached only to the private <code>data</code> network. Caddy is attached
-only to the <code>edge</code> network. The worker is not reachable through the proxy.</p>
-<h2>2. Supported deployment shapes</h2>
-<p>Choose one deployment shape before changing configuration.</p>
-<h3>2.1 Public HTTPS with bundled Caddy</h3>
-<p>Use this for the usual single-server installation. You need a public DNS name,
-inbound TCP ports 80 and 443, and no other process already using those ports.
-Caddy obtains and renews the TLS certificate.</p>
-<h3>2.2 Existing reverse proxy</h3>
-<p>Use this when nginx, Traefik, HAProxy, a load balancer, or another Caddy instance
-already terminates HTTPS. Josi publishes its web service on a configurable host
-port. Your proxy forwards HTTPS traffic to that port.</p>
-<h3>2.3 Local HTTP evaluation</h3>
-<p>Use this only on a trusted machine or trusted LAN for evaluation. Secure
-cookies must be disabled for plain HTTP. Never expose this mode to the public
-Internet.</p>
-<h2>3. Host requirements</h2>
-<h3>3.1 Operating system and architecture</h3>
-<p>Use a 64-bit Linux host supported by Docker Engine. The application image is
-intended for <code>linux/amd64</code> and <code>linux/arm64</code>.</p>
-<p>Do not use a 32-bit operating system. Raspberry Pi installations require a
-64-bit OS. Josi does not publish capacity claims yet; workload, connector use,
-and local inference change resource requirements substantially.</p>
-<h3>3.2 Required software</h3>
-<p>Install:</p>
+<p><strong>Admin → Integrations</strong> connects model providers and external
+services. Credentials stay in the Master Vault. Consequential writes and deletes
+still require approval.</p>
+<h3>Family / Parental Controls BETA</h3>
+<blockquote><p><strong>Do not rely on these controls for a child's safety.</strong>
+They control only access to Josi. They do not lock a device, block other apps or
+websites, monitor location or actual screen time, contact emergency services,
+or replace active adult supervision and proven device-level controls.</p></blockquote>
+
+<h2 id="installation">1. Run the installer</h2>
+<p>Install and open Docker first. You do not need Git, Node.js, a source checkout,
+or a Josi command-line tool.</p>
+<p>Choose the command for your computer and paste the whole block into Terminal.</p>
+<h3>Mac</h3>
+<pre><code class="language-bash">mkdir -p "$HOME/josi-ce" &amp;&amp; cd "$HOME/josi-ce" &amp;&amp; \
+docker run --rm \
+  -p 8080:8080 \
+  -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
+  -v "$PWD:$PWD" -w "$PWD" \
+  docker.io/romanvaxman/josi-ce-installer:latest
+</code></pre>
+<h3>Linux</h3>
+<pre><code class="language-bash">mkdir -p "$HOME/josi-ce" &amp;&amp; cd "$HOME/josi-ce" &amp;&amp; \
+docker run --rm \
+  -p 8080:8080 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD:$PWD" -w "$PWD" \
+  docker.io/romanvaxman/josi-ce-installer:latest
+</code></pre>
+<p>The installer prints a private setup URL and a one-time setup code. Leave the
+Terminal window open while setup is running.</p>
+<p>The temporary installer can control Docker so it can create the Josi services.
+It exits when installation finishes. Normal Josi services do not receive the
+Docker socket.</p>
+
+<h2>2. Finish setup in your browser</h2>
+<ol>
+<li>Open the setup URL printed in Terminal.</li>
+<li>Accept the temporary local-certificate warning.</li>
+<li>Enter the one-time setup code.</li>
+<li>Choose whether Josi is available on this computer, your local network, a
+public domain, or through an existing proxy or tunnel.</li>
+<li>Optionally choose one project folder for coding features. Skip it if you do
+not need Josi to work with local files.</li>
+<li>Review the choices and select <strong>Install Josi</strong>.</li>
+</ol>
+<p>The browser installer writes the configuration, generates the installation
+secrets, downloads the published images, starts Josi, and checks that it opens.</p>
+
+<h2>3. Open Josi</h2>
+<p>When installation succeeds, select <strong>Open Josi</strong>. The first person
+through setup becomes the administrator.</p>
+<p>Josi walks through the account, AI provider, privacy choices, and optional
+connections. When the recovery key appears, copy or download it and store it
+somewhere other than the Josi computer.</p>
+
+<h2>4. Confirm it works</h2>
+<p>Open the Josi URL and send a message. If Josi opens and answers using the
+provider configured during setup, the installation works. You do not need to
+inspect containers or call health endpoints.</p>
+
+<h2>After installation</h2>
+<p>Use Josi's <strong>Admin</strong> screens for normal management:</p>
 <ul>
-<li>Git</li>
-<li>Docker Engine</li>
-<li>Docker Compose v2, invoked as <code>docker compose</code></li>
-<li>OpenSSL, or a readable <code>/dev/urandom</code></li>
-<li><code>curl</code> for host-side verification</li>
+<li><strong>Overview</strong> shows status and recommendations.</li>
+<li><strong>System checkup</strong> explains problems, offers safe automatic repairs, and installs approved stable updates.</li>
+<li><strong>Network &amp; address</strong> changes local, LAN, domain, proxy, or tunnel access.</li>
+<li><strong>Backups</strong> creates backups and configures storage.</li>
+<li><strong>Integrations</strong> connects providers and services.</li>
+<li><strong>Users</strong> manages workspace access.</li>
 </ul>
+<p>Keep Docker running. On a dedicated Mac mini, enable Docker Desktop at login
+so Josi returns after a restart.</p>
+
+<h2>Use Josi on your devices</h2>
+<p>Your Josi server is the home for every client. The web app and native apps use
+the same account, workspace, conversations, memory, and tools.</p>
+<ul>
+<li><strong>Android:</strong> <a href="https://play.google.com/store/apps/details?id=com.socalreceptionist.josice">Install Josi CE from Google Play</a>.</li>
+<li><strong>iPhone and iPad:</strong> The App Store release is coming soon.</li>
+<li><strong>macOS, Windows, and Linux:</strong> Desktop downloads are in final
+device testing. Links will appear here when each build is approved.</li>
+</ul>
+<p>To connect a native app:</p>
+<ol>
+<li>Open Josi CE.</li>
+<li>Choose <strong>Public URL</strong> or <strong>Tailscale</strong>.</li>
+<li>Paste the Josi URL shown during server setup.</li>
+<li>Select <strong>Verify and continue</strong>.</li>
+<li>Sign in with the same Josi account you created in the browser.</li>
+</ol>
+<p>The app connects to the Josi server you just installed. It does not install
+or create another server.</p>
+
+<h2>Updating Josi</h2>
+<p>Open <strong>Admin → System checkup</strong> as a super-admin, select
+<strong>Check for updates</strong>, review the release notes, enter the exact
+confirmation shown, and approve the update. Josi creates a backup, applies the
+pinned release, verifies health, and rolls back automatically when a safe
+rollback is possible.</p>
+<p>If Josi cannot open or the maintenance helper is unavailable, run the same
+installer command again. The browser installer detects the existing installation
+and preserves its configuration and data. Do not delete the
+<code>josi-ce</code> folder or Docker volumes during an update.</p>
+
+<h2>Backups</h2>
+<p>Open <strong>Admin → Backups</strong> to create a backup or configure SMB/NFS
+storage. Keep the recovery key separately from the backup destination. A backup
+and the key protect different things, so you need both.</p>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3>Docker is not running</h3>
+<p>Open Docker Desktop on Mac, or start Docker Engine on Linux, then run the same
+installer command again.</p>
+<h3>The Mac reports that the Docker socket does not exist</h3>
+<p>Wait until Docker Desktop says the engine is running, then retry. Josi uses
+Docker Desktop's user socket at <code>$HOME/.docker/run/docker.sock</code>.</p>
+<h3>Port 8080 is already in use</h3>
+<p>Stop the program using port 8080, then run the installer again. That port is
+used only for the temporary setup page.</p>
+<h3>The browser warns that the setup page is not private</h3>
+<p>This is expected for the temporary local setup certificate. Confirm that the
+address matches the one printed by the installer before continuing.</p>
+<h3>Setup was interrupted</h3>
+<p>Run the same installer command again. It reuses the
+<code>$HOME/josi-ce</code> directory and preserves completed configuration.</p>
+<h3>Josi installed but does not open</h3>
+<p>Return to the installer window and use its reported error. If Josi previously
+worked, open <strong>Admin → Overview</strong> for the system checkup. Do not
+delete Docker volumes or the installation directory while troubleshooting.</p>
+
+<h2>Source code and licence</h2>
+<p>Josi CE is licensed under GNU AGPL v3. The
+<a href="https://github.com/vaxman14/josi-ce">source code is available on GitHub</a>.
+Licence terms, security reporting, and developer documentation are kept
+separate from this end-user installation path.</p>
+
 <h2 id="terms-of-use">Terms of Use</h2>
 <p><strong>Effective 14 September 2026.</strong> These Terms govern use of the
 official Josi CE application and publisher-supplied paid modules from SOCAL
@@ -289,593 +291,3 @@ approval or support.</p>
 copyright licence. It activates only the feature, buyer, installation and term
 encoded in the key and is governed by the Terms above. Community Preview carries
 no support entitlement or SLA.</p>
-<p>Confirm each dependency:</p>
-<pre><code class="language-bash">git --version
-docker version
-docker compose version
-openssl version
-curl --version
-</code></pre>
-<p><code>docker-compose</code> with a hyphen is the retired Compose v1 client. This manual
-uses Compose v2.</p>
-<h3>3.3 Docker access</h3>
-<p>Run Docker as root, or configure the installation account to access the Docker
-daemon. Membership in the <code>docker</code> group is effectively root-level access to
-the host. Treat it accordingly.</p>
-<p>Verify access:</p>
-<pre><code class="language-bash">docker run --rm hello-world
-</code></pre>
-<h3>3.4 Network requirements</h3>
-<p>For bundled Caddy:</p>
-<ul>
-<li>Create an <code>A</code> record pointing the chosen hostname to the server&#39;s public IPv4
-address.</li>
-<li>Create an <code>AAAA</code> record only if IPv6 actually reaches the server.</li>
-<li>Forward TCP 80 and 443 through the router or firewall.</li>
-<li>Permit outbound DNS and HTTPS so Caddy can reach the ACME certificate
-authority and Josi can reach configured providers.</li>
-</ul>
-<p>Check DNS from a machine outside the server&#39;s LAN:</p>
-<pre><code class="language-bash">dig +short A josi.example.com
-dig +short AAAA josi.example.com
-</code></pre>
-<p>Replace <code>josi.example.com</code> everywhere in this manual with the real hostname.</p>
-<p>If an incorrect <code>AAAA</code> record exists, some clients and certificate validation
-requests may use broken IPv6 even while IPv4 works. Remove the record or fix
-IPv6 routing.</p>
-<h2>4. Obtain the source</h2>
-<p>Choose a permanent directory. Do not run a long-lived installation from a
-Downloads folder.</p>
-<pre><code class="language-bash">sudo mkdir -p /opt/josi-ce
-sudo chown &quot;$(id -u):$(id -g)&quot; /opt/josi-ce
-git clone &lt;REPOSITORY-URL&gt; /opt/josi-ce
-cd /opt/josi-ce
-</code></pre>
-<p>Until the repository is public, replace <code>&lt;REPOSITORY-URL&gt;</code> with the private
-clone URL available to the operator. Do not put access tokens directly in the
-command or shell history.</p>
-<p>Confirm the checkout and inspect its state:</p>
-<pre><code class="language-bash">git remote -v
-git status --short --branch
-git log -1 --oneline
-</code></pre>
-<p>For a release, check out its signed or documented release tag instead of an
-arbitrary moving branch:</p>
-<pre><code class="language-bash">git fetch --tags
-git checkout &lt;RELEASE-TAG&gt;
-</code></pre>
-<h2>5. Read the configuration before starting</h2>
-<p>The repository includes these deployment files:</p>
-<ul>
-<li><code>docker-compose.yml</code>: default stack and optional profiles</li>
-<li><code>docker-compose.noproxy.yml</code>: publishes the web service for an existing proxy</li>
-<li><code>Caddyfile</code>: bundled reverse proxy configuration</li>
-<li><code>.env.example</code>: non-secret operator settings</li>
-<li><code>scripts/install.sh</code>: generates the master key and database password</li>
-</ul>
-<p>Validate the Compose model before creating anything:</p>
-<pre><code class="language-bash">docker compose config --quiet
-</code></pre>
-<p>This command expands configuration but does not start containers.</p>
-<h2>6. Configure <code>.env</code></h2>
-<p>Copy the example and restrict its permissions:</p>
-<pre><code class="language-bash">cp .env.example .env
-chmod 600 .env
-</code></pre>
-<p>The current <code>.env</code> contains no secrets, but restrictive permissions prevent a
-future operator-added value from becoming broadly readable.</p>
-<p>Edit it with your preferred editor:</p>
-<pre><code class="language-bash">nano .env
-</code></pre>
-<h3>6.1 Domain and application URL</h3>
-<p>Public HTTPS example:</p>
-<pre><code class="language-dotenv">JOSI_DOMAIN=josi.example.com
-JOSI_APP_URL=https://josi.example.com
-JOSI_COOKIE_SECURE=true
-JOSI_HTTP_PORT=80
-JOSI_HTTPS_PORT=443
-</code></pre>
-<p><code>JOSI_DOMAIN</code> is the hostname Caddy serves. Do not include <code>https://</code>, a path,
-or a trailing slash.</p>
-<p><code>JOSI_APP_URL</code> is the browser-facing origin. Include the scheme. Do not add a
-trailing slash. OAuth redirect URLs and security checks depend on this value
-being the actual external URL.</p>
-<p><code>JOSI_COOKIE_SECURE=true</code> is required for HTTPS. A browser refuses to send a
-Secure cookie over plain HTTP.</p>
-<p>Local HTTP evaluation example:</p>
-<pre><code class="language-dotenv">JOSI_DOMAIN=localhost
-JOSI_APP_URL=http://localhost
-JOSI_COOKIE_SECURE=false
-JOSI_HTTP_PORT=80
-JOSI_HTTPS_PORT=443
-</code></pre>
-<p>Do not use <code>JOSI_COOKIE_SECURE=false</code> on a public deployment.</p>
-<h3>6.2 Host ports</h3>
-<p><code>JOSI_HTTP_PORT</code> maps the host&#39;s chosen port to Caddy port 80.
-<code>JOSI_HTTPS_PORT</code> maps the host&#39;s chosen port to Caddy port 443.</p>
-<p>The normal public values are 80 and 443. Changing them means users must include
-the nonstandard port in the URL unless another device forwards standard ports.</p>
-<p>Check for conflicts before starting:</p>
-<pre><code class="language-bash">sudo ss -lntp | grep -E &#39;:(80|443)[[:space:]]&#39; || true
-</code></pre>
-<h3>6.3 Database names</h3>
-<p>Defaults:</p>
-<pre><code class="language-dotenv">POSTGRES_DB=josi
-POSTGRES_USER=josi
-</code></pre>
-<p>These values are identifiers, not passwords. Changing either after the database
-volume has been initialized does not rename the existing database or user. Set
-them once before first start and leave them stable.</p>
-<h3>6.4 Application image</h3>
-<p>Defaults:</p>
-<pre><code class="language-dotenv">JOSI_IMAGE=josi-ce
-JOSI_TAG=local
-</code></pre>
-<p>The current Compose file builds from the local checkout and tags the resulting
-image <code>josi-ce:local</code>. A future published release may provide a registry image
-and immutable version tag. Do not use a floating <code>latest</code> tag for a controlled
-deployment.</p>
-<h3>6.5 Optional-service limits</h3>
-<p>Defaults:</p>
-<pre><code class="language-dotenv">JOSI_OCR_CPUS=1.0
-JOSI_OCR_MEMORY=512m
-JOSI_CLAMAV_MEMORY=1500m
-</code></pre>
-<p>These are container ceilings. OCR and ClamAV do not start merely because the
-values exist. Their Compose profiles must also be selected.</p>
-<p>ClamAV needs substantial memory while loading and updating signatures. Do not
-enable it on a constrained host without observing memory pressure.</p>
-<h2>7. Generate installation secrets</h2>
-<p>Run:</p>
-<pre><code class="language-bash">./scripts/install.sh
-</code></pre>
-<p>The script creates:</p>
-<ul>
-<li><code>secrets/master.key</code>: encrypts stored provider, OAuth, and mail credentials</li>
-<li><code>secrets/db_password</code>: authenticates the application to PostgreSQL</li>
-</ul>
-<p>The directory is mode <code>0700</code>; each file is mode <code>0600</code>. Values are deliberately
-not printed.</p>
-<p>Verify without changing anything:</p>
-<pre><code class="language-bash">./scripts/install.sh --check
-</code></pre>
-<p>The installer is idempotent: rerunning it leaves existing secret files alone.
-It never rotates the master key.</p>
-<h3>7.1 Master-key warning</h3>
-<p>The master key is not stored in PostgreSQL. That protects credentials if a
-database dump is stolen, but it creates an operational obligation:</p>
-<p><strong>Losing <code>secrets/master.key</code> makes encrypted credentials permanently
-unreadable.</strong> A database backup alone is insufficient.</p>
-<p>Before continuing, copy the master key to encrypted storage on a different
-device. Example using removable media already mounted at <code>/mnt/secure-backup</code>:</p>
-<pre><code class="language-bash">install -m 600 secrets/master.key /mnt/secure-backup/josi-master.key
-</code></pre>
-<p>Do not email the key, paste it into chat, store it in Git, or include it in a
-normal unencrypted cloud folder. Record which installation it belongs to.</p>
-<p>Check that Git ignores the generated directory:</p>
-<pre><code class="language-bash">git check-ignore -v secrets/master.key secrets/db_password
-</code></pre>
-<h2>8. Build and start the default stack</h2>
-<p>Review the resolved configuration. This output should contain file paths but
-must not contain the secret values:</p>
-<pre><code class="language-bash">docker compose config
-</code></pre>
-<p>Build the application image:</p>
-<pre><code class="language-bash">docker compose build --pull
-</code></pre>
-<p>Start in detached mode:</p>
-<pre><code class="language-bash">docker compose up -d
-</code></pre>
-<p>Watch startup:</p>
-<pre><code class="language-bash">docker compose ps
-docker compose logs -f --tail=200
-</code></pre>
-<p>Press <code>Ctrl+C</code> to stop following logs. This does not stop the containers.</p>
-<p>Expected state:</p>
-<ul>
-<li><code>db</code>, <code>web</code>, <code>worker</code>, and <code>caddy</code> are running.</li>
-<li><code>migrate</code> exited with code 0 after applying migrations.</li>
-<li><code>ocr</code> and <code>clamav</code> do not exist unless their profiles were enabled.</li>
-</ul>
-<p>Inspect a failed service without restarting the whole stack:</p>
-<pre><code class="language-bash">docker compose logs --tail=300 &lt;SERVICE&gt;
-docker compose ps -a
-</code></pre>
-<p>Replace <code>&lt;SERVICE&gt;</code> with <code>db</code>, <code>migrate</code>, <code>web</code>, <code>worker</code>, or <code>caddy</code>.</p>
-<h2>9. Verify the installation</h2>
-<h3>9.1 Container health</h3>
-<pre><code class="language-bash">docker compose ps
-</code></pre>
-<p>Do not equate &quot;running&quot; with &quot;ready.&quot; The health and readiness endpoints test
-different layers.</p>
-<h3>9.2 Liveness</h3>
-<p>For public HTTPS:</p>
-<pre><code class="language-bash">curl -fsS https://josi.example.com/health
-</code></pre>
-<p>For localhost evaluation:</p>
-<pre><code class="language-bash">curl -fsS http://localhost/health
-</code></pre>
-<p>Liveness means the API process answers.</p>
-<h3>9.3 Readiness</h3>
-<pre><code class="language-bash">curl -fsS https://josi.example.com/ready
-</code></pre>
-<p>Readiness additionally checks the database, migrations, and master-key
-availability. A live but unready service should not receive normal traffic.</p>
-<h3>9.4 TLS and redirects</h3>
-<pre><code class="language-bash">curl -I http://josi.example.com
-curl -I https://josi.example.com
-openssl s_client -connect josi.example.com:443 -servername josi.example.com &lt;/dev/null
-</code></pre>
-<p>If certificate issuance fails, check DNS, inbound ports, Caddy logs, router
-port forwarding, firewall policy, and incorrect IPv6 records.</p>
-<h3>9.5 Optional services remain absent</h3>
-<pre><code class="language-bash">docker compose ps --all
-docker ps --format &#39;{{.Names}}&#39; | grep -E &#39;(ocr|clamav)&#39; &amp;&amp; echo unexpected || echo absent
-</code></pre>
-<h2>10. Complete the setup wizard</h2>
-<p>Open <code>JOSI_APP_URL</code> in a browser. A fresh installation exposes the setup wizard
-and refuses normal application routes until setup completes.</p>
-<p>The wizard covers:</p>
-<ol>
-<li>Host checks</li>
-<li>Super-admin account</li>
-<li>Domain and HTTPS review</li>
-<li>LLM provider</li>
-<li>System and Josi mail profiles</li>
-<li>Optional Google and Microsoft connector clients</li>
-<li>Security and privacy choices</li>
-<li>Explicit telemetry choice</li>
-<li>Review and completion</li>
-</ol>
-<p>Setup is single-use. After completion, setup routes return 404 and cannot be
-used to create another super administrator.</p>
-<p>Record recovery information in the organization&#39;s password manager. Do not put
-provider keys, OAuth secrets, SMTP passwords, or recovery material in this
-repository.</p>
-<h2>11. Enable optional OCR and ClamAV profiles</h2>
-<p>Profiles may be combined.</p>
-<p>OCR only:</p>
-<pre><code class="language-bash">docker compose --profile ocr up -d
-</code></pre>
-<p>ClamAV only:</p>
-<pre><code class="language-bash">docker compose --profile clamav up -d
-</code></pre>
-<p>Both:</p>
-<pre><code class="language-bash">docker compose --profile ocr --profile clamav up -d
-</code></pre>
-<p>Verify:</p>
-<pre><code class="language-bash">docker compose --profile ocr --profile clamav ps
-docker compose logs --tail=200 ocr clamav
-</code></pre>
-<p>ClamAV&#39;s first signature load can take several minutes. Its healthcheck allows
-a five-minute start period.</p>
-<p>To stop and remove an optional service while leaving the core running:</p>
-<pre><code class="language-bash">docker compose stop ocr
-docker compose rm -f ocr
-</code></pre>
-<p>Use <code>clamav</code> in place of <code>ocr</code> for the malware scanner. Removing the ClamAV
-container does not remove the named signature volume unless you deliberately
-remove volumes.</p>
-<blockquote>
-<p><strong>Document-processing boundary:</strong> supported files can be extracted,
-scanned, indexed, searched and cited, and configured cloud sources can
-synchronize. Unsupported, encrypted, unsafe or over-limit files are skipped
-with an explicit reason. OCR and ClamAV remain optional services and must be
-provisioned and resourced before they are relied on.</p>
-</blockquote>
-<h2>12. Use an existing reverse proxy</h2>
-<p>Create <code>.env</code> with the real public URL and a local published port:</p>
-<pre><code class="language-dotenv">JOSI_DOMAIN=josi.example.com
-JOSI_APP_URL=https://josi.example.com
-JOSI_COOKIE_SECURE=true
-JOSI_WEB_PORT=8080
-</code></pre>
-<p>Start with the override and scale bundled Caddy to zero:</p>
-<pre><code class="language-bash">docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.noproxy.yml \
-  up -d --scale caddy=0
-</code></pre>
-<p>Josi is then available to the host proxy at <code>http://127.0.0.1:8080</code> if Docker
-binds to loopback. The current override publishes on all host interfaces. If
-the machine is not protected by a firewall, tighten the port mapping in a local
-override:</p>
-<pre><code class="language-yaml">services:
-  web:
-    ports:
-      - &quot;127.0.0.1:${JOSI_WEB_PORT:-8080}:8080&quot;
-</code></pre>
-<p>Save that as <code>docker-compose.local.yml</code> and include it last:</p>
-<pre><code class="language-bash">docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.noproxy.yml \
-  -f docker-compose.local.yml \
-  up -d --scale caddy=0
-</code></pre>
-<p>The external proxy must:</p>
-<ul>
-<li>Terminate HTTPS with a valid certificate.</li>
-<li>Preserve the original <code>Host</code> header.</li>
-<li>Forward <code>X-Forwarded-For</code>.</li>
-<li>Forward <code>X-Forwarded-Proto: https</code>.</li>
-<li>Support normal long-lived HTTP responses used by the application.</li>
-<li>Apply sensible request-size and timeout limits without truncating supported
-application traffic.</li>
-</ul>
-<p>Minimal nginx location:</p>
-<pre><code class="language-nginx">location / {
-    proxy_pass http://127.0.0.1:8080;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-</code></pre>
-<p>After proxy changes, verify <code>/health</code>, <code>/ready</code>, login, logout, and a browser
-refresh on an authenticated route.</p>
-<h2>13. Firewall guidance</h2>
-<p>Bundled Caddy normally needs only:</p>
-<ul>
-<li>TCP 22 from trusted administration addresses, if SSH is used</li>
-<li>TCP 80 from the Internet</li>
-<li>TCP 443 from the Internet</li>
-</ul>
-<p>Do not expose PostgreSQL. The Compose file publishes no database port.</p>
-<p>Example UFW policy, only after confirming SSH access and adjusting the SSH rule
-for the actual environment:</p>
-<pre><code class="language-bash">sudo ufw allow OpenSSH
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable
-sudo ufw status verbose
-</code></pre>
-<p>Firewall changes can lock you out. Keep an existing SSH session open and test a
-second session before closing the first.</p>
-<h2>14. Normal operations</h2>
-<p>Show status:</p>
-<pre><code class="language-bash">docker compose ps
-</code></pre>
-<p>Follow all logs:</p>
-<pre><code class="language-bash">docker compose logs -f --tail=200
-</code></pre>
-<p>Follow one service:</p>
-<pre><code class="language-bash">docker compose logs -f --tail=200 web
-</code></pre>
-<p>Restart one service:</p>
-<pre><code class="language-bash">docker compose restart web
-</code></pre>
-<p>Stop without deleting containers or volumes:</p>
-<pre><code class="language-bash">docker compose stop
-</code></pre>
-<p>Start stopped containers:</p>
-<pre><code class="language-bash">docker compose start
-</code></pre>
-<p>Recreate containers from the current configuration:</p>
-<pre><code class="language-bash">docker compose up -d
-</code></pre>
-<h3>14.1 Commands that are intentionally not routine</h3>
-<p><code>docker compose down</code> removes containers and networks but preserves named
-volumes unless <code>--volumes</code> is supplied.</p>
-<p><strong>Never run <code>docker compose down --volumes</code> as an ordinary troubleshooting
-step.</strong> It deletes the PostgreSQL data volume and other named volumes.</p>
-<p>Do not delete <code>secrets/master.key</code>. Do not regenerate it to fix a startup
-problem. A replacement key cannot decrypt existing credentials.</p>
-<h2>15. Backup and restore</h2>
-<p>Backup and restore are implemented and have passed a destructive acceptance
-test in which the schema was dropped, restored and encrypted credentials were
-proved readable with the original master key and unreadable without it. Create
-a full or portable backup under <strong>Admin → Backups</strong>, download the
-completed archive, and test restoration before relying on it.</p>
-<p>A complete backup set preserves:</p>
-<ul>
-<li>PostgreSQL data</li>
-<li>The exact <code>secrets/master.key</code></li>
-<li>Application configuration</li>
-<li>Uploads and recovery/history data included by the selected backup kind</li>
-<li>A record of the Josi release being restored</li>
-</ul>
-<p>The master key must be protected separately from the database backup. Restore
-must fail safely when the wrong key is supplied.</p>
-<h2>16. Upgrade and rollback</h2>
-<p>Josi never updates itself. The application has a tested backup-first,
-health-check and rollback sequence, but no release download channel is configured
-in Community Preview, so there is no in-product upgrade yet. Operators must use
-a version-pinned published image, take and validate a full backup first, preserve
-the master key separately, apply migrations, verify service and public-path
-health, and retain the previous image and backup for rollback.</p>
-<h2>17. Troubleshooting</h2>
-<h3>17.1 Compose cannot read a secret file</h3>
-<p>Symptoms include <code>secrets/master.key not found</code> or <code>secrets/db_password not found</code>.</p>
-<pre><code class="language-bash">./scripts/install.sh --check
-ls -ld secrets
-ls -l secrets/master.key secrets/db_password
-</code></pre>
-<p>Run commands from the repository root. Do not solve permission errors by making
-the secrets world-readable.</p>
-<h3>17.2 Database is unhealthy</h3>
-<pre><code class="language-bash">docker compose ps db
-docker compose logs --tail=300 db
-docker inspect --format &#39;{{json .State.Health}}&#39; josi-ce-db-1
-</code></pre>
-<p>Container names can vary with the Compose project name. Use <code>docker compose ps -q db</code> when scripting:</p>
-<pre><code class="language-bash">docker inspect --format &#39;{{json .State.Health}}&#39; &quot;$(docker compose ps -q db)&quot;
-</code></pre>
-<p>Common causes are disk exhaustion, filesystem permission problems, corrupt
-storage, and changing database identifiers after initialization.</p>
-<h3>17.3 Migrator exited nonzero</h3>
-<pre><code class="language-bash">docker compose ps -a migrate
-docker compose logs --tail=500 migrate
-</code></pre>
-<p>Do not repeatedly delete the database volume. Preserve the evidence, identify
-the failing migration, and use the release&#39;s documented recovery path.</p>
-<h3>17.4 Web is running but <code>/ready</code> fails</h3>
-<pre><code class="language-bash">docker compose logs --tail=300 web
-curl -i http://127.0.0.1/ready
-./scripts/install.sh --check
-</code></pre>
-<p>Readiness distinguishes database, migrations, and master-key failures. Fix the
-reported dependency instead of masking the check.</p>
-<h3>17.5 Login works locally but fails through a proxy</h3>
-<p>Confirm:</p>
-<ul>
-<li><code>JOSI_APP_URL</code> exactly matches the browser&#39;s HTTPS origin.</li>
-<li><code>JOSI_COOKIE_SECURE=true</code> for HTTPS.</li>
-<li>The proxy sends <code>X-Forwarded-Proto: https</code>.</li>
-<li>The browser is not being redirected between different hostnames.</li>
-<li>System time is correct.</li>
-</ul>
-<p>For plain HTTP evaluation only, set <code>JOSI_COOKIE_SECURE=false</code>, recreate the web
-container, and clear cookies for the host.</p>
-<h3>17.6 Caddy restarts or cannot issue a certificate</h3>
-<pre><code class="language-bash">docker compose ps caddy
-docker compose logs --tail=500 caddy
-dig +short A josi.example.com
-dig +short AAAA josi.example.com
-</code></pre>
-<p>Check that ports 80 and 443 reach this server, that another service is not
-already bound to them, and that DNS does not contain a stale address.</p>
-<p><code>JOSI_ACME_EMAIL</code> in <code>.env</code> is currently informational. The supplied Caddyfile
-does not interpolate it because an empty <code>email</code> directive makes Caddy fail to
-parse. Certificate issuance works without an ACME contact address.</p>
-<h3>17.7 Port already in use</h3>
-<pre><code class="language-bash">sudo ss -lntp | grep -E &#39;:(80|443|8080)[[:space:]]&#39;
-docker ps --format &#39;table {{.Names}}\t{{.Ports}}&#39;
-</code></pre>
-<p>Stop the conflicting service, choose different host ports, or use the existing
-reverse-proxy deployment shape.</p>
-<h3>17.7.1 Gmail rejects the SMTP username or password</h3>
-<p>For Gmail, use the full Gmail address as the SMTP username and a Google App
-Password created after enabling 2-Step Verification. Do not use the normal
-Google account password.</p>
-<p>Google displays an App Password as four groups of four lowercase letters. Josi
-removes spaces automatically, but must receive exactly 16 letters. Enable
-<strong>Show password</strong> before selecting <strong>Save and test</strong>
-and verify <code>4-4-4-4</code>. Google&#39;s copy action can occasionally omit the
-final character; <code>4-4-4-3</code> means the pasted value is incomplete even
-when it came directly from Google&#39;s page. Append the missing displayed
-character or generate a new App Password.</p>
-<p>Regenerate any App Password that appears in a screenshot, message, support
-ticket or log. Treat it as exposed even if the test failed.</p>
-<h3>17.8 Docker build fails</h3>
-<pre><code class="language-bash">docker compose build --pull --no-cache
-docker system df
-df -h
-df -i
-</code></pre>
-<p>Capture the first real compiler or package error, not only the final nonzero
-exit line. Do not run broad Docker prune commands on a shared host without
-reviewing what they will delete.</p>
-<h3>17.9 Host is out of disk space</h3>
-<p>Inspect before removing anything:</p>
-<pre><code class="language-bash">df -h
-docker system df -v
-docker volume ls
-docker image ls
-</code></pre>
-<p>Do not delete a volume merely because its name looks old. Confirm ownership and
-take a restorable backup first.</p>
-<h3>17.10 Host architecture mismatch</h3>
-<pre><code class="language-bash">uname -m
-docker info --format &#39;{{.Architecture}}&#39;
-docker image inspect &quot;${JOSI_IMAGE:-josi-ce}:${JOSI_TAG:-local}&quot; --format &#39;{{.Architecture}}&#39;
-</code></pre>
-<p>Use a 64-bit <code>amd64</code> or <code>arm64</code> OS and matching image.</p>
-<h3>17.11 ClamAV remains unhealthy</h3>
-<pre><code class="language-bash">docker compose --profile clamav ps clamav
-docker compose --profile clamav logs --tail=500 clamav
-docker stats --no-stream
-</code></pre>
-<p>Allow time for initial signature loading and verify the host has enough memory.
-An out-of-memory kill appears in container state and host kernel logs.</p>
-<h3>Managing connector permissions</h3>
-<p>On <strong>Settings → Connectors</strong>, <strong>Member permissions</strong> controls which
-connector features members are allowed to enable for their own accounts.
-Allowing a permission does not turn it on for anyone or grant access by itself;
-each member must still connect their own account and enable the feature.</p>
-<p>Google, Microsoft, Dropbox, and Box show one provider consent screen for the
-complete set of features Josi currently supports. Those provider permissions do
-not turn features on inside Josi: members still use the local On/Off controls.
-Older connections with partial permissions show one account-level
-<strong>Upgrade permissions / Reconnect</strong> action instead of approval buttons
-beside individual features.</p>
-<p>OAuth application forms only enable <strong>Save</strong> after a valid change.
-Wait for the named saved confirmation before leaving the page; secrets remain
-masked and are never shown again.</p>
-<h2>18. Security checklist</h2>
-<p>Before considering an installation reachable by other people, confirm:</p>
-<ul>
-<li><input disabled="" type="checkbox"> The checkout is an intended release, not an arbitrary dirty branch.</li>
-<li><input disabled="" type="checkbox"> <code>scripts/scan-secrets.sh</code> passes.</li>
-<li><input disabled="" type="checkbox"> <code>scripts/install.sh --check</code> passes.</li>
-<li><input disabled="" type="checkbox"> The master key has an encrypted off-host copy.</li>
-<li><input disabled="" type="checkbox"> <code>.env</code> contains the correct public origin.</li>
-<li><input disabled="" type="checkbox"> HTTPS works with a valid certificate.</li>
-<li><input disabled="" type="checkbox"> Secure cookies remain enabled for HTTPS.</li>
-<li><input disabled="" type="checkbox"> PostgreSQL is not published to the host or Internet.</li>
-<li><input disabled="" type="checkbox"> Host security updates are enabled and current.</li>
-<li><input disabled="" type="checkbox"> SSH uses strong authentication and limited network exposure.</li>
-<li><input disabled="" type="checkbox"> Optional OCR and ClamAV services are enabled only when supported and
-resourced.</li>
-<li><input disabled="" type="checkbox"> Provider, OAuth, and SMTP credentials belong to the operator.</li>
-<li><input disabled="" type="checkbox"> External LLM processing is disclosed to users.</li>
-<li><input disabled="" type="checkbox"> Telemetry was explicitly chosen rather than assumed.</li>
-<li><input disabled="" type="checkbox"> <code>/health</code> and <code>/ready</code> are monitored.</li>
-<li><input disabled="" type="checkbox"> A current full backup and the separate master key have been restored in a test.</li>
-<li><input disabled="" type="checkbox"> Current threat-model and release gates have passed before public launch.</li>
-</ul>
-<h2>19. Collecting useful support information</h2>
-<p>Josi creates a redacted diagnostics bundle locally. Review it before approving
-submission to an operator-configured support gateway; Community installations
-ship with no gateway. The fixed bundle schema excludes messages, emails,
-documents, prompts, database rows and credentials. Container health and logs are
-not collected because the application has no Docker socket. If you inspect logs
-yourself, redact them before sharing. Never send:</p>
-<ul>
-<li><code>secrets/master.key</code></li>
-<li><code>secrets/db_password</code></li>
-<li>Provider API keys</li>
-<li>OAuth client secrets or access/refresh tokens</li>
-<li>SMTP passwords</li>
-<li>Message, document, contact, calendar, or prompt content</li>
-</ul>
-<p>Safe first-line metadata usually includes the Josi commit or release, host OS,
-CPU architecture, Docker versions, Compose service state, the failing endpoint,
-and the exact error after secrets and user content are removed.</p>
-<pre><code class="language-bash">git rev-parse HEAD
-uname -a
-docker version
-docker compose version
-docker compose ps -a
-</code></pre>
-<h2 id="offline-password-recovery">Offline password recovery</h2>
-<p>If reset email is unavailable, run <code>./reset-password.sh USERNAME_OR_EMAIL</code>
-from the installation directory. The command accepts the new password through a
-hidden prompt, changes exactly one active account, and invalidates its existing
-sessions and unused reset links. Reset-email links use the exact browser-facing
-origin selected in the installer, including LAN HTTP and non-default ports.</p>
-<h2 id="developer-workspace">Optional developer workspace</h2>
-<p>The browser installer can optionally bind one host project folder into Josi at
-<code>/workspace</code>. Skip it unless coding connectors need local files. Choose
-read-only access for inspection or read/write for editing, tests, and Git. The
-installer validates the requested capability and refuses system, credential,
-secret, and Josi installation paths. Normal Josi containers never receive the
-Docker socket.</p>
-<h2 id="setup-recovery-key">Setup recovery key and model test</h2>
-<p>The Vault key is displayed only as a masked preview ending in its true final
-four characters. Use the explicit Copy or Download action and store it offline.
-The launch checklist reuses that acknowledgement. The Language Model step saves
-the configuration and runs the full five-part capability test before setup may
-advance.</p>
-<h2 id="uninstallation">20. Uninstallation</h2>
-<p>There is no supported uninstall-and-preserve-data wizard yet.</p>
-<p>Stopping the installation is reversible:</p>
-<pre><code class="language-bash">docker compose stop
-</code></pre>
-<p>Removing containers and networks while retaining named volumes:</p>
-<pre><code class="language-bash">docker compose down
-</code></pre>
-<p>Deleting named volumes or the installation directory destroys data. Before any
-permanent removal, create and verify a complete backup, and separately preserve
-the master key. This manual deliberately
-does not provide a one-line destructive wipe command.</p>

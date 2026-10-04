@@ -1,10 +1,11 @@
-const DOCS_ROOT = 'https://josi-ce-docs.netlify.app/';
+const DOCS_ROOT = 'https://help.heyjosi.com/';
 
-export const HELP_URL = `${DOCS_ROOT}#help`;
-export const TERMS_URL = `${DOCS_ROOT}#terms-of-use`;
-export const PRIVACY_URL = `${DOCS_ROOT}#privacy-notice`;
-export const COOKIES_URL = `${DOCS_ROOT}#cookie-notice`;
-export const LICENCE_URL = `${DOCS_ROOT}#software-and-paid-feature-licences`;
+export const HELP_URL = '/help/index.html';
+export const LIVE_HELP_URL = DOCS_ROOT;
+export const TERMS_URL = '/help/legal/index.html#terms-of-use';
+export const PRIVACY_URL = '/help/legal/index.html#privacy-notice';
+export const COOKIES_URL = '/help/legal/index.html#cookie-notice';
+export const LICENCE_URL = '/help/legal/index.html#software-and-paid-feature-licences';
 
 export function LegalLinks({ className = '' }: { className?: string }) {
   return (
