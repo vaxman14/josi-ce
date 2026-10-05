@@ -397,10 +397,14 @@ run_doctor_checks(){
     local mounts worker_mounts bad_mount=0 roots=0 source dest rw worker_id workspace_mode normalized_web normalized_worker
     mounts=$(docker inspect -f '{{range .Mounts}}{{printf "%s|%s|%t\n" .Source .Destination .RW}}{{end}}' "$web_id" 2>/dev/null || true); worker_id=$(container_id worker); worker_mounts=$(docker inspect -f '{{range .Mounts}}{{printf "%s|%s|%t\n" .Source .Destination .RW}}{{end}}' "$worker_id" 2>/dev/null || true); workspace_mode=$(env_get JOSI_WORKSPACE_MODE); workspace_mode=${workspace_mode:-ro}
     [[ "$workspace_mode" == ro || "$workspace_mode" == rw ]] || bad_mount=1
-    while IFS='|' read -r source dest rw; do [[ "$dest" == /data/roots/* ]] || continue; roots=$((roots+1)); [[ -d "$source" ]] || bad_mount=1; [[ ( "$workspace_mode" == ro && "$rw" == false ) || ( "$workspace_mode" == rw && "$rw" == true ) ]] || bad_mount=1; done <<< "$mounts"
-    normalized_web=$(printf '%s\n' "$mounts" | awk -F'|' '$2 ~ /^\/data\/roots\// {print}' | LC_ALL=C sort); normalized_worker=$(printf '%s\n' "$worker_mounts" | awk -F'|' '$2 ~ /^\/data\/roots\// {print}' | LC_ALL=C sort)
+    while IFS='|' read -r source dest rw; do
+      [[ "$dest" == /workspace || "$dest" == /data/roots/* ]] || continue
+      roots=$((roots+1))
+      [[ ( "$workspace_mode" == ro && "$rw" == false ) || ( "$workspace_mode" == rw && "$rw" == true ) ]] || bad_mount=1
+    done <<< "$mounts"
+    normalized_web=$(printf '%s\n' "$mounts" | awk -F'|' '$2 == "/workspace" || $2 ~ /^\/data\/roots\// {print}' | LC_ALL=C sort); normalized_worker=$(printf '%s\n' "$worker_mounts" | awk -F'|' '$2 == "/workspace" || $2 ~ /^\/data\/roots\// {print}' | LC_ALL=C sort)
     [[ "$normalized_web" == "$normalized_worker" ]] || bad_mount=1
-    [[ "$roots" -gt 0 && "$bad_mount" == 0 ]] && doctor_check workspace pass "$roots resolved Compose workspace bind(s) available with mode=$workspace_mode in web and worker" || doctor_check workspace fail 'workspace is enabled but resolved /data/roots binds are missing, unavailable, mode-mismatched, or differ between web and worker'
+    [[ "$roots" -gt 0 && "$bad_mount" == 0 ]] && doctor_check workspace pass "$roots active Compose workspace bind(s) available with mode=$workspace_mode in web and worker" || doctor_check workspace fail 'workspace is enabled but its active binds are missing, mode-mismatched, or differ between web and worker'
   fi
   if [[ -f "$RECEIPTS/last-backup.json" ]]; then
     local newest; newest=$(ls -1t "$BACKUPS"/josi-db-*.sql.gz 2>/dev/null | head -1 || true)

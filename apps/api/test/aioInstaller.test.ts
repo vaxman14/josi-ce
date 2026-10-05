@@ -41,7 +41,9 @@ describe('the browser-first AIO installer', () => {
   it('protects the LAN setup UI with TLS and a one-time high-entropy code', () => {
     const controller = readFileSync(join(root, 'services/installer/controller.py'), 'utf8');
     expect(installer).toContain('openssl rand -hex 16');
-    expect(installer).toContain('https://${host_ip}:${INSTALLER_PORT}');
+    expect(installer).toContain('https://${setup_host}:${INSTALLER_PORT}');
+    expect(installer).toContain('JOSI_INSTALLER_HOSTNAME');
+    expect(installer).toContain('subjectAltName=${installer_san}');
     expect(controller).toContain('hmac.compare_digest');
     expect(controller).toContain('HttpOnly; Secure; SameSite=Strict');
     expect(controller).toContain('X-Josi-Installer');

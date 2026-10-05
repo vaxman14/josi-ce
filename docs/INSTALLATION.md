@@ -18,9 +18,11 @@ Choose the command for your computer and paste the whole block into Terminal.
 ### Mac
 
 ```bash
+JOSI_HOST_IP="$(ipconfig getifaddr "$(route -n get default | awk '/interface:/{print $2;exit}')")" && \
+test -n "$JOSI_HOST_IP" && \
 mkdir -p "$HOME/josi-ce" && cd "$HOME/josi-ce" && \
 docker run --rm \
-  -p 8080:8080 \
+  -e JOSI_INSTALLER_HOSTNAME="$JOSI_HOST_IP" -p 8080:8080 \
   -v "$HOME/.docker/run/docker.sock:/var/run/docker.sock" \
   -v "$PWD:$PWD" -w "$PWD" \
   docker.io/romanvaxman/josi-ce-installer:latest
@@ -29,16 +31,20 @@ docker run --rm \
 ### Linux
 
 ```bash
+JOSI_HOST_IP="$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++)if($i=="src"){print $(i+1);exit}}')" && \
+test -n "$JOSI_HOST_IP" && \
 mkdir -p "$HOME/josi-ce" && cd "$HOME/josi-ce" && \
 docker run --rm \
-  -p 8080:8080 \
+  -e JOSI_INSTALLER_HOSTNAME="$JOSI_HOST_IP" -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:$PWD" -w "$PWD" \
   docker.io/romanvaxman/josi-ce-installer:latest
 ```
 
-The installer prints a private setup URL and a one-time setup code. Leave the
-Terminal window open while setup is running.
+The installer prints one private setup link using the computer's LAN address.
+Leave the Terminal window open while setup is running. The same link works from
+another device on the local network, including a headless Josi server. It never
+uses Docker Desktop's hidden Linux-VM address.
 
 The temporary installer can control Docker so it can create the Josi services.
 It exits when installation finishes. The normal Josi services do not receive
@@ -48,8 +54,8 @@ the Docker socket.
 
 1. Open the setup URL printed in Terminal.
 2. Accept the temporary local-certificate warning.
-3. Enter the one-time setup code.
-4. Choose how people will reach Josi:
+3. The private link connects to the installer automatically.
+4. Choose how people will reach Josi entirely in the browser:
    - this computer only;
    - devices on your local network;
    - a public domain with automatic HTTPS; or
@@ -60,6 +66,8 @@ the Docker socket.
 
 The browser installer writes the configuration, generates the installation
 secrets, downloads the published images, starts Josi, and checks that it opens.
+You do not edit `.env`, run Compose, or use the Josi management CLI during the
+normal installation path.
 
 ## 3. Open Josi
 
