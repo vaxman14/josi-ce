@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, type Reminder, type Task, type TaskActivity, type TaskRun, type TaskType } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
 import { plain } from '@/lib/plainLanguage';
-import { canCancelTask, runAction, tabForRun, tabForTask, taskAction, type TaskTab } from '@/lib/taskManager';
+import { canCancelTask, runAction, tabForRun, tabForTask, taskAction, taskSlotLink, type TaskTab } from '@/lib/taskManager';
 
 const TABS: Array<{ key: TaskTab; label: string }> = [
   { key: 'active', label: 'Active' },
@@ -41,7 +41,17 @@ function eventLabel(kind: string, payload: Record<string, unknown>): string {
     return `Status changed to ${to}`;
   }
   if (kind === 'task.slots_updated') return 'Task details updated';
+  if (kind === 'restaurant.handoff_prepared') return 'Booking links prepared';
+  if (kind === 'restaurant.booking_reported') return 'Booking recorded from your confirmation';
   return kind.replace(/^task\./, '').replace(/[._]/g, ' ');
+}
+
+function slotValue(key: string, value: unknown) {
+  const link = taskSlotLink(key, value);
+  if (link) {
+    return <a className="break-all underline" href={link.href} target="_blank" rel="noreferrer">{link.label}</a>;
+  }
+  return String(value);
 }
 
 type TimelineRow = { id: string; at: string; label: string; detail?: string };
@@ -273,7 +283,7 @@ export function Tasks() {
                         {Object.entries(task.slots).map(([key, value]) => (
                           <div key={key} className="flex min-w-0 gap-2">
                             <dt className="shrink-0 text-muted-foreground">{key.replace(/_/g, ' ')}:</dt>
-                            <dd className="min-w-0 break-words">{String(value)}</dd>
+                            <dd className="min-w-0 break-words">{slotValue(key, value)}</dd>
                           </div>
                         ))}
                       </dl>

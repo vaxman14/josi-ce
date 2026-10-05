@@ -10,6 +10,7 @@ import { CUSTOM_API_TOOLS } from './customApiTools.js';
 import { DATA_TOOLS } from './dataTools.js';
 import { WORKFLOW_TOOLS } from './workflowTools.js';
 import { DEVELOPER_INTEGRATION_TOOLS, OBSIDIAN_TOOLS } from './developerIntegrationTools.js';
+import { RESTAURANT_TOOLS } from './restaurantTools.js';
 
 /** Everything the assistant can do that changes something.
  *
@@ -27,6 +28,7 @@ export interface ToolSpec {
 
 export const TASK_TOOLS: ToolSpec[] = [
   ...WORKSPACE_TOOLS,
+  ...RESTAURANT_TOOLS,
   { def: { name: 'get_provider_status', description: 'Read current owner-scoped connection, capability, mapped storage, index/queue and contact-sync metadata. Use for connectivity or available-file claims. Treat the receipt, observation time, account metadata and identifiers as internal grounding evidence: never show them to the person. Summarize useful status with a human-facing provider/source name. Connection status is not proof of provider reachability or indexed files.', parameters: { type: 'object', properties: {}, additionalProperties: false } }, actionClass: null },
   {
     def: {
