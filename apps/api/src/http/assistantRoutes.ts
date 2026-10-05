@@ -20,10 +20,10 @@ import {
   addMessage, appendEvent, ApprovalError, createContact, createTask, createThread, decideActionApproval, markActionsPresented,
   getTask, getTemplate, getThread, listContactsFor, listMessages, pendingApprovalSnapshot,
   listTasksFor, listTemplates, listThreadsFor, missingSlots, resolveAccess, setSlots,
-  setUserApprovalLevel, getApprovalLevel, taskMetrics, transition, verifyStepUp,
+  setUserApprovalLevel, getApprovalLevel, taskMetrics, taskActivity, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder, updateReminder,
   checkChildAccess, encodeTurnCursor, listNativeReminderActions,
-  json, submitDurableTurn, listDurableTurns, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
+  json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -540,16 +540,27 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   // ------------------------------------------------------------ tasks
   r.get(
     '/tasks',
-    handle(async (req, res) =>
-      res.json({
+    handle(async (req, res) => {
+      const includeClosed = req.query.all === '1';
+      return res.json({
         tasks: await listTasksFor(db, {
           ownerUserId: req.user!.id,
-          includeClosed: req.query.all === '1',
+          includeClosed,
+          limit: includeClosed ? 200 : undefined,
         }),
-      })),
+      });
+    }),
   );
 
   r.get('/task-types', handle(async (_req, res) => res.json({ types: await listTemplates(db) })));
+
+  r.get(
+    '/task-runs',
+    handle(async (req, res) => {
+      res.set('Cache-Control', 'private, no-store');
+      return res.json({ runs: await listTaskRunsFor(db, { ownerUserId: req.user!.id }) });
+    }),
+  );
 
   r.post(
     '/tasks',
@@ -576,6 +587,15 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     '/tasks/:id',
     requireOwnership({ db }, { type: 'task', need: 'read' }),
     handle(async (req, res) => res.json({ task: await getTask(db, param(req, 'id')) })),
+  );
+
+  r.get(
+    '/tasks/:id/activity',
+    requireOwnership({ db }, { type: 'task', need: 'read' }),
+    handle(async (req, res) => {
+      res.set('Cache-Control', 'private, no-store');
+      return res.json({ activity: await taskActivity(db, param(req, 'id')) });
+    }),
   );
 
   r.patch(

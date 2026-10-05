@@ -257,6 +257,53 @@ describe('one member cannot reach another member tasks or contacts', () => {
     expect(row.state).toBe('drafting');
   });
 
+  it('returns an owner-only task timeline without executor details', async () => {
+    const [task] = await db.query<{ id: string }>(
+      `insert into tasks (owner_user_id, template_key, state) values ($1,'follow_up','attempting') returning id`,
+      [ids.alice],
+    );
+    await db.query(
+      `insert into events(actor_user_id,actor,kind,subject_type,subject_id,payload)
+       values($1,'agent','task.transition','task',$2,'{"from":"ready","to":"attempting"}')`,
+      [ids.alice, task.id],
+    );
+    await db.query(
+      `insert into task_attempts(task_id,kind,ended_at,outcome,detail)
+       values($1,'calendar_lookup',now(),'success','{"private":"EXECUTOR-ONLY"}')`,
+      [task.id],
+    );
+    await db.query(
+      `insert into approvals(subject_type,subject_id,owner_user_id,action_class,action,summary,payload_hash)
+       values('task',$1,$2,'calendar_write','create','Create the appointment','task-manager-hash')`,
+      [task.id, ids.alice],
+    );
+
+    const mine = await call(`/api/assistant/tasks/${task.id}/activity`, { jar: cookies.alice });
+    expect(mine.status).toBe(200);
+    expect(mine.headers.get('cache-control')).toBe('private, no-store');
+    expect(mine.body.activity.events[0]).toMatchObject({ kind: 'task.transition' });
+    expect(mine.body.activity.attempts[0]).toMatchObject({ kind: 'calendar_lookup', outcome: 'success' });
+    expect(mine.body.activity.approvals[0]).toMatchObject({ summary: 'Create the appointment' });
+    expect(JSON.stringify(mine.body)).not.toContain('EXECUTOR-ONLY');
+    expect((await call(`/api/assistant/tasks/${task.id}/activity`, { jar: cookies.bob })).status).toBe(404);
+  });
+
+  it('lists active conversation runs across only the owner threads', async () => {
+    const threadId = await threadWith('alice', 'RUN-BODY-MUST-STAY-IN-THE-CONVERSATION');
+    const accepted = await call(`/api/assistant/threads/${threadId}/turns`, {
+      method: 'POST', jar: cookies.alice,
+      body: { client_message_id: 'task-manager-run', message: 'RUN-BODY-MUST-STAY-IN-THE-CONVERSATION' },
+    });
+    expect(accepted.status).toBe(202);
+
+    const mine = await call('/api/assistant/task-runs', { jar: cookies.alice });
+    expect(mine.status).toBe(200);
+    expect(mine.headers.get('cache-control')).toBe('private, no-store');
+    expect(mine.body.runs[0]).toMatchObject({ id: accepted.body.turn.id, thread_id: threadId, status: 'queued' });
+    expect(JSON.stringify(mine.body)).not.toContain('RUN-BODY-MUST-STAY-IN-THE-CONVERSATION');
+    expect((await call('/api/assistant/task-runs', { jar: cookies.bob })).body.runs).toEqual([]);
+  });
+
   it('404s a colleague contact', async () => {
     const created = await call('/api/assistant/contacts', {
       method: 'POST', jar: cookies.alice, body: { name: 'PRIVATE-CONTACT', email: 'p@x.test' },

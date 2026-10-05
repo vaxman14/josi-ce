@@ -69,9 +69,36 @@ export interface Task {
   urgency_ceiling: string;
   attempt_count: number;
   next_wake_at: string | null;
+  due_at: string | null;
   fail_reason: string | null;
   meta: Record<string, unknown>;
   created_at: string;
+  updated_at: string;
+}
+
+export interface TaskActivity {
+  events: Array<{
+    id: string;
+    actor: string;
+    kind: string;
+    payload: Record<string, unknown>;
+    created_at: string;
+  }>;
+  attempts: Array<{
+    id: string;
+    kind: string;
+    outcome: string | null;
+    started_at: string;
+    ended_at: string | null;
+  }>;
+  approvals: Array<{
+    id: string;
+    action: string;
+    summary: string;
+    status: string;
+    created_at: string;
+    decided_at: string | null;
+  }>;
 }
 
 export class TaskError extends Error {}
@@ -255,7 +282,32 @@ export async function listTasksFor(
     `select * from tasks
      where owner_user_id = $1
        and ($2::boolean or state not in ('closed', 'confirmed', 'cancelled', 'failed'))
-     order by created_at desc limit $3`,
+     order by case when state in ('closed', 'confirmed', 'cancelled', 'failed') then 1 else 0 end,
+              updated_at desc limit $3`,
     [args.ownerUserId, args.includeClosed ?? false, Math.min(200, args.limit ?? 50)],
   );
+}
+
+/** The owner's readable task timeline. Audit payloads remain metadata-only,
+ * attempt details remain private to the executor, and approval summaries are
+ * returned only after the ordinary task ownership guard has passed. */
+export async function taskActivity(db: Db, taskId: string): Promise<TaskActivity> {
+  const [events, attempts, approvals] = await Promise.all([
+    db.query<TaskActivity['events'][number]>(
+      `select id::text,actor,kind,payload,created_at from events
+       where subject_type='task' and subject_id=$1 order by created_at,id`,
+      [taskId],
+    ),
+    db.query<TaskActivity['attempts'][number]>(
+      `select id,kind,outcome,started_at,ended_at from task_attempts
+       where task_id=$1 order by created_at,id`,
+      [taskId],
+    ),
+    db.query<TaskActivity['approvals'][number]>(
+      `select id,action,summary,status,created_at,decided_at from approvals
+       where subject_type='task' and subject_id=$1 order by created_at,id`,
+      [taskId],
+    ),
+  ]);
+  return { events, attempts, approvals };
 }
