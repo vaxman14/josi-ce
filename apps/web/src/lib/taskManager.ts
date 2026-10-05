@@ -17,6 +17,12 @@ export function tabForRun(run: TaskRun): TaskTab {
 }
 
 export function taskAction(task: Task): string {
+  if (task.template_key === 'restaurant_reservation' && task.state === 'awaiting_owner') {
+    return 'Waiting for you to finish the booking';
+  }
+  if (task.template_key === 'restaurant_reservation' && task.state === 'confirmed') {
+    return 'Booking recorded from your confirmation';
+  }
   const actions: Record<string, string> = {
     drafting: 'Working out the next steps',
     awaiting_approval: 'Waiting for your approval',
@@ -32,6 +38,22 @@ export function taskAction(task: Task): string {
   return actions[task.state] ?? task.state.replace(/_/g, ' ');
 }
 
+const BOOKING_LINKS: Record<string, { origin: string; label: string }> = {
+  open_table_url: { origin: 'https://www.opentable.com', label: 'Open OpenTable' },
+  google_maps_url: { origin: 'https://www.google.com', label: 'Open Google Maps' },
+};
+
+export function taskSlotLink(key: string, value: unknown): { href: string; label: string } | null {
+  const allowed = BOOKING_LINKS[key];
+  if (!allowed || typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.origin === allowed.origin ? { href: url.toString(), label: allowed.label } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function runAction(run: TaskRun): string {
   if (run.status === 'queued') return 'Waiting for Josi to start';
   if (run.status === 'running') return 'Josi is working';
@@ -42,4 +64,3 @@ export function runAction(run: TaskRun): string {
 export function canCancelTask(task: Task): boolean {
   return !TERMINAL.has(task.state);
 }
-
