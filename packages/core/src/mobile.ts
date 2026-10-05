@@ -5,6 +5,7 @@ import type { MasterKey } from './masterKey.js';
 
 export type TurnStatus='queued'|'running'|'completed'|'failed';
 export interface DurableTurn { id:string;owner_user_id:string;accepted_session_id:string;thread_id:string;client_message_id:string;attempt_of:string|null;inbound_message_id:string;reply_to_message_id:string|null;attachment_ids:string[];status:TurnStatus;assistant_message_id:string|null;tool_receipts:unknown[];error_code:string|null;error_retryable:boolean|null;created_at:string;updated_at:string; }
+export interface TaskRunSummary { id:string;thread_id:string;thread_title:string|null;status:TurnStatus;attempt_of:string|null;error_code:string|null;error_retryable:boolean|null;started_at:string|null;completed_at:string|null;created_at:string;updated_at:string; }
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const canonical=(v:unknown):string=>JSON.stringify(v,(_k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.entries(x).sort(([a],[b])=>a.localeCompare(b))):x);
 const digest=(v:unknown)=>createHash('sha256').update(canonical(v)).digest('hex');
@@ -85,6 +86,17 @@ export async function listDurableTurns(db:Db,args:{ownerUserId:string;threadId:s
   if(args.turnId)return db.query<DurableTurn>(`select * from assistant_turns where owner_user_id=$1 and thread_id=$2 and id=$3`,[args.ownerUserId,args.threadId,args.turnId]);
   if(cursor)return db.query<DurableTurn>(`select * from assistant_turns where owner_user_id=$1 and thread_id=$2 and (updated_at,id)>($3::timestamptz,$4::uuid) order by updated_at,id limit 200`,[args.ownerUserId,args.threadId,cursor.updated_at,cursor.id]);
   return db.query<DurableTurn>(`select * from (select * from assistant_turns where owner_user_id=$1 and thread_id=$2 order by updated_at desc,id desc limit 200) recent order by updated_at,id`,[args.ownerUserId,args.threadId]);
+}
+
+/** Cross-thread process list for the owner's task manager. Deliberately omits
+ * message bodies and tool receipts: the task manager says what is running;
+ * opening the conversation remains the place to read its private content. */
+export async function listTaskRunsFor(db:Db,args:{ownerUserId:string;limit?:number}):Promise<TaskRunSummary[]>{
+  return db.query<TaskRunSummary>(`select t.id,t.thread_id,th.title thread_title,t.status,t.attempt_of,
+    t.error_code,t.error_retryable,t.started_at,t.completed_at,t.created_at,t.updated_at
+    from assistant_turns t join threads th on th.id=t.thread_id
+    where t.owner_user_id=$1 order by t.updated_at desc,t.id desc limit $2`,
+  [args.ownerUserId,Math.min(200,Math.max(1,args.limit??100))]);
 }
 export async function claimDurableTurn(db:Db,turnId:string,leaseSeconds=300):Promise<(DurableTurn&{lease_token:string})|null>{
   const token=randomUUID();

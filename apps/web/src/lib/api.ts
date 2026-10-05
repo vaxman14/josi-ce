@@ -129,7 +129,31 @@ export interface Task {
   state: string;
   slots: Record<string, unknown>;
   attempt_count: number;
+  next_wake_at: string | null;
+  due_at: string | null;
+  fail_reason: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+export interface TaskRun {
+  id: string;
+  thread_id: string;
+  thread_title: string | null;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  attempt_of: string | null;
+  error_code: string | null;
+  error_retryable: boolean | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskActivity {
+  events: Array<{ id: string; actor: string; kind: string; payload: Record<string, unknown>; created_at: string }>;
+  attempts: Array<{ id: string; kind: string; outcome: string | null; started_at: string; ended_at: string | null }>;
+  approvals: Array<{ id: string; action: string; summary: string; status: string; created_at: string; decided_at: string | null }>;
 }
 
 export interface Reminder {
