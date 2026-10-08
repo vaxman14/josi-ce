@@ -13,6 +13,7 @@
 // log aggregator. A file mounted as a Docker secret is readable by the process
 // and by nothing else.
 import { readFileSync, statSync } from 'node:fs';
+import { readWindowsSecret } from './windowsSecrets.js';
 
 export const DEFAULT_MASTER_KEY_PATH = '/run/secrets/josi_master_key';
 
@@ -92,8 +93,12 @@ export function loadMasterKey(opts: LoadOptions = {}): MasterKey {
 
   let raw: Buffer;
   try {
-    raw = (opts.readFile ?? readFileSync)(path);
+    raw = (opts.readFile ?? (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
+      ? readWindowsSecret : readFileSync))(path);
   } catch {
+    if (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1') {
+      throw new MasterKeyError('The installation key is missing or its Windows permissions are unsafe. Use Repair in Josi CE Server Setup.');
+    }
     throw new MasterKeyError(
       `no master key at ${path}. Run scripts/install.sh to generate one, and mount it as a Docker secret.`,
     );

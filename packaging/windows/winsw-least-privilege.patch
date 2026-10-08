@@ -1,0 +1,10 @@
+--- a/src/WinSW/WrapperService.cs
++++ b/src/WinSW/WrapperService.cs
+@@ -392,6 +392,6 @@
+         private void SignalStopped()
+         {
+-            using var scm = ServiceManager.Open();
++            using var scm = ServiceManager.Open(ServiceApis.ServiceManagerAccess.Connect);
+             using var sc = scm.OpenService(this.ServiceName, ServiceApis.ServiceAccess.QueryStatus);
+ 
+             sc.SetStatus(this.ServiceHandle, ServiceControllerStatus.Stopped);

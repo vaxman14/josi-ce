@@ -299,7 +299,9 @@ describe('LB1.5 — a permission mode is a number, never a filesystem-stat dump'
     }
   });
 
-  it('reads a real file’s mode as plain octal digits', () => {
+  // POSIX mode bits and Bash exercise the existing Unix installer only. Native
+  // Windows acceptance separately checks real DACLs; do not invoke WSL here.
+  it.skipIf(process.platform === 'win32')('reads a real file’s mode as plain octal digits', () => {
     // The property, executed rather than pattern-matched.
     //
     // This used to read `secrets/master.key`, which exists in a working
@@ -320,7 +322,7 @@ describe('LB1.5 — a permission mode is a number, never a filesystem-stat dump'
     }
   });
 
-  it('reports nothing rather than junk when there is no mode to read', () => {
+  it.skipIf(process.platform === 'win32')('reports nothing rather than junk when there is no mode to read', () => {
     // A missing file must not produce a "mode" at all. The original defect was
     // exactly this shape: a failed stat whose output was printed as a mode.
     expect(() => execPreflightHelper('file_mode /nonexistent/file/here')).toThrow();
@@ -337,7 +339,7 @@ describe('LB1.6 — a healthy disk does not warn', () => {
     expect(diskFn, 'the disk check must not parse `df -h`').not.toMatch(/df\s+-h/);
   });
 
-  it('reports this host’s real free space as a plain integer', () => {
+  it.skipIf(process.platform === 'win32')('reports this host’s real free space as a plain integer', () => {
     const mb = execPreflightHelper('disk_free_mb .');
     expect(mb, 'free space is whole megabytes').toMatch(/^\d+$/);
     // This repository lives on a normal disk with room on it. The assertion is

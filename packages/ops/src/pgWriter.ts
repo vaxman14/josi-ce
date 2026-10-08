@@ -15,8 +15,9 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
+import { privateTemporaryDirectory, readWindowsSecret, resolveDataPath } from '@josi-ce/core';
 import { BackupError, type BackupContents, type BackupKind, type BackupWriter } from './backup.js';
 import { RestoreError, type RestoreReader } from './backup.js';
 
@@ -28,6 +29,10 @@ export interface PgConnection {
   /** Read from a file at call time and passed through the environment to the
    * child only. Never logged, never stored, never part of an error. */
   password?: string;
+  /** Raw password file, read for each operation; preferred by native services. */
+  passwordFile?: string;
+  /** Private, immutable PostgreSQL bin directory. Required on Windows. */
+  toolsDirectory?: string;
 }
 
 /** Tables whose contents are derived and enormous, excluded from a PORTABLE
@@ -49,8 +54,9 @@ function run(
 ): Promise<{ stdout: Buffer; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      env: { ...process.env, ...opts.env },
+      env: opts.env ?? process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
     const out: Buffer[] = [];
     let err = '';
@@ -62,15 +68,59 @@ function run(
     child.stdout.on('data', (d: Buffer) => out.push(d));
     // Kept only to classify. It is never returned to a caller or logged,
     // because pg_dump's stderr quotes connection strings and table contents.
-    child.stderr.on('data', (d: Buffer) => { err += d.toString(); });
+    child.stderr.on('data', (d: Buffer) => {
+      if (err.length < 65536) err += d.toString().slice(0, 65536 - err.length);
+    });
     child.on('error', (e) => { clearTimeout(timer); reject(e); });
     child.on('close', (code) => {
       clearTimeout(timer);
       resolve({ stdout: Buffer.concat(out), stderr: err, code: code ?? 1 });
     });
-    if (opts.input) { child.stdin.write(opts.input); child.stdin.end(); }
+    // psql may reject an archive before consuming stdin. Its exit status and
+    // redacted category carry the error; EPIPE must not crash the API process.
+    child.stdin.on('error', () => undefined);
+    if (opts.input) { child.stdin.end(opts.input); }
     else child.stdin.end();
   });
+}
+
+function toolPath(name: 'pg_dump' | 'psql', directory = process.env.JOSI_PG_BIN): string {
+  if (process.platform !== 'win32') return directory ? join(directory, name) : name;
+  if (!directory || !isAbsolute(directory) || !/^[A-Za-z]:[\\/]/.test(directory)) {
+    throw new BackupError('the bundled database tools are not configured', 'unknown');
+  }
+  return join(directory, `${name}.exe`);
+}
+
+async function runPg(conn: PgConnection, name: 'pg_dump' | 'psql', args: string[], input?: Buffer) {
+  let privateDir: string | undefined;
+  try {
+    const command = toolPath(name, conn.toolsDirectory);
+    const password = conn.passwordFile ? (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
+      ? readWindowsSecret(conn.passwordFile).toString('utf8') : await readFile(conn.passwordFile, 'utf8')).trim() : conn.password;
+    let env: NodeJS.ProcessEnv;
+    if (process.platform === 'win32') {
+      // Do not pass provider credentials or inherited libpq options to tools.
+      env = { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
+        TEMP: process.env.TEMP, TMP: process.env.TMP, PATH: dirname(command),
+        PGCONNECT_TIMEOUT: '10', PGCLIENTENCODING: 'UTF8' };
+      if (password !== undefined) {
+        const fields = [conn.host, String(conn.port), conn.database, conn.user, password];
+        if (fields.some(value => /[\r\n\0]/.test(value))) {
+          throw new BackupError('the database credentials are invalid', 'permission_denied');
+        }
+        privateDir = privateTemporaryDirectory('josi-pg-');
+        env.PGPASSFILE = join(privateDir, 'pgpass.conf');
+        await writeFile(env.PGPASSFILE, fields.map(value => value.replace(/\\/g, '\\\\').replace(/:/g, '\\:')).join(':') + '\n', { mode: 0o600, flag: 'wx' });
+      }
+    } else {
+      env = { ...process.env, ...(password === undefined ? {} : { PGPASSWORD: password }) };
+    }
+    return await run(command, ['--no-password', ...args], { env, input });
+  } finally {
+    // Only a directory created exclusively by this invocation is removed.
+    if (privateDir) await rm(privateDir, { recursive: true, force: true });
+  }
 }
 
 /** Map a failure to a category without letting the message escape. */
@@ -90,7 +140,6 @@ export function pgBackupWriter(conn: PgConnection): BackupWriter {
   const baseArgs = [
     '-h', conn.host, '-p', String(conn.port), '-U', conn.user, '-d', conn.database,
   ];
-  const env = conn.password ? { PGPASSWORD: conn.password } : {};
 
   return {
     async write({ kind, contents, destination }: {
@@ -104,7 +153,7 @@ export function pgBackupWriter(conn: PgConnection): BackupWriter {
 
       let result;
       try {
-        result = await run('pg_dump', args, { env });
+        result = await runPg(conn, 'pg_dump', args);
       } catch (e) {
         if (e instanceof BackupError) throw e;
         throw new BackupError('pg_dump could not be started', 'unknown');
@@ -116,9 +165,10 @@ export function pgBackupWriter(conn: PgConnection): BackupWriter {
       // Compressed, because M109-style size limits and ordinary disks both
       // matter, and a SQL dump compresses by roughly ten to one.
       const compressed = gzipSync(result.stdout, { level: 6 });
+      const physicalDestination = resolveDataPath(destination);
       try {
-        await mkdir(dirname(destination), { recursive: true });
-        await writeFile(destination, compressed, { mode: 0o600 });
+        await mkdir(dirname(physicalDestination), { recursive: true });
+        await writeFile(physicalDestination, compressed, { mode: 0o600 });
       } catch (e) {
         const code = (e as NodeJS.ErrnoException).code;
         throw new BackupError(
@@ -127,7 +177,7 @@ export function pgBackupWriter(conn: PgConnection): BackupWriter {
         );
       }
 
-      const st = await stat(destination);
+      const st = await stat(physicalDestination);
       return {
         byteSize: st.size,
         sha256: createHash('sha256').update(compressed).digest('hex'),
@@ -135,11 +185,11 @@ export function pgBackupWriter(conn: PgConnection): BackupWriter {
     },
 
     async read(path: string) {
-      return readFile(path);
+      return readFile(resolveDataPath(path));
     },
 
     async remove(path: string) {
-      await rm(path, { force: true });
+      await rm(resolveDataPath(path), { force: true });
     },
   };
 }
@@ -150,7 +200,6 @@ export function pgBackupWriter(conn: PgConnection): BackupWriter {
  * rather than half-replaced, which is the difference between a failed restore
  * and a destroyed installation. */
 export function pgRestoreReader(conn: PgConnection): RestoreReader {
-  const env = conn.password ? { PGPASSWORD: conn.password } : {};
   return {
     async apply({ archive }: { archive: Buffer }) {
       let sql: Buffer;
@@ -160,10 +209,16 @@ export function pgRestoreReader(conn: PgConnection): RestoreReader {
         throw new RestoreError('that file is not a Josi backup', 'archive_corrupt');
       }
 
-      const result = await run('psql', [
+      let result;
+      try {
+        result = await runPg(conn, 'psql', [
+        '-X',
         '-h', conn.host, '-p', String(conn.port), '-U', conn.user, '-d', conn.database,
         '-v', 'ON_ERROR_STOP=1', '--single-transaction', '-q', '-f', '-',
-      ], { env, input: sql });
+        ], sql);
+      } catch {
+        throw new RestoreError('the database restore could not be started', 'database_unavailable');
+      }
 
       if (result.code !== 0) {
         const s = result.stderr.toLowerCase();
@@ -174,10 +229,12 @@ export function pgRestoreReader(conn: PgConnection): RestoreReader {
       }
 
       // How much came back, counted rather than claimed.
-      const counted = await run('psql', [
+      const counted = await runPg(conn, 'psql', [
+        '-X',
         '-h', conn.host, '-p', String(conn.port), '-U', conn.user, '-d', conn.database,
         '-tAc', 'select count(*) from users',
-      ], { env });
+      ]);
+      if (counted.code !== 0) throw new RestoreError('the restored database could not be verified', 'database_unavailable');
       const rows = Number.parseInt(counted.stdout.toString().trim(), 10);
       return { rowsRestored: Number.isFinite(rows) ? rows : 0 };
     },
@@ -188,7 +245,7 @@ export function pgRestoreReader(conn: PgConnection): RestoreReader {
  * available on this installation" honestly rather than failing at write time. */
 export async function pgToolsAvailable(): Promise<boolean> {
   try {
-    const r = await run('pg_dump', ['--version'], { timeoutMs: 10_000 });
+    const r = await run(toolPath('pg_dump'), ['--version'], { timeoutMs: 10_000 });
     return r.code === 0;
   } catch {
     return false;

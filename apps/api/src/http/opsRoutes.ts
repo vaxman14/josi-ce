@@ -229,7 +229,8 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         },
         configStatus: {
           smtp: (smtp?.n ?? 0) > 0,
-          clamav: policy?.clamav_enabled ?? false,
+          ...(process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
+            ? { malware_scanning: policy?.clamav_enabled ?? false } : { clamav: policy?.clamav_enabled ?? false }),
           ocr: policy?.ocr_enabled ?? false,
           // WHETHER, never which. A boolean answers "could this installation
           // have called an outside API?" without naming one.
@@ -388,8 +389,8 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
               const { writeFile } = await import('node:fs/promises');
               await writeFile(`${destination.bucket}/${backup.id}.zip.enc`, encryptBackupContents(archive, Buffer.from(opened.key, 'base64url')), { mode: 0o600 });
             } else {
-              const { copyFile } = await import('node:fs/promises');
-              await copyFile(backup.stored_path, `${destination.bucket}/${backup.id}.zip`);
+              const { writeFile } = await import('node:fs/promises');
+              await writeFile(`${destination.bucket}/${backup.id}.zip`, archive, { mode: 0o600 });
             }
           } else if (destination.credentials_enc) {
             const credentials = await openCredentialPayload<Record<string,string>>(db, requireDestinationKey(ctx), { ownerUserId: req.user!.id, service: 'backup', slot: 'destination', stored: destination.credentials_enc });

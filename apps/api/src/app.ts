@@ -353,7 +353,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // Last: the SPA and its security headers. Mounted after /api so an unknown
   // endpoint still answers with the API's JSON 404 rather than an HTML page.
   mountWebApp(app, { dir: cfg.webDir,
-    voiceEnabled: Boolean(cfg.voiceBoxHelper || process.env.JOSI_VOICE_HELPER_SOCKET) });
+    voiceEnabled: Boolean(cfg.voiceBoxHelper || process.env.JOSI_VOICE_HELPER_SOCKET
+      || (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1' && process.env.JOSI_VOICE_HELPER_TOKEN_FILE)) });
 
   return app;
 }

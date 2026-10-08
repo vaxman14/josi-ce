@@ -25,7 +25,7 @@ class NeuralSpeech:
         speller = en.G2P(trf=False, british=False, fallback=None)
         self.g2p = en.G2P(trf=False, british=False,
                          fallback=lambda token: (speller(' '.join(token.text.upper()))[0], 1))
-        self.vocab = json.loads((root / 'kokoro/config.json').read_text())['vocab']
+        self.vocab = json.loads((root / 'kokoro/config.json').read_text(encoding='utf-8'))['vocab']
         self.voice = np.fromfile(root / ('kokoro/' + config['voice'] + '.bin'), dtype='<f4').reshape(-1, 1, 256)
 
     def speech(self, text):

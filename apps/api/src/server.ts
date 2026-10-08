@@ -1,5 +1,4 @@
 // Josi CE API entrypoint.
-import { readFileSync } from 'node:fs';
 import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
@@ -29,15 +28,15 @@ try {
 
 // The real backup path. `pgBackupWriter` shells out to pg_dump, which ships in
 // the runtime image; the password is read from its file here and handed to the
-// child through the environment only, never logged and never stored.
+// child through protected native files (or the existing container environment).
 const pgConn = {
   host: process.env.PGHOST ?? 'db',
   port: Number(process.env.PGPORT ?? 5432),
   user: process.env.POSTGRES_USER ?? 'josi',
   database: process.env.POSTGRES_DB ?? 'josi',
-  password: process.env.PGPASSWORD_FILE
-    ? readFileSync(process.env.PGPASSWORD_FILE, 'utf8').trim()
-    : process.env.PGPASSWORD,
+  passwordFile: process.env.PGPASSWORD_FILE,
+  password: process.env.PGPASSWORD_FILE ? undefined : process.env.PGPASSWORD,
+  toolsDirectory: process.env.JOSI_PG_BIN,
 };
 
 const appUrl = (process.env.APP_URL ?? '').replace(/\/$/, '') || 'http://localhost:8080';
@@ -73,7 +72,11 @@ const app = createApp(db, {
   setupTokenSha256: process.env.JOSI_SETUP_TOKEN_SHA256 || null,
 });
 
-const server = app.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));
+// The native proxy is the only public listener. Container network isolation
+// retains its existing behavior on other platforms.
+const server = process.platform === 'win32'
+  ? app.listen(PORT, '127.0.0.1', () => console.log(`josi-ce api on loopback :${PORT}`))
+  : app.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));
 
 /** Stop accepting connections, drain, then close the pool. Without this a
  * `docker compose up -d` redeploy cuts requests off mid-flight. */

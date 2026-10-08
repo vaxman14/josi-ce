@@ -21,7 +21,7 @@ describe('native Obsidian workspace discovery',()=>{
     const root=await mkdtemp(join(tmpdir(),'josi-obsidian-root-'));roots.push(root);
     const outside=await mkdtemp(join(tmpdir(),'josi-obsidian-outside-'));roots.push(outside);
     await mkdir(join(outside,'.obsidian'));
-    await symlink(outside,join(root,'escape'));
+    await symlink(outside,join(root,'escape'),process.platform==='win32'?'junction':'dir');
     await expect(discoverObsidianVaults(root)).resolves.toEqual([]);
   });
 });
@@ -35,7 +35,7 @@ it('reads native Markdown unchanged and rejects traversal, symlinks and configur
  await writeFile(join(root,'vault','note.md'),content);
  expect((await readObsidianNote(root,'vault','note.md')).markdown).toBe(content);
  expect(await readFile(join(root,'vault','note.md'),'utf8')).toBe(content);
- await symlink(join(root,'vault','note.md'),join(root,'vault','alias.md'));
+ await symlink(join(root,'vault','note.md'),join(root,'vault','alias.md'),process.platform==='win32'?'junction':'file');
  await expect(readObsidianNote(root,'vault','alias.md')).rejects.toThrow();
  await expect(readObsidianNote(root,'vault','../note.md')).rejects.toThrow();
  await expect(readObsidianNote(root,'vault','.obsidian/config.md')).rejects.toThrow();

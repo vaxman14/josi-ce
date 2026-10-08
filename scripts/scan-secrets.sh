@@ -78,7 +78,7 @@ done
 # Files we never scan: the scanner's own ban-list, lockfiles, binaries.
 is_skippable() {
   case "$1" in
-    scripts/scan-secrets.sh) return 0 ;;
+    scripts/scan-secrets.sh|scripts/scan-secrets.mjs) return 0 ;;
     *.png|*.jpg|*.jpeg|*.gif|*.ico|*.webp|*.pdf|*.zip|*.woff|*.woff2|*.ttf) return 0 ;;
     package-lock.json|*/package-lock.json) return 0 ;;
     *) return 1 ;;

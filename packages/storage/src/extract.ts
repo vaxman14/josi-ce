@@ -107,7 +107,9 @@ export async function extractRichSegments(
     if (!args.ocrImages) return null;
     // Language data ships inside the image. Indexing a photo must not quietly
     // download a model from a CDN or stop working on an offline installation.
-    const worker = await createWorker('eng', undefined, { langPath: OCR_LANGUAGE_PATH });
+    // Bundled data needs no writable working-directory cache (Program Files is
+    // read-only to the native service account).
+    const worker = await createWorker('eng', undefined, { langPath: OCR_LANGUAGE_PATH, cacheMethod: 'none' });
     try {
       const image = Buffer.from(args.bytes) as unknown as Parameters<typeof worker.recognize>[0];
       text = (await worker.recognize(image)).data.text;

@@ -1,10 +1,11 @@
 // Linux descriptor-relative access: no check-then-open of a user-controlled path.
 import { constants } from 'node:fs';
-import { open, readdir, mkdir, rename, link, unlink, type FileHandle } from 'node:fs/promises';
-import { dirname, basename } from 'node:path';
+import { open, readdir, mkdir, rename, link, unlink, stat, type FileHandle } from 'node:fs/promises';
+import { dirname, basename, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { appendEvent, approvalHash, requestApproval, type Db } from '@josi-ce/core';
-import { safeRelativePath, PathEscape } from './paths.js';
+import { safeRelativePath, PathEscape, isInside } from './paths.js';
+import { openStorageFile, pinWindowsDirectory } from './windowsFiles.js';
 import { looksLikeCredentialFile } from './extract.js';
 import { ROOT_BASE } from './mappings.js';
 
@@ -15,6 +16,10 @@ export function workspacePath(value: string): string {
 }
 /** Every ancestor is opened with O_NOFOLLOW and pinned until the operation ends. */
 export async function withWorkspaceDirectory<T>(root: string, relative: string, fn: (fdPath: string) => Promise<T>): Promise<T> {
+  if (process.platform === 'win32') {
+    const directory = pinWindowsDirectory(join(root, workspacePath(relative)));
+    try { return await fn(directory.path); } finally { await directory.close(); }
+  }
   const handles: FileHandle[] = [];
   try {
     let current = '/';
@@ -25,6 +30,11 @@ export async function withWorkspaceDirectory<T>(root: string, relative: string, 
     return await fn(current);
   } finally { await Promise.all(handles.map(h => h.close())); }
 }
+async function pinnedDirectory(path: string) {
+  if (process.platform === 'win32') return pinWindowsDirectory(path);
+  const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  return { path: `/proc/self/fd/${handle.fd}`, close: () => handle.close() };
+}
 interface Grant { id: string; relative_path: string; container_path: string; recursive: boolean; writable: boolean; may_create: boolean; may_edit: boolean; may_move: boolean; may_delete: boolean }
 export async function workspaceGrant(db: Db, userId: string, id: string): Promise<Grant> {
   const [g] = await db.query<Grant>(`select m.id,m.relative_path,m.recursive,m.may_create,m.may_edit,m.may_move,m.may_delete,r.container_path,r.writable
@@ -32,7 +42,7 @@ export async function workspaceGrant(db: Db, userId: string, id: string): Promis
     where m.id=$1 and m.owner_user_id=$2 and m.provider='local' and m.status='active' and r.enabled=true and c.may_map_local=true`, [id,userId]);
   const configuredWorkspace = process.env.JOSI_WORKSPACE_ENABLED === '1'
     && g?.container_path === '/workspace';
-  if (!g || !(g.container_path.startsWith(`${ROOT_BASE}/`) || configuredWorkspace)) {
+  if (!g || !((isInside(ROOT_BASE, g.container_path) && !isInside(g.container_path, ROOT_BASE)) || configuredWorkspace)) {
     throw new PathEscape('Workspace unavailable or permission revoked');
   }
   return g;
@@ -48,8 +58,9 @@ export async function workspaceList(db: Db, userId: string, id: string, path = '
     const visible: Array<{name:string;kind:string;size:number;modified:string}> = [];
     for(const e of entries){
       try {workspacePath(e.name);if(e.isSymbolicLink() || !(e.isFile() || g.recursive&&e.isDirectory()))continue;
-        const h=await open(`${dir}/${e.name}`,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK|(e.isDirectory()?constants.O_DIRECTORY:0));
-        try{const st=await h.stat();if(st.isFile()&&st.nlink!==1)continue;visible.push({name:e.name,kind:e.isDirectory()?'folder':'file',size:st.size,modified:st.mtime.toISOString()});}finally{await h.close();}
+        const d=e.isDirectory()?await pinnedDirectory(`${dir}/${e.name}`):null;
+        const h=d?null:await openStorageFile(`${dir}/${e.name}`,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+        try{const st=d?await stat(d.path):await h!.stat();if(st.isFile()&&st.nlink!==1)continue;visible.push({name:e.name,kind:e.isDirectory()?'folder':'file',size:st.size,modified:st.mtime.toISOString()});}finally{await h?.close();await d?.close();}
       }catch{/* Concurrent removal or protected entry: never widen the grant. */}
     }
     const receipt=randomUUID();await appendEvent(db,{actor:'user',actorUserId:userId,kind:'workspace.listed',subjectType:'folder_mapping',subjectId:id,payload:{receipt,count:visible.length}});
@@ -59,7 +70,7 @@ export async function workspaceList(db: Db, userId: string, id: string, path = '
 export async function workspaceRead(db: Db, userId: string, id: string, path: string) {
   const g = await workspaceGrant(db,userId,id); const p = inGrant(g,path); if (!p) throw new PathEscape('Choose a file');
   return withWorkspaceDirectory(rootPath(g),dirname(p)==='.'?'':dirname(p),async dir => {
-    const h = await open(`${dir}/${basename(p)}`, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const h = await openStorageFile(`${dir}/${basename(p)}`, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = await h.stat();
       if (!stat.isFile() || stat.nlink !== 1 || stat.size > 4*1024*1024) throw new PathEscape('Only regular files up to 4 MiB can be downloaded');
@@ -95,13 +106,13 @@ async function performWorkspaceChange(db: Db,userId: string,id: string,input: Wo
       if (operation==='mkdir') await mkdir(target,{mode:0o700});
       if (operation==='edit') {
         await mkdir(`${dir}/.josi-recovery`,{mode:0o700}).catch((e:NodeJS.ErrnoException)=>{if(e.code!=='EEXIST')throw e;});
-        const recovery=await open(`${dir}/.josi-recovery`,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
-        const backup=`/proc/self/fd/${recovery.fd}/${receipt}`;
+        const recovery=await pinnedDirectory(`${dir}/.josi-recovery`);
+        const backup=`${recovery.path}/${receipt}`;
         try {
           await rename(target,backup);
-          const old=await open(backup,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+          const old=await openStorageFile(backup,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
           try {const st=await old.stat();if(!st.isFile()||st.nlink!==1||st.size>4*1024*1024||createHash('sha256').update(await old.readFile()).digest('hex')!==precondition)throw new PathEscape('File changed after approval; recovery copy preserved');}finally{await old.close();}
-          const h=await open(target,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
+          const h=await openStorageFile(target,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
           try{await h.writeFile(content!);await h.sync();}catch(error){await unlink(target).catch(()=>undefined);throw error;}finally{await h.close();}
         } catch(error) {
           // Restore only if the original name is still free; never overwrite a concurrent writer.
@@ -112,27 +123,30 @@ async function performWorkspaceChange(db: Db,userId: string,id: string,input: Wo
       if (operation==='create') {
         // Hard ceiling independent of indexing; serialize writes per mapping in the route.
         const entries=await readdir(dir); if(entries.length>=1000) throw new PathEscape('Workspace folder file limit reached');
-        const h=await open(target,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
+        const h=await openStorageFile(target,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
         try { await h.writeFile(content!); await h.sync(); } catch(err) { await unlink(target).catch(()=>undefined); throw err; } finally {await h.close();}
       }
       if (operation==='move') {
-        const h=await open(target,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+        const h=await openStorageFile(target,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
         try {
           const stat=await h.stat(); if(!stat.isFile() || stat.nlink!==1) throw new PathEscape('Only ordinary files can be moved');
           await withWorkspaceDirectory(rootPath(g),dirname(destination!)==='.'?'':dirname(destination!),async dest=> {
             // link refuses an existing destination; a crash before unlink preserves both copies.
             await link(target,`${dest}/${basename(destination!)}`);
+            // Windows denies deletion while the guard handle is held. The
+            // destination hardlink has already fixed the exact source bytes.
+            if (process.platform === 'win32') await h.close();
             await unlink(target);
           });
         } finally {await h.close();}
       }
       if (operation==='delete') {
         // Recovery copy before removal, on the same filesystem, outside the visible namespace.
-        const h=await open(target,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+        const h=await openStorageFile(target,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
         try { if (!(await h.stat()).isFile()) throw new PathEscape('Only regular files can be deleted'); } finally {await h.close();}
         await mkdir(`${dir}/.josi-recovery`,{mode:0o700}).catch((e:NodeJS.ErrnoException)=>{if(e.code!=='EEXIST')throw e;});
-        const recovery=await open(`${dir}/.josi-recovery`,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
-        try { await rename(target,`/proc/self/fd/${recovery.fd}/${receipt}`); } finally {await recovery.close();}
+        const recovery=await pinnedDirectory(`${dir}/.josi-recovery`);
+        try { await rename(target,`${recovery.path}/${receipt}`); } finally {await recovery.close();}
       }
     });
     await appendEvent(db,{actorUserId:userId,actor:'user',kind:'workspace.write_completed',subjectType:'folder_mapping',subjectId:id,payload:{receipt,operation}});
@@ -162,10 +176,11 @@ async function enforceWorkspaceQuota(db:Db,userId:string,additionalBytes:number)
   for(const e of entries){
    if(e.isSymbolicLink())continue;
    if(e.isDirectory()&&!recursive)continue;
-   const h=await open(`${dir}/${e.name}`,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK|(e.isDirectory()?constants.O_DIRECTORY:0));
-   try{const st=await h.stat();if(st.isFile()){files++;bytes+=st.size;}else if(st.isDirectory())await inspect(`/proc/self/fd/${h.fd}`,true);
+   const d=e.isDirectory()?await pinnedDirectory(`${dir}/${e.name}`):null;
+   const h=d?null:await openStorageFile(`${dir}/${e.name}`,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+   try{const st=d?await stat(d.path):await h!.stat();if(st.isFile()){files++;bytes+=st.size;}else if(d)await inspect(d.path,true);
     if(files>maxFiles||bytes>maxBytes)throw new PathEscape('Workspace quota exceeded. Remove files or ask an administrator to increase your storage limit');
-   }finally{await h.close();}
+   }finally{await h?.close();await d?.close();}
   }
  };
  for(const root of roots)await withWorkspaceDirectory(`${root.container_path}/${workspacePath(root.relative_path)}`,'',dir=>inspect(dir,root.recursive));

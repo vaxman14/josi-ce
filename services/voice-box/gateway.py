@@ -13,25 +13,33 @@ import os
 from pathlib import Path
 import secrets
 import socketserver
+import sys
 import threading
 import time
 import wave
 from http.server import BaseHTTPRequestHandler
+if sys.platform == 'win32':
+    from windows_limits import apply_voice_limits
+    apply_voice_limits()
 import numpy as np
 from faster_whisper import WhisperModel
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 from settings import validate
 from tts import NeuralSpeech
 from bounded_http import BoundedRequests
+from runtime_config import runtime_config
 
 RATE = 16000
 MAX_SAMPLES = 15 * RATE
 
 
 class Engine:
-    def __init__(self):
-        self.config = validate(json.loads(Path('/run/voice/settings.json').read_text()))
-        self.token = Path('/run/voice/token').read_text().strip()
+    def __init__(self, runtime=None):
+        self.runtime = runtime_config() if runtime is None else runtime
+        self.config = validate(json.loads((self.runtime['state'] / 'settings.json').read_text(encoding='utf-8')))
+        if self.runtime['windows'] and self.config['device'] != 'cpu':
+            raise ValueError('The Windows distribution supports CPU speech only')
+        self.token = (self.runtime['state'] / 'token').read_text(encoding='ascii').strip()
         if len(self.token) < 32:
             raise ValueError('Missing gateway credential')
         self.sessions, self.lock = {}, threading.Lock()
@@ -42,10 +50,10 @@ class Engine:
 
     def load(self):
         try:
-            self.model = WhisperModel('/models/' + self.config['model'], device=self.config['device'],
+            self.model = WhisperModel(str(self.runtime['models'] / self.config['model']), device=self.config['device'],
                                       compute_type='int8' if self.config['device'] == 'cpu' else 'int8_float16',
                                       cpu_threads=4, num_workers=1, local_files_only=True)
-            self.tts = NeuralSpeech(self.config)
+            self.tts = NeuralSpeech(self.config, root=self.runtime['models'])
             segments, _ = self.model.transcribe(np.zeros(RATE, dtype=np.float32), language='en', vad_filter=False)
             list(segments)
             get_speech_timestamps(np.zeros(RATE, dtype=np.float32), VadOptions())
@@ -130,6 +138,11 @@ class Engine:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def setup(self):
+        super().setup()
+        # Bound header reads too; a local client must not retain all 16 slots.
+        self.connection.settimeout(10)
+
     def log_message(self, *args):
         pass
 
@@ -176,18 +189,24 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-class Server(BoundedRequests, socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+Transport = socketserver.TCPServer if sys.platform == 'win32' else socketserver.UnixStreamServer
+
+
+class Server(BoundedRequests, socketserver.ThreadingMixIn, Transport):
     daemon_threads = True
 
 
 if __name__ == '__main__':
-    engine = Engine()
-    path = Path('/run/voice/gateway/gateway.sock')
-    if path.exists():
-        if not path.is_socket():
-            raise ValueError('Gateway path is not a socket')
-        path.unlink()
-    server = Server(str(path), Handler)
-    path.chmod(0o600)
+    runtime = runtime_config()
+    engine = Engine(runtime)
+    if not runtime['windows']:
+        path = Path(runtime['address'])
+        if path.exists():
+            if not path.is_socket():
+                raise ValueError('Gateway path is not a socket')
+            path.unlink()
+    server = Server(runtime['address'], Handler)
+    if not runtime['windows']:
+        path.chmod(0o600)
     server.engine = engine
     server.serve_forever()

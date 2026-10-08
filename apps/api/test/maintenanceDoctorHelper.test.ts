@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-describe('isolated Doctor maintenance helper', () => {
+// Executes the Bash/Compose maintenance CLI. Native maintenance has its own
+// acceptance gate; this is not evidence for a Windows repair or upgrade.
+describe.skipIf(process.platform === 'win32')('isolated Doctor maintenance helper', () => {
   it('runs only the fixed check and repair command shapes and returns their report', () => {
     const root = mkdtempSync(join(tmpdir(), 'josi-doctor-helper-'));
     const cli = join(root, 'josi');

@@ -12,6 +12,7 @@
     "build": "tsc -b",
     "test": "vitest run",
     "scan": "bash scripts/scan-secrets.sh",
+    "scan:native": "node scripts/scan-secrets.mjs",
     "migrate": "node packages/db/migrate.mjs",
     "e2e": "node scripts/e2e-web.mjs",
     "test:mcp-workspace": "node scripts/test-workspace-mcp-child.mjs",
@@ -40,8 +41,8 @@
     "fflate": "^0.8.3",
     "heic-convert": "^2.1.0",
     "mammoth": "^1.12.2",
-    "multer": "^2.3.0",
-    "nodemailer": "^9.1.1",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.16",
     "otplib": "^13.5.0",
     "pdf-parse": "^2.4.5",
     "postgres": "^3.4.9",
@@ -51,5 +52,8 @@
   },
   "overrides": {
     "uuid": "11.1.1"
+  },
+  "optionalDependencies": {
+    "koffi": "3.3.2"
   }
 }

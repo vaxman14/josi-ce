@@ -6,6 +6,7 @@
 // environment on a crash.
 import { readFileSync } from 'node:fs';
 import { postgresDb, type Db } from './db.js';
+import { readWindowsSecret } from './windowsSecrets.js';
 
 export class ConnectionConfigError extends Error {}
 
@@ -20,7 +21,8 @@ export function connectionStringFromEnv(env: NodeJS.ProcessEnv = process.env): s
 
   let password: string;
   try {
-    password = readFileSync(passwordFile, 'utf8').trim();
+    password = (process.platform === 'win32' && env.JOSI_NATIVE_RUNTIME === '1'
+      ? readWindowsSecret(passwordFile).toString('utf8') : readFileSync(passwordFile, 'utf8')).trim();
   } catch {
     throw new ConnectionConfigError(`could not read the database password from ${passwordFile}`);
   }

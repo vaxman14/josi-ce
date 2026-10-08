@@ -33,3 +33,6 @@ export * from './mobile.js';
 export {
   LIMITS, consume, peek, pruneRateLimits, type Limit, type LimitVerdict,
 } from './ratelimit.js';
+export { privateTemporaryDirectory } from './privateTemporaryDirectory.js';
+export { resolveDataPath } from './dataPath.js';
+export { readWindowsSecret } from './windowsSecrets.js';

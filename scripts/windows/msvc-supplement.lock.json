@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Build-only supplement for the existing licensed Visual Studio 18 MSVC toolset; not an installable product manifest",
+  "catalogSource": "Microsoft Visual Studio installed channel catalog f4716298",
+  "compiler": "14.50.35729",
+  "sdk": "10.0.19041.0",
+  "packages": [
+    {
+      "id": "Microsoft.VC.14.50.18.0.CRT.Headers.base",
+      "version": "14.50.35717",
+      "size": 2057481,
+      "catalogReportedSize": 2070089,
+      "sha256": "428bcda4a867056ab696aeca95b1057f5282aa9a8121481e7787fae7548efde2",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/eef0996f-4334-4b1a-a344-4d13e27ac052/428bcda4a867056ab696aeca95b1057f5282aa9a8121481e7787fae7548efde2/Microsoft.VC.14.50.18.0.CRT.Headers.base.vsix"
+    },
+    {
+      "id": "Microsoft.VC.14.50.18.0.CRT.x64.Desktop.base",
+      "version": "14.50.35729",
+      "size": 51726225,
+      "catalogReportedSize": 52472383,
+      "sha256": "f538fed4fbf0fff460fa0a35f179319586d24c61804ab5d9780707cfd6353556",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/4cb7a450-4979-4d07-89e7-6613722fc25e/f538fed4fbf0fff460fa0a35f179319586d24c61804ab5d9780707cfd6353556/Microsoft.VC.14.50.18.0.CRT.x64.Desktop.base.vsix"
+    },
+    {
+      "id": "Microsoft.VC.14.50.18.0.CRT.Redist.X64.base",
+      "version": "14.50.35719",
+      "size": 3313422,
+      "catalogReportedSize": 3325839,
+      "sha256": "a4ab48822362df6e478eb4ed33bf825a07a6faacd6879c1e3d59929cd38b984b",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/a424e95b-20f6-4af6-844f-9d9a806080a7/a4ab48822362df6e478eb4ed33bf825a07a6faacd6879c1e3d59929cd38b984b/Microsoft.VC.14.50.18.0.CRT.Redist.X64.base.vsix"
+    }
+  ]
+}

@@ -52,10 +52,9 @@
 //   * It needs the binary present in the container or on the host, signed in,
 //     and it will not be either by default.
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { assertCapability } from '@josi-ce/core';
+import { assertCapability, privateTemporaryDirectory } from '@josi-ce/core';
 import {
   MCP_SERVER_NAME, openHarnessSession, readExecutedCalls, resolveMcpServerPath,
   type HarnessSession,
@@ -368,7 +367,7 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
         // make the model answer about yesterday's picture instead of today's.
         const images = request.messages.at(-1)?.images ?? [];
         if (images.length) {
-          imageDir = await mkdtemp(join(tmpdir(), 'josi-codex-images-'));
+          imageDir = privateTemporaryDirectory('josi-codex-images-');
           for (const [index, image] of images.entries()) {
             const extension = image.mediaType === 'image/jpeg' ? 'jpg'
               : image.mediaType === 'image/webp' ? 'webp'

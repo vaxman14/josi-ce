@@ -1,0 +1,5 @@
+# Native CPU engine build tools, not installed into the product runtime.
+cmake==3.31.10 \
+    --hash=sha256:f1ea1fe826355560e8976c3d5794d9357444209bc0e0d56676c71e6a571fd474
+ninja==1.13.0 \
+    --hash=sha256:fb8ee8719f8af47fed145cced4a85f0755dd55d45b2bddaf7431fa89803c5f3e

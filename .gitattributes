@@ -1,0 +1,3 @@
+# Preserve reviewed patch bytes; blank context lines are required diff syntax.
+packaging/windows/winsw-least-privilege.patch -text -whitespace
+services/voice-box/ctranslate2-windows-shutdown.patch -text -whitespace

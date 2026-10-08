@@ -6,6 +6,7 @@
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
   openHarnessSession, readExecutedCalls, writeClaudeMcpConfig,
@@ -21,6 +22,19 @@ const A_TOOL: ToolDefinition = {
   parameters: { type: 'object', properties: {} },
 };
 
+function expectPrivate(path: string): void {
+  if (process.platform !== 'win32') {
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    return;
+  }
+  const escaped = path.replace(/'/g, "''");
+  const checks = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-Command',
+    `$a=[System.IO.File]::GetAccessControl('${escaped}'); $u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; @($a.Access | ForEach-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -in @($u,'S-1-5-18','S-1-5-32-544') }) | ConvertTo-Json -Compress`],
+  { windowsHide: true, encoding: 'utf8' }));
+  expect(checks.length).toBe(3);
+  expect(checks.every(Boolean)).toBe(true);
+}
+
 function session(tools: ToolDefinition[] = [A_TOOL]) {
   return openHarnessSession({
     serverPath: '/app/packages/agent/dist/mcp/server.js',
@@ -35,7 +49,7 @@ describe('the harness context file', () => {
     const s = session();
     try {
       // 0600: /tmp is shared and the file names a person.
-      expect(statSync(s.contextPath).mode & 0o777).toBe(0o600);
+      expectPrivate(s.contextPath);
       const ctx = JSON.parse(readFileSync(s.contextPath, 'utf8'));
       expect(ctx.userId).toBe('u1');
       expect(ctx.sessionKey).toBe('s1');
@@ -47,7 +61,7 @@ describe('the harness context file', () => {
       expect(ctx.callsPath).toBe(s.callsPath);
       expect(ctx.workspaceEnabled).toBe(false);
       expect(ctx.workspaceMode).toBe('ro');
-      expect(statSync(s.callsPath).mode & 0o777).toBe(0o600);
+      expectPrivate(s.callsPath);
     } finally {
       s.cleanup();
     }
@@ -118,7 +132,7 @@ describe('the claude command line with a harness', () => {
     const s = session();
     try {
       const configPath = writeClaudeMcpConfig(s);
-      expect(statSync(configPath).mode & 0o777).toBe(0o600);
+      expectPrivate(configPath);
       const config = JSON.parse(readFileSync(configPath, 'utf8'));
       expect(config.mcpServers.josi.args).toEqual([s.serverPath]);
       expect(config.mcpServers.josi.env.JOSI_MCP_CONTEXT).toBe(s.contextPath);

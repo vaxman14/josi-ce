@@ -1,5 +1,8 @@
 import { request } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
 import { Router, type Request, type Response } from 'express';
+import { readWindowsSecret } from '@josi-ce/core';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { asyncRoute } from './async.js';
 
@@ -8,6 +11,10 @@ export type VoiceHelper = (path: string, body?: unknown) => Promise<VoiceReply>;
 
 /** The app receives access to this one socket, never a Docker capability. */
 export function voiceHelper(socketPath?: string): VoiceHelper {
+  if (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1') {
+    return nativeVoiceHelper({ port: Number(process.env.JOSI_VOICE_HELPER_PORT ?? 18082),
+      tokenFile: process.env.JOSI_VOICE_HELPER_TOKEN_FILE ?? '' });
+  }
   return (path, body) => new Promise((resolve, reject) => {
     if (!socketPath) return reject(new Error('helper unavailable'));
     const encoded = body === undefined ? undefined : JSON.stringify(body);
@@ -31,8 +38,49 @@ export function voiceHelper(socketPath?: string): VoiceHelper {
   });
 }
 
+/** Trusted installer configuration supplies only a port and credential file.
+ * Neither browser input nor a URL can change the fixed loopback destination.
+ */
+export function nativeVoiceHelper(config: { port: number; tokenFile: string }): VoiceHelper {
+  return async (path, body) => {
+    if (!Number.isInteger(config.port) || config.port < 1024 || config.port > 65535
+      || !isAbsolute(config.tokenFile)
+      || !/^\/(status|session|audio|close|speech|operation\/(install|update|restart|uninstall|rollback|settings))$/.test(path)) {
+      throw new Error('Invalid private voice configuration');
+    }
+    const token = (process.platform === 'win32' ? readWindowsSecret(config.tokenFile, 'voice-control').toString('ascii')
+      : await readFile(config.tokenFile, 'ascii')).trim();
+    if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Private voice credential unavailable');
+    const encoded = body === undefined ? undefined : JSON.stringify(body);
+    if (encoded && Buffer.byteLength(encoded) > 100000) throw new Error('Voice request too large');
+    return new Promise((resolve, reject) => {
+      const req = request({ hostname: '127.0.0.1', port: config.port, path,
+        method: encoded === undefined ? 'GET' : 'POST', agent: false,
+        headers: { Authorization: `Bearer ${token}`, ...(encoded === undefined ? {} :
+          { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(encoded) }) },
+      }, res => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on('data', (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > 4 * 1024 * 1024) res.destroy(new Error('Voice response too large'));
+          else chunks.push(chunk);
+        });
+        res.on('error', reject);
+        res.on('end', () => resolve({ status: res.statusCode ?? 503,
+          type: res.headers['content-type'] ?? 'application/json', data: Buffer.concat(chunks) }));
+      });
+      const timer = setTimeout(() => req.destroy(new Error('Voice timeout')), 50_000);
+      req.on('close', () => clearTimeout(timer));
+      req.on('error', () => reject(new Error('Private voice service unavailable')));
+      req.end(encoded);
+    });
+  };
+}
+
 const requirements = [
-  '64-bit Linux with Docker Engine, Compose v2 and the optional host helper',
+  process.platform === 'win32' ? 'Josi CE Server for Windows with Voice Box installed'
+    : '64-bit Linux with Docker Engine, Compose v2 and the optional host helper',
   '4 GB available RAM, 5 GB free disk and at least 2 CPU cores',
   'HTTPS or localhost for browser microphone access',
   'Kokoro provides local neural speech with Heart and Bella voices.',

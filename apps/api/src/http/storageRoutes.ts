@@ -21,6 +21,7 @@ import {
   queueHealth, recordSemanticConsent, revokeSemanticConsent, searchDocuments,
   setGlobalPause, setIndexing, setPermissions, sharingPolicy, syncHealth, unmapFolder,
   SKIP_EXPLANATIONS,
+  nativeScannerHealth,
   type Provider as MappingProvider,
 } from '@josi-ce/storage';
 import { requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
@@ -623,6 +624,8 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
       const [policy] = await db.query<StoragePolicyRow>(`select * from storage_policy where id = true`);
       return res.json({
         policy,
+        ...(process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
+          ? { malwareScanning: { ...await nativeScannerHealth(), required: policy.clamav_enabled === true } } : {}),
         historyDisclosure: historyDisclosure(policy),
         auditNotice: auditRetentionNotice(policy.audit_retention),
       });
@@ -757,7 +760,9 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
          where id = true returning *`,
         [
           historyMode, historyKind, recycleDays, auditRetention,
-          flag(b.clamavEnabled) ?? null, scanMode, flag(b.clamavAutoUpdate) ?? null,
+          flag(process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
+            ? b.malwareScanningEnabled ?? b.clamavEnabled : b.clamavEnabled) ?? null,
+          scanMode, flag(b.clamavAutoUpdate) ?? null,
           flag(b.ocrEnabled) ?? null, flag(b.semanticEnabled) ?? null,
           flag(b.sharingEnabled) ?? null, flag(b.workspaceSharingEnabled) ?? null,
           flag(b.archivesEnabled) ?? null, flag(b.manualSyncEnabled) ?? null, syncMinutes,
@@ -773,6 +778,8 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
       });
       return res.json({
         policy,
+        ...(process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
+          ? { malwareScanning: { ...await nativeScannerHealth(), required: policy.clamav_enabled === true } } : {}),
         // What these settings MEAN, generated from the settings themselves so
         // the wording cannot drift from the behaviour.
         historyDisclosure: historyDisclosure(policy),

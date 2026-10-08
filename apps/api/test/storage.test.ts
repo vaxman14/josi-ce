@@ -8,7 +8,7 @@
 //   * does the administrator's view ever contain a path?        (M72)
 //   * does revoking really destroy the derived data?            (M54)
 //   * does a path leave the mapped folder, ever?                (M45)
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -93,7 +93,9 @@ const PW = { admin: 'admin-password-123', alice: 'alice-password-123', bob: 'bob
 beforeAll(async () => {
   await mkdir(join(docsRoot, FOLDER), { recursive: true });
   await mkdir(join(dir, 'outside'), { recursive: true });
-  await symlink(join(dir, 'outside'), join(docsRoot, 'escape'));
+  // A junction exercises the Windows directory reparse-point escape without
+  // requiring Administrator or enabling Developer Mode just to run the suite.
+  await symlink(join(dir, 'outside'), join(docsRoot, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
 
   db = await testDb();
   await ensureWorkspace(db);
@@ -112,7 +114,7 @@ beforeAll(async () => {
   cookies.bob = await signIn('bob', PW.bob);
 });
 
-afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); });
+afterAll(async () => { if (server) await new Promise<void>((r) => server.close(() => r())); });
 
 beforeEach(async () => {
   // The limiter is per user and persists across requests, so a suite that takes
@@ -698,6 +700,26 @@ describe('the global pause and Sync now — M75, M77', () => {
 });
 
 describe('the policy screen says what the settings do — M61, M62, M73', () => {
+  it.skipIf(process.platform !== 'win32')('reports unavailable native scanning honestly with either optional or required policy', async () => {
+    vi.stubEnv('JOSI_NATIVE_RUNTIME', '1');
+    vi.stubEnv('JOSI_DATA_DIR', dir);
+    try {
+      for (const required of [false, true]) {
+        const updated = await call('/api/storage/admin/policy', {
+          method: 'PUT', jar: cookies.admin, body: { malwareScanningEnabled: required },
+        });
+        expect(updated.status).toBe(200);
+        expect(updated.body.policy.clamav_enabled).toBe(required);
+        expect(updated.body.malwareScanning).toEqual({ provider: 'windows-amsi', status: 'unavailable', checkedAt: null, required });
+        const fetched = await call('/api/storage/admin/policy', { jar: cookies.admin });
+        expect(fetched.status).toBe(200);
+        expect(fetched.body.malwareScanning).toEqual(updated.body.malwareScanning);
+      }
+    } finally {
+      await db.query('update storage_policy set clamav_enabled = false where id = true');
+      vi.unstubAllEnvs();
+    }
+  });
   it('lets the super admin configure indexing and bounded archive limits', async () => {
     const res = await call('/api/storage/admin/policy', {
       method: 'PUT', jar: cookies.admin,

@@ -26,15 +26,21 @@ beforeAll(async () => {
 
   // A link inside the mapped folder pointing out of it, both to the sibling
   // and to a system path.
-  await symlink(join(base, 'docs-private'), join(root, 'escape'));
-  await symlink('/etc', join(root, 'etc-link'));
+  const directoryLink = process.platform === 'win32' ? 'junction' : 'dir';
+  await symlink(join(base, 'docs-private'), join(root, 'escape'), directoryLink);
+  await symlink(process.platform === 'win32' ? join(base, 'docs-private') : '/etc', join(root, 'etc-link'), directoryLink);
   // A link that stays inside, which must keep working.
-  await symlink(join(root, 'reports'), join(root, 'reports-alias'));
+  await symlink(join(root, 'reports'), join(root, 'reports-alias'), directoryLink);
 });
 
 afterAll(async () => { await rm(base, { recursive: true, force: true }); });
 
 describe('safeRelativePath', () => {
+  it.runIf(process.platform === 'win32')('rejects alternate streams, devices and ambiguous Windows names', () => {
+    for (const bad of ['report.txt:private', 'a/nul.txt', 'COM1', 'lpt².log', 'aux', 'a.', 'a ', 'file?', 'a\u0001b']) {
+      expect(() => safeRelativePath(bad), bad).toThrow(PathEscape);
+    }
+  });
   it('accepts ordinary relative paths', () => {
     expect(safeRelativePath('reports/q3/summary.txt')).toBe('reports/q3/summary.txt');
     expect(safeRelativePath('')).toBe('');

@@ -1,0 +1,40 @@
+# Local developer build only; no publication or Windows machine mutation.
+[CmdletBinding()]
+param()
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$base=Join-Path $repo 'artifacts\windows-native'
+Import-Module (Join-Path $repo 'packaging\windows\Payloads.psm1')
+$helper=Get-Content -LiteralPath (Join-Path $base 'evidence\native-setup-helper.json') -Raw | ConvertFrom-Json
+if(!$helper.passed -or !$helper.testedInOsPowerShell -or $helper.architecture -cne 'x64' -or $helper.framework -cne 'net462' -or
+    $helper.sourceSha256 -cne (Get-FileHash -LiteralPath (Join-Path $repo 'packaging\windows\NativeFileAttributes.cs') -Algorithm SHA256).Hash.ToLowerInvariant() -or
+    (Get-Item -LiteralPath $helper.binary).Length -ne $helper.size -or
+    (Get-FileHash -LiteralPath $helper.binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $helper.sha256){throw 'Precompiled bridge source or bytes changed; rebuild and test first'}
+$root=Assert-PlainNativePath (Join-Path $base ('staging\installer-kit-'+[Guid]::NewGuid().ToString('N')))
+$null=[IO.Directory]::CreateDirectory($root)
+$files=[Collections.Generic.List[object]]::new()
+foreach($name in @('Initialize-NativeSetup.ps1','Josi.NativeSetup.dll','Configuration.psm1','DataLayout.psm1','Database.psm1',
+    'Maintenance.psm1','Payloads.psm1','Services.psm1','Transactions.psm1','service-host.lock.json')){
+    $source=if($name -ceq 'Josi.NativeSetup.dll'){$helper.binary}else{Join-Path $repo ('packaging\windows\'+$name)}
+    $null=Assert-PlainNativePath $source
+    if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($source)){throw 'Linked installer input refused'}
+    $output=Join-Path $root $name
+    [IO.File]::Copy($source,$output,$false)
+    $files.Add([ordered]@{path=$name;size=(Get-Item -LiteralPath $output).Length;sha256=(Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()})
+}
+$manifest=[ordered]@{schemaVersion=1;product='Josi CE installer kit';architecture='x64';files=@($files.ToArray())}
+$inventory=Join-Path $root 'kit-inventory.json'
+[IO.File]::WriteAllText($inventory,($manifest | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+$hash=(Get-FileHash -LiteralPath $inventory -Algorithm SHA256).Hash.ToLowerInvariant()
+$env:PSModulePath=''
+$probe='& '+("'"+(Join-Path $root 'Initialize-NativeSetup.ps1').Replace("'","''")+"'")+' -Root '+("'"+$root.Replace("'","''")+"'")+' -ExpectedKitHash '+("'"+$hash+"'")+' | ConvertTo-Json -Compress'
+$encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
+$out=& (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -OutputFormat Text -ExecutionPolicy Bypass -EncodedCommand $encoded
+if($LASTEXITCODE -ne 0){throw 'Private precompiled installer kit failed the OS PowerShell check'}
+$result=($out -join "`n") | ConvertFrom-Json
+if(!$result.verified -or !$result.precompiledBridge -or $result.runtimeCompilerRequired){throw 'Installer still requires source compilation'}
+$report=[ordered]@{passed=$true;root=$root;kitSha256=$hash;helperSha256=$helper.sha256;files=$files.Count;
+    osPowerShellTested=$true;containsSourceCompiler=$false;endUserSdkRequired=$false;signed=$false;releaseApproved=$false}
+$report | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $base 'evidence\installer-kit.json') -Encoding UTF8
+'Verified installer kit loads the precompiled bridge using OS Windows PowerShell 5.1.'

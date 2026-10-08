@@ -11,6 +11,7 @@
 // `createMapping` takes the owner from the session, never from the request
 // body, and there is no admin route that reaches it.
 import { appendEvent, resolveAccess, type Db } from '@josi-ce/core';
+import { isAbsolute } from 'node:path';
 import { PathEscape, isInside, resolveWithin, safeRelativePath } from './paths.js';
 
 export class MappingError extends Error {
@@ -426,7 +427,7 @@ export async function registerRoot(
 ): Promise<{ id: string; container_path: string; label: string }> {
   const base = args.base ?? ROOT_BASE;
   const path = args.containerPath;
-  if (!path.startsWith('/')) throw new MappingError('a root must be an absolute path', 'bad_root');
+  if (!isAbsolute(path)) throw new MappingError('a root must be an absolute path', 'bad_root');
   if (path.includes('..') || path.includes('\0')) {
     throw new MappingError('that root path is not in the expected form', 'bad_root');
   }

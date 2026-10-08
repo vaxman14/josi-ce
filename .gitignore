@@ -16,6 +16,7 @@ dist/
 build/
 *.tsbuildinfo
 coverage/
+artifacts/windows-native/
 __pycache__/
 *.pyc
 

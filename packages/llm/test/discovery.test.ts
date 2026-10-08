@@ -6,9 +6,10 @@
 // found out at the first real request — after setup had already said the model
 // was configured.
 import { describe, expect, it } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { listCodexModels } from '../src/providers/codexModels.js';
 import {
   categorizeFailure, discoverModels, discoveryError, explainCategory, humanizeModelId,
   safeErrorCode,
@@ -182,7 +183,7 @@ describe('LB3.2 — nothing is invented', () => {
 
   it('asks the signed-in Codex app-server for visible models without passing an API key', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'josi-codex-model-list-'));
-    const command = join(dir, 'codex-fixture');
+    const command = join(dir, 'codex-fixture.cjs');
     const prior = process.env.OPENAI_API_KEY;
     try {
       await writeFile(command, `#!/usr/bin/env node
@@ -207,9 +208,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   }
 });
 `);
-      await chmod(command, 0o700);
       process.env.OPENAI_API_KEY = 'test-secret-should-not-reach-child';
-      const result = await discoverModels({ ...base, provider: 'openai_subscription', codexCommand: command });
+      const result = await discoverModels({ ...base, provider: 'openai_subscription',
+        codexModelList: () => listCodexModels({ command: process.execPath, commandArgs: [command] }),
+      });
       expect(result.ok).toBe(true);
       expect(result.models.map(m => m.id)).toEqual(['cli-visible']);
       expect(result.models[0].label).toBe('Visible in CLI');

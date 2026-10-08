@@ -200,10 +200,10 @@ describe('no code path in the repository reads a credential store (L3.3)', () =>
 
   function sources(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {
-      if (['node_modules', '.git', 'dist', 'docs-site'].includes(entry)) continue;
+      if (['node_modules', '.git', 'dist', 'docs-site', 'artifacts'].includes(entry)) continue;
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) sources(full, out);
-      else if (/\.(ts|tsx|mjs|js)$/.test(entry) && !full.includes('/test/')) out.push(full);
+      else if (/\.(ts|tsx|mjs|js)$/.test(entry) && !full.replace(/\\/g, '/').includes('/test/')) out.push(full);
     }
     return out;
   }

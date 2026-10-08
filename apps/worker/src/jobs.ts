@@ -32,7 +32,7 @@ import {
 } from '@josi-ce/channels';
 import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
 import { effectiveTimeContext, formatCalendarRange, runAssistantTurn } from '@josi-ce/agent';
-import { IMAGE_MEDIA_TYPES, readAttachment } from '@josi-ce/storage';
+import { IMAGE_MEDIA_TYPES, readAttachment, type Scanner } from '@josi-ce/storage';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import { extname } from 'node:path';
 
@@ -42,6 +42,7 @@ import { extname } from 'node:path';
  * key says so by failing, which is visible, rather than by quietly doing
  * nothing. */
 export interface WorkerContext {
+  scanner?: Scanner;
   masterKey?: MasterKey | null;
   /** Injected by the tests so no suite contacts a provider. */
   connectorFetch?: typeof fetch;
@@ -279,6 +280,7 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       const result = await syncCloudMapping(db, mappingId, {
         masterKey: ctx.masterKey,
         fetchImpl: ctx.connectorFetch,
+        scanner: ctx.scanner,
       });
       if (result.status === 'failed') {
         console.error(

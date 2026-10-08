@@ -62,3 +62,6 @@ export { AttachmentError, attachmentFailure, attachmentRoot, validateAttachment,
   CHAT_FILE_BYTES, CHAT_USER_BYTES, CHAT_USER_FILES, CHAT_THREAD_FILES, CHAT_TENANT_BYTES,
 } from './chatAttachments.js';
 export { proposeCodingRun, getCodingRun, startCodingRun, codingRunStatus } from './workspaceCoding.js';
+export { nativeScanner, NativeScanFailure, type NativeScannerOptions, type NativeScanStatus } from './nativeScanner.js';
+export { nativeScannerHealth, type NativeScannerHealth } from './nativeScannerHealth.js';
+export { openStorageFile, pinWindowsDirectory, publishWindowsFile } from './windowsFiles.js';

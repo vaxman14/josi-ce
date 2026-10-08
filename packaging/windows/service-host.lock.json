@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "variant": "2.12.0+josi.windows1",
+  "asset": "WinSW.Josi-2.12.0-windows1.exe",
+  "size": 772608,
+  "sha256": "2168de8c70c52203f4c2db1e9480aac625992284774b9386f2a1e94053480775",
+  "upstreamCommit": "eef5bade59fca0254e387ac73ed7625ba6aa7147",
+  "sourceArchiveSha256": "15581a065018d6828041dfd764876b1bf9087a8fe0cc26506e1e9f5a81951c43",
+  "license": "MIT AND Apache-2.0",
+  "framework": "net462",
+  "scmCompletionRequestsConnectOnly": true
+}

@@ -23,7 +23,7 @@ beforeAll(async () => {
   await mkdir(join(rootPath, 'reports'), { recursive: true });
   await mkdir(join(base, 'roots', 'ro'), { recursive: true });
   await mkdir(join(base, 'outside'), { recursive: true });
-  await symlink(join(base, 'outside'), join(rootPath, 'escape'));
+  await symlink(join(base, 'outside'), join(rootPath, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
 
   db = await testDb();
   for (const [name, role] of [['admin', 'super_admin'], ['alice', 'member'], ['bob', 'member']] as const) {

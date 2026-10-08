@@ -125,7 +125,9 @@ print(json.dumps({'urls':[x['appUrl'] for x in good], 'bad':len(bad)}))
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it('atomically persists the chosen URL, preserves secrets, and backs up reruns', () => {
+  // These exercise POSIX ownership and Compose host mounts in the Linux-only
+  // installer. Native ACL and lifecycle acceptance are tracked separately.
+  it.skipIf(process.platform === 'win32')('atomically persists the chosen URL, preserves secrets, and backs up reruns', () => {
     const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
     writeFileSync(join(dir, '.env'), 'UNCHANGED_SECRET=keep-me\nJOSI_APP_URL=http://old\n', { mode: 0o600 });
     try {
@@ -183,7 +185,7 @@ print(json.dumps({'env':(p/'.env').read_text(), 'backups':len(list(p.glob('.env.
     expect(page).toMatch(/if\(p\.state==='complete'\)\{\$\('openAction'\)\.classList\.remove\('hidden'\)/);
   });
 
-  it('validates an optional developer workspace and writes a least-privilege compose override', () => {
+  it.skipIf(process.platform === 'win32')('validates an optional developer workspace and writes a least-privilege compose override', () => {
     const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
     const workspace = mkdtempSync(join(tmpdir(), 'josi-workspace-'));
     try {
@@ -211,7 +213,7 @@ print(json.dumps({'plan':p,'override':pathlib.Path(${JSON.stringify(dir)},'docke
     }
   });
 
-  it('refuses dangerous developer workspace paths and keeps the feature optional', () => {
+  it.skipIf(process.platform === 'win32')('refuses dangerous developer workspace paths and keeps the feature optional', () => {
     const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
     try {
       const result = python(`

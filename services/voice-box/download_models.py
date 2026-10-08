@@ -17,10 +17,19 @@ def download(root, lock):
         target = root / entry['path']
         if not target.resolve().is_relative_to(root.resolve()):
             raise ValueError('Invalid model path')
+        if target.is_symlink():
+            raise ValueError('Model files must not be links')
+        if target.is_file() and target.stat().st_size == entry['size']:
+            with target.open('rb') as cached:
+                if hashlib.file_digest(cached, 'sha256').hexdigest() == entry['sha256']:
+                    return
         target.parent.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256()
         size = 0
-        with urllib.request.urlopen(entry['url'], timeout=60) as source, target.with_suffix('.download').open('wb') as out:
+        partial = target.with_name(target.name + '.download')
+        if partial.is_symlink():
+            raise ValueError('Partial model files must not be links')
+        with urllib.request.urlopen(entry['url'], timeout=60) as source, partial.open('wb') as out:
             while chunk := source.read(1024 * 1024):
                 size += len(chunk)
                 if size > entry['size']:
@@ -29,7 +38,7 @@ def download(root, lock):
                 out.write(chunk)
         if size != entry['size'] or digest.hexdigest() != entry['sha256']:
             raise ValueError('Model checksum mismatch: ' + entry['path'])
-        target.with_suffix('.download').replace(target)
+        partial.replace(target)
 
     def verified(entry):
         for attempt in range(3):

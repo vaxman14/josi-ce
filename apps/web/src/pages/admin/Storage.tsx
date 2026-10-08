@@ -20,14 +20,16 @@ const MB = 1024 * 1024;
 const toMb = (bytes: number | string) => Math.round(Number(bytes) / MB);
 
 export function AdminStorage() {
-  const resource = useResource<{ policy: StoragePolicy }>('/storage/admin/policy');
+  type MalwareScanning = { provider: 'windows-amsi'; status: 'available' | 'error' | 'unavailable'; required: boolean; checkedAt: string | null };
+  const resource = useResource<{ policy: StoragePolicy; malwareScanning?: MalwareScanning }>('/storage/admin/policy');
+  const [malware, setMalware] = useState<MalwareScanning | undefined>();
   const [policy, setPolicy] = useState<StoragePolicy | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (resource.state === 'ready' && resource.data) setPolicy(resource.data.policy);
+    if (resource.state === 'ready' && resource.data) { setPolicy(resource.data.policy); setMalware(resource.data.malwareScanning); }
   }, [resource.state, resource.data]);
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
@@ -40,7 +42,8 @@ export function AdminStorage() {
     setSaved(false);
     setError('');
     try {
-      const result = await api.put<{ policy: StoragePolicy }>('/storage/admin/policy', {
+      const result = await api.put<{ policy: StoragePolicy; malwareScanning?: MalwareScanning }>('/storage/admin/policy', {
+        ...(malware ? { malwareScanningEnabled: form.get('malwareScanningEnabled') === 'on' } : {}),
         maxFileBytes: Number(form.get('maxFileMb')) * MB,
         maxTotalBytesPerUser: Number(form.get('maxTotalMb')) * MB,
         maxFilesPerUser: Number(form.get('maxFiles')),
@@ -52,6 +55,7 @@ export function AdminStorage() {
         archiveMaxSeconds: Number(form.get('archiveMaxSeconds')),
       });
       setPolicy(result.policy);
+      setMalware(result.malwareScanning);
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save storage settings');
@@ -71,6 +75,20 @@ export function AdminStorage() {
 
       {resource.state === 'ready' && policy ? (
         <form onSubmit={save} className="space-y-4">
+          {malware ? <Card>
+            <h2 className="mb-2 text-base font-semibold">Windows antivirus</h2>
+            <p className="mb-3 text-sm text-muted-foreground" role="status">
+              {malware.status === 'available' ? 'Your installed antivirus accepted an explicit scan request.'
+                : malware.status === 'error' ? 'The antivirus scan failed. Files that require scanning cannot be processed.'
+                  : 'Antivirus scanning is unavailable. Files that require scanning cannot be processed.'}
+              {' '}Josi asks Windows to scan each file when scanning is required.
+            </p>
+            <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
+              <input name="malwareScanningEnabled" type="checkbox" defaultChecked={malware.required} className="h-5 w-5" />
+              Require malware scanning before file processing
+            </label>
+            {!malware.required ? <p className="mt-2 text-sm text-muted-foreground">Scanning is optional under your current policy. Unscanned files are never reported as clean.</p> : null}
+          </Card> : null}
           <CollapsibleCard title="Indexing limits" summary="File size, total storage, and item-count limits" defaultOpen>
             <p className="mb-4 text-sm text-muted-foreground">
               These workspace limits protect the server. A limit may cause files to be skipped; raising it can increase CPU, memory and disk use.

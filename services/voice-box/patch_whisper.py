@@ -14,6 +14,23 @@ from pathlib import Path
 
 def patch():
     dist = importlib.metadata.distribution('faster-whisper')
+    if dist.version == '1.2.1+josi.pcm1':
+        # A repeated local build must validate its prior output, not merely
+        # accept a version label or repeatedly modify an already adapted module.
+        audio = Path(dist.locate_file('faster_whisper/audio.py'))
+        if hashlib.sha256(audio.read_text(encoding='utf-8').encode()).hexdigest() != '4e9d4a4ca226120585756c07b46cf6a3bcb1b1da6f46a8fb21ba462c7a48d45b':
+            raise ValueError('Previously adapted audio module changed')
+        metadata = Path(dist.locate_file('faster_whisper-1.2.1.dist-info/METADATA'))
+        if any(line.startswith('Requires-Dist: av') for line in metadata.read_text(encoding='utf-8').splitlines()):
+            raise ValueError('Adapted codec dependency reappeared')
+        with metadata.with_name('RECORD').open(newline='', encoding='utf-8') as stream:
+            rows = {row[0]: row for row in csv.reader(stream)}
+        for name in ('faster_whisper/audio.py', 'faster_whisper-1.2.1.dist-info/METADATA'):
+            content = Path(dist.locate_file(name)).read_bytes()
+            digest = 'sha256=' + base64.urlsafe_b64encode(hashlib.sha256(content).digest()).decode().rstrip('=')
+            if rows.get(name, [None])[1:] != [digest, str(len(content))]:
+                raise ValueError('Adapted wheel record changed')
+        return
     if dist.version != '1.2.1':
         raise ValueError('Only the reviewed faster-whisper version can be adapted')
     path = Path(dist.locate_file('faster_whisper/audio.py'))
@@ -34,14 +51,14 @@ def decode_audio(input_file, sampling_rate=16000, split_stereo=False):
     raise ValueError("This build accepts decoded float32 PCM arrays only")
 
 
-''' + original[original.index('def pad_or_trim('):])
+''' + original[original.index('def pad_or_trim('):], encoding='utf-8', newline='\n')
     metadata = Path(dist.locate_file('faster_whisper-1.2.1.dist-info/METADATA'))
-    text = metadata.read_text()
+    text = metadata.read_text(encoding='utf-8')
     lines = text.splitlines(keepends=True)
     dependencies = [line for line in lines if line.startswith('Requires-Dist: av')]
     if dependencies != ['Requires-Dist: av>=11\n']:
         raise ValueError('Upstream codec dependency changed')
-    metadata.write_text(text.replace(dependencies[0], '').replace('Version: 1.2.1\n', 'Version: 1.2.1+josi.pcm1\n'))
+    metadata.write_text(text.replace(dependencies[0], '').replace('Version: 1.2.1\n', 'Version: 1.2.1+josi.pcm1\n'), encoding='utf-8', newline='\n')
     record = metadata.with_name('RECORD')
     with record.open(newline='') as stream:
         rows = list(csv.reader(stream))

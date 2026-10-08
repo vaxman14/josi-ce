@@ -11,7 +11,11 @@
 //   * No capacity claims (canonical map M97). These checks answer "can this
 //     run at all", never "this machine supports N users".
 import { statfsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { checkReadiness, masterKeyAvailable, type Db, type LoadOptions } from '@josi-ce/core';
+import { nativeScannerHealth } from '@josi-ce/storage';
 
 export type CheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -61,7 +65,8 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: major >= MIN_NODE_MAJOR ? 'pass' : 'fail',
     detail: major >= MIN_NODE_MAJOR
       ? 'The bundled runtime is supported.'
-      : 'This image is running an unsupported runtime. Pull the current Josi CE image.',
+      : process.platform === 'win32' ? 'The application runtime needs repair. Run Josi Setup again.'
+        : 'This image is running an unsupported runtime. Pull the current Josi CE image.',
   });
 
   // --- Database + schema ---
@@ -76,7 +81,8 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: dbUp ? 'pass' : 'fail',
     detail: dbUp
       ? 'Josi can reach its database.'
-      : 'Josi cannot reach its database. Check that the database container is running.',
+      : process.platform === 'win32' ? 'Josi cannot reach its stored data. Run Josi Setup and choose Repair.'
+        : 'Josi cannot reach its database. Check that the database container is running.',
   });
   const migrated = dbUp && !readiness.blockers.includes('migrations');
   checks.push({
@@ -86,7 +92,8 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: migrated ? 'pass' : 'fail',
     detail: migrated
       ? 'The schema is up to date.'
-      : 'The database has not been migrated. Restart the stack so the migration step runs.',
+      : process.platform === 'win32' ? 'The data update is incomplete. Run Josi Setup and choose Repair.'
+        : 'The database has not been migrated. Restart the stack so the migration step runs.',
   });
 
   // --- Master key ---
@@ -100,7 +107,8 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: keyOk ? 'pass' : 'fail',
     detail: keyOk
       ? 'Found. Back it up separately — a database backup alone cannot restore your saved credentials.'
-      : 'No usable master key. Run scripts/install.sh and mount it as a Docker secret, then reload.',
+      : process.platform === 'win32' ? 'The installation key is unavailable. Open Josi Setup to recover this installation.'
+        : 'No usable master key. Run scripts/install.sh and mount it as a Docker secret, then reload.',
   });
 
   // --- Writable scratch space ---
@@ -109,8 +117,8 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
   let scratchOk = true;
   try {
     const { writeFileSync, unlinkSync } = await import('node:fs');
-    const probe = `/tmp/.josi-setup-probe-${process.pid}`;
-    writeFileSync(probe, 'ok');
+    const probe = join(tmpdir(), `.josi-setup-probe-${randomUUID()}`);
+    writeFileSync(probe, 'ok', { flag: 'wx', mode: 0o600 });
     unlinkSync(probe);
   } catch {
     scratchOk = false;
@@ -122,7 +130,8 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: scratchOk ? 'pass' : 'fail',
     detail: scratchOk
       ? 'Josi can write temporary files.'
-      : 'Josi cannot write temporary files. Check the container has a writable /tmp.',
+      : process.platform === 'win32' ? 'Josi cannot write temporary files. Run Josi Setup and choose Repair.'
+        : 'Josi cannot write temporary files. Check the container has a writable /tmp.',
   });
 
   // --- Disk headroom ---
@@ -136,7 +145,7 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
   // the fallback when no data volume is mounted (tests, bare runs).
   const gb = (n: number) => (n / (1024 ** 3)).toFixed(n >= 100 * (1024 ** 3) ? 0 : 1);
   const measure = opts.freeBytes ?? freeBytesOf;
-  const free = measure('/data/versions') ?? measure('/tmp');
+  const free = measure(process.env.JOSI_DATA_DIR ?? '/data/versions') ?? measure(tmpdir());
   checks.push({
     id: 'disk_space',
     label: 'Free disk space',
@@ -148,6 +157,28 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
         ? `There is room to install and grow: ${gb(free)} GB free where Josi stores its data.`
         : `Free space is low: ${gb(free)} GB free where Josi stores its data. Josi will install, but the database and documents need room.`,
   });
+
+  // Native antivirus is discovered by an explicit worker request. Availability
+  // is advisory when the existing storage policy makes scanning optional.
+  // Never infer a document verdict from real-time protection or this probe.
+  if (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1') {
+    const health = await nativeScannerHealth();
+    let required = false;
+    if (migrated) {
+      const [policy] = await db.query<{ clamav_enabled: boolean }>('select clamav_enabled from storage_policy where id = true');
+      required = policy?.clamav_enabled === true;
+    }
+    const available = health.status === 'available';
+    checks.push({
+      id: 'malware_scanning', label: 'Windows antivirus scanning', mandatory: required,
+      status: available ? 'pass' : required ? 'fail' : 'warn',
+      detail: available
+        ? 'An explicit scan succeeded. Josi requests a separate antivirus scan for each file required by your storage policy.'
+        : required
+          ? 'Windows antivirus scanning is unavailable or failed. Required file scanning remains blocked. Check your installed antivirus before continuing.'
+          : 'Windows antivirus scanning is unavailable or failed. Installation can continue with scanning optional; files are not reported as scanned clean.',
+    });
+  }
 
   return checks;
 }

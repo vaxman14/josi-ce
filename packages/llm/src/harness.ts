@@ -31,8 +31,8 @@
 // both need to know that tools genuinely ran. The probe in particular must not
 // mark `toolCalling: true` unless a call it asked for demonstrably reached our
 // server — the calls file is that demonstration.
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { privateTemporaryDirectory } from '@josi-ce/core';
 import { join } from 'node:path';
 import type { ExecutedToolCall, ToolContext, ToolDefinition } from './types.js';
 
@@ -102,7 +102,7 @@ export function openHarnessSession(args: {
   const env = args.env ?? process.env;
   // mkdtemp gives the directory 0700, and the context file gets 0600 on top:
   // /tmp is shared, and the file names a person.
-  const dir = mkdtempSync(join(tmpdir(), 'josi-mcp-'));
+  const dir = privateTemporaryDirectory('josi-mcp-');
   const contextPath = join(dir, 'context.json');
   const callsPath = join(dir, 'calls.jsonl');
   const workspaceEnabled = env.JOSI_WORKSPACE_ENABLED === '1';

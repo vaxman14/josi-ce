@@ -8,6 +8,7 @@ interface Status {
   helperAvailable: boolean; healthy: boolean; verified: boolean; releaseAvailable: boolean; gpuAvailable?: boolean;
   phase: string; error?: string; requirements: string[]; settings?: Settings; previous?: unknown;
   apiReady?: boolean; modelsReady?: boolean;
+  managedByInstaller?: boolean;
 }
 export function AdminVoiceBox() {
   const [status, setStatus] = useState<Status>();
@@ -63,15 +64,15 @@ export function AdminVoiceBox() {
     <p>Optional local voice chat for Josi. Kokoro provides neural speech on your CPU. Audio stays on this installation; transcripts go through your configured Josi model and its existing permissions.</p>
     {error && <ErrorNote>{error}</ErrorNote>}
     {!status ? <p>Checking Voice Box…</p> : <>
-      <p role="status">{working ? 'Applying changes and checking speech models…' : status.healthy ? 'Speech models are ready' : status.apiReady ? 'API is ready; speech models are not ready' : status.phase === 'absent' ? 'Voice Box is not installed' : 'Voice Box is not ready'}</p>
+      <p role="status">{working ? 'Applying changes and checking speech models…' : status.healthy ? 'Speech models are ready' : status.apiReady ? 'Speech models are starting' : status.phase === 'absent' ? (status.managedByInstaller ? 'Voice Box is turned off' : 'Voice Box is not installed') : 'Voice Box is not ready'}</p>
       {status.error && <ErrorNote>{status.error}</ErrorNote>}
       {!status.verified ? <section className="space-y-3 rounded border border-border p-4">
-        <h2 className="font-semibold">Before you install</h2>
+        <h2 className="font-semibold">{status.managedByInstaller ? 'Enable local voice' : 'Before you install'}</h2>
         <ul className="list-disc space-y-1 pl-5">{status.requirements.map((item) => <li key={item}>{item}</li>)}</ul>
-        <p className="text-sm">Kokoro weights and the included Heart and Bella voices use Apache-2.0 terms. Whisper uses MIT terms. Third-party notices accompany the pinned image. Installation downloads the image; no microphone audio is sent to a speech provider.</p>
+        <p className="text-sm">Kokoro weights and the included Heart and Bella voices use Apache-2.0 terms. Whisper uses MIT terms. {status.managedByInstaller ? 'Models and third-party notices are included with Josi.' : 'Third-party notices accompany the pinned image. Installation downloads the image;'} no microphone audio is sent to a speech provider.</p>
         {!status.helperAvailable && <p>The host operator must enable the optional Voice Box helper once. Follow the repository’s Voice Box setup guide.</p>}
         {status.helperAvailable && !status.releaseAvailable && <p>A Voice Box image has not yet been authorized for release.</p>}
-        <Button disabled={working || !status.helperAvailable || !status.releaseAvailable} onClick={() => void operation('install')}>Install Voice Box</Button>
+        <Button disabled={working || !status.helperAvailable || !status.releaseAvailable} onClick={() => void operation('install')}>{status.managedByInstaller ? 'Enable Voice Box' : 'Install Voice Box'}</Button>
       </section> : settings && <section className="space-y-4 rounded border border-border p-4">
         <h2 className="font-semibold">Speech settings</h2>
         <fieldset disabled={working || !status.healthy} className="grid gap-4 sm:grid-cols-2">
@@ -89,11 +90,12 @@ export function AdminVoiceBox() {
           <Button disabled={working || !status.healthy} onClick={() => void operation('settings', settings)}>Save and verify</Button>
           <Button disabled={working || !status.healthy || previewing || JSON.stringify(settings) !== savedSettings} onClick={() => void playPreview()}>{previewing ? 'Playing preview…' : 'Preview voice'}</Button>
           <Button disabled={working} onClick={() => void operation('restart')}>Restart</Button>
-          <Button disabled={working || !status.releaseAvailable} onClick={() => void operation('update')}>Update Voice Box</Button>
-          <Button disabled={working || !status.previous} onClick={() => void operation('rollback')}>Roll back</Button>
-          <Button disabled={working} onClick={() => setRemove(true)}>Uninstall</Button>
+          {!status.managedByInstaller && <Button disabled={working || !status.releaseAvailable} onClick={() => void operation('update')}>Update Voice Box</Button>}
+          <Button disabled={working || !status.previous} onClick={() => void operation('rollback')}>{status.managedByInstaller ? 'Restore previous settings' : 'Roll back'}</Button>
+          <Button disabled={working} onClick={() => setRemove(true)}>{status.managedByInstaller ? 'Turn off Voice Box' : 'Uninstall'}</Button>
         </div>
-        {remove && <div className="space-y-2"><p>Stop and remove the Voice Box container? Josi conversations and settings are preserved.</p><Button disabled={working} onClick={() => void operation('uninstall')}>Confirm uninstall</Button> <Button onClick={() => setRemove(false)}>Cancel</Button></div>}
+        {status.managedByInstaller && <p className="text-sm text-muted-foreground">Voice Box updates are included in Josi updates.</p>}
+        {remove && <div className="space-y-2"><p>{status.managedByInstaller ? 'Turn off local voice? You can enable it again here. Conversations and settings are preserved.' : 'Stop and remove the Voice Box container? Josi conversations and settings are preserved.'}</p><Button disabled={working} onClick={() => void operation('uninstall')}>{status.managedByInstaller ? 'Confirm turn off' : 'Confirm uninstall'}</Button> <Button onClick={() => setRemove(false)}>Cancel</Button></div>}
       </section>}
     </>}
   </div>;

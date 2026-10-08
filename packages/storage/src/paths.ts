@@ -24,7 +24,7 @@
 // separator, then resolve symlinks and check AGAIN. Checking once before
 // resolution is checking the wrong string.
 import { realpath } from 'node:fs/promises';
-import { isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 
 export class PathEscape extends Error {}
 
@@ -41,9 +41,8 @@ export function safeRelativePath(input: string): string {
   if (typeof input !== 'string') throw new PathEscape('that is not a path');
   if (input.includes('\0')) throw new PathEscape('that path contains a null byte');
   if (isAbsolute(input)) throw new PathEscape('that path must be relative to the mapped folder');
-  // Windows-style separators and drive letters, refused rather than translated:
-  // CE runs in Linux containers, so anything shaped like a Windows path is a
-  // caller doing something unexpected.
+  // The API uses slash-separated relative paths on every platform. Native
+  // Windows absolute paths are trusted configuration, never client input here.
   if (/^[A-Za-z]:/.test(input) || input.includes('\\')) {
     throw new PathEscape('that path is not in the expected form');
   }
@@ -51,6 +50,10 @@ export function safeRelativePath(input: string): string {
   const parts = input.split('/').filter((p) => p.length > 0);
   for (const part of parts) {
     if (FORBIDDEN_SEGMENTS.has(part)) throw new PathEscape('that path may not contain "." or ".."');
+    if (process.platform === 'win32' && (
+      /[<>:"|?*\x00-\x1f]/.test(part) || /[. ]$/.test(part)
+      || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part)
+    )) throw new PathEscape('that path is not a supported Windows filename');
   }
   const cleaned = parts.join('/');
   // The empty path is the mapped folder itself, which is a legitimate thing to
@@ -59,7 +62,7 @@ export function safeRelativePath(input: string): string {
   if (cleaned === '') return '';
   // Normalising after the segment check, not before: `normalize` would happily
   // collapse "a/../b" into "b" and hide the fact that the caller sent a "..".
-  if (normalize(cleaned) !== cleaned) throw new PathEscape('that path is not in normal form');
+  if (posix.normalize(cleaned) !== cleaned) throw new PathEscape('that path is not in normal form');
   return cleaned;
 }
 

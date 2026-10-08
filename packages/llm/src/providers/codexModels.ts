@@ -15,7 +15,7 @@ export interface CodexListedModel {
 function modelListEnvironment(parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const keys = [
     'PATH', 'HOME', 'USER', 'CODEX_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY',
-    'SSL_CERT_FILE', 'NODE_EXTRA_CA_CERTS',
+    'SSL_CERT_FILE', 'NODE_EXTRA_CA_CERTS', 'SystemRoot', 'WINDIR',
   ];
   const env: NodeJS.ProcessEnv = { NO_COLOR: '1', CI: '1' };
   for (const key of keys) {
@@ -28,11 +28,13 @@ function modelListEnvironment(parent: NodeJS.ProcessEnv = process.env): NodeJS.P
  * is only a set of candidates; the existing real model probe decides whether
  * one can be activated on this person's plan. */
 export function listCodexModels(
-  opts: { command?: string | null; timeoutMs?: number } = {},
+  opts: { command?: string | null; timeoutMs?: number; commandArgs?: string[] } = {},
 ): Promise<CodexListedModel[]> {
   return new Promise((resolve, reject) => {
-    const child = spawn(opts.command || DEFAULT_CODEX_COMMAND, ['app-server', '--stdio'], {
-      env: modelListEnvironment(), stdio: ['pipe', 'pipe', 'ignore'],
+    // Trusted programmatic launcher arguments (e.g. a bundled Node CLI or test
+    // fixture). This option is not populated by an HTTP request or model output.
+    const child = spawn(opts.command || DEFAULT_CODEX_COMMAND, [...(opts.commandArgs ?? []), 'app-server', '--stdio'], {
+      env: modelListEnvironment(), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true,
     });
     let finished = false;
     let buffer = '';

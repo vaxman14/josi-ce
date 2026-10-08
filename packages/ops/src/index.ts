@@ -29,3 +29,4 @@ export {
 export {
   pgBackupWriter, pgRestoreReader, pgToolsAvailable, type PgConnection,
 } from './pgWriter.js';
+export { createNativeSnapshot, restoreNativeSnapshot, verifyNativeSnapshot } from './nativeSnapshot.js';
