@@ -13,7 +13,8 @@ if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparseP
     (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedKitHash){throw 'Installer kit integrity failed'}
 $manifest=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
 $required=@('Initialize-NativeSetup.ps1','Josi.NativeSetup.dll','Configuration.psm1','DataLayout.psm1','Database.psm1',
-    'Maintenance.psm1','Payloads.psm1','Services.psm1','Transactions.psm1','service-host.lock.json')
+    'Maintenance.psm1','Payloads.psm1','Services.psm1','Transactions.psm1','service-host.lock.json',
+    'Lifecycle.psm1','Diagnostics.psm1','StartupEvidence.psm1','Invoke-NativeSetup.ps1','WinSW.Josi.exe')
 if(@($manifest.PSObject.Properties).Count -ne 4 -or $manifest.schemaVersion -ne 1 -or $manifest.product -cne 'Josi CE installer kit' -or
     $manifest.architecture -cne 'x64' -or @($manifest.files).Count -ne $required.Count){throw 'Installer kit identity failed'}
 $seen=@{}
@@ -37,5 +38,5 @@ foreach($name in @($required+'kit-inventory.json')){
 }
 Import-Module (Join-Path $root 'Payloads.psm1')
 $null=Assert-PlainNativePath $root
-foreach($name in @('Services','DataLayout','Configuration','Database','Transactions','Maintenance')){Import-Module (Join-Path $root ($name+'.psm1'))}
+foreach($name in @('Services','DataLayout','Configuration','Database','Transactions','Maintenance','Lifecycle','Diagnostics','StartupEvidence')){Import-Module (Join-Path $root ($name+'.psm1'))}
 [pscustomobject]@{verified=$true;precompiledBridge=$true;runtimeCompilerRequired=$false;kitSha256=$ExpectedKitHash}

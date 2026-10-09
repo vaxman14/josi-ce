@@ -15,10 +15,15 @@ $root=Assert-PlainNativePath (Join-Path $base ('staging\installer-kit-'+[Guid]::
 $null=[IO.Directory]::CreateDirectory($root)
 $files=[Collections.Generic.List[object]]::new()
 foreach($name in @('Initialize-NativeSetup.ps1','Josi.NativeSetup.dll','Configuration.psm1','DataLayout.psm1','Database.psm1',
-    'Maintenance.psm1','Payloads.psm1','Services.psm1','Transactions.psm1','service-host.lock.json')){
-    $source=if($name -ceq 'Josi.NativeSetup.dll'){$helper.binary}else{Join-Path $repo ('packaging\windows\'+$name)}
+    'Maintenance.psm1','Payloads.psm1','Services.psm1','Transactions.psm1','service-host.lock.json',
+    'Lifecycle.psm1','Diagnostics.psm1','StartupEvidence.psm1','Invoke-NativeSetup.ps1','WinSW.Josi.exe')){
+    $source=if($name -ceq 'Josi.NativeSetup.dll'){$helper.binary}elseif($name -ceq 'WinSW.Josi.exe'){Join-Path $base 'cache\WinSW.Josi-2.12.0-windows1.exe'}else{Join-Path $repo ('packaging\windows\'+$name)}
     $null=Assert-PlainNativePath $source
     if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($source)){throw 'Linked installer input refused'}
+    if($name -ceq 'WinSW.Josi.exe'){
+        $pin=Get-Content -LiteralPath (Join-Path $repo 'packaging\windows\service-host.lock.json') -Raw | ConvertFrom-Json
+        if((Get-Item -LiteralPath $source).Length -ne $pin.size -or (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.sha256){throw 'Service wrapper pin changed'}
+    }
     $output=Join-Path $root $name
     [IO.File]::Copy($source,$output,$false)
     $files.Add([ordered]@{path=$name;size=(Get-Item -LiteralPath $output).Length;sha256=(Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()})

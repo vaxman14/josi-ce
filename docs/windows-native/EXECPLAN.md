@@ -39,15 +39,17 @@ module, file, service and network evidence; never remove unrelated prerequisites
 - [ ] M7: existing local Azure Artifact Signing after unsigned acceptance; verify
   Authenticode/timestamp, Defender, freshly downloaded hashes and clean reinstall.
 
-Immediate priority: repair/uninstall isolation, diagnostics, thin EXE and legal closure,
-then browser/audio/LAN and signing gates. Earlier implementation notes below are history.
+Immediate priority: finish the production thin-installer lifecycle and legal/source
+closure, then browser/audio/LAN and signing gates. Isolated repair/uninstall and
+diagnostics passed; the thin EXE is a read-only engineering preview. Earlier
+implementation notes below are history.
 The CPU voice build now works with workspace-local pinned Microsoft supplements;
 the earlier Build Tools UAC request is no longer needed. A successful
 import is insufficient. Linux CPU approval does not approve different Windows
 artifacts. No public publishing before Roman approves the physically
 tested, signed candidate. Stage release assets locally until that gate is met.
 
-### Source checkpoint and preserved recovery state (2026-10-08)
+### Historical source checkpoint and preserved recovery state (2026-10-08)
 
 The checkpoint contains source, build recipes, pinned dependencies, tests and
 this plan. Secrets, databases, recovery snapshots, downloaded inputs, compiled
