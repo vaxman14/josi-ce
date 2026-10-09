@@ -1,6 +1,6 @@
 // Josi CE API entrypoint.
 import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
-import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
+import { apiListenHost, connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
 import { createApp } from './app.js';
 import { publicAddressFromEnvironment, reconcilePublicAddress } from './setup/publicAddress.js';
@@ -74,8 +74,9 @@ const app = createApp(db, {
 
 // The native proxy is the only public listener. Container network isolation
 // retains its existing behavior on other platforms.
-const server = process.platform === 'win32'
-  ? app.listen(PORT, '127.0.0.1', () => console.log(`josi-ce api on loopback :${PORT}`))
+const listenHost = apiListenHost();
+const server = listenHost
+  ? app.listen(PORT, listenHost, () => console.log(`josi-ce api on loopback :${PORT}`))
   : app.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));
 
 /** Stop accepting connections, drain, then close the pool. Without this a

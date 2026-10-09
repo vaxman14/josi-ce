@@ -1,0 +1,72 @@
+Josi CE native macOS — acceptance procedure draft
+STATUS: PORT INCOMPLETE. NO INSTALLABLE ACCEPTANCE APP EXISTS AT THIS CHECKPOINT.
+The built josi-native-status utility only queries launchd. It installs nothing.
+
+SERVICE INVENTORY (proposed fixed system-domain labels)
+com.heyjosi.ce.database       boot; private PostgreSQL ready before writers
+com.heyjosi.ce.web            boot; waits for database and completed migrations
+com.heyjosi.ce.worker         boot; waits for database; recent worker heartbeat
+com.heyjosi.ce.proxy          boot; waits for API readiness
+com.heyjosi.ce.voice-control  boot; authenticated local speech control
+com.heyjosi.ce.voice          on demand; may legitimately be idle
+The scanner product decision may add labels. Update this list before packaging.
+Current checkpoint: all six labels queried; all NOT REGISTERED, health UNVERIFIED.
+No service was installed, loaded, unloaded, started or stopped by this run.
+
+SIMPLE READ-ONLY CHECK
+Run the josi-native-status executable built by scripts/macos/build-status.sh.
+It reports label, expected startup, current state and PID when present.
+Exit 1 means a required service is not running/registered or its query failed;
+exit 2 means the inspection itself could not run. A PID is not a health verdict.
+For a single label: /bin/launchctl print system/com.heyjosi.ce.web
+Do not share raw launchctl output; it can contain installed configuration.
+
+POST-INSTALL HUMAN CHECKLIST (ONLY AFTER A REAL CANDIDATE IS PROVIDED)
+1. Verify the installer checksum and exact SOCAL signature/team LRH75YR6QW.
+2. During installation observe current phase/service, a moving activity indicator
+   and elapsed time. Installation may take several minutes. A static frozen
+   screen, premature success, missing permission prompt or leaked token is a fail.
+3. Confirm the six listed services (and any approved scanner services) using the
+   status utility. Expected automatic services run; speech may be on demand.
+4. After ownership is established, check http://localhost:8080/ready returns 200,
+   readiness confirms migrations and a fresh worker heartbeat, and the browser
+   opens setup/sign-in as appropriate. Startup order requires separate evidence.
+5. Expected listeners are IPv4 127.0.0.1 only: proxy 8080, API 18080,
+   PostgreSQL 15432, speech 18081 when active, control 18082. No wildcard or LAN
+   bindings, public database listener, proxy admin listener or scanner TCP port.
+   Check the reported process IDs with: /usr/sbin/lsof -nP -a -p PID -iTCP -sTCP:LISTEN
+6. Complete owner creation, retain recovery material privately and confirm it,
+   configure a model provider and complete setup. Close/reopen midway; resume
+   without creating another owner or rotating the original vault/recovery key.
+7. Verify browser token scrubbing, single-use/expiry and fresh-link retry after
+   a failed browser launch. Do not screenshot or share private setup links.
+8. Test approved scanning policy: clean, blocked, scanner unavailable, and OCR.
+   Test CPU speech, real microphone/playback, then a separate reboot-startup run.
+   LAN is off by default and requires separately authorized configuration/testing.
+
+CLEAN INSTALL
+Use a separate physical Apple Silicon Mac with no Josi installation. Never wipe
+this Mac, remove an existing Josi app, clear Keychains or delete retained data
+to simulate a clean installation. Double-click the future app as the ordinary
+interactive user and approve its normal macOS authorization prompt. No Terminal,
+Homebrew, external developer runtime or container engine may be required.
+
+UPGRADE
+Use a separately retained accepted native macOS baseline with real fixture data.
+Do not call a first install an upgrade. Capture the exact baseline, permissions,
+service identities, configuration, secrets and recovery inventory privately.
+The installer must refuse an interrupted earlier transaction. Quiesce writers,
+verify the snapshot, migrate before activation and commit only after readiness.
+Confirm prior accounts, vault wraps, grants, data and credentials are retained.
+
+FAILURE / ROLLBACK
+Keep the transaction, old/candidate runtimes, logs and verified snapshots. Do not
+delete the cluster, rotate credentials, restore SQL or retry over a stale journal
+without reviewing evidence that recovery cannot discard newer data. Failure
+injection belongs in a separate disposable installation, never the live Mac.
+
+UNVERIFIED
+Native installer/launchd lifecycle, packaged migration/rollback, browser handoff,
+OCR/scanner/CPU speech, malware/SBOM/license/archive closure, SOCAL signature,
+Gatekeeper/notarization, physical clean install, physical upgrade, reboot,
+provider authentication, microphone/speaker and LAN acceptance are not claimed.

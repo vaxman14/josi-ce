@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { postgresDb, type Db } from './db.js';
 import { readWindowsSecret } from './windowsSecrets.js';
+import { readMacSecret } from './macosSecrets.js';
 
 export class ConnectionConfigError extends Error {}
 
@@ -22,7 +23,9 @@ export function connectionStringFromEnv(env: NodeJS.ProcessEnv = process.env): s
   let password: string;
   try {
     password = (process.platform === 'win32' && env.JOSI_NATIVE_RUNTIME === '1'
-      ? readWindowsSecret(passwordFile).toString('utf8') : readFileSync(passwordFile, 'utf8')).trim();
+      ? readWindowsSecret(passwordFile).toString('utf8')
+      : process.platform === 'darwin' && env.JOSI_NATIVE_RUNTIME === '1'
+        ? readMacSecret(passwordFile).toString('utf8') : readFileSync(passwordFile, 'utf8')).trim();
   } catch {
     throw new ConnectionConfigError(`could not read the database password from ${passwordFile}`);
   }

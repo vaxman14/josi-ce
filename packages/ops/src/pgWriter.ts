@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { privateTemporaryDirectory, readWindowsSecret, resolveDataPath } from '@josi-ce/core';
+import { privateTemporaryDirectory, readMacSecret, readWindowsSecret, resolveDataPath } from '@josi-ce/core';
 import { BackupError, type BackupContents, type BackupKind, type BackupWriter } from './backup.js';
 import { RestoreError, type RestoreReader } from './backup.js';
 
@@ -26,12 +26,12 @@ export interface PgConnection {
   port: number;
   user: string;
   database: string;
-  /** Read from a file at call time and passed through the environment to the
-   * child only. Never logged, never stored, never part of an error. */
+  /** Compatibility input. Native subprocesses receive a private pgpass file;
+   * container subprocesses retain their existing credential environment. */
   password?: string;
   /** Raw password file, read for each operation; preferred by native services. */
   passwordFile?: string;
-  /** Private, immutable PostgreSQL bin directory. Required on Windows. */
+  /** Private, immutable PostgreSQL bin directory. Required by native runtimes. */
   toolsDirectory?: string;
 }
 
@@ -85,6 +85,10 @@ function run(
 }
 
 function toolPath(name: 'pg_dump' | 'psql', directory = process.env.JOSI_PG_BIN): string {
+  if (process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1'
+    && (!directory || !isAbsolute(directory))) {
+    throw new BackupError('the bundled database tools are not configured', 'unknown');
+  }
   if (process.platform !== 'win32') return directory ? join(directory, name) : name;
   if (!directory || !isAbsolute(directory) || !/^[A-Za-z]:[\\/]/.test(directory)) {
     throw new BackupError('the bundled database tools are not configured', 'unknown');
@@ -97,9 +101,11 @@ async function runPg(conn: PgConnection, name: 'pg_dump' | 'psql', args: string[
   try {
     const command = toolPath(name, conn.toolsDirectory);
     const password = conn.passwordFile ? (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
-      ? readWindowsSecret(conn.passwordFile).toString('utf8') : await readFile(conn.passwordFile, 'utf8')).trim() : conn.password;
+      ? readWindowsSecret(conn.passwordFile).toString('utf8')
+      : process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1'
+        ? readMacSecret(conn.passwordFile).toString('utf8') : await readFile(conn.passwordFile, 'utf8')).trim() : conn.password;
     let env: NodeJS.ProcessEnv;
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' || (process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1')) {
       // Do not pass provider credentials or inherited libpq options to tools.
       env = { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
         TEMP: process.env.TEMP, TMP: process.env.TMP, PATH: dirname(command),

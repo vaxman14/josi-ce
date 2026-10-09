@@ -12,6 +12,19 @@ describe('portable database paths at the native filesystem boundary', () => {
   it('maps portable names into the configured Windows root', () => {
     expect(resolveDataPath('/data/backups/a.zip', native, 'win32')).toBe('C:\\ProgramData\\Josi CE Server\\backups\\a.zip');
   });
+  it('maps macOS storage without changing stored names or selected external paths', () => {
+    const env = { JOSI_NATIVE_RUNTIME: '1', JOSI_DATA_DIR: '/Library/Application Support/Josi CE Server' };
+    expect(resolveDataPath('/data/backups/a.zip', env, 'darwin')).toBe(env.JOSI_DATA_DIR + '/backups/a.zip');
+    expect(resolveDataPath('/data', env, 'darwin')).toBe(env.JOSI_DATA_DIR);
+    expect(resolveDataPath('/Volumes/Documents/a', env, 'darwin')).toBe('/Volumes/Documents/a');
+    expect(resolveDataPath('/data/a', {}, 'darwin')).toBe('/data/a');
+    for (const path of ['/data/../secret', '/data/a/./b', '/data/a\\b', '/data/a\0b']) {
+      expect(() => resolveDataPath(path, env, 'darwin')).toThrow();
+    }
+    for (const root of ['', '/', 'relative', '/data/../secret', '/data/', '/data\n']) {
+      expect(() => resolveDataPath('/data/a', { ...env, JOSI_DATA_DIR: root }, 'darwin')).toThrow();
+    }
+  });
   it('fails closed for missing roots, traversal, alternate streams and device names', () => {
     expect(() => resolveDataPath('/data/backups/a.zip', { JOSI_NATIVE_RUNTIME: '1' }, 'win32')).toThrow();
     for (const path of ['/data/../secret', '/data/a/./b', '/data/a\\b', '/data/a:stream', '/data/COM1.zip', '/data/a.']) {

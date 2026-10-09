@@ -14,6 +14,7 @@
 // and by nothing else.
 import { readFileSync, statSync } from 'node:fs';
 import { readWindowsSecret } from './windowsSecrets.js';
+import { readMacSecret } from './macosSecrets.js';
 
 export const DEFAULT_MASTER_KEY_PATH = '/run/secrets/josi_master_key';
 
@@ -94,8 +95,12 @@ export function loadMasterKey(opts: LoadOptions = {}): MasterKey {
   let raw: Buffer;
   try {
     raw = (opts.readFile ?? (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
-      ? readWindowsSecret : readFileSync))(path);
+      ? readWindowsSecret : process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1'
+        ? readMacSecret : readFileSync))(path);
   } catch {
+    if (process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1') {
+      throw new MasterKeyError('The installation key is missing or its macOS permissions are unsafe. Installer recovery is required.');
+    }
     if (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1') {
       throw new MasterKeyError('The installation key is missing or its Windows permissions are unsafe. Use Repair in Josi CE Server Setup.');
     }

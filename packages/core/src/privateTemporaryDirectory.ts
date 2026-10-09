@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { closeSync, constants, fstatSync, mkdtempSync, openSync, rmdirSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,30 @@ import { createRequire } from 'node:module';
  */
 export function privateTemporaryDirectory(prefix: string): string {
   if (!/^[a-zA-Z0-9-]{1,64}$/.test(prefix)) throw new Error('Invalid private directory prefix');
+  if (process.platform === 'darwin') {
+    // macOS inherits extended ACLs independently of mode 0700. Establish the
+    // empty ACL before any credential/document is written into this directory.
+    const path = mkdtempSync(join(tmpdir(), prefix));
+    let fd: number | undefined;
+    try {
+      fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      const s = fstatSync(fd);
+      if (!s.isDirectory() || s.uid !== process.getuid!() || (s.mode & 0o777) !== 0o700) throw new Error();
+      const k = createRequire(import.meta.url)('koffi');
+      const libc = k.load('/usr/lib/libSystem.B.dylib');
+      const init = libc.func('void *acl_init(int)');
+      const set = libc.func('int acl_set_fd_np(int, void *, int)');
+      const free = libc.func('int acl_free(void *)');
+      const acl = init(0);
+      if (!acl) throw new Error();
+      try { if (set(fd, acl, 0x100) !== 0) throw new Error(); }
+      finally { free(acl); }
+      return path;
+    } catch {
+      rmdirSync(path);
+      throw new Error('Could not establish private macOS storage');
+    } finally { if (fd !== undefined) closeSync(fd); }
+  }
   if (process.platform !== 'win32') return mkdtempSync(join(tmpdir(), prefix));
   const k = createRequire(import.meta.url)('koffi');
   const kernel = k.load('kernel32.dll');

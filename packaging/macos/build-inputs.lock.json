@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "purpose": "macos-port-development",
+  "installable": false,
+  "architecture": "arm64",
+  "components": [
+    {
+      "id": "node",
+      "version": "24.15.0",
+      "url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-darwin-arm64.tar.gz",
+      "sha256": "372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4",
+      "checksumSource": "https://nodejs.org/dist/v24.15.0/SHASUMS256.txt",
+      "license": "MIT AND bundled third-party notices",
+      "licenseFile": "node-v24.15.0-darwin-arm64/LICENSE",
+      "redistribution": "Not packaged; retain the complete upstream LICENSE and audit the final runtime inventory before packaging"
+    }
+  ]
+}

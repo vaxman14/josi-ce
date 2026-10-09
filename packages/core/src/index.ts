@@ -36,4 +36,6 @@ export {
 } from './ratelimit.js';
 export { privateTemporaryDirectory } from './privateTemporaryDirectory.js';
 export { resolveDataPath } from './dataPath.js';
+export { apiListenHost } from './nativeNetwork.js';
 export { readWindowsSecret } from './windowsSecrets.js';
+export { readMacSecret } from './macosSecrets.js';

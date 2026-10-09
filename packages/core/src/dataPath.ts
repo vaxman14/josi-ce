@@ -1,4 +1,4 @@
-import { win32 } from 'node:path';
+import { posix, win32 } from 'node:path';
 
 /** Database records keep their portable /data/... names. Only filesystem
  * boundaries translate those names into the native installation's data root.
@@ -9,9 +9,20 @@ export function resolveDataPath(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  if (platform !== 'win32' || env.JOSI_NATIVE_RUNTIME !== '1') return path;
+  if (!['win32', 'darwin'].includes(platform) || env.JOSI_NATIVE_RUNTIME !== '1') return path;
   if (path !== '/data' && !path.startsWith('/data/')) return path;
   const root = env.JOSI_DATA_DIR;
+  if (platform === 'darwin') {
+    if (!root || !posix.isAbsolute(root) || root === '/' || posix.normalize(root) !== root
+      || /[\x00-\x1f]/.test(root) || root.endsWith('/')) {
+      throw new Error('Native data storage is not configured');
+    }
+    const segments = path.slice('/data'.length).split('/').filter(Boolean);
+    if (segments.some(part => part === '.' || part === '..' || /[\\\x00-\x1f]/.test(part))) {
+      throw new Error('Invalid native data path');
+    }
+    return posix.join(root, ...segments);
+  }
   if (!root || !/^[A-Za-z]:[\\/]/.test(root) || root.includes('\0')) {
     throw new Error('Native data storage is not configured');
   }
