@@ -1,5 +1,6 @@
+import { macReadFile as readFile } from '../src/macosDirectory.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, symlink, rm, link, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, symlink, rm, link } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspacePath, withWorkspaceDirectory, workspaceGrant } from '../src/localWorkspace.js';

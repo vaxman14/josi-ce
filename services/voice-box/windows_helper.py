@@ -5,6 +5,7 @@ unprivileged helper cannot install services, change their executable/account,
 download payloads, select models outside settings.py, or execute commands.
 """
 import ctypes
+import sys
 from ctypes import wintypes
 import hmac
 import http.client
@@ -92,7 +93,7 @@ class Manager:
         for root in (self.root, self.gateway_root):
             if not root.is_absolute() or not root.is_dir():
                 raise ValueError('Private voice storage is unavailable')
-            if any(path.is_symlink() or path.is_junction() for path in (root, *root.parents)):
+            if any(path.is_symlink() or getattr(path, 'is_junction', lambda: False)() for path in (root, *root.parents)):
                 raise ValueError('Voice storage must not contain links')
         if not 1024 <= gateway_port <= 65535 or not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?', version):
             raise ValueError('Invalid installed voice configuration')
@@ -147,7 +148,7 @@ class Manager:
         health = self.health() if self.state['enabled'] else {'apiReady': False, 'modelsReady': False}
         return {**self.state, **health, 'healthy': all(health.values()), 'helperAvailable': True,
                 'managedByInstaller': True, 'releaseAvailable': True, 'gpuAvailable': False,
-                'requirements': ['Josi CE Server for Windows', '4 GB available RAM and 2+ CPU cores',
+                'requirements': ['Josi CE Server for Apple Silicon' if sys.platform == 'darwin' else 'Josi CE Server for Windows', '4 GB available RAM and 2+ CPU cores',
                                  'HTTPS or localhost for browser microphone access',
                                  'Speech models are installed locally with Josi']}
 
@@ -294,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
 class Server(BoundedRequests, socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
     block_on_close = False
-    allow_reuse_address = False
+    allow_reuse_address = sys.platform == 'darwin'
 
 
 if __name__ == '__main__':

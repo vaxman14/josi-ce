@@ -16,7 +16,7 @@ const MIGRATIONS = join(dirname(fileURLToPath(import.meta.url)), 'migrations');
 /** The database password is read from a file for the same reason the master key
  * is: an environment variable is visible in `docker inspect` and inherited by
  * every child process. */
-function connectionString() {
+async function connectionString() {
   const url = process.env.DATABASE_URL;
   if (!url) {
     console.error('DATABASE_URL is required');
@@ -27,7 +27,9 @@ function connectionString() {
 
   let password;
   try {
-    password = readFileSync(passwordFile, 'utf8').trim();
+    password = process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1'
+      ? (await import('../core/dist/macosSecrets.js')).readMacSecret(passwordFile).toString('utf8').trim()
+      : readFileSync(passwordFile, 'utf8').trim();
   } catch {
     console.error(`could not read the database password from ${passwordFile}`);
     process.exit(1);
@@ -37,7 +39,7 @@ function connectionString() {
   return parsed.toString();
 }
 
-const sql = postgres(connectionString(), { max: 1, prepare: false, onnotice: () => {} });
+const sql = postgres(await connectionString(), { max: 1, prepare: false, onnotice: () => {} });
 
 try {
   await sql`

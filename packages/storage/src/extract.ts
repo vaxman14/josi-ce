@@ -1,3 +1,4 @@
+import { requireMacScan } from './macosScanner.js';
 // Turning a file's bytes into searchable text — for the formats where that is
 // honest to do without a parser.
 //
@@ -70,6 +71,7 @@ export function looksLikeCredentialFile(filename: string, text = ''): boolean {
 export async function extractRichSegments(
   args: { extension: string; bytes: Buffer; ocrImages?: boolean },
 ): Promise<ExtractedSegment[] | null> {
+  await requireMacScan(args.bytes);
   const ext = args.extension.toLowerCase();
   const plain = extractSegments(args);
   if (plain) return plain;

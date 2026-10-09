@@ -34,7 +34,7 @@ MAX_SAMPLES = 15 * RATE
 
 
 class Engine:
-    def __init__(self, runtime=None):
+    def __init__(self, runtime=None, start=True):
         self.runtime = runtime_config() if runtime is None else runtime
         self.config = validate(json.loads((self.runtime['state'] / 'settings.json').read_text(encoding='utf-8')))
         if self.runtime['windows'] and self.config['device'] != 'cpu':
@@ -46,7 +46,8 @@ class Engine:
         self.tts_lock = threading.Lock()
         self.ready = False
         self.failure = None
-        threading.Thread(target=self.load, daemon=True).start()
+        if start:
+            threading.Thread(target=self.load, daemon=True).start()
 
     def load(self):
         try:
@@ -157,6 +158,18 @@ class Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + engine.token):
             self.reply(401, {'error': 'Unauthorized'})
             return
+        if sys.platform == 'darwin' and self.command == 'POST' and self.path in ('/control/start', '/control/stop'):
+            if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Length') != '2' or self.rfile.read(2) != b'{}':
+                self.reply(400, {'error': 'Invalid control request'})
+                return
+            # Fixed private actions only, authenticated with the separate gateway
+            # credential. The public API possesses only the control credential.
+            with engine.lock, engine.tts_lock:
+                engine.ready = False
+                engine.sessions.clear()
+                self.server.engine = Engine(engine.runtime, start=self.path == '/control/start')
+            self.reply(200, {'accepted': True})
+            return
         if self.command == 'GET' and self.path in ('/health', '/ready'):
             self.reply(200 if self.path == '/health' or engine.ready else 503,
                        {'apiReady': True, 'modelsReady': engine.ready, 'error': engine.failure, 'version': '0.1.0'})
@@ -189,16 +202,19 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-Transport = socketserver.TCPServer if sys.platform == 'win32' else socketserver.UnixStreamServer
+Transport = socketserver.TCPServer if sys.platform in ('win32', 'darwin') else socketserver.UnixStreamServer
 
 
 class Server(BoundedRequests, socketserver.ThreadingMixIn, Transport):
     daemon_threads = True
+    # Darwin must rebind after a controlled restart while accepted connections
+    # remain in TIME_WAIT. SO_REUSEPORT is deliberately never enabled.
+    allow_reuse_address = sys.platform == 'darwin'
 
 
 if __name__ == '__main__':
     runtime = runtime_config()
-    engine = Engine(runtime)
+    engine = Engine(runtime, start=sys.platform != 'darwin')
     if not runtime['windows']:
         path = Path(runtime['address'])
         if path.exists():

@@ -329,6 +329,7 @@ export function scanRequired(
   policy: StoragePolicy,
   event: 'index' | 'change',
 ): boolean {
+  if (process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1') return true;
   if (!policy.clamav_enabled) return false;
   return policy.clamav_scan_mode === 'on_change' ? true : event === 'index';
 }

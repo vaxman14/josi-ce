@@ -1,0 +1,197 @@
+[
+  {
+    "path": "native/@napi-rs__canvas-0.1.80.tar.gz",
+    "url": "https://codeload.github.com/Brooooooklyn/canvas/tar.gz/dda1b258dac667b4c66b94bbd4d70aa79ea4503a",
+    "sha256": "f981d7b67c6059b1665461f13101cdd29e6ac179bde5e91f72f71213e72dd412",
+    "size": 26859723,
+    "package": "@napi-rs/canvas",
+    "version": "0.1.80",
+    "commit": "dda1b258dac667b4c66b94bbd4d70aa79ea4503a",
+    "license": "MIT"
+  },
+  {
+    "path": "native/@node-rs__argon2-2.2.0.tar.gz",
+    "url": "https://codeload.github.com/napi-rs/node-rs/tar.gz/fa136aca9ec849e4fc0935bd71f0efce1a6a3ef2",
+    "sha256": "19e546c517fd59c1eb1587694ab5b225ac17cabe4e80765daea809bd32a42e2e",
+    "size": 6019693,
+    "package": "@node-rs/argon2",
+    "version": "2.2.0",
+    "commit": "fa136aca9ec849e4fc0935bd71f0efce1a6a3ef2",
+    "license": "MIT"
+  },
+  {
+    "path": "native/libheif-js-1.23.2.tar.gz",
+    "url": "https://codeload.github.com/catdad-experiments/libheif-js/tar.gz/6ca00b818c0ff51cb2a5c75b9ce97d708083335a",
+    "sha256": "6dc502839526b5c2073efde3686817d9a63c077a6bea6026fedb9857f5414a71",
+    "size": 10267,
+    "package": "libheif-js",
+    "version": "1.23.2",
+    "commit": "6ca00b818c0ff51cb2a5c75b9ce97d708083335a",
+    "license": "LGPL-3.0"
+  },
+  {
+    "path": "native/microsoft__onnxruntime-v1.22.1.tar.gz",
+    "url": "https://codeload.github.com/microsoft/onnxruntime/tar.gz/v1.22.1",
+    "sha256": "9eacbf624d6f7466da81d9beb4399cb8683808b15c1276b7cd56c6907bf59f77",
+    "size": 241396095,
+    "package": "microsoft/onnxruntime",
+    "version": "v1.22.1"
+  },
+  {
+    "path": "native/google__flatbuffers-v25.12.19.tar.gz",
+    "url": "https://codeload.github.com/google/flatbuffers/tar.gz/v25.12.19",
+    "sha256": "f81c3162b1046fe8b84b9a0dbdd383e24fdbcf88583b9cb6028f90d04d90696a",
+    "size": 2355743,
+    "package": "google/flatbuffers",
+    "version": "v25.12.19"
+  },
+  {
+    "path": "native/libheif-emscripten-1.23.2.tar.gz",
+    "url": "https://codeload.github.com/catdad-experiments/libheif-emscripten/tar.gz/refs/tags/v1.23.2",
+    "sha256": "1b1b71e8b34ccc2b9ba490d769172ad855c279efdc787d8ea7a901af177ebcab",
+    "size": 3126,
+    "package": "libheif-emscripten",
+    "version": "1.23.2"
+  },
+  {
+    "path": "native/libheif-ac1cb05c39008f01525c991ff8b88f84ddf70fd2.tar.gz",
+    "url": "https://codeload.github.com/strukturag/libheif/tar.gz/ac1cb05c39008f01525c991ff8b88f84ddf70fd2",
+    "sha256": "36c9b259386f1ffb3ed12d7ca01664fde8ef03802ded750de17db53303b099e7",
+    "size": 2066097,
+    "package": "libheif",
+    "version": "ac1cb05c39008f01525c991ff8b88f84ddf70fd2",
+    "license": "LGPL-3.0-or-later"
+  },
+  {
+    "path": "native/libde265-1.0.15.tar.gz",
+    "url": "https://github.com/strukturag/libde265/releases/download/v1.0.15/libde265-1.0.15.tar.gz",
+    "sha256": "00251986c29d34d3af7117ed05874950c875dd9292d016be29d3b3762666511d",
+    "size": 846016,
+    "package": "libde265",
+    "version": "1.0.15",
+    "license": "LGPL-3.0-or-later"
+  },
+  {
+    "path": "native/emscripten-3.1.61.tar.gz",
+    "url": "https://codeload.github.com/emscripten-core/emscripten/tar.gz/refs/tags/3.1.61",
+    "sha256": "bc5eff3d929a208173a61de47f0084e687d06df442c03684a796538d51e4a38b",
+    "size": 29346100,
+    "package": "emscripten",
+    "version": "3.1.61",
+    "license": "MIT AND Apache-2.0"
+  },
+  {
+    "path": "native/go-notice-1.26.8.txt",
+    "url": "https://raw.githubusercontent.com/golang/go/go1.26.8/LICENSE",
+    "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+    "size": 1453,
+    "package": "go-notice",
+    "version": "1.26.8",
+    "license": "BSD-3-Clause"
+  },
+  {
+    "path": "native/skia-1fdbea293a53b270e3f5e74c92cc6670d68412ff.tar.gz",
+    "url": "https://codeload.github.com/google/skia/tar.gz/1fdbea293a53b270e3f5e74c92cc6670d68412ff",
+    "sha256": "c209cc7bf4a0303d54e9800a8438f2f2be26d6ef9cfb2f1bb4ede2d9d5e780af",
+    "size": 63813758,
+    "package": "skia",
+    "version": "1fdbea293a53b270e3f5e74c92cc6670d68412ff",
+    "license": "BSD-3-Clause AND third-party notices"
+  },
+  {
+    "path": "native/skia-brotli-6d03dfbedda1615c4cba1211f8d81735575209c8.tar.gz",
+    "url": "https://skia.googlesource.com/external/github.com/google/brotli/+archive/6d03dfbedda1615c4cba1211f8d81735575209c8.tar.gz",
+    "sha256": "8f8097e169520414fe92489a0e3992ef67b179d74dc4f01aac5f11daae33efe5",
+    "size": 30702535,
+    "package": "skia-brotli",
+    "version": "6d03dfbedda1615c4cba1211f8d81735575209c8"
+  },
+  {
+    "path": "native/skia-expat-8e49998f003d693213b538ef765814c7d21abada.tar.gz",
+    "url": "https://chromium.googlesource.com/external/github.com/libexpat/libexpat/+archive/8e49998f003d693213b538ef765814c7d21abada.tar.gz",
+    "sha256": "95b3ccae1142ceeb8520de39384a521f1ab46797f7f0fb44087363a5c96cf638",
+    "size": 8420978,
+    "package": "skia-expat",
+    "version": "8e49998f003d693213b538ef765814c7d21abada"
+  },
+  {
+    "path": "native/skia-freetype-1518bc83d26b434031bd12c706ac3c7dab3902fd.tar.gz",
+    "url": "https://chromium.googlesource.com/chromium/src/third_party/freetype2/+archive/1518bc83d26b434031bd12c706ac3c7dab3902fd.tar.gz",
+    "sha256": "fffb06cd4aaeb820594e8e2a1cb308e418d9c47438871ebca49c9c8d1b5c5237",
+    "size": 2547930,
+    "package": "skia-freetype",
+    "version": "1518bc83d26b434031bd12c706ac3c7dab3902fd"
+  },
+  {
+    "path": "native/skia-harfbuzz-08b52ae2e44931eef163dbad71697f911fadc323.tar.gz",
+    "url": "https://chromium.googlesource.com/external/github.com/harfbuzz/harfbuzz/+archive/08b52ae2e44931eef163dbad71697f911fadc323.tar.gz",
+    "sha256": "67480aba54e2c51b2ad46fecc246bdd112684e8174b7b9affb6af08e824f57fd",
+    "size": 35237146,
+    "package": "skia-harfbuzz",
+    "version": "08b52ae2e44931eef163dbad71697f911fadc323"
+  },
+  {
+    "path": "native/skia-highway-424360251cdcfc314cfc528f53c872ecd63af0f0.tar.gz",
+    "url": "https://chromium.googlesource.com/external/github.com/google/highway/+archive/424360251cdcfc314cfc528f53c872ecd63af0f0.tar.gz",
+    "sha256": "2781acdc1a7c3d954624672d7ce3f9bd402dde3042091f25623eed672c5d31a9",
+    "size": 1491423,
+    "package": "skia-highway",
+    "version": "424360251cdcfc314cfc528f53c872ecd63af0f0"
+  },
+  {
+    "path": "native/skia-icu-364118a1d9da24bb5b770ac3d762ac144d6da5a4.tar.gz",
+    "url": "https://chromium.googlesource.com/chromium/deps/icu/+archive/364118a1d9da24bb5b770ac3d762ac144d6da5a4.tar.gz",
+    "sha256": "44d9ac081d99f8b399cc061fb641721d7caab981a024a84b59c4ffa9077e3904",
+    "size": 51747071,
+    "package": "skia-icu",
+    "version": "364118a1d9da24bb5b770ac3d762ac144d6da5a4"
+  },
+  {
+    "path": "native/skia-libjpeg-turbo-e14cbfaa85529d47f9f55b0f104a579c1061f9ad.tar.gz",
+    "url": "https://chromium.googlesource.com/chromium/deps/libjpeg_turbo/+archive/e14cbfaa85529d47f9f55b0f104a579c1061f9ad.tar.gz",
+    "sha256": "14ebf4d9e47ca5a00bfc8a8525b2b975c07b0b6c442f72d9cfcaf75d813e9942",
+    "size": 2623881,
+    "package": "skia-libjpeg-turbo",
+    "version": "e14cbfaa85529d47f9f55b0f104a579c1061f9ad"
+  },
+  {
+    "path": "native/skia-libjxl-a205468bc5d3a353fb15dae2398a101dff52f2d3.tar.gz",
+    "url": "https://chromium.googlesource.com/external/gitlab.com/wg1/jpeg-xl/+archive/a205468bc5d3a353fb15dae2398a101dff52f2d3.tar.gz",
+    "sha256": "846d032f541b9446824433f8cbdc294c0d109b50cd20a59df2f5a7f73f14e689",
+    "size": 16998604,
+    "package": "skia-libjxl",
+    "version": "a205468bc5d3a353fb15dae2398a101dff52f2d3"
+  },
+  {
+    "path": "native/skia-libpng-ed217e3e601d8e462f7fd1e04bed43ac42212429.tar.gz",
+    "url": "https://skia.googlesource.com/third_party/libpng/+archive/ed217e3e601d8e462f7fd1e04bed43ac42212429.tar.gz",
+    "sha256": "6bcf4310a934e1982e148347de7c2e276c39be438316b6969e4f070a68a367d8",
+    "size": 1574370,
+    "package": "skia-libpng",
+    "version": "ed217e3e601d8e462f7fd1e04bed43ac42212429"
+  },
+  {
+    "path": "native/skia-libwebp-845d5476a866141ba35ac133f856fa62f0b7445f.tar.gz",
+    "url": "https://chromium.googlesource.com/webm/libwebp/+archive/845d5476a866141ba35ac133f856fa62f0b7445f.tar.gz",
+    "sha256": "79dea972bcd8ec846475cee69511a30269416cc4fef9cd4a36b74db7f79b0438",
+    "size": 3813255,
+    "package": "skia-libwebp",
+    "version": "845d5476a866141ba35ac133f856fa62f0b7445f"
+  },
+  {
+    "path": "native/skia-wuffs-e3f919ccfe3ef542cfc983a82146070258fb57f8.tar.gz",
+    "url": "https://skia.googlesource.com/external/github.com/google/wuffs-mirror-release-c/+archive/e3f919ccfe3ef542cfc983a82146070258fb57f8.tar.gz",
+    "sha256": "757685bd79e51850361a427e190346d0d7ba074cd8732b094cb761cd183a9782",
+    "size": 327721,
+    "package": "skia-wuffs",
+    "version": "e3f919ccfe3ef542cfc983a82146070258fb57f8"
+  },
+  {
+    "path": "native/skia-zlib-646b7f569718921d7d4b5b8e22572ff6c76f2596.tar.gz",
+    "url": "https://chromium.googlesource.com/chromium/src/third_party/zlib/+archive/646b7f569718921d7d4b5b8e22572ff6c76f2596.tar.gz",
+    "sha256": "354e47d36dd2c47435135a7f69ea7a873b55d110956dd9ef31568ba81b1e1eec",
+    "size": 587299,
+    "package": "skia-zlib",
+    "version": "646b7f569718921d7d4b5b8e22572ff6c76f2596"
+  }
+]

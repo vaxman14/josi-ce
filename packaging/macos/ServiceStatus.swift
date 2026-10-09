@@ -11,8 +11,8 @@ struct ServiceStatus: Codable {
 
 let services = [
     ("database", "boot"), ("web", "boot after database readiness"),
-    ("worker", "boot after database readiness"), ("proxy", "boot after API readiness"),
-    ("voice-control", "boot"), ("voice", "on demand")
+    ("worker", "boot after database readiness"), ("proxy", "boot; readiness waits for API"),
+    ("voice-control", "boot; restores saved model enablement"), ("voice", "boot; CPU models follow saved enablement")
 ]
 
 func inspect(_ name: String, _ startup: String) throws -> ServiceStatus {
@@ -51,9 +51,9 @@ do {
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     FileHandle.standardOutput.write(try encoder.encode(statuses))
     FileHandle.standardOutput.write(Data("\n".utf8))
-    // A PID is deliberately not a health verdict. On-demand voice may be idle.
-    exit(statuses.allSatisfy { $0.state.hasPrefix("running") ||
-        ($0.label.hasSuffix(".voice") && $0.state == "registered, not running") } ? 0 : 1)
+    // A PID is deliberately not a health verdict. All six transports run;
+    // disabled speech means unloaded models, not a stopped launchd job.
+    exit(statuses.allSatisfy { $0.state.hasPrefix("running") } ? 0 : 1)
 } catch {
     FileHandle.standardError.write(Data("Josi service status could not be inspected.\n".utf8))
     exit(2)

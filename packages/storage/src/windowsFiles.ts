@@ -1,3 +1,4 @@
+import { macOpen } from './macosDirectory.js';
 // Win32 file handles replace /proc/self/fd containment on Windows. A read
 // handle with no FILE_SHARE_DELETE prevents rename/replacement, while
 // FILE_FLAG_OPEN_REPARSE_POINT makes junctions/symlinks inspectable, not followed.
@@ -96,6 +97,7 @@ export function pinWindowsDirectory(path: string): { path: string; close(): Prom
  * are pinned and checked before Node opens them, and remain pinned until close.
  */
 export async function openStorageFile(path: string, flags: number, mode?: number): Promise<FileHandle> {
+  if (process.platform === 'darwin') return macOpen(path, flags, mode);
   if (process.platform !== 'win32' || ((flags & constants.O_CREAT) && (flags & constants.O_EXCL))) {
     return nodeOpen(path, flags, mode);
   }

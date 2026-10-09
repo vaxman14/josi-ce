@@ -213,7 +213,8 @@ print(json.dumps({'plan':p,'override':pathlib.Path(${JSON.stringify(dir)},'docke
     }
   });
 
-  it.skipIf(process.platform === 'win32')('refuses dangerous developer workspace paths and keeps the feature optional', () => {
+  // This test asserts Linux mount paths and the container runtime probe; neither ships in native macOS.
+  it.skipIf(process.platform !== 'linux')('refuses dangerous developer workspace paths and keeps the feature optional', () => {
     const dir = mkdtempSync(join(tmpdir(), 'josi-installer-'));
     try {
       const result = python(`

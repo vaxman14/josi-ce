@@ -39,7 +39,8 @@ print(json.dumps([manager.doctor(False), manager.doctor(True)]))
     expect(readFileSync(join(root, 'project'), 'utf8').trim().split('\n')).toEqual(['josi-acceptance', 'josi-acceptance']);
   });
 
-  it('accepts only an exact version approval and persists a successful background update', () => {
+  // Fixture runs the Linux Compose helper and GNU sed -i. Native lifecycle is tested separately.
+  it.skipIf(process.platform !== 'linux')('accepts only an exact version approval and persists a successful background update', () => {
     const root = mkdtempSync(join(tmpdir(), 'josi-update-helper-'));
     writeFileSync(join(root, '.env'), 'JOSI_TAG=0.1.68\n');
     const cli = join(root, 'josi');

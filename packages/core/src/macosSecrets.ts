@@ -1,4 +1,4 @@
-import { constants, fstatSync, readSync } from 'node:fs';
+import { constants, fstatSync, readSync, lstatSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 /** Read an installer-owned secret through pinned descriptors. POSIX modes do
@@ -8,6 +8,12 @@ import { createRequire } from 'node:module';
  */
 export function readMacSecret(path: string): Buffer {
   if (process.platform !== 'darwin') throw new Error('macOS secret reader unavailable');
+  const root=process.env.JOSI_NATIVE_ISOLATED_ROOT;
+  if(root){
+    const st=lstatSync(root);
+    if(process.getuid!()===0||!root.startsWith('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/')||st.isSymbolicLink()||!st.isDirectory()||st.uid!==process.getuid!()||(st.mode&0o077)||JSON.parse(readFileSync(root+'/isolated-test.json','utf8')).purpose!=='disposable-native-acceptance')throw new Error('Invalid isolated acceptance root');
+    return readProtectedMacFile(path,process.getuid!(),process.getgid!(),root);
+  }
   return readProtectedMacFile(path, 0, process.getgid!());
 }
 

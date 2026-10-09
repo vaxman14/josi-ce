@@ -1,3 +1,4 @@
+import { nativeMac } from '@josi-ce/storage';
 // Documents and storage over HTTP.
 //
 // Two things to check when reading this file.
@@ -624,8 +625,8 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
       const [policy] = await db.query<StoragePolicyRow>(`select * from storage_policy where id = true`);
       return res.json({
         policy,
-        ...(process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
-          ? { malwareScanning: { ...await nativeScannerHealth(), required: policy.clamav_enabled === true } } : {}),
+        ...((process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1') || nativeMac()
+          ? { malwareScanning: { ...await nativeScannerHealth(), required: nativeMac() || policy.clamav_enabled === true } } : {}),
         historyDisclosure: historyDisclosure(policy),
         auditNotice: auditRetentionNotice(policy.audit_retention),
       });
@@ -733,6 +734,7 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
         });
       }
 
+      if (nativeMac() && (b.malwareScanningEnabled === false || b.clamavEnabled === false)) return res.status(400).json({error:'Native macOS document scanning cannot be disabled.'});
       const [policy] = await db.query<StoragePolicyRow>(
         `update storage_policy set
            history_mode = coalesce($1, history_mode),
@@ -760,7 +762,7 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
          where id = true returning *`,
         [
           historyMode, historyKind, recycleDays, auditRetention,
-          flag(process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
+          flag((process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1') || nativeMac()
             ? b.malwareScanningEnabled ?? b.clamavEnabled : b.clamavEnabled) ?? null,
           scanMode, flag(b.clamavAutoUpdate) ?? null,
           flag(b.ocrEnabled) ?? null, flag(b.semanticEnabled) ?? null,
@@ -778,8 +780,8 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
       });
       return res.json({
         policy,
-        ...(process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
-          ? { malwareScanning: { ...await nativeScannerHealth(), required: policy.clamav_enabled === true } } : {}),
+        ...((process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1') || nativeMac()
+          ? { malwareScanning: { ...await nativeScannerHealth(), required: nativeMac() || policy.clamav_enabled === true } } : {}),
         // What these settings MEAN, generated from the settings themselves so
         // the wording cannot drift from the behaviour.
         historyDisclosure: historyDisclosure(policy),

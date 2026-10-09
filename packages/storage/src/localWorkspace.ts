@@ -1,6 +1,7 @@
 // Linux descriptor-relative access: no check-then-open of a user-controlled path.
 import { constants } from 'node:fs';
-import { open, readdir, mkdir, rename, link, unlink, stat, type FileHandle } from 'node:fs/promises';
+import { open, type FileHandle } from 'node:fs/promises';
+import { pinMacDirectory, macReaddir as readdir, macMkdir as mkdir, macRename as rename, macLink as link, macUnlink as unlink, macStat as stat } from './macosDirectory.js';
 import { dirname, basename, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { appendEvent, approvalHash, requestApproval, type Db } from '@josi-ce/core';
@@ -20,6 +21,10 @@ export async function withWorkspaceDirectory<T>(root: string, relative: string, 
     const directory = pinWindowsDirectory(join(root, workspacePath(relative)));
     try { return await fn(directory.path); } finally { await directory.close(); }
   }
+  if (process.platform === 'darwin') {
+    const directory = pinMacDirectory(join(root, workspacePath(relative)));
+    try { return await fn(directory.path); } finally { await directory.close(); }
+  }
   const handles: FileHandle[] = [];
   try {
     let current = '/';
@@ -31,6 +36,7 @@ export async function withWorkspaceDirectory<T>(root: string, relative: string, 
   } finally { await Promise.all(handles.map(h => h.close())); }
 }
 async function pinnedDirectory(path: string) {
+  if (process.platform === 'darwin') return pinMacDirectory(path);
   if (process.platform === 'win32') return pinWindowsDirectory(path);
   const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   return { path: `/proc/self/fd/${handle.fd}`, close: () => handle.close() };

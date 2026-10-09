@@ -7,7 +7,7 @@ import sys
 def runtime_config(env=None, platform=None):
     env = os.environ if env is None else env
     platform = sys.platform if platform is None else platform
-    windows = platform == 'win32'
+    windows = platform in ('win32', 'darwin')
     state = env.get('JOSI_VOICE_STATE_DIR', '' if windows else '/run/voice')
     models = env.get('JOSI_VOICE_MODELS_DIR', '' if windows else '/models')
     if not state or not models or not Path(state).is_absolute() or not Path(models).is_absolute():

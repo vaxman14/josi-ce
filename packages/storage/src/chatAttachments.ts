@@ -1,5 +1,6 @@
 import { constants } from 'node:fs';
-import { open, realpath, readdir, unlink } from 'node:fs/promises';
+import { open, realpath } from 'node:fs/promises';
+import { pinMacDirectory, macReaddir as readdir, macUnlink as unlink } from './macosDirectory.js';
 import { resolve, join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -20,7 +21,7 @@ export class AttachmentError extends Error {
 export function attachmentFailure(error: unknown): AttachmentError {
   if (error instanceof AttachmentError) return error;
   const code = (error as NodeJS.ErrnoException)?.code;
-  if (code === 'EUNSAFE') return new AttachmentError(503, 'storage_unsafe', 'Attachment storage contains an unsafe link or file.');
+  if (code === 'EUNSAFE' || code === 'ELOOP' || code === 'ENOTDIR') return new AttachmentError(503, 'storage_unsafe', 'Attachment storage contains an unsafe link or file.');
   if (code === 'ENOSPC' || code === 'EDQUOT') return new AttachmentError(507, 'storage_full', 'Attachment storage is full. Ask the administrator to free space.');
   if (code === 'EROFS') return new AttachmentError(503, 'storage_read_only', 'Attachment storage is read-only. Ask the administrator to repair the attachment volume mount.');
   if (code === 'EACCES' || code === 'EPERM') return new AttachmentError(503, 'storage_permission', 'Attachment storage permissions are incorrect. Ask the administrator to repair volume ownership.');
@@ -31,6 +32,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Pin the opened directory for every operation. No caller-supplied path or DB
 // storage_path is used, and a swapped root/leaf symlink cannot redirect access.
 async function directory(root: string) {
+  if (process.platform === 'darwin') return { ...pinMacDirectory(root), fd: undefined };
   if (process.platform === 'win32') return { ...pinWindowsDirectory(root), fd: undefined };
   if (await realpath(root) !== resolve(root)) throw new AttachmentError(503, 'storage_unsafe', 'Attachment storage must be a dedicated directory without symlinks.');
   const file = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
@@ -40,8 +42,7 @@ async function inDirectory<T>(root: string, id: string, fn: (path: string) => Pr
   if (!UUID.test(id)) throw new AttachmentError(404, 'not_found', 'Attachment not found.');
   const dir = await directory(root);
   // Linux production pins traversal through the opened directory descriptor.
-  // macOS test runners cannot traverse /dev/fd directories, so use the already
-  // realpath-checked root there while retaining O_NOFOLLOW on the leaf.
+  // Darwin uses a held capability resolved by descriptor-relative syscalls.
   const pinnedRoot = process.platform === 'linux' ? `/proc/self/fd/${dir.fd}` : dir.path;
   try { return await fn(`${pinnedRoot}/${id}`); } finally { await dir.close(); }
 }

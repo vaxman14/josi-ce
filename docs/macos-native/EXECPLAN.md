@@ -1,3 +1,9 @@
+> Historical preimplementation audit retained from checkpoint a7febd0.
+> The implementation and scanner decision are now recorded in
+> [IMPLEMENTATION.md](IMPLEMENTATION.md) and
+> [RELEASE-CHECKPOINT.md](RELEASE-CHECKPOINT.md). Statements below about pending
+> implementation describe that earlier checkpoint, not the current candidate.
+
 # Native macOS architecture and continuation audit
 
 Baseline: Windows-native `bb2d6ef6b6d5e2873ecb1fcd85966a7e0495f3bf`;

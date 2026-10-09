@@ -1,8 +1,9 @@
 {
   "schemaVersion": 1,
-  "purpose": "macos-port-development",
-  "installable": false,
+  "purpose": "native-macos-offline-distribution",
   "architecture": "arm64",
+  "minimumMacOS": "14.0",
+  "bundledScanner": false,
   "components": [
     {
       "id": "node",
@@ -11,8 +12,35 @@
       "sha256": "372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4",
       "checksumSource": "https://nodejs.org/dist/v24.15.0/SHASUMS256.txt",
       "license": "MIT AND bundled third-party notices",
-      "licenseFile": "node-v24.15.0-darwin-arm64/LICENSE",
-      "redistribution": "Not packaged; retain the complete upstream LICENSE and audit the final runtime inventory before packaging"
+      "licenseFile": "runtime/node/LICENSE"
+    },
+    {
+      "id": "postgresql-source",
+      "version": "16.15",
+      "url": "https://ftp.postgresql.org/pub/source/v16.15/postgresql-16.15.tar.bz2",
+      "sha256": "c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed",
+      "license": "PostgreSQL",
+      "licenseFile": "runtime/postgresql/COPYRIGHT",
+      "build": "Full Xcode arm64; relative library IDs/rpaths at link time; no readline/ICU/zlib dependency"
+    },
+    {
+      "id": "cpython-source",
+      "version": "3.11.15",
+      "url": "https://www.python.org/ftp/python/3.11.15/Python-3.11.15.tar.xz",
+      "sha256": "272179ddd9a2e41a0fc8e42e33dfbdca0b3711aa5abf372d3f2d51543d09b625",
+      "license": "Python-2.0 AND bundled third-party notices",
+      "licenseFile": "runtime/sources/base/Python-3.11.15.tar.xz:LICENSE",
+      "build": "Full Xcode arm64; static interpreter; offline speech; Apple system libraries only"
+    },
+    {
+      "id": "caddy",
+      "version": "2.11.7",
+      "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_mac_arm64.tar.gz",
+      "sha256": "cda3030e5d5b13eb9f0b6fb541037f633bddd958c070c5f561d7a5cccb581665",
+      "license": "Apache-2.0 AND Go dependency notices",
+      "licenseFile": "runtime/caddy/LICENSE",
+      "sourceLock": "caddy-sources.lock.json"
     }
-  ]
+  ],
+  "otherLocks": ["../../package-lock.json", "voice-inputs.lock.json", "extra-sources.lock.json", "../../services/voice-box/models.lock.json", "../../services/voice-box/sources.lock.json"]
 }

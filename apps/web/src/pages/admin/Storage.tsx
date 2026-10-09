@@ -20,7 +20,7 @@ const MB = 1024 * 1024;
 const toMb = (bytes: number | string) => Math.round(Number(bytes) / MB);
 
 export function AdminStorage() {
-  type MalwareScanning = { provider: 'windows-amsi'; status: 'available' | 'error' | 'unavailable'; required: boolean; checkedAt: string | null };
+  type MalwareScanning = { provider: 'windows-amsi' | 'configured-local-scanner'; enforced?: boolean; status: 'available' | 'error' | 'unavailable'; required: boolean; checkedAt: string | null };
   const resource = useResource<{ policy: StoragePolicy; malwareScanning?: MalwareScanning }>('/storage/admin/policy');
   const [malware, setMalware] = useState<MalwareScanning | undefined>();
   const [policy, setPolicy] = useState<StoragePolicy | null>(null);
@@ -43,7 +43,7 @@ export function AdminStorage() {
     setError('');
     try {
       const result = await api.put<{ policy: StoragePolicy; malwareScanning?: MalwareScanning }>('/storage/admin/policy', {
-        ...(malware ? { malwareScanningEnabled: form.get('malwareScanningEnabled') === 'on' } : {}),
+        ...(malware ? { malwareScanningEnabled: malware.enforced || form.get('malwareScanningEnabled') === 'on' } : {}),
         maxFileBytes: Number(form.get('maxFileMb')) * MB,
         maxTotalBytesPerUser: Number(form.get('maxTotalMb')) * MB,
         maxFilesPerUser: Number(form.get('maxFiles')),
@@ -76,15 +76,15 @@ export function AdminStorage() {
       {resource.state === 'ready' && policy ? (
         <form onSubmit={save} className="space-y-4">
           {malware ? <Card>
-            <h2 className="mb-2 text-base font-semibold">Windows antivirus</h2>
+            <h2 className="mb-2 text-base font-semibold">{malware.enforced ? 'Required document scanning' : 'Windows antivirus'}</h2>
             <p className="mb-3 text-sm text-muted-foreground" role="status">
               {malware.status === 'available' ? 'Your installed antivirus accepted an explicit scan request.'
                 : malware.status === 'error' ? 'The antivirus scan failed. Files that require scanning cannot be processed.'
                   : 'Antivirus scanning is unavailable. Files that require scanning cannot be processed.'}
-              {' '}Josi asks Windows to scan each file when scanning is required.
+              {' '}{malware.enforced ? 'No scanner is bundled. Uploads, indexing and OCR stay blocked until an administrator configures a supported local scanner and each file passes its scan.' : 'Josi asks Windows to scan each file when scanning is required.'}
             </p>
             <label className="flex min-h-11 items-center gap-3 text-sm font-medium">
-              <input name="malwareScanningEnabled" type="checkbox" defaultChecked={malware.required} className="h-5 w-5" />
+              <input name="malwareScanningEnabled" type="checkbox" disabled={malware.enforced} defaultChecked={malware.required} className="h-5 w-5" />
               Require malware scanning before file processing
             </label>
             {!malware.required ? <p className="mt-2 text-sm text-muted-foreground">Scanning is optional under your current policy. Unscanned files are never reported as clean.</p> : null}

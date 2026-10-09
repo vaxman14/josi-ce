@@ -2,7 +2,7 @@ import { request } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { Router, type Request, type Response } from 'express';
-import { readWindowsSecret } from '@josi-ce/core';
+import { readMacSecret, readWindowsSecret } from '@josi-ce/core';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { asyncRoute } from './async.js';
 
@@ -11,7 +11,7 @@ export type VoiceHelper = (path: string, body?: unknown) => Promise<VoiceReply>;
 
 /** The app receives access to this one socket, never a Docker capability. */
 export function voiceHelper(socketPath?: string): VoiceHelper {
-  if (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1') {
+  if (['win32', 'darwin'].includes(process.platform) && process.env.JOSI_NATIVE_RUNTIME === '1') {
     return nativeVoiceHelper({ port: Number(process.env.JOSI_VOICE_HELPER_PORT ?? 18082),
       tokenFile: process.env.JOSI_VOICE_HELPER_TOKEN_FILE ?? '' });
   }
@@ -49,7 +49,7 @@ export function nativeVoiceHelper(config: { port: number; tokenFile: string }): 
       throw new Error('Invalid private voice configuration');
     }
     const token = (process.platform === 'win32' ? readWindowsSecret(config.tokenFile, 'voice-control').toString('ascii')
-      : await readFile(config.tokenFile, 'ascii')).trim();
+      : process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1' ? readMacSecret(config.tokenFile).toString('ascii') : await readFile(config.tokenFile, 'ascii')).trim();
     if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Private voice credential unavailable');
     const encoded = body === undefined ? undefined : JSON.stringify(body);
     if (encoded && Buffer.byteLength(encoded) > 100000) throw new Error('Voice request too large');
@@ -80,7 +80,7 @@ export function nativeVoiceHelper(config: { port: number; tokenFile: string }): 
 
 const requirements = [
   process.platform === 'win32' ? 'Josi CE Server for Windows with Voice Box installed'
-    : '64-bit Linux with Docker Engine, Compose v2 and the optional host helper',
+    : process.platform === 'darwin' ? 'Josi CE Server for Apple Silicon with CPU Voice Box installed' : '64-bit Linux with Docker Engine, Compose v2 and the optional host helper',
   '4 GB available RAM, 5 GB free disk and at least 2 CPU cores',
   'HTTPS or localhost for browser microphone access',
   'Kokoro provides local neural speech with Heart and Bella voices.',
