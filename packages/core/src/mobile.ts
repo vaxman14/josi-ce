@@ -87,7 +87,6 @@ export async function listDurableTurns(db:Db,args:{ownerUserId:string;threadId:s
   if(cursor)return db.query<DurableTurn>(`select * from assistant_turns where owner_user_id=$1 and thread_id=$2 and (updated_at,id)>($3::timestamptz,$4::uuid) order by updated_at,id limit 200`,[args.ownerUserId,args.threadId,cursor.updated_at,cursor.id]);
   return db.query<DurableTurn>(`select * from (select * from assistant_turns where owner_user_id=$1 and thread_id=$2 order by updated_at desc,id desc limit 200) recent order by updated_at,id`,[args.ownerUserId,args.threadId]);
 }
-
 /** Cross-thread process list for the owner's task manager. Deliberately omits
  * message bodies and tool receipts: the task manager says what is running;
  * opening the conversation remains the place to read its private content. */
@@ -97,6 +96,23 @@ export async function listTaskRunsFor(db:Db,args:{ownerUserId:string;limit?:numb
     from assistant_turns t join threads th on th.id=t.thread_id
     where t.owner_user_id=$1 order by t.updated_at desc,t.id desc limit $2`,
   [args.ownerUserId,Math.min(200,Math.max(1,args.limit??100))]);
+}
+
+/** Cancel this device's still-pending completion banner only after the active
+ * native UI has loaded and displayed the completed turn. The registration /
+ * dispatch advisory fence makes observation and Expo dispatch mutually
+ * ordered: once Expo has accepted a push it cannot be recalled, but a queued,
+ * deferred, or claimed-yet-unsent row is suppressed before it can escape. */
+export async function acknowledgeDurableTurnObserved(db:Db,args:{ownerUserId:string;threadId:string;turnId:string}):Promise<boolean>{
+  if(!uuid.test(args.turnId))throw new MobileError('invalid_turn_id','Choose a valid turn id.');
+  if(!db.transaction)throw new Error('turn observation requires transaction support');
+  return db.transaction(async tx=>{
+    await tx.query(`select pg_advisory_xact_lock(hashtext('josi_mobile_device_registration'))`);
+    const [owned]=await tx.query<{id:string}>(`select id from assistant_turns where id=$1 and owner_user_id=$2 and thread_id=$3 and status='completed'`,[args.turnId,args.ownerUserId,args.threadId]);
+    if(!owned)return false;
+    await tx.query(`update push_deliveries p set status='suppressed',lease_token=null,last_error_code='observed_foreground' from mobile_devices d where p.device_id=d.id and p.owner_user_id=$2 and p.route_type='turn' and p.route_id=$1 and p.status in('queued','retry','sending') and d.owner_user_id=$2 and d.app_state='foreground' and d.revoked_at is null`,[args.turnId,args.ownerUserId]);
+    return true;
+  });
 }
 export async function claimDurableTurn(db:Db,turnId:string,leaseSeconds=300):Promise<(DurableTurn&{lease_token:string})|null>{
   const token=randomUUID();
@@ -215,7 +231,10 @@ export function quietNow(now:Date,timeZone:string,start:string|null,end:string|n
 
 export interface PushFetchResult{sent:number;ticketed:number;retried:number;deferred:number;suppressed:number;}
 const FOREGROUND_GRACE_MS=10*60*1000;
-const FOREGROUND_RECHECK_SECONDS=30;
+// A completion can race the native app's background-state update by a few
+// milliseconds. Recheck promptly instead of making a finished reply wait for
+// the old scheduler-sized 30-second window.
+const FOREGROUND_RECHECK_SECONDS=1;
 function coalesceCategory(categories:unknown,category:string):boolean{return !categories||typeof categories!=='object'||(categories as Record<string,unknown>)[category]!==false;}
 const EXPO_ERROR_CODES=new Set(['DeviceNotRegistered','MessageTooBig','MessageRateExceeded','MismatchSenderId','InvalidCredentials']);
 const PERMANENT_EXPO_ERRORS=new Set(['DeviceNotRegistered','MessageTooBig','MismatchSenderId','InvalidCredentials']);
