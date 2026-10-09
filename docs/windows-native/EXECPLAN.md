@@ -10,10 +10,15 @@ Read-only diagnosis, fresh-process regression, explicit assembly loading and
 redacted stage/service failure diagnostics are complete. New unsigned `.7` is
 built and automatically verified, without installation or recovery. Exact results,
 hashes and artifacts are in RELEASE-CHECKPOINT.md and native7-verification.json.
-**Next action requires Roman's approval:** separately review and losslessly close
-the failed `.6` transaction while retaining every file and all original database,
-secret, snapshot and dump material. No SQL restore or transaction deletion is
-authorized. Then Roman performs `.7` UAC/physical upgrade and isolated clean-install
+Saved continuation, 2026-10-09: approved lossless closure of the failed `.6`
+transaction is complete. Only hash-chained `0004.json`/`0005.json` were appended;
+the three originals remain intact. All six `.5` services and readiness passed
+before/after with unchanged processes, permissions and protected files. Original
+recovery and `.6`/`.7` artifact hashes matched. See native6-transaction-closure.json
+and RELEASE-CHECKPOINT.md. No SQL restore, data replacement or deletion occurred.
+**Next action requires Roman's separate approval: run `.7`.** The save request
+authorizes a source/documentation push to GitHub, not installation or release.
+Then Roman performs `.7` UAC/physical upgrade and isolated clean-install
 acceptance. Desktop bundling begins only after this current server candidate passes.
 Earlier candidate descriptions below are historical; no unsigned candidate is
 approved for signing/publication and legal/source gaps remain.

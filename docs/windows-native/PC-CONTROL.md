@@ -119,7 +119,8 @@ service isolation and local-only listeners remain unchanged.
 ## Next bounded phase: separate existing Windows desktop client
 
 **Gate: Roman completes the current native-server `.7` physical acceptance first,
-after separately approving lossless closure of the retained failed `.6` transaction.**
+after the approved lossless closure of the retained failed `.6` transaction. Closure
+is complete; running `.7` still requires separate approval.**
 Do not implement installer bundling before that gate. The published desktop EXE
 already retained as a download/resume fixture is not a server payload and has never
 been run here. Its source/protocol/control capabilities must be inspected and

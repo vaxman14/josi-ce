@@ -1,5 +1,48 @@
 # Native Windows engineering checkpoint
 
+## Saved transaction-closure checkpoint — 2026-10-09
+
+Roman explicitly approved closure of only the retained failed `.6` transaction.
+The operation inventoried its three original records and verified all six installed
+`.5` services before the first live write. It appended only these immutable,
+hash-chained records in transaction `f8ecac89e0c846d1bcc87c0f04f69696`:
+
+- `0004.json`: `rolling-back`, SHA-256
+  `3b8b16ab34abb631365ace39b2d74b6017784e171df38ad9136b97ad523fc57c`.
+- `0005.json`: `rolled-back`, SHA-256
+  `73fbbed141af015caf23744fad8554600c1b885a51cce69c8a947939e12b3c8d`.
+
+These close stale installer intent; no service/filesystem rollback or SQL restore
+was needed. The transaction directory's modification timestamp advanced as expected
+when the new records were published. Its ACL and all original record bytes, ACLs
+and creation/write timestamps remained unchanged. The existing lifecycle lock's
+bytes and ACL remained unchanged. All six `.5` services passed after closure with
+the same process IDs and configuration. Application/database readiness, worker
+heartbeat, CPU speech/control readiness and local-only listeners passed before and
+after. Protected configuration/secrets and directory ownership/permissions matched.
+All 19 original recovery-file hashes, seven delivered `.6` checksum entries and the
+delivered `.7` EXE hash were verified. No file was deleted; all staged `.5`/`.6`
+artifacts, dumps, snapshots and logs were retained. No live SQL client was used.
+
+The first elevated launch did not reach preflight because the ISO UTC expiry
+argument lost its formatting. Explicit quoted ISO UTC plus exact parsing fixed
+the launch; an OS PowerShell guard regression passed and the second UAC operation
+completed. This was an operational script correction, not an installer rebuild.
+
+Detailed evidence remains local under ignored `artifacts/windows-native/`:
+`evidence/native6-transaction-closure.json` and
+`test-installations/native6-closure-806f261dbaff4fceb585bb3f5b8d28b1/`
+contain the reviewed one-shot script, before/after/result records and verified
+copies of the three original checkpoints. Databases, secrets, packages, private
+evidence and recovery material are deliberately excluded from the Git checkpoint.
+
+The stale transaction blocker is cleared. **Running `.7` still requires Roman's
+separate approval.** `.7` has not been installed or uninstalled. No reboot, signing,
+publication or security-setting change was performed. This save request authorizes
+pushing the current source/documentation branch to GitHub; it does not authorize
+deployment or a release. The existing unsigned candidate and acceptance folder
+remain unchanged; no rebuild is necessary for this documentation checkpoint.
+
 ## Failed `.6` diagnosis and `.7` candidate — 2026-10-08
 
 Roman's physical `.6` upgrade failed before service quiescence, not because a
@@ -79,16 +122,17 @@ Evidence under `artifacts/windows-native/`: read-only inspection at
 Earlier `.6` pointer records were retained byte-for-byte in the directory identified
 by `evidence/native7-preserved-candidate6.json` before recording `.7` results.
 
-**Next human gate:** approve a separately reviewed, lossless closure of the retained
-failed `.6` transaction before any live `.7` upgrade. Do not delete that transaction
+**Next human gate:** separately approve running `.7`; the retained failed `.6`
+transaction was losslessly closed as recorded above. Do not delete that transaction
 or restore SQL; preserve the staged `.6` directory and all journal/recovery material.
-The agent has not performed recovery or installed `.7`. Then Roman performs the
+The agent has not installed `.7`. Then Roman performs the
 normal EXE/UAC and physical acceptance, plus clean-install testing on a separate
 PC/VM. Browser/provider login, hardware audio and second-device LAN remain physical
 gates; historical startup ordering remains a supplemental evidence gap. Three
 moderate dependency advisories, unsigned status and public legal/source gaps remain.
 Desktop bundling waits for successful `.7` native-server acceptance. No push,
-signing, publication, reboot or Windows security-setting change was performed.
+signing, publication, reboot or Windows security-setting change was performed during
+candidate creation. The later save request separately authorizes the GitHub push.
 
 ## PC-control permission source phase — 2026-10-08
 
