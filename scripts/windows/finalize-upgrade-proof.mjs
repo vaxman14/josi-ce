@@ -1,0 +1,26 @@
+// Finalize only recorded read-only dumps; never connect to PostgreSQL.
+import assert from 'node:assert/strict';
+import {readFile,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {normalize} from './logical-dump-compare.mjs';
+import {typedNormalize} from './logical-timezone-normalize.mjs';
+import {compareScheduler} from './logical-operational-compare.mjs';
+const root=process.argv[2];
+const prior=JSON.parse(await readFile(join(root,'result.json'),'utf8'));
+assert.ok(!prior.passed&&prior.priorInterruptionRecovered&&prior.migrationsBeforeActivation&&prior.sixServicesVerified&&prior.amsiAndOcr&&prior.cpuVoiceInference&&prior.servicesStopped);
+const oldBytes=await readFile(join(root,'retained-logical.sql')),newBytes=await readFile(join(root,'after-services-logical.sql'));
+const before=typedNormalize(oldBytes).buffer;
+let after=typedNormalize(newBytes).buffer;
+const oldTable=normalize(before).tables.get('public.deployment_config'),newTable=normalize(after).tables.get('public.deployment_config');
+assert.equal(oldTable.columns,newTable.columns);assert.equal(oldTable.rows.length,1);assert.equal(newTable.rows.length,1);
+const index=oldTable.columns.split(', ').indexOf('updated_at');assert.ok(index>=0);
+const fields=newTable.rows[0].split('\t');fields[index]=oldTable.rows[0].split('\t')[index];
+const header=`COPY public.deployment_config (${newTable.columns}) FROM stdin;\r\n`;
+assert.equal(after.toString().split(header).length,2);
+after=Buffer.from(after.toString().replace(header+newTable.rows[0]+'\n',header+fields.join('\t')+'\n'));
+const comparison=compareScheduler(before,after);
+assert.deepEqual(JSON.parse(await readFile(join(root,'prior-ownership-acls.json'),'utf8')),JSON.parse(await readFile(join(root,'after-services-ownership-acls.json'),'utf8')));
+const report={...comparison,permissionsUnchanged:true,originalUserRowsPreserved:true,operationalTimestamp:'public.deployment_config.updated_at',retainedLogicalSha256:createHash('sha256').update(oldBytes).digest('hex'),liveLogicalSha256:createHash('sha256').update(newBytes).digest('hex'),physicalUpgradeRepeated:false,recordedAt:new Date().toISOString()};
+await writeFile(join(root,'final-preservation-proof.json'),JSON.stringify(report,null,2),{flag:'wx'});
+console.log(JSON.stringify({passed:true,permissionsUnchanged:true,userRowsPreserved:true,newHousekeepingJobs:comparison.newHousekeepingJobs,schedulesAdvanced:comparison.schedulesAdvanced,sequence:`${comparison.queueSequenceBefore}->${comparison.queueSequenceAfter}`}));

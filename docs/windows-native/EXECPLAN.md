@@ -2,9 +2,9 @@
 
 ## Status and evidence standard
 
-Persistent engineering work, started 2026-10-07 (America/Los_Angeles). No Windows
-installer release is approved, built, or accepted yet. Planned controls below are requirements,
-not claims of implementation. Each milestone must acquire executable evidence.
+Persistent engineering work, started 2026-10-07 (America/Los_Angeles). The `.5`
+unsigned engineering candidate is accepted; no signed Windows release is approved.
+Planned controls below are requirements until supported by executable evidence.
 
 Baseline: `7e0842bfeb72d4a37d68fb990ad15eb1d748f9e8`, verified against
 `git ls-remote origin refs/heads/main` after a fresh clone and fetch. Initial tree
@@ -33,13 +33,14 @@ module, file, service and network evidence; never remove unrelated prerequisites
 - [ ] M2: real native CPU Kokoro -> Silero -> Whisper inference, then microphone
   -> authenticated assistant -> local playback; prove all other native dependencies.
 - [ ] M3: narrow portability adapters, service entry points, existing regression suite.
-- [ ] M4: private PostgreSQL/migrations, API, separate worker, proxy, voice, OCR, AV.
+- [x] M4: private PostgreSQL/migrations, API, separate worker, proxy, voice, OCR, AV.
 - [ ] M5: transactional install/upgrade/repair/rollback/backup/restore/uninstall.
 - [ ] M6: locally build thin EXE; physical acceptance, failure injection and reboot.
 - [ ] M7: existing local Azure Artifact Signing after unsigned acceptance; verify
   Authenticode/timestamp, Defender, freshly downloaded hashes and clean reinstall.
 
-Immediate priority: finish native control/backup integration and service packaging.
+Immediate priority: repair/uninstall isolation, diagnostics, thin EXE and legal closure,
+then browser/audio/LAN and signing gates. Earlier implementation notes below are history.
 The CPU voice build now works with workspace-local pinned Microsoft supplements;
 the earlier Build Tools UAC request is no longer needed. A successful
 import is insufficient. Linux CPU approval does not approve different Windows
@@ -81,7 +82,146 @@ test script's recovery path is pending that inspection and execution evidence.
 Repair/uninstall, diagnostics, final thin EXE, legal/source closure, browser,
 microphone/playback, reboot, LAN, signing and fresh-download reinstall remain.
 
+### Bounded lossless recovery acceptance (2026-10-08)
+
+The read-only logical comparison verified a copy of the stopped live cluster:
+2,056 files and 76,816,927 bytes. All 148 tables, 129 rows, schema, sequence
+state and 864 recorded ownership entries matched the retained SQL snapshot.
+Timestamp representations differed across 19 tables but preserved the same
+instants and all six fractional digits. Historical grants, database ACLs and
+roles were not present in the snapshot; current permissions were captured.
+All temporary instances and copied credentials were removed. Both logical
+dumps, permission records, original byte/ACL inventories and source audits
+remain private under the ignored logical-comparison artifact folders.
+
+Roman authorized lossless transaction repair followed by one physical `.5`
+upgrade. `Test-LosslessNativeUpgrade.ps1` is the current bounded acceptance
+entry, replacing the older destructive synthetic restore path for this retained
+installation. It must never initialize, restore SQL, replace the cluster,
+rotate secrets, restore artifacts, or discard rollback material. It rechecks
+the live offline bytes/ACLs, recreates baseline services, proves connectivity
+and unchanged data/permissions, checks baseline readiness and closes only the
+exact pre-migration `.4` journal. The `.5` path verifies installed payloads,
+takes a fresh stopped-writer snapshot, runs migrations before activation and
+checks all six services, loopback listeners, worker AMSI, clean/blocked AMSI
+requests, OCR and CPU TTS/VAD/STT. Normal worker scheduling changes are limited
+to the queue and schedules; all other rows, schema and permissions must match.
+Existing successful rollback evidence is retained rather than repeating a SQL
+restore over the preserved installation. Registration remains demand-start
+until verified health; activation then enables automatic startup for five
+services while leaving speech on demand. Only checks directly required by
+these operations run. No passing application or regression suite is rebuilt
+or repeated without a concrete implementation failure.
+
+The baseline readiness check exposed two comparison details, both resolved
+against retained dumps without restoring data: offset-only `timestamptz`
+representations need the existing type-aware UTC normalization, and API address
+reconciliation touches only `deployment_config.updated_at` when the address is
+unchanged. Acceptance records that operational timestamp explicitly while
+comparing every other deployment field. Baseline connectivity, all 63 recorded
+migrations, schema/rows/sequences, permissions and readiness passed. The exact
+`.4` journal reached `rolled-back` without SQL restore or artifact replacement.
+The single `.5` physical upgrade is now committed and accepted as an unsigned
+engineering candidate. Evidence: `evidence/native-candidate-acceptance.json` and
+the private `lossless-upgrade-2b856e914b2f4fe38460d394744c0a2f` run. Both baseline
+and candidate inventories verified 18,563 files. Migrations ran once before
+activation, with all 63 already present and no schema changes. All six restricted
+services, five loopback listeners, the Worker's explicit AMSI request, actual
+clean/blocked AMSI requests, OCR, and CPU TTS/VAD/STT passed. All recorded database
+permissions matched and all existing user rows remained intact. Normal runtime
+changes were the readiness timestamp, four new housekeeping jobs, four advanced
+next-run times, and the matching queue sequence advancement from 4 to 8. Every
+original queue row remained unchanged. These concrete comparison classifications
+were corrected offline from retained dumps; the upgrade and passing feature
+checks were not rerun. No SQL restore, cluster replacement, secret rotation or
+artifact replacement occurred. `.4` rollback material, the fresh `.5` snapshot,
+secrets, artifacts, and both original logical dumps are retained.
+
+After acceptance the changed installer kit was rebuilt once for the new startup
+activation code; OS PowerShell loading and its four integrity rejection checks
+passed. Five services now use automatic startup; speech remains on demand under
+the control service. Registrations are retained and all services are stopped.
+The next acceptance deliverable is actual reboot startup. Its boot baseline and
+`Test-NativeReboot.ps1` are prepared; the latter only reads owned service state,
+application/database readiness, loopback listeners, a fresh Worker AMSI result,
+and CPU speech readiness. It refuses a same-boot run and performs no repair or
+service mutation. Roman must perform the actual reboot before that check can
+run. No reboot, browser owner setup, physical microphone/playback, LAN, signed
+thin EXE or full release acceptance is claimed. Repair/uninstall, diagnostics,
+final EXE, legal closure and the remaining physical gates remain unfinished.
+
 ### Evidence collected during the first implementation pass
+
+### Post-reboot acceptance and resumed release gates (2026-10-08)
+
+Roman accepted the post-reboot runtime checks. Boot was `2026-10-08T20:01:10.5000000Z`.
+The five automatic services started, demand-start speech resumed under its control
+service, all six services passed readiness, and all five listeners remained on
+`127.0.0.1`. CPU speech models and fresh explicit Worker AMSI availability passed.
+The read-only comparison verified all 148 tables, schema, all 63 migrations,
+permissions, prior rows, secrets, artifacts, snapshots and 2,030 preserved file/ACL
+entries. Allowed runtime differences were 1,094 added housekeeping jobs (queue
+sequence 8 to 1,102), four advanced schedule times and the readiness timestamp.
+No SQL restore, configuration change or service repair occurred.
+
+The private run `reboot-acceptance-ca27d6e8e87e47b9b761d0f7ce12b5dc/result.json`
+has `passed=false` only because the supplementary SCM 7036 event query found no
+matching records. Preserve that original result. Historical startup ordering is
+unconfirmed, explicitly an evidence gap, not a runtime failure. The revised query
+classifies only `NoMatchingEventsFound` as unavailable; access or other query
+errors still fail. It never changes logging/service policy or claims ordering
+from missing events. Accepted summary: `evidence/native-reboot-acceptance.json`.
+
+Release work must preserve the live installation and original logical dumps.
+Repair/uninstall tests use a separate disposable identity and runtime, never the
+accepted six registrations or PostgreSQL directory. No push, publication,
+reboot, live uninstall, destructive recovery or authenticated signing is authorized
+without its applicable human gate. Bounded validation remains required.
+
+Resumed gate checkpoint: the four startup-evidence boundary tests passed through
+OS PowerShell 5.1 with normal log access. A sandboxed log query was correctly
+refused, then the authorized read-only host query returned no matching events.
+The first disposable lifecycle attempt refused an older host hash before service
+registration. The next attempt registered only
+`JosiAcceptance_4c44ad663b3545eca093876a2acd3d30` in separate standard test folders;
+it refused repair before stopping because of PowerShell 5.1 JSON array handling.
+That parser issue is corrected. The subsequent ownership check correctly refused
+the fixture's unquoted path, caused by PowerShell's native CLI quoting. A structured
+Windows service-path correction and isolated retry are prepared; the latest UAC
+launch was canceled, so neither that correction nor the protected diagnostics
+test executed. The disposable service remains running; its data and evidence
+are retained. All six accepted services remain running and unchanged. Lifecycle
+and diagnostics source remain uncommitted drafts pending physical evidence.
+The next action is approval of the prepared Windows PowerShell UAC prompt, which
+targets only that disposable identity plus read-only live diagnostics. Thin EXE,
+license/SBOM closure, browser/audio/LAN and signing gates remain unfinished.
+
+Roman then authorized consolidating UAC work. One temporary, fixed-action
+elevated session completed the disposable retry and live read-only diagnostics.
+The prior fixture's unquoted path was corrected through the structured Windows
+service API after exact ownership checks; only its disposable service/runtime
+were removed, with data and evidence retained. The new physical fixture
+`9ad02d50aa804890b3e2abbff962f914` passed damaged-file repair (one replacement,
+original retained), service restart/readiness, and data-retaining uninstall.
+Untrusted inventory and unlisted-file removal were refused before service stop.
+Every fixture data file and its permissions stayed unchanged, and all accepted
+service registrations remained running and identical. Scope is one isolated real
+SCM service with binary/data sentinels, not six-service EXE lifecycle acceptance.
+Evidence: `evidence/native-lifecycle-accepted.json`.
+
+Structured diagnostics passed six-service/readiness/local-listener reporting,
+CPU speech/control and fresh AMSI availability, exact absence of all four secret
+values, installation-write refusal and prior-export preservation. It excludes
+SQL, raw logs, environment, command lines, hostnames and profile paths by design.
+Evidence: `evidence/native-diagnostics-accepted.json`.
+
+The temporary elevation accepted only fixed lifecycle/diagnostics/startup-event
+actions and finish, with no command/path parameters or live mutation action.
+Unknown commands, wrong session and extra command arguments were all refused
+(`evidence/admin-session-boundaries.json`). The completed session was closed.
+No UAC policy, scheduled task, permanent administrator service or signing
+credential was created. Future sessions freeze approved source under an
+administrator-owned ProgramData parent; changes to source/scope need fresh approval.
 
 ### Current Windows antivirus revision (2026-10-08)
 

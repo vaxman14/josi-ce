@@ -206,4 +206,23 @@ function Stop-NativeService([string]$Name,[int]$TimeoutSeconds=60){
     }finally{$service.Dispose()}
 }
 
-Export-ModuleMember -Function Get-NativeServicePlan, Get-NativeServiceSid, Get-NativeServiceSecurity, Write-NativeServiceFiles, Register-NativeServices, Assert-NativeServiceHost, Stop-NativeService, ConvertTo-NativeArgument
+function Set-NativeServiceStartup([string]$ProgramRoot,[string]$DataRoot){
+    Assert-NativeAdministrator
+    $plan=Get-NativeServicePlan $ProgramRoot $DataRoot
+    # Registration deliberately leaves every service demand-start. Only the
+    # healthy activation transaction may enable the intended startup policy.
+    foreach($entry in $plan){
+        $service=Get-CimInstance Win32_Service -Filter ("Name='"+$entry.Name+"'")
+        $expected=if($entry.Kind -eq 'PostgreSQL'){
+            (ConvertTo-NativeArgument $entry.Executable)+' '+(($entry.Arguments | ForEach-Object {ConvertTo-NativeArgument $_}) -join ' ')
+        }else{ConvertTo-NativeArgument (Join-Path $ProgramRoot ('services\'+$entry.Name+'\'+$entry.Name+'.exe'))}
+        if(!$service -or $service.StartName -ine ('NT SERVICE\'+$entry.Name) -or $service.PathName -cne $expected){throw 'Startup activation refuses an unrelated service'}
+    }
+    foreach($entry in $plan){
+        $mode=if($entry.Start -ceq 'Automatic'){'auto'}else{'demand'}
+        & (Join-Path $env:SystemRoot 'System32\sc.exe') config $entry.Name 'start=' $mode | Out-Null
+        if($LASTEXITCODE){throw 'Service startup activation requires recovery'}
+    }
+}
+
+Export-ModuleMember -Function Get-NativeServicePlan, Get-NativeServiceSid, Get-NativeServiceSecurity, Write-NativeServiceFiles, Register-NativeServices, Assert-NativeServiceHost, Stop-NativeService, ConvertTo-NativeArgument, Set-NativeServiceStartup
