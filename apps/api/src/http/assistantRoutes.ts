@@ -23,7 +23,7 @@ import {
   setUserApprovalLevel, getApprovalLevel, taskMetrics, taskActivity, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder, updateReminder,
   checkChildAccess, encodeTurnCursor, listNativeReminderActions,
-  json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
+  json, submitDurableTurn, listDurableTurns, listTaskRunsFor, acknowledgeDurableTurnObserved, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -367,6 +367,12 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     const receiptById=new Map(receipts.map(a=>[a.id,a]));
     res.set('Cache-Control','no-store');
     return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,attachment_receipts:t.attachment_ids.flatMap(id=>{const a=receiptById.get(id);return a?[{id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}}]:[];}),error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
+  }));
+
+  r.post('/threads/:id/turns/:turnId/observed',requireOwnership({db},{type:'thread',need:'owner'}),handle(async(req,res)=>{
+    const found=await acknowledgeDurableTurnObserved(db,{ownerUserId:req.user!.id,threadId:param(req,'id'),turnId:param(req,'turnId')});
+    if(!found)throw new RouteError(404,'not found');
+    return res.status(204).end();
   }));
 
   r.put('/devices',handle(async(req,res)=>{

@@ -3,6 +3,11 @@ import { calendarEventUrl, runJob } from '../src/jobs.js';
 import { testDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
 import { MasterKey, createThread, processPushBatch, seal, submitDurableTurn, upsertMobileDevice, type Job } from '@josi-ce/core';
+import { WORKER_TICK_MS } from '../src/cadence.js';
+
+it('polls interactive work within one second',()=>{
+  expect(WORKER_TICK_MS).toBeLessThanOrEqual(1_000);
+});
 
 describe('calendar write target', () => {
   it('writes Google events to the selected calendar instead of primary', () => {

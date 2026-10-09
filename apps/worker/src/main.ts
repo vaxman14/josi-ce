@@ -7,10 +7,10 @@
 import { connectFromEnv, loadMasterKey } from '@josi-ce/core';
 import { cleanupAttachments, probeAttachmentStorage } from '@josi-ce/storage';
 import { processQueue } from './jobs.js';
+import { WORKER_TICK_MS } from './cadence.js';
 import { writeFileSync } from 'node:fs';
 
 const HEARTBEAT_FILE = '/tmp/worker-alive';
-const TICK_MS = 30_000;
 
 const { db, close, describe } = await connectFromEnv({ ...process.env }, { max: 4 });
 console.log(`josi-ce worker: database ${describe}`);
@@ -64,7 +64,7 @@ await tick().catch((err) => console.error('josi-ce worker: first tick failed', e
 const timer = setInterval(() => {
   if (!running) return;
   void tick().catch((err) => console.error('josi-ce worker: tick failed', err?.message));
-}, TICK_MS);
+}, WORKER_TICK_MS);
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`josi-ce worker: ${signal} received, shutting down`);
