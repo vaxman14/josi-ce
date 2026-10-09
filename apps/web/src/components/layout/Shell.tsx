@@ -53,6 +53,7 @@ const ADMIN_NAV = [
   { to: '/admin/model', label: 'Model' },
   { to: '/admin/voice-box', label: 'Voice Box' },
   { to: '/admin/policy', label: 'Policy' },
+  { to: '/admin/pc-control', label: 'PC control permissions' },
   { to: '/admin/storage', label: 'Storage' },
   { to: '/admin/connectors', label: 'Connectors' },
   { to: '/admin/workflows', label: 'Workflows' },

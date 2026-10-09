@@ -30,6 +30,7 @@ import { AdminDiagnostics } from '@/pages/admin/Diagnostics';
 import { AdminPeople } from '@/pages/admin/People';
 import { AdminModel } from '@/pages/admin/Model';
 import { AdminPolicy } from '@/pages/admin/Policy';
+import { AdminPcControl } from '@/pages/admin/PcControl';
 import { AdminStorage } from '@/pages/admin/Storage';
 import { AdminConnectors } from '@/pages/admin/Connectors';
 import { AdminWorkflows } from '@/pages/admin/Workflows';
@@ -171,6 +172,7 @@ export function App() {
         <Route path="model" element={<AdminModel />} />
         <Route path="voice-box" element={<AdminVoiceBox />} />
         <Route path="policy" element={<AdminPolicy />} />
+        <Route path="pc-control" element={<AdminPcControl />} />
         <Route path="storage" element={<AdminStorage />} />
         <Route path="connectors" element={<AdminConnectors />} />
         <Route path="workflows" element={<AdminWorkflows />} />

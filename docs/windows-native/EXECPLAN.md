@@ -2,6 +2,17 @@
 
 ## Status and evidence standard
 
+PC-control permissions phase, 2026-10-08: implement the encrypted exact-scope policy,
+owner approval UI, activity log and fail-safe stop/broker boundary described in
+[PC-CONTROL.md](PC-CONTROL.md). The desktop executor is unavailable in this checkout;
+no desktop component is bundled or run. **Next bounded packaging phase begins only
+after Roman accepts the current `.6` native-server candidate**: required Hosting
+Server and default-selected optional Desktop App, independent client maintenance,
+secure local pairing and trusted effect-manifest enforcement. Preserve the accepted
+live `.5`, `.6` EXE/payloads, all data and recovery evidence. Migration 0065 is tested
+only on disposable databases. No live deployment, installer rebuild or security
+setting change is part of this permissions phase.
+
 Persistent engineering work, started 2026-10-07 (America/Los_Angeles). The `.5`
 unsigned engineering candidate is accepted; no signed Windows release is approved.
 Planned controls below are requirements until supported by executable evidence.

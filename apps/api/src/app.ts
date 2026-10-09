@@ -43,8 +43,11 @@ import { nasController } from './http/nasController.js';
 import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
 import { doctorHelper, doctorRoutes, type DoctorHelper } from './http/doctorRoutes.js';
+import { pcControlRoutes } from './http/pcControlRoutes.js';
 
 export interface AppConfig {
+  /** Injected only by tests; production derives the native Windows boundary. */
+  nativeWindowsPermissions?: boolean;
   /** Production enables a real persistent-volume readiness probe. */
   attachmentStorageRoot?: string;
   voiceBoxHelper?: VoiceHelper;
@@ -269,6 +272,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, codexRunner: cfg.codexRunner,
     releaseFetch: cfg.releaseFetch,
   }));
+  api.use('/admin/pc-control', pcControlRoutes({db,masterKey:cfg.masterKeyCheck,
+    windows:cfg.nativeWindowsPermissions ?? (process.platform==='win32' && process.env.JOSI_NATIVE_RUNTIME==='1')}));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));

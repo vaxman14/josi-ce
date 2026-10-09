@@ -1,5 +1,40 @@
 # Native Windows engineering checkpoint
 
+## PC-control permission source phase — 2026-10-08
+
+Administration now includes PC control permissions: master off by default, 23
+independent capabilities, exact browser/profile/origin and folder/application
+scopes, all five modes, bounded task/temporary grants, separate per-action high-risk
+decisions with owner-password confirmation, encrypted local policy/audit storage,
+readable activity and key-independent emergency disable. Revocation invalidates
+queued approvals and cancels active broker signals. Existing workspace/connector
+policies remain unchanged. The additive 0065 migration is not applied to live data.
+
+This source phase has no production PC executor. The UI states that control is
+unavailable until the separate Windows desktop client connects. No fake successful
+control, automatic administrator approval, UAC bypass or security-setting change
+is claimed. Full design/contract and independent desktop-component acceptance plan:
+[PC-CONTROL.md](PC-CONTROL.md). Bundling starts only after Roman's `.6` native-server
+acceptance, with Hosting Server required and Desktop App selected by default but
+optional. Server data and accounts remain canonical and independent of client
+maintenance. `.5`, the delivered unsigned `.6` EXE and all payload/recovery artifacts
+remain preserved; this phase does not rebuild, install or uninstall either candidate.
+
+Focused evidence is `pc-control-core-tests.json`, `pc-control-http-tests.json` and
+`pc-control-verification.json` under `artifacts/windows-native/evidence/`. These
+records cover disposable-database policies and the actual browser settings UI;
+they do not establish physical desktop-control or client lifecycle acceptance.
+
+Final verification: **47 passed, zero failed** (30 new core permission tests,
+five authenticated HTTP/real headless-Chrome checks, 12 existing approval-policy
+regressions). Root API/package TypeScript compilation, web typecheck and production
+web build pass. The public-data/secret scanner passes across 904 files. Hashes of
+19 preserved original/recovery files and every delivered `.6` EXE/payload match.
+No live database connection, service operation, PC control, UAC, signing or push
+was performed. First-run fixture issues (single-super-admin rule, Windows sandbox
+multi-file cache and durable-switch timing) were corrected; browser acceptance
+also exposed select labels that were fixed with explicit accessible associations.
+
 ## Continuous browser onboarding candidate `.6` — 2026-10-08
 
 The new `0.1.78-native.6` is a private, **unsigned** offline acceptance candidate.

@@ -1,4 +1,5 @@
 export * from './db.js';
+export * from './pcControl.js';
 export * from './connect.js';
 // Phase 13 — the edition capability boundary. First in the list because it is
 // the thing everything capability-gated has to consult.
