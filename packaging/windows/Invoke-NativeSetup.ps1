@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$KitRoot,[Parameter(Mandatory=$true)][string]$KitHash,
     [Parameter(Mandatory=$true)][string]$ManifestHash,[Parameter(Mandatory=$true)][string]$Version,
-    [ValidateSet('install','upgrade','repair','diagnostics','uninstall','verify-only')][string]$Operation='install')
+    [ValidateSet('install','upgrade','repair','diagnostics','uninstall','verify-only','install-or-upgrade')][string]$Operation='install',
+    [string]$LocalAcceptancePayloads)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest;$env:PSModulePath=''
 $verified=& (Join-Path $KitRoot 'Initialize-NativeSetup.ps1') -Root $KitRoot -ExpectedKitHash $KitHash
 if(!$verified.verified){throw 'Private installer integrity failed'}
@@ -20,12 +21,23 @@ if($Operation -ceq 'verify-only'){
     try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
     $result|ConvertTo-Json;exit 0
 }
-if(!$manifest.installable -or !$manifest.licenseGatePassed -or !$manifest.unsignedAcceptancePassed){throw 'This engineering candidate has unfinished release gates; installation is blocked'}
-$null=Read-SignedNativeManifest $manifestPath $catalogPath $ManifestHash $Version
+if($LocalAcceptancePayloads){
+    # Explicit, private, offline acceptance build. It is hash-bound to this EXE,
+    # never fetches unsigned remote code and never claims publication approval.
+    if(!$manifest.installable -or !$manifest.localUnsignedAcceptance -or $manifest.published -or
+        $Operation -cnotin @('install','upgrade','install-or-upgrade')){throw 'Invalid private acceptance operation'}
+    $LocalAcceptancePayloads=Assert-PlainNativePath $LocalAcceptancePayloads
+}else{
+    if(!$manifest.installable -or !$manifest.licenseGatePassed -or !$manifest.unsignedAcceptancePassed){throw 'This engineering candidate has unfinished release gates; installation is blocked'}
+    $null=Read-SignedNativeManifest $manifestPath $catalogPath $ManifestHash $Version
+}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 if(!([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Windows administrator approval required'}
 $product=Assert-PlainNativePath (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Josi CE Server')
 $data=Assert-PlainNativePath (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Josi CE Server')
+if($Operation -ceq 'install-or-upgrade'){
+    $Operation=if((Test-Path -LiteralPath $product) -or (Test-Path -LiteralPath $data)){'upgrade'}else{'install'}
+}
 $context=$null;$lock=$null;$directory=$null
 function Run-Private([string]$Program,[string[]]$Arguments){
     $info=[Diagnostics.ProcessStartInfo]::new();$info.FileName=Join-Path $Program 'node\JosiRuntime.exe'
@@ -124,7 +136,7 @@ try{
     }
     $source=Assert-PlainNativePath (Join-Path $cache ('expanded-'+[Guid]::NewGuid().ToString('N')));$null=[IO.Directory]::CreateDirectory($source)
     foreach($component in $manifest.components){
-        $archive=Get-NativePayload $component $ManifestHash $cache (Join-Path $cache 'cancel')
+        $archive=if($LocalAcceptancePayloads){Get-NativeLocalPayload $component $LocalAcceptancePayloads $cache}else{Get-NativePayload $component $ManifestHash $cache (Join-Path $cache 'cancel')}
         Extract-VerifiedArchive $component $archive $source
     }
     $entries=[Collections.Generic.List[object]]::new()
@@ -140,6 +152,9 @@ try{
     foreach($entry in $entries){$path=Assert-PlainNativePath (Join-Path $source $entry.path);if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($path) -or (Get-Item -LiteralPath $path).Length -ne $entry.size -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.sha256){throw 'Expanded payload failed verification'}}
     foreach($component in $manifest.components){[IO.File]::Delete((Join-Path $source ('inventories\'+$component.id+'.json')))}
     [IO.Directory]::Delete((Join-Path $source 'inventories'),$false)
+    $launcher=Join-Path $source 'JosiLauncher.exe'
+    [IO.File]::Copy((Join-Path $KitRoot 'JosiLauncher.exe'),$launcher,$false)
+    $entries.Add([ordered]@{path='JosiLauncher.exe';size=(Get-Item $launcher).Length;sha256=(Get-FileHash $launcher -Algorithm SHA256).Hash.ToLowerInvariant()})
     $program=Assert-PlainNativePath (Join-Path $product ('versions\'+$Version))
     $wrapper=Join-Path $KitRoot 'WinSW.Josi.exe'
     $null=Write-NativeServiceFiles $source $data $wrapper

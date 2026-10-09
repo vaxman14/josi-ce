@@ -14,7 +14,7 @@ if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparseP
 $manifest=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
 $required=@('Initialize-NativeSetup.ps1','Josi.NativeSetup.dll','Configuration.psm1','DataLayout.psm1','Database.psm1',
     'Maintenance.psm1','Payloads.psm1','Services.psm1','Transactions.psm1','service-host.lock.json',
-    'Lifecycle.psm1','Diagnostics.psm1','StartupEvidence.psm1','Invoke-NativeSetup.ps1','WinSW.Josi.exe')
+    'Lifecycle.psm1','Diagnostics.psm1','StartupEvidence.psm1','Invoke-NativeSetup.ps1','WinSW.Josi.exe','JosiLauncher.exe')
 if(@($manifest.PSObject.Properties).Count -ne 4 -or $manifest.schemaVersion -ne 1 -or $manifest.product -cne 'Josi CE installer kit' -or
     $manifest.architecture -cne 'x64' -or @($manifest.files).Count -ne $required.Count){throw 'Installer kit identity failed'}
 $seen=@{}

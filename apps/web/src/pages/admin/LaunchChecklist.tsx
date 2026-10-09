@@ -132,6 +132,15 @@ export function AdminLaunchChecklist() {
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
+      <Card>
+        <CardTitle>Optional connections and devices</CardTitle>
+        <p className="mt-1 text-sm text-muted-foreground">Connect services when you need them. Companion-device pairing is unavailable until a compatible app is provided; it is not required to use Josi.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => navigate('/app/connections')}>Connect services</Button>
+          <Button variant="secondary" onClick={() => navigate('/app/apps')}>Companion devices</Button>
+        </div>
+      </Card>
+
       {/* Material risks keep saying so. These are the ones that cannot be put
           aside, and repeating them is the whole point. */}
       {data.reminders.length ? (

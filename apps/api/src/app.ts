@@ -177,11 +177,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use(requireCsrf);
   // Before the routes, after CSRF: an unconfigured installation refuses
   // everything except the wizard, and a configured one refuses the wizard.
-  api.use(setupGate(db, cfg.setupTokenSha256));
+  api.use(setupGate(db, cfg.setupTokenSha256, cfg.cookieSecure));
   const voiceBox = voiceBoxRoutes(cfg.voiceBoxHelper ?? voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET));
   api.use('/admin/voice-box', voiceBox.admin);
   api.use('/voice', voiceBox.voice);
 
+  api.use('/setup', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   api.use('/setup', setupRoutes({
     db,
     masterKey: cfg.masterKeyCheck,

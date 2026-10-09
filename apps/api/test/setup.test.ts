@@ -70,6 +70,54 @@ const OWNER = {
   password: 'a-long-enough-password',
 };
 
+it('imports the fixed native local address without replacing an existing deployment choice', async () => {
+  const previous = {native:process.env.JOSI_NATIVE_RUNTIME,url:process.env.APP_URL};
+  process.env.JOSI_NATIVE_RUNTIME='1'; process.env.APP_URL='http://localhost:8080';
+  try {
+    expect((await call('/api/setup/state')).body.completedSteps).toContain('domain');
+    expect((await db.query('select domain from deployment_config where id=true'))[0].domain).toBe('localhost');
+    await db.query("update deployment_config set domain='retained.example.test' where id=true");
+    await call('/api/setup/state');
+    expect((await db.query('select domain from deployment_config where id=true'))[0].domain).toBe('retained.example.test');
+  } finally {
+    if(previous.native===undefined)delete process.env.JOSI_NATIVE_RUNTIME;else process.env.JOSI_NATIVE_RUNTIME=previous.native;
+    if(previous.url===undefined)delete process.env.APP_URL;else process.env.APP_URL=previous.url;
+  }
+});
+
+it('resumes an interrupted recovery-key presentation without changing the vault key or owner', async () => {
+  expect((await call('/api/setup/steps/host_checks', {method:'POST',body:{}})).status).toBe(200);
+  const owner = await call('/api/setup/steps/owner', {method:'POST',body:OWNER});
+  expect(owner.status).toBe(200);
+  const recovery = owner.body.vaultRecovery;
+  const [before] = await db.query('select master_key_enc,recovery_master_enc,recovery_key_hash,pending_setup_recovery_enc from vault_state where id=true');
+  expect(before.pending_setup_recovery_enc).not.toContain(recovery.key);
+  await stopServer(); await startServer();
+  expect((await call('/api/setup/state')).body.recoveryPending).toBe(true);
+  expect((await call('/api/setup/vault-recovery')).body).toEqual(recovery);
+  expect((await call('/api/setup/vault-recovery-confirmed', {method:'POST',body:{}})).status).toBe(200);
+  const [after] = await db.query('select master_key_enc,recovery_master_enc,recovery_key_hash,pending_setup_recovery_enc from vault_state where id=true');
+  expect(after).toEqual({...before,pending_setup_recovery_enc:null});
+  expect((await call('/api/setup/vault-recovery')).status).toBe(409);
+  expect((await db.query('select id from users')).length).toBe(1);
+});
+
+it('resumes a previously saved owner only with their password and preserves all owner and vault values', async () => {
+  await call('/api/setup/steps/host_checks',{method:'POST',body:{}});
+  await call('/api/setup/steps/owner',{method:'POST',body:OWNER});
+  const ownersBefore=await db.query('select * from users');
+  const vaultBefore=await db.query('select * from vault_state');
+  // Simulate the old installer committing account creation before progress.
+  await db.query("update setup_state set completed_steps=array['host_checks'],current_step='owner' where id=true");
+  expect((await call('/api/setup/state')).body.ownerExists).toBe(true);
+  expect((await call('/api/setup/steps/owner',{method:'POST',body:{resumeOwner:true,identifier:OWNER.username,password:'wrong'}})).status).toBe(400);
+  expect(await db.query('select * from users')).toEqual(ownersBefore);
+  const resumed=await call('/api/setup/steps/owner',{method:'POST',body:{resumeOwner:true,identifier:OWNER.username,password:OWNER.password}});
+  expect(resumed.status).toBe(200);
+  expect(await db.query('select * from users')).toEqual(ownersBefore);
+  expect(await db.query('select * from vault_state')).toEqual(vaultBefore);
+});
+
 const SMTP_BODY = {
   system: {
     host: 'smtp.example.test', port: 587, security: 'starttls',
@@ -955,6 +1003,8 @@ describe('telemetry is off unless affirmatively enabled', () => {
       .join('\n');
     const urls = [...code.matchAll(/https?:\/\/[a-z0-9.-]+/gi)].map((m) => m[0].toLowerCase());
     const allowed = [
+      // Fixed native deployment metadata; this is not an external request.
+      'http://localhost',
       // Endpoints the server calls.
       'https://api.openai.com', 'https://api.x.ai', 'https://api.anthropic.com',
       // Links the browser is offered so an administrator can open the console

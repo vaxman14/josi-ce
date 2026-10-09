@@ -79,6 +79,19 @@ function Test-NativePayload($Component, [string]$Path) {
         (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $Component.sha256
 }
 
+function Get-NativeLocalPayload($Component,[string]$Source,[string]$Cache){
+    $sourcePath=Assert-PlainNativePath (Join-Path $Source $Component.asset)
+    if(!(Test-NativePayload $Component $sourcePath) -or ![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($sourcePath)){throw 'Local acceptance payload integrity failed'}
+    $destination=Assert-PlainNativePath (Join-Path $Cache $Component.asset)
+    if(Test-Path -LiteralPath $destination){
+        if(!(Test-NativePayload $Component $destination)){throw 'Retained cache differs; review it before proceeding'}
+    }else{
+        [IO.File]::Copy($sourcePath,$destination,$false)
+        if(!(Test-NativePayload $Component $destination)){throw 'Local payload changed during private copy'}
+    }
+    return $destination
+}
+
 function Get-NativePayload($Component, [string]$ManifestHash, [string]$CacheRoot,
     [string]$CancelPath, [scriptblock]$Progress = {}, [int]$MaximumSeconds = 1800) {
     if ($ManifestHash -cnotmatch '^[a-f0-9]{64}$' -or $MaximumSeconds -lt 1 -or $MaximumSeconds -gt 7200) {
@@ -190,4 +203,4 @@ function Get-NativePayload($Component, [string]$ManifestHash, [string]$CacheRoot
     }
 }
 
-Export-ModuleMember -Function Read-NativeManifest, Read-SignedNativeManifest, Test-NativePayload, Get-NativePayload, Assert-PlainNativePath
+Export-ModuleMember -Function Read-NativeManifest, Read-SignedNativeManifest, Test-NativePayload, Get-NativePayload, Get-NativeLocalPayload, Assert-PlainNativePath

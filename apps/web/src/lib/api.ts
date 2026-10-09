@@ -7,6 +7,8 @@
 //   * the CSRF cookie echoed into the header on every state-changing request,
 //     which is the double-submit pair the API requires. A missing header comes
 //     back as 403, which reads like an authorization bug and is not one.
+import { captureSetupHandoff } from './setupHandoff';
+
 export class ApiError extends Error {
   constructor(readonly status: number, message: string, readonly body?: unknown) {
     super(message);
@@ -14,14 +16,24 @@ export class ApiError extends Error {
 }
 
 const SETUP_HANDOFF_KEY = 'josi_setup_handoff';
+let launchToken = typeof window === 'undefined' ? null : captureSetupHandoff(window.location, history, sessionStorage);
+let handoffConsumption: Promise<void> | null = null;
+let csrfPriming: Promise<void> | null = null;
+
+export function consumeSetupHandoff(): Promise<void> {
+  if (!handoffConsumption) handoffConsumption = (async () => {
+    if (!launchToken) return;
+    const token = launchToken; launchToken = null;
+    sessionStorage.removeItem(SETUP_HANDOFF_KEY);
+    await primeCsrf();
+    const res = await fetch('/api/onboarding/consume', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'x-josi-csrf': csrfToken() ?? '' }, body: JSON.stringify({ token }) });
+    if (!res.ok) throw new ApiError(res.status, 'This setup link could not be used. Reopen Josi to resume setup safely.');
+  })();
+  return handoffConsumption;
+}
 
 function setupHandoffToken(): string | null {
-  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-  const incoming = fragment.get('setup');
-  if (incoming && /^[A-Za-z0-9_-]{40,80}$/.test(incoming)) {
-    sessionStorage.setItem(SETUP_HANDOFF_KEY, incoming);
-    history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-  }
   return sessionStorage.getItem(SETUP_HANDOFF_KEY);
 }
 
@@ -40,6 +52,7 @@ function csrfToken(): string | null {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  await consumeSetupHandoff();
   const headers: Record<string, string> = setupHandoffHeaders();
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const token = csrfToken();
@@ -71,6 +84,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 async function upload<T>(path: string, body: FormData): Promise<T> {
+  await consumeSetupHandoff();
   const headers: Record<string, string> = setupHandoffHeaders();
   const token = csrfToken(); if (token) headers['x-josi-csrf'] = token;
   const res = await fetch(`/api${path}`, { method: 'POST', headers, body, credentials: 'same-origin', cache: 'no-store' });
@@ -90,8 +104,12 @@ export const api = {
 
 /** Fetches the CSRF cookie before the first state-changing request. The login
  * form needs this: there is no session yet, so nothing has set the pair. */
-export async function primeCsrf(): Promise<void> {
-  await fetch('/api/auth/csrf', { credentials: 'same-origin' }).catch(() => undefined);
+export function primeCsrf(): Promise<void> {
+  // AuthProvider and the launch exchange mount together. Rotating two CSRF
+  // cookies concurrently could invalidate the exchange's header before POST.
+  if (!csrfPriming) csrfPriming = fetch('/api/auth/csrf', { credentials: 'same-origin', cache: 'no-store' })
+    .then(() => undefined).catch(() => undefined).finally(() => { csrfPriming = null; });
+  return csrfPriming;
 }
 
 // ---------------------------------------------------------------- shapes

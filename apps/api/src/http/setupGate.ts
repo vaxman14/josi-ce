@@ -18,6 +18,8 @@
 import type { NextFunction, Request, Response } from 'express';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { getSetupState, type Db } from '@josi-ce/core';
+import { readCookie } from './cookies.js';
+import { HANDOFF_TTL, SETUP_SESSION_COOKIE, SETUP_SESSION_TTL, SetupHandoffs } from './setupHandoffs.js';
 
 /** Paths that must answer regardless of setup state.
  *
@@ -35,7 +37,8 @@ function isSetupPath(path: string): boolean {
   return SETUP_EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
-export function setupGate(db: Db, setupTokenSha256?: string | null) {
+export function setupGate(db: Db, setupTokenSha256?: string | null, cookieSecure = false) {
+  const handoffs = new SetupHandoffs();
   const expected = setupTokenSha256
     ? Buffer.from(setupTokenSha256, 'hex')
     : null;
@@ -55,6 +58,29 @@ export function setupGate(db: Db, setupTokenSha256?: string | null) {
     }
 
     const setupPath = isSetupPath(req.path);
+    const rootAuthorized = () => !!expected && timingSafeEqual(
+      createHash('sha256').update(req.get('x-josi-setup-token') ?? '').digest(), expected);
+
+    if (req.path === '/onboarding/state' && req.method === 'GET' && expected) {
+      res.set('Cache-Control', 'no-store').json({ completed }); return;
+    }
+    if (req.path === '/onboarding/launch' || req.path === '/onboarding/consume') {
+      res.set('Cache-Control', 'no-store');
+      if (completed || !expected || req.method !== 'POST') {
+        res.status(404).json({ error: 'not found' }); return;
+      }
+      if (req.path === '/onboarding/launch') {
+        if (!rootAuthorized()) { res.status(404).json({ error: 'not found' }); return; }
+        try { res.json({ token: handoffs.issue(), expiresInSeconds: HANDOFF_TTL / 1000 }); }
+        catch { res.status(429).json({ error: 'too many pending setup links; retry shortly' }); }
+        return;
+      }
+      const session = handoffs.consume(req.body?.token);
+      if (!session) { res.status(410).json({ error: 'This setup link expired or was already used. Reopen Josi to continue.' }); return; }
+      res.cookie(SETUP_SESSION_COOKIE, session, { httpOnly: true, secure: cookieSecure,
+        sameSite: 'strict', path: '/api/setup', maxAge: SETUP_SESSION_TTL });
+      res.status(204).end(); return;
+    }
 
     if (ALWAYS_AVAILABLE_PATHS.has(req.path)) {
       next();
@@ -63,7 +89,7 @@ export function setupGate(db: Db, setupTokenSha256?: string | null) {
 
     if (!completed) {
       if (setupPath) {
-        if (expected) {
+        if (expected && !handoffs.authorized(readCookie(req, SETUP_SESSION_COOKIE))) {
           const supplied = req.get('x-josi-setup-token') ?? '';
           const actual = createHash('sha256').update(supplied).digest();
           if (!timingSafeEqual(actual, expected)) {
@@ -85,6 +111,8 @@ export function setupGate(db: Db, setupTokenSha256?: string | null) {
     }
 
     if (setupPath) {
+      handoffs.clear();
+      res.clearCookie(SETUP_SESSION_COOKIE, { path: '/api/setup' });
       res.status(404).json({ error: 'not found' });
       return;
     }

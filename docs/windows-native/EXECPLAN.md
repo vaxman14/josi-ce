@@ -6,6 +6,19 @@ Persistent engineering work, started 2026-10-07 (America/Los_Angeles). The `.5`
 unsigned engineering candidate is accepted; no signed Windows release is approved.
 Planned controls below are requirements until supported by executable evidence.
 
+Onboarding continuation, 2026-10-08: `.6` is a new private unsigned offline acceptance
+candidate, separate from the installed accepted `.5`. Installer readiness and
+original-user browser handoff, ten-minute single-use links, immediate scrubbing,
+setup-only HttpOnly cookies, resumable encrypted recovery presentation, atomic owner
+creation and authenticated interrupted-owner resumption are implemented. Focused
+tests, disposable packaged-browser acceptance, installer integrity, SBOM/license
+inventories, archive checks and explicit AMSI evidence are recorded in
+RELEASE-CHECKPOINT.md. The final candidate must not be installed or uninstalled by
+the agent. Roman's next gate is normal double-click/UAC and physical acceptance,
+with a separate clean PC/VM for clean-install testing. Preserve the adjacent offline
+payloads, `.5`, private data and all rollback/original-dump material. No signing,
+push, publication or Windows security-setting changes are authorized by this work.
+
 Baseline: `7e0842bfeb72d4a37d68fb990ad15eb1d748f9e8`, verified against
 `git ls-remote origin refs/heads/main` after a fresh clone and fetch. Initial tree
 was clean. Branch: `windows/native-distribution-20261007`. Workspace:

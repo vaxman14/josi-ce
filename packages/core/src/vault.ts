@@ -40,9 +40,11 @@ export async function initializeVault(db:Db, masterKey:MasterKey, actorUserId:st
   const recoveryKey=new MasterKey(recoveryRaw); const fingerprint=digest(recoveryRaw).slice(0,12).toUpperCase();
   const rows=await db.query<{id:boolean}>(
     `update vault_state set initialized_at=now(),initialized_by=$1,locked=false,master_key_enc=$2,
-      recovery_master_enc=$3,recovery_key_hash=$4,recovery_key_fingerprint=$5,updated_at=now()
+      recovery_master_enc=$3,recovery_key_hash=$4,recovery_key_fingerprint=$5,
+      pending_setup_recovery_enc=$6,updated_at=now()
      where id=true and initialized_at is null returning id`,
-    [actorUserId,seal(masterKey,{key:vaultRaw.toString('base64')}),seal(recoveryKey,{key:vaultRaw.toString('base64')}),digest(recoveryRaw),fingerprint]);
+    [actorUserId,seal(masterKey,{key:vaultRaw.toString('base64')}),seal(recoveryKey,{key:vaultRaw.toString('base64')}),digest(recoveryRaw),fingerprint,
+      seal(masterKey,{key:recoveryText})]);
   if(!rows.length) throw new VaultError('the Master Vault was initialized by another request');
   await appendEvent(db,{actorUserId,actor:'super_admin',kind:'vault.initialized',subjectType:'vault',payload:{fingerprint}});
   return {recoveryKey:new Secret(recoveryText),fingerprint};

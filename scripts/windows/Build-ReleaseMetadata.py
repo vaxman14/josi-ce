@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import uuid
+import argparse
 
 REPO = Path(__file__).resolve().parents[2]
 BASE = REPO / 'artifacts/windows-native'
@@ -24,10 +25,17 @@ def sha(path):
 
 
 def main():
+    args = argparse.ArgumentParser()
+    args.add_argument('--local-acceptance', action='store_true')
+    local = args.parse_args().local_acceptance
     app = read(BASE / 'evidence/application-build.json')
     runtime = read(BASE / 'evidence/runtime-build.json')
     accepted = read(BASE / 'evidence/native-candidate-acceptance.json')
-    if not accepted['passed'] or app['version'] != accepted['candidate']:
+    if local:
+        proof = read(BASE / 'evidence/onboarding-build-validation.json')
+        if not proof['passed'] or proof['candidate'] != app['version'] or proof['sourceInventorySha256'] != app['sourceInventorySha256']:
+            raise ValueError('Verified new candidate inputs required')
+    elif not accepted['passed'] or app['version'] != accepted['candidate']:
         raise ValueError('Only the accepted candidate can enter release metadata')
     output = BASE / 'staging' / ('release-metadata-' + uuid.uuid4().hex)
     output.mkdir()
@@ -51,6 +59,23 @@ def main():
     components = []
     gaps = []
     sources = []
+    if local:
+        launcher = read(BASE / 'evidence/onboarding-launcher.json')
+        if not launcher['passed'] or not launcher['testsPassed'] or sha(launcher['binary']) != launcher['sha256']:
+            raise ValueError('Verified launcher identity required')
+        components.append({'type': 'application', 'bom-ref': 'josi:launcher:' + app['version'],
+                           'name': 'Josi Windows onboarding launcher', 'version': app['version'],
+                           'hashes': [{'alg': 'SHA-256', 'content': launcher['sha256']}],
+                           'licenses': [{'license': {'id': 'AGPL-3.0-or-later'}}],
+                           'properties': [{'name': 'josi:system-runtime', 'value': 'Windows .NET Framework 4.6.2 or newer; not bundled'}]})
+        for name in ('JosiLauncher.cs', 'JosiLauncher.csproj', 'packages.lock.json'):
+            original = REPO / 'packaging/windows/launcher' / name
+            if name == 'JosiLauncher.cs' and sha(original) != launcher['sourceSha256']:
+                raise ValueError('Tested launcher source changed')
+            target = licenses / 'josi-launcher-source' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(original, target)
+            notices.append({'path': target.relative_to(licenses).as_posix(), 'size': target.stat().st_size, 'sha256': sha(target)})
     for row in python['components']:
         name, version = row['name'], row['version']
         notice_files = list(row['licenseFiles'])

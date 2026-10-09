@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import uuid
 import zipfile
+import argparse
+import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = ROOT / 'artifacts/windows-native'
@@ -26,15 +28,30 @@ def record(path, name):
 
 
 def main():
+    args = argparse.ArgumentParser()
+    args.add_argument('--local-acceptance', action='store_true')
+    args.add_argument('--reuse-runtime-assets-report', type=Path)
+    options = args.parse_args()
+    local = options.local_acceptance
+    reusable = {}
+    reuse_root = None
+    if options.reuse_runtime_assets_report:
+        prior = read(options.reuse_runtime_assets_report)
+        reuse_root = Path(prior['output'])
+        if not prior['archivesVerified'] or sha(reuse_root / 'release-manifest.json') != prior['manifestSha256']:
+            raise ValueError('Retained runtime archive identity failed')
+        reusable = {row['id']: row for row in read(reuse_root / 'release-manifest.json')['components'] if row['id'] != 'josi'}
     app = read(BASE / 'evidence/application-build.json')
     runtime = read(BASE / 'evidence/runtime-build.json')
     metadata = read(BASE / 'evidence/release-metadata.json')
     accepted = read(BASE / 'evidence/native-candidate-acceptance.json')
     sbom = read(BASE / 'evidence/release-sbom-validation.json')
-    if not accepted['passed'] or accepted['candidate'] != app['version'] or not sbom['passed'] or not sbom['formatAnnotationsValidated']:
+    if local:
+        accepted = read(BASE / 'evidence/onboarding-build-validation.json')
+    if not accepted['passed'] or accepted['candidate'] != app['version'] or not sbom['passed'] or not sbom['formatAnnotationsValidated'] or metadata['candidate'] != app['version']:
         raise ValueError('Accepted payload and complete SBOM validation required')
     inventories = [Path(app['build']) / 'reports/payload-inventory.json', Path(runtime['reports']) / 'file-inventory.json']
-    expected = ['5a82dd3f048dbfb67c72daddf093373ff100e64690522b9a7c28fd171842783b', runtime['inventorySha256']]
+    expected = [accepted['sourceInventorySha256'] if local else '5a82dd3f048dbfb67c72daddf093373ff100e64690522b9a7c28fd171842783b', runtime['inventorySha256']]
     # The application source inventory and payload inventory have separate hashes.
     if app['sourceInventorySha256'] != expected[0] or sha(inventories[1]) != expected[1]:
         raise ValueError('Accepted inventory identity changed')
@@ -69,10 +86,20 @@ def main():
     for name, files in groups.items():
         asset = f'josi-windows-{name}-{app["version"]}-x64.zip'
         path = output / asset
-        with zipfile.ZipFile(path, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True) as archive:
-            for source, row in files:
-                archive.write(source, row['path'])
-            archive.writestr('inventories/' + name + '.json', json.dumps([row for _, row in files], separators=(',', ':')))
+        if name in reusable:
+            retained = reusable[name]
+            original = reuse_root / retained['asset']
+            if sha(original) != retained['sha256'] or original.stat().st_size != retained['size']:
+                raise ValueError('Retained runtime archive bytes changed')
+            with zipfile.ZipFile(original) as archive:
+                if json.loads(archive.read('inventories/' + name + '.json')) != [row for _, row in files]:
+                    raise ValueError('Runtime inputs changed; reuse refused')
+            shutil.copyfile(original, path)
+        else:
+            with zipfile.ZipFile(path, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True) as archive:
+                for source, row in files:
+                    archive.write(source, row['path'])
+                archive.writestr('inventories/' + name + '.json', json.dumps([row for _, row in files], separators=(',', ':')))
         # Read back every member and CRC after compression; no payload rebuild.
         with zipfile.ZipFile(path) as archive:
             if archive.testzip() is not None or len(archive.infolist()) != len(files) + 1:
@@ -82,14 +109,14 @@ def main():
                            'license': licenses[name], 'licenseSource': upstream[name], 'redistributionEvidence': 'licenses/THIRD_PARTY_NOTICES.txt'})
         print(json.dumps({'component': name, 'files': len(files), 'archiveVerified': True}), flush=True)
     manifest = {'schemaVersion': 1, 'product': 'Josi CE Server', 'version': app['version'], 'architecture': 'x64', 'releaseTag': 'windows-v' + app['version'],
-                'components': components, 'installable': False, 'licenseGatePassed': False, 'unsignedAcceptancePassed': False,
+                'components': components, 'installable': local, 'localUnsignedAcceptance': local, 'licenseGatePassed': False, 'unsignedAcceptancePassed': False,
                 'payloadAcceptancePassed': True, 'published': False, 'openLicenseGates': metadata['gaps'],
-                'acceptanceScope': 'accepted .5 payload; full thin-EXE installation acceptance is unfinished'}
+                'acceptanceScope': 'private offline unsigned physical acceptance; no redistribution approval' if local else 'accepted .5 payload; full thin-EXE installation acceptance is unfinished'}
     manifest_path = output / 'release-manifest.json'
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     report = {'packaged': True, 'archivesVerified': True, 'components': len(components), 'acceptedFilesVerified': app['files'] + runtime['files'],
               'nativeClamavExcluded': True, 'output': str(output), 'manifestSha256': sha(manifest_path), 'candidate': app['version'],
-              'licenseGatePassed': False, 'installable': False, 'published': False, 'signed': False, 'releaseApproved': False}
+              'licenseGatePassed': False, 'installable': local, 'localUnsignedAcceptance': local, 'published': False, 'signed': False, 'releaseApproved': False}
     (BASE / 'evidence/release-assets.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps(report), flush=True)
 

@@ -1,5 +1,115 @@
 # Native Windows engineering checkpoint
 
+## Continuous browser onboarding candidate `.6` — 2026-10-08
+
+The new `0.1.78-native.6` is a private, **unsigned** offline acceptance candidate.
+The accepted installed `.5` and its artifacts remain the baseline. No `.6`
+installation/uninstallation, live database connection, SQL restore, secret rotation,
+service change, reboot, firewall change, signing, push or publication was performed.
+
+The production Inno entry installs or upgrades through the existing transaction
+host, waits for database/API/proxy and all six services, then starts the separate
+Windows launcher as the original non-elevated user. The Finish message is:
+“Installation complete. Finish setting up Josi in your browser.” The Start-menu
+Josi shortcut uses the same launcher to resume incomplete setup. Installation
+requires normal Windows administrator consent; the read-only EXE verifier uses
+`/CURRENTUSER /VERIFYONLY` and cannot install.
+
+The launcher keeps the existing ACL-protected bootstrap document/configuration
+unchanged, authenticates an explicit launch request in memory, and retrieves a
+random, ten-minute, single-use capability. Default HTTP-browser association receives
+only a user-private temporary HTML path, not the capability as a process argument.
+The browser scrubs the fragment before React renders, consumes the capability under
+the existing CSRF guard and receives an HttpOnly, SameSite=Strict setup-only cookie
+with an eight-hour bound. Restart invalidates capabilities/cookies; fresh launcher
+links resume persisted wizard answers. Browser-launch failure exposes one copyable
+private link with Retry; Retry mints a fresh link. Temporary handoff documents have
+protected ACLs and bounded cleanup. No token, password or recovery key enters logs.
+
+Owner creation, vault initialization and owner-step progress commit atomically.
+An owner left by an older interrupted setup must prove their existing password
+before resuming; their account and vault values remain unchanged. Migration 0064
+adds a nullable encrypted pending-recovery field without changing existing wraps,
+ownership or permissions. New recovery keys can be presented again until confirmation,
+then the pending presentation is cleared. Older unconfirmed keys that were never
+retained cannot be recreated automatically. Native setup imports the installed
+local address without replacing an existing address. Completion leads to ordinary
+owner sign-in and Getting started, with optional service connections and an honest
+companion-device availability explanation. No compatible companion build/pairing
+is invented. Native malware scanning remains explicit Windows AMSI; Docker/Linux
+antivirus behavior is unchanged and no native engine or definitions are bundled.
+
+Automated evidence (under `artifacts/windows-native/evidence/`):
+
+- `onboarding-focused-tests-final.json`: 106 passing tests across setup, verification,
+  setup UI, handoff capabilities and native antivirus policy; zero failures.
+- `onboarding-csrf-race-after.json`: one passing regression. The before record
+  reproduced two concurrent CSRF requests; sharing initialization fixes the race.
+  Total focused checks: 107. Root/API and web TypeScript checks pass.
+- `onboarding-launcher.json`: net462 x64 GUI build and executable tests pass for
+  readiness waiting/cancellation, link generation, completed-install behavior,
+  errors, browser launch success/failure, actual fallback form, fresh-link retry,
+  private-document ACLs and cleanup. No end-user compiler/SDK is required.
+- `onboarding-runtime.json`: final compiled API/UI in a fresh disposable PostgreSQL
+  cluster and headless Chrome. Real 63-to-64 migration before activation; unactivated
+  writer refusal; retained fixture rows, grants and secrets; owner creation once;
+  immediate fragment scrubbing; no browser token storage; HttpOnly cookie; recovery
+  presentation survives reload; unchanged recovery wraps; fresh link resumes the
+  model step. No fixed live ports or SCM operations are used.
+- `installer-kit-tests.json`: all 16 embedded files load using OS PowerShell 5.1;
+  four integrity rejection checks pass. `initial-configuration.json`: actual Caddy
+  adaptation confirms local-only listeners.
+- `native-package-inspection.json`: 18,565 application/runtime files hashed; native
+  antivirus engine/services/definitions/downloads/ports and container recipes excluded.
+- `release-sbom-validation.json`: CycloneDX 1.6 official schema and every format,
+  354 components, unique identities/resolved graph, bad URI/timestamp rejection.
+  Metadata validates 472 third-party notice files, three tested launcher source
+  inputs and 71 retained source archives. Public license/source closure remains false.
+- Final installer integrity, AMSI, delivery and preserved-original verification are
+  recorded in `onboarding-installer-tests.json`, `onboarding-malware.json`,
+  `onboarding-delivery.json` and `onboarding-preserved-inputs.json`.
+
+The offline installer requires its six hash-bound ZIPs in the adjacent `payloads`
+folder. No unpublished download or unsigned remote-catalog fallback is used. Only
+explicit private offline acceptance permits installation without signing/public
+license closure; signed remote-release gates remain enforced. Final EXE metadata,
+SHA-256 and artifact location are in `onboarding-installer.json` and the delivery
+record. Acceptance instructions are maintained in `packaging/windows/TEST-ME.txt`.
+
+Delivered EXE:
+`C:\Users\Roman\OneDrive\Desktop\Josi-Windows-Acceptance\Josi-CE-0.1.78-native.6-Windows-x64-acceptance.exe`
+(2,347,953 bytes; file version `0.1.78.6`; Authenticode `NotSigned`). SHA-256:
+`2e18621152f8c637ca4d6ec5ebeff79ed3c82e62bd85fcc948d534eb6e5509d7`.
+The matching `.exe.sha256`, `SHA256SUMS.txt`, `TEST-ME.txt`, SBOM, license-gap record
+and six `payloads` ZIPs are beside it. All delivered copies were hash-verified.
+Final EXE read-only verification, local-cache reuse/tamper rejection and seven
+archive-boundary rejections passed; installed service state remained unchanged.
+AMSI returned **clean** for four explicit full-buffer scans: EXE, launcher, setup
+bridge and service host. Preserved `.5`, original logical-dump and recovery-evidence
+hashes matched after packaging/delivery. No physical acceptance is inferred.
+
+Initial test issues are retained: sandbox loopback denial; an obsolete telemetry
+allowlist rejecting fixed local metadata; a fixture contact missing its required
+owner; an EXE version-string padding assertion; and a JSON BOM parser assumption.
+These were corrected with focused reruns. Application rebuilds were limited to the
+concrete owner-interruption and reproduced CSRF fixes. Five unchanged runtime ZIPs
+are reused byte-for-byte after the final browser change.
+
+Remaining acceptance: Roman's physical clean install on a separate PC/VM, upgrade
+of accepted `.5`, original-user/default-browser behavior and UAC. Real provider
+authentication, microphone/playback and second-device LAN remain unverified.
+Listeners stay local-only. Historical startup-event ordering remains a supplemental
+evidence gap. Existing license/source/Microsoft-recipient review gaps and three
+moderate npm audit advisories (argparse, mammoth, sprintf-js; zero high/critical)
+remain recorded, without dependency downgrades or public release approval. AMSI
+evidence covers full EXE/embedded binaries; large payload archives have full hash,
+inventory and CRC checks and are not claimed as fully AMSI-scanned.
+
+The preserved-original record verifies accepted `.5` EXE, both original logical
+dumps and recovery/ownership evidence hashes. Builds/tests never open installed
+private data for writing. This is not a fresh byte comparison of a running database;
+the accepted services may continue their normal housekeeping.
+
 The accepted installed payload remains `0.1.78-native.5`. It is unsigned and
 accepted for engineering use. There is no approved signed public Windows release.
 The lossless `.4` transaction repair, single `.5` physical upgrade and reboot

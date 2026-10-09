@@ -44,7 +44,7 @@ import { AdminVoiceBox } from '@/pages/admin/VoiceBox';
 import { AdminChannels } from '@/pages/admin/Channels';
 import { AdminVault } from '@/pages/admin/Vault';
 import { AdminNetwork } from '@/pages/admin/Network';
-import { setupHandoffHeaders } from '@/lib/api';
+import { api } from '@/lib/api';
 
 /** Routing is convenience, not security.
  *
@@ -113,15 +113,9 @@ function useSetupNeeded(): boolean | null {
   useEffect(() => {
     // `cache: 'no-store'` for the same reason as lib/api.ts: a cached
     // permanent redirect must not be replayed here.
-    void fetch('/api/setup/state', {
-      credentials: 'same-origin', cache: 'no-store', headers: setupHandoffHeaders(),
-    })
-      .then(async (res) => {
-        if (res.status === 404) return setNeeded(false);
-        const body = await res.json().catch(() => null);
-        setNeeded(!(body as { completed?: boolean } | null)?.completed);
-      })
-      .catch(() => setNeeded(false));
+    void api.get<{ completed: boolean }>('/setup/state')
+      .then((body) => setNeeded(!body.completed))
+      .catch((error) => setNeeded(error?.status === 404 ? false : true));
   }, []);
   return needed;
 }
@@ -130,7 +124,7 @@ export function App() {
   const setupNeeded = useSetupNeeded();
   useFirstRunRedirect();
   if (setupNeeded === null) return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
-  if (setupNeeded) return <Setup onDone={() => window.location.assign('/login')} />;
+  if (setupNeeded) return <Setup onDone={() => window.location.replace('/login?setup=complete')} />;
 
   // Everything below always renders a page. Redirects are either declared
   // inside the route tree (so the tree keeps rendering) or fired imperatively

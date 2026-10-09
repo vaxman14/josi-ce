@@ -78,6 +78,8 @@ interface StepDescriptor {
 
 interface SetupState {
   completed: boolean;
+  recoveryPending: boolean;
+  ownerExists: boolean;
   completedSteps: string[];
   nextStep: string | null;
   steps: StepDescriptor[];
@@ -106,6 +108,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
     const next = await api.get<SetupState>('/setup/state');
     setState(next);
     if (next.completed) { clearSetupHandoff(); onDone(); return; }
+    if (next.recoveryPending) setVaultRecovery(await api.get<{key:string;fingerprint:string}>('/setup/vault-recovery'));
     // Only once there is something to summarise. Before the model step there
     // is nothing to say, and an empty summary reads like a broken one.
     if (next.completedSteps.includes('llm')) {
@@ -216,7 +219,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-1 text-xs text-muted-foreground">Step {position} of {state.steps.length}</p>
           <CardTitle>{current.title}</CardTitle>
           <p className="mb-4 text-sm text-muted-foreground">{current.summary}</p>
-          <StepForm step={current.id} busy={busy} catalog={state.providerCatalog ?? []} onSubmit={submit} />
+          <StepForm step={current.id} busy={busy} ownerExists={state.ownerExists} catalog={state.providerCatalog ?? []} onSubmit={submit} />
         </Card>
       ) : (
         <Card>
@@ -267,9 +270,10 @@ export function Setup({ onDone }: { onDone: () => void }) {
 }
 
 function StepForm({
-  step, busy, catalog, smtpInitial, onSubmit,
+  step, busy, catalog, smtpInitial, onSubmit, ownerExists = false,
 }: {
   step: string; busy: boolean; catalog: ProviderCatalogEntry[];
+  ownerExists?: boolean;
   smtpInitial?: {
     host: string | null; port: number | null; security: string | null; username: string | null;
     passwordSet: boolean | null; fromName: string | null; fromAddress: string | null;
@@ -319,6 +323,12 @@ function StepForm({
       );
 
     case 'owner':
+      if (ownerExists) return <form className="space-y-3" onSubmit={(e)=>handle(e,f=>({resumeOwner:true,identifier:f.get('identifier'),password:f.get('password')}))}>
+        <p className="text-sm">An owner account is already saved. Sign in to resume without replacing it.</p>
+        <Field id="identifier" label="Username or email" required autoComplete="username" />
+        <Field id="password" label="Password" type="password" required autoComplete="current-password" />
+        <Button type="submit" disabled={busy}>Sign in and continue</Button>
+      </form>;
       return (
         <form
           onSubmit={(e) => handle(e, (f) => ({
@@ -546,7 +556,7 @@ function RecoveryKeyStep({
 
   return <div className="mx-auto max-w-3xl p-5 sm:p-8"><Card>
     <CardTitle>Save your Vault recovery key</CardTitle>
-    <p className="mt-2 text-sm text-muted-foreground">This is the only copy Josi will provide. Store it offline. Losing both this key and the server&rsquo;s Master Vault key makes encrypted credentials permanently unrecoverable.</p>
+    <p className="mt-2 text-sm text-muted-foreground">Store this key offline. Josi can show it again while setup is unfinished, until you confirm saving it. Losing both this key and the server&rsquo;s Master Vault key makes encrypted credentials permanently unrecoverable.</p>
     <div className="my-5 rounded-md border border-border bg-background p-4 font-mono text-base" aria-label={`Recovery key ending in ${suffix}`}>
       <span aria-hidden>•••• •••• •••• •••• •••• •••• •••• {suffix}</span>
     </div>

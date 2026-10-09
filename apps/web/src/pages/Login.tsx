@@ -60,6 +60,7 @@ export function Login() {
           <p className="text-sm text-muted-foreground">Your assistant, on your own server.</p>
         </div>
         <Card>
+          {searchParams.get('setup') === 'complete' ? <p className="mb-4 text-sm">Josi setup is complete. Sign in with the owner account you created to enter Josi and choose optional connections.</p> : null}
           <form onSubmit={challenge ? verifyMfa : submit} className="space-y-3">
             {challenge ? <><p className="text-sm">Enter the 6-digit code from your authenticator app, or a recovery code.</p>
               <Input inputMode="numeric" autoComplete="one-time-code" value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} required autoFocus /></> : <>

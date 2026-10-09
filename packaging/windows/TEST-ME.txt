@@ -1,0 +1,52 @@
+Josi Windows private acceptance candidate
+EXE: Josi-CE-0.1.78-native.6-Windows-x64-acceptance.exe
+Status: UNSIGNED. Not published or approved for public redistribution.
+Keep the complete folder, including payloads, together. No SDK or CLI is needed.
+
+CLEAN INSTALL
+Use a separate Windows 11 x64 PC or disposable VM with no Josi installation.
+Do not remove the accepted live installation to perform this test.
+Double-click the EXE normally and approve Windows UAC. Wait for installation
+and service readiness. The default browser should open automatically.
+Create your owner account, copy/download the recovery key to a safe offline
+location and confirm saving it. Configure and test a model provider. Choose
+optional settings, finish setup, then sign in with the account you created.
+Optional service connections are available in Getting started. Companion app
+pairing is honestly unavailable until a compatible app is provided.
+
+UPGRADE TEST
+Keep accepted .5, its data, configuration, secrets, both logical dumps, snapshots
+and rollback material. Double-click this EXE normally and approve UAC once.
+It selects upgrade automatically, snapshots before migration and checks readiness
+before opening the browser. Completed setup opens Josi; incomplete setup resumes.
+Existing accounts/passwords remain yours; the installer prints no credentials.
+Close the browser during unfinished setup, then open Josi from the Start menu.
+Expect the saved step and recovery-key confirmation to resume without a new owner.
+
+BROWSER HANDOFF
+The private link expires in ten minutes and works once. Its token disappears
+from the browser address immediately when the app loads and is exchanged for
+an HttpOnly setup cookie. No token is passed as a browser process argument.
+If browser launch fails, expect one copyable private URL and a Retry button.
+Retry requests a fresh link. Do not share the link or capture it in screenshots.
+Expected finish message: Installation complete. Finish setting up Josi in your browser.
+
+ROLLBACK
+If installation fails, stop and retain the transaction, old .5 version and backups.
+Do not delete the PostgreSQL directory, restore SQL, uninstall the live instance
+or retry an interrupted transaction blindly. Request review of retained diagnostics
+for a lossless service/filesystem rollback. Automatic downgrade UI is not included.
+
+KNOWN LIMITATIONS
+Physical clean-install/upgrade, default-browser launch and UAC acceptance remain
+for Roman. No final-candidate install/uninstall or reboot was performed by Codex.
+An unsigned-app warning may appear; no Windows security setting should be disabled.
+Model-provider login, real microphone/audio and second-device LAN require physical
+acceptance. Listeners remain local-only. Historical startup ordering is unconfirmed.
+Older unfinished vaults whose recovery key was never retained cannot show that
+original key again; preserve the saved key and request review rather than rotate it.
+SBOM schema and retained license/source hashes pass; public license/source closure
+remains incomplete. Dependency audit reports three moderate advisories and no
+high/critical advisories. No signing or publication is claimed.
+AMSI explicitly scans the EXE and embedded Windows binaries. Large payload ZIPs
+have full inventory/hash/CRC inspection; they are not claimed as fully AMSI-scanned.

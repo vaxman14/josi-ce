@@ -18,7 +18,7 @@ import { Router } from 'express';
 import {
   appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, initializeVault, json, loadMasterKey,
   updateWorkspace,
-  recordVerification, seal, storeCredentialPayload, summarizeReview,
+  recordVerification, seal, openSealed, storeCredentialPayload, summarizeReview,
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
 import { describeProvider, discoverModels } from '@josi-ce/llm';
@@ -51,7 +51,7 @@ const READ_ONLY_CAPABILITIES: Record<'google' | 'microsoft', string[]> = {
   google: CAPABILITIES.filter((c) => c.provider === 'google' && c.kind === 'read').map((c) => c.key),
   microsoft: CAPABILITIES.filter((c) => c.provider === 'microsoft' && c.kind === 'read').map((c) => c.key),
 };
-import { UserError, createUser } from '@josi-ce/auth';
+import { UserError, createUser, verifyPassword } from '@josi-ce/auth';
 import { asyncRoute, param } from '../http/async.js';
 import { blockingFailures, runHostChecks } from './hostChecks.js';
 import { STEP_DESCRIPTORS, SETUP_STEPS, canSubmit, nextStep, type SetupStep } from './steps.js';
@@ -119,6 +119,17 @@ const bool = (v: unknown): boolean => v === true;
  * simply leaves the normal Address step in place. This is idempotent so both
  * GET and POST routes can enforce the same state-machine boundary. */
 async function applyInstallerDeployment(db: Db): Promise<void> {
+  if (process.env.JOSI_NATIVE_RUNTIME === '1' && process.env.APP_URL === 'http://localhost:8080') {
+    // Import the already-installed local address. Never overwrite a previously
+    // chosen address or alter proxy/firewall configuration during onboarding.
+    await db.query(`update deployment_config set domain='localhost',tls_mode='bundled_caddy'
+      where id=true and (domain is null or domain='')
+        and exists(select 1 from setup_state where id=true and completed=false)`);
+    await db.query(`update setup_state set completed_steps=array_append(completed_steps,'domain')
+      where id=true and completed=false and not ('domain'=any(completed_steps))
+        and exists(select 1 from deployment_config where id=true and domain='localhost')`);
+    return;
+  }
   if (process.env.JOSI_INSTALLER_CONFIGURED !== '1') return;
   const mode = process.env.JOSI_ACCESS_MODE;
   if (!['lan', 'domain', 'proxy'].includes(mode ?? '')) return;
@@ -169,11 +180,16 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
       await applyInstallerDeployment(db);
       const state = await getSetupState(db);
       const next = await expectedSetupStep(db, state.completed_steps ?? []);
+      const [vault] = await db.query<{ initialized_at: string | null; recovery_confirmed_at: string | null }>(
+        'select initialized_at, recovery_confirmed_at from vault_state where id=true');
+      const [owner] = await db.query<{present:boolean}>("select exists(select 1 from users where role='super_admin') as present");
       const visibleCompleted = next === 'llm'
         ? (state.completed_steps ?? []).filter((id) => id !== 'llm')
         : (state.completed_steps ?? []);
       return res.json({
         completed: state.completed,
+        recoveryPending: !!vault?.initialized_at && !vault.recovery_confirmed_at,
+        ownerExists: !!owner?.present,
         completedSteps: visibleCompleted,
         nextStep: next,
         steps: SETUP_STEPS.map((id) => ({
@@ -232,7 +248,18 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
 
       let result: StepResult | void;
       try {
-        result = await applyStep(ctx, step as SetupStep, (req.body ?? {}) as Record<string, unknown>);
+        if (step === 'owner') {
+          if (!db.transaction) throw new SetupError(503, 'Owner setup is unavailable; no account changes were made.');
+          result = await db.transaction(async (tx) => {
+            await tx.query('select id from setup_state where id=true for update');
+            const locked = await getSetupState(tx);
+            if (locked.completed || !canSubmit('owner', locked.completed_steps ?? []).ok)
+              throw new SetupError(409, 'that step is already done');
+            const applied = await applyStep({...ctx,db:tx}, 'owner', req.body ?? {});
+            await tx.query("update setup_state set completed_steps=array_append(completed_steps,'owner'),current_step='owner' where id=true");
+            return applied;
+          });
+        } else result = await applyStep(ctx, step as SetupStep, (req.body ?? {}) as Record<string, unknown>);
       } catch (err) {
         if (err instanceof SetupError) {
           return res.status(err.status).json({ error: err.message });
@@ -557,7 +584,15 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
     }),
   );
 
-  r.post('/vault-recovery-confirmed',asyncRoute(async(_req,res)=>{const rows=await db.query(`update vault_state set recovery_confirmed_at=now(),updated_at=now() where id=true and initialized_at is not null returning id`);if(!rows.length)return res.status(409).json({error:'the Master Vault is not initialized'});return res.json({ok:true});}));
+  r.get('/vault-recovery', asyncRoute(async (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const [row] = await db.query<{pending_setup_recovery_enc:string|null;recovery_key_fingerprint:string;recovery_confirmed_at:string|null}>(
+      'select pending_setup_recovery_enc,recovery_key_fingerprint,recovery_confirmed_at from vault_state where id=true');
+    if (!row?.pending_setup_recovery_enc || row.recovery_confirmed_at)
+      return res.status(409).json({error:'The original recovery key cannot be shown again. Preserve your saved key and contact your administrator before continuing.'});
+    return res.json({key:openSealed<{key:string}>(requireMasterKey(ctx),row.pending_setup_recovery_enc).key,fingerprint:row.recovery_key_fingerprint});
+  }));
+  r.post('/vault-recovery-confirmed',asyncRoute(async(_req,res)=>{const rows=await db.query(`update vault_state set recovery_confirmed_at=now(),pending_setup_recovery_enc=null,updated_at=now() where id=true and initialized_at is not null returning id`);if(!rows.length)return res.status(409).json({error:'the Master Vault is not initialized'});return res.json({ok:true});}));
 
   return r;
 }
@@ -634,6 +669,25 @@ async function applyStep(
       const displayName = str(body.displayName, 120);
       const timezone = str(body.timezone, 80) || 'UTC';
       const password = asSecret(body.password);
+
+      if (body.resumeOwner === true) {
+        const [owner] = await db.query<{id:string;email:string;username:string;password_hash:string|null}>(
+          "select id,email,username,password_hash from users where role='super_admin' limit 1");
+        const identifier=str(body.identifier,320).toLowerCase();
+        if (!owner || ![owner.email.toLowerCase(),owner.username.toLowerCase()].includes(identifier)
+            || !await verifyPassword(owner.password_hash,password.reveal()))
+          throw new SetupError(400, 'The owner sign-in details did not match.');
+        const [vault] = await db.query<{initialized_at:string|null;initialized_by:string|null;pending_setup_recovery_enc:string|null;recovery_key_fingerprint:string}>(
+          'select initialized_at,initialized_by,pending_setup_recovery_enc,recovery_key_fingerprint from vault_state where id=true');
+        if (vault?.initialized_at) {
+          if (vault.initialized_by !== owner.id) throw new SetupError(409, 'Preserve this installation and ask its administrator to review the existing vault.');
+          return vault.pending_setup_recovery_enc ? {vaultRecovery:{
+            key:openSealed<{key:string}>(requireMasterKey(ctx),vault.pending_setup_recovery_enc).key,
+            fingerprint:vault.recovery_key_fingerprint}} : undefined;
+        }
+        const initialized=await initializeVault(db,requireMasterKey(ctx),owner.id);
+        return {vaultRecovery:{key:initialized.recoveryKey.reveal(),fingerprint:initialized.fingerprint}};
+      }
 
       if (!email || !email.includes('@')) throw new SetupError(400, 'a valid email address is required');
       if (!username) throw new SetupError(400, 'a username is required');
