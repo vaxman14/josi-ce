@@ -51,7 +51,7 @@ if($before -cne $after -or (Get-FileHash $sentinel -Algorithm SHA256).Hash -cne 
 $signature=Get-AuthenticodeSignature $exe.path
 if($signature.Status -ne 'NotSigned'){throw 'Unexpected signature status; review before delivery'}
 $version=(Get-Item $exe.path).VersionInfo
-if($version.FileVersion.Trim() -cne '0.1.78.6' -or $version.FileDescription -notmatch 'unsigned acceptance'){throw 'Final EXE metadata identity failed'}
+if($version.FileVersion.Trim() -cne ($assets.candidate -replace '-native\.','.') -or $version.FileDescription -notmatch 'unsigned acceptance'){throw 'Final EXE metadata identity failed'}
 $report=[ordered]@{passed=$true;candidate=$assets.candidate;root=$root;exeSha256=$exe.sha256;embeddedKitAndManifestVerified=$true;
  localPayloadCopiedAndReused=$true;changedLocalPayloadRejected=$true;retainedCacheNotOverwritten=$true;archiveBoundariesRefused=7;unsafeArchivesCreatedNoFiles=$true;
  installedServiceStateUnchanged=$true;fixtureDataAndAclUnchanged=$true;exeReadOnlyProbe=$true;installed=$false;uninstalled=$false;uacRequested=$false;

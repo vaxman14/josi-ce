@@ -54,7 +54,9 @@ function Assert-JournalTransition($Prior,[string]$Phase,[string]$Category){
 
 function Read-NativeTransaction([string]$Directory){
     $directory=Assert-PlainNativePath $Directory
-    $records=@(Get-ChildItem -LiteralPath $directory -File -Filter '*.json' | Sort-Object Name)
+    # Supplemental redacted diagnostics are not journal checkpoints. Checkpoint
+    # sequence/hash validation remains strict and still catches missing records.
+    $records=@(Get-ChildItem -LiteralPath $directory -File -Filter '*.json' | Where-Object {$_.Name -cne 'failure-summary.json'} | Sort-Object Name)
     if(!$records.Count){throw 'Recovery journal contains no published checkpoint'}
     $previous=$null; $hash='0'*64; $sequence=1
     foreach($file in $records){

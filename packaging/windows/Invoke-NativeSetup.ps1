@@ -38,7 +38,7 @@ $data=Assert-PlainNativePath (Join-Path ([Environment]::GetFolderPath('CommonApp
 if($Operation -ceq 'install-or-upgrade'){
     $Operation=if((Test-Path -LiteralPath $product) -or (Test-Path -LiteralPath $data)){'upgrade'}else{'install'}
 }
-$context=$null;$lock=$null;$directory=$null
+$context=$null;$lock=$null;$directory=$null;$failureStage='preflight';$failureCategory='unknown';$failureService=$null
 function Run-Private([string]$Program,[string[]]$Arguments){
     $info=[Diagnostics.ProcessStartInfo]::new();$info.FileName=Join-Path $Program 'node\JosiRuntime.exe'
     $info.Arguments=($Arguments | ForEach-Object {ConvertTo-NativeArgument $_}) -join ' '
@@ -179,6 +179,7 @@ try{
     foreach($entry in $entries){$target=Assert-PlainNativePath (Join-Path $program $entry.path);$null=[IO.Directory]::CreateDirectory((Split-Path $target -Parent));[IO.File]::Copy((Join-Path $source $entry.path),$target,$false)}
     $null=Set-NativeTransactionPhase $lock $directory 'verified'
     if($Operation -ceq 'install'){
+        $failureStage='initial-configuration';$failureCategory='permissions'
         $user=(Get-CimInstance Win32_ComputerSystem).UserName
         if(!$user){throw 'Original interactive Windows user could not be identified'}
         $sid=([Security.Principal.NTAccount]::new($user)).Translate([Security.Principal.SecurityIdentifier]).Value
@@ -197,16 +198,22 @@ try{
         Run-Private $program @((Join-Path $program 'app\native\DatabaseBootstrap.mjs'),(Join-Path $data 'config\runtime.json'))
         $null=Set-NativeTransactionPhase $lock $directory 'database-ready'
     }else{
-        foreach($name in @('JosiProxy','JosiVoiceControl','JosiVoice','JosiWorker','JosiWeb')){Stop-NativeService $name}
+        $failureStage='service-quiesce';$failureCategory='service'
+        foreach($name in @('JosiProxy','JosiVoiceControl','JosiVoice','JosiWorker','JosiWeb')){$failureService=$name;Stop-NativeService $name}
+        $failureService=$null
         $null=Set-NativeTransactionPhase $lock $directory 'quiesced'
+        $failureStage='snapshot';$failureCategory='backup'
         $backupContext=Get-NativeMaintenanceContext $installationId $prior.version $Version
         $null=New-NativeMaintenanceSnapshot $backupContext $lock $directory
     }
+    $failureStage='migration';$failureCategory='migration';$failureService=$null
     Run-Private $program @((Join-Path $program 'app\native\Runtime.mjs'),'migrate',(Join-Path $data 'config\runtime.json'))
     $null=Set-NativeTransactionPhase $lock $directory 'migrated'
     if($Operation -ceq 'upgrade'){
+        $failureStage='service-activation';$failureCategory='service';$failureService='JosiDatabase'
         Stop-NativeService 'JosiDatabase'
         foreach($entry in Get-NativeServicePlan $context.Program $data){
+            $failureService=$entry.Name
             $service=Get-CimInstance Win32_Service -Filter ("Name='"+$entry.Name+"'")
             if($service.StartName -ine ('NT SERVICE\'+$entry.Name) -or !$service.PathName.Contains($context.Program+'\')){throw 'Upgrade refuses an unrelated service'}
             & (Join-Path $env:SystemRoot 'System32\sc.exe') delete $entry.Name | Out-Null;if($LASTEXITCODE){throw 'Upgrade registration switch needs recovery'}
@@ -216,8 +223,10 @@ try{
         $null=Register-NativeServices $program $data;Start-Service JosiDatabase
     }
     $null=Set-NativeTransactionPhase $lock $directory 'activated'
-    foreach($name in @('JosiWeb','JosiWorker','JosiProxy','JosiVoiceControl')){Start-Service $name}
+    $failureStage='service-start';$failureCategory='service'
+    foreach($name in @('JosiWeb','JosiWorker','JosiProxy','JosiVoiceControl')){$failureService=$name;Start-Service $name}
     $context=Get-NativeLifecycleContext $product $data $Version $installationId
+    $failureStage='readiness';$failureCategory='health';$failureService=$null
     Ready $context
     $null=Set-NativeTransactionPhase $lock $directory 'healthy'
     Set-NativeServiceStartup $program $data
@@ -226,7 +235,20 @@ try{
     [IO.File]::WriteAllText((Join-Path $receiptRoot 'installed-receipt.json'),(@{installationId=$installationId;version=$Version;inventorySha256=$hash;manifestSha256=$ManifestHash} | ConvertTo-Json))
     $null=Set-NativeTransactionPhase $lock $directory 'committed'
 }catch{
-    if($lock -and $directory){try{$null=Set-NativeTransactionPhase $lock $directory 'recovery-required' 'unknown'}catch{}}
+    $failure=$_
+    if($lock -and $directory){
+        try{
+            # Fixed allowlist: never persist exception messages, private process
+            # output, arguments, config values, SQL or credentials.
+            $summary=[ordered]@{schemaVersion=1;stage=$failureStage;category=$failureCategory;service=$failureService;
+                errorType=$failure.Exception.GetType().Name;errorId=$(if($failure.FullyQualifiedErrorId -ceq 'TypeNotFound'){'TypeNotFound'}else{'redacted; identify using stage/type/line'});
+                hresult=$failure.Exception.HResult;line=$failure.InvocationInfo.ScriptLineNumber;recordedAt=[DateTime]::UtcNow.ToString('o');automaticSqlRestore=$false}
+            $bytes=[Text.Encoding]::UTF8.GetBytes(($summary|ConvertTo-Json -Compress))
+            $stream=[IO.FileStream]::new((Join-Path $directory 'failure-summary.json'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+            try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+        }catch{}
+        try{$null=Set-NativeTransactionPhase $lock $directory 'recovery-required' $failureCategory}catch{}
+    }
     # Keep snapshots, originals, secrets and cluster untouched. Never silently
     # restore SQL; report the preserved transaction before any recovery action.
     [Console]::Error.WriteLine('Josi setup did not complete. Existing data and recovery material are retained. Review the installation diagnostics before recovery.')

@@ -1,5 +1,95 @@
 # Native Windows engineering checkpoint
 
+## Failed `.6` diagnosis and `.7` candidate — 2026-10-08
+
+Roman's physical `.6` upgrade failed before service quiescence, not because a
+runtime service failed readiness. Read-only elevated inspection found all six
+services running with restricted identities and `.5` paths, zero exit codes,
+successful direct/proxy readiness, healthy CPU speech and all five listeners on
+127.0.0.1. The live configuration remains `.5`. No SQL client, installation,
+uninstallation, recovery, service/configuration change or SQL restore was performed.
+
+Transaction `f8ecac89e0c846d1bcc87c0f04f69696` reached `verified` and then
+`recovery-required` 22 milliseconds later. It never reached `quiesced`, snapshot,
+migration or activation. The first attempted operation was `Stop-NativeService
+JosiProxy`: a fresh OS PowerShell 5.1 process does not load `System.ServiceProcess`
+until requested. Constructing `ServiceController` therefore raises `TypeNotFound`
+before querying or stopping the service. A fresh-process regression reproduces
+this against the retained `.6` module and passes against the fixed module, with no
+`Get-Service` warmup or SCM operations. This identifies the failing code path from
+reproduction and the retained journal; the old installer did not retain the
+underlying exception. `Runtime error (at 14:1329)` is the installer wrapper.
+
+The module now explicitly loads the OS assembly. Failed setup also writes a
+bounded, redacted, create-only failure summary containing stage, service and error
+type/ID/line, never exception messages, arguments, SQL or credentials. The summary
+is supplemental to the journal; sequence/hash validation remains strict and
+unknown JSON files are still refused. Version metadata is derived from the
+candidate, so the new EXE reports `0.1.78.7` rather than the old hardcoded `.6`.
+
+New **unsigned**, private candidate:
+`C:\Users\Roman\OneDrive\Desktop\Josi-Windows-Acceptance\native.7\Josi-CE-0.1.78-native.7-Windows-x64-acceptance.exe`
+(2,348,157 bytes; Authenticode `NotSigned`; product version `0.1.78-native.7`).
+SHA-256: `a1d9ae9d038ad80f68168e6af4377ac426e5417c8599830310159a99d7a1f080`.
+Its checksum, TEST-ME, SBOM, license-gap record and six offline archives are beside
+it. Existing `.6` delivery and `.5`/original dumps/recovery material are preserved.
+The source build records parent revision `38c6775a0dcc7b8472884efa68502127a14703d5`
+plus source inventory `c62c743f2c3adb9df656f93a4b73535ce58d25537eead941322c3ee281397011`;
+that parent revision is not a claim that the subsequent fix commit was the build
+revision. Five unchanged runtime archives were reused after full byte validation.
+
+Validation performed for `.7`:
+
+- Application dependency install, TypeScript/API/web checks, production web build,
+  production dependency/SBOM generation and native-addon runtime check passed.
+- `Test-InstallerServiceBootstrap.ps1`: two fresh OS PowerShell 5.1 probes passed,
+  including reproduction against retained `.6`, with no service changes.
+- `Test-Transactions.ps1`: journal/reopen/hash-chain tests and nine invalid-operation
+  refusals passed; supplemental diagnostics do not change checkpoint validation.
+- `Test-OnboardingRuntime.mjs`: actual packaged API/UI, 63-to-65 migration before
+  activation, unactivated-writer refusal, retained rows/secrets/existing table
+  ownership/grants, exact owner-only grants for four additive tables, readiness,
+  single-owner creation, token scrubbing, HttpOnly session, recovery confirmation
+  and fresh-link model-step resumption passed in a disposable cluster/Chrome.
+  The first run exposed an outdated whole-inventory equality assertion; it was
+  corrected to test old grants unchanged plus exact new-table grants, then passed.
+- Installer kit: 16 embedded files load in OS PowerShell 5.1; four integrity
+  rejection checks passed. Production EXE `/CURRENTUSER /VERIFYONLY` passed,
+  seven unsafe archive boundaries were refused, and service state/disposable
+  data/ACLs remained unchanged. This does not constitute a physical installation.
+- 18,568 application/runtime files hashed and six archives fully checked, including
+  inventory/hash/CRC checks. Native ClamAV binaries/services/definitions/downloads/
+  ports and container recipes remain excluded.
+- CycloneDX 1.6 schema/formats, 354 components, graph references, 475 notices and
+  retained source hashes validated. Public license/source closure remains **false**.
+- Explicit full-buffer AMSI scans returned **clean** for the final EXE, launcher,
+  native helper and WinSW. Large ZIPs have integrity checks; full ZIP AMSI scanning
+  is not claimed. No unavailable/failed scan is reported as clean.
+- EXE metadata/checksum and every delivery copy verified. All 19 preserved original
+  material hashes and previous `.6` delivery checksums matched. Public-data/secret
+  scan passed. No claim is made that a running database's background bytes froze.
+
+Evidence under `artifacts/windows-native/`: read-only inspection at
+`test-installations/native6-failure-readonly-73c4d41efebe4852a793a72333d68304/result.json`;
+`evidence/native7-root-cause.json`, `native7-service-bootstrap-regression.json`,
+`native7-verification.json`, `transaction-journal.json`, `onboarding-runtime.json`,
+`installer-kit-tests.json`, `onboarding-installer-tests.json`,
+`native-package-inspection.json`, `release-sbom-validation.json`,
+`onboarding-malware.json`, `onboarding-exe-metadata.json`, `onboarding-delivery.json`.
+Earlier `.6` pointer records were retained byte-for-byte in the directory identified
+by `evidence/native7-preserved-candidate6.json` before recording `.7` results.
+
+**Next human gate:** approve a separately reviewed, lossless closure of the retained
+failed `.6` transaction before any live `.7` upgrade. Do not delete that transaction
+or restore SQL; preserve the staged `.6` directory and all journal/recovery material.
+The agent has not performed recovery or installed `.7`. Then Roman performs the
+normal EXE/UAC and physical acceptance, plus clean-install testing on a separate
+PC/VM. Browser/provider login, hardware audio and second-device LAN remain physical
+gates; historical startup ordering remains a supplemental evidence gap. Three
+moderate dependency advisories, unsigned status and public legal/source gaps remain.
+Desktop bundling waits for successful `.7` native-server acceptance. No push,
+signing, publication, reboot or Windows security-setting change was performed.
+
 ## PC-control permission source phase — 2026-10-08
 
 Administration now includes PC control permissions: master off by default, 23
@@ -14,7 +104,7 @@ This source phase has no production PC executor. The UI states that control is
 unavailable until the separate Windows desktop client connects. No fake successful
 control, automatic administrator approval, UAC bypass or security-setting change
 is claimed. Full design/contract and independent desktop-component acceptance plan:
-[PC-CONTROL.md](PC-CONTROL.md). Bundling starts only after Roman's `.6` native-server
+[PC-CONTROL.md](PC-CONTROL.md). Bundling starts only after Roman's `.7` native-server
 acceptance, with Hosting Server required and Desktop App selected by default but
 optional. Server data and accounts remain canonical and independent of client
 maintenance. `.5`, the delivered unsigned `.6` EXE and all payload/recovery artifacts

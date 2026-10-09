@@ -11,7 +11,9 @@ foreach($component in $decoded.components){if(!(Test-NativePayload $component (J
 $compiler=Join-Path $base 'tools\inno-7.1.0\ISCC.exe'
 if((Get-AuthenticodeSignature $compiler).Status -ne 'Valid' -or (Get-FileHash $compiler -Algorithm SHA256).Hash.ToLowerInvariant() -cne 'd06ebd38f38e3cee60a3c50cc45bd449d77e0bc6a5cabc607ea9886808e4de1a'){throw 'Compiler trust failed'}
 $output=Join-Path $base ('installers\onboarding-'+[Guid]::NewGuid().ToString('N'));$null=[IO.Directory]::CreateDirectory($output)
-& $compiler '/Q' ('/DKitRoot='+$kit.root) ('/DReleaseRoot='+$assets.output) ('/DKitHash='+$kit.kitSha256) ('/DManifestHash='+$assets.manifestSha256) ('/DCandidateVersion='+$assets.candidate) ('/DOutputRoot='+$output) (Join-Path $repo 'packaging\windows\JosiWindows.iss')
+$numeric=$assets.candidate -replace '-native\.','.'
+if($numeric -cnotmatch '^\d+\.\d+\.\d+\.\d+$'){throw 'Candidate must have an exact four-part Windows file version'}
+& $compiler '/Q' ('/DKitRoot='+$kit.root) ('/DReleaseRoot='+$assets.output) ('/DKitHash='+$kit.kitSha256) ('/DManifestHash='+$assets.manifestSha256) ('/DCandidateVersion='+$assets.candidate) ('/DNumericVersion='+$numeric) ('/DOutputRoot='+$output) (Join-Path $repo 'packaging\windows\JosiWindows.iss')
 if($LASTEXITCODE){throw 'Production onboarding installer compile failed'}
 $exe=Join-Path $output ('Josi-CE-'+$assets.candidate+'-Windows-x64-acceptance.exe')
 $report=[ordered]@{built=$true;path=$exe;size=(Get-Item $exe).Length;sha256=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant();candidate=$assets.candidate;

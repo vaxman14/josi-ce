@@ -52,6 +52,12 @@ try{
     $lock=Open-NativeTransactionLock $root
     $resumed=Read-NativeTransaction $upgrade.Directory
     if($resumed.Record.phase -ne 'backup-verified'){throw 'An incomplete checkpoint was adopted'}
+    [IO.File]::WriteAllText((Join-Path $upgrade.Directory 'failure-summary.json'),'{"stage":"service-quiesce","service":"JosiProxy","errorId":"TypeNotFound"}')
+    $withSummary=Read-NativeTransaction $upgrade.Directory
+    if($withSummary.Sha256 -cne $resumed.Sha256 -or $withSummary.Record.sequence -ne $resumed.Record.sequence){throw 'Supplemental failure evidence changed the journal'}
+    $unknown=Join-Path $upgrade.Directory 'unexpected.json';[IO.File]::WriteAllText($unknown,'{}')
+    Reject {Read-NativeTransaction $upgrade.Directory}
+    [IO.File]::Delete($unknown)
     Reject {New-NativeTransaction $lock ('1'*32) 'repair' '0.1.0' '0.1.0' ('a'*64)}
     foreach($phase in @('recovery-required','rolling-back','rolled-back')){
         $category=if($phase -eq 'recovery-required'){'interrupted'}else{'none'}
@@ -74,6 +80,7 @@ try{
     [pscustomobject]@{passed=$true;rejectedInvalidOperations=$script:checks;reopenAfterInterruption=$true;
         partialPublicationIgnored=$true;hashChainTamperingRejected=$true;allOperationSequences=$true;
         interruptedInitialPublicationRecovered=$true;
+        redactedFailureSummaryDoesNotChangeJournal=$true;unknownJsonStillRefused=$true;
         actualInstallerRollbackTested=$false;root=$root;time=[DateTime]::UtcNow.ToString('o')} |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $base 'evidence\transaction-journal.json') -Encoding UTF8
     Write-Output 'Native recovery journal tests passed.'

@@ -1,4 +1,4 @@
-param()
+param([string]$Destination='C:\Users\Roman\OneDrive\Desktop\Josi-Windows-Acceptance')
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent;$base=Join-Path $repo 'artifacts\windows-native'
 $exe=Get-Content (Join-Path $base 'evidence\onboarding-installer.json') -Raw|ConvertFrom-Json
@@ -14,7 +14,9 @@ if(!$tests.passed -or !$malware.passed -or !$runtime.passed -or !$sbom.passed -o
 foreach($record in (Get-Content (Join-Path $base 'evidence\onboarding-preserved-inputs.json') -Raw|ConvertFrom-Json).files){
  if((Get-Item -LiteralPath $record.path).Length -ne $record.size -or (Get-FileHash -LiteralPath $record.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $record.sha256){throw 'Preserved original material changed; stop before delivery'}
 }
-$destination='C:\Users\Roman\OneDrive\Desktop\Josi-Windows-Acceptance'
+$destination=[IO.Path]::GetFullPath($Destination)
+$acceptanceRoot='C:\Users\Roman\OneDrive\Desktop\Josi-Windows-Acceptance'
+if($destination -ine $acceptanceRoot -and !$destination.StartsWith($acceptanceRoot+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Delivery must stay in the authorized acceptance folder'}
 $null=[IO.Directory]::CreateDirectory($destination);$payloads=Join-Path $destination 'payloads';$null=[IO.Directory]::CreateDirectory($payloads)
 function Copy-Verified([string]$Source,[string]$Target,[string]$Hash){
  if((Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Hash){throw 'Delivery source changed'}

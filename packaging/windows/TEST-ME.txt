@@ -1,5 +1,5 @@
 Josi Windows private acceptance candidate
-EXE: Josi-CE-0.1.78-native.6-Windows-x64-acceptance.exe
+EXE: Josi-CE-0.1.78-native.7-Windows-x64-acceptance.exe
 Status: UNSIGNED. Not published or approved for public redistribution.
 Keep the complete folder, including payloads, together. No SDK or CLI is needed.
 
@@ -15,6 +15,11 @@ Optional service connections are available in Getting started. Companion app
 pairing is honestly unavailable until a compatible app is provided.
 
 UPGRADE TEST
+The retained failed .6 transaction must be reviewed and losslessly closed only
+after Roman explicitly approves recovery. This .7 EXE deliberately refuses a
+new live upgrade while that transaction is incomplete. Do not retry it blindly.
+The fixed defect is the missing fresh-PowerShell service-controller assembly.
+All six .5 services were healthy; .6 failed before service quiescence/migration.
 Keep accepted .5, its data, configuration, secrets, both logical dumps, snapshots
 and rollback material. Double-click this EXE normally and approve UAC once.
 It selects upgrade automatically, snapshots before migration and checks readiness

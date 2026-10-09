@@ -2,11 +2,27 @@
 
 ## Status and evidence standard
 
+Current continuation, 2026-10-08: physical `.6` upgrade failed before the first
+service stop because a fresh OS PowerShell 5.1 process had not loaded the
+ServiceController assembly. All six `.5` services remain healthy and local-only;
+the retained transaction stopped after `verified`, before snapshot/migration.
+Read-only diagnosis, fresh-process regression, explicit assembly loading and
+redacted stage/service failure diagnostics are complete. New unsigned `.7` is
+built and automatically verified, without installation or recovery. Exact results,
+hashes and artifacts are in RELEASE-CHECKPOINT.md and native7-verification.json.
+**Next action requires Roman's approval:** separately review and losslessly close
+the failed `.6` transaction while retaining every file and all original database,
+secret, snapshot and dump material. No SQL restore or transaction deletion is
+authorized. Then Roman performs `.7` UAC/physical upgrade and isolated clean-install
+acceptance. Desktop bundling begins only after this current server candidate passes.
+Earlier candidate descriptions below are historical; no unsigned candidate is
+approved for signing/publication and legal/source gaps remain.
+
 PC-control permissions phase, 2026-10-08: implement the encrypted exact-scope policy,
 owner approval UI, activity log and fail-safe stop/broker boundary described in
 [PC-CONTROL.md](PC-CONTROL.md). The desktop executor is unavailable in this checkout;
 no desktop component is bundled or run. **Next bounded packaging phase begins only
-after Roman accepts the current `.6` native-server candidate**: required Hosting
+after Roman accepts the current `.7` native-server candidate**: required Hosting
 Server and default-selected optional Desktop App, independent client maintenance,
 secure local pairing and trusted effect-manifest enforcement. Preserve the accepted
 live `.5`, `.6` EXE/payloads, all data and recovery evidence. Migration 0065 is tested

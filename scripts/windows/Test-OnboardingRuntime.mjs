@@ -49,22 +49,32 @@ try{
  await admin.unsafe('create database josi owner josi');await admin.end();admin=undefined;
  db=postgres({host:'127.0.0.1',port:databasePort,username:'josi',database:'josi',password:dbPassword,max:1,onnotice:()=>{}});
  // Apply the unchanged .5 schema in this fresh private cluster, then exercise
- // the real .6 migration runner against retained rows and permissions.
+ // the current migration runner against retained rows and permissions.
  await db.unsafe('create table _migrations(name text primary key,applied_at timestamptz not null default now())');
  const migrationRoot=join(program,'app/packages/db/migrations');
- const baselineFiles=(await readdir(migrationRoot)).filter(name=>name.endsWith('.sql')&&!name.startsWith('0064_')).sort();
+ const migrationFiles=(await readdir(migrationRoot)).filter(name=>name.endsWith('.sql')).sort();
+ const baselineFiles=migrationFiles.filter(name=>Number(name.slice(0,4))<=63);
  assert.equal(baselineFiles.length,63);
  for(const name of baselineFiles)await db.begin(async tx=>{await tx.unsafe(await readFile(join(migrationRoot,name),'utf8'));await tx`insert into _migrations(name) values(${name})`;});
  await db.unsafe("create table onboarding_fixture_sentinel(id integer primary key,value text); insert into onboarding_fixture_sentinel values(1,'Preserved disposable onboarding data')");
  const priorRows=await db`select * from onboarding_fixture_sentinel order by id`;
  const priorPermissions=await db`select table_name,grantee,privilege_type from information_schema.role_table_grants where table_schema='public' order by table_name,grantee,privilege_type`;
+ const priorOwnership=await db`select tablename,tableowner from pg_tables where schemaname='public' order by tablename`;
+ const originalTables=priorOwnership.map(row=>row.tablename);
  const protectedHash=createHash('sha256').update(await readFile(join(data,'secrets/master-key'))).digest('hex');
  await writeFile(config,JSON.stringify({...configuration,version:'0.1.78-native.5'}));
  await run(node,[entry,'migrate',config],'upgrade-migrations-before-activation');
- const [migrations]=await db`select count(*)::int as count from _migrations`;assert.equal(migrations.count,64);
+ const [migrations]=await db`select count(*)::int as count from _migrations`;assert.equal(migrations.count,migrationFiles.length);
  const refused=start(node,[entry,'web',config],'unactivated-web');assert.equal(await refused.done,1);
  assert.deepEqual(await db`select * from onboarding_fixture_sentinel order by id`,priorRows);
- assert.deepEqual(await db`select table_name,grantee,privilege_type from information_schema.role_table_grants where table_schema='public' order by table_name,grantee,privilege_type`,priorPermissions);
+ const currentPermissions=await db`select table_name,grantee,privilege_type from information_schema.role_table_grants where table_schema='public' order by table_name,grantee,privilege_type`;
+ assert.deepEqual(currentPermissions.filter(row=>originalTables.includes(row.table_name)),Array.from(priorPermissions));
+ const currentOwnership=await db`select tablename,tableowner from pg_tables where schemaname='public' order by tablename`;
+ assert.deepEqual(currentOwnership.filter(row=>originalTables.includes(row.tablename)),Array.from(priorOwnership));
+ const newTables=['pc_control_activity','pc_control_policies','pc_control_requests','pc_control_settings'];
+ assert.deepEqual(currentOwnership.filter(row=>!originalTables.includes(row.tablename)),newTables.map(tablename=>({tablename,tableowner:'josi'})));
+ const ownerPrivileges=['DELETE','INSERT','REFERENCES','SELECT','TRIGGER','TRUNCATE','UPDATE'];
+ assert.deepEqual(currentPermissions.filter(row=>!originalTables.includes(row.table_name)),newTables.flatMap(table_name=>ownerPrivileges.map(privilege_type=>({table_name,grantee:'josi',privilege_type}))));
  assert.equal(createHash('sha256').update(await readFile(join(data,'secrets/master-key'))).digest('hex'),protectedHash);
  await writeFile(config,JSON.stringify(configuration));
  const web=start(node,[entry,'web',config],'web');
@@ -111,7 +121,8 @@ try{
  assert.equal(external,0);
  for(const file of await readdir(logs)){const contents=await readFile(join(logs,file),'utf8');for(const secret of [initPassword,dbPassword,master,bootstrap,token,newToken])assert.ok(!contents.includes(secret),'Private fixture log exposed a capability');}
  const report={passed:true,candidate:app.version,sourceInventorySha256:app.sourceInventorySha256,fixture,apiReady:true,
-   cleanInstallMigrations:64,upgradeBeforeActivation:true,unactivatedWriterRefused:true,rowsPermissionsSecretsPreserved:true,
+   cleanInstallMigrations:migrationFiles.length,upgradeBeforeActivation:true,unactivatedWriterRefused:true,rowsPermissionsSecretsPreserved:true,
+   existingTableOwnershipPreserved:true,additiveTables:newTables,newTableGrantsOwnerOnly:true,
    realHeadlessChrome:true,tokenScrubbed:true,tokenNotStoredInBrowserStorage:true,httpOnlySetupSession:true,
    ownerCreatedOnce:true,recoveryPresentationResumed:true,recoveryWrapsUnchanged:true,pendingRecoveryClearedOnConfirmation:true,
    freshLinkResumesModelStep:true,logsExcludeCapabilities:true,externalRequests:external,servicesModified:false,installed:false,

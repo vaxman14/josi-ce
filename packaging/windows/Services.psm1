@@ -2,6 +2,10 @@
 # module only renders the fixed product definitions and their permissions.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# A fresh PowerShell 5.1 upgrade does not call Get-Service before quiescence.
+# Its ServiceController dependency must be loaded explicitly; relying on a
+# previous cmdlet to load it makes the first JosiProxy stop fail TypeNotFound.
+Add-Type -AssemblyName System.ServiceProcess
 Import-Module (Join-Path $PSScriptRoot 'Payloads.psm1')
 $script:ServiceNames = @('JosiDatabase', 'JosiWeb', 'JosiWorker', 'JosiVoice', 'JosiVoiceControl', 'JosiProxy')
 $script:ServiceSids = @{}
