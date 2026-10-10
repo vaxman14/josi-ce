@@ -42,14 +42,34 @@ def inspect_archive(archive,app):
     if seen!=actual:raise ValueError('Incomplete archive')
     return {'files':len(seen),'uncompressedBytes':total,'allArchiveBytesVerified':True,'privateEvidenceBundled':False}
 
+def inspect_tree_archive(archive,root):
+    seen=set();total=0
+    with zipfile.ZipFile(archive) as z:
+        for info in z.infolist():
+            parts=Path(info.filename).parts
+            if not parts or parts[0]!=root.name or '..' in parts or info.filename.startswith('/'):raise ValueError('Source archive traversal')
+            if info.is_dir():continue
+            name=Path(*parts[1:]).as_posix()
+            if name in seen:raise ValueError('Duplicate source archive file')
+            seen.add(name);p=root/name
+            if not p.resolve().is_relative_to(root) or p.is_symlink():raise ValueError('Unsafe source archive entry')
+            with z.open(info) as stream:
+                if hashlib.file_digest(stream,'sha256').hexdigest()!=digest(p):raise ValueError('Source archive bytes mismatch')
+            total+=info.file_size
+    actual={p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()}
+    if seen!=actual:raise ValueError('Incomplete source archive')
+    return {'files':len(seen),'uncompressedBytes':total,'allArchiveBytesVerified':True}
+
 def main():
     subprocess.run(['/usr/bin/git','diff','--exit-code','--quiet'],cwd=REPO,check=True)
     subprocess.run(['/usr/bin/git','diff','--cached','--exit-code','--quiet'],cwd=REPO,check=True)
     if subprocess.check_output(['/usr/bin/git','ls-files','--others','--exclude-standard'],cwd=REPO):raise ValueError('Commit all intended source before final packaging')
     commit=subprocess.check_output(['/usr/bin/git','rev-parse','HEAD'],cwd=REPO,text=True).strip()
     runtime=BASE/'stage/runtime'
+    sources=BASE/'stage/corresponding-sources'
     subprocess.run([str(BASE/'prefix/python/bin/python3.11'),'-B',str(REPO/'scripts/macos/stage.py'),'--code-only'],cwd=REPO,env=ENV,check=True)
-    subprocess.run(['/usr/bin/git','archive','--format=tar.gz','--prefix=josi-ce-source/','-o',str(runtime/'sources/josi-ce-source.tar.gz'),commit],cwd=REPO,check=True)
+    if not sources.is_dir() or not (sources/'sources').is_dir():raise ValueError('Corresponding source staging is missing')
+    subprocess.run(['/usr/bin/git','archive','--format=tar.gz','--prefix=josi-ce-source/','-o',str(sources/'sources/josi-ce-source.tar.gz'),commit],cwd=REPO,check=True)
     (runtime/'licenses/build.json').write_text(json.dumps({'sourceCommit':commit,'architecture':'arm64','minimumMacOS':'14.0','scannerBundled':False,'signing':'deferred pending Roman Keychain approval'},indent=2)+'\n')
     spec=importlib.util.spec_from_file_location('inventory',REPO/'scripts/macos/inventory.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     module.inventory(runtime)
@@ -76,13 +96,16 @@ def main():
     archive=OUT/'Josi-CE-Server-macos-arm64-unsigned.zip'
     record('archive-build.log',['/usr/bin/ditto','--norsrc','--noextattr','-c','-k','--keepParent',app,archive])
     report=inspect_archive(archive,app)
-    report.update({'sourceCommit':commit,'architecture':'arm64','nativeRuntimeFiles':241,'SOCALSigned':False,'notarized':False,'malwareEngineScan':False,'malwareInspection':'source/manifest/archive and native platform preflight; no clean-engine verdict claimed'})
+    source_archive=OUT/'Josi-CE-Server-macos-arm64-corresponding-sources.zip'
+    record('source-archive-build.log',['/usr/bin/ditto','--norsrc','--noextattr','-c','-k','--keepParent',sources,source_archive])
+    source_report=inspect_tree_archive(source_archive,sources)
+    report.update({'sourceCommit':commit,'architecture':'arm64','nativeRuntimeFiles':241,'SOCALSigned':False,'notarized':False,'correspondingSources':source_report,'malwareEngineScan':False,'malwareInspection':'source/manifest/archive and native platform preflight; no clean-engine verdict claimed'})
     (evidence/'archive-inspection.json').write_text(json.dumps(report,indent=2)+'\n')
-    (OUT/'SHA256SUMS.txt').write_text(digest(archive)+'  '+archive.name+'\n'+digest(packaged.parent/'inventory.json')+'  Josi CE Server Setup.app/Contents/Resources/inventory.json\n')
+    (OUT/'SHA256SUMS.txt').write_text(digest(archive)+'  '+archive.name+'\n'+digest(source_archive)+'  '+source_archive.name+'\n'+digest(packaged.parent/'inventory.json')+'  Josi CE Server Setup.app/Contents/Resources/inventory.json\n')
     # Retain build/test/audit output outside the installer, with no overwrites.
     logs=evidence/'build-tests';logs.mkdir(mode=0o700)
     for p in BASE.iterdir():
         if p.is_file() and (p.suffix=='.log' or p.name in ('npm-audit-1.json','npm-sbom.cdx.json','service-status-1.json')):shutil.copyfile(p,logs/p.name)
-    print(json.dumps({'app':str(app),'archive':str(archive),'checksums':str(OUT/'SHA256SUMS.txt'),'sourceCommit':commit,'archiveInspection':report},indent=2),flush=True)
+    print(json.dumps({'app':str(app),'archive':str(archive),'correspondingSources':str(source_archive),'checksums':str(OUT/'SHA256SUMS.txt'),'sourceCommit':commit,'archiveInspection':report},indent=2),flush=True)
 
 if __name__=='__main__':main()

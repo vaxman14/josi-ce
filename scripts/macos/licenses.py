@@ -10,14 +10,24 @@ import zipfile
 REPO=Path(__file__).resolve().parents[2]
 BASE=Path('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
 RUNTIME=BASE/'stage/runtime'
-LICENSES=RUNTIME/'licenses';SOURCES=RUNTIME/'sources'
+LICENSES=RUNTIME/'licenses'
+# Corresponding source is distributed beside the notarized installer instead of
+# inside its app bundle. Apple recursively inspects nested upstream archives and
+# rejects historical foreign test binaries that are source material, not runtime
+# payload. Notices, lock files and the SBOM remain in the app.
+SOURCE_BUNDLE=BASE/'stage/corresponding-sources'
+SOURCES=SOURCE_BUNDLE/'sources'
 def copy(src,dst):
     dst.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(src,dst)
 def verified(src,expected):
     with src.open('rb') as f:
         if hashlib.file_digest(f,'sha256').hexdigest()!=expected:raise ValueError('Unverified source '+str(src))
 def main():
-    LICENSES.mkdir(exist_ok=True);SOURCES.mkdir(exist_ok=True)
+    LICENSES.mkdir(exist_ok=True)
+    bundled_sources=RUNTIME/'sources'
+    if bundled_sources.exists():shutil.rmtree(bundled_sources)
+    if SOURCE_BUNDLE.exists():shutil.rmtree(SOURCE_BUNDLE)
+    SOURCES.mkdir(parents=True)
     for name in ('LICENSE','NOTICE','TRADEMARK.md'):copy(REPO/name,RUNTIME/name)
     copy(BASE/'src/postgresql-16.15/COPYRIGHT',RUNTIME/'postgresql/COPYRIGHT')
     copy(BASE/'source-closure/native/go-notice-1.26.8.txt',LICENSES/'Go-LICENSE.txt')
@@ -72,5 +82,5 @@ def main():
     for row in json.loads((REPO/'services/voice-box/models.lock.json').read_text())['files']:
         bom['components'].append({'type':'data','name':row['path'],'version':row['sha256'][:12],'hashes':[{'alg':'SHA-256','content':row['sha256']}],'licenses':[{'license':{'id':row['license']}}]})
     (LICENSES/'runtime.cdx.json').write_text(json.dumps(bom,indent=2)+'\n')
-    print(json.dumps({'noticeSections':len(notices),'sbomComponents':len(bom['components']),'correspondingSourceArchives':sum(p.is_file() for p in SOURCES.rglob('*'))}),flush=True)
+    print(json.dumps({'noticeSections':len(notices),'sbomComponents':len(bom['components']),'correspondingSourceArchives':sum(p.is_file() for p in SOURCES.rglob('*')),'correspondingSourceLocation':'separate companion archive'}),flush=True)
 if __name__=='__main__':main()

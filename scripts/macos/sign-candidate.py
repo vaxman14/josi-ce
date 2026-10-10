@@ -18,6 +18,8 @@ def main():
     if len(sys.argv)!=3 or sys.argv[1]!='--roman-keychain-approved':raise ValueError('Roman must explicitly confirm Keychain approval before this command runs')
     source=Path(sys.argv[2]).resolve()
     if not source.is_relative_to(RELEASE) or source.name!='Josi CE Server Setup.app':raise ValueError('Unexpected acceptance artifact')
+    source_archive=source.parent/'Josi-CE-Server-macos-arm64-corresponding-sources.zip'
+    if not source_archive.is_file():raise ValueError('Missing corresponding-source companion archive')
     output=RELEASE/('socal-signed-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ'));output.mkdir()
     app=output/source.name;shutil.copytree(source,app,symlinks=True)
     env={'PATH':'/usr/bin:/bin:/usr/sbin:/sbin','DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer','TMPDIR':'/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp'}
@@ -50,7 +52,9 @@ def main():
         run(['/usr/sbin/spctl','--assess','--type','execute','--verbose=4',str(app)],accepted=(0,1,3))
         archive=output/'Josi-CE-Server-macos-arm64-SOCAL.zip'
         run(['/usr/bin/ditto','-c','-k','--sequesterRsrc','--keepParent',str(app),str(archive)])
-        with archive.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
-        (output/'SHA256SUMS.txt').write_text(digest+'  '+archive.name+'\n')
+        source_copy=output/source_archive.name;shutil.copy2(source_archive,source_copy)
+        with archive.open('rb') as stream:app_digest=hashlib.file_digest(stream,'sha256').hexdigest()
+        with source_copy.open('rb') as stream:source_digest=hashlib.file_digest(stream,'sha256').hexdigest()
+        (output/'SHA256SUMS.txt').write_text(app_digest+'  '+archive.name+'\n'+source_digest+'  '+source_copy.name+'\n')
         print(output)
 if __name__=='__main__':main()

@@ -16,8 +16,11 @@ the UI explains the block and cannot disable the enforced native policy.
 The real AppKit application is `Josi CE Server Setup.app`, arm64, macOS 14+.
 It packages private Node 24.15.0, PostgreSQL 16.15, CPython 3.11.15, Caddy 2.11.7,
 offline CPU Kokoro/Silero/Whisper, OCR and native application dependencies.
-Pinned hashes, original notices and corresponding source archives accompany the
-runtime. There is no dependency on a global runtime or package manager.
+Pinned hashes, original notices and the SBOM accompany the runtime. Exact
+corresponding source archives ship as a separately checksummed companion ZIP so
+Apple notarization does not recursively treat upstream source/test fixtures as
+executable runtime payload. There is no dependency on a global runtime or
+package manager.
 
 Implemented: six isolated launchd identities; protected secrets and ACLs;
 local-only listeners; live installer phase/service and elapsed progress;
@@ -62,11 +65,13 @@ macOS workspace operations; saved CPU speech enablement and restart handling.
 
 `/Volumes/JosiOS/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009/`
 
-It contains the app, `Josi-CE-Server-macos-arm64-unsigned.zip`, `SHA256SUMS.txt`,
+It contains the app, `Josi-CE-Server-macos-arm64-unsigned.zip`, the separately
+verified `Josi-CE-Server-macos-arm64-corresponding-sources.zip`, `SHA256SUMS.txt`,
 `SOURCE-COMMIT.txt`, `TEST-ME.txt`, native dependency inventory and private
-`evidence/`. Every ZIP member is compared with the app, paths/links are checked,
-and private operational evidence is excluded from the payload. The final report
-provides exact paths; `SOURCE-COMMIT.txt` is the authoritative packaged revision.
+`evidence/`. Every installer ZIP member is compared with the app, every source
+ZIP member is compared with its staging tree, paths/links are checked, and
+private operational evidence is excluded. The final report provides exact
+paths; `SOURCE-COMMIT.txt` is the authoritative packaged revision.
 Build/test logs and failed intermediate runs are retained outside the installer.
 
 Unsigned Gatekeeper/stapler results are evidence of current rejection/no ticket,
