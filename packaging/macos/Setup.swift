@@ -157,7 +157,7 @@ import Foundation
         let id = UUID().uuidString.lowercased()
         let log = "/Library/Application Support/josi-setup-\(id).jsonl"
         progress = URL(fileURLWithPath: log)
-        let requirement = "anchor apple generic and identifier \"com.heyjosi.ce.setup\" and certificate leaf[subject.OU] = \"LRH75YR6QW\" and certificate leaf[subject.CN] = \"Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)\""
+        let requirement = "=anchor apple generic and identifier \"com.heyjosi.ce.setup\" and certificate leaf[subject.OU] = \"LRH75YR6QW\" and certificate leaf[subject.CN] = \"Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)\""
         let script = "set -eu; umask 022; stage=$(/usr/bin/mktemp -d '/Library/Application Support/.josi-setup.XXXXXXXX'); /bin/chmod 700 \"$stage\"; /usr/bin/ditto --noqtn " + shell(Bundle.main.bundlePath) + " \"$stage/Setup.app\"; /usr/bin/codesign --verify --deep --strict -R " + shell(requirement) + " \"$stage/Setup.app\"; set -C; /usr/bin/env -i PATH=/usr/bin:/bin \"$stage/Setup.app/Contents/Resources/runtime/python/bin/python3.11\" -I -B \"$stage/Setup.app/Contents/Resources/runtime/app/native/lifecycle.py\" install \(getuid()) > " + shell(log)
         // JSON string quoting is also valid AppleScript string quoting for this
         // fixed ASCII command; paths are separately POSIX-shell quoted above.

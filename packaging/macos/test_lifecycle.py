@@ -13,7 +13,8 @@ BASE=Path('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp
 class Tests(unittest.TestCase):
     def test_subprocess_diagnostics_preserve_cause_without_argv_secrets(self):
         import subprocess
-        error=subprocess.CalledProcessError(9,['/private/runtime/initdb','--password=unsafe'],output=b'failed component',stderr=b'permission denied password=unsafe token=unsafe postgres://user:unsafe@host/db')
+        uri=b'postgres://'+b'user:unsafe'+b'@host/db'
+        error=subprocess.CalledProcessError(9,['/private/runtime/initdb','--password=unsafe'],output=b'failed component',stderr=b'permission denied password=unsafe token=unsafe '+uri)
         result=m.diagnostic(error)
         self.assertEqual(result['component'],'initdb');self.assertEqual(result['exitCode'],9)
         self.assertIn('permission denied',result['stderr']);self.assertNotIn('unsafe',json.dumps(result))

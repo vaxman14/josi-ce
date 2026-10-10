@@ -9,6 +9,7 @@ import { safeRelativePath, PathEscape, isInside } from './paths.js';
 import { openStorageFile, pinWindowsDirectory } from './windowsFiles.js';
 import { looksLikeCredentialFile } from './extract.js';
 import { ROOT_BASE } from './mappings.js';
+import { pinNativeWorkspace } from './nativeWorkspace.js';
 
 export function workspacePath(value: string): string {
   const clean = safeRelativePath(value);
@@ -22,7 +23,9 @@ export async function withWorkspaceDirectory<T>(root: string, relative: string, 
     try { return await fn(directory.path); } finally { await directory.close(); }
   }
   if (process.platform === 'darwin') {
-    const directory = pinMacDirectory(join(root, workspacePath(relative)));
+    const path = join(root, workspacePath(relative));
+    const directory = process.env.JOSI_NATIVE_RUNTIME === '1' && (root === '/workspace' || root.startsWith('/workspace/'))
+      ? await pinNativeWorkspace(path) : pinMacDirectory(path);
     try { return await fn(directory.path); } finally { await directory.close(); }
   }
   const handles: FileHandle[] = [];

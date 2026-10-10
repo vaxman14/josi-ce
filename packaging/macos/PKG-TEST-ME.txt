@@ -1,0 +1,48 @@
+Josi Server — physical acceptance candidate (not notarized)
+
+Use a separate Apple Silicon Mac with macOS 14 or later and at least 6 GB
+free space. Keep existing Josi data and recovery copies. Allow several minutes.
+Do not disable Gatekeeper globally. This candidate is signed but deliberately
+not notarized; macOS may require an explicit approval to open it.
+
+1. Server only: Open the DMG and double-click Install Josi.pkg. Read Introduction.
+   Use Customize to leave Desktop Client unchecked. Confirm the startup disk
+   and authorize Installer with a Mac administrator account. The Josi progress
+   window should show the current task and elapsed seconds. Open Josi stays
+   disabled until installation completes and services are ready.
+2. Folder: In Josi Server, choose a folder you own that the server can read.
+   A native folder chooser should appear. The connection is read only and
+   appears in Josi as /workspace after owner setup. A protected/unreadable
+   folder must be refused with copyable diagnostics; no folder permissions
+   should be changed. Change folders, then select No Folder Access and check
+   that discovery/access stops. The chosen folder is never deleted.
+3. Launch: Click Open Josi in Browser and complete owner setup. Verify a
+   single-use setup link, the selected /workspace content and read-only limits.
+   Document indexing remains unavailable until a supported scanner is ready.
+4. Restart: Restart the Mac. Open /Applications/Josi Server.app and verify
+   ready status, browser access, chosen folder and retained owner/data.
+5. Server + client: On another clean acceptance Mac, select Desktop Client in
+   Customize. Verify /Applications/Josi CE.app is separate. Launch it and
+   connect to http://localhost:8080. Confirm login and real client operation.
+   If a desktop client is already installed, deselect this component to keep it.
+6. Upgrade: On an acceptance Mac with an earlier supported native server,
+   save a harmless sentinel and owner settings. Install this PKG, then check
+   the sentinel, settings, workspace and startup. Never reuse production data
+   for injected failure tests. Same-version reruns are repair installs.
+7. Uninstall: In Josi Server, choose Uninstall Server and read the confirmation.
+   Authorize it. Check that Josi stops and no longer starts after reboot.
+   Data, program versions and recovery copies remain for reinstalling.
+   Move Josi CE.app to Trash separately to remove the desktop client; this
+   does not remove server data. Move Josi Server.app to Trash only after the
+   server is stopped if you also want to remove its management application.
+8. Failure: If installation fails, use Copy Diagnostics in the progress window.
+   Also inspect /Library/Logs/Josi CE Server/Install-*.jsonl or use Installer’s
+   Window > Installer Log. The output must identify verification vs installation
+   and the cause. An upgrade failure before activation may restore the old
+   version automatically; after activation, data is retained and recovery must
+   refuse to discard possible new writes. Do not keep clicking install after
+   an unresolved failure. Save diagnostics first.
+
+No clean install, real upgrade, reboot, workspace authorization, desktop-client
+operation, or uninstall acceptance has been performed on the build Mac.
+Record PASS/FAIL for each step, OS version and exact candidate checksum.

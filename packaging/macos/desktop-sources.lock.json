@@ -1,0 +1,19 @@
+{
+  "electron": "43.2.0",
+  "chromium": "150.0.7871.129",
+  "ffmpegRevision": "ad41607c61898cf7150e0fb20fe4bbabd44922a3",
+  "files": [
+    {
+      "filename": "electron-v43.2.0.tar.gz",
+      "url": "https://codeload.github.com/electron/electron/tar.gz/refs/tags/v43.2.0",
+      "sha256": "eba2128a73febacedf89fabc9dc7ceb9f12bfd4d5a4470acb8ddc247b0da90f5",
+      "size": 18973278
+    },
+    {
+      "filename": "ffmpeg-ad41607c61898cf7150e0fb20fe4bbabd44922a3.tar.gz",
+      "url": "https://chromium.googlesource.com/chromium/third_party/ffmpeg/+archive/ad41607c61898cf7150e0fb20fe4bbabd44922a3.tar.gz",
+      "sha256": "f674f53c69701a2898bacde95f06ec01fe5e27c0d7d06c618acfe25e38213390",
+      "size": 18439873
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+[ "${3:-}" = / ] || exit 1
+app='/Applications/Josi Server.app'
+verification_log=$(/usr/bin/mktemp /var/log/josi-verification.XXXXXXXX.log)
+/bin/chmod 644 "$verification_log"
+if ! /usr/bin/codesign --verify --deep --strict -R '=anchor apple generic and identifier "com.heyjosi.ce.server" and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)"' "$app" > "$verification_log" 2>&1; then
+    /bin/sync
+    echo "Josi verification failed before setup could start. Diagnostic log: $verification_log"
+    exit 1
+fi
+/bin/sync
+/usr/bin/env -i PATH=/usr/bin:/bin "$app/Contents/Resources/runtime/python/bin/python3.11" -I -B "$app/Contents/Resources/runtime/app/native/pkg-driver.py" install

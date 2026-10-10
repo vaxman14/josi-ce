@@ -25,6 +25,7 @@
 // resolution is checking the wrong string.
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { nativeWorkspacePath } from './nativeWorkspace.js';
 
 export class PathEscape extends Error {}
 
@@ -103,7 +104,7 @@ export async function resolveWithin(
 ): Promise<ResolvedPath> {
   const rp = opts.realpathImpl ?? realpath;
   const cleanRelative = safeRelativePath(relativePath);
-  const rootReal = await rp(rootPath).catch(() => {
+  const rootReal = await rp(nativeWorkspacePath(rootPath)).catch(() => {
     throw new PathEscape('that mapped folder is not available');
   });
 

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "ds-store",
+    "version": "1.3.3",
+    "sha256": "b92a371efbf1b4ccce2a04d1ed13fceacc4736c81ba09cf5aefb74c088160a35",
+    "url": "https://files.pythonhosted.org/packages/66/c0/718a4132306ff8ff052f2c40595f45595993b480409400d55b07f3842d45/ds_store-1.3.3-py3-none-any.whl"
+  },
+  {
+    "name": "mac-alias",
+    "version": "2.2.2",
+    "sha256": "504ab8ac546f35bbd75ad014d6ad977c426660aa721f2cd3acf3dc2f664141bd",
+    "url": "https://files.pythonhosted.org/packages/39/a1/4136777ed6a56df83e7c748ad28892f0672cbbcdc3b3d15a57df6ba72443/mac_alias-2.2.2-py3-none-any.whl"
+  }
+]

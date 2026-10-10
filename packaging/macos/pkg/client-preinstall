@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+[ "${3:-}" = / ] || exit 1
+app='/Applications/Josi CE.app'
+[ ! -L "$app" ] || { echo 'The existing desktop-client link must be preserved.'; exit 1; }
+if [ -e "$app" ]; then
+    # A separately installed client is retained, rather than overwritten by
+    # this combined server distribution. Use server-only and its existing app.
+    echo 'Josi CE desktop client is already installed. Deselect Desktop Client in Customize to preserve it.'
+    exit 1
+fi

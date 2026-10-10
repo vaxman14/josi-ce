@@ -1,5 +1,9 @@
 # Installer investigation — 2026-10-10
 
+Continuation correction: the zero-identity query below ran inside the sandbox.
+Explicit login-Keychain queries outside the sandbox show both SOCAL identities.
+See [PKG-DISTRIBUTION.md](PKG-DISTRIBUTION.md) for the continued implementation.
+
 This is a blocked diagnostic checkpoint, **not a physical-acceptance candidate**.
 Branch: `macos/native-distribution-20261009`; baseline: `860bd5a`.
 

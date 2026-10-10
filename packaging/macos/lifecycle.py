@@ -254,6 +254,14 @@ class Lifecycle:
         if self.isolated:return
         for role,definition in self.plists(program).items():
             p=Path('/Library/LaunchDaemons')/(LABEL+role+'.plist');plain(p,0)
+            if not p.exists():
+                # Uninstall retains the exact owned definitions for repair or
+                # reinstall; an unrelated/missing definition still fails closed.
+                record=json.loads((self.root/'disabled-launchd-record.json').read_text())
+                name=record.get(role,'')
+                if not re.fullmatch(re.escape(LABEL+role)+r'\.[a-f0-9]{32}\.plist',name):raise ValueError('Invalid retained service identity')
+                p=self.root/'disabled-launchd'/name;plain(p,0)
+                if not p.is_file() or p.stat().st_mode&0o022:raise ValueError('Unprotected retained service definition')
             if plistlib.loads(p.read_bytes())!=definition:raise ValueError('Unowned service definition')
     def stop(self):
         for role in STOP:
@@ -340,7 +348,7 @@ class Lifecycle:
         for p in [directory,*directory.rglob('*')]:
             os.lchown(p,0,0)
             if not p.is_symlink():os.chmod(p,0o755 if p.is_dir() or p.stat().st_mode&0o111 else 0o644)
-    def install(self,ports=(15432,18080,8080,18081,18082),fail_at=None,interactive_uid=None):
+    def install(self,ports=(15432,18080,8080,18081,18082),fail_at=None,interactive_uid=None,repair=False):
         if not self.isolated and (interactive_uid is None or interactive_uid<501 or os.stat('/dev/console').st_uid!=interactive_uid):raise ValueError('Logged-in installer user required')
         if fail_at and not self.isolated:raise ValueError('Fault injection is isolated only')
         if self.root.exists() and not (self.root/'installation.json').exists() and any(self.root.iterdir()):
@@ -356,6 +364,8 @@ class Lifecycle:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         transactions=self.root/'transactions';transactions.mkdir(mode=0o700,exist_ok=True)
         try:
+            maintenance=self.root/'maintenance.json'
+            if maintenance.exists() and json.loads(maintenance.read_text()).get('state')!='complete':raise RuntimeError('Earlier settings change requires review')
             for folder in transactions.iterdir():
                 prior=Journal(folder)
                 if not prior.records or prior.records[-1]['phase'] not in ('committed','rolled-back'):raise RuntimeError('Earlier transaction requires recovery')
@@ -365,7 +375,7 @@ class Lifecycle:
                 if marker.get('product')!='Josi CE Server':raise ValueError('Unrelated data')
                 if (self.data/'database/PG_VERSION').read_text().strip()!='16':raise ValueError('Database major-version conversion requires a separate reviewed migration')
                 old=json.loads((self.data/'config/runtime.json').read_text())['version'];self.check_owned(self.root/'versions'/old)
-                if old==self.version:raise ValueError('This version is already installed; preserve it')
+                if old==self.version and not repair:raise ValueError('This version is already installed; preserve it')
             folder=transactions/secrets.token_hex(16);self.journal=Journal(folder,{'from':old,'to':self.version,'manifest':self.verify()})
             def phase(name):
                 self.journal.phase(name);self.progress(name,'installer')
@@ -435,6 +445,7 @@ class Lifecycle:
                     durable(handoff/'bootstrap.json',{'token':(self.data/'secrets/bootstrap/browser-token').read_text(),'port':cfg['publicPort']})
                     os.chown(handoff/'bootstrap.json',interactive_uid,-1);os.chown(handoff,interactive_uid,-1)
             phase('committed')
+            durable(self.root/'status.json',{'installed':True,'version':self.version,'publicPort':cfg['publicPort']},replace=True,mode=0o644)
             return folder
         except Exception as error:
             if self.journal:

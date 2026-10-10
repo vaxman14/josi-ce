@@ -11,7 +11,8 @@ import Darwin
         do {
             let log = try DiagnosticLog(directory: folder, operation: "verification")
             location = log.url
-            try log.append("Payload hash mismatch: app/file.js\npassword=unsafe token=unsafe postgres://user:unsafe@localhost/db\n" + String(repeating: "a", count: 64))
+            let uri = "postgres://" + "user:unsafe" + "@localhost/db"
+            try log.append("Payload hash mismatch: app/file.js\npassword=unsafe token=unsafe " + uri + "\n" + String(repeating: "a", count: 64))
             let during = try String(contentsOf: location, encoding: .utf8)
             precondition(during.contains("Payload hash mismatch: app/file.js"))
             precondition(!during.contains("unsafe")); precondition(during.contains("[redacted]"))

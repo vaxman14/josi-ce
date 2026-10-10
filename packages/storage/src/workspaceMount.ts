@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { access, readFile, stat } from 'node:fs/promises';
 import type { Db } from '@josi-ce/core';
+import { nativeWorkspaceProbe } from './nativeWorkspace.js';
 
 export const WORKSPACE_MOUNT_PATH = '/workspace';
 
@@ -58,7 +59,7 @@ export type WorkspaceMountReconcileResult =
 export async function reconcileWorkspaceMount(
   db: Db,
   configuration: WorkspaceMountConfiguration = workspaceMountConfiguration(),
-  probe: WorkspaceMountProbe = linuxWorkspaceMountProbe,
+  probe: WorkspaceMountProbe = process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1' ? nativeWorkspaceProbe : linuxWorkspaceMountProbe,
 ): Promise<WorkspaceMountReconcileResult> {
   if (!configuration.enabled) {
     // A retained row is useful for a later re-enable, but it must disappear

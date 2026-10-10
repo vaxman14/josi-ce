@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+[ "${3:-}" = / ] || { echo 'Josi must be installed on this Mac’s startup disk.'; exit 1; }
+[ "$(/usr/bin/uname -m)" = arm64 ] || { echo 'Josi requires an Apple Silicon Mac.'; exit 1; }
+available=$(/bin/df -k / | /usr/bin/awk 'NR==2 {print $4}')
+[ "$available" -ge 6291456 ] || { echo 'Josi requires at least 6 GB free space on the startup disk.'; exit 1; }
+for app in '/Applications/Josi Server.app'; do
+    [ ! -L "$app" ] || { echo 'An existing linked application must be preserved.'; exit 1; }
+    if [ -e "$app" ]; then
+        /usr/bin/codesign --verify --deep --strict -R '=anchor apple generic and identifier "com.heyjosi.ce.server" and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)"' "$app"
+    fi
+done
