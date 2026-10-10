@@ -11,6 +11,8 @@ import subprocess
 import sys
 import time
 import uuid
+import pwd
+import re
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from lifecycle import Lifecycle, PRODUCT, diagnostic, plain
 
@@ -48,7 +50,12 @@ def main():
     info=LOGS.stat()
     if info.st_uid!=0 or info.st_mode&0o022:raise PermissionError('Unprotected installer log folder')
     path=LOGS/('Install-'+str(uuid.uuid4())+'.jsonl')
-    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644)
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    # Root keeps write authority; only the original interactive user receives
+    # read access. Detailed component failures are not public to other users.
+    user=pwd.getpwuid(uid).pw_name
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}',user):raise ValueError('Unsupported local account name')
+    subprocess.run(['/bin/chmod','+a','user:'+user+' allow read,readattr,readextattr,readsecurity',str(path)],check=True,capture_output=True)
     parent=os.open(LOGS,os.O_RDONLY|os.O_DIRECTORY)
     try:os.fsync(parent)
     finally:os.close(parent)
