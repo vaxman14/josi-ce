@@ -29,6 +29,8 @@ async function connectionString() {
   try {
     password = process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1'
       ? (await import('../core/dist/macosSecrets.js')).readMacSecret(passwordFile).toString('utf8').trim()
+      : process.platform === 'linux' && process.env.JOSI_NATIVE_RUNTIME === '1'
+        ? (await import('../core/dist/linuxSecrets.js')).readLinuxSecret(passwordFile).toString('utf8').trim()
       : readFileSync(passwordFile, 'utf8').trim();
   } catch {
     console.error(`could not read the database password from ${passwordFile}`);

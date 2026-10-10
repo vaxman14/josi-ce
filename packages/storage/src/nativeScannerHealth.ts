@@ -1,4 +1,4 @@
-import { nativeMac, macScannerHealth } from './macosScanner.js';
+import { nativePosix, macScannerHealth } from './macosScanner.js';
 import { constants } from 'node:fs';
 import { dirname } from 'node:path';
 import { resolveDataPath } from '@josi-ce/core';
@@ -16,7 +16,7 @@ export interface NativeScannerHealth {
  * not a clean verdict for any user document, nor a real-time-protection guess.
  */
 export async function nativeScannerHealth(): Promise<NativeScannerHealth> {
-  if (nativeMac()) return macScannerHealth();
+  if (nativePosix()) return macScannerHealth();
   const unavailable: NativeScannerHealth = { provider: 'windows-amsi', status: 'unavailable', checkedAt: null };
   if (process.platform !== 'win32' || process.env.JOSI_NATIVE_RUNTIME !== '1') return unavailable;
   let held, file;

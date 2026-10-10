@@ -1,0 +1,18 @@
+{
+  "node": {
+    "version": "24.15.0",
+    "x86_64": {"url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.xz", "sha256": "472655581fb851559730c48763e0c9d3bc25975c59d518003fc0849d3e4ba0f6"},
+    "aarch64": {"url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-arm64.tar.xz", "sha256": "f3d5a797b5d210ce8e2cb265544c8e482eaedcb8aa409a8b46da7e8595d0dda0"}
+  },
+  "postgresql": {"version": "16.15", "url": "https://ftp.postgresql.org/pub/source/v16.15/postgresql-16.15.tar.bz2", "sha256": "c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed"},
+  "python": {
+    "version": "3.12.15+20261009",
+    "x86_64": {"url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261009/cpython-3.12.15%2B20261009-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz", "sha256": "ffa8f85f1b56e88b687f08d743d817015524b86a9365fd921243132b80f1a36d"}
+  },
+  "caddy": {
+    "version": "2.11.7",
+    "x86_64": {"url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz", "sha256": "727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b"},
+    "aarch64": {"url": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_arm64.tar.gz", "sha256": "d8fc6d179a5d283028a472a5618564f6ad8a86fed513e64f032b3b0b7cc45e42"}
+  },
+  "openblas": {"version": "0.3.34-1", "x86_64": {"url": "https://fastly.mirror.pkgbuild.com/extra/os/x86_64/openblas-0.3.34-1-x86_64.pkg.tar.zst", "sha256": "854099273915eadb8d5e94e88104c4a14fe26a275ecd71d4590cdbc8545765a3"}}
+}

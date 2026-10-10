@@ -1,0 +1,20 @@
+JOSI CE SERVER - NATIVE LINUX ACCEPTANCE
+
+This candidate is for a disposable x86_64 Blade/Arch test machine only.
+It is unsigned and must not be published.
+
+Before installation:
+  1. Compare the package SHA-256 with SHA256SUMS.txt.
+  2. Back up any existing /var/lib/josi-ce-server directory independently.
+  3. Confirm no unrelated josi-ce-*.service units exist.
+
+Acceptance:
+  1. Install the package and launch Josi CE Server Setup from the application menu.
+  2. Verify package, then approve the Polkit installation prompt.
+  3. Confirm the setup application opens http://127.0.0.1:8080 only after health passes.
+  4. Finish setup and restart the machine.
+  5. Run: systemctl status 'josi-ce-*.service'
+  6. Verify browser setup, workspace mapping, attachments, speech, and a configured clamd socket.
+
+If setup fails, do not delete data or transaction folders. Copy the private log
+path shown by Setup and preserve /var/lib/josi-ce-server/transactions for review.

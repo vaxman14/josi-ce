@@ -1,4 +1,4 @@
-import { requireMacScan, nativeMac, macScannerHealth, MAC_SCAN_MESSAGE } from '@josi-ce/storage';
+import { requireMacScan, nativePosix, macScannerHealth, MAC_SCAN_MESSAGE } from '@josi-ce/storage';
 // The assistant's HTTP surface: conversations, tasks, approvals, step-up.
 //
 // Every route here touches somebody's private content, so every one of them
@@ -192,7 +192,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     handle(async (req, res) => {
       const thread = await getThread(db, param(req, 'id'));
       if (!thread || thread.owner_user_id !== req.user!.id) throw new RouteError(404, 'not found');
-      if (nativeMac() && (await macScannerHealth()).status !== 'available') throw new AttachmentError(503, 'scanner_unavailable', MAC_SCAN_MESSAGE);
+      if (nativePosix() && (await macScannerHealth()).status !== 'available') throw new AttachmentError(503, 'scanner_unavailable', MAC_SCAN_MESSAGE);
       await new Promise<void>((resolve, reject) => receive.single('file')(req, res, error => error ? reject(error) : resolve())).catch(error => {
         if (error instanceof multer.MulterError) throw new AttachmentError(413, error.code,
           error.code === 'LIMIT_FILE_SIZE' ? 'The upload exceeds the configured attachment size limit.' : 'Upload one file at a time without additional fields.');

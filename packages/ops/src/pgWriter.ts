@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { privateTemporaryDirectory, readMacSecret, readWindowsSecret, resolveDataPath } from '@josi-ce/core';
+import { privateTemporaryDirectory, readLinuxSecret, readMacSecret, readWindowsSecret, resolveDataPath } from '@josi-ce/core';
 import { BackupError, type BackupContents, type BackupKind, type BackupWriter } from './backup.js';
 import { RestoreError, type RestoreReader } from './backup.js';
 
@@ -85,7 +85,7 @@ function run(
 }
 
 function toolPath(name: 'pg_dump' | 'psql', directory = process.env.JOSI_PG_BIN): string {
-  if (process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1'
+  if (['darwin', 'linux'].includes(process.platform) && process.env.JOSI_NATIVE_RUNTIME === '1'
     && (!directory || !isAbsolute(directory))) {
     throw new BackupError('the bundled database tools are not configured', 'unknown');
   }
@@ -103,13 +103,16 @@ async function runPg(conn: PgConnection, name: 'pg_dump' | 'psql', args: string[
     const password = conn.passwordFile ? (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
       ? readWindowsSecret(conn.passwordFile).toString('utf8')
       : process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1'
-        ? readMacSecret(conn.passwordFile).toString('utf8') : await readFile(conn.passwordFile, 'utf8')).trim() : conn.password;
+        ? readMacSecret(conn.passwordFile).toString('utf8')
+        : process.platform === 'linux' && process.env.JOSI_NATIVE_RUNTIME === '1'
+          ? readLinuxSecret(conn.passwordFile).toString('utf8') : await readFile(conn.passwordFile, 'utf8')).trim() : conn.password;
     let env: NodeJS.ProcessEnv;
-    if (process.platform === 'win32' || (process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1')) {
+    if (process.platform === 'win32' || (['darwin', 'linux'].includes(process.platform) && process.env.JOSI_NATIVE_RUNTIME === '1')) {
       // Do not pass provider credentials or inherited libpq options to tools.
       env = { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR,
         TEMP: process.env.TEMP, TMP: process.env.TMP, PATH: dirname(command),
         PGCONNECT_TIMEOUT: '10', PGCLIENTENCODING: 'UTF8' };
+      if (process.platform === 'linux') env.LD_LIBRARY_PATH = join(dirname(dirname(command)), 'lib');
       if (password !== undefined) {
         const fields = [conn.host, String(conn.port), conn.database, conn.user, password];
         if (fields.some(value => /[\r\n\0]/.test(value))) {

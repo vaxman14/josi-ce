@@ -4,19 +4,29 @@ import { dirname } from 'node:path';
 import { createRequire } from 'node:module';
 import { ScannerUnavailable, type Scanner } from './gates.js';
 export const nativeMac = () => process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1';
-export const MAC_SCAN_MESSAGE = 'Document ingestion is blocked. Configure a supported local scanner and verify its health before uploading, indexing or OCR. No scanner is bundled with Josi for macOS.';
+export const nativeLinux = () => process.platform === 'linux' && process.env.JOSI_NATIVE_RUNTIME === '1';
+export const nativePosix = () => nativeMac() || nativeLinux();
+export const MAC_SCAN_MESSAGE = 'Document ingestion is blocked. Configure a supported local scanner and verify its health before uploading, indexing or OCR. No scanner is bundled with this native Josi installation.';
 function trustedSocket():string {
   const path=process.env.JOSI_SCANNER_SOCKET;
   if(!path||!path.startsWith('/')||/[\x00-\x1f]/.test(path)||realpathSync(path)!==path)throw new ScannerUnavailable(MAC_SCAN_MESSAGE);
   const s=lstatSync(path);
   if(!s.isSocket()||s.uid!==0||(s.mode&0o007))throw new ScannerUnavailable(MAC_SCAN_MESSAGE);
-  const k=createRequire(import.meta.url)('koffi'),lib=k.load('/usr/lib/libSystem.B.dylib');
-  const get=lib.func('void *acl_get_file(const char *, int)'),entry=lib.func('int acl_get_entry(void *, int, _Out_ void **)'),free=lib.func('int acl_free(void *)'),errno=lib.func('int *__error()');
+  const k=createRequire(import.meta.url)('koffi');
+  const lib=k.load(process.platform==='darwin'?'/usr/lib/libSystem.B.dylib':'libacl.so.1');
+  const get=lib.func('void *acl_get_file(const char *, int)'),free=lib.func('int acl_free(void *)');
+  const entry=process.platform==='darwin'?lib.func('int acl_get_entry(void *, int, _Out_ void **)'):null;
+  const equivalent=process.platform==='linux'?lib.func('int acl_equiv_mode(void *, _Out_ int *)'):null;
+  const libc=process.platform==='darwin'?lib:k.load('libc.so.6'),errno=libc.func(process.platform==='darwin'?'int *__error()':'int *__errno_location()');
   for(let p=path;;p=dirname(p)){
     if(p!==path){const d=lstatSync(p);if(!d.isDirectory()||d.isSymbolicLink()||d.uid!==0||(d.mode&0o022))throw new ScannerUnavailable(MAC_SCAN_MESSAGE);}
-    k.encode(errno(),'int',0);const acl=get(p,0x100);
-    if(!acl){if(k.decode(errno(),'int')!==2)throw new ScannerUnavailable(MAC_SCAN_MESSAGE);}
-    else{try{k.encode(errno(),'int',0);if(entry(acl,0,[null])!==-1||k.decode(errno(),'int')!==22)throw new ScannerUnavailable(MAC_SCAN_MESSAGE);}finally{free(acl);}}
+    k.encode(errno(),'int',0);const acl=get(p,process.platform==='darwin'?0x100:0x8000);
+    if(!acl){throw new ScannerUnavailable(MAC_SCAN_MESSAGE);}
+    else{try{
+      if(process.platform==='darwin'){
+        k.encode(errno(),'int',0);if(entry!(acl,0,[null])!==-1||k.decode(errno(),'int')!==22)throw new ScannerUnavailable(MAC_SCAN_MESSAGE);
+      }else if(equivalent!(acl,[0])!==0)throw new ScannerUnavailable(MAC_SCAN_MESSAGE);
+    }finally{free(acl);}}
     if(p==='/')break;
   }
   return path;
@@ -57,7 +67,7 @@ export const macScanner:Scanner={async scan(bytes){
   throw new ScannerUnavailable(MAC_SCAN_MESSAGE);
 }};
 export async function requireMacScan(bytes:Buffer){
-  if(!nativeMac())return;
+  if(!nativePosix())return;
   const result=await macScanner.scan(bytes);
   if(!result.clean)throw new ScannerUnavailable('Document ingestion blocked: the configured scanner rejected this file.');
 }

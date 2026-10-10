@@ -158,7 +158,7 @@ class Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + engine.token):
             self.reply(401, {'error': 'Unauthorized'})
             return
-        if sys.platform == 'darwin' and self.command == 'POST' and self.path in ('/control/start', '/control/stop'):
+        if self.server.engine.runtime['windows'] and sys.platform != 'win32' and self.command == 'POST' and self.path in ('/control/start', '/control/stop'):
             if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Length') != '2' or self.rfile.read(2) != b'{}':
                 self.reply(400, {'error': 'Invalid control request'})
                 return
@@ -202,19 +202,20 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-Transport = socketserver.TCPServer if sys.platform in ('win32', 'darwin') else socketserver.UnixStreamServer
+NATIVE_TCP = sys.platform in ('win32', 'darwin') or (sys.platform.startswith('linux') and os.environ.get('JOSI_NATIVE_RUNTIME') == '1')
+Transport = socketserver.TCPServer if NATIVE_TCP else socketserver.UnixStreamServer
 
 
 class Server(BoundedRequests, socketserver.ThreadingMixIn, Transport):
     daemon_threads = True
     # Darwin must rebind after a controlled restart while accepted connections
     # remain in TIME_WAIT. SO_REUSEPORT is deliberately never enabled.
-    allow_reuse_address = sys.platform == 'darwin'
+    allow_reuse_address = sys.platform == 'darwin' or (sys.platform.startswith('linux') and os.environ.get('JOSI_NATIVE_RUNTIME') == '1')
 
 
 if __name__ == '__main__':
     runtime = runtime_config()
-    engine = Engine(runtime, start=sys.platform != 'darwin')
+    engine = Engine(runtime, start=not (runtime['windows'] and sys.platform != 'win32'))
     if not runtime['windows']:
         path = Path(runtime['address'])
         if path.exists():

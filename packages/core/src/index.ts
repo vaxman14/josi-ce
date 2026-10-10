@@ -39,3 +39,4 @@ export { resolveDataPath } from './dataPath.js';
 export { apiListenHost } from './nativeNetwork.js';
 export { readWindowsSecret } from './windowsSecrets.js';
 export { readMacSecret } from './macosSecrets.js';
+export { readLinuxSecret, readProtectedLinuxFile } from './linuxSecrets.js';
