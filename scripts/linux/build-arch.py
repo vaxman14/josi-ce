@@ -1,5 +1,6 @@
 """Build an unsigned Blade/Arch x86_64 acceptance package without installing it."""
 import json
+import shutil
 import subprocess
 
 from package_common import BASE, OUT, SOURCE_DATE_EPOCH, VERSION, populate_root, record_checksum
@@ -25,8 +26,16 @@ def main() -> None:
     package.unlink(missing_ok=True)
     subprocess.run([
         'tar', '--sort=name', '--owner=0', '--group=0', '--numeric-owner',
-        f'--mtime=@{SOURCE_DATE_EPOCH}', '-I', 'zstd -19 -T0', '-cf', package, '-C', root, '.',
+        f'--mtime=@{SOURCE_DATE_EPOCH}', '-I', 'zstd -19 -T0', '-cf', package,
+        '-C', root, '.PKGINFO', 'usr',
     ], check=True)
+    members = subprocess.run(
+        ['tar', '-tf', package], check=True, capture_output=True, text=True,
+    ).stdout.splitlines()
+    if '.PKGINFO' not in members or './.PKGINFO' in members:
+        raise RuntimeError('Arch package metadata must be stored as .PKGINFO at archive root')
+    if shutil.which('pacman'):
+        subprocess.run(['pacman', '-Qp', package], check=True, stdout=subprocess.DEVNULL)
     digest = record_checksum(package)
     print(json.dumps({'package': str(package), 'bytes': package.stat().st_size,
         'sha256': digest, 'signed': False, 'target': 'Blade/Arch x86_64'}))
