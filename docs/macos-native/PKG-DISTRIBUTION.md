@@ -64,6 +64,13 @@ uses hardened runtime and timestamps where applicable, and produces a separate
 new PKG/DMG plus source companion, checksums and TEST-ME. Neither command submits
 notarization or publishes. Pause for Roman if private-key access is requested.
 
+Finder presentation uses an HFS+ image, matching the legacy Finder alias format,
+with explicit icon-view settings and a single Licenses and Sources folder.
+If macOS blocks a mount within external staging, obtain the user's permission
+for a temporary standard /Volumes mount and pass `sign --standard-mount`.
+The helper verifies that the mount belongs to this candidate; physical image
+data and all outputs remain on JosiDrive, and the volume is detached afterward.
+
 Existing server notices/SBOM and 787-archive corresponding-source closure are
 preserved. The client receives original Electron/Chromium and npm notices, an
 additional CycloneDX SBOM, its application source and the pinned engine build

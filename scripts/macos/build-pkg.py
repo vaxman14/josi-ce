@@ -166,7 +166,7 @@ def prepare(out):
     (out/'prepared.json').write_text(json.dumps({'version':VERSION,'candidate':False,'notarized':False,'installed':False},indent=2)+'\n')
     print(out,flush=True)
 
-def sign(out):
+def sign(out,standard_mount=False):
     if not (out/'prepared.json').is_file():raise ValueError('Prepare first')
     run=runner(out);app=out/'payload/Applications/Josi Server.app'
     subprocess.run(['/usr/bin/git','diff','--exit-code','--quiet'],cwd=REPO,check=True)
@@ -210,18 +210,25 @@ def sign(out):
     # Prepare a branded image; never add an Applications drag target.
     image_root=out/'dmg-root';image_root.mkdir()
     shutil.copyfile(pkg,image_root/pkg.name);shutil.copyfile(out/'TEST-ME.txt',image_root/'TEST-ME.txt')
-    shutil.copyfile(source_zip,image_root/source_zip.name)
-    shutil.copyfile(out/'client-legal/Josi-Desktop-Notices.txt',image_root/'Josi-Desktop-Notices.txt')
+    legal_root=image_root/'Licenses and Sources';legal_root.mkdir()
+    shutil.copyfile(source_zip,legal_root/source_zip.name)
+    shutil.copyfile(out/'client-legal/Josi-Desktop-Notices.txt',legal_root/'Josi-Desktop-Notices.txt')
     (image_root/'.background').mkdir();shutil.copyfile(out/'background.png',image_root/'.background/background.png')
     shutil.copyfile(app/'Contents/Resources/Josi.icns',image_root/'.VolumeIcon.icns')
     run('volume-icon.log',['/usr/bin/xcrun','SetFile','-a','C',image_root])
     dmg=out/'Josi-Server-macos-arm64.dmg'
     writable=out/'Josi-Server-layout.dmg'
-    run('dmg-build.log',['/usr/bin/hdiutil','create','-srcfolder',image_root,'-volname','Josi Server','-format','UDRW',writable])
-    mount=out/'dmg-mount';mount.mkdir()
-    run('dmg-mount.log',['/usr/bin/hdiutil','attach','-nobrowse','-mountpoint',mount,writable])
+    run('dmg-build.log',['/usr/bin/hdiutil','create','-srcfolder',image_root,'-volname','Josi Server','-fs','HFS+','-format','UDRW',writable])
+    if standard_mount:
+        mounted=run('dmg-mount.log',['/usr/bin/hdiutil','attach','-nobrowse','-plist',writable])
+        points=[x['mount-point'] for x in plistlib.loads(mounted.encode())['system-entities'] if 'mount-point' in x]
+        if len(points)!=1:raise ValueError('Expected one candidate volume')
+        mount=Path(points[0])
+    else:
+        mount=out/'dmg-mount';mount.mkdir()
+        run('dmg-mount.log',['/usr/bin/hdiutil','attach','-nobrowse','-mountpoint',mount,writable])
     try:
-        run('dmg-layout.log',[BASE/'prefix/python/bin/python3.11','-I','-B',REPO/'scripts/macos/dmg-layout.py',out,mount])
+        run('dmg-layout.log',[BASE/'prefix/python/bin/python3.11','-I','-B',REPO/'scripts/macos/dmg-layout.py',out,mount,*(['--standard-mount'] if standard_mount else [])])
         run('mounted-volume-icon.log',['/usr/bin/xcrun','SetFile','-a','C',mount])
     finally:run('dmg-detach.log',['/usr/bin/hdiutil','detach',mount])
     run('dmg-compress.log',['/usr/bin/hdiutil','convert',writable,'-format','UDZO','-o',dmg])
@@ -232,9 +239,9 @@ def sign(out):
     print(out,flush=True)
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['prepare','sign']);parser.add_argument('--output',required=True);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('mode',choices=['prepare','sign']);parser.add_argument('--output',required=True);parser.add_argument('--standard-mount',action='store_true',help='Use only after user authorizes a temporary /Volumes mount');args=parser.parse_args()
     out=Path(args.output)
     if out.parent!=RELEASE or not out.name.startswith('pkg-candidate-') or out.is_symlink():raise ValueError('Use a new timestamped candidate directory under the release root')
     if args.mode=='prepare':prepare(out)
-    else:sign(out)
+    else:sign(out,args.standard_mount)
 if __name__=='__main__':main()
