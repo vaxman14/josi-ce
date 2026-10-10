@@ -37,6 +37,9 @@ class LinuxLifecycleTests(unittest.TestCase):
         self.assertEqual((self.obj.data/'secrets/web/master-key').stat().st_mode&0o777,0o640)
         unit=self.obj.unit('web').decode();self.assertIn('User=josi-ce-web',unit);self.assertIn('NoNewPrivileges=yes',unit)
         self.assertNotIn((self.obj.data/'secrets/web/master-key').read_text(),unit)
+    def test_shared_groups_do_not_collide_with_service_accounts(self):
+        self.assertTrue(set(lifecycle.SHARED_GROUPS).isdisjoint(lifecycle.ACCOUNTS.values()))
+        self.assertIn('SupplementaryGroups=josi-ce-voice-shared',self.obj.unit('voice').decode())
     def test_diagnostics_redact_credential_shapes(self):
         value=lifecycle.diagnostic(ValueError('token=abc postgresql://josi:pw@host/db '+('a'*64)))['cause']
         self.assertNotIn('abc',value);self.assertNotIn('josi:pw',value);self.assertNotIn('a'*64,value)

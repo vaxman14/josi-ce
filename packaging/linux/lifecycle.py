@@ -28,6 +28,7 @@ UNIT_PREFIX = 'josi-ce-'
 ROLES = ('database', 'voice', 'voice-control', 'web', 'worker', 'proxy')
 STOP = ('proxy', 'voice-control', 'voice', 'worker', 'web', 'database')
 ACCOUNTS = {role: 'josi-ce-' + ({'voice-control':'control'}.get(role, role)) for role in ROLES}
+SHARED_GROUPS = {'josi-ce-app':('web','worker'), 'josi-ce-voice-shared':('voice','voice-control')}
 PHASES = ('prepared','verified','quiescing','quiesced','snapshot','provisioned',
           'database-ready','migrating','migrated','activating','activated','healthy','committed')
 TRANSITIONS = {left:{right,'recovery-required'} for left,right in zip(PHASES,PHASES[1:])}
@@ -204,7 +205,7 @@ class Lifecycle:
             user = pwd.getpwnam(name)
             records[role] = [user.pw_uid,user.pw_gid]
             durable(self.root/'identities.json', records, replace=(self.root/'identities.json').exists())
-        for group_name,members in [('josi-ce-app',('web','worker')),('josi-ce-voice',('voice','voice-control'))]:
+        for group_name,members in SHARED_GROUPS.items():
             self.run(['/usr/sbin/groupadd','--system',group_name])
             for role in members: self.run(['/usr/sbin/usermod','-a','-G',group_name,ACCOUNTS[role]])
 
@@ -246,7 +247,7 @@ class Lifecycle:
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
             if not self.isolated: os.chown(path, *self.account(role))
         if not self.isolated:
-            os.chown(self.data/'voice/gateway', self.account('voice-control')[0], grp.getgrnam('josi-ce-voice').gr_gid)
+            os.chown(self.data/'voice/gateway', self.account('voice-control')[0], grp.getgrnam('josi-ce-voice-shared').gr_gid)
             os.chmod(self.data/'voice/gateway', 0o2750)
         master,password,setup,control,gateway,initial = [secrets.token_hex(32) for _ in range(6)]
         for role in ('web','worker','migrate','bootstrap'):
@@ -261,7 +262,7 @@ class Lifecycle:
             'silenceMs':700,'speed':1.0,'device':'cpu'}, mode=0o640)
         if not self.isolated:
             for name in ('token','settings.json'):
-                os.chown(self.data/'voice/gateway'/name, self.account('voice-control')[0], grp.getgrnam('josi-ce-voice').gr_gid)
+                os.chown(self.data/'voice/gateway'/name, self.account('voice-control')[0], grp.getgrnam('josi-ce-voice-shared').gr_gid)
         cfg = {'schemaVersion':1,'version':self.version,'databasePort':ports[0],'apiPort':ports[1],
                'publicPort':ports[2],'voicePort':ports[3],'controlPort':ports[4],
                'setupTokenSha256':hashlib.sha256(setup.encode()).hexdigest(),'scannerSocket':''}
@@ -281,7 +282,7 @@ class Lifecycle:
 
     def unit(self, role, program=None):
         program = program or self.installed
-        supplemental = {'web':'josi-ce-app','worker':'josi-ce-app','voice':'josi-ce-voice','voice-control':'josi-ce-voice'}.get(role)
+        supplemental = {'web':'josi-ce-app','worker':'josi-ce-app','voice':'josi-ce-voice-shared','voice-control':'josi-ce-voice-shared'}.get(role)
         if any(re.search(r'[\s"\'\\]', str(value)) for value in self.arguments(role, program)):
             raise ValueError('Unsafe systemd argument')
         command = ' '.join(str(value) for value in self.arguments(role, program))
