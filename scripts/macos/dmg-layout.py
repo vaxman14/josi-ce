@@ -27,6 +27,6 @@ with DSStore.open(str(mount/'.DS_Store'),'w+') as store:
         store[name]['Iloc']=position
 with DSStore.open(str(mount/'.DS_Store'),'r') as store:
     assert store['.']['icvp']['backgroundType']==2
-    assert store['.']['icvl']==('type',b'icnv')
+    assert store['.']['icvl'][1]==b'icnv'
     assert store['Install Josi.pkg']['Iloc']==(170,220)
 print(json.dumps({'backgroundConfigured':True,'packageIconPositioned':True,'dragToApplications':False}))
