@@ -11,6 +11,9 @@ import Foundation
     let install = NSButton(title: "Install Josi CE Server…", target: nil, action: nil)
     let verify = NSButton(title: "Verify package", target: nil, action: nil)
     let open = NSButton(title: "Open Josi", target: nil, action: nil)
+    let diagnostics = NSButton(title: "Copy diagnostic log path", target: nil, action: nil)
+    let logPath = NSTextField(wrappingLabelWithString: "")
+    var diagnosticURL: URL?
     var started: Date?
     var timer: Timer?
     var progress: URL?
@@ -28,9 +31,12 @@ import Foundation
         install.target = self; install.action = #selector(beginInstall)
         verify.target = self; verify.action = #selector(beginVerify)
         open.target = self; open.action = #selector(openJosi)
+        open.isEnabled = false
+        diagnostics.target = self; diagnostics.action = #selector(copyDiagnosticPath)
+        diagnostics.isEnabled = false; logPath.isSelectable = true
         let buttons = NSStackView(views: [verify, install, open]); buttons.orientation = .horizontal
         let activity = NSStackView(views: [spinner, elapsed]); activity.orientation = .horizontal
-        let stack = NSStackView(views: [title, copy, phase, activity, buttons])
+        let stack = NSStackView(views: [title, copy, phase, activity, buttons, logPath, diagnostics])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(stack)
@@ -38,6 +44,11 @@ import Foundation
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in Task { @MainActor in self?.tick() } }
         if CommandLine.arguments.contains("--verify-only") { beginVerify() }
+    }
+    @objc func copyDiagnosticPath() {
+        guard let url = diagnosticURL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.path, forType: .string)
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if busy { NSSound.beep(); return .terminateCancel }; return .terminateNow
@@ -48,21 +59,60 @@ import Foundation
         if let path = progress, let data = try? Data(contentsOf: path), let text = ProgressState.latest(data) { phase.stringValue = text }
     }
     func run(_ executable: String, _ args: [String], label: String) {
-        guard !busy else { return }; busy = true; started = Date()
+        guard !busy else { return }
+        let installing = progress != nil
+        let privilegedLog = progress
+        let log: DiagnosticLog
+        do {
+            let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Josi CE Server/Setup")
+            log = try DiagnosticLog(directory: directory, operation: installing ? "installation" : "verification")
+        } catch {
+            phase.stringValue = "Cannot save diagnostic information. Check that your home folder is writable before retrying."
+            install.isEnabled = false; verify.isEnabled = false; open.isEnabled = false
+            return
+        }
+        diagnosticURL = log.url; logPath.stringValue = "Diagnostic log: " + log.url.path; diagnostics.isEnabled = true
+        busy = true; started = Date()
         phase.stringValue = label; spinner.startAnimation(nil); install.isEnabled = false; verify.isEnabled = false
+        open.isEnabled = false
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process(); process.executableURL = URL(fileURLWithPath: executable); process.arguments = args
             process.environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
             let pipe = Pipe(); process.standardOutput = pipe; process.standardError = pipe
             var success = false
-            do { try process.run(); _ = pipe.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit(); success = process.terminationStatus == 0 } catch {}
+            var diagnosticFailure = false
+            do {
+                try process.run()
+                var pending = Data()
+                while true {
+                    let chunk = pipe.fileHandleForReading.availableData
+                    if chunk.isEmpty { break }
+                    pending.append(chunk)
+                    while let newline = pending.firstIndex(of: 10) {
+                        let line = pending.prefix(through: newline)
+                        do { try log.append(String(decoding: line, as: UTF8.self)) } catch { diagnosticFailure = true }
+                        pending.removeSubrange(...newline)
+                    }
+                }
+                if !pending.isEmpty { try log.append(String(decoding: pending, as: UTF8.self)) }
+                process.waitUntilExit()
+                if let privilegedLog, let bytes = try? Data(contentsOf: privilegedLog) {
+                    try log.append("Installation helper output (original: \(privilegedLog.path)):\n" + String(decoding: bytes, as: UTF8.self))
+                }
+                try log.append("Process exit status: \(process.terminationStatus)\n")
+                success = process.terminationStatus == 0 && !diagnosticFailure
+            } catch {
+                try? log.append("Operation error: \(error.localizedDescription)\n")
+                if process.isRunning { process.waitUntilExit() }
+            }
             let passed = success
             DispatchQueue.main.async {
                 self.tick(); self.busy = false; self.started = nil; self.spinner.stopAnimation(nil)
-                self.elapsed.stringValue = passed ? "Completed" : "Stopped safely — keep transaction evidence for recovery"
-                self.phase.stringValue = passed ? "Package operation completed. See TEST-ME for service and browser acceptance checks." : "Verification or installation did not complete. No success is assumed. If activation began, preserve data and request recovery review."
-                self.install.isEnabled = true; self.verify.isEnabled = true
-                if passed && self.progress != nil { self.openJosi() }
+                self.elapsed.stringValue = passed ? "Completed" : "Stopped"
+                let operation = installing ? "Installation" : "Verification"
+                self.phase.stringValue = passed ? (installing ? "Josi is ready. Click Open Josi to finish setup." : "Josi’s installation files passed verification.") : operation + " failed. Details are saved in the diagnostic log shown below. " + (installing ? "Your existing data is retained. Keep the log before attempting recovery." : "No installation was started. You can verify again or obtain a fresh installer.")
+                self.install.isEnabled = passed; self.verify.isEnabled = !installing || passed
+                self.open.isEnabled = passed && installing
             }
         }
     }
@@ -73,6 +123,7 @@ import Foundation
     }
     func shell(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     @objc func openJosi() {
+        guard open.isEnabled && !busy else { return }
         let folder = URL(fileURLWithPath: "/Library/Application Support/Josi CE Server/handoff/\(getuid())")
         guard let bytes = try? Data(contentsOf: folder.appendingPathComponent("bootstrap.json")), bytes.count < 4096,
               let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],

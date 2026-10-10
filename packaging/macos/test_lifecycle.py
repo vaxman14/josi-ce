@@ -11,6 +11,17 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 BASE=Path('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests')
 
 class Tests(unittest.TestCase):
+    def test_subprocess_diagnostics_preserve_cause_without_argv_secrets(self):
+        import subprocess
+        error=subprocess.CalledProcessError(9,['/private/runtime/initdb','--password=unsafe'],output=b'failed component',stderr=b'permission denied password=unsafe token=unsafe postgres://user:unsafe@host/db')
+        result=m.diagnostic(error)
+        self.assertEqual(result['component'],'initdb');self.assertEqual(result['exitCode'],9)
+        self.assertIn('permission denied',result['stderr']);self.assertNotIn('unsafe',json.dumps(result))
+    def test_timeout_and_hash_failure_diagnostics(self):
+        import subprocess
+        result=m.diagnostic(subprocess.TimeoutExpired(['/runtime/pg_ctl'],60,stderr=b'waiting for startup'))
+        self.assertIn('timed out',result['cause']);self.assertEqual(result['stderr'],'waiting for startup')
+        self.assertIn('app/file.js',m.diagnostic(ValueError('Payload hash mismatch: app/file.js'))['cause'])
     def setUp(self):
         BASE.mkdir(exist_ok=True);self.root=Path(tempfile.mkdtemp(prefix='unit-',dir=BASE))
         self.runtime=self.root/'payload';(self.runtime/'app').mkdir(parents=True)

@@ -37,6 +37,31 @@ def hashed(path):
         for b in iter(lambda:f.read(1024*1024),b''): h.update(b)
     return h.hexdigest()
 
+def diagnostic(error):
+    """Useful failure evidence without command arguments or credential values."""
+    def redact(value):
+        if isinstance(value, bytes): value=value.decode('utf-8','replace')
+        value=str(value or '')
+        value=re.sub(r'(?i)(password|token|secret|authorization|master.key)(\s*[=:]\s*)\S+',r'\1\2[redacted]',value)
+        value=re.sub(r'(?i)(postgres(?:ql)?://)[^\s]+',r'\1[redacted]',value)
+        value=re.sub(r'\b[a-fA-F0-9]{64}\b','[redacted]',value)
+        return value[-32768:]
+    result={'error':type(error).__name__,'cause':redact(error)}
+    if isinstance(error,(subprocess.CalledProcessError,subprocess.TimeoutExpired)):
+        # str(CalledProcessError) includes argv, which can contain credentials.
+        result['cause']='A required component timed out' if isinstance(error,subprocess.TimeoutExpired) else 'A required component exited unsuccessfully'
+        result['component']=Path(str(error.cmd[0])).name if isinstance(error.cmd,(list,tuple)) and error.cmd else 'component'
+        result['exitCode']=getattr(error,'returncode',None)
+        result['stdout']=redact(error.stdout);result['stderr']=redact(error.stderr)
+    return result
+
+def emit(value):
+    print(json.dumps(value),flush=True)
+    # The privileged installer redirects stdout to its evidence file. Flush
+    # each phase and failure before returning or permitting the next mutation.
+    if stat.S_ISREG(os.fstat(sys.stdout.fileno()).st_mode):
+        os.fsync(sys.stdout.fileno())
+
 def plain(path, owner=None):
     p=Path(path)
     if not p.is_absolute() or '..' in p.parts: raise ValueError('Unsafe path')
@@ -88,7 +113,7 @@ class Journal:
 class Lifecycle:
     def __init__(self, runtime, root=PRODUCT, isolated=False, progress=None):
         self.runtime=plain(runtime);self.root=plain(root);self.isolated=isolated
-        self.progress=progress or (lambda phase,service:print(json.dumps({'phase':phase,'service':service}),flush=True))
+        self.progress=progress or (lambda phase,service:emit({'phase':phase,'service':service}))
         if isolated:
             if os.getuid()==0 or not str(root).startswith('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'):raise ValueError('Invalid isolated root')
         elif os.getuid()!=0 or self.root!=PRODUCT:raise PermissionError('Administrator authorization required')
@@ -118,10 +143,10 @@ class Lifecycle:
                 actual.add(rel)
             elif p.is_file():
                 x=expected.get(rel,{})
-                if p.stat().st_nlink!=1 or x.get('size')!=p.stat().st_size or x.get('sha256')!=hashed(p):raise ValueError('Payload hash mismatch')
+                if p.stat().st_nlink!=1 or x.get('size')!=p.stat().st_size or x.get('sha256')!=hashed(p):raise ValueError('Payload hash mismatch: '+rel)
                 actual.add(rel)
             elif not p.is_dir():raise ValueError('Special payload file')
-        if actual!=set(expected):raise ValueError('Incomplete payload')
+        if actual!=set(expected):raise ValueError('Incomplete payload: '+', '.join(sorted(actual.symmetric_difference(expected))[:10]))
         return hashed(self.runtime.parent/'inventory.json')
     def account(self,role):
         if self.isolated:return os.getuid(),os.getgid()
@@ -411,7 +436,9 @@ class Lifecycle:
                     os.chown(handoff/'bootstrap.json',interactive_uid,-1);os.chown(handoff,interactive_uid,-1)
             phase('committed')
             return folder
-        except Exception:
+        except Exception as error:
+            if self.journal:
+                durable(self.journal.folder/'failure-diagnostics',diagnostic(error),replace=True)
             if self.journal and self.journal.records[-1]['phase'] not in ('committed','rolled-back','recovery-required'):
                 self.journal.phase('recovery-required')
             self.progress('Recovery required; existing data retained','installer')
@@ -465,12 +492,12 @@ if __name__=='__main__':
             # No mutation or elevation for unsigned acceptance inspection.
             obj=object.__new__(Lifecycle);obj.runtime=runtime
             obj.version=json.loads((runtime/'app/package.json').read_text())['version']
-            print(json.dumps({'verified':obj.verify(),'architecture':'arm64'}),flush=True)
+            emit({'verified':obj.verify(),'architecture':'arm64'})
         elif len(sys.argv)==3 and sys.argv[1]=='install' and sys.argv[2].isascii() and sys.argv[2].isdecimal():
             Lifecycle(runtime).install(interactive_uid=int(sys.argv[2]))
         elif len(sys.argv)==3 and sys.argv[1]=='recover' and re.fullmatch('[a-f0-9]{32}',sys.argv[2]):
             Lifecycle(runtime).recover(PRODUCT/'transactions'/sys.argv[2])
         else:raise ValueError('Unsupported lifecycle command')
     except Exception as error:
-        print(json.dumps({'phase':'Stopped; preserve transaction evidence','error':type(error).__name__}),flush=True)
+        emit({'phase':'Stopped',**diagnostic(error)})
         sys.exit(1)
