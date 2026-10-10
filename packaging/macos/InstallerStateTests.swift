@@ -6,6 +6,10 @@ import Foundation
         precondition(InstallerState.from(["phase":"committed"]) == .working)
         precondition(InstallerState.from(["result":"success"]) == .ready)
         precondition(InstallerState.from(["result":"failure"]) == .failed)
+        let folderRetry = InstallerState.afterMaintenanceFailure("workspace")
+        precondition(folderRetry == .waiting && !folderRetry.canOpen && !folderRetry.canChangeFolder)
+        precondition(InstallerState.afterMaintenanceFailure("recover-latest") == .failed)
+        precondition(InstallerState.afterMaintenanceFailure("uninstall") == .failed)
         for phase in ["migrating", "snapshot", "recovery-required", "unknown"] {
             let copy = InstallerState.phase(phase, service: "database")
             precondition(!copy.contains("migrat") && !copy.contains("recovery") && !copy.contains("database"))

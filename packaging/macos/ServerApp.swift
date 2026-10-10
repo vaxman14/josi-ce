@@ -153,7 +153,7 @@ import Darwin
                 self.busy = false
                 if passed && operation == "uninstall" { self.state = .removed;self.heading.stringValue = "Josi Server uninstalled";self.detail.stringValue = "The server is stopped. Your data and recovery copies are retained for reinstalling. The optional desktop client can be removed separately by moving Josi CE.app to Trash." }
                 else if passed { self.state = .ready;self.detail.stringValue = "Saved. Josi is ready.";self.folderLabel.stringValue = operation == "workspace" ? (path?.isEmpty == false ? "Connected as /workspace (read only): " + path! : "Folder access declined.") : self.folderLabel.stringValue }
-                else { self.state = .failed;self.detail.stringValue = "The change did not complete. Copy Diagnostics for details. If the folder is protected by macOS or unreadable by the server, choose a shared documents folder. Existing data is retained." }
+                else { self.state = InstallerState.afterMaintenanceFailure(operation);self.detail.stringValue = "The change did not complete. Copy Diagnostics for details. If the folder is protected by macOS or unreadable by the server, choose a shared documents folder after Josi is ready. Existing data is retained." }
                 self.activity.stringValue = passed ? "Completed" : "Stopped";self.applyState()
             }
         }
