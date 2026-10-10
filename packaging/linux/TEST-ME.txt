@@ -1,6 +1,7 @@
 JOSI CE SERVER - NATIVE LINUX ACCEPTANCE
 
-This candidate is for a disposable x86_64 Blade/Arch test machine only.
+This candidate is for disposable x86_64 test machines running Blade/Arch,
+Debian 12+/Ubuntu 22.04+, or RHEL 9+/Fedora.
 It is unsigned and must not be published.
 
 Before installation:

@@ -2,6 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import socket
 import sys
 
 sys.dont_write_bytecode = True
@@ -13,11 +14,22 @@ def main(runtime: Path, root: Path) -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     lifecycle = module.Lifecycle(runtime.resolve(), root.resolve(), isolated=True)
+    probes = []
     try:
-        transaction = lifecycle.install(interactive_uid=None)
+        for _ in range(5):
+            probe = socket.socket()
+            probe.bind(('127.0.0.1', 0))
+            probes.append(probe)
+        ports = tuple(probe.getsockname()[1] for probe in probes)
+        for probe in probes:
+            probe.close()
+        probes.clear()
+        transaction = lifecycle.install(ports=ports, interactive_uid=None)
         status = json.loads((root / 'status.json').read_text())
         print(json.dumps({'result': 'PASS', 'transaction': str(transaction), 'status': status}))
     finally:
+        for probe in probes:
+            probe.close()
         lifecycle.stop()
 
 

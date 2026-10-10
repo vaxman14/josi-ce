@@ -22,5 +22,26 @@ python)
   tar -xzf "$archive" --strip-components=1 -C "$base/prefix/python.pending"
   mv "$base/prefix/python.pending" "$base/prefix/python"
   ;;
+portable)
+  image=local/josi-ce-linux-package-build:debian12
+  docker build --quiet --pull=false -t "$image" -f "$PWD/scripts/linux/PackageBuild.Dockerfile" "$PWD"
+  test "$(sha256sum "$cache/postgresql-16.15.tar.bz2" | cut -d' ' -f1)" = c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed
+  mkdir -p "$base/src-portable" "$base/prefix/portable"
+  docker run --rm --pull=never --user "$(id -u):$(id -g)" \
+    -v "$base:/work" -v "$cache:/cache:ro" -v "$PWD:/repo:ro" "$image" bash -euo pipefail -c '
+      rm -rf /work/src-portable/postgresql-16.15 /work/prefix/portable/postgresql.pending
+      tar -xjf /cache/postgresql-16.15.tar.bz2 -C /work/src-portable
+      cd /work/src-portable/postgresql-16.15
+      ./configure --prefix=/work/prefix/portable/postgresql.pending --disable-rpath --without-readline --without-icu --without-zlib
+      make -s -j8
+      make -s install
+      gcc -O2 -fPIE -pie -Wl,-z,relro,-z,now -Wall -Wextra -Werror -o /work/prefix/portable/josi-ce-setup-helper /repo/packaging/linux/helper.c
+      rm -rf /work/prefix/portable/postgresql
+      mv /work/prefix/portable/postgresql.pending /work/prefix/portable/postgresql
+    '
+  docker run --rm --pull=never --user "$(id -u):$(id -g)" \
+    -e JOSI_PORTABLE_BUILD=1 -v /home/roman/JosiDrive:/home/roman/JosiDrive \
+    -w "$PWD" "$image" /home/roman/JosiDrive/BuildTemp/josi-ce-native-linux-20261010/prefix/python/bin/python3 scripts/linux/build-voice.py
+  ;;
 *) exit 2;;
 esac

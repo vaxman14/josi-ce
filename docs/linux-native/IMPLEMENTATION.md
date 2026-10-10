@@ -1,7 +1,7 @@
 # Native Linux server
 
-This port runs Josi CE Server directly on Linux without Docker. The first
-acceptance target is x86_64 Blade/Arch Linux.
+This port runs Josi CE Server directly on Linux without Docker. The x86_64
+acceptance formats are Pacman, Debian, and RPM packages.
 
 ## Runtime
 
@@ -34,8 +34,15 @@ No scanner is silently bundled. File ingestion remains fail-closed until the
 owner configures a root-protected local `clamd` socket. The socket and all parent
 directories are checked for ownership, mode, symlinks, and extended ACLs.
 
+## Portability baseline
+
+Native components are built in a digest-pinned Debian 12 environment. The
+payload's highest required glibc symbol is `GLIBC_2.34`, covering the current
+acceptance targets: Blade/Arch, Debian 12+, Ubuntu 22.04+, and RHEL 9+/Fedora.
+All package formats carry the same inventory-verified runtime.
+
 ## Current scope
 
-The generated package is an unsigned x86_64 Blade/Arch acceptance build. A
-physical root install, reboot persistence, upgrade, recovery, uninstall, package
-signature, older-glibc portability build, and arm64 build remain release gates.
+The generated packages are unsigned x86_64 acceptance builds. Physical root
+installation on each distribution family, reboot persistence, upgrade,
+recovery, uninstall, package signatures, and arm64 builds remain release gates.

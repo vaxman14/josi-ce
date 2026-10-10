@@ -11,7 +11,7 @@ import sys
 REPO=Path(__file__).resolve().parents[2]
 BASE=Path('/home/roman/JosiDrive/BuildTemp/josi-ce-native-linux-20261010')
 CACHE=Path('/home/roman/JosiDrive/Caches/codex-linux-native-20261010')
-RUNTIME=BASE/'stage/runtime';VERSION='0.1.78-linux.1'
+RUNTIME=BASE/'stage/runtime';VERSION='0.1.78-linux.2'
 
 def copy(source,target):
     if source.is_dir():shutil.copytree(source,target,symlinks=True,dirs_exist_ok=True)
@@ -44,7 +44,7 @@ def main():
     for name in ('node','caddy'):
         if (RUNTIME/name).exists():shutil.rmtree(RUNTIME/name)
     extract(CACHE/node_name,RUNTIME/'node',True)
-    copy(BASE/'prefix/postgresql',RUNTIME/'postgresql');copy(BASE/'prefix/python',RUNTIME/'python')
+    copy(BASE/'prefix/portable/postgresql',RUNTIME/'postgresql');copy(BASE/'prefix/python',RUNTIME/'python')
     caddy_name='caddy-'+('amd64' if architecture=='x86_64' else 'arm64')+'.tar.gz'
     extract(CACHE/caddy_name,RUNTIME/'caddy')
     for item in json.loads((REPO/'services/voice-box/models.lock.json').read_text())['files']:
