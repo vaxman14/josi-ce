@@ -22,13 +22,13 @@ def main() -> None:
 %global _build_id_links none
 Name: josi-ce-server-setup
 Version: 0.1.78
-Release: linux.2
-Summary: Native offline setup and lifecycle manager for Josi CE Server
+Release: linux.6
+Summary: Native offline Josi CE Server runtime and CLI installer
 License: AGPL-3.0-or-later
 URL: https://github.com/vaxman14/josi-ce
 BuildArch: x86_64
 AutoReqProv: no
-Requires: python3-gobject, gtk4, polkit, systemd, rsync, acl, xdg-utils, libstdc++
+Requires: python3, systemd, rsync, acl, iproute, libstdc++
 
 %description
 Installs Josi's private PostgreSQL, Node, Python, Caddy and CPU Voice Box runtime.
@@ -38,13 +38,9 @@ mkdir -p %{{buildroot}}
 cp -a {root}/. %{{buildroot}}/
 
 %files
-/usr/bin/josi-ce-server-setup
+/usr/bin/josi-ce-server-install
 /usr/bin/josi-ce-native-status
 /usr/lib/josi-ce-server-setup
-/usr/libexec/josi-ce-setup-helper
-/usr/share/applications/com.heyjosi.ce.server.setup.desktop
-/usr/share/polkit-1/actions/com.heyjosi.ce.server.setup.policy
-/usr/share/icons/hicolor/512x512/apps/com.heyjosi.ce.server.png
 /usr/share/licenses/josi-ce-server-setup/LICENSE
 /usr/share/doc/josi-ce-server-setup
 ''')

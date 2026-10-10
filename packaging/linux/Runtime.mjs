@@ -20,7 +20,7 @@ try {
     if (process.getuid() === 0 || !data.startsWith('/home/roman/JosiDrive/') || st.uid !== process.getuid()
       || (st.mode & 0o077) || marker.purpose !== 'disposable-native-acceptance') throw Error();
     process.env.JOSI_NATIVE_ISOLATED_ROOT = data;
-  } else if (data !== '/var/lib/josi-ce-server') throw Error();
+  } else if (data !== '/var/lib/josi-ce-server/data') throw Error();
   const info = lstatSync(configFile);
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 8192
     || info.uid !== (isolated ? process.getuid() : 0) || (info.mode & 0o022)) throw Error();

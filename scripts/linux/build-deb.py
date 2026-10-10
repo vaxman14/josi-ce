@@ -19,10 +19,10 @@ def main() -> None:
         "Package: josi-ce-server-setup\n"
         f"Version: {VERSION}\nArchitecture: amd64\n"
         "Maintainer: Josi CE Maintainers <packages@example.invalid>\n"
-        "Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-4.0, policykit-1, systemd, rsync, acl, xdg-utils, libstdc++6\n"
+        "Depends: python3 (>= 3.10), systemd, rsync, acl, iproute2, libstdc++6\n"
         "Section: admin\nPriority: optional\n"
         f"Installed-Size: {size}\n"
-        "Description: Native offline setup and lifecycle manager for Josi CE Server\n"
+        "Description: Native offline Josi CE Server runtime and CLI installer\n"
         " Installs Josi's private PostgreSQL, Node, Python, Caddy and CPU Voice Box runtime.\n"
     )
     package = OUT / f'josi-ce-server-setup_{VERSION}_amd64.deb'

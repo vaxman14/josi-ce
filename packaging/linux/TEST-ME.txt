@@ -10,9 +10,9 @@ Before installation:
   3. Confirm no unrelated josi-ce-*.service units exist.
 
 Acceptance:
-  1. Install the package and launch Josi CE Server Setup from the application menu.
-  2. Verify package, then approve the Polkit installation prompt.
-  3. Confirm the setup application opens http://127.0.0.1:8080 only after health passes.
+  1. Run the single documented curl-to-shell command as a normal user.
+  2. Enter the sudo password when prompted; do not run any second setup command.
+  3. Confirm the command prints the machine IP and one-use browser setup URL only after health passes.
   4. Finish setup and restart the machine.
   5. Run: systemctl status 'josi-ce-*.service'
   6. Verify browser setup, workspace mapping, attachments, speech, and a configured clamd socket.

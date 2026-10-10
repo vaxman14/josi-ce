@@ -14,12 +14,12 @@ def main() -> None:
     metadata = (
         "pkgname = josi-ce-server-setup\npkgbase = josi-ce-server-setup\n"
         f"pkgver = {package_version}\n"
-        "pkgdesc = Native offline setup and lifecycle manager for Josi CE Server\n"
+        "pkgdesc = Native offline Josi CE Server runtime and CLI installer\n"
         "url = https://github.com/vaxman14/josi-ce\n"
         f"builddate = {SOURCE_DATE_EPOCH}\npackager = SOCAL RECEPTIONIST LLC\n"
         f"size = {size}\narch = x86_64\nlicense = AGPL-3.0-or-later\n"
-        "depend = python-gobject\ndepend = gtk4\ndepend = polkit\ndepend = systemd\n"
-        "depend = rsync\ndepend = acl\ndepend = xdg-utils\ndepend = gcc-libs\n"
+        "depend = python\ndepend = systemd\ndepend = rsync\ndepend = acl\n"
+        "depend = iproute2\ndepend = gcc-libs\n"
     )
     (root / '.PKGINFO').write_text(metadata)
     package = OUT / f'josi-ce-server-setup-{package_version}-x86_64.pkg.tar.zst'

@@ -468,7 +468,7 @@ class Lifecycle:
                 durable(self.data/'database/postgresql.auto.conf',settings.encode(),replace=True,mode=0o600)
                 if not self.isolated: os.chown(self.data/'database/postgresql.auto.conf',*self.account('database'))
                 self.write(self.data/'config/Caddyfile',(f"{{\n admin off\n auto_https off\n}}\nhttp://localhost:{cfg['publicPort']} {{\n"
-                    f" bind 127.0.0.1\n reverse_proxy 127.0.0.1:{cfg['apiPort']}\n}}\n").encode(),mode=0o644)
+                f" bind 0.0.0.0\n reverse_proxy 127.0.0.1:{cfg['apiPort']}\n}}\n").encode(),mode=0o644)
             phase('provisioned')
             self.run([self.installed/'postgresql/bin/pg_ctl','-D',self.data/'database','-l',self.data/'logs/database/setup.log','-w','-t','60','start'],'database')
             if fresh:
