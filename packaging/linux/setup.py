@@ -6,12 +6,14 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
 import uuid
 
 import gi
+gi.require_version('Gdk', '4.0')
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gdk, GLib, Gtk
 
@@ -101,8 +103,8 @@ class Setup(Gtk.Application):
         self.log_label.set_text('Diagnostic log: '+str(self.log)); self.copy.set_sensitive(True)
         self.phase.set_text('Waiting for administrator authorization' if installing else 'Verifying every packaged file and pinned inventory')
         args=['pkexec',HELPER,'install',str(os.getuid())] if installing else [str(PAYLOAD/'python/bin/python3.12'),'-I','-B',str(PAYLOAD/'app/native/lifecycle.py'),'verify']
-        threading.Thread(target=self.run,args=(args,),daemon=True).start()
-    def run(self,args):
+        threading.Thread(target=self.run_operation,args=(args,),daemon=True).start()
+    def run_operation(self,args):
         passed=False
         try:
             process=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
@@ -145,4 +147,4 @@ class Setup(Gtk.Application):
             self.phase.set_text('Browser handoff unavailable. Wait for readiness, then click Open Josi to retry.')
 
 if __name__=='__main__':
-    raise SystemExit(Setup().run())
+    raise SystemExit(Setup().run(sys.argv))
