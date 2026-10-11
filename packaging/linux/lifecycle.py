@@ -32,7 +32,7 @@ SHARED_GROUPS = {'josi-ce-app':('web','worker'), 'josi-ce-voice-shared':('voice'
 PHASES = ('prepared','verified','quiescing','quiesced','snapshot','provisioned',
           'database-ready','migrating','migrated','activating','activated','healthy','committed')
 TRANSITIONS = {left:{right,'recovery-required'} for left,right in zip(PHASES,PHASES[1:])}
-TRANSITIONS.update({'recovery-required':{'rolling-back'}, 'rolling-back':{'rolled-back','recovery-required'}})
+TRANSITIONS.update({'recovery-required':{'activated','rolling-back'}, 'rolling-back':{'rolled-back','recovery-required'}})
 
 def hashed(path):
     digest = hashlib.sha256()
@@ -221,8 +221,8 @@ class Lifecycle:
                             'xattrs':xattrs,'hash':hashed(path) if path.is_file() else None}
         return result
 
-    def write(self, path, value, role=None, mode=0o600):
-        durable(path, value, mode=mode)
+    def write(self, path, value, role=None, mode=0o600, replace=False):
+        durable(path, value, mode=mode, replace=replace)
         if role and not self.isolated: os.chown(path, 0, self.account(role)[1])
 
     def layout(self, ports):
@@ -230,17 +230,21 @@ class Lifecycle:
         if self.isolated: durable(self.data/'isolated-test.json', {'purpose':'disposable-native-acceptance'})
         else: os.chmod(self.data, 0o711)
         for folder in ('config','secrets','temp','profiles','logs','voice'):
-            (self.data/folder).mkdir(mode=0o711)
+            path = self.data/folder
+            path.mkdir(mode=0o711)
+            os.chmod(path, 0o711)
         for role in (*ROLES,'migrate','bootstrap'):
             uid,gid = self.account(role) if role in ROLES else (os.getuid(),os.getgid())
             for category in ('temp','profiles','logs','secrets'):
                 path = self.data/category/role
                 path.mkdir(mode=0o750 if category == 'secrets' else 0o700)
+                os.chmod(path, 0o750 if category == 'secrets' else 0o700)
                 if not self.isolated: os.chown(path, 0 if category == 'secrets' else uid, gid)
         shared_gid = os.getgid() if self.isolated else grp.getgrnam('josi-ce-app').gr_gid
         for folder in ('chat-attachments','roots','versions','backups','diagnostics','codex','state'):
             path = self.data/folder
             path.mkdir(mode=0o2770)
+            os.chmod(path, 0o2770)
             if not self.isolated: os.chown(path, 0, shared_gid)
         for folder,role in [('database','database'),('proxy','proxy'),('voice/gateway','voice-control'),('voice/control','voice-control')]:
             path = self.data/folder
@@ -270,6 +274,68 @@ class Lifecycle:
         self.write(self.data/'secrets/bootstrap/browser-token', setup.encode())
         return cfg
 
+    def repair_layout_permissions(self):
+        """Reassert the fixed service-write boundary after older installs.
+
+        mkdir modes are filtered by the invoking user's umask. Explicit chmod
+        keeps shared application directories group-writable on physical hosts,
+        including upgrades from candidates created before this repair.
+        """
+        if self.isolated: return
+        shared_gid = grp.getgrnam('josi-ce-app').gr_gid
+        for folder in ('chat-attachments','roots','versions','backups','diagnostics','codex','state'):
+            path = self.data/folder; plain(path, 0)
+            os.chown(path, 0, shared_gid); os.chmod(path, 0o2770)
+
+    def seal_traversal_permissions(self):
+        if self.isolated: return
+        for path in (self.root, self.data, self.data/'secrets'):
+            plain(path, 0); os.chmod(path, 0o711)
+
+    def settle_activated_recovery(self, interactive_uid):
+        """Close a retained transaction without discarding reachable data."""
+        for folder in sorted((self.root/'transactions').iterdir()):
+            prior = Journal(folder)
+            if not prior.records or prior.records[-1]['phase'] in ('committed','rolled-back'): continue
+            phases = [record['phase'] for record in prior.records]
+            if prior.records[-1]['phase'] != 'recovery-required':
+                raise RuntimeError('Earlier transaction requires recovery')
+            configured = json.loads((self.data/'config/runtime.json').read_text())['version']
+            if 'activating' not in phases:
+                if 'migrating' in phases or prior.identity['from'] != configured:
+                    raise RuntimeError('Earlier transaction requires snapshot recovery')
+                self.installed = self.root/'versions'/configured
+                self.check_owned(self.installed)
+                self.repair_layout_permissions()
+                self.stop(); prior.phase('rolling-back')
+                try:
+                    for role in ROLES: self.start(role)
+                    self.ready()
+                except Exception:
+                    prior.phase('recovery-required')
+                    raise
+                prior.phase('rolled-back')
+                continue
+            if prior.identity['to'] != configured:
+                raise RuntimeError('Earlier activated transaction identity changed')
+            self.installed = self.root/'versions'/configured
+            self.check_owned(self.installed)
+            self.repair_layout_permissions()
+            self.stop()
+            for role in ROLES: self.start(role)
+            prior.phase('activated')
+            try: self.ready()
+            except Exception:
+                prior.phase('recovery-required')
+                raise
+            prior.phase('healthy')
+            cfg = json.loads((self.data/'config/runtime.json').read_text())
+            handoff=self.root/'handoff'/str(interactive_uid); handoff.mkdir(mode=0o700,parents=True,exist_ok=True)
+            durable(handoff/'bootstrap.json',{'token':(self.data/'secrets/bootstrap/browser-token').read_text(),'port':cfg['publicPort']},replace=(handoff/'bootstrap.json').exists())
+            os.chown(handoff/'bootstrap.json',interactive_uid,-1); os.chown(handoff,interactive_uid,-1)
+            prior.phase('committed')
+            durable(self.root/'status.json',{'installed':True,'version':configured,'publicPort':cfg['publicPort']},replace=(self.root/'status.json').exists(),mode=0o644)
+
     def arguments(self, role, program=None):
         program = program or self.installed
         config = str(self.data/'config/runtime.json')
@@ -279,6 +345,10 @@ class Lifecycle:
         if role in ('voice','voice-control'):
             return [program/'python/bin/python3.12','-I','-B',program/'app/native/PythonRuntime.py',role,config,*test]
         return [program/'node/bin/node',program/'app/native/Runtime.mjs',role,config,*test]
+
+    def caddyfile(self, cfg):
+        return (f"{{\n admin off\n auto_https off\n}}\n:{cfg['publicPort']} {{\n"
+            f" bind 0.0.0.0\n reverse_proxy 127.0.0.1:{cfg['apiPort']}\n}}\n").encode()
 
     def unit(self, role, program=None):
         program = program or self.installed
@@ -420,6 +490,8 @@ class Lifecycle:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         transactions = self.root/'transactions'; transactions.mkdir(mode=0o700,exist_ok=True)
         try:
+            self.settle_activated_recovery(interactive_uid)
+            self.installed = self.root/'versions'/self.version
             for folder in transactions.iterdir():
                 prior = Journal(folder)
                 if not prior.records or prior.records[-1]['phase'] not in ('committed','rolled-back'):
@@ -474,8 +546,10 @@ class Lifecycle:
                     "log_statement='none'\nlog_min_error_statement='panic'\nlog_parameter_max_length=0\nlog_parameter_max_length_on_error=0\n") % cfg['databasePort']
                 durable(self.data/'database/postgresql.auto.conf',settings.encode(),replace=True,mode=0o600)
                 if not self.isolated: os.chown(self.data/'database/postgresql.auto.conf',*self.account('database'))
-                self.write(self.data/'config/Caddyfile',(f"{{\n admin off\n auto_https off\n}}\nhttp://localhost:{cfg['publicPort']} {{\n"
-                f" bind 0.0.0.0\n reverse_proxy 127.0.0.1:{cfg['apiPort']}\n}}\n").encode(),mode=0o644)
+            cfg=json.loads((self.data/'config/runtime.json').read_text())
+            self.repair_layout_permissions()
+            self.write(self.data/'config/Caddyfile',self.caddyfile(cfg),
+                mode=0o644, replace=(self.data/'config/Caddyfile').exists())
             phase('provisioned')
             self.run([self.installed/'postgresql/bin/pg_ctl','-D',self.data/'database','-l',self.data/'logs/database/setup.log','-w','-t','60','start'],'database')
             if fresh:
@@ -486,6 +560,7 @@ class Lifecycle:
             phase('activating')
             cfg=json.loads((self.data/'config/runtime.json').read_text()); cfg['version']=self.version
             durable(self.data/'config/runtime.json',cfg,replace=True,mode=0o644)
+            self.seal_traversal_permissions()
             if not self.isolated:
                 for role in ROLES: durable(UNIT_DIR/(UNIT_PREFIX+role+'.service'),self.unit(role),replace=True,mode=0o644)
                 subprocess.run(['/usr/bin/systemctl','daemon-reload'],check=True)

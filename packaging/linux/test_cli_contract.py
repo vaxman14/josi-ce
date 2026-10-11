@@ -15,6 +15,21 @@ class LinuxCliContract(unittest.TestCase):
         source = Path(__file__).with_name('install_cli.py').read_text()
         self.assertIn("event.get('cause')", source)
 
+    def test_cli_does_not_print_internal_lifecycle_phases(self):
+        source = Path(__file__).with_name('install_cli.py').read_text()
+        self.assertNotIn("event.get('phase')", source)
+        self.assertNotIn("event['phase']", source)
+
+    def test_runtime_surfaces_redacted_startup_error(self):
+        source = Path(__file__).with_name('Runtime.mjs').read_text()
+        self.assertIn('Josi native Linux runtime failed:', source)
+        self.assertIn('[redacted database URL]', source)
+        self.assertIn('[redacted secret]', source)
+
+    def test_browser_handoff_rejects_non_json_without_a_traceback(self):
+        source = Path(__file__).with_name('install_cli.py').read_text()
+        self.assertIn('except (UnicodeDecodeError, json.JSONDecodeError)', source)
+
     def test_normal_linux_path_is_cli_only(self):
         repo = Path(__file__).resolve().parents[2]
         source = repo.joinpath('scripts/linux/package_common.py').read_text()

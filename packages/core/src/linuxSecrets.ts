@@ -40,10 +40,14 @@ export function readProtectedLinuxFile(path: string, owner: number, group: numbe
   const openat = libc.func('int openat(int, const char *, int, ...)');
   const close = libc.func('int close(int)');
   const aclGetFd = libacl.func('void *acl_get_fd(int)');
+  const aclGetFile = libacl.func('void *acl_get_file(const char *, int)');
   const aclEquivalent = libacl.func('int acl_equiv_mode(void *, _Out_ int *)');
   const aclFree = libacl.func('int acl_free(void *)');
-  const noExtendedAcl = (fd: number) => {
-    const acl = aclGetFd(fd);
+  const noExtendedAcl = (fd: number, pathOnly = false) => {
+    // O_PATH is required to traverse execute-only protected directories as a
+    // service user. acl_get_fd cannot inspect an O_PATH descriptor, so ask
+    // libacl to inspect the kernel-pinned descriptor through /proc instead.
+    const acl = pathOnly ? aclGetFile(`/proc/self/fd/${fd}`, 0x8000) : aclGetFd(fd);
     if (!acl) throw refuse();
     try {
       const mode = [0];
@@ -55,24 +59,25 @@ export function readProtectedLinuxFile(path: string, owner: number, group: numbe
   const directory = (fd: number) => {
     const s = fstatSync(fd);
     if (!s.isDirectory() || ![0, owner].includes(s.uid) || (s.mode & 0o022)) throw refuse();
-    noExtendedAcl(fd);
+    noExtendedAcl(fd, true);
   };
-  // Linux O_CLOEXEC is stable but absent from some Node type definitions.
-  const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | 0x80000;
+  // Linux O_CLOEXEC and O_PATH are stable but absent from some Node type definitions.
+  const directoryFlags = constants.O_NOFOLLOW | constants.O_DIRECTORY | 0x80000 | 0x200000;
+  const fileFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | 0x80000;
   let parent = -1;
   let file = -1;
   try {
-    parent = open(anchor, flags | constants.O_DIRECTORY);
+    parent = open(anchor, directoryFlags);
     if (parent < 0) throw refuse();
     directory(parent);
     for (const part of parts.slice(0, -1)) {
-      const next = openat(parent, part, flags | constants.O_DIRECTORY);
+      const next = openat(parent, part, directoryFlags);
       if (next < 0) throw refuse();
       close(parent);
       parent = next;
       directory(parent);
     }
-    file = openat(parent, parts.at(-1), flags);
+    file = openat(parent, parts.at(-1), fileFlags);
     if (file < 0) throw refuse();
     const s = fstatSync(file);
     if (!s.isFile() || s.nlink !== 1 || s.uid !== owner || (s.mode & 0o7137)

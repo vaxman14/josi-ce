@@ -92,7 +92,14 @@ try {
       : `apps/${role === 'web' ? 'api' : 'worker'}/dist/${role === 'web' ? 'server' : 'main'}.js`;
     await import(pathToFileURL(join(PROGRAM, 'app', target)).href);
   }
-} catch {
-  console.error('Josi native Linux runtime refused unsafe, unactivated or unavailable configuration. Preserve installer recovery evidence.');
+} catch (error) {
+  const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const safe = raw
+    .replace(/postgres(?:ql)?:\/\/[^\s]+/gi, '[redacted database URL]')
+    .replace(/\b[a-f0-9]{64}\b/gi, '[redacted secret]')
+    .replace(/\b(token|password|secret)=\S+/gi, '$1=[redacted]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, 1000);
+  console.error(`Josi native Linux runtime failed: ${safe || 'unknown error'}`);
   process.exitCode = 1;
 }

@@ -19,6 +19,14 @@ describe.skipIf(process.platform !== 'linux')('Linux descriptor, mode and ACL se
     const value = fixture(); expect(value.read()).toBe('test-value');
     chmodSync(value.path, 0o640); expect(value.read()).toBe('test-value');
   });
+  it('traverses execute-only protected parent directories through pinned descriptors', () => {
+    const value = fixture();
+    const nested = join(value.root, 'nested'); mkdirSync(nested, { mode: 0o700 });
+    const secret = join(nested, 'secret'); writeFileSync(secret, 'nested-value', { mode: 0o600 });
+    chmodSync(nested, 0o111);
+    try { expect(value.read(secret)).toBe('nested-value'); }
+    finally { chmodSync(nested, 0o700); }
+  });
   it('refuses links, traversal, broad modes and oversized files', () => {
     const value = fixture(); symlinkSync(value.path, join(value.root, 'link'));
     expect(() => value.read(join(value.root, 'link'))).toThrow();

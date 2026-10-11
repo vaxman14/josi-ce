@@ -48,9 +48,6 @@ def run_install(uid):
         if event.get('error'):
             detail = event.get('component') or event.get('cause') or event['error']
             print(f"Stopped: {detail}", file=sys.stderr)
-        elif event.get('phase'):
-            service = f" ({event['service']})" if event.get('service') else ''
-            print(f"{event['phase']}{service}", flush=True)
     if process.wait() != 0:
         fail('installation failed; protected recovery evidence was retained')
 
@@ -81,7 +78,13 @@ def browser_target(port, address, bootstrap):
             body = response.read(8193)
             if response.status != 200 or len(body) > 8192:
                 fail('browser handoff response is invalid')
-            return json.loads(body)
+            try:
+                value = json.loads(body)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                fail('browser handoff response is invalid')
+            if not isinstance(value, dict):
+                fail('browser handoff response is invalid')
+            return value
     state = request('/api/onboarding/state')
     target = f'http://{address}:{port}/'
     if state.get('completed') is True:
