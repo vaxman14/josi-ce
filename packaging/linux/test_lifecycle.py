@@ -27,6 +27,10 @@ class LinuxLifecycleTests(unittest.TestCase):
         self.assertRegex(self.obj.verify(),r'^[a-f0-9]{64}$')
         (self.runtime/'app/package.json').write_text('{}')
         with self.assertRaisesRegex(ValueError,'hash mismatch'):self.obj.verify()
+    def test_same_version_installed_payload_mutation_is_rejected(self):
+        installed=self.root/'installed';shutil.copytree(self.runtime,installed)
+        (installed/'app/package.json').write_text('{"version":"0.1.78-linux.test","changed":true}\n')
+        with self.assertRaisesRegex(ValueError,'hash mismatch'):self.obj.verify(installed)
     def test_journal_is_hash_chained_and_transition_bounded(self):
         journal=lifecycle.Journal(self.root/'journal',{'from':None,'to':'0.1.78-linux.test','manifest':'a'*64})
         journal.phase('prepared');journal.phase('verified')
