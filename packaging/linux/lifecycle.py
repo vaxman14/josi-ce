@@ -348,38 +348,45 @@ class Lifecycle:
         for role in ROLES:
             if self.isolated:
                 child = self.children.get(role)
-                if child is None or child.poll() is not None: raise RuntimeError('Packaged service exited')
+                if child is None or child.poll() is not None: raise RuntimeError(role+' service exited')
             elif subprocess.run(['/usr/bin/systemctl','is-active','--quiet',UNIT_PREFIX+role+'.service']).returncode:
-                raise RuntimeError('Service is not active')
+                raise RuntimeError(role+' service is not active')
             if role in ports:
                 probe = socket.socket()
                 probe.settimeout(2)
                 try: probe.connect(('127.0.0.1', ports[role]))
+                except OSError as error: raise RuntimeError(role+' service is not listening') from error
                 finally: probe.close()
 
     def ready(self):
         cfg = json.loads((self.data/'config/runtime.json').read_text())
         deadline = time.monotonic() + 240
+        last_error = RuntimeError('readiness did not start')
         while time.monotonic() < deadline:
             self.progress('Checking readiness', 'web / worker / speech')
             try:
                 self.listeners(cfg)
-                for port in (cfg['apiPort'], cfg['publicPort']):
+                for name,port in (('web',cfg['apiPort']),('proxy',cfg['publicPort'])):
                     connection = http.client.HTTPConnection('127.0.0.1', port, timeout=3)
                     connection.request('GET','/ready')
                     response = connection.getresponse(); response.read(); connection.close()
-                    if response.status != 200: raise RuntimeError()
+                    if response.status != 200: raise RuntimeError(name+' readiness returned HTTP '+str(response.status))
                 heartbeat = self.data/'state/worker-heartbeat'
-                if not heartbeat.exists() or time.time()-heartbeat.stat().st_mtime > 90: raise RuntimeError()
+                if not heartbeat.exists(): raise RuntimeError('worker heartbeat is missing')
+                if time.time()-heartbeat.stat().st_mtime > 90: raise RuntimeError('worker heartbeat is stale')
                 connection = http.client.HTTPConnection('127.0.0.1',cfg['controlPort'],timeout=3)
                 token = (self.data/'secrets/voice-control/voice-control-token').read_text()
                 connection.request('GET','/status',headers={'Authorization':'Bearer '+token})
                 response = connection.getresponse(); status_value = json.loads(response.read()); connection.close()
-                if response.status != 200 or not status_value.get('helperAvailable') or (status_value.get('enabled') and not status_value.get('healthy')):
-                    raise RuntimeError()
+                if response.status != 200: raise RuntimeError('speech control returned HTTP '+str(response.status))
+                if not status_value.get('helperAvailable'): raise RuntimeError('speech helper is unavailable')
+                if status_value.get('enabled') and not status_value.get('healthy'):
+                    raise RuntimeError('speech runtime is unhealthy')
                 return
-            except (OSError,ValueError,RuntimeError,http.client.HTTPException): time.sleep(2)
-        raise RuntimeError('Readiness deadline exceeded')
+            except (OSError,ValueError,RuntimeError,http.client.HTTPException) as error:
+                last_error = error
+                time.sleep(2)
+        raise RuntimeError('Readiness deadline exceeded: '+str(last_error))
 
     def copy(self, source, target):
         if target.exists(): raise ValueError('Copy destination exists')

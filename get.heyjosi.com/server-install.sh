@@ -3,7 +3,7 @@
 # the release base URL for physical acceptance without publishing the candidate.
 set -eu
 
-VERSION=0.1.78-linux.6
+VERSION=0.1.78-linux.7
 DEFAULT_BASE="https://github.com/vaxman14/josi-ce/releases/download/v${VERSION}"
 BASE_URL=${1:-$DEFAULT_BASE}
 

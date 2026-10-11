@@ -46,7 +46,8 @@ def run_install(uid):
         except json.JSONDecodeError:
             continue
         if event.get('error'):
-            print(f"Stopped: {event.get('component') or event['error']} failed", file=sys.stderr)
+            detail = event.get('component') or event.get('cause') or event['error']
+            print(f"Stopped: {detail}", file=sys.stderr)
         elif event.get('phase'):
             service = f" ({event['service']})" if event.get('service') else ''
             print(f"{event['phase']}{service}", flush=True)

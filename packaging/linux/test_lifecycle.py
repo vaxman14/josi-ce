@@ -43,6 +43,10 @@ class LinuxLifecycleTests(unittest.TestCase):
     def test_diagnostics_redact_credential_shapes(self):
         value=lifecycle.diagnostic(ValueError('token=abc postgresql://josi:pw@host/db '+('a'*64)))['cause']
         self.assertNotIn('abc',value);self.assertNotIn('josi:pw',value);self.assertNotIn('a'*64,value)
+    def test_listener_failure_names_the_service(self):
+        self.installation.mkdir(mode=0o700);self.obj.layout((15432,18080,8080,18081,18082))
+        with self.assertRaisesRegex(RuntimeError,'database service exited'):
+            self.obj.listeners(json.loads((self.obj.data/'config/runtime.json').read_text()))
     def test_workspace_selection_refuses_home_and_links(self):
         with self.assertRaises(ValueError):maintenance.selected_folder(str(Path.home()),os.getuid())
         folder=self.root/'owned';folder.mkdir();link=self.root/'linked';link.symlink_to(folder)

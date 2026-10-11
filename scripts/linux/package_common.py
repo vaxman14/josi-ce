@@ -9,7 +9,7 @@ REPO = Path(__file__).resolve().parents[2]
 BASE = Path('/home/roman/JosiDrive/BuildTemp/josi-ce-native-linux-20261010')
 OUT = BASE / 'artifacts'
 RUNTIME = BASE / 'stage/runtime'
-VERSION = '0.1.78-linux.6'
+VERSION = '0.1.78-linux.7'
 SOURCE_DATE_EPOCH = '1735689600'
 
 
