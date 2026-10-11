@@ -94,6 +94,15 @@ rejected by Gatekeeper; that verdict is recorded, never treated as acceptance.
 
 ## Root-cause evidence
 
+Apple rejected notarization submission `a8d75303-666b-490b-b194-8b3f12046212`
+because the source ZIP inside the DMG included Skia's legacy i386 `perfhost`
+fixture. All three blocking findings (unsigned, missing secure timestamp and
+missing hardened runtime) pointed to that upstream fixture. Corresponding
+source archives must therefore ship beside the submitted DMG, with checksums
+and a pointer inside `Licenses and Sources`. Preserve their pinned original
+bytes; do not re-sign or edit upstream source fixtures to satisfy notarization.
+The installer payload is unchanged by this packaging correction.
+
 Roman's failed physical test used Verify only. Its stdout/stderr and launch
 error were discarded, and helper output retained only the exception class.
 The original Verify failure cause remains unrecoverable; preserved payload

@@ -211,7 +211,13 @@ def sign(out,standard_mount=False):
     image_root=out/'dmg-root';image_root.mkdir()
     shutil.copyfile(pkg,image_root/pkg.name);shutil.copyfile(out/'TEST-ME.txt',image_root/'TEST-ME.txt')
     legal_root=image_root/'Licenses and Sources';legal_root.mkdir()
-    shutil.copyfile(source_zip,legal_root/source_zip.name)
+    # Apple recursively scans archives inside the submitted image, including
+    # upstream source fixtures. Keep the exact source closure beside the DMG.
+    (legal_root/'Corresponding-Sources.txt').write_text(
+        'Complete corresponding source is distributed beside this disk image as '
+        +source_zip.name+'. See SHA256SUMS.txt for its checksum.\n'
+        'The source archive contains upstream build and test fixtures; it is '
+        'not an installer and should not be executed.\n')
     shutil.copyfile(out/'client-legal/Josi-Desktop-Notices.txt',legal_root/'Josi-Desktop-Notices.txt')
     (image_root/'.background').mkdir();shutil.copyfile(out/'background.png',image_root/'.background/background.png')
     shutil.copyfile(app/'Contents/Resources/Josi.icns',image_root/'.VolumeIcon.icns')
