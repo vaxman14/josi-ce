@@ -63,6 +63,16 @@ class LinuxLifecycleTests(unittest.TestCase):
         folder=self.root/'protected';folder.mkdir(mode=0o700);os.chmod(folder,0o700)
         lifecycle.protect_product_root(folder,False)
         self.assertEqual(folder.stat().st_mode&0o777,0o711)
+    def test_program_root_restores_service_traversal_after_restrictive_umask(self):
+        folder=self.root/'versions';folder.mkdir(mode=0o700);os.chmod(folder,0o700)
+        lifecycle.protect_program_root(folder,False)
+        self.assertEqual(folder.stat().st_mode&0o777,0o755)
+    def test_durable_applies_requested_mode_despite_restrictive_umask(self):
+        folder=self.root/'durable';folder.mkdir()
+        previous=os.umask(0o077)
+        try:lifecycle.durable(folder/'shared-secret',b'secret',mode=0o640)
+        finally:os.umask(previous)
+        self.assertEqual((folder/'shared-secret').stat().st_mode&0o777,0o640)
     def test_failed_fresh_install_is_retained_before_clean_retry(self):
         self.installation.mkdir(mode=0o700);self.obj.data.mkdir()
         (self.obj.data/'partial').write_text('preserve me')

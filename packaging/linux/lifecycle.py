@@ -85,6 +85,7 @@ def durable(path, value, replace=False, mode=0o600):
     data = json.dumps(value, sort_keys=True, separators=(',', ':')).encode() + b'\n' if not isinstance(value, bytes) else value
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     try:
+        os.fchmod(descriptor, mode)
         with os.fdopen(descriptor, 'wb', closefd=False) as stream:
             stream.write(data)
             stream.flush()
@@ -105,6 +106,16 @@ def protect_product_root(path, isolated=False):
         raise ValueError('Unprotected product directory')
     if not isolated:
         os.chmod(path, 0o711)
+
+def protect_program_root(path, isolated=False):
+    """Keep immutable runtimes traversable despite a restrictive root umask."""
+    path = Path(path)
+    path.mkdir(mode=0o755, parents=True, exist_ok=True)
+    info = path.stat()
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError('Unprotected program directory')
+    if not isolated:
+        os.chmod(path, 0o755)
 
 class Journal:
     def __init__(self, folder, identity=None):
@@ -555,7 +566,7 @@ class Lifecycle:
                 finally:
                     for probe in probes: probe.close()
             self.identities(fresh)
-            self.installed.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
+            protect_program_root(self.installed.parent, self.isolated)
             if self.installed.exists(): self.verify(self.installed)
             else:
                 staged=folder/'program'; self.copy(self.runtime,staged); self.seal_program(staged); self.verify(staged); os.rename(staged,self.installed)
