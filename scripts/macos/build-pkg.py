@@ -24,7 +24,7 @@ CLIENT=CLIENT_ROOT/'release-public-20261001-2321/mac-arm64/Josi CE.app'
 APP_IDENTITY='Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
 PKG_IDENTITY='Developer ID Installer: Socal Receptionist LLC (LRH75YR6QW)'
 KEYCHAIN='/Users/roman/Library/Keychains/login.keychain-db'
-VERSION='0.1.78-macos.5'
+VERSION='0.1.78-macos.6'
 SDK='/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
 SWIFTC='/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc'
 ENV={**os.environ,'DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer','TMPDIR':str(BASE/'tmp'),'CLANG_MODULE_CACHE_PATH':str(BASE/'clang-cache'),'npm_config_cache':'/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/codex-macos-native-20261009/npm'}
@@ -66,7 +66,7 @@ def distribution():
  <choices-outline><line choice="server"/><line choice="client"/></choices-outline>
  <choice id="server" title="Josi Server" description="Required. Installs the local server and Josi Server management app. Your existing server data is retained." start_selected="true" start_enabled="false"><pkg-ref id="com.heyjosi.ce.server.pkg"/></choice>
  <choice id="client" title="Desktop Client (optional)" description="Adds the real Josi CE desktop app. It can be removed separately. Leave unchecked if you already have this client." start_selected="false"><pkg-ref id="com.heyjosi.ce.desktop.pkg"/></choice>
- <pkg-ref id="com.heyjosi.ce.server.pkg" version="0.1.78.5" onConclusion="none">server.pkg</pkg-ref>
+ <pkg-ref id="com.heyjosi.ce.server.pkg" version="0.1.78.6" onConclusion="none">server.pkg</pkg-ref>
  <pkg-ref id="com.heyjosi.ce.desktop.pkg" version="0.6.5" onConclusion="none">client.pkg</pkg-ref>
 </installer-gui-script>
 '''
@@ -101,7 +101,7 @@ def prepare(out):
     macos=app/'Contents/MacOS';macos.mkdir()
     compile(run,out,'JosiServer',['ServerApp.swift','InstallerState.swift','DiagnosticLog.swift','ProgressState.swift','BrowserHandoff.swift'])
     shutil.copyfile(out/'JosiServer',macos/'JosiServer');(macos/'JosiServer').chmod(0o755)
-    plist={'CFBundleIdentifier':'com.heyjosi.ce.server','CFBundleName':'Josi Server','CFBundleDisplayName':'Josi Server','CFBundleExecutable':'JosiServer','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.1.78','CFBundleVersion':'20261010.5','CFBundleIconFile':'Josi.icns','LSMinimumSystemVersion':'14.0','NSHighResolutionCapable':True,'NSAppTransportSecurity':{'NSAllowsLocalNetworking':True},'NSHumanReadableCopyright':'Copyright SOCAL RECEPTIONIST LLC. AGPL-3.0-or-later; bundled notices and corresponding sources apply.'}
+    plist={'CFBundleIdentifier':'com.heyjosi.ce.server','CFBundleName':'Josi Server','CFBundleDisplayName':'Josi Server','CFBundleExecutable':'JosiServer','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.1.78','CFBundleVersion':'20261011.6','CFBundleIconFile':'Josi.icns','LSMinimumSystemVersion':'14.0','NSHighResolutionCapable':True,'NSAppTransportSecurity':{'NSAllowsLocalNetworking':True},'NSHumanReadableCopyright':'Copyright SOCAL RECEPTIONIST LLC. AGPL-3.0-or-later; bundled notices and corresponding sources apply.'}
     (app/'Contents/Info.plist').write_bytes(plistlib.dumps(plist))
     for executable,sources in [('state-tests',['InstallerState.swift','InstallerStateTests.swift']),('diagnostic-tests',['DiagnosticLog.swift','DiagnosticTests.swift']),('progress-tests',['ProgressState.swift','ProgressTests.swift'])]:
         compile(run,out,executable,sources)
@@ -170,7 +170,7 @@ def prepare(out):
     m.inventory(runtime)
     run('unsigned-runtime-integrity.log',[runtime/'python/bin/python3.11','-I','-B',runtime/'app/native/lifecycle.py','verify'])
     packages=out/'unsigned-packages';packages.mkdir()
-    for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.5'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
+    for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.6'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
         root=out/('payload' if name=='server' else 'client-payload')
         run('unsigned-'+name+'-pkg.log',['/usr/bin/pkgbuild','--root',root,'--component-plist',component_plan(out,name),'--install-location','/','--ownership','recommended','--identifier',identifier,'--version',version,'--scripts',out/(name+'-scripts'),packages/(name+'.pkg')])
     run('unsigned-productbuild.log',['/usr/bin/productbuild','--distribution',out/'Distribution.xml','--resources',out/'package-resources','--package-path',packages,out/'Install Josi-unsigned.pkg'])
@@ -197,7 +197,7 @@ def sign(out,standard_mount=False):
     identity=run('app-authority.log',['/usr/bin/codesign','-d','--verbose=4',app])
     if 'Authority='+APP_IDENTITY not in identity or 'TeamIdentifier=LRH75YR6QW' not in identity or 'Timestamp=' not in identity or '(runtime)' not in identity:raise ValueError('Wrong application identity, timestamp or hardened runtime')
     packages=out/'packages';packages.mkdir()
-    for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.5'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
+    for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.6'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
         payload=out/('payload' if name=='server' else 'client-payload')
         run(name+'-pkg.log',['/usr/bin/pkgbuild','--root',payload,'--component-plist',component_plan(out,name),'--install-location','/','--ownership','recommended','--identifier',identifier,'--version',version,'--scripts',out/(name+'-scripts'),packages/(name+'.pkg')])
     pkg=out/'Install Josi.pkg'

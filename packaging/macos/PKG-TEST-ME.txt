@@ -1,9 +1,9 @@
-Josi Server — physical acceptance candidate (not notarized)
+Josi Server — physical acceptance candidate
 
 Use a separate Apple Silicon Mac with macOS 14 or later and at least 6 GB
 free space. Keep existing Josi data and recovery copies. Allow several minutes.
-Do not disable Gatekeeper globally. This candidate is signed but deliberately
-not notarized; macOS may require an explicit approval to open it.
+Do not disable Gatekeeper globally. Check the accompanying candidate status
+and checksums for signing and notarization results before physical testing.
 
 1. Server only: Open the DMG and double-click Install Josi.pkg. Read Introduction.
    Use Customize to leave Desktop Client unchecked. Confirm the startup disk

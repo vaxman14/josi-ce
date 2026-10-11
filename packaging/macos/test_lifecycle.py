@@ -28,6 +28,20 @@ class Tests(unittest.TestCase):
         self.obj.isolated=False
         with patch.object(Path,'exists',lambda p: p.parent==Path('/Library/LaunchDaemons')), patch.object(m.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','Permission denied')):
             with self.assertRaisesRegex(RuntimeError,'Cannot inspect service'):self.obj.stop()
+    def test_missing_service_requires_exact_label_domain_and_exit_code(self):
+        from unittest.mock import patch
+        import subprocess
+        self.obj.isolated=False
+        label=m.LABEL+m.STOP[0]
+        for code,message in [
+            (1,'Could not find service "'+label+'" in domain for system'),
+            (113,'Could not find service "'+label+'-other" in domain for system'),
+            (113,'Could not find service "'+label+'" in domain for gui/501'),
+            (113,'Permission denied'),
+        ]:
+            with self.subTest(code=code,message=message), patch.object(Path,'exists',lambda p: p.parent==Path('/Library/LaunchDaemons')), patch.object(m.subprocess,'run',return_value=subprocess.CompletedProcess([],code,'',message)) as run:
+                with self.assertRaisesRegex(RuntimeError,'Cannot inspect service'):self.obj.stop()
+                self.assertEqual(run.call_count,1)
     def test_subprocess_diagnostics_preserve_cause_without_argv_secrets(self):
         import subprocess
         uri=b'postgres://'+b'user:unsafe'+b'@host/db'
