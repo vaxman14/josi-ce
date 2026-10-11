@@ -11,6 +11,23 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 BASE=Path('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests')
 
 class Tests(unittest.TestCase):
+    def test_stopping_already_unloaded_services_is_idempotent(self):
+        from unittest.mock import patch
+        import subprocess
+        self.obj.isolated=False
+        def query(args, **kwargs):
+            self.assertEqual(args[:2],['/bin/launchctl','print'])
+            label=args[2].split('/',1)[1]
+            return subprocess.CompletedProcess(args,113,'','Bad request.\nCould not find service "'+label+'" in domain for system\n')
+        with patch.object(Path,'exists',lambda p: p.parent==Path('/Library/LaunchDaemons')), patch.object(m.subprocess,'run',side_effect=query) as run:
+            self.obj.stop()
+        self.assertEqual(run.call_count,len(m.ROLES))
+    def test_service_inspection_errors_are_not_treated_as_stopped(self):
+        from unittest.mock import patch
+        import subprocess
+        self.obj.isolated=False
+        with patch.object(Path,'exists',lambda p: p.parent==Path('/Library/LaunchDaemons')), patch.object(m.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','Permission denied')):
+            with self.assertRaisesRegex(RuntimeError,'Cannot inspect service'):self.obj.stop()
     def test_subprocess_diagnostics_preserve_cause_without_argv_secrets(self):
         import subprocess
         uri=b'postgres://'+b'user:unsafe'+b'@host/db'

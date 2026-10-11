@@ -273,6 +273,10 @@ class Lifecycle:
                 p=Path('/Library/LaunchDaemons')/(LABEL+role+'.plist')
                 if p.exists():
                     query=subprocess.run(['/bin/launchctl','print','system/'+LABEL+role],capture_output=True,text=True,timeout=10)
+                    if query.returncode:
+                        if query.returncode==113 and 'Could not find service "'+LABEL+role+'" in domain for system' in query.stderr:
+                            continue
+                        raise RuntimeError('Cannot inspect service before stopping: '+role)
                     pids=[int(line.strip()[6:]) for line in query.stdout.splitlines() if line.strip().startswith('pid = ') and line.strip()[6:].isdecimal()]
                     result=subprocess.run(['/bin/launchctl','bootout','system',str(p)],capture_output=True)
                     if result.returncode and b'No such process' not in result.stderr and b'Could not find' not in result.stderr:raise RuntimeError('Service quiescence failed')
