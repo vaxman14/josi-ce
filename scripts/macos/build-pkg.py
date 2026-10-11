@@ -74,10 +74,15 @@ def distribution():
 def prepare(out):
     out.mkdir();(out/'evidence').mkdir(mode=0o700)
     run=runner(out)
-    run('baseline-app-signature.log',['/usr/bin/codesign','--verify','--deep','--strict','-R','=anchor apple generic and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "'+APP_IDENTITY+'"',PREVIOUS])
+    # Finder may attach unsigned metadata when the handoff is copied. Preserve
+    # the immutable input; verify its original signature on a byte-identical
+    # candidate copy without resource forks or extended attributes.
+    baseline=out/'baseline-input/Josi CE Server Setup.app'
+    run('baseline-copy.log',['/usr/bin/ditto','--norsrc','--noextattr',PREVIOUS,baseline])
+    run('baseline-app-signature.log',['/usr/bin/codesign','--verify','--deep','--strict','-R','=anchor apple generic and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "'+APP_IDENTITY+'"',baseline])
     run('baseline-client-signature.log',['/usr/bin/codesign','--verify','--deep','--strict','-R','=anchor apple generic and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "'+APP_IDENTITY+'"',CLIENT])
     app=out/'payload/Applications/Josi Server.app';resources=app/'Contents/Resources';resources.mkdir(parents=True)
-    shutil.copytree(PREVIOUS/'Contents/Resources/runtime',resources/'runtime',symlinks=True)
+    shutil.copytree(baseline/'Contents/Resources/runtime',resources/'runtime',symlinks=True)
     runtime=resources/'runtime'
     for p in REPO.glob('packages/*/dist'):
         destination=runtime/'app'/p.relative_to(REPO)
