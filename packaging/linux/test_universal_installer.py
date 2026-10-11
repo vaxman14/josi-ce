@@ -28,7 +28,7 @@ class UniversalInstallerTest(unittest.TestCase):
     def test_manifest_requires_all_packages_and_pinned_checksums(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'manifest.json'
-            manifest = {'version':'0.1.78-linux.16','baseUrl':'https://example.invalid/',
+            manifest = {'version':'0.1.78-linux.17','baseUrl':'https://example.invalid/',
                 'packages':{family:{'name':family+'.pkg','sha256':'a'*64} for family in ('arch','debian','rpm')}}
             path.write_text(json.dumps(manifest))
             self.assertEqual(core.load_manifest(path), manifest)
@@ -55,7 +55,7 @@ class UniversalInstallerTest(unittest.TestCase):
 
     def test_browser_handoff_uses_private_page_and_checked_host_launcher(self):
         class Surface:
-            manifest = {'version':'0.1.78-linux.16'}
+            manifest = {'version':'0.1.78-linux.17'}
             final_url = 'http://10.0.0.7:8080/setup#handoff=' + 'a'*64
             opened = False
             failed = False
@@ -79,7 +79,7 @@ class UniversalInstallerTest(unittest.TestCase):
 
     def test_browser_handoff_reports_launcher_failure(self):
         class Surface:
-            manifest = {'version':'0.1.78-linux.16'}
+            manifest = {'version':'0.1.78-linux.17'}
             final_url = 'http://127.0.0.1:8080/'
             opened = False
             failed = False

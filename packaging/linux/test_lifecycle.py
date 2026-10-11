@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import tempfile
 import unittest
 
@@ -80,6 +81,23 @@ class LinuxLifecycleTests(unittest.TestCase):
         self.assertEqual((self.root/'handoff').stat().st_mode&0o777,0o711)
         self.assertEqual(handoff.stat().st_mode&0o777,0o700)
         self.assertEqual(handoff.stat().st_uid,os.getuid())
+    def test_fresh_install_selects_an_open_public_port_when_preferred_is_taken(self):
+        occupied=socket.socket();occupied.bind(('0.0.0.0',0));self.addCleanup(occupied.close)
+        public=occupied.getsockname()[1]
+        probes=[]
+        try:
+            for _ in range(4):
+                probe=socket.socket();probe.bind(('127.0.0.1',0));probes.append(probe)
+            preferred=(probes[0].getsockname()[1],probes[1].getsockname()[1],public,
+                probes[2].getsockname()[1],probes[3].getsockname()[1])
+        finally:
+            for probe in probes:probe.close()
+        selected=lifecycle.available_ports(preferred)
+        self.assertNotEqual(selected[2],public)
+        self.assertEqual(len(set(selected)),5)
+    def test_port_selection_rejects_invalid_or_duplicate_ports(self):
+        for ports in ((8080,)*5,(80,18080,8080,18081,18082),(True,18080,8080,18081,18082)):
+            with self.assertRaisesRegex(ValueError,'Invalid ports'):lifecycle.available_ports(ports)
     def test_failed_fresh_install_is_retained_before_clean_retry(self):
         self.installation.mkdir(mode=0o700);self.obj.data.mkdir()
         (self.obj.data/'partial').write_text('preserve me')

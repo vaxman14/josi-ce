@@ -16,7 +16,7 @@ BASE = Path('/home/roman/JosiDrive/BuildTemp/josi-ce-native-linux-20261010')
 OUT = BASE / 'artifacts'
 APPDIR = BASE / 'universal-appimage/AppDir'
 TOOLS = Path('/home/roman/JosiDrive/Caches/linux-appimage-tools')
-VERSION = '0.1.78-linux.16'
+VERSION = '0.1.78-linux.17'
 BASE_URL = os.environ.get('JOSI_INSTALLER_BASE_URL',
     f'https://github.com/vaxman14/josi-ce/releases/download/v{VERSION}/')
 PACKAGES = {

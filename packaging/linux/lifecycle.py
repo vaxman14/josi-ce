@@ -7,6 +7,7 @@ create users, write systemd units or touch an installed Josi instance.
 import fcntl
 import hashlib
 import http.client
+import itertools
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ UNIT_DIR = Path('/etc/systemd/system')
 UNIT_PREFIX = 'josi-ce-'
 ROLES = ('database', 'voice', 'voice-control', 'web', 'worker', 'proxy')
 STOP = ('proxy', 'voice-control', 'voice', 'worker', 'web', 'database')
+DEFAULT_PORTS = (15432, 18080, 8080, 18081, 18082)
 ACCOUNTS = {role: 'josi-ce-' + ({'voice-control':'control'}.get(role, role)) for role in ROLES}
 SHARED_GROUPS = {'josi-ce-app':('web','worker'), 'josi-ce-voice-shared':('voice','voice-control')}
 PHASES = ('prepared','verified','quiescing','quiesced','snapshot','provisioned',
@@ -133,6 +135,42 @@ def prepare_browser_handoff(root, interactive_uid):
     os.chmod(handoff, 0o700)
     os.chown(handoff, interactive_uid, -1)
     return handoff
+
+def available_ports(preferred=DEFAULT_PORTS):
+    """Choose collision-free fresh-install ports, preferring stable defaults.
+
+    Internal services bind loopback. The public proxy binds every IPv4
+    interface, so its availability probe must do the same or a Docker-published
+    port can slip past the preflight and fail only after provisioning.
+    """
+    if len(preferred) != 5 or len(set(preferred)) != 5 or any(
+        not isinstance(port, int) or isinstance(port, bool) or port < 1024 or port > 65535
+        for port in preferred
+    ):
+        raise ValueError('Invalid ports')
+    selected, reservations = [], []
+    try:
+        for index, first in enumerate(preferred):
+            address = '0.0.0.0' if index == 2 else '127.0.0.1'
+            candidates = itertools.chain(range(first, 65536), range(1024, first))
+            for port in candidates:
+                if port in selected:
+                    continue
+                probe = socket.socket()
+                try:
+                    probe.bind((address, port))
+                except OSError:
+                    probe.close()
+                    continue
+                reservations.append(probe)
+                selected.append(port)
+                break
+            else:
+                raise RuntimeError('No available service port')
+        return tuple(selected)
+    finally:
+        for probe in reservations:
+            probe.close()
 
 class Journal:
     def __init__(self, folder, identity=None):
@@ -534,7 +572,7 @@ class Lifecycle:
             os.lchown(path,0,0)
             if not path.is_symlink(): os.chmod(path,0o755 if path.is_dir() or path.stat().st_mode&0o111 else 0o644)
 
-    def install(self, ports=(15432,18080,8080,18081,18082), fail_at=None, interactive_uid=None, repair=False):
+    def install(self, ports=None, fail_at=None, interactive_uid=None, repair=False):
         if not self.isolated and (interactive_uid is None or interactive_uid < 1000 or not pwd.getpwuid(interactive_uid).pw_dir):
             raise ValueError('Logged-in installer user required')
         if fail_at and not self.isolated: raise ValueError('Fault injection is isolated only')
@@ -573,15 +611,7 @@ class Lifecycle:
                 if not self.isolated:
                     for role in ROLES:
                         if (UNIT_DIR/(UNIT_PREFIX+role+'.service')).exists(): raise ValueError('Existing systemd unit must be preserved')
-                probes=[]
-                try:
-                    if len(set(ports)) != 5 or any(not isinstance(port,int) or port<1024 or port>65535 for port in ports): raise ValueError('Invalid ports')
-                    for port in ports:
-                        probe=socket.socket(); probes.append(probe)
-                        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                        probe.bind(('127.0.0.1',port))
-                finally:
-                    for probe in probes: probe.close()
+                ports = available_ports(DEFAULT_PORTS if ports is None else ports)
             self.identities(fresh)
             protect_program_root(self.installed.parent, self.isolated)
             if self.installed.exists(): self.verify(self.installed)
