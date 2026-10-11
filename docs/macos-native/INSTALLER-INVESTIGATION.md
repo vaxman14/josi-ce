@@ -25,7 +25,7 @@ Read-only verification of the preserved accepted app at
 ```
 
 The base artifact directory is
-`/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009/`.
+`/Users/roman/Documents/Josi Mac Native/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009/`.
 The current read-only result does not reproduce the original failure and is
 not evidence of installation success. The accepted app's Info.plist also
 has no CFBundleIconFile; its source exposes competing Verify/Install/Open

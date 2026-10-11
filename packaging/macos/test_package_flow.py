@@ -9,7 +9,7 @@ HERE=Path(__file__).parent
 def module(name,file):
     spec=importlib.util.spec_from_file_location(name,HERE/file);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m
 driver=module('pkg_driver','pkg-driver.py');maintenance=module('maintenance','maintenance.py')
-BASE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests')
+BASE=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests')
 
 class PackageFlow(unittest.TestCase):
     def test_verification_precedes_install_and_failure_prevents_mutation(self):

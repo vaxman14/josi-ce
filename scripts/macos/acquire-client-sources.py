@@ -9,7 +9,7 @@ import re
 import sys
 import subprocess
 
-CACHE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Caches/codex-macos-native-20261009/desktop-source-closure')
+CACHE=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/codex-macos-native-20261009/desktop-source-closure')
 
 def fetch(url,path):
     if path.exists():return path.read_bytes()
@@ -17,7 +17,7 @@ def fetch(url,path):
     return path.read_bytes()
 
 out=Path(sys.argv[1])
-if not str(out).startswith('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009/pkg-candidate-'):raise ValueError('External candidate required')
+if not str(out).startswith('/Users/roman/Documents/Josi Mac Native/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009/pkg-candidate-'):raise ValueError('External candidate required')
 folder=out/'client-source-closure';folder.mkdir()
 deps=fetch('https://raw.githubusercontent.com/electron/electron/v43.2.0/DEPS',folder/'electron-DEPS.txt').decode()
 chromium=re.search(r"'chromium_version':\s*'([^']+)'",deps).group(1)

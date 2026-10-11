@@ -8,7 +8,7 @@ import subprocess
 import zipfile
 
 REPO=Path(__file__).resolve().parents[2]
-BASE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
+BASE=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
 RUNTIME=BASE/'stage/runtime'
 LICENSES=RUNTIME/'licenses'
 # Corresponding source is distributed beside the notarized installer instead of
@@ -47,7 +47,7 @@ def main():
     for row in go:
         src=BASE/'caddy-sources'/row['filename'];verified(src,row['sha256']);copy(src,SOURCES/'caddy'/row['filename'])
     for name,expected in [('Python-3.11.15.tar.xz','272179ddd9a2e41a0fc8e42e33dfbdca0b3711aa5abf372d3f2d51543d09b625'),('postgresql-16.15.tar.bz2','c1575341fa7bd40f5274ea465b34390f4dc64cdd0770af327005caaeb9f6b7ed')]:
-        src=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Caches/codex-macos-native-20261009')/name;verified(src,expected);copy(src,SOURCES/'base'/name)
+        src=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/codex-macos-native-20261009')/name;verified(src,expected);copy(src,SOURCES/'base'/name)
     notices=[]
     def notice(name,data):
         if not data or len(data)>4*1024*1024:return

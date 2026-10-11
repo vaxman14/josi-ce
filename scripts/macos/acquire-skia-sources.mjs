@@ -1,7 +1,7 @@
 import {execFileSync} from 'node:child_process';
 import {readFileSync,writeFileSync,existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-const base='/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port';
+const base='/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port';
 const lock='packaging/macos/extra-sources.lock.json';const rows=JSON.parse(readFileSync(lock));
 const skia=rows.find(x=>x.package==='skia');
 const deps=execFileSync('/usr/bin/tar',['-xOf',base+'/source-closure/'+skia.path,'skia-'+skia.version+'/DEPS'],{encoding:'utf8'});

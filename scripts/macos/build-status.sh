@@ -2,8 +2,8 @@
 set -euo pipefail
 # Build only the read-only acceptance utility. This is not the distribution.
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-build_root=/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009
-artifact_root=/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009
+build_root=/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009
+artifact_root=/Users/roman/Documents/Josi Mac Native/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009
 export TMPDIR="$build_root/tmp"
 mkdir -p "$TMPDIR" "$build_root/swift-cache"
 output="$artifact_root/status-tool-$(/bin/date -u +%Y%m%dT%H%M%SZ)"

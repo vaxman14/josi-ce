@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 REPO=Path(__file__).resolve().parents[2]
-BASE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
+BASE=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
 STAGE=BASE/'stage'
 RUNTIME=STAGE/'runtime'
 NODE=BASE.parent.parent/'node-v24.15.0-darwin-arm64'
@@ -25,7 +25,7 @@ def main():
     RUNTIME.mkdir(parents=True,exist_ok=True)
     app=RUNTIME/'app';app.mkdir(exist_ok=True)
     for p in [REPO/'package.json',REPO/'package-lock.json',*REPO.glob('packages/*/package.json'),*REPO.glob('apps/*/package.json')]:copy(p,app/p.relative_to(REPO))
-    env={'PATH':str(NODE/'bin')+':/usr/bin:/bin','TMPDIR':str(BASE/'tmp'),'npm_config_cache':'/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Caches/codex-macos-native-20261009/npm','DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer'}
+    env={'PATH':str(NODE/'bin')+':/usr/bin:/bin','TMPDIR':str(BASE/'tmp'),'npm_config_cache':'/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/codex-macos-native-20261009/npm','DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer'}
     if not (app/'node_modules').exists():
         subprocess.run([str(NODE/'bin/npm'),'ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],cwd=app,env=env,check=True)
     meta=json.loads((app/'package.json').read_text());meta.update(name='josi-ce-native-runtime',version=VERSION,type='module')
@@ -43,7 +43,7 @@ def main():
     for name,source in [('node',NODE),('postgresql',BASE/'prefix/postgresql'),('python',BASE/'prefix/python')]:
         if (RUNTIME/name).exists():shutil.rmtree(RUNTIME/name)
         if name=='node':
-            archive=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Caches/codex-macos-native-20261009/node-v24.15.0-darwin-arm64.tar.gz')
+            archive=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/codex-macos-native-20261009/node-v24.15.0-darwin-arm64.tar.gz')
             with archive.open('rb') as stream:
                 if hashlib.file_digest(stream,'sha256').hexdigest()!='372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4':raise ValueError('Node pin mismatch')
             (RUNTIME/name).mkdir()

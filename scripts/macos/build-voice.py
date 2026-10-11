@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
-BASE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
+BASE=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
 REPO=Path(__file__).resolve().parents[2]
 python=BASE/'prefix/python/bin/python3.11'
 rows=json.loads((REPO/'packaging/macos/voice-inputs.lock.json').read_text())

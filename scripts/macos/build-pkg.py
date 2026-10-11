@@ -16,10 +16,10 @@ import subprocess
 import zipfile
 
 REPO=Path(__file__).resolve().parents[2]
-BASE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
-RELEASE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009')
+BASE=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
+RELEASE=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009')
 PREVIOUS=RELEASE/'socal-signed-20261010T021606Z/Josi CE Server Setup.app'
-CLIENT_ROOT=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Projects/worktrees/josi-desktop-macos-0.6.5-e1d28de')
+CLIENT_ROOT=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/Projects/worktrees/josi-desktop-macos-0.6.5-e1d28de')
 CLIENT=CLIENT_ROOT/'release-public-20261001-2321/mac-arm64/Josi CE.app'
 APP_IDENTITY='Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
 PKG_IDENTITY='Developer ID Installer: Socal Receptionist LLC (LRH75YR6QW)'
@@ -27,7 +27,7 @@ KEYCHAIN='/Users/roman/Library/Keychains/login.keychain-db'
 VERSION='0.1.78-macos.5'
 SDK='/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
 SWIFTC='/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc'
-ENV={**os.environ,'DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer','TMPDIR':str(BASE/'tmp'),'CLANG_MODULE_CACHE_PATH':str(BASE/'clang-cache'),'npm_config_cache':'/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Caches/codex-macos-native-20261009/npm'}
+ENV={**os.environ,'DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer','TMPDIR':str(BASE/'tmp'),'CLANG_MODULE_CACHE_PATH':str(BASE/'clang-cache'),'npm_config_cache':'/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/codex-macos-native-20261009/npm'}
 
 def digest(path):
     with path.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
@@ -114,7 +114,7 @@ def prepare(out):
     client=out/'client-payload/Applications/Josi CE.app'
     shutil.copytree(CLIENT,client,symlinks=True)
     legal=out/'client-legal';legal.mkdir()
-    electron_archive=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Caches/electron/electron-v43.2.0-darwin-arm64.zip')
+    electron_archive=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/electron/electron-v43.2.0-darwin-arm64.zip')
     expected=json.loads((CLIENT_ROOT/'node_modules/electron/checksums.json').read_text())['electron-v43.2.0-darwin-arm64.zip']
     if digest(electron_archive)!=expected:raise ValueError('Cached Electron archive does not match its pinned package checksum')
     # Read the existing cache only; all new dependency copies/evidence stay on JosiDrive.

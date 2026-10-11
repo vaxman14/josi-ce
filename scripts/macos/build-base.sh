@@ -2,8 +2,8 @@
 set -euo pipefail
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 export PATH="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-base=/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port
-cache=/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Caches/codex-macos-native-20261009
+base=/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port
+cache=/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/codex-macos-native-20261009
 export TMPDIR="$base/tmp"
 export CLANG_MODULE_CACHE_PATH="$base/clang-cache"
 mkdir -p "$TMPDIR" "$base/src" "$base/prefix" "$CLANG_MODULE_CACHE_PATH"

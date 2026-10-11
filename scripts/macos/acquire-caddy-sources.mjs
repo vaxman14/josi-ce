@@ -1,7 +1,7 @@
 import {readFileSync,writeFileSync,mkdirSync,existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {unzipSync} from 'fflate';
-const base='/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port';
+const base='/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port';
 mkdirSync(base+'/caddy-sources',{recursive:true});
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const escape=s=>s.replace(/[A-Z]/g,c=>'!'+c.toLowerCase());

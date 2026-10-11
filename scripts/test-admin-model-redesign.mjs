@@ -15,7 +15,7 @@ await new Promise(done=>portServer.close(done));
 const url=`http://127.0.0.1:${port}/test/adminModel-redesign-fixture.html`;
 const server=spawn('npm',['run','dev','--workspace','@josi-ce/web','--','--host','127.0.0.1','--port',String(port),'--strictPort'],{
   cwd:root,stdio:['ignore','pipe','pipe'],detached:process.platform!=='win32',
-  env:{...process.env,...(process.platform==='darwin'?{TMPDIR:'/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Projects/.tmp'}:{})},
+  env:{...process.env,...(process.platform==='darwin'?{TMPDIR:'/Users/roman/Documents/Josi Mac Native/JosiDrive/Projects/.tmp'}:{})},
 });
 let log='';for(const stream of [server.stdout,server.stderr]) stream.on('data',d=>{log=(log+d.toString()).slice(-3000)});
 let browser;
@@ -44,7 +44,7 @@ try{
   const saveBox=await page.getByRole('button',{name:'Save & test',exact:true}).boundingBox();
   const cancelBox=await page.getByRole('button',{name:'Cancel',exact:true}).boundingBox();
   if(!saveBox||!cancelBox||Math.abs(saveBox.y-cancelBox.y)>8)throw Error('Cancel and Save & test are not on the same row');
-  await page.screenshot({path:'/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Projects/release-20260923/mockups/josi-ce-model-implemented-desktop.png',fullPage:true});
+  await page.screenshot({path:'/Users/roman/Documents/Josi Mac Native/JosiDrive/Projects/release-20260923/mockups/josi-ce-model-implemented-desktop.png',fullPage:true});
   await page.getByRole('radio',{name:/CLI Two/}).click();
   const ack=page.locator('input[name="ack"]');
   if(await ack.count())await ack.check();
@@ -59,9 +59,9 @@ try{
   await mobile.goto(url);
   await mobile.getByRole('button',{name:'Change model',exact:true}).click();
   await mobile.getByRole('radio',{name:/CLI Two/}).waitFor();
-  await mobile.screenshot({path:'/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Projects/release-20260923/mockups/josi-ce-model-implemented-mobile.png'});
+  await mobile.screenshot({path:'/Users/roman/Documents/Josi Mac Native/JosiDrive/Projects/release-20260923/mockups/josi-ce-model-implemented-mobile.png'});
   await mobile.getByRole('button',{name:'Save & test',exact:true}).scrollIntoViewIfNeeded();
-  await mobile.screenshot({path:'/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Projects/release-20260923/mockups/josi-ce-model-implemented-mobile-bottom.png'});
+  await mobile.screenshot({path:'/Users/roman/Documents/Josi Mac Native/JosiDrive/Projects/release-20260923/mockups/josi-ce-model-implemented-mobile-bottom.png'});
   const overflow=await mobile.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth);
   if(overflow)throw Error('Mobile viewport has horizontal overflow');
 

@@ -3,7 +3,7 @@ import {readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {chromium} from 'playwright';
 const root=process.argv[2];
-if(!root.startsWith('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'))throw Error('Disposable fixture required');
+if(!root.startsWith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'))throw Error('Disposable fixture required');
 assert.equal(JSON.parse(readFileSync(join(root,'data/isolated-test.json'))).purpose,'disposable-native-acceptance');
 const cfg=JSON.parse(readFileSync(join(root,'data/config/runtime.json'))),url=`http://localhost:${cfg.publicPort}`;
 const bootstrap=readFileSync(join(root,'data/secrets/bootstrap/browser-token'),'utf8');

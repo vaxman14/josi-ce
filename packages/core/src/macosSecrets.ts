@@ -11,7 +11,7 @@ export function readMacSecret(path: string): Buffer {
   const root=process.env.JOSI_NATIVE_ISOLATED_ROOT;
   if(root){
     const st=lstatSync(root);
-    if(process.getuid!()===0||!root.startsWith('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/')||st.isSymbolicLink()||!st.isDirectory()||st.uid!==process.getuid!()||(st.mode&0o077)||JSON.parse(readFileSync(root+'/isolated-test.json','utf8')).purpose!=='disposable-native-acceptance')throw new Error('Invalid isolated acceptance root');
+    if(process.getuid!()===0||!root.startsWith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/')||st.isSymbolicLink()||!st.isDirectory()||st.uid!==process.getuid!()||(st.mode&0o077)||JSON.parse(readFileSync(root+'/isolated-test.json','utf8')).purpose!=='disposable-native-acceptance')throw new Error('Invalid isolated acceptance root');
     return readProtectedMacFile(path,process.getuid!(),process.getgid!(),root);
   }
   return readProtectedMacFile(path, 0, process.getgid!());

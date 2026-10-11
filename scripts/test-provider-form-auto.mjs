@@ -22,7 +22,7 @@ const server = spawn('npm', [
   detached: process.platform !== 'win32',
   env: {
     ...process.env,
-    ...(process.platform === 'darwin' ? { TMPDIR: '/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Projects/.tmp' } : {}),
+    ...(process.platform === 'darwin' ? { TMPDIR: '/Users/roman/Documents/Josi Mac Native/JosiDrive/Projects/.tmp' } : {}),
   },
 });
 let serverOutput = '';
