@@ -2,7 +2,7 @@
 set -euo pipefail
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
-base=/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port
+base=/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port
 export TMPDIR="$base/tmp"
 out="$base/Josi CE Server Setup.app"
 mkdir -p "$out/Contents/MacOS" "$out/Contents/Resources" "$base/swift-cache"

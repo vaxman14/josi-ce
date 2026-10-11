@@ -12,7 +12,7 @@ import sys
 import zipfile
 
 IDENTITY='Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
-RELEASE=Path('/Volumes/JosiOS/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009')
+RELEASE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009')
 REPO=Path(__file__).resolve().parents[2]
 def main():
     if len(sys.argv)!=3 or sys.argv[1]!='--roman-keychain-approved':raise ValueError('Roman must explicitly confirm Keychain approval before this command runs')
@@ -22,7 +22,7 @@ def main():
     if not source_archive.is_file():raise ValueError('Missing corresponding-source companion archive')
     output=RELEASE/('socal-signed-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ'));output.mkdir()
     app=output/source.name;shutil.copytree(source,app,symlinks=True)
-    env={'PATH':'/usr/bin:/bin:/usr/sbin:/sbin','DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer','TMPDIR':'/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp'}
+    env={'PATH':'/usr/bin:/bin:/usr/sbin:/sbin','DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer','TMPDIR':'/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp'}
     with (output/'signing.log').open('x') as log:
         def run(args,accepted=(0,)):
             result=subprocess.run(args,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)

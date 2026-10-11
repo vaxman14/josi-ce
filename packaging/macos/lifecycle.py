@@ -115,7 +115,7 @@ class Lifecycle:
         self.runtime=plain(runtime);self.root=plain(root);self.isolated=isolated
         self.progress=progress or (lambda phase,service:emit({'phase':phase,'service':service}))
         if isolated:
-            if os.getuid()==0 or not str(root).startswith('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'):raise ValueError('Invalid isolated root')
+            if os.getuid()==0 or not str(root).startswith('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'):raise ValueError('Invalid isolated root')
         elif os.getuid()!=0 or self.root!=PRODUCT:raise PermissionError('Administrator authorization required')
         self.data=self.root/'data';self.children={};self.version=json.loads((runtime/'app/package.json').read_text())['version']
         if not re.fullmatch(r'\d+\.\d+\.\d+-[a-z0-9.]+',self.version):raise ValueError('Invalid version identity')

@@ -9,11 +9,11 @@ import subprocess
 import time
 import sys
 
-BASE=Path('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
+BASE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port')
 RUNTIME=BASE/'stage/runtime'
 if len(sys.argv)==3 and sys.argv[1]=='--runtime':
     RUNTIME=Path(sys.argv[2])
-    if not str(RUNTIME).startswith('/Volumes/JosiOS/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009/pkg-candidate-') or RUNTIME.name!='runtime':raise ValueError('Candidate runtime required')
+    if not str(RUNTIME).startswith('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009/pkg-candidate-') or RUNTIME.name!='runtime':raise ValueError('Candidate runtime required')
 elif sys.argv[1:]:raise ValueError('Unsupported test arguments')
 spec=importlib.util.spec_from_file_location('lifecycle',RUNTIME/'app/native/lifecycle.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)

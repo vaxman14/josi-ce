@@ -6,7 +6,7 @@ import {dirname,resolve,join} from 'node:path';
 import {writeFileSync,readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
-const root=process.argv[2];assert(root.startsWith('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'));
+const root=process.argv[2];assert(root.startsWith('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'));
 assert.equal(JSON.parse(readFileSync(join(root,'data/isolated-test.json'))).purpose,'disposable-native-acceptance');
 const program=resolve(dirname(process.execPath),'../..'),require=createRequire(join(program,'app/package.json'));
 const {hash,verify}=require('@node-rs/argon2');assert(await verify(await hash('isolated synthetic acceptance input'),'isolated synthetic acceptance input'));

@@ -5,7 +5,7 @@ import Darwin
     static func main() throws {
         guard CommandLine.arguments.count == 2 else { fatalError("Disposable fixture directory required") }
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
-        guard root.path.hasPrefix("/Volumes/JosiOS/JosiDrive/") else { fatalError("External fixture required") }
+        guard root.path.hasPrefix("/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/") else { fatalError("External fixture required") }
         let folder = root.appendingPathComponent(UUID().uuidString)
         var location: URL!
         do {

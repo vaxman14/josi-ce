@@ -16,7 +16,7 @@ def main():
     data = config.parent.parent
     isolated = len(sys.argv) == 4 and sys.argv[3] == '--isolated'
     if isolated:
-        if os.getuid() == 0 or not str(data).startswith('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/') or json.loads((data / 'isolated-test.json').read_text())['purpose'] != 'disposable-native-acceptance':
+        if os.getuid() == 0 or not str(data).startswith('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/') or json.loads((data / 'isolated-test.json').read_text())['purpose'] != 'disposable-native-acceptance':
             raise ValueError('Invalid disposable context')
     elif str(data) != '/Library/Application Support/Josi CE Server/data':
         raise ValueError('Invalid installation')

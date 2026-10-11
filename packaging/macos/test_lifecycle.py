@@ -8,7 +8,7 @@ import unittest
 
 spec=importlib.util.spec_from_file_location('lifecycle',Path(__file__).with_name('lifecycle.py'))
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-BASE=Path('/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests')
+BASE=Path('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests')
 
 class Tests(unittest.TestCase):
     def test_stopping_already_unloaded_services_is_idempotent(self):

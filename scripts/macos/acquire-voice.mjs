@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-const root='/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port';
+const root='/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port';
 for(const d of ['wheels','sources','models'])mkdirSync(root+'/'+d,{recursive:true});
 const digest=b=>createHash('sha256').update(b).digest('hex');
 async function get(url){const r=await fetch(url,{signal:AbortSignal.timeout(120000)});if(!r.ok)throw new Error(`${r.status}: ${url}`);return Buffer.from(await r.arrayBuffer());}

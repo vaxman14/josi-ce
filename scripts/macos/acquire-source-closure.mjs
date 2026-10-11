@@ -1,7 +1,7 @@
 import {readFileSync,writeFileSync,mkdirSync,existsSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {createHash} from 'node:crypto';
-const base='/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port';
+const base='/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port';
 const sha=b=>createHash('sha256').update(b).digest('hex');
 async function bytes(url){const r=await fetch(url,{signal:AbortSignal.timeout(120000)});if(!r.ok)throw Error(r.status+' '+url);return Buffer.from(await r.arrayBuffer());}
 async function acquire(row){const path=base+'/source-closure/'+row.path;mkdirSync(dirname(path),{recursive:true});const b=existsSync(path)?readFileSync(path):await bytes(row.url);if(sha(b)!==row.sha256)throw Error('Source hash mismatch '+row.path);if(!existsSync(path))writeFileSync(path,b,{flag:'wx'});}

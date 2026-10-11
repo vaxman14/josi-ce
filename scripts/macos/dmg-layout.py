@@ -11,7 +11,7 @@ from ds_store import DSStore
 from mac_alias import Alias, Bookmark
 
 out=Path(sys.argv[1]);mount=Path(sys.argv[2])
-if not str(out).startswith('/Volumes/JosiOS/JosiDrive/Artifacts/'):raise ValueError('Unexpected image location')
+if not str(out).startswith('/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Artifacts/'):raise ValueError('Unexpected image location')
 if sys.argv[3:]==['--standard-mount']:
     images=plistlib.loads(subprocess.check_output(['/usr/bin/hdiutil','info','-plist']))['images']
     if mount.parent!=Path('/Volumes') or not any(Path(x['image-path']).parent==out and Path(x['image-path']).name.startswith('Josi-Server-layout') and any(e.get('mount-point')==str(mount) for e in x['system-entities']) for x in images):raise ValueError('Mount is not the candidate image')

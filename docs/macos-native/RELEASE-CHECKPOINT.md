@@ -63,7 +63,7 @@ macOS workspace operations; saved CPU speech enablement and restart handling.
 `scripts/macos/finalize.py` requires a clean local commit and produces a unique
 `unsigned-acceptance-<UTC timestamp>/` directory below:
 
-`/Volumes/JosiOS/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009/`
+`/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/Artifacts/josi-ce-native-macos-arm64-20261009/`
 
 It contains the app, `Josi-CE-Server-macos-arm64-unsigned.zip`, the separately
 verified `Josi-CE-Server-macos-arm64-corresponding-sources.zip`, `SHA256SUMS.txt`,
@@ -92,7 +92,7 @@ Keychain protections. Roman must confirm completion before another attempt.
 After that confirmation, use the private Python with:
 
 ```sh
-/Volumes/JosiOS/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/prefix/python/bin/python3.11 -B scripts/macos/sign-candidate.py --roman-keychain-approved '/absolute/path/to/unsigned-acceptance-TIMESTAMP/Josi CE Server Setup.app'
+/Volumes/handoff/Josi-MBP-Handoff-20261011/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/prefix/python/bin/python3.11 -B scripts/macos/sign-candidate.py --roman-keychain-approved '/absolute/path/to/unsigned-acceptance-TIMESTAMP/Josi CE Server Setup.app'
 ```
 
 The script creates a separate signed copy, signs nested Mach-O files with the
