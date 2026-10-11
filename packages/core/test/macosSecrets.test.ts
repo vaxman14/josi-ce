@@ -27,6 +27,17 @@ describe.skipIf(process.platform !== 'darwin')('macOS descriptor and extended AC
     const f = fixture();
     if (process.getuid!() !== 0) expect(() => readMacSecret(f.path)).toThrow();
   });
+  it('reads through search-only parents without granting directory listing', () => {
+    const f = fixture();
+    const parent = join(f.root, 'search-only');
+    mkdirSync(parent, { mode: 0o700 });
+    const path = join(parent, 'secret');
+    writeFileSync(path, 'protected', { mode: 0o600 });
+    chmodSync(parent, 0o100);
+    try {
+      expect(f.read(path)).toBe('protected');
+    } finally { chmodSync(parent, 0o700); }
+  });
   it('refuses hardlinks, symbolic links, traversal, broad modes and oversized files', () => {
     const f = fixture();
     symlinkSync(f.path, join(f.root, 'link'));

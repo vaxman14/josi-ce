@@ -64,13 +64,16 @@ export function readProtectedMacFile(path: string, owner: number, group: number,
   };
   // Darwin O_CLOEXEC is not exposed in Node's constants on every release.
   const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | 0x01000000;
+  // Darwin O_SEARCH pins a directory using search permission. Service accounts
+  // can traverse root-owned 0711 parents without being allowed to list them.
+  const directoryFlags = constants.O_NOFOLLOW | 0x01000000 | 0x40000000 | constants.O_DIRECTORY;
   let parent = -1, file = -1;
   try {
-    parent = open(anchor, flags | constants.O_DIRECTORY);
+    parent = open(anchor, directoryFlags);
     if (parent < 0) throw refuse();
     checkDirectory(parent);
     for (const part of parts.slice(0, -1)) {
-      const next = openat(parent, part, flags | constants.O_DIRECTORY);
+      const next = openat(parent, part, directoryFlags);
       if (next < 0) throw refuse();
       close(parent); parent = next;
       checkDirectory(parent);

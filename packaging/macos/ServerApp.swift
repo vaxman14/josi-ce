@@ -89,12 +89,14 @@ import Darwin
                     if state == .ready { completedProgress = true;heading.stringValue = "Josi is ready";detail.stringValue = "Choose a folder or continue without access, then open Josi to finish setup.";activity.stringValue = "Installation complete" }
                     if state == .failed {
                         completedProgress = true;heading.stringValue = "Installation stopped"
+                        activity.stringValue = "Stopped · " + ProgressState.elapsed(start: started,now: Date()).replacingOccurrences(of: " · working", with: "")
                         detail.stringValue = (event["operation"] as? String == "verification" ? "Josi could not verify its installation files." : "Josi could not finish installation.") + " Your data is retained. Copy Diagnostics for the cause and log location. A previous version can be restored only when it is safe."
                     }
                     break
                 }
                 if state == .working, let pid = first?["pid"] as? Int32, Darwin.kill(pid,0) != 0 && errno == ESRCH {
                     state = .failed;completedProgress = true;heading.stringValue = "Installation stopped"
+                    activity.stringValue = "Stopped"
                     detail.stringValue = "The installer ended without a completion result. Your data is retained. Copy Diagnostics before trying to restore a previous version."
                 }
             }
