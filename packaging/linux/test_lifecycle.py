@@ -55,5 +55,19 @@ class LinuxLifecycleTests(unittest.TestCase):
         with self.assertRaises(ValueError):maintenance.selected_folder(str(Path.home()),os.getuid())
         folder=self.root/'owned';folder.mkdir();link=self.root/'linked';link.symlink_to(folder)
         with self.assertRaises(ValueError):maintenance.selected_folder(str(link),os.getuid())
+    def test_product_root_restores_service_traversal_after_validation(self):
+        folder=self.root/'protected';folder.mkdir(mode=0o700);os.chmod(folder,0o700)
+        lifecycle.protect_product_root(folder,False)
+        self.assertEqual(folder.stat().st_mode&0o777,0o711)
+    def test_failed_fresh_install_is_retained_before_clean_retry(self):
+        self.installation.mkdir(mode=0o700);self.obj.data.mkdir()
+        (self.obj.data/'partial').write_text('preserve me')
+        transactions=self.installation/'transactions';transactions.mkdir()
+        journal=lifecycle.Journal(transactions/'fresh',{'from':None,'to':'0.1.78-linux.test','manifest':'a'*64})
+        for phase in ('prepared','verified','quiescing','quiesced','snapshot','provisioned','recovery-required'):journal.phase(phase)
+        self.obj.settle_activated_recovery(os.getuid())
+        self.assertFalse(self.obj.data.exists())
+        self.assertEqual((transactions/'fresh'/'failed-data'/'partial').read_text(),'preserve me')
+        self.assertEqual(lifecycle.Journal(transactions/'fresh').records[-1]['phase'],'rolled-back')
 
 if __name__=='__main__':unittest.main()

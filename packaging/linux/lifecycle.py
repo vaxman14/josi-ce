@@ -96,6 +96,16 @@ def durable(path, value, replace=False, mode=0o600):
         temporary.unlink()
     sync_directory(path.parent)
 
+def protect_product_root(path, isolated=False):
+    """Validate ownership first, then restore the service traversal boundary."""
+    path = Path(path)
+    path.mkdir(mode=0o700 if isolated else 0o711, parents=True, exist_ok=True)
+    info = path.stat()
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError('Unprotected product directory')
+    if not isolated:
+        os.chmod(path, 0o711)
+
 class Journal:
     def __init__(self, folder, identity=None):
         self.folder = plain(folder)
@@ -186,17 +196,30 @@ class Lifecycle:
 
     def identities(self, fresh):
         if self.isolated: return
+        recorded = None
+        if fresh and (self.root/'identities.json').exists():
+            recorded = json.loads((self.root/'identities.json').read_text())
         for role,name in ACCOUNTS.items():
             try: user = pwd.getpwnam(name)
             except KeyError: user = None
             try: group = grp.getgrnam(name)
             except KeyError: group = None
-            if fresh and (user or group): raise ValueError('Service identity collision')
+            if fresh and recorded is not None:
+                record = recorded.get(role)
+                if not user or not group or user.pw_gid != group.gr_gid or [user.pw_uid,user.pw_gid] != record or user.pw_shell not in ('/usr/sbin/nologin','/sbin/nologin'):
+                    raise ValueError('Recovered service identity changed')
+            elif fresh and (user or group): raise ValueError('Service identity collision')
             if not fresh:
                 record = json.loads((self.root/'identities.json').read_text())[role]
                 if not user or not group or user.pw_gid != group.gr_gid or [user.pw_uid,user.pw_gid] != record or user.pw_shell not in ('/usr/sbin/nologin','/sbin/nologin'):
                     raise ValueError('Service identity changed')
         if not fresh: return
+        if recorded is not None:
+            for group_name,members in SHARED_GROUPS.items():
+                group = grp.getgrnam(group_name)
+                if any(ACCOUNTS[role] not in group.gr_mem for role in members):
+                    raise ValueError('Recovered shared service identity changed')
+            return
         records = {}
         for role,name in ACCOUNTS.items():
             self.run(['/usr/sbin/groupadd','--system',name])
@@ -300,6 +323,15 @@ class Lifecycle:
             phases = [record['phase'] for record in prior.records]
             if prior.records[-1]['phase'] != 'recovery-required':
                 raise RuntimeError('Earlier transaction requires recovery')
+            if prior.identity['from'] is None and 'activating' not in phases:
+                retained = folder/'failed-data'
+                if retained.exists():
+                    raise RuntimeError('Fresh-install recovery evidence already exists')
+                if self.data.exists():
+                    os.rename(self.data, retained)
+                    sync_directory(folder); sync_directory(self.root)
+                prior.phase('rolling-back'); prior.phase('rolled-back')
+                continue
             configured = json.loads((self.data/'config/runtime.json').read_text())['version']
             if 'activating' not in phases:
                 if 'migrating' in phases or prior.identity['from'] != configured:
@@ -480,8 +512,7 @@ class Lifecycle:
         if fail_at and not self.isolated: raise ValueError('Fault injection is isolated only')
         if self.root.exists() and not (self.root/'installation.json').exists() and any(self.root.iterdir()):
             raise ValueError('Existing directory has no Josi ownership receipt; preserve it')
-        self.root.mkdir(mode=0o700 if self.isolated else 0o711, parents=True, exist_ok=True)
-        if self.root.stat().st_uid != os.getuid() or self.root.stat().st_mode & 0o022: raise ValueError('Unprotected product directory')
+        protect_product_root(self.root, self.isolated)
         lock_path = self.root/'lifecycle.lock'
         lock = os.open(lock_path, os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW, 0o600)
         info = os.fstat(lock)
@@ -537,7 +568,10 @@ class Lifecycle:
                 durable(folder/'snapshot-inventory',before)
             phase('snapshot')
             if fresh:
-                durable(self.root/'installation.json',{'product':'Josi CE Server','id':secrets.token_hex(16)})
+                receipt = self.root/'installation.json'
+                if receipt.exists() and json.loads(receipt.read_text()).get('product') != 'Josi CE Server':
+                    raise ValueError('Unrelated installation receipt')
+                durable(receipt,{'product':'Josi CE Server','id':secrets.token_hex(16)},replace=receipt.exists())
                 cfg=self.layout(ports)
                 self.run([self.installed/'postgresql/bin/initdb','-D',self.data/'database','-U','bootstrap_admin',
                     '--pwfile='+str(self.data/'secrets/database/init-password'),'--auth-host=scram-sha-256',
