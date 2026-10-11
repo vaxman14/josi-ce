@@ -4,8 +4,8 @@
 # final private browser setup URL in the terminal.
 set -eu
 
-VERSION=0.1.78-linux.18
-BASE_URL=https://github.com/vaxman14/josi-ce/releases/download/v0.1.78-linux.18
+VERSION=0.1.78-linux.19
+BASE_URL=https://github.com/vaxman14/josi-ce/releases/download/v0.1.78-linux.19
 
 fail() {
   printf 'Josi installer: %s\n' "$*" >&2
@@ -27,30 +27,32 @@ cleanup() { rm -rf -- "$work"; }
 trap cleanup EXIT HUP INT TERM
 
 if command -v pacman >/dev/null 2>&1; then
-  package=josi-ce-server-setup-0.1.78_linux.18-1-x86_64.pkg.tar.zst
-  expected=491ac06a6915dfcaed1e5f8f69f8670ab0d08c694598bda32bf49cae371767e3
+  package=josi-ce-server-setup-0.1.78_linux.19-1-x86_64.pkg.tar.zst
+  expected=dafa13226317d1a5e9a5eacd730c551aa3d5a1ab45d468d856eb8a5e9a7608a8
   install_package() { sudo pacman -U --noconfirm -- "$work/$package"; }
 elif command -v apt-get >/dev/null 2>&1; then
-  package=josi-ce-server-setup_0.1.78-linux.18_amd64.deb
-  expected=ce33dd659077845e7d4804b63f345748c88cf6bee084646ce00ca0f9b40d61a1
+  package=josi-ce-server-setup_0.1.78-linux.19_amd64.deb
+  expected=2c34b1b20fadaf11ac0a5d30d921685b1e004f5adc090f1e7567763a340276fb
   install_package() {
     sudo apt-get update -qq
     sudo apt-get install -y "$work/$package"
   }
 elif command -v dnf >/dev/null 2>&1; then
-  package=josi-ce-server-setup-0.1.78-linux.18.x86_64.rpm
-  expected=88af9809919976a018103ba5fb12a8110b6bc438c7b10aa30a5df7222286acea
+  package=josi-ce-server-setup-0.1.78-linux.19.x86_64.rpm
+  expected=13866bae833f562452ae8c78f8d09274559f4b98a2828810dcb391c7be6c855b
   install_package() { sudo dnf install -y "$work/$package"; }
 elif command -v yum >/dev/null 2>&1; then
-  package=josi-ce-server-setup-0.1.78-linux.18.x86_64.rpm
-  expected=88af9809919976a018103ba5fb12a8110b6bc438c7b10aa30a5df7222286acea
+  package=josi-ce-server-setup-0.1.78-linux.19.x86_64.rpm
+  expected=13866bae833f562452ae8c78f8d09274559f4b98a2828810dcb391c7be6c855b
   install_package() { sudo yum install -y "$work/$package"; }
 else
   fail 'supported package manager not found (pacman, apt-get, dnf, or yum)'
 fi
 
 printf 'Installing Josi CE Server %s. This can take several minutes.\n' "$VERSION"
-sudo -v
+if ! sudo -n true 2>/dev/null; then
+  sudo -v
+fi
 curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 \
   --output "$work/$package" "$BASE_URL/$package"
 actual=$(sha256sum "$work/$package")
