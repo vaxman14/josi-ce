@@ -22,7 +22,7 @@ def main() -> None:
 %global _build_id_links none
 Name: josi-ce-server-setup
 Version: 0.1.78
-Release: linux.19
+Release: linux.20
 Summary: Native offline Josi CE Server runtime and CLI installer
 License: AGPL-3.0-or-later
 URL: https://github.com/vaxman14/josi-ce

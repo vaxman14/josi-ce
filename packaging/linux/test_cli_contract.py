@@ -43,6 +43,10 @@ class LinuxCliContract(unittest.TestCase):
         for library in ('libgfortran.so.5', 'libquadmath.so.0', 'libgomp.so.1'):
             self.assertIn(library, source)
 
+    def test_staging_regenerates_payload_inventory(self):
+        source = Path(__file__).resolve().parents[2].joinpath('scripts/linux/stage.py').read_text()
+        self.assertIn("REPO/'scripts/linux/inventory.py'", source)
+
 
 if __name__ == '__main__':
     unittest.main()

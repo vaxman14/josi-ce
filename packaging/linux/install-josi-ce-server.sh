@@ -4,8 +4,8 @@
 # final private browser setup URL in the terminal.
 set -eu
 
-VERSION=0.1.78-linux.19
-BASE_URL=https://github.com/vaxman14/josi-ce/releases/download/v0.1.78-linux.19
+VERSION=0.1.78-linux.20
+BASE_URL=https://github.com/vaxman14/josi-ce/releases/download/v0.1.78-linux.20
 
 fail() {
   printf 'Josi installer: %s\n' "$*" >&2
@@ -27,23 +27,23 @@ cleanup() { rm -rf -- "$work"; }
 trap cleanup EXIT HUP INT TERM
 
 if command -v pacman >/dev/null 2>&1; then
-  package=josi-ce-server-setup-0.1.78_linux.19-1-x86_64.pkg.tar.zst
-  expected=dafa13226317d1a5e9a5eacd730c551aa3d5a1ab45d468d856eb8a5e9a7608a8
+  package=josi-ce-server-setup-0.1.78_linux.20-1-x86_64.pkg.tar.zst
+  expected=bb5ecc77d0f9a99e05d697b8f246bf32398efae65f5a18a5fba99e14648ce698
   install_package() { sudo pacman -U --noconfirm -- "$work/$package"; }
 elif command -v apt-get >/dev/null 2>&1; then
-  package=josi-ce-server-setup_0.1.78-linux.19_amd64.deb
-  expected=2c34b1b20fadaf11ac0a5d30d921685b1e004f5adc090f1e7567763a340276fb
+  package=josi-ce-server-setup_0.1.78-linux.20_amd64.deb
+  expected=f8ba987ed17c07216ea191eb33ab75121bb3739968bec01b0a49189784b0f837
   install_package() {
     sudo apt-get update -qq
     sudo apt-get install -y "$work/$package"
   }
 elif command -v dnf >/dev/null 2>&1; then
-  package=josi-ce-server-setup-0.1.78-linux.19.x86_64.rpm
-  expected=13866bae833f562452ae8c78f8d09274559f4b98a2828810dcb391c7be6c855b
+  package=josi-ce-server-setup-0.1.78-linux.20.x86_64.rpm
+  expected=cf13d79979951f124a6458e2e95edb52db852b2ea5f9b39b4a4835cd49bb6447
   install_package() { sudo dnf install -y "$work/$package"; }
 elif command -v yum >/dev/null 2>&1; then
-  package=josi-ce-server-setup-0.1.78-linux.19.x86_64.rpm
-  expected=13866bae833f562452ae8c78f8d09274559f4b98a2828810dcb391c7be6c855b
+  package=josi-ce-server-setup-0.1.78-linux.20.x86_64.rpm
+  expected=cf13d79979951f124a6458e2e95edb52db852b2ea5f9b39b4a4835cd49bb6447
   install_package() { sudo yum install -y "$work/$package"; }
 else
   fail 'supported package manager not found (pacman, apt-get, dnf, or yum)'

@@ -11,7 +11,7 @@ import sys
 REPO=Path(__file__).resolve().parents[2]
 BASE=Path('/home/roman/JosiDrive/BuildTemp/josi-ce-native-linux-20261010')
 CACHE=Path('/home/roman/JosiDrive/Caches/codex-linux-native-20261010')
-RUNTIME=BASE/'stage/runtime';VERSION='0.1.78-linux.19'
+RUNTIME=BASE/'stage/runtime';VERSION='0.1.78-linux.20'
 
 def copy(source,target):
     if source.is_dir():shutil.copytree(source,target,symlinks=True,dirs_exist_ok=True)
@@ -60,6 +60,7 @@ def main():
         if path.exists():shutil.rmtree(path)
     for path in (RUNTIME/'node/bin').iterdir():
         if path.name!='node':path.unlink()
+    subprocess.run([sys.executable,str(REPO/'scripts/linux/inventory.py'),str(RUNTIME)],check=True)
     print(json.dumps({'runtime':str(RUNTIME),'architecture':architecture,'version':VERSION}))
 
 if __name__=='__main__':main()
