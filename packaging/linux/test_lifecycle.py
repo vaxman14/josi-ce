@@ -73,6 +73,13 @@ class LinuxLifecycleTests(unittest.TestCase):
         try:lifecycle.durable(folder/'shared-secret',b'secret',mode=0o640)
         finally:os.umask(previous)
         self.assertEqual((folder/'shared-secret').stat().st_mode&0o777,0o640)
+    def test_browser_handoff_parent_is_traversable_and_user_folder_is_private(self):
+        previous=os.umask(0o077)
+        try:handoff=lifecycle.prepare_browser_handoff(self.root,os.getuid())
+        finally:os.umask(previous)
+        self.assertEqual((self.root/'handoff').stat().st_mode&0o777,0o711)
+        self.assertEqual(handoff.stat().st_mode&0o777,0o700)
+        self.assertEqual(handoff.stat().st_uid,os.getuid())
     def test_failed_fresh_install_is_retained_before_clean_retry(self):
         self.installation.mkdir(mode=0o700);self.obj.data.mkdir()
         (self.obj.data/'partial').write_text('preserve me')

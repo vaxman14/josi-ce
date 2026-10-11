@@ -11,14 +11,15 @@ import subprocess
 import sys
 import threading
 import urllib.request
-import webbrowser
+import uuid
 
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import GLib, Gtk
 
 from universal_installer_core import (
-    architecture, distro_family, load_manifest, package_url, read_os_release, sha256,
+    architecture, distro_family, host_environment, load_manifest, package_url,
+    read_os_release, sha256,
 )
 
 
@@ -193,9 +194,47 @@ class Installer(Gtk.Application):
         return False
 
     def open_josi(self, *_):
-        if self.final_url:
-            webbrowser.open(self.final_url, new=2)
-            self.phase.set_text('Browser opened. Complete Josi setup there.')
+        if not self.final_url:
+            return
+        self.open.set_sensitive(False)
+        self.phase.set_text('Opening browser setup…')
+        threading.Thread(target=self.launch_browser, daemon=True).start()
+
+    def launch_browser(self):
+        try:
+            folder = STATE / self.manifest['version'] / 'handoff'
+            folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(folder, 0o700)
+            info = folder.stat()
+            if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise PermissionError('Private browser handoff folder is unsafe')
+            page = folder / ('Open-Josi-' + uuid.uuid4().hex + '.html')
+            html = ('<!doctype html><meta charset="utf-8"><meta name="referrer" '
+                'content="no-referrer"><title>Open Josi</title><script>location.replace('
+                + json.dumps(self.final_url) + ')</script>Opening Josi…')
+            descriptor = os.open(page, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, 'w') as stream:
+                stream.write(html)
+                stream.flush()
+                os.fsync(stream.fileno())
+            completed = subprocess.run(['/usr/bin/xdg-open', str(page)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, env=host_environment(), timeout=20)
+            if completed.returncode != 0:
+                raise RuntimeError('The desktop browser launcher returned an error')
+            self.ui(self.browser_opened)
+        except Exception:
+            self.ui(self.browser_failed)
+
+    def browser_opened(self):
+        self.open.set_sensitive(True)
+        self.phase.set_text('Browser opened. Complete Josi setup there.')
+        return False
+
+    def browser_failed(self):
+        self.open.set_sensitive(True)
+        self.phase.set_text('Browser could not open. Click Open Josi to retry.')
+        return False
 
 
 def main():

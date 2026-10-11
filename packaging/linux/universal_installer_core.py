@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -15,6 +16,28 @@ FAMILY_IDS = {
     'debian': {'debian', 'linuxmint', 'pop', 'ubuntu'},
     'rpm': {'almalinux', 'centos', 'fedora', 'rhel', 'rocky'},
 }
+
+APPIMAGE_ENVIRONMENT = (
+    'APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'PYTHONHOME', 'PYTHONPATH',
+    'GI_TYPELIB_PATH', 'GSETTINGS_SCHEMA_DIR', 'FONTCONFIG_PATH',
+    'FONTCONFIG_FILE', 'GDK_BACKEND', 'LD_LIBRARY_PATH', 'SSL_CERT_FILE',
+    'XDG_DATA_DIRS',
+)
+
+
+def host_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
+    """Remove the portable runtime from a process launched on the host desktop."""
+    result = dict(os.environ if environment is None else environment)
+    for key in APPIMAGE_ENVIRONMENT:
+        result.pop(key, None)
+    for key in ('GDK_BACKEND', 'LD_LIBRARY_PATH', 'SSL_CERT_FILE', 'XDG_DATA_DIRS'):
+        original = result.pop('JOSI_HOST_' + key, '')
+        if original:
+            result[key] = original
+    for key in tuple(result):
+        if key.startswith('JOSI_HOST_'):
+            result.pop(key)
+    return result
 
 
 def read_os_release(path: Path = Path('/etc/os-release')) -> dict[str, str]:

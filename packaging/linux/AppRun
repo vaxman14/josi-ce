@@ -2,6 +2,10 @@
 set -eu
 APPDIR="${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
 export APPDIR
+export JOSI_HOST_GDK_BACKEND="${GDK_BACKEND-}"
+export JOSI_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
+export JOSI_HOST_SSL_CERT_FILE="${SSL_CERT_FILE-}"
+export JOSI_HOST_XDG_DATA_DIRS="${XDG_DATA_DIRS-}"
 export PYTHONHOME="$APPDIR/usr"
 export PYTHONPATH="$APPDIR/usr/lib/python3/dist-packages"
 export GI_TYPELIB_PATH="$APPDIR/usr/lib/x86_64-linux-gnu/girepository-1.0"

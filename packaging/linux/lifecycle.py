@@ -117,6 +117,23 @@ def protect_program_root(path, isolated=False):
     if not isolated:
         os.chmod(path, 0o755)
 
+def prepare_browser_handoff(root, interactive_uid):
+    """Keep the shared boundary traversable and each user's handoff private."""
+    parent = plain(Path(root) / 'handoff')
+    parent.mkdir(mode=0o711, exist_ok=True)
+    info = parent.stat()
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError('Unprotected browser handoff directory')
+    os.chmod(parent, 0o711)
+    handoff = plain(parent / str(interactive_uid))
+    handoff.mkdir(mode=0o700, exist_ok=True)
+    info = handoff.stat()
+    if info.st_uid not in (os.getuid(), interactive_uid) or info.st_mode & 0o077:
+        raise ValueError('Unprotected user browser handoff directory')
+    os.chmod(handoff, 0o700)
+    os.chown(handoff, interactive_uid, -1)
+    return handoff
+
 class Journal:
     def __init__(self, folder, identity=None):
         self.folder = plain(folder)
@@ -373,9 +390,9 @@ class Lifecycle:
                 raise
             prior.phase('healthy')
             cfg = json.loads((self.data/'config/runtime.json').read_text())
-            handoff=self.root/'handoff'/str(interactive_uid); handoff.mkdir(mode=0o700,parents=True,exist_ok=True)
+            handoff=prepare_browser_handoff(self.root,interactive_uid)
             durable(handoff/'bootstrap.json',{'token':(self.data/'secrets/bootstrap/browser-token').read_text(),'port':cfg['publicPort']},replace=(handoff/'bootstrap.json').exists())
-            os.chown(handoff/'bootstrap.json',interactive_uid,-1); os.chown(handoff,interactive_uid,-1)
+            os.chown(handoff/'bootstrap.json',interactive_uid,-1)
             prior.phase('committed')
             durable(self.root/'status.json',{'installed':True,'version':configured,'publicPort':cfg['publicPort']},replace=(self.root/'status.json').exists(),mode=0o644)
 
@@ -613,9 +630,9 @@ class Lifecycle:
             for role in ROLES: self.start(role)
             phase('activated'); self.ready(); phase('healthy')
             if not self.isolated:
-                handoff=self.root/'handoff'/str(interactive_uid); handoff.mkdir(mode=0o700,parents=True,exist_ok=True)
+                handoff=prepare_browser_handoff(self.root,interactive_uid)
                 durable(handoff/'bootstrap.json',{'token':(self.data/'secrets/bootstrap/browser-token').read_text(),'port':cfg['publicPort']},replace=True)
-                os.chown(handoff/'bootstrap.json',interactive_uid,-1); os.chown(handoff,interactive_uid,-1)
+                os.chown(handoff/'bootstrap.json',interactive_uid,-1)
             phase('committed')
             durable(self.root/'status.json',{'installed':True,'version':self.version,'publicPort':cfg['publicPort']},replace=True,mode=0o644)
             return folder
