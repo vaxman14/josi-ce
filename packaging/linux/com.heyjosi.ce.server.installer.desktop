@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Josi CE Server Installer
+Comment=Install Josi CE Server on this Linux computer
+Exec=josi-ce-server-installer
+Icon=com.heyjosi.ce.server.installer
+Terminal=false
+Categories=Utility;
+StartupNotify=true
