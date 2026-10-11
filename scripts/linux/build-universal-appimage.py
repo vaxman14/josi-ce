@@ -62,7 +62,7 @@ mkdir -p /build/AppDir/usr/share/josi-ce-server-installer \
   /build/AppDir/usr/lib/python3/dist-packages \
   /build/AppDir/usr/lib/x86_64-linux-gnu/girepository-1.0 \
   /build/AppDir/usr/share/glib-2.0/schemas \
-  /build/AppDir/usr/share/icons/hicolor/512x512/apps /build/AppDir/etc
+  /build/AppDir/usr/share/icons/hicolor/512x512/apps /build/AppDir/etc/josi-fontconfig
 cp /repo/packaging/linux/universal_installer.py /repo/packaging/linux/universal_installer_core.py \
   /build/AppDir/usr/share/josi-ce-server-installer/
 cp /repo/packaging/linux/universal_root_install.sh /build/AppDir/usr/share/josi-ce-server-installer/
@@ -72,8 +72,7 @@ cp -a /usr/lib/python3/dist-packages/gi /build/AppDir/usr/lib/python3/dist-packa
 cp -a /usr/lib/x86_64-linux-gnu/girepository-1.0/. /build/AppDir/usr/lib/x86_64-linux-gnu/girepository-1.0/
 cp -a /usr/share/glib-2.0/schemas/gschemas.compiled /build/AppDir/usr/share/glib-2.0/schemas/
 cp -a /usr/share/icons/Adwaita /build/AppDir/usr/share/icons/
-cp -aL /etc/fonts /build/AppDir/etc/
-cp /repo/packaging/linux/portable-fonts.conf /build/AppDir/etc/fonts/
+cp /repo/packaging/linux/portable-fonts.conf /build/AppDir/etc/josi-fontconfig/
 cp -a /usr/share/fonts /build/AppDir/usr/share/
 cp -a /usr/share/fontconfig /build/AppDir/usr/share/
 cp /repo/apps/web/public/icons/icon-512.png /build/AppDir/com.heyjosi.ce.server.installer.png
