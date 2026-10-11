@@ -13,15 +13,15 @@ class HeadlessInstallerTests(unittest.TestCase):
         subprocess.run(['/bin/sh', '-n', str(SCRIPT)], check=True)
 
     def test_release_packages_and_hashes_are_pinned(self):
-        self.assertIn('VERSION=0.1.78-linux.17', TEXT)
-        self.assertIn('/releases/download/v0.1.78-linux.17', TEXT)
+        self.assertIn('VERSION=0.1.78-linux.18', TEXT)
+        self.assertIn('/releases/download/v0.1.78-linux.18', TEXT)
         expected = {
-            'josi-ce-server-setup-0.1.78_linux.17-1-x86_64.pkg.tar.zst':
-                'bbd83026d0c94efb7afb15983006fa7174fd0f37f713731e52d6a4ec17b2a9ea',
-            'josi-ce-server-setup_0.1.78-linux.17_amd64.deb':
-                'b8700230609633cb026e9c605abfae6fcf2695bcff3c0d9eac0b3a440cbe752c',
-            'josi-ce-server-setup-0.1.78-linux.17.x86_64.rpm':
-                'c86ceddffbcc30661f776470e49aae4561b297fb880fca64f48d3c6d0819c77a',
+            'josi-ce-server-setup-0.1.78_linux.18-1-x86_64.pkg.tar.zst':
+                '491ac06a6915dfcaed1e5f8f69f8670ab0d08c694598bda32bf49cae371767e3',
+            'josi-ce-server-setup_0.1.78-linux.18_amd64.deb':
+                'ce33dd659077845e7d4804b63f345748c88cf6bee084646ce00ca0f9b40d61a1',
+            'josi-ce-server-setup-0.1.78-linux.18.x86_64.rpm':
+                '88af9809919976a018103ba5fb12a8110b6bc438c7b10aa30a5df7222286acea',
         }
         for package, digest in expected.items():
             self.assertIn('package=' + package, TEXT)

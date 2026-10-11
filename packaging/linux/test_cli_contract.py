@@ -38,6 +38,11 @@ class LinuxCliContract(unittest.TestCase):
         installer = next(repo.glob('get.*josi.com/server-install.sh')).read_text()
         self.assertIn('josi-ce-server-install --interactive-uid', installer)
 
+    def test_portable_voice_runtime_bundles_openblas_compiler_libraries(self):
+        source = Path(__file__).resolve().parents[2].joinpath('scripts/linux/build-voice.py').read_text()
+        for library in ('libgfortran.so.5', 'libquadmath.so.0', 'libgomp.so.1'):
+            self.assertIn(library, source)
+
 
 if __name__ == '__main__':
     unittest.main()

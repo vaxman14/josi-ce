@@ -48,6 +48,9 @@ def main():
     library=BASE/'prefix/python/lib/libopenblas.so.0';library.parent.mkdir(parents=True,exist_ok=True)
     openblas=Path('/usr/lib/x86_64-linux-gnu/openblas-pthread/libopenblas.so.0') if portable else SYSROOT/'usr/lib/libopenblas.so.0'
     shutil.copy2(openblas,library)
+    if portable:
+        for name in ('libgfortran.so.5','libquadmath.so.0','libgomp.so.1'):
+            shutil.copy2(Path('/usr/lib/x86_64-linux-gnu')/name,library.parent/name)
     for shared in (CT2/'lib').glob('libctranslate2.so*'):shutil.copy2(shared,library.parent/shared.name)
     run([PYTHON,'-m','pip','check'])
     run([PYTHON,'-c','import ctranslate2,numpy,onnxruntime; print(ctranslate2.__version__,numpy.__version__,onnxruntime.__version__)'],
