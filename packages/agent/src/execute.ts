@@ -29,6 +29,7 @@ import { executeObsidianTool, DEVELOPER_INTEGRATION_TOOL, executeDeveloperIntegr
 import { resolveCalendarTimeIntent, validateAbsoluteCalendarRange, type CalendarTimeResolution } from './calendarTimeIntent.js';
 import { effectiveTimeContext } from './timeContext.js';
 import { formatCalendarRange } from './calendarPresentation.js';
+import { executeRestaurantTool, RESTAURANT_TOOL_NAMES } from './restaurantTools.js';
 
 async function actionSummary(db:Db,userId:string,domain:string,operation:string,slots:Record<string,unknown>):Promise<string>{
   if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}${Array.isArray(slots.cc) && slots.cc.length ? `\nCc: ${slots.cc.join(', ')}` : ''}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
@@ -81,6 +82,7 @@ export async function executeAssistantTool(
   const { userId } = ctx;
   if (WORKSPACE_TOOLS.some(t=>t.def.name===name)) return executeWorkspaceTool(db,userId,name,input);
   if (name === 'get_provider_status') return providerStatus(db, userId);
+  if (RESTAURANT_TOOL_NAMES.has(name)) return executeRestaurantTool(db, userId, ctx.threadId, name, input);
 
   // Connected-data reads live in their own module; every one of them
   // re-checks the person's capability switches at this moment, not at the

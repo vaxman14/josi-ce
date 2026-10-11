@@ -11,5 +11,6 @@ export * from './timeContext.js';
 export * from './calendarPresentation.js';
 export * from './retry.js';
 export * from './mediaCapability.js';
+export * from './restaurantTools.js';
 export * from './mcp/protocol.js';
 export * from './tools.js';

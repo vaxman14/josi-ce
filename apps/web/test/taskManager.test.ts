@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task, TaskRun } from '../src/lib/api';
-import { canCancelTask, runAction, tabForRun, tabForTask, taskAction } from '../src/lib/taskManager';
+import { canCancelTask, runAction, tabForRun, tabForTask, taskAction, taskSlotLink } from '../src/lib/taskManager';
 
 const task = (state: string, extra: Partial<Task> = {}): Task => ({
   id: 't', template_key: 'follow_up', state, slots: {}, attempt_count: 0,
@@ -33,5 +33,21 @@ describe('task manager classification', () => {
     expect(runAction({ ...run('failed'), error_code: 'worker_interrupted' })).toContain('worker interrupted');
     expect(canCancelTask(task('ready'))).toBe(true);
     expect(canCancelTask(task('confirmed'))).toBe(false);
+  });
+
+  it('describes restaurant handoffs without claiming an external booking', () => {
+    expect(taskAction(task('awaiting_owner', { template_key: 'restaurant_reservation' }))).toBe('Waiting for you to finish the booking');
+    expect(taskAction(task('confirmed', { template_key: 'restaurant_reservation' }))).toBe('Booking recorded from your confirmation');
+  });
+
+  it('only links the known booking fields to their expected providers', () => {
+    expect(taskSlotLink('open_table_url', 'https://www.opentable.com/s?covers=2')).toEqual({
+      href: 'https://www.opentable.com/s?covers=2', label: 'Open OpenTable',
+    });
+    expect(taskSlotLink('google_maps_url', 'https://www.google.com/maps/search/?api=1')).toEqual({
+      href: 'https://www.google.com/maps/search/?api=1', label: 'Open Google Maps',
+    });
+    expect(taskSlotLink('notes', 'https://example.com/phishing')).toBeNull();
+    expect(taskSlotLink('open_table_url', 'https://example.com/phishing')).toBeNull();
   });
 });

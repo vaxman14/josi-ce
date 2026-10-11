@@ -13,6 +13,7 @@ export const MUTATING_TOOLS=new Set([
   'create_task','update_task_slots','approve_task','cancel_task','schedule_reminder','update_reminder','cancel_reminder',
   'draft_email','draft_calendar_event','draft_contact_update','call_custom_api','run_native_workflow',
   'workspace_propose_change','workspace_propose_code',
+  'prepare_restaurant_reservation_handoff','mark_restaurant_reservation_booked',
 ]);
 
 /** Some tools are reads for their usual shape but consequential for a specific
