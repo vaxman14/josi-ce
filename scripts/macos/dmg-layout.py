@@ -23,8 +23,8 @@ with DSStore.open(str(mount/'.DS_Store'),'w+') as store:
     store['.']['icvl']=('type',b'icnv')
     store['.']['vstl']=('type',b'icnv')
     store['.']['pBBk']=Bookmark.for_file(str(background))
-    store['.']['bwsp']={'ShowStatusBar':False,'ShowTabView':False,'ShowToolbar':False,'ShowPathbar':False,'ShowSidebar':False,'ContainerShowSidebar':False,'PreviewPaneVisibility':False,'SidebarWidth':0,'WindowBounds':'{{200, 160}, {720, 440}}'}
-    store['.']['icvp']={'viewOptionsVersion':1,'backgroundType':2,'backgroundColorRed':0.04,'backgroundColorGreen':0.09,'backgroundColorBlue':0.16,'backgroundImageAlias':alias,'iconSize':80.0,'textSize':13.0,'labelOnBottom':True,'arrangeBy':'none','showIconPreview':True,'showItemInfo':False,'gridSpacing':100.0,'gridOffsetX':0.0,'gridOffsetY':0.0,'scrollPositionX':0.0,'scrollPositionY':0.0}
+    store['.']['bwsp']={'ShowStatusBar':False,'ShowTabView':False,'ShowToolbar':False,'ShowPathbar':False,'ShowSidebar':False,'ContainerShowSidebar':False,'PreviewPaneVisibility':False,'SidebarWidth':0,'WindowBounds':'{{200, 160}, {720, 520}}'}
+    store['.']['icvp']={'viewOptionsVersion':1,'backgroundType':2,'backgroundColorRed':0.97,'backgroundColorGreen':0.97,'backgroundColorBlue':0.97,'backgroundImageAlias':alias,'iconSize':80.0,'textSize':13.0,'labelOnBottom':True,'arrangeBy':'none','showIconPreview':True,'showItemInfo':False,'gridSpacing':100.0,'gridOffsetX':0.0,'gridOffsetY':0.0,'scrollPositionX':0.0,'scrollPositionY':0.0}
     for name,position in [('Install Josi.pkg',(170,220)),('TEST-ME.txt',(365,220)),('Licenses and Sources',(555,220))]:
         store[name]['Iloc']=position
 with DSStore.open(str(mount/'.DS_Store'),'r') as store:
