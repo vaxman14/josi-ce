@@ -13,6 +13,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import tempfile
 import zipfile
 
 REPO=Path(__file__).resolve().parents[2]
@@ -32,20 +33,16 @@ ENV={**os.environ,'DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer','
 def digest(path):
     with path.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
 
-def clean_candidate_metadata(out,app):
-    if not app.is_relative_to(out) or app.is_symlink():raise ValueError('Candidate app required')
+def clean_candidate_metadata(out,app,workspace):
+    if not app.is_relative_to(workspace) or app.is_symlink():raise ValueError('Candidate app required')
     # This private Python does not expose os.listxattr on macOS. Use the native
     # utility, which ignores missing attributes and preserves file contents.
-    root_attributes=subprocess.run(['/usr/bin/xattr',str(app)],check=True,capture_output=True,text=True,env=ENV).stdout.splitlines()
     for name in ('com.apple.FinderInfo','com.apple.ResourceFork'):
-        commands=[['/usr/bin/xattr','-dr',name,str(app)]]
-        # Recursive xattr acts on directory contents; handle the app root too.
-        if name in root_attributes:commands.append(['/usr/bin/xattr','-d',name,str(app)])
-        for args in commands:
-            result=subprocess.run(args,capture_output=True,text=True,env=ENV)
-            with (out/'evidence/candidate-metadata.jsonl').open('a') as log:
-                log.write(json.dumps({'command':args,'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})+'\n')
-            if result.returncode:raise RuntimeError('Candidate metadata cleanup failed')
+        args=['/usr/bin/xattr','-dr',name,str(app)]
+        result=subprocess.run(args,capture_output=True,text=True,env=ENV)
+        with (out/'evidence/candidate-metadata.jsonl').open('a') as log:
+            log.write(json.dumps({'command':args,'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})+'\n')
+        if result.returncode:raise RuntimeError('Candidate metadata cleanup failed')
 
 def runner(out):
     def run(name,args,accepted=(0,),cwd=REPO):
@@ -88,16 +85,21 @@ def distribution():
 
 def prepare(out):
     out.mkdir();(out/'evidence').mkdir(mode=0o700)
+    # File Provider can reattach FinderInfo to signed bundles in Documents.
+    # Only app staging is temporary; every deliverable and log remains in out.
+    with tempfile.TemporaryDirectory(prefix='josi-pkg-native-',dir='/private/tmp') as folder:
+        prepare_native(out,Path(folder))
+
+def prepare_native(out,workspace):
     run=runner(out)
     # Finder may attach unsigned metadata when the handoff is copied. Preserve
     # the immutable input; verify its original signature on a byte-identical
     # candidate copy without resource forks or extended attributes.
-    baseline=out/'baseline-input/Josi CE Server Setup.app'
+    baseline=workspace/'baseline-input/Josi CE Server Setup.app'
     run('baseline-copy.log',['/usr/bin/ditto','--norsrc','--noextattr',PREVIOUS,baseline])
-    clean_candidate_metadata(out,baseline)
+    clean_candidate_metadata(out,baseline,workspace)
     run('baseline-app-signature.log',['/usr/bin/codesign','--verify','--deep','--strict','-R','=anchor apple generic and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "'+APP_IDENTITY+'"',baseline])
-    run('baseline-client-signature.log',['/usr/bin/codesign','--verify','--deep','--strict','-R','=anchor apple generic and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "'+APP_IDENTITY+'"',CLIENT])
-    app=out/'payload/Applications/Josi Server.app';resources=app/'Contents/Resources';resources.mkdir(parents=True)
+    app=workspace/'payload/Applications/Josi Server.app';resources=app/'Contents/Resources';resources.mkdir(parents=True)
     shutil.copytree(baseline/'Contents/Resources/runtime',resources/'runtime',symlinks=True)
     runtime=resources/'runtime'
     for p in REPO.glob('packages/*/dist'):
@@ -132,10 +134,10 @@ def prepare(out):
     run('background-pixels.log',['/usr/bin/sips','-z',440,720,out/'background.png'])
     run('dmg-build-tools.log',[BASE/'prefix/python/bin/python3.11','-I','-B',REPO/'scripts/macos/acquire-dmg-tools.py',out])
     # The client is reused unchanged, with its original signature and identity.
-    client=out/'client-payload/Applications/Josi CE.app'
+    client=workspace/'client-payload/Applications/Josi CE.app'
     shutil.copytree(CLIENT,client,symlinks=True)
-    clean_candidate_metadata(out,client)
-    run('copied-client-signature.log',['/usr/bin/codesign','--verify','--deep','--strict',client])
+    clean_candidate_metadata(out,client,workspace)
+    run('baseline-client-signature.log',['/usr/bin/codesign','--verify','--deep','--strict','-R','=anchor apple generic and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "'+APP_IDENTITY+'"',client])
     legal=out/'client-legal';legal.mkdir()
     electron_archive=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/electron/electron-v43.2.0-darwin-arm64.zip')
     expected=json.loads((CLIENT_ROOT/'node_modules/electron/checksums.json').read_text())['electron-v43.2.0-darwin-arm64.zip']
@@ -189,29 +191,41 @@ def prepare(out):
         'To uninstall, choose Uninstall Server in Josi Server. Your data and recovery copies are retained.'
     ]))
     (out/'Distribution.xml').write_text(distribution())
-    clean_candidate_metadata(out,app)
+    clean_candidate_metadata(out,app,workspace)
     spec=importlib.util.spec_from_file_location('inventory',REPO/'scripts/macos/inventory.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     m.inventory(runtime)
     run('unsigned-runtime-integrity.log',[runtime/'python/bin/python3.11','-I','-B',runtime/'app/native/lifecycle.py','verify'])
     packages=out/'unsigned-packages';packages.mkdir()
     for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.6'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
-        root=out/('payload' if name=='server' else 'client-payload')
+        root=workspace/('payload' if name=='server' else 'client-payload')
         run('unsigned-'+name+'-pkg.log',['/usr/bin/pkgbuild','--root',root,'--component-plist',component_plan(out,name),'--install-location','/','--ownership','recommended','--identifier',identifier,'--version',version,'--scripts',out/(name+'-scripts'),packages/(name+'.pkg')])
     run('unsigned-productbuild.log',['/usr/bin/productbuild','--distribution',out/'Distribution.xml','--resources',out/'package-resources','--package-path',packages,out/'Install Josi-unsigned.pkg'])
     run('unsigned-package-expand.log',['/usr/sbin/pkgutil','--expand-full',out/'Install Josi-unsigned.pkg',out/'expanded-unsigned-pkg'])
+    for name in ['payload','client-payload']:
+        shutil.copytree(workspace/name,out/name,symlinks=True)
     shutil.copyfile(REPO/'packaging/macos/PKG-TEST-ME.txt',out/'TEST-ME.txt')
     (out/'prepared.json').write_text(json.dumps({'version':VERSION,'candidate':False,'notarized':False,'installed':False},indent=2)+'\n')
     print(out,flush=True)
 
 def sign(out,standard_mount=False):
     if not (out/'prepared.json').is_file():raise ValueError('Prepare first')
-    run=runner(out);app=out/'payload/Applications/Josi Server.app'
+    with tempfile.TemporaryDirectory(prefix='josi-pkg-native-',dir='/private/tmp') as folder:
+        workspace=Path(folder)
+        for name in ['payload','client-payload']:
+            subprocess.run(['/usr/bin/ditto','--norsrc','--noextattr',str(out/name),str(workspace/name)],check=True)
+        sign_native(out,standard_mount,workspace)
+
+def sign_native(out,standard_mount,workspace):
+    run=runner(out);app=workspace/'payload/Applications/Josi Server.app'
     subprocess.run(['/usr/bin/git','diff','--exit-code','--quiet'],cwd=REPO,check=True)
     subprocess.run(['/usr/bin/git','diff','--cached','--exit-code','--quiet'],cwd=REPO,check=True)
     if subprocess.check_output(['/usr/bin/git','ls-files','--others','--exclude-standard','--exclude=.native-acceptance-evidence/'],cwd=REPO):raise ValueError('Commit intended source before signing')
     commit=subprocess.check_output(['/usr/bin/git','rev-parse','HEAD'],cwd=REPO,text=True).strip()
     (app/'Contents/Resources/runtime/licenses/build.json').write_text(json.dumps({'sourceCommit':commit,'architecture':'arm64','minimumMacOS':'14.0','scannerBundled':False,'signing':'SOCAL candidate; not notarized'},indent=2)+'\n')
-    clean_candidate_metadata(out,app)
+    clean_candidate_metadata(out,app,workspace)
+    client=workspace/'client-payload/Applications/Josi CE.app'
+    clean_candidate_metadata(out,client,workspace)
+    run('signing-client-input-verify.log',['/usr/bin/codesign','--verify','--deep','--strict',client])
     # No probe, alternate identity, or automatic retry. This is actual candidate code.
     run('sign-server-executable.log',['/usr/bin/codesign','--force','--keychain',KEYCHAIN,'--sign',APP_IDENTITY,'--options','runtime','--timestamp',app/'Contents/MacOS/JosiServer'])
     runtime=app/'Contents/Resources/runtime'
@@ -223,12 +237,17 @@ def sign(out,standard_mount=False):
     if 'Authority='+APP_IDENTITY not in identity or 'TeamIdentifier=LRH75YR6QW' not in identity or 'Timestamp=' not in identity or '(runtime)' not in identity:raise ValueError('Wrong application identity, timestamp or hardened runtime')
     packages=out/'packages';packages.mkdir()
     for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.6'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
-        payload=out/('payload' if name=='server' else 'client-payload')
+        payload=workspace/('payload' if name=='server' else 'client-payload')
         run(name+'-pkg.log',['/usr/bin/pkgbuild','--root',payload,'--component-plist',component_plan(out,name),'--install-location','/','--ownership','recommended','--identifier',identifier,'--version',version,'--scripts',out/(name+'-scripts'),packages/(name+'.pkg')])
     pkg=out/'Install Josi.pkg'
     run('productbuild.log',['/usr/bin/productbuild','--distribution',out/'Distribution.xml','--resources',out/'package-resources','--package-path',packages,'--keychain',KEYCHAIN,'--sign',PKG_IDENTITY,'--timestamp',pkg])
     signature=run('pkg-signature.log',['/usr/sbin/pkgutil','--check-signature',pkg])
     if PKG_IDENTITY not in signature:raise ValueError('Wrong package identity')
+    # Preserve the signed bytes for inspection. File Provider metadata on these
+    # loose inspection copies is not included in the already-built package.
+    for name in ['payload','client-payload']:
+        shutil.rmtree(out/name)
+        shutil.copytree(workspace/name,out/name,symlinks=True)
     run('expanded-pkg.log',['/usr/sbin/pkgutil','--expand-full',pkg,out/'expanded-pkg'])
     run('pkg-gatekeeper.log',['/usr/sbin/spctl','--assess','--type','install','--verbose=4',pkg],accepted=(0,1,3))
     # Public source and license materials are companions, not executable payload.
