@@ -259,11 +259,11 @@ def sign_native(out,standard_mount,workspace):
     run('productbuild.log',['/usr/bin/productbuild','--distribution',out/'Distribution.xml','--resources',out/'package-resources','--package-path',packages,'--keychain',KEYCHAIN,'--sign',PKG_IDENTITY,'--timestamp',pkg])
     signature=run('pkg-signature.log',['/usr/sbin/pkgutil','--check-signature',pkg])
     if PKG_IDENTITY not in signature:raise ValueError('Wrong package identity')
-    # Preserve the signed bytes for inspection. File Provider metadata on these
-    # loose inspection copies is not included in the already-built package.
+    # Preserve signed inspection copies separately. Deleting or replacing an
+    # inspection tree in Documents races File Provider's Finder metadata.
+    # The package was built from the clean local staging tree above.
     for name in ['payload','client-payload']:
-        shutil.rmtree(out/name)
-        shutil.copytree(workspace/name,out/name,symlinks=True)
+        shutil.copytree(workspace/name,out/('signed-'+name),symlinks=True)
     run('expanded-pkg.log',['/usr/sbin/pkgutil','--expand-full',pkg,out/'expanded-pkg'])
     run('pkg-gatekeeper.log',['/usr/sbin/spctl','--assess','--type','install','--verbose=4',pkg],accepted=(0,1,3))
     # Public source and license materials are companions, not executable payload.
