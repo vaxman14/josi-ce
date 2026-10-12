@@ -70,7 +70,7 @@ def main():
         subprocess.run(['/bin/launchctl','asuser',str(uid),'/usr/bin/sudo','-H','-u','#'+str(uid),'/usr/bin/open','-n',str(APP),'--args','--progress',str(path)],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:
             subprocess.run(['/usr/bin/codesign','--verify','--deep','--strict','-R',REQUIREMENT,str(APP)],check=True,capture_output=True)
-            obj=Lifecycle(runtime,progress=lambda phase,service:event({'phase':phase,'service':service}))
+            obj=Lifecycle(runtime,progress=lambda phase,service:event({'phase':phase,'service':service}),diagnostics=event)
             run_install(obj,uid,event)
         except Exception as error:
             event({'result':'failure','phase':'Stopped','operation':getattr(error,'josi_operation','installation'),**diagnostic(error)})

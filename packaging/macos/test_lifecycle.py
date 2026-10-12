@@ -81,7 +81,7 @@ class Tests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'did not return a readiness result'):self.obj.ready()
     def test_readiness_timeout_retains_specific_attachment_blocker(self):
         from unittest.mock import patch
-        self.readiness_fixture()
+        self.readiness_fixture();events=[];self.obj.diagnostics=events.append
         class Connection:
             def __init__(self,*args,**kwargs):pass
             def request(self,*args,**kwargs):pass
@@ -89,9 +89,9 @@ class Tests(unittest.TestCase):
             status=503
             def read(self,limit=None):return b'{"ready":false,"blockers":["attachment_storage"]}'
             def close(self):pass
-        with patch.object(m.http.client,'HTTPConnection',Connection),patch.object(m.time,'monotonic',side_effect=[0,0,241]),patch.object(m.time,'sleep'),patch.object(m,'emit') as emit:
+        with patch.object(m.http.client,'HTTPConnection',Connection),patch.object(m.time,'monotonic',side_effect=[0,0,241]),patch.object(m.time,'sleep'):
             with self.assertRaisesRegex(RuntimeError,'web readiness HTTP 503 \\(attachment_storage\\)'):self.obj.ready()
-        self.assertIn('attachment_storage',emit.call_args.args[0]['cause'])
+        self.assertIn('attachment_storage',events[0]['cause'])
     def setUp(self):
         BASE.mkdir(exist_ok=True);self.root=Path(tempfile.mkdtemp(prefix='unit-',dir=BASE))
         self.runtime=self.root/'payload';(self.runtime/'app').mkdir(parents=True)
@@ -206,6 +206,25 @@ class Tests(unittest.TestCase):
     def test_snapshot_rejects_links(self):
         self.obj.data.mkdir();(self.obj.data/'link').symlink_to('/etc/passwd')
         with self.assertRaises(ValueError):self.obj.snapshot_inventory(self.obj.data)
+    def test_copy_preserves_inherited_acls_and_restores_them_again(self):
+        import pwd
+        self.obj.data.mkdir();(self.obj.data/'temp/migrate').mkdir(parents=True)
+        state=self.obj.data/'state';state.mkdir()
+        user=pwd.getpwuid(os.getuid()).pw_name
+        self.obj.run(['/bin/chmod','+a','user:'+user+' allow read,write,append,execute,delete,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit',state])
+        (state/'worker-heartbeat').write_text('permission fixture')
+        before=self.obj.snapshot_inventory(self.obj.data)
+        self.assertIn('inherited',before['state/worker-heartbeat']['acl'])
+        snapshot=self.root/'snapshot';self.obj.copy(self.obj.data,snapshot)
+        self.assertEqual(self.obj.snapshot_inventory(snapshot),before)
+        restored=self.root/'restored';self.obj.copy(snapshot,restored)
+        self.assertEqual(self.obj.snapshot_inventory(restored),before)
+    def test_tampered_snapshot_acl_never_replaces_current_data(self):
+        import pwd
+        j=self.prepare_snapshot();user=pwd.getpwuid(os.getuid()).pw_name
+        self.obj.run(['/bin/chmod','+a','user:'+user+' allow read',j.folder/'snapshot/row'])
+        with self.assertRaisesRegex(ValueError,'integrity'):self.obj.recover(j.folder)
+        self.assertEqual((self.obj.data/'row').read_text(),'new schema retained')
     def test_isolated_adapter_refuses_live_root(self):
         with self.assertRaises(ValueError):m.Lifecycle(self.runtime,m.PRODUCT,isolated=True)
     def test_isolated_adapter_refuses_arbitrary_temporary_root(self):

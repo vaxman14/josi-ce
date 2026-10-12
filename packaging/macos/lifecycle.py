@@ -113,9 +113,10 @@ class Journal:
         p=self.folder/f'{r["sequence"]:04}.json';durable(p,r);self.records.append(r);self.previous=hashed(p)
 
 class Lifecycle:
-    def __init__(self, runtime, root=PRODUCT, isolated=False, progress=None):
+    def __init__(self, runtime, root=PRODUCT, isolated=False, progress=None, diagnostics=None):
         self.runtime=plain(runtime);self.root=plain(root);self.isolated=isolated
         self.progress=progress or (lambda phase,service:emit({'phase':phase,'service':service}))
+        self.diagnostics=diagnostics
         if isolated:
             local=self.root.parent==LOCAL_TESTS
             if os.getuid()==0 or not (local or str(root).startswith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/')):raise ValueError('Invalid isolated root')
@@ -342,7 +343,7 @@ class Lifecycle:
             except (OSError,ValueError,RuntimeError,http.client.HTTPException) as error:
                 detail=diagnostic(error)
                 if detail!=last:
-                    emit({'phase':'Waiting for readiness','service':'installer',**detail})
+                    (self.diagnostics or emit)({'phase':'Waiting for readiness','service':'installer',**detail})
                     last=detail
                 time.sleep(2)
         raise RuntimeError('Readiness deadline exceeded'+(': '+last['cause'] if last else ''))
@@ -366,6 +367,7 @@ class Lifecycle:
         if target.exists():raise ValueError('Copy destination exists')
         self.progress('Copying and flushing protected files','installer')
         self.run(['/usr/bin/ditto','--acl','--extattr',source,target],timeout=600)
+        self.copy_acls(source,target)
         last=None
         for p in target.rglob('*'):
             if p.is_symlink():continue
@@ -377,6 +379,49 @@ class Lifecycle:
             fd=os.open(last,os.O_RDONLY|os.O_NOFOLLOW)
             try:fcntl.fcntl(fd,51)
             finally:os.close(fd)
+    def copy_acls(self,source,target):
+        # ditto can omit inherited-only ACLs on files. Restore the exact ACL
+        # through pinned descriptors; snapshot verification still compares all
+        # ownership, modes, flags, ACL entries and content before accepting it.
+        lib=ctypes.CDLL('/usr/lib/libSystem.B.dylib',use_errno=True)
+        lib.acl_get_fd_np.argtypes=[ctypes.c_int,ctypes.c_int];lib.acl_get_fd_np.restype=ctypes.c_void_p
+        lib.acl_set_fd_np.argtypes=[ctypes.c_int,ctypes.c_void_p,ctypes.c_int];lib.acl_set_fd_np.restype=ctypes.c_int
+        lib.acl_to_text.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_ssize_t)];lib.acl_to_text.restype=ctypes.c_void_p
+        lib.acl_init.argtypes=[ctypes.c_int];lib.acl_init.restype=ctypes.c_void_p
+        lib.acl_free.argtypes=[ctypes.c_void_p]
+        def read(fd):
+            acl=lib.acl_get_fd_np(fd,0x100)
+            if not acl:
+                if ctypes.get_errno()==2:return None,b''
+                raise ValueError('Cannot inspect copied permissions')
+            size=ctypes.c_ssize_t();text=lib.acl_to_text(acl,ctypes.byref(size))
+            if not text:lib.acl_free(acl);raise ValueError('Cannot decode copied permissions')
+            try:return acl,ctypes.string_at(text,size.value)
+            finally:lib.acl_free(text)
+        source=Path(source);target=Path(target)
+        for path in [source,*source.rglob('*')]:
+            destination=target/path.relative_to(source)
+            if path.is_symlink():
+                if not destination.is_symlink() or os.readlink(path)!=os.readlink(destination):raise ValueError('Copied link identity changed')
+                continue
+            kind=stat.S_IFMT(path.lstat().st_mode)
+            if kind not in (stat.S_IFDIR,stat.S_IFREG):raise ValueError('Copy contains a special file')
+            flags=os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|(os.O_DIRECTORY if kind==stat.S_IFDIR else 0)
+            a=b=-1;acl=existing=empty=None
+            try:
+                a=os.open(path,flags);b=os.open(destination,flags)
+                if stat.S_IFMT(os.fstat(a).st_mode)!=kind or stat.S_IFMT(os.fstat(b).st_mode)!=kind:raise ValueError('Copied file type changed')
+                acl,expected=read(a);existing,actual=read(b)
+                if expected!=actual:
+                    if not acl:
+                        empty=lib.acl_init(0)
+                        if not empty:raise ValueError('Cannot allocate copied permissions')
+                    if lib.acl_set_fd_np(b,acl or empty,0x100)!=0:raise ValueError('Cannot preserve copied permissions')
+            finally:
+                for value in (acl,existing,empty):
+                    if value:lib.acl_free(value)
+                for fd in (a,b):
+                    if fd>=0:os.close(fd)
     def seal_program(self,directory):
         if self.isolated:return
         self.run(['/bin/chmod','-RN',directory])
@@ -526,8 +571,17 @@ class Lifecycle:
             phase('quiesced')
             if not fresh:
                 before=self.snapshot_inventory(self.data)
+                durable(folder/'snapshot-source-inventory',before)
                 self.copy(self.data,folder/'snapshot')
-                if self.snapshot_inventory(folder/'snapshot')!=before:raise ValueError('Cold snapshot verification failed')
+                copied=self.snapshot_inventory(folder/'snapshot')
+                if copied!=before:
+                    differences=[]
+                    for name in sorted(before.keys()|copied.keys()):
+                        fields=['missing'] if name not in copied else ['unexpected'] if name not in before else [key for key in before[name] if before[name][key]!=copied[name][key]]
+                        if fields:differences.append({'path':name,'fields':fields})
+                    durable(folder/'snapshot-copy-diagnostics',{'differences':differences})
+                    summary='; '.join(item['path']+' ('+', '.join(item['fields'])+')' for item in differences[:8])
+                    raise ValueError('Cold snapshot verification failed: '+summary)
                 durable(folder/'snapshot-inventory',before)
             phase('snapshot')
             if fresh:
