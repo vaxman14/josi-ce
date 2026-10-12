@@ -20,6 +20,11 @@ try{
   await page.goto(target);
   await page.waitForFunction(()=>!location.hash.includes('handoff'),{},{timeout:15000});
   const cookies=await context.cookies();assert(cookies.some(x=>x.name==='josi_setup_session'&&x.httpOnly&&x.sameSite==='Strict'));
+  const subscriptions=await page.evaluate(async()=>{const response=await fetch('/api/setup/subscription');return {status:response.status,body:await response.json()};});
+  assert.equal(subscriptions.status,200);
+  assert.equal(subscriptions.body.cli.installed,true);assert.equal(subscriptions.body.cli.signedIn,false);
+  assert.equal(subscriptions.body.claudeCli.installed,true);assert.equal(subscriptions.body.claudeCli.signedIn,false);
+  console.log('PASS actual native setup API reports both bundled subscription CLIs installed and signed out');
   assert.equal((await fetch(url+'/api/onboarding/consume',{method:'POST',headers,body:JSON.stringify({token})})).status,410);
   assert.equal(await page.evaluate(value=>Object.values(localStorage).some(x=>x.includes(value)),token),false);
   await page.screenshot({path:join(root,'browser-setup.png')});
