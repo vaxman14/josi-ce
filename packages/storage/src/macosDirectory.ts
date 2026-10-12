@@ -45,8 +45,15 @@ export function pinMacDirectory(path:string):{path:string;close():Promise<void>}
       const parts=path.split('/').filter(Boolean);
       if(parts.some(p=>p==='.'||p==='..'))throw new Error('Invalid directory');
       // AT_FDCWD is -2 on Darwin. Each subsequent name is relative to a held fd.
-      fd=check(api().openat(-2,'/',flags|fs.constants.O_RDONLY|fs.constants.O_DIRECTORY));
-      for(const part of parts){const next=check(api().openat(fd,part,flags|fs.constants.O_RDONLY|fs.constants.O_DIRECTORY));api().close(fd);fd=next;}
+      // Darwin O_SEARCH pins ancestors with traversal permission. Installer
+      // parents are root-owned 0711: services may cross them but not list them.
+      // The final directory still requires read permission for enumeration.
+      const directoryFlags=fs.constants.O_NOFOLLOW|0x01000000|fs.constants.O_DIRECTORY;
+      fd=check(api().openat(-2,'/',directoryFlags|(parts.length?0x40000000:fs.constants.O_RDONLY)));
+      for(const [index,part] of parts.entries()){
+        const access=index===parts.length-1?fs.constants.O_RDONLY:0x40000000;
+        const next=check(api().openat(fd,part,directoryFlags|access));api().close(fd);fd=next;
+      }
     }
     const id=randomUUID();held.set(id,fd);fd=-1;
     return {path:'/josi-held/'+id,async close(){const value=held.get(id);if(value!==undefined){held.delete(id);api().close(value);}}};

@@ -54,6 +54,44 @@ class Tests(unittest.TestCase):
         result=m.diagnostic(subprocess.TimeoutExpired(['/runtime/pg_ctl'],60,stderr=b'waiting for startup'))
         self.assertIn('timed out',result['cause']);self.assertEqual(result['stderr'],'waiting for startup')
         self.assertIn('app/file.js',m.diagnostic(ValueError('Payload hash mismatch: app/file.js'))['cause'])
+    def readiness_fixture(self):
+        (self.obj.data/'config').mkdir(parents=True)
+        (self.obj.data/'state').mkdir()
+        (self.obj.data/'state/worker-heartbeat').touch()
+        (self.obj.data/'secrets/voice-control').mkdir(parents=True)
+        (self.obj.data/'secrets/voice-control/voice-control-token').write_text('private-test-token')
+        (self.obj.data/'config/runtime.json').write_text(json.dumps({'apiPort':18080,'publicPort':8080,'controlPort':18082}))
+        self.obj.listeners=lambda cfg:None
+    def test_readiness_requires_real_proxy_result_and_localhost_host(self):
+        from unittest.mock import patch
+        self.readiness_fixture();requests=[]
+        class Connection:
+            def __init__(self,host,port,timeout):self.port=port
+            def request(self,method,path,headers):requests.append((self.port,path,headers))
+            def getresponse(self):return self
+            status=200
+            def read(self,limit=None):
+                return b'{"helperAvailable":true,"enabled":true,"healthy":true}' if self.port==18082 else b'{"ready":true,"blockers":[]}'
+            def close(self):pass
+        with patch.object(m.http.client,'HTTPConnection',Connection):self.obj.ready()
+        self.assertEqual(requests[0][2],{'Host':'localhost'});self.assertEqual(requests[1][2],{'Host':'localhost'})
+        self.assertEqual(requests[2][2],{'Authorization':'Bearer private-test-token'})
+        Connection.read=lambda self,limit=None:b''
+        with patch.object(m.http.client,'HTTPConnection',Connection),patch.object(m.time,'monotonic',side_effect=[0,0,241]),patch.object(m.time,'sleep'),patch.object(m,'emit'):
+            with self.assertRaisesRegex(RuntimeError,'did not return a readiness result'):self.obj.ready()
+    def test_readiness_timeout_retains_specific_attachment_blocker(self):
+        from unittest.mock import patch
+        self.readiness_fixture()
+        class Connection:
+            def __init__(self,*args,**kwargs):pass
+            def request(self,*args,**kwargs):pass
+            def getresponse(self):return self
+            status=503
+            def read(self,limit=None):return b'{"ready":false,"blockers":["attachment_storage"]}'
+            def close(self):pass
+        with patch.object(m.http.client,'HTTPConnection',Connection),patch.object(m.time,'monotonic',side_effect=[0,0,241]),patch.object(m.time,'sleep'),patch.object(m,'emit') as emit:
+            with self.assertRaisesRegex(RuntimeError,'web readiness HTTP 503 \\(attachment_storage\\)'):self.obj.ready()
+        self.assertIn('attachment_storage',emit.call_args.args[0]['cause'])
     def setUp(self):
         BASE.mkdir(exist_ok=True);self.root=Path(tempfile.mkdtemp(prefix='unit-',dir=BASE))
         self.runtime=self.root/'payload';(self.runtime/'app').mkdir(parents=True)

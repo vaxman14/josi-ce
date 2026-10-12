@@ -312,38 +312,56 @@ class Lifecycle:
             self.run(['/bin/launchctl','bootstrap','system',Path('/Library/LaunchDaemons')/(LABEL+role+'.plist')])
     def ready(self):
         cfg=json.loads((self.data/'config/runtime.json').read_text());deadline=time.monotonic()+240
+        last=None
         while time.monotonic()<deadline:
             self.progress('Checking readiness','web / worker / speech')
             try:
                 self.listeners(cfg)
-                for port in (cfg['apiPort'],cfg['publicPort']):
-                    c=http.client.HTTPConnection('127.0.0.1',port,timeout=3);c.request('GET','/ready');r=c.getresponse();r.read();c.close()
-                    if r.status!=200:raise RuntimeError()
+                for name,port in [('web',cfg['apiPort']),('browser proxy',cfg['publicPort'])]:
+                    c=http.client.HTTPConnection('127.0.0.1',port,timeout=3)
+                    try:
+                        # Caddy serves the localhost virtual host. An IP Host
+                        # can return an empty 200 without reaching the API.
+                        c.request('GET','/ready',headers={'Host':'localhost'})
+                        r=c.getresponse();body=r.read(16385)
+                    finally:c.close()
+                    if len(body)>16384:raise RuntimeError(name+' readiness response exceeded its limit')
+                    try:value=json.loads(body)
+                    except ValueError:raise RuntimeError(name+' did not return a readiness result') from None
+                    blockers=value.get('blockers',[]) if isinstance(value,dict) else []
+                    names=[x for x in blockers if isinstance(x,str) and re.fullmatch('[a-z_]{1,64}',x)][:10] if isinstance(blockers,list) else []
+                    if r.status!=200 or not isinstance(value,dict) or value.get('ready') is not True or blockers:
+                        raise RuntimeError(name+' readiness HTTP '+str(r.status)+(' ('+', '.join(names)+')' if names else ''))
                 hb=self.data/'state/worker-heartbeat'
-                if not hb.exists() or time.time()-hb.stat().st_mtime>90:raise RuntimeError()
+                if not hb.exists() or time.time()-hb.stat().st_mtime>90:raise RuntimeError('Worker heartbeat is missing or stale')
                 c=http.client.HTTPConnection('127.0.0.1',cfg['controlPort'],timeout=3)
                 token=(self.data/'secrets/voice-control/voice-control-token').read_text()
                 c.request('GET','/status',headers={'Authorization':'Bearer '+token});r=c.getresponse();status=json.loads(r.read());c.close()
-                if r.status!=200 or not status.get('helperAvailable') or (status.get('enabled') and not status.get('healthy')):raise RuntimeError()
+                if r.status!=200 or not status.get('helperAvailable') or (status.get('enabled') and not status.get('healthy')):raise RuntimeError('Speech helper or models are not ready')
                 return
-            except (OSError,ValueError,RuntimeError,http.client.HTTPException):time.sleep(2)
-        raise RuntimeError('Readiness deadline exceeded')
+            except (OSError,ValueError,RuntimeError,http.client.HTTPException) as error:
+                detail=diagnostic(error)
+                if detail!=last:
+                    emit({'phase':'Waiting for readiness','service':'installer',**detail})
+                    last=detail
+                time.sleep(2)
+        raise RuntimeError('Readiness deadline exceeded'+(': '+last['cause'] if last else ''))
     def listeners(self,cfg):
         ports={'database':cfg['databasePort'],'web':cfg['apiPort'],'proxy':cfg['publicPort'],'voice':cfg['voicePort'],'voice-control':cfg['controlPort']}
         for role in ROLES:
             if self.isolated:
                 child=self.children.get(role)
-                if child is None or child.poll() is not None:raise RuntimeError('Packaged service exited')
+                if child is None or child.poll() is not None:raise RuntimeError('Packaged service exited: '+role)
                 pid=child.pid
             else:
                 output=self.run(['/bin/launchctl','print','system/'+LABEL+role]).stdout.decode()
                 matches=[line.strip()[6:] for line in output.splitlines() if line.strip().startswith('pid = ')]
-                if len(matches)!=1 or not matches[0].isdecimal():raise RuntimeError('Service has no running PID')
+                if len(matches)!=1 or not matches[0].isdecimal():raise RuntimeError('Service has no running PID: '+role)
                 pid=int(matches[0])
             if role in ports:
                 result=subprocess.run(['/usr/sbin/lsof','-nP','-a','-p',str(pid),'-iTCP','-sTCP:LISTEN','-Fn'],capture_output=True,text=True,timeout=5)
                 names=[line[1:] for line in result.stdout.splitlines() if line.startswith('n')]
-                if result.returncode or names!=['127.0.0.1:'+str(ports[role])]:raise RuntimeError('Unexpected or unavailable service listener')
+                if result.returncode or names!=['127.0.0.1:'+str(ports[role])]:raise RuntimeError('Unexpected or unavailable service listener: '+role)
     def copy(self,source,target):
         if target.exists():raise ValueError('Copy destination exists')
         self.progress('Copying and flushing protected files','installer')
