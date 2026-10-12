@@ -281,7 +281,9 @@ def sign_native(out,standard_mount,workspace):
     run('source-zip.log',['/usr/bin/ditto','--norsrc','--noextattr','-c','-k','--keepParent',sources,source_zip])
     (out/'SOURCE-COMMIT.txt').write_text(commit+'\n')
     # Prepare a branded image; never add an Applications drag target.
-    image_root=out/'dmg-root';image_root.mkdir()
+    # DiskImages also uses File Provider copy callbacks. Build from a local
+    # source tree, then preserve complete inspection/image files in Documents.
+    image_root=workspace/'dmg-root';image_root.mkdir()
     shutil.copyfile(pkg,image_root/pkg.name);shutil.copyfile(out/'TEST-ME.txt',image_root/'TEST-ME.txt')
     legal_root=image_root/'Licenses and Sources';legal_root.mkdir()
     # Apple recursively scans archives inside the submitted image, including
@@ -297,7 +299,10 @@ def sign_native(out,standard_mount,workspace):
     run('volume-icon.log',['/usr/bin/xcrun','SetFile','-a','C',image_root])
     dmg=out/'Josi-Server-macos-arm64.dmg'
     writable=out/'Josi-Server-layout.dmg'
-    run('dmg-build.log',['/usr/bin/hdiutil','create','-srcfolder',image_root,'-volname','Josi Server','-fs','HFS+','-format','UDRW',writable])
+    local_writable=workspace/writable.name
+    run('dmg-build.log',['/usr/bin/hdiutil','create','-srcfolder',image_root,'-volname','Josi Server','-fs','HFS+','-format','UDRW',local_writable])
+    shutil.copyfile(local_writable,writable)
+    shutil.copytree(image_root,out/'dmg-root')
     if standard_mount:
         mounted=run('dmg-mount.log',['/usr/bin/hdiutil','attach','-nobrowse','-plist',writable])
         points=[x['mount-point'] for x in plistlib.loads(mounted.encode())['system-entities'] if 'mount-point' in x]
