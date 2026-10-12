@@ -14,7 +14,9 @@ try {
   const isolated=!!test;
   if(isolated){
     const st=lstatSync(data), marker=JSON.parse(readFileSync(join(data,'isolated-test.json')));
-    if(process.getuid()===0||!data.startsWith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/')||st.uid!==process.getuid()||(st.mode&0o077)||marker.purpose!=='disposable-native-acceptance')throw Error();
+    const localBase=`/private/tmp/josi-ce-native-tests-${process.getuid()}`,local=data.startsWith(localBase+'/');
+    if(local){const base=lstatSync(localBase);if(!base.isDirectory()||base.isSymbolicLink()||base.uid!==process.getuid()||(base.mode&0o077))throw Error();}
+    if(process.getuid()===0||!(local||data.startsWith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'))||st.uid!==process.getuid()||(st.mode&0o077)||marker.purpose!=='disposable-native-acceptance')throw Error();
   }else if(data!=='/Library/Application Support/Josi CE Server/data')throw Error();
   const info=lstatSync(configFile);
   if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||info.size>8192||info.uid!==(isolated?process.getuid():0)||(info.mode&0o022))throw Error();

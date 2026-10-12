@@ -27,6 +27,28 @@ describe.skipIf(process.platform !== 'darwin')('macOS descriptor and extended AC
     const f = fixture();
     if (process.getuid!() !== 0) expect(() => readMacSecret(f.path)).toThrow();
   });
+  it('requires a private marked local fixture for isolated secrets', () => {
+    const base = `/private/tmp/josi-ce-native-tests-${process.getuid!()}`;
+    mkdirSync(base, { mode: 0o700, recursive: true });
+    const root = mkdtempSync(join(base, 'secret-fixture-'));
+    roots.push(root);
+    const path = join(root, 'secret');
+    writeFileSync(path, 'isolated-value', { mode: 0o600 });
+    writeFileSync(join(root, 'isolated-test.json'), JSON.stringify({ purpose: 'disposable-native-acceptance' }), { mode: 0o600 });
+    const original = process.env.JOSI_NATIVE_ISOLATED_ROOT;
+    try {
+      process.env.JOSI_NATIVE_ISOLATED_ROOT = root;
+      expect(readMacSecret(path).toString()).toBe('isolated-value');
+      chmodSync(root, 0o755);
+      expect(() => readMacSecret(path)).toThrow();
+      chmodSync(root, 0o700);
+      writeFileSync(join(root, 'isolated-test.json'), JSON.stringify({ purpose: 'other' }));
+      expect(() => readMacSecret(path)).toThrow();
+    } finally {
+      if (original === undefined) delete process.env.JOSI_NATIVE_ISOLATED_ROOT;
+      else process.env.JOSI_NATIVE_ISOLATED_ROOT = original;
+    }
+  });
   it('reads through search-only parents without granting directory listing', () => {
     const f = fixture();
     const parent = join(f.root, 'search-only');

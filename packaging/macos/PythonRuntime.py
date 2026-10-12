@@ -16,7 +16,11 @@ def main():
     data = config.parent.parent
     isolated = len(sys.argv) == 4 and sys.argv[3] == '--isolated'
     if isolated:
-        if os.getuid() == 0 or not str(data).startswith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/') or json.loads((data / 'isolated-test.json').read_text())['purpose'] != 'disposable-native-acceptance':
+        local_base = Path('/private/tmp/josi-ce-native-tests-'+str(os.getuid()))
+        local = str(data).startswith(str(local_base)+'/')
+        if local and (local_base.is_symlink() or not local_base.is_dir() or local_base.stat().st_uid != os.getuid() or local_base.stat().st_mode & 0o077):
+            raise ValueError('Unprotected isolated test base')
+        if os.getuid() == 0 or not (local or str(data).startswith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/')) or json.loads((data / 'isolated-test.json').read_text())['purpose'] != 'disposable-native-acceptance':
             raise ValueError('Invalid disposable context')
     elif str(data) != '/Library/Application Support/Josi CE Server/data':
         raise ValueError('Invalid installation')

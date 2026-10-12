@@ -110,7 +110,7 @@ def prepare_native(out,workspace):
         destination=runtime/'app'/p.relative_to(REPO)
         if destination.exists():shutil.rmtree(destination)
         shutil.copytree(p,destination)
-    for name in ['lifecycle.py','maintenance.py','pkg-driver.py','Runtime.mjs']:
+    for name in ['lifecycle.py','maintenance.py','pkg-driver.py','Runtime.mjs','PythonRuntime.py']:
         shutil.copyfile(REPO/'packaging/macos'/name,runtime/'app/native'/name)
     meta=json.loads((runtime/'app/package.json').read_text());meta['version']=VERSION
     (runtime/'app/package.json').write_text(json.dumps(meta,indent=2)+'\n')
