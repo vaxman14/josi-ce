@@ -64,7 +64,10 @@ def main():
         event({'phase':'prepared','diagnosticPath':str(path),'pid':os.getpid()})
         # This opens only the status/folder/browser companion in the user's
         # session. The normal Installer remains the sole installation action.
-        subprocess.run(['/bin/launchctl','asuser',str(uid),'/usr/bin/sudo','-H','-u','#'+str(uid),'/usr/bin/open',str(APP),'--args','--progress',str(path)],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        # Always use the newly installed companion and this attempt's log.
+        # Reusing an older running app would keep its failed window and ignore
+        # the new command-line progress arguments after an upgrade.
+        subprocess.run(['/bin/launchctl','asuser',str(uid),'/usr/bin/sudo','-H','-u','#'+str(uid),'/usr/bin/open','-n',str(APP),'--args','--progress',str(path)],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:
             subprocess.run(['/usr/bin/codesign','--verify','--deep','--strict','-R',REQUIREMENT,str(APP)],check=True,capture_output=True)
             obj=Lifecycle(runtime,progress=lambda phase,service:event({'phase':phase,'service':service}))
