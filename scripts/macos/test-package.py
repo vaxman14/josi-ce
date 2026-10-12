@@ -21,6 +21,9 @@ test_base=mod.LOCAL_TESTS
 mod.plain(test_base,os.getuid())
 test_base.mkdir(mode=0o700,exist_ok=True)
 if test_base.stat().st_uid!=os.getuid() or test_base.stat().st_mode&0o777!=0o700:raise ValueError('Unprotected isolated test base')
+# Darwin inherits a new directory's group from its parent; /private/tmp is
+# wheel-owned. Disposable service secrets must use this user's primary group.
+os.chown(test_base,-1,os.getgid())
 root=test_base/('acceptance-'+str(time.time_ns()))
 ports=[]
 while len(ports)<5:
