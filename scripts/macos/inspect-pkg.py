@@ -13,6 +13,11 @@ def digest(path):
 def compare(source,target):
     files={p.relative_to(source).as_posix() for p in source.rglob('*') if p.is_file() or p.is_symlink()}
     actual={p.relative_to(target).as_posix() for p in target.rglob('*') if p.is_file() or p.is_symlink()}
+    # Finder may add view metadata to the Documents inspection copy after
+    # pkgbuild used clean local staging. Never exempt anything inside an app.
+    metadata={'.DS_Store','Applications/.DS_Store'}
+    if actual&metadata:raise ValueError('Finder metadata entered package payload')
+    files-=metadata
     if files!=actual:raise ValueError('Payload inventory mismatch')
     if len({p.casefold() for p in files})!=len(files):raise ValueError('Case-colliding payload members')
     for name in files:
