@@ -57,6 +57,13 @@ try:
         maintenance.workspace(instance,'',__import__('os').getuid())
         subprocess.run([str(instance.installed/'node/bin/node'),str(workspace_proof),str(root),'declined'],env=env,check=True,timeout=30)
     instance.stop()
+    # A later real Codex invocation may clean stale aliases created by an
+    # earlier one. Seed the interrupted-CLI cache explicitly so this upgrade
+    # regression always exercises retention of links, regardless of cleanup.
+    cache_alias=instance.data/'codex/tmp/arg0/codex-arg0-upgrade-fixture/apply_patch'
+    cache_alias.parent.mkdir(parents=True,mode=0o700)
+    cache_target=str(instance.installed/'subscription-cli/bin/codex')
+    cache_alias.symlink_to(cache_target)
     # Reproduce the physical snapshot failure: an inherited-only file ACL
     # must survive both a cold backup and the automatic restore below.
     import pwd
@@ -88,7 +95,8 @@ try:
     subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(root),'verify'],env=env,check=True,timeout=30)
     print('PASS automatic migration failure recovery, retained failed data, and continuing upgrade activation',flush=True)
     retained_cache=interrupted/'retained-subscription-cache/codex-tmp'
-    assert retained_cache.is_dir() and any(p.is_symlink() for p in retained_cache.rglob('*'))
+    retained_alias=retained_cache/'arg0/codex-arg0-upgrade-fixture/apply_patch'
+    assert retained_cache.is_dir() and retained_alias.is_symlink() and os.readlink(retained_alias)==cache_target
     assert json.loads((interrupted/'retained-subscription-cache-record').read_text())['contentsDeleted'] is False
     print('PASS Codex temporary aliases retained without following links or weakening cold snapshot verification',flush=True)
     subprocess.run([str(instance.installed/'node/bin/node'),str(subscription_proof),str(root),'retained'],env=env,check=True,timeout=60)
