@@ -183,6 +183,7 @@ async function main(): Promise<void> {
     const conn = await connectFromEnv({
       DATABASE_URL: ctx.databaseUrl ?? undefined,
       PGPASSWORD_FILE: ctx.passwordFile ?? undefined,
+      JOSI_NATIVE_RUNTIME: process.env.JOSI_NATIVE_RUNTIME,
     } as NodeJS.ProcessEnv, { max: 2 });
     close = conn.close;
     return conn.db;

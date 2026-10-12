@@ -88,6 +88,9 @@ export interface HarnessSession {
   serverPath: string;
   contextPath: string;
   callsPath: string;
+  /** Explicit non-secret environment: vendor MCP launchers clear inherited
+   * variables. Secrets remain only in the private context file. */
+  serverEnvironment: Record<string, string>;
   /** Removes the temp dir. Always called in a `finally`; a leftover context
    * file is a leftover statement of who was asking. */
   cleanup: () => void;
@@ -129,10 +132,18 @@ export function openHarnessSession(args: {
   // Create this explicitly rather than relying on appendFile's umask. The
   // completed results may contain private connected data used by grounding.
   writeFileSync(callsPath, '', { mode: 0o600 });
+  const serverEnvironment: Record<string, string> = { [MCP_CONTEXT_ENV]: contextPath };
+  if (env.JOSI_NATIVE_RUNTIME === '1') {
+    for (const key of ['JOSI_NATIVE_RUNTIME', 'JOSI_NATIVE_ISOLATED_ROOT', 'JOSI_DATA_DIR',
+      'JOSI_STORAGE_ROOT_BASE', 'JOSI_UPLOAD_DIR', 'JOSI_WORKSPACE_NATIVE_PATH', 'JOSI_WORKSPACE_NATIVE_ID']) {
+      if (env[key]) serverEnvironment[key] = env[key]!;
+    }
+  }
   return {
     serverPath: args.serverPath,
     contextPath,
     callsPath,
+    serverEnvironment,
     cleanup: () => {
       try { rmSync(dir, { recursive: true, force: true }); } catch { /* already gone */ }
     },
@@ -180,7 +191,7 @@ export function writeClaudeMcpConfig(session: HarnessSession): string {
         // spawns the server itself and its PATH is not a promise we rely on.
         command: process.execPath,
         args: [session.serverPath],
-        env: { [MCP_CONTEXT_ENV]: session.contextPath },
+        env: session.serverEnvironment,
       },
     },
   }), { mode: 0o600 });

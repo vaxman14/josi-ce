@@ -166,7 +166,7 @@ export function codexArgs(model: string, harness?: HarnessSession | null, imageP
       // TOML basic string for these paths.
       '-c', `mcp_servers.${MCP_SERVER_NAME}.command=${JSON.stringify(process.execPath)}`,
       '-c', `mcp_servers.${MCP_SERVER_NAME}.args=[${JSON.stringify(harness.serverPath)}]`,
-      '-c', `mcp_servers.${MCP_SERVER_NAME}.env={${'JOSI_MCP_CONTEXT'} = ${JSON.stringify(harness.contextPath)}}`,
+      '-c', `mcp_servers.${MCP_SERVER_NAME}.env={${Object.entries(harness.serverEnvironment).map(([key, value]) => `${key} = ${JSON.stringify(value)}`).join(', ')}}`,
       '-c', `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
     ]
     : [];

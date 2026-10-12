@@ -94,6 +94,23 @@ rejected by Gatekeeper; that verdict is recorded, never treated as acceptance.
 
 ## Root-cause evidence
 
+The native subscription environment must set `JOSI_MCP_SERVER` to the activated
+version's `app/packages/agent/dist/mcp/server.js`. Without it, both subscription
+providers fall back to Docker's `/app` path and refuse tool requests before
+starting the vendor CLI, even when ordinary replies and account sign-in work.
+The macos.11 package supplies this path for both web and worker roles.
+`test-subscription-cli.mjs` checks the official Codex CLI's generated MCP
+configuration and starts the real packaged server using each provider's
+configuration. Initialization, tool listing, `record_number(7)` and the
+completed-call ledger must all pass in the disposable installation. These
+checks also read the selected native folder through both providers' MCP
+configurations with a cleared child environment and the native protected
+database-password reader. Codex's MCP launcher clears inherited variables,
+so the harness explicitly passes only the required non-secret native paths
+and filesystem identities; credentials remain in the private context file.
+These checks do not establish an authenticated model-driven tool call; Roman must
+repeat the setup capability test after upgrading.
+
 Apple rejected notarization submission `a8d75303-666b-490b-b194-8b3f12046212`
 because the source ZIP inside the DMG included Skia's legacy i386 `perfhost`
 fixture. All three blocking findings (unsigned, missing secure timestamp and

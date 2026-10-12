@@ -6,6 +6,9 @@ export function subscriptionEnvironment(program, data, role) {
     PATH: `${join(program, 'subscription-cli/bin')}:${join(program, 'node/bin')}:/usr/bin:/bin`,
     HOME: join(data, 'profiles', role),
     CODEX_HOME: join(data, 'codex'),
+    // The CLI providers otherwise look under Docker's /app. Pin the tool
+    // entry to this activated version, just like the bundled executables.
+    JOSI_MCP_SERVER: join(program, 'app/packages/agent/dist/mcp/server.js'),
     // This shared inherited-ACL directory lets the worker use the connection
     // established by the web service without depending on the owner's shell.
     CLAUDE_CONFIG_DIR: join(data, 'codex', 'claude-code'),

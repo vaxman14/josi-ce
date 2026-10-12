@@ -87,6 +87,25 @@ describe('the harness context file', () => {
     expect(() => statSync(s.contextPath)).toThrow();
     expect(() => statSync(s.callsPath)).toThrow();
   });
+
+  it('passes native filesystem facts through both vendor configs without passing secrets', () => {
+    const env = { JOSI_NATIVE_RUNTIME: '1', JOSI_DATA_DIR: '/native/data',
+      JOSI_NATIVE_ISOLATED_ROOT: '/native/data', JOSI_STORAGE_ROOT_BASE: '/native/data/roots',
+      JOSI_WORKSPACE_NATIVE_PATH: '/selected', JOSI_WORKSPACE_NATIVE_ID: '1:2',
+      DATABASE_URL: 'postgresql://josi@db:5432/josi', PGPASSWORD_FILE: '/secret/password',
+      MASTER_KEY_FILE: '/secret/key', OPENAI_API_KEY: 'synthetic', UNKNOWN_VARIABLE: 'refuse' };
+    const s = openHarnessSession({ serverPath: '/native/server.js', tools: [], env });
+    try {
+      const expected = { JOSI_MCP_CONTEXT: s.contextPath, JOSI_NATIVE_RUNTIME: '1',
+        JOSI_NATIVE_ISOLATED_ROOT: '/native/data', JOSI_DATA_DIR: '/native/data',
+        JOSI_STORAGE_ROOT_BASE: '/native/data/roots', JOSI_WORKSPACE_NATIVE_PATH: '/selected', JOSI_WORKSPACE_NATIVE_ID: '1:2' };
+      expect(s.serverEnvironment).toEqual(expected);
+      expect(JSON.parse(readFileSync(writeClaudeMcpConfig(s), 'utf8')).mcpServers.josi.env).toEqual(expected);
+      const override = codexArgs('m', s).find(arg => arg.startsWith('mcp_servers.josi.env='))!;
+      for (const [key, value] of Object.entries(expected)) expect(override).toContain(`${key} = ${JSON.stringify(value)}`);
+      for (const key of ['DATABASE_URL', 'PGPASSWORD_FILE', 'MASTER_KEY_FILE', 'OPENAI_API_KEY', 'UNKNOWN_VARIABLE']) expect(override).not.toContain(key);
+    } finally { s.cleanup(); }
+  });
 });
 
 describe('reading back what the server recorded', () => {
@@ -157,7 +176,7 @@ describe('the claude command line with a harness', () => {
  * would and writes the calls file as the server would. */
 /** Pulls the quoted context path out of the TOML env override. */
 function contextPathFrom(override: string): string {
-  return override.slice(override.indexOf('"'), override.lastIndexOf('"') + 1);
+  return override.match(/JOSI_MCP_CONTEXT = ("(?:[^"\\]|\\.)*")/)![1]!;
 }
 
 function harnessRunner(reply: string): { runner: SpawnRunner; seen: { args: string[] } } {
