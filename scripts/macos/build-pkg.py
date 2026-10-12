@@ -35,6 +35,11 @@ def digest(path):
 
 def clean_candidate_metadata(out,app,workspace):
     if not app.is_relative_to(workspace) or app.is_symlink():raise ValueError('Candidate app required')
+    for path in app.rglob('.DS_Store'):
+        if path.is_symlink() or not path.is_file():raise ValueError('Unexpected Finder metadata entry')
+        value={'removedFinderMetadata':str(path.relative_to(workspace)),'sha256':digest(path)}
+        path.unlink()
+        with (out/'evidence/candidate-metadata.jsonl').open('a') as log:log.write(json.dumps(value)+'\n')
     # This private Python does not expose os.listxattr on macOS. Use the native
     # utility, which ignores missing attributes and preserves file contents.
     for name in ('com.apple.FinderInfo','com.apple.ResourceFork'):
@@ -221,6 +226,10 @@ def sign_native(out,standard_mount,workspace):
     subprocess.run(['/usr/bin/git','diff','--cached','--exit-code','--quiet'],cwd=REPO,check=True)
     if subprocess.check_output(['/usr/bin/git','ls-files','--others','--exclude-standard','--exclude=.native-acceptance-evidence/'],cwd=REPO):raise ValueError('Commit intended source before signing')
     commit=subprocess.check_output(['/usr/bin/git','rev-parse','HEAD'],cwd=REPO,text=True).strip()
+    clean_candidate_metadata(out,workspace/'payload',workspace)
+    clean_candidate_metadata(out,workspace/'client-payload',workspace)
+    prepared_runtime=app/'Contents/Resources/runtime'
+    run('signing-prepared-runtime-integrity.log',[prepared_runtime/'python/bin/python3.11','-I','-B',prepared_runtime/'app/native/lifecycle.py','verify'])
     (app/'Contents/Resources/runtime/licenses/build.json').write_text(json.dumps({'sourceCommit':commit,'architecture':'arm64','minimumMacOS':'14.0','scannerBundled':False,'signing':'SOCAL candidate; not notarized'},indent=2)+'\n')
     clean_candidate_metadata(out,app,workspace)
     client=workspace/'client-payload/Applications/Josi CE.app'
