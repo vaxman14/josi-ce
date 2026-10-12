@@ -32,6 +32,18 @@ ENV={**os.environ,'DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer','
 def digest(path):
     with path.open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
 
+def clean_candidate_metadata(out,app):
+    if not app.is_relative_to(out) or app.is_symlink():raise ValueError('Candidate app required')
+    removed=[]
+    for path in [app,*app.rglob('*')]:
+        if path.is_symlink():continue
+        for name in os.listxattr(path):
+            if name in ('com.apple.FinderInfo','com.apple.ResourceFork'):
+                os.removexattr(path,name)
+                removed.append({'path':str(path.relative_to(out)),'attribute':name})
+    with (out/'evidence/candidate-metadata.jsonl').open('a') as log:
+        log.write(json.dumps({'app':str(app.relative_to(out)),'removed':removed})+'\n')
+
 def runner(out):
     def run(name,args,accepted=(0,),cwd=REPO):
         print('Checking/building '+name,flush=True)
@@ -79,6 +91,7 @@ def prepare(out):
     # candidate copy without resource forks or extended attributes.
     baseline=out/'baseline-input/Josi CE Server Setup.app'
     run('baseline-copy.log',['/usr/bin/ditto','--norsrc','--noextattr',PREVIOUS,baseline])
+    clean_candidate_metadata(out,baseline)
     run('baseline-app-signature.log',['/usr/bin/codesign','--verify','--deep','--strict','-R','=anchor apple generic and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "'+APP_IDENTITY+'"',baseline])
     run('baseline-client-signature.log',['/usr/bin/codesign','--verify','--deep','--strict','-R','=anchor apple generic and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "'+APP_IDENTITY+'"',CLIENT])
     app=out/'payload/Applications/Josi Server.app';resources=app/'Contents/Resources';resources.mkdir(parents=True)
@@ -118,6 +131,8 @@ def prepare(out):
     # The client is reused unchanged, with its original signature and identity.
     client=out/'client-payload/Applications/Josi CE.app'
     shutil.copytree(CLIENT,client,symlinks=True)
+    clean_candidate_metadata(out,client)
+    run('copied-client-signature.log',['/usr/bin/codesign','--verify','--deep','--strict',client])
     legal=out/'client-legal';legal.mkdir()
     electron_archive=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/electron/electron-v43.2.0-darwin-arm64.zip')
     expected=json.loads((CLIENT_ROOT/'node_modules/electron/checksums.json').read_text())['electron-v43.2.0-darwin-arm64.zip']
@@ -171,6 +186,7 @@ def prepare(out):
         'To uninstall, choose Uninstall Server in Josi Server. Your data and recovery copies are retained.'
     ]))
     (out/'Distribution.xml').write_text(distribution())
+    clean_candidate_metadata(out,app)
     spec=importlib.util.spec_from_file_location('inventory',REPO/'scripts/macos/inventory.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     m.inventory(runtime)
     run('unsigned-runtime-integrity.log',[runtime/'python/bin/python3.11','-I','-B',runtime/'app/native/lifecycle.py','verify'])
@@ -192,6 +208,7 @@ def sign(out,standard_mount=False):
     if subprocess.check_output(['/usr/bin/git','ls-files','--others','--exclude-standard','--exclude=.native-acceptance-evidence/'],cwd=REPO):raise ValueError('Commit intended source before signing')
     commit=subprocess.check_output(['/usr/bin/git','rev-parse','HEAD'],cwd=REPO,text=True).strip()
     (app/'Contents/Resources/runtime/licenses/build.json').write_text(json.dumps({'sourceCommit':commit,'architecture':'arm64','minimumMacOS':'14.0','scannerBundled':False,'signing':'SOCAL candidate; not notarized'},indent=2)+'\n')
+    clean_candidate_metadata(out,app)
     # No probe, alternate identity, or automatic retry. This is actual candidate code.
     run('sign-server-executable.log',['/usr/bin/codesign','--force','--keychain',KEYCHAIN,'--sign',APP_IDENTITY,'--options','runtime','--timestamp',app/'Contents/MacOS/JosiServer'])
     runtime=app/'Contents/Resources/runtime'
