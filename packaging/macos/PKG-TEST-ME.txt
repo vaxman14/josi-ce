@@ -19,6 +19,10 @@ and checksums for signing and notarization results before physical testing.
 3. Launch: Click Open Josi in Browser and complete owner setup. Verify a
    single-use setup link, the selected /workspace content and read-only limits.
    Document indexing remains unavailable until a supported scanner is ready.
+   Subscription models: Choose ChatGPT or Claude subscription and verify that
+   the bundled CLI is installed but signed out. Complete the vendor browser
+   sign-in yourself, test the model, then verify the connection after restart
+   and upgrade. Enable Codex device login in ChatGPT security settings if needed.
 4. Restart: Restart the Mac. Open /Applications/Josi Server.app and verify
    ready status, browser access, chosen folder and retained owner/data.
 5. Server + client: On another clean acceptance Mac, select Desktop Client in

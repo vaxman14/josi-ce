@@ -3,6 +3,7 @@ import { readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { subscriptionEnvironment } from './SubscriptionEnvironment.mjs';
 const PROGRAM=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
 try {
   if(process.platform!=='darwin'||process.arch!=='arm64')throw Error();
@@ -32,7 +33,7 @@ try {
   for(const k of Object.keys(process.env))delete process.env[k];
   const secret=join(data,'secrets',role);
   Object.assign(process.env,{
-    PATH:join(PROGRAM,'node/bin')+':/usr/bin:/bin',TMPDIR:join(data,'temp',role),
+    ...subscriptionEnvironment(PROGRAM,data,role),TMPDIR:join(data,'temp',role),
     NODE_ENV:'production',JOSI_NATIVE_RUNTIME:'1',JOSI_VERSION:cfg.version,JOSI_DATA_DIR:data,
     JOSI_STORAGE_ROOT_BASE:join(data,'roots'),JOSI_UPLOAD_DIR:join(data,'chat-attachments'),
     MASTER_KEY_FILE:join(secret,'master-key'),PGPASSWORD_FILE:join(secret,'database-password'),

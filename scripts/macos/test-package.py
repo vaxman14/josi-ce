@@ -38,6 +38,8 @@ try:
     subprocess.run([str(instance.installed/'python/bin/python3.11'),'-B',str(instance.installed/'app/services/voice-box/model_smoke.py')],env=env,check=True,timeout=180)
     print('PASS isolated offline CPU speech roundtrip',flush=True)
     repo=Path(__file__).resolve().parents[2]
+    subscription_proof=repo/'scripts/macos/test-subscription-cli.mjs'
+    subprocess.run([str(instance.installed/'node/bin/node'),str(subscription_proof),str(root),'seed'],env=env,check=True,timeout=60)
     subprocess.run([str(instance.installed/'node/bin/node'),str(repo/'scripts/macos/test-engines.mjs'),str(root)],env=env,check=True,timeout=90)
     subprocess.run([str(BASE/'handoff-tests'),str(root)],env=env,check=True,timeout=30)
     subprocess.run([str(BASE.parent.parent/'node-v24.15.0-darwin-arm64/bin/node'),str(repo/'scripts/macos/test-browser.mjs'),str(root)],cwd=repo,env=env,check=True,timeout=90)
@@ -85,6 +87,7 @@ try:
     print('PASS exact inherited ACL retention across cold backup and automatic snapshot restoration',flush=True)
     subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(root),'verify'],env=env,check=True,timeout=30)
     print('PASS automatic migration failure recovery, retained failed data, and continuing upgrade activation',flush=True)
+    subprocess.run([str(instance.installed/'node/bin/node'),str(subscription_proof),str(root),'retained'],env=env,check=True,timeout=60)
     if (RUNTIME/'app/native/maintenance.py').exists():
         maintenance.uninstall(instance)
         assert not instance.children and (instance.data/'database/PG_VERSION').exists()

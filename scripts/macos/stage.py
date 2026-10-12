@@ -35,7 +35,7 @@ def main():
     copy(REPO/'packaging/macos/install-help.html',app/'apps/web/dist/help/install/index.html')
     if (app/'native').exists():shutil.rmtree(app/'native')
     for p in (REPO/'packaging/macos').glob('*'):
-        if p.name in ('PythonRuntime.py','Runtime.mjs','lifecycle.py'):copy(p,app/'native'/p.name)
+        if p.name in ('PythonRuntime.py','Runtime.mjs','SubscriptionEnvironment.mjs','lifecycle.py'):copy(p,app/'native'/p.name)
     if (app/'services/voice-box').exists():shutil.rmtree(app/'services/voice-box')
     for name in ('bounded_http.py','gateway.py','macos_helper.py','model_smoke.py','runtime_config.py','settings.py','tts.py','windows_helper.py'):
         copy(REPO/'services/voice-box'/name,app/'services/voice-box'/name)

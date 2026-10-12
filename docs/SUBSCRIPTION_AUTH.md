@@ -207,6 +207,30 @@ forwarded, and the one-time code is a pairing code rather than a secret — it i
 meant to be read aloud, it grants nothing without you completing the flow with
 your own ChatGPT account, and it expires in fifteen minutes.
 
+### Native Apple Silicon macOS installer
+
+Starting with `0.1.78-macos.10`, the native package includes pinned, unmodified
+Apple Silicon Codex 0.152.0 and Claude Code 2.1.258. macos.9 successfully
+installed but omitted both CLIs, so its subscription buttons correctly reported
+that the tools were missing. Installing a CLI in the owner’s shell does not fix
+the dedicated launchd service environment.
+
+Use the subscription sign-in buttons in setup or Admin → Model. Each CLI owns
+its login and configuration inside Josi’s retained data, shared by the web and
+worker service accounts. Upgrades and automatic recovery retain those directories.
+The application does not import the owner’s desktop or terminal credentials.
+Codex device sign-in must be enabled in the account’s ChatGPT security settings.
+A completed browser authorization and successful model test are still required;
+an installed CLI alone does not prove account or model access.
+
+The package retains each vendor’s original binary and signature. Notices, pinned
+artifact hashes and SBOM entries ship in the runtime; matching Codex source and
+original vendor distributions accompany the full source archive. Claude Code is
+proprietary and its published license remains applicable. The existing FI-006
+public-distribution review remains open; this packaging change does not close it.
+Rechecked official authentication and Claude Code distribution documentation on
+11 October 2026.
+
 ### Running Josi outside Docker
 
 Install and sign in the CLI as the account Josi runs as:

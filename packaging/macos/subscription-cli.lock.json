@@ -1,0 +1,51 @@
+[
+  {
+    "id": "codex",
+    "name": "@openai/codex",
+    "version": "0.152.0",
+    "filename": "codex.tgz",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.152.0.tgz",
+    "sha256": "054963eb89072c77cfa7cdca71dc65c3834e0015c45a74d172a7983a1712c6fd",
+    "integrity": "sha512-Vx0tg/J5SbxYYGJazTtL/XySK9Dlqc5KW1MZM71NMwVci/4F1ap+FfSKPFTlrICEtOTuq3KNcWSdv9oMGdPuRw==",
+    "license": "Apache-2.0"
+  },
+  {
+    "id": "codex-arm64",
+    "name": "@openai/codex",
+    "version": "0.152.0-darwin-arm64",
+    "filename": "codex-arm64.tgz",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.152.0-darwin-arm64.tgz",
+    "sha256": "cc26642531cb490dec79e8fc1aace175065e4a9e47410628c869965d8d98d20f",
+    "integrity": "sha512-DOnDA6EKOs+aRytYH4ffIuUutok9ovpvCNax8aaTZvBB2bKUPjUleLrP1pk+hGarddqU1ySuvXMOfp6ufXyOVQ==",
+    "license": "Apache-2.0"
+  },
+  {
+    "id": "claude",
+    "name": "@anthropic-ai/claude-code",
+    "version": "2.1.258",
+    "filename": "claude.tgz",
+    "url": "https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.258.tgz",
+    "sha256": "695a6dcbf475ea24f20d2c4dcb6d540a86de8c8c996ad88c1972d0b71d191ffc",
+    "integrity": "sha512-Zis1AYrHuCcK4V1tXJUkzJdklFsTvvqIcj7gk4K8lyEeJOW99ZoQH/E+WxugMqDEO7xncYZ41gydxlkSTmj/2Q==",
+    "license": "SEE LICENSE IN README.md"
+  },
+  {
+    "id": "claude-arm64",
+    "name": "@anthropic-ai/claude-code-darwin-arm64",
+    "version": "2.1.258",
+    "filename": "claude-arm64.tgz",
+    "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-arm64/-/claude-code-darwin-arm64-2.1.258.tgz",
+    "sha256": "eba374d2796edf6ed9652b40d4c081a1b7d2c206b5f2aec6187fcb3384087686",
+    "integrity": "sha512-9gYzEZjYLY/3N49jkgk9BeXPGDQNCE/6pO3/tFHJP054YnXCvKcyjWbx1M5ISgiKnEtmTRDXnAX4cXe1SGZ+Eg==",
+    "license": "SEE LICENSE IN LICENSE.md"
+  },
+  {
+    "id": "codex-source",
+    "name": "openai/codex",
+    "version": "rust-v0.152.0",
+    "filename": "codex-source.tar.gz",
+    "url": "https://codeload.github.com/openai/codex/tar.gz/refs/tags/rust-v0.152.0",
+    "sha256": "d14f90856ab4fa0eb0ab96d02ed741ac749fec67cd005471702ac11d6884887c",
+    "license": "Apache-2.0"
+  }
+]
