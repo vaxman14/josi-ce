@@ -84,8 +84,13 @@ try:
     # before health/commit. A subsequent package must preserve that database
     # and finish a repair without asking the user to erase its journal.
     failed_root=test_base/('activated-fresh-'+str(time.time_ns()))
+    fresh_ports=[]
+    while len(fresh_ports)<5:
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+            if port not in fresh_ports:fresh_ports.append(port)
     instance=mod.Lifecycle(RUNTIME,failed_root,isolated=True)
-    try:instance.install(tuple(ports),fail_at='activated')
+    try:instance.install(tuple(fresh_ports),fail_at='activated')
     except RuntimeError as error:
         if str(error)!='Injected isolated failure':raise
     else:raise AssertionError('Activation fault did not fire')
@@ -96,7 +101,7 @@ try:
     instance.run([instance.installed/'postgresql/bin/pg_ctl','-D',instance.data/'database','-l',instance.data/'logs/database/setup.log','-w','-t','60','start'],'database')
     subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(failed_root),'seed'],env=env,check=True,timeout=30)
     instance.stop();instance=mod.Lifecycle(RUNTIME,failed_root,isolated=True)
-    instance.install(tuple(ports),repair=True)
+    instance.install(tuple(fresh_ports),repair=True)
     assert mod.Journal(interrupted).records[-1]['phase']=='preserved'
     subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(failed_root),'verify'],env=env,check=True,timeout=30)
     print('PASS automatic repair of an activated fresh-install failure, retaining post-activation database writes',flush=True)
