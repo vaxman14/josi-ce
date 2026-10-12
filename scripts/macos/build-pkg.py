@@ -36,12 +36,16 @@ def clean_candidate_metadata(out,app):
     if not app.is_relative_to(out) or app.is_symlink():raise ValueError('Candidate app required')
     # This private Python does not expose os.listxattr on macOS. Use the native
     # utility, which ignores missing attributes and preserves file contents.
+    root_attributes=subprocess.run(['/usr/bin/xattr',str(app)],check=True,capture_output=True,text=True,env=ENV).stdout.splitlines()
     for name in ('com.apple.FinderInfo','com.apple.ResourceFork'):
-        args=['/usr/bin/xattr','-dr',name,str(app)]
-        result=subprocess.run(args,capture_output=True,text=True,env=ENV)
-        with (out/'evidence/candidate-metadata.jsonl').open('a') as log:
-            log.write(json.dumps({'command':args,'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})+'\n')
-        if result.returncode:raise RuntimeError('Candidate metadata cleanup failed')
+        commands=[['/usr/bin/xattr','-dr',name,str(app)]]
+        # Recursive xattr acts on directory contents; handle the app root too.
+        if name in root_attributes:commands.append(['/usr/bin/xattr','-d',name,str(app)])
+        for args in commands:
+            result=subprocess.run(args,capture_output=True,text=True,env=ENV)
+            with (out/'evidence/candidate-metadata.jsonl').open('a') as log:
+                log.write(json.dumps({'command':args,'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})+'\n')
+            if result.returncode:raise RuntimeError('Candidate metadata cleanup failed')
 
 def runner(out):
     def run(name,args,accepted=(0,),cwd=REPO):
