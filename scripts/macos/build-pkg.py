@@ -34,15 +34,14 @@ def digest(path):
 
 def clean_candidate_metadata(out,app):
     if not app.is_relative_to(out) or app.is_symlink():raise ValueError('Candidate app required')
-    removed=[]
-    for path in [app,*app.rglob('*')]:
-        if path.is_symlink():continue
-        for name in os.listxattr(path):
-            if name in ('com.apple.FinderInfo','com.apple.ResourceFork'):
-                os.removexattr(path,name)
-                removed.append({'path':str(path.relative_to(out)),'attribute':name})
-    with (out/'evidence/candidate-metadata.jsonl').open('a') as log:
-        log.write(json.dumps({'app':str(app.relative_to(out)),'removed':removed})+'\n')
+    # This private Python does not expose os.listxattr on macOS. Use the native
+    # utility, which ignores missing attributes and preserves file contents.
+    for name in ('com.apple.FinderInfo','com.apple.ResourceFork'):
+        args=['/usr/bin/xattr','-dr',name,str(app)]
+        result=subprocess.run(args,capture_output=True,text=True,env=ENV)
+        with (out/'evidence/candidate-metadata.jsonl').open('a') as log:
+            log.write(json.dumps({'command':args,'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})+'\n')
+        if result.returncode:raise RuntimeError('Candidate metadata cleanup failed')
 
 def runner(out):
     def run(name,args,accepted=(0,),cwd=REPO):
