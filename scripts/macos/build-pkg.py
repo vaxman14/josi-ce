@@ -54,7 +54,12 @@ def runner(out):
         print('Checking/building '+name,flush=True)
         path=out/'evidence'/name
         with path.open('x') as log:
-            result=subprocess.run([str(x) for x in args],cwd=cwd,env=ENV,stdout=log,stderr=subprocess.STDOUT)
+            # Machine-readable plist stdout must not include SDK deprecation
+            # warnings. Keep those diagnostics in a separate evidence file.
+            structured='-plist' in [str(x) for x in args]
+            result=subprocess.run([str(x) for x in args],cwd=cwd,env=ENV,stdout=log,stderr=subprocess.PIPE if structured else subprocess.STDOUT)
+        if structured:
+            with path.with_name(path.name+'.stderr').open('xb') as stderr:stderr.write(result.stderr)
         with (out/'evidence/commands.jsonl').open('a') as f:
             f.write(json.dumps({'command':[str(x) for x in args],'log':name,'exitCode':result.returncode})+'\n')
         if result.returncode not in accepted:raise RuntimeError('Stopped at '+str(path))
