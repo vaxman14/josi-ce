@@ -47,7 +47,9 @@ try:
         mspec=importlib.util.spec_from_file_location('maintenance',RUNTIME/'app/native/maintenance.py');maintenance=importlib.util.module_from_spec(mspec);mspec.loader.exec_module(maintenance)
         workspace_proof=repo/'scripts/macos/test-native-workspace.mjs'
         subprocess.run([str(instance.installed/'node/bin/node'),str(workspace_proof),str(root),'seed'],env=env,check=True,timeout=30)
-        chosen=root/'selected-folder';chosen.mkdir();(chosen/'chosen.txt').write_text('selected native folder')
+        # Exercise the production chooser policy on a disposable user-owned
+        # documents folder; system temp directories are intentionally refused.
+        chosen=BASE/'tests'/('selected-folder-'+str(time.time_ns()));chosen.mkdir(mode=0o700);(chosen/'chosen.txt').write_text('selected native folder')
         maintenance.workspace(instance,str(chosen),__import__('os').getuid())
         subprocess.run([str(instance.installed/'node/bin/node'),str(workspace_proof),str(root),'verify'],env=env,check=True,timeout=30)
         maintenance.workspace(instance,'',__import__('os').getuid())
