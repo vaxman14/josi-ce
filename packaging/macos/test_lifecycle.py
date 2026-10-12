@@ -11,6 +11,30 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 BASE=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests')
 
 class Tests(unittest.TestCase):
+    def test_subscription_cache_is_retained_without_following_links(self):
+        self.obj.account=lambda role:(os.getuid(),os.getgid())
+        (self.root/'transactions').mkdir()
+        self.obj.journal=m.Journal(self.root/'transactions/cache',{'from':'0.1.78-macos.9','to':'0.1.78-macos.10','manifest':'test'})
+        cache=self.obj.data/'codex/tmp';cache.mkdir(parents=True,mode=0o700)
+        (cache/'apply_patch').symlink_to('/private/tmp/nonexistent-outside-target')
+        (cache/'sentinel').write_text('preserved cache content')
+        self.obj.retain_subscription_cache()
+        retained=self.obj.journal.folder/'retained-subscription-cache/codex-tmp'
+        self.assertFalse(cache.exists())
+        self.assertEqual(os.readlink(retained/'apply_patch'),'/private/tmp/nonexistent-outside-target')
+        self.assertEqual((retained/'sentinel').read_text(),'preserved cache content')
+        self.assertEqual(json.loads((self.obj.journal.folder/'retained-subscription-cache-record').read_text())['state'],'retained')
+        self.obj.snapshot_inventory(self.obj.data)
+    def test_subscription_cache_symlink_is_refused_and_retained_in_place(self):
+        folder=self.obj.data/'codex';folder.mkdir(parents=True)
+        (folder/'tmp').symlink_to('/private/tmp')
+        with self.assertRaisesRegex(ValueError,'Linked path'):self.obj.retain_subscription_cache()
+        self.assertTrue((folder/'tmp').is_symlink())
+    def test_subscription_cache_shared_mode_is_refused(self):
+        self.obj.account=lambda role:(os.getuid(),os.getgid())
+        cache=self.obj.data/'codex/tmp';cache.mkdir(parents=True);cache.chmod(0o755)
+        with self.assertRaisesRegex(ValueError,'Unprotected subscription'):self.obj.retain_subscription_cache()
+        self.assertTrue(cache.exists())
     def test_stopping_already_unloaded_services_is_idempotent(self):
         from unittest.mock import patch
         import subprocess

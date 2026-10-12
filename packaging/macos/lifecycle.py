@@ -188,6 +188,29 @@ class Lifecycle:
             for args in [('-create',f'/Groups/{name}'),('-create',f'/Groups/{name}','PrimaryGroupID',str(number)),('-create',f'/Users/{name}'),('-create',f'/Users/{name}','UniqueID',str(number)),('-create',f'/Users/{name}','PrimaryGroupID',str(number)),('-create',f'/Users/{name}','UserShell','/usr/bin/false'),('-create',f'/Users/{name}','NFSHomeDirectory',str(self.data/'profiles'/role)),('-create',f'/Users/{name}','IsHidden','1'),('-create',f'/Users/{name}','Password','*')]:self.run(['/usr/bin/dscl','.',*args])
             records[role]=[number,number]
             durable(self.root/'identities.json',records,replace=(self.root/'identities.json').exists())
+    def retain_subscription_cache(self):
+        # Codex leaves temporary executable aliases in its own tmp directory.
+        # Once all services are quiescent, retain that entire cache by atomic
+        # rename into the private transaction. Never follow or execute links,
+        # delete cache contents, or relax verification of the durable snapshot.
+        cache=self.data/'codex/tmp'
+        if not cache.exists() and not cache.is_symlink():return
+        plain(cache)
+        info=cache.lstat()
+        owners={self.account(role)[0] for role in ('web','worker')}
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid not in owners or info.st_mode&0o077:raise ValueError('Unprotected subscription temporary directory')
+        retained=self.journal.folder/'retained-subscription-cache';retained.mkdir(mode=0o700)
+        record=self.journal.folder/'retained-subscription-cache-record'
+        plan={'original':'data/codex/tmp','retained':'retained-subscription-cache/codex-tmp','state':'planned','contentsDeleted':False}
+        durable(record,plan)
+        os.rename(cache,retained/'codex-tmp')
+        for directory in (cache.parent,retained):
+            fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+            try:os.fsync(fd)
+            finally:os.close(fd)
+        plan['state']='retained';durable(record,plan,replace=True)
+        self.progress('Retaining subscription temporary files','installer')
+
     def snapshot_inventory(self, directory):
         libc=ctypes.CDLL('/usr/lib/libSystem.B.dylib',use_errno=True)
         libc.acl_get_file.argtypes=[ctypes.c_char_p,ctypes.c_int];libc.acl_get_file.restype=ctypes.c_void_p
@@ -570,6 +593,7 @@ class Lifecycle:
                 self.stop();self.installed=candidate_program
             phase('quiesced')
             if not fresh:
+                self.retain_subscription_cache()
                 before=self.snapshot_inventory(self.data)
                 durable(folder/'snapshot-source-inventory',before)
                 self.copy(self.data,folder/'snapshot')

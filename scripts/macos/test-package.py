@@ -64,7 +64,7 @@ try:
     instance.run(['/bin/chmod','+a','user:'+acl_user+' allow read,write,append,execute,delete,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit',instance.data/'state'])
     permission_marker=instance.data/'state/snapshot-inherited-permission'
     permission_marker.write_text('retained inherited-permission sentinel')
-    inherited_acl=instance.snapshot_inventory(instance.data)['state/snapshot-inherited-permission']['acl']
+    inherited_acl=instance.snapshot_inventory(instance.data/'state')['snapshot-inherited-permission']['acl']
     assert 'inherited' in inherited_acl
     # The candidate differs only in release metadata; real SQL/data, cold copy,
     # version activation and child processes exercise the production algorithm.
@@ -83,10 +83,14 @@ try:
     assert mod.Journal(interrupted).records[-1]['phase']=='rolled-back'
     assert (interrupted/'failed-data/database/PG_VERSION').exists()
     assert (instance.data/'state/snapshot-inherited-permission').read_text()=='retained inherited-permission sentinel'
-    assert instance.snapshot_inventory(instance.data)['state/snapshot-inherited-permission']['acl']==inherited_acl
+    assert instance.snapshot_inventory(instance.data/'state')['snapshot-inherited-permission']['acl']==inherited_acl
     print('PASS exact inherited ACL retention across cold backup and automatic snapshot restoration',flush=True)
     subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(root),'verify'],env=env,check=True,timeout=30)
     print('PASS automatic migration failure recovery, retained failed data, and continuing upgrade activation',flush=True)
+    retained_cache=interrupted/'retained-subscription-cache/codex-tmp'
+    assert retained_cache.is_dir() and any(p.is_symlink() for p in retained_cache.rglob('*'))
+    assert json.loads((interrupted/'retained-subscription-cache-record').read_text())['contentsDeleted'] is False
+    print('PASS Codex temporary aliases retained without following links or weakening cold snapshot verification',flush=True)
     subprocess.run([str(instance.installed/'node/bin/node'),str(subscription_proof),str(root),'retained'],env=env,check=True,timeout=60)
     if (RUNTIME/'app/native/maintenance.py').exists():
         maintenance.uninstall(instance)

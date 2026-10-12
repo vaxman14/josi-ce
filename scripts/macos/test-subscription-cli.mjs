@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+process.umask(0o077);
 const [root, mode = 'status'] = process.argv.slice(2);
 assert.ok(root.startsWith('/private/tmp/josi-ce-native-tests-') && /\/acceptance-\d+$/.test(root));
 const cfg = JSON.parse(readFileSync(join(root, 'data/config/runtime.json')));
