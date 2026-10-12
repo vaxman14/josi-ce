@@ -1,9 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import { loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import {
-  accessTokenFor, ensureInternalCalendar, getConnection, getEvent, listCalendars, listEvents, loadClient,
-  syncCalendarOrigin,
-  type CalendarProvider, type OAuthProvider,
+  accessTokenFor, createEvent, deleteEvent, ensureInternalCalendar, getConnection, getEvent, listCalendars, listEvents, loadClient,
+  syncCalendarOrigin, updateEvent, ConnectorError,
+  type CalendarEventMutation, type CalendarProvider, type OAuthProvider,
 } from '@josi-ce/connectors';
 import { asyncRoute, param } from './async.js';
 import { requireAuth } from './authz.js';
@@ -13,6 +13,12 @@ class HttpError extends Error { constructor(readonly status: number, message: st
 const handle = (fn: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
   try { return await fn(req, res); } catch (error) {
     if (error instanceof HttpError) return res.status(error.status).json({ error: error.message });
+    if (error instanceof ConnectorError) {
+      const stale = error.status === 404 || error.status === 410 || error.status === 412;
+      const reconnect = error.category === 'insufficient_scope' || error.category === 'revoked' || error.category === 'expired';
+      const status = stale || reconnect ? 409 : error.category === 'rate_limited' ? 429 : 502;
+      return res.status(status).json({ error: reconnect ? 'Calendar permission is missing or expired. Open Connections and use Upgrade permissions / Reconnect.' : error.message, category: error.category, ...(reconnect ? { reconnectRequired: true } : {}) });
+    }
     throw error;
   }
 });
@@ -31,6 +37,44 @@ async function calendarAccess(db: Db, connectionId: string): Promise<boolean> {
     [connectionId],
   );
   return row?.allowed === true;
+}
+
+async function calendarWriteAccess(db: Db, connectionId: string, provider: OAuthProvider): Promise<boolean> {
+  const [row] = await db.query<{ allowed:boolean }>(
+    `select cc.enabled and cc.scopes_granted_at is not null and coalesce(p.allowed,true) as allowed
+       from connection_capabilities cc left join admin_capability_policy p on p.capability=cc.capability
+      where cc.connection_id=$1 and cc.capability=$2`,
+    [connectionId, `${provider}.calendar.write`],
+  );
+  return row?.allowed === true;
+}
+
+const UUID_RE=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function uuid(value:unknown,name:string):string { const out=String(value??'');if(!UUID_RE.test(out))throw new HttpError(400,`${name} is invalid`);return out; }
+function mutationBody(body:any, partial=false):CalendarEventMutation {
+  const title=typeof body?.title==='string'?body.title.trim():'';
+  const allDay=body?.allDay===true; const start=typeof body?.start==='string'?body.start:''; const end=typeof body?.end==='string'?body.end:'';
+  const timezone=typeof body?.timezone==='string'?body.timezone:'';
+  if(!title||title.length>500)throw new HttpError(400,'title is required and must be at most 500 characters');
+  try { new Intl.DateTimeFormat('en',{timeZone:timezone}).format(); } catch { throw new HttpError(400,'timezone is invalid'); }
+  if(allDay){const validDate=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(`${value}T00:00:00Z`))&&new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)===value;if(!validDate(start)||!validDate(end)||end<=start)throw new HttpError(400,'all-day end date must be after start date');}
+  else {if(!/(?:Z|[+-]\d{2}:\d{2})$/i.test(start)||!/(?:Z|[+-]\d{2}:\d{2})$/i.test(end)||!Number.isFinite(Date.parse(start))||!Number.isFinite(Date.parse(end))||Date.parse(end)<=Date.parse(start))throw new HttpError(400,'timed event end must be after start and both times must include an offset');}
+  const optional=(value:unknown,max:number,name:string)=>{if(value==null||value==='')return null;if(typeof value!=='string'||value.length>max)throw new HttpError(400,`${name} is too long`);return value;};
+  return {title,allDay,start,end,timezone,location:optional(body.location,1000,'location'),...(partial&&!Object.prototype.hasOwnProperty.call(body,'description')?{}:{description:optional(body.description,10000,'description')})};
+}
+
+async function writableSource(ctx:Ctx,ownerUserId:string,sourceId:string){
+  const [source]=await ctx.db.query<{id:string;connection_id:string;provider_calendar_id:string;name:string;provider:OAuthProvider;account:string|null}>(
+    `select s.id,s.connection_id,s.provider_calendar_id,s.name,c.provider,c.account_email account
+       from calendar_sources s join connections c on c.id=s.connection_id and c.owner_user_id=s.owner_user_id
+      where s.id=$1 and s.owner_user_id=$2 and s.selected and s.writable and c.status='active'`,[uuid(sourceId,'source id'),ownerUserId]);
+  if(!source||!(await calendarWriteAccess(ctx.db,source.connection_id,source.provider)))throw new HttpError(404,'writable calendar not found');
+  return source;
+}
+async function sourceToken(ctx:Ctx,source:{connection_id:string;provider:OAuthProvider}){
+  const connection=await getConnection(ctx.db,source.connection_id);if(!connection||connection.status!=='active')throw new HttpError(404,'writable calendar not found');
+  const masterKey=key(ctx);const client=await loadClient(ctx.db,masterKey,source.provider);
+  return accessTokenFor(ctx.db,masterKey,{connection,client},{fetchImpl:ctx.fetchImpl});
 }
 
 async function discover(ctx: Ctx, ownerUserId: string) {
@@ -185,9 +229,19 @@ export function calendarRoutes(ctx: Ctx): Router {
     const sources = await ctx.db.query(
       `select s.id, s.connection_id as "connectionId", s.provider_calendar_id as "providerCalendarId",
               s.name, s.color, s.is_primary as "primary", s.selected, s.writable,
+              (c.status='active' and s.writable and s.selected and exists(
+                select 1 from connection_capabilities cc left join admin_capability_policy p on p.capability=cc.capability
+                 where cc.connection_id=s.connection_id and cc.capability=c.provider::text||'.calendar.write'
+                   and cc.enabled and cc.scopes_granted_at is not null and coalesce(p.allowed,true)
+              )) as "canWrite",
+              (s.writable and (c.status<>'active' or not exists(
+                select 1 from connection_capabilities cc
+                 where cc.connection_id=s.connection_id and cc.capability=c.provider::text||'.calendar.write'
+                   and cc.scopes_granted_at is not null
+              ))) as "reconnectRequired",
               s.is_write_default as "writeDefault",
               c.provider, c.account_email as account
-         from calendar_sources s join connections c on c.id=s.connection_id
+         from calendar_sources s join connections c on c.id=s.connection_id and c.owner_user_id=s.owner_user_id
         where s.owner_user_id=$1 order by c.provider, c.account_email nulls last, s.is_primary desc, s.name`,
       [req.user!.id],
     );
@@ -238,9 +292,10 @@ export function calendarRoutes(ctx: Ctx): Router {
   r.get('/events', handle(async (req, res) => {
     const start = new Date(String(req.query.start ?? '')); const end = new Date(String(req.query.end ?? ''));
     if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start || end.getTime()-start.getTime()>92*86400000) throw new HttpError(400, 'choose a valid range of at most 92 days');
-    const sources = await ctx.db.query<{ id:string; connection_id:string; provider_calendar_id:string; name:string; color:string|null; provider:OAuthProvider; account:string|null }>(
-      `select s.id,s.connection_id,s.provider_calendar_id,s.name,s.color,c.provider,c.account_email account
-       from calendar_sources s join connections c on c.id=s.connection_id
+    const sources = await ctx.db.query<{ id:string; connection_id:string; provider_calendar_id:string; name:string; color:string|null; provider:OAuthProvider; account:string|null; writable:boolean }>(
+      `select s.id,s.connection_id,s.provider_calendar_id,s.name,s.color,c.provider,c.account_email account,
+        (s.writable and exists(select 1 from connection_capabilities cc left join admin_capability_policy p on p.capability=cc.capability where cc.connection_id=s.connection_id and cc.capability=c.provider::text||'.calendar.write' and cc.enabled and cc.scopes_granted_at is not null and coalesce(p.allowed,true))) writable
+       from calendar_sources s join connections c on c.id=s.connection_id and c.owner_user_id=s.owner_user_id
        where s.owner_user_id=$1 and s.selected=true order by s.name`, [req.user!.id]);
     const events: unknown[] = []; const sourceErrors: Array<{ sourceId:string; error:string }> = [];
     for (const source of sources) {
@@ -250,20 +305,45 @@ export function calendarRoutes(ctx: Ctx): Router {
         const client = await loadClient(ctx.db, key(ctx), source.provider);
         const accessToken = await accessTokenFor(ctx.db, key(ctx), { connection, client }, { fetchImpl: ctx.fetchImpl });
         const found = await listEvents(source.provider, { accessToken, calendarId: source.provider_calendar_id, timeMin:start.toISOString(), timeMax:end.toISOString(), limit:1000 }, { fetchImpl:ctx.fetchImpl });
-        events.push(...found.map(event => ({ ...event, eventId:event.sourceId, sourceId:source.id, sourceName:source.name, connectionId:source.connection_id, providerCalendarId:source.provider_calendar_id, sourceColor:source.color, provider:source.provider, account:source.account })));
+        events.push(...found.map(event => ({ ...event, eventId:event.sourceId, sourceId:source.id, sourceName:source.name, connectionId:source.connection_id, providerCalendarId:source.provider_calendar_id, sourceColor:source.color, provider:source.provider, account:source.account, writable:source.writable })));
       } catch { sourceErrors.push({ sourceId: source.id, error: `Calendar ${source.name} could not be loaded. Check its account connection and permissions, or choose a shorter range.` }); }
     }
     events.sort((a:any,b:any)=>String(a.start??'').localeCompare(String(b.start??'')));
     return res.json({ events, sourceErrors });
   }));
   r.get('/events/:sourceId/:eventId', handle(async (req, res) => {
-    const [source] = await ctx.db.query<{ connection_id:string; provider_calendar_id:string; provider:OAuthProvider; name:string; color:string|null; account:string|null }>(
-      `select s.connection_id,s.provider_calendar_id,s.name,s.color,c.provider,c.account_email account from calendar_sources s join connections c on c.id=s.connection_id where s.id=$1 and s.owner_user_id=$2`, [param(req,'sourceId'), req.user!.id]);
+    const sourceId=uuid(param(req,'sourceId'),'source id');
+    const [source] = await ctx.db.query<{ connection_id:string; provider_calendar_id:string; provider:OAuthProvider; name:string; color:string|null; account:string|null; writable:boolean }>(
+      `select s.connection_id,s.provider_calendar_id,s.name,s.color,c.provider,c.account_email account,
+        (s.writable and s.selected and exists(select 1 from connection_capabilities cc left join admin_capability_policy p on p.capability=cc.capability where cc.connection_id=s.connection_id and cc.capability=c.provider::text||'.calendar.write' and cc.enabled and cc.scopes_granted_at is not null and coalesce(p.allowed,true))) writable
+       from calendar_sources s join connections c on c.id=s.connection_id and c.owner_user_id=s.owner_user_id where s.id=$1 and s.owner_user_id=$2`, [sourceId, req.user!.id]);
     if (!source || !(await calendarAccess(ctx.db,source.connection_id))) throw new HttpError(404,'event not found');
     const connection=await getConnection(ctx.db,source.connection_id); if(!connection || connection.status !== 'active') throw new HttpError(404,'event not found');
     const client=await loadClient(ctx.db,key(ctx),source.provider); const accessToken=await accessTokenFor(ctx.db,key(ctx),{connection,client},{fetchImpl:ctx.fetchImpl});
     const event=await getEvent(source.provider,{accessToken,calendarId:source.provider_calendar_id,id:param(req,'eventId')},{fetchImpl:ctx.fetchImpl});
-    if(!event) throw new HttpError(404,'event not found'); return res.json({event:{...event,eventId:event.sourceId,sourceId:param(req,'sourceId'),connectionId:source.connection_id,providerCalendarId:source.provider_calendar_id,sourceName:source.name,sourceColor:source.color,provider:source.provider,account:source.account}});
+    if(!event) throw new HttpError(404,'event not found'); return res.json({event:{...event,eventId:event.sourceId,sourceId,connectionId:source.connection_id,providerCalendarId:source.provider_calendar_id,sourceName:source.name,sourceColor:source.color,provider:source.provider,account:source.account,writable:source.writable}});
+  }));
+  r.post('/events', handle(async(req,res)=>{
+    const source=await writableSource(ctx,req.user!.id,String(req.body?.sourceId??''));
+    const idempotencyKey=uuid(req.body?.requestId,'request id');
+    const event=await createEvent(source.provider,{accessToken:await sourceToken(ctx,source),calendarId:source.provider_calendar_id,event:mutationBody(req.body),idempotencyKey},{fetchImpl:ctx.fetchImpl});
+    return res.status(201).json({event:{...event,eventId:event.sourceId,sourceId:source.id,sourceName:source.name,provider:source.provider,account:source.account,writable:true}});
+  }));
+  r.patch('/events/:sourceId/:eventId', handle(async(req,res)=>{
+    const source=await writableSource(ctx,req.user!.id,param(req,'sourceId'));
+    const eventId=param(req,'eventId');if(!eventId||eventId.length>1024)throw new HttpError(400,'event id is invalid');
+    const version=typeof req.body?.version==='string'&&req.body.version.length<=1024&&req.body.version!=='*'&&/^[\x20-\x7e]+$/.test(req.body.version)?req.body.version:null;
+    if(!version)throw new HttpError(400,'refresh this event before editing it');
+    const event=await updateEvent(source.provider,{accessToken:await sourceToken(ctx,source),calendarId:source.provider_calendar_id,id:eventId,event:mutationBody(req.body,true),version},{fetchImpl:ctx.fetchImpl});
+    return res.json({event:{...event,eventId:event.sourceId,sourceId:source.id,sourceName:source.name,provider:source.provider,account:source.account,writable:true}});
+  }));
+  r.delete('/events/:sourceId/:eventId', handle(async(req,res)=>{
+    const source=await writableSource(ctx,req.user!.id,param(req,'sourceId'));
+    const eventId=param(req,'eventId');if(!eventId||eventId.length>1024)throw new HttpError(400,'event id is invalid');
+    const version=typeof req.query.version==='string'&&req.query.version.length<=1024&&req.query.version!=='*'&&/^[\x20-\x7e]+$/.test(req.query.version)?req.query.version:null;
+    if(!version)throw new HttpError(400,'refresh this event before deleting it');
+    await deleteEvent(source.provider,{accessToken:await sourceToken(ctx,source),calendarId:source.provider_calendar_id,id:eventId,version},{fetchImpl:ctx.fetchImpl});
+    return res.status(204).end();
   }));
   return r;
 }

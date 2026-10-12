@@ -31,6 +31,21 @@ export function calendarRange(anchor: string, view: CalendarView, zone: string) 
   const days = Array.from({length: count}, (_, i)=>addDays(first,i));
   return { days, start: midnight(first,zone).toISOString(), end: midnight(addDays(first,count),zone).toISOString() };
 }
+/** Every instant matching a civil minute in a zone. Fall-back minutes return
+ * two values; spring-forward gaps return none. */
+export function civilInstants(value:string,zone:string):string[] {
+  const match=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);if(!match)return [];
+  const target=Date.UTC(+match[1],+match[2]-1,+match[3],+match[4],+match[5]);
+  const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+  const wanted=value;const found:string[]=[];
+  for(let offset=-14*60;offset<=14*60;offset+=15){const date=new Date(target-offset*60000);const p=formatter.formatToParts(date);const part=(t:string)=>p.find(x=>x.type===t)!.value;const civil=`${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}`;if(civil===wanted)found.push(date.toISOString());}
+  return [...new Set(found)].sort();
+}
+export function civilValue(value:string,zone:string):string {
+  const p=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(value));
+  const part=(t:string)=>p.find(x=>x.type===t)!.value;return `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}`;
+}
+
 export function moveCalendar(anchor:string, view:CalendarView, direction:number) {
   if (view !== 'month') return addDays(anchor, direction * (view === 'day' ? 1 : 7));
   const date = new Date(`${anchor.slice(0,7)}-01T12:00:00Z`); date.setUTCMonth(date.getUTCMonth()+direction); return date.toISOString().slice(0,10);

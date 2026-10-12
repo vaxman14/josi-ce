@@ -1,5 +1,5 @@
 import { describe,it,expect } from 'vitest';
-import { calendarDayLabel, calendarRange, dayKey, eventsOnDay, layoutEvents, moveCalendar } from '../src/lib/calendar.js';
+import { calendarDayLabel, calendarRange, civilInstants, civilValue, dayKey, eventsOnDay, layoutEvents, moveCalendar } from '../src/lib/calendar.js';
 const zone='America/Los_Angeles';
 describe('civil calendar views',()=>{
   it('uses the local today across UTC midnight',()=>expect(dayKey(new Date('2026-09-04T01:00:00Z'),zone)).toBe('2026-09-03'));
@@ -8,6 +8,7 @@ describe('civil calendar views',()=>{
     expect(calendarDayLabel('2026-09-18','Pacific/Auckland','en-US')).toBe('Friday, Sep 18, 2026');
   });
   it.each([['2026-03-08',23],['2026-11-01',25]])('bounds DST day %s independently', (day,hours)=>{const r=calendarRange(String(day),'day',zone);expect((Date.parse(r.end)-Date.parse(r.start))/3600000).toBe(hours);});
+  it('resolves DST gaps and both repeated-hour instants without shifting them',()=>{expect(civilInstants('2026-03-08T02:30',zone)).toEqual([]);expect(civilInstants('2026-11-01T01:30',zone)).toEqual(['2026-11-01T08:30:00.000Z','2026-11-01T09:30:00.000Z']);expect(civilValue('2026-11-01T09:30:00Z',zone)).toBe('2026-11-01T01:30');});
   it('uses actual month navigation instead of thirty days',()=>{expect(moveCalendar('2026-01-31','month',1)).toBe('2026-02-01');expect(moveCalendar('2026-03-31','month',-1)).toBe('2026-02-01');});
   it('builds a six week grid and an explicit seven day list',()=>{expect(calendarRange('2026-03-31','month',zone).days).toHaveLength(42);expect(calendarRange('2026-03-31','list',zone).days[0]).toBe('2026-03-31');});
   it('keeps all day dates timezone independent and end exclusive',()=>{const e={start:'2026-03-08',end:'2026-03-10',allDay:true};expect(eventsOnDay([e],'2026-03-07',zone)).toEqual([]);expect(eventsOnDay([e],'2026-03-09','Pacific/Auckland')).toEqual([e]);expect(eventsOnDay([e],'2026-03-10',zone)).toEqual([]);});
