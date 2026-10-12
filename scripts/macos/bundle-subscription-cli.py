@@ -32,6 +32,10 @@ def bundle(runtime):
             for entry in archive:
                 path=Path(entry.name)
                 if not path.parts or path.parts[0]!='package' or '..' in path.parts or path.is_absolute() or not (entry.isfile() or entry.isdir()):raise ValueError('Unsafe vendor artifact entry')
+                # This optional bundled shell requires macOS 15. Codex supports
+                # an absent bundled shell; Josi uses the core CLI on macOS 14.
+                # Preserve the entire original distribution in the companion.
+                if artifact=='codex-arm64' and path.as_posix()=='package/vendor/aarch64-apple-darwin/codex-resources/zsh/bin/zsh':continue
                 output=destination.joinpath(*path.parts[1:])
                 if entry.isdir():output.mkdir(parents=True,exist_ok=True);continue
                 output.parent.mkdir(parents=True,exist_ok=True)

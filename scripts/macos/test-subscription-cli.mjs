@@ -15,6 +15,7 @@ Object.assign(process.env, subscriptionEnvironment(program, join(root, 'data'), 
 process.env.TMPDIR = join(root, 'data/temp/web');
 process.chdir(join(program, 'app'));
 assert.match(execFileSync('codex', ['--version'], { encoding: 'utf8' }), /0\.152\.0/);
+assert.match(execFileSync('codex', ['exec', '--help'], { encoding: 'utf8' }), /--json/);
 assert.match(execFileSync('claude', ['--version'], { encoding: 'utf8' }), /2\.1\.258/);
 const codex = await codexLoginStatus({ codexHome: process.env.CODEX_HOME });
 const claude = await claudeAuthStatus({ configDir: process.env.CLAUDE_CONFIG_DIR });
