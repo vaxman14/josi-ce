@@ -17,7 +17,11 @@ if len(sys.argv)==3 and sys.argv[1]=='--runtime':
 elif sys.argv[1:]:raise ValueError('Unsupported test arguments')
 spec=importlib.util.spec_from_file_location('lifecycle',RUNTIME/'app/native/lifecycle.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-root=BASE/'tests'/('acceptance-'+str(time.time_ns()))
+test_base=mod.LOCAL_TESTS
+mod.plain(test_base,os.getuid())
+test_base.mkdir(mode=0o700,exist_ok=True)
+if test_base.stat().st_uid!=os.getuid() or test_base.stat().st_mode&0o777!=0o700:raise ValueError('Unprotected isolated test base')
+root=test_base/('acceptance-'+str(time.time_ns()))
 ports=[]
 while len(ports)<5:
     with socket.socket() as sock:

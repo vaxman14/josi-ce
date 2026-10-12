@@ -101,6 +101,16 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError):self.obj.snapshot_inventory(self.obj.data)
     def test_isolated_adapter_refuses_live_root(self):
         with self.assertRaises(ValueError):m.Lifecycle(self.runtime,m.PRODUCT,isolated=True)
+    def test_isolated_adapter_refuses_arbitrary_temporary_root(self):
+        with self.assertRaisesRegex(ValueError,'Invalid isolated root'):m.Lifecycle(self.runtime,Path('/private/tmp/arbitrary-josi-test'),isolated=True)
+    def test_local_isolated_adapter_requires_private_base(self):
+        from unittest.mock import patch
+        base=self.root/'local-tests';base.mkdir(mode=0o700)
+        with patch.object(m,'LOCAL_TESTS',base):
+            obj=m.Lifecycle(self.runtime,base/'acceptance-test',isolated=True)
+            self.assertEqual(obj.root,base/'acceptance-test')
+            base.chmod(0o755)
+            with self.assertRaisesRegex(ValueError,'Unprotected isolated test base'):m.Lifecycle(self.runtime,base/'acceptance-test',isolated=True)
     def test_definitions_use_six_distinct_nonroot_identities(self):
         self.obj.data.mkdir();(self.obj.data/'config').mkdir()
         (self.obj.data/'config/runtime.json').write_text(json.dumps(dict(databasePort=15432,apiPort=18080,publicPort=8080,voicePort=18081,controlPort=18082)))

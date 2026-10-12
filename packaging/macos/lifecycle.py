@@ -1,5 +1,5 @@
 """Native offline lifecycle. Production roots/labels are fixed, never user input.
-The isolated adapter runs only child processes in a marked JosiDrive test root.
+The isolated adapter runs only child processes in a marked disposable test root.
 It cannot call launchctl, create users, or operate on the installed product.
 """
 import fcntl
@@ -23,6 +23,7 @@ import sys
 import time
 
 PRODUCT = Path('/Library/Application Support/Josi CE Server')
+LOCAL_TESTS = Path('/private/tmp/josi-ce-native-tests-'+str(os.getuid()))
 LABEL = 'com.heyjosi.ce.'
 ROLES = ('database','voice','voice-control','web','worker','proxy')
 STOP = ('proxy','voice-control','voice','worker','web','database')
@@ -115,7 +116,11 @@ class Lifecycle:
         self.runtime=plain(runtime);self.root=plain(root);self.isolated=isolated
         self.progress=progress or (lambda phase,service:emit({'phase':phase,'service':service}))
         if isolated:
-            if os.getuid()==0 or not str(root).startswith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'):raise ValueError('Invalid isolated root')
+            local=self.root.parent==LOCAL_TESTS
+            if os.getuid()==0 or not (local or str(root).startswith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/')):raise ValueError('Invalid isolated root')
+            if local:
+                plain(LOCAL_TESTS,os.getuid())
+                if not LOCAL_TESTS.is_dir() or LOCAL_TESTS.stat().st_mode&0o777!=0o700:raise ValueError('Unprotected isolated test base')
         elif os.getuid()!=0 or self.root!=PRODUCT:raise PermissionError('Administrator authorization required')
         self.data=self.root/'data';self.children={};self.version=json.loads((runtime/'app/package.json').read_text())['version']
         if not re.fullmatch(r'\d+\.\d+\.\d+-[a-z0-9.]+',self.version):raise ValueError('Invalid version identity')

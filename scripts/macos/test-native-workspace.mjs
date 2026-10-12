@@ -4,7 +4,7 @@ import { resolve, dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 const root=process.argv[2],mode=process.argv[3];
-assert(root.startsWith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/'));
+assert(root.startsWith('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests/')||root.startsWith(`/private/tmp/josi-ce-native-tests-${process.getuid()}/`));
 assert.equal(JSON.parse(readFileSync(join(root,'data/isolated-test.json'))).purpose,'disposable-native-acceptance');
 const program=resolve(dirname(process.execPath),'../..'),require=createRequire(join(program,'app/package.json'));
 const postgres=require('postgres'),cfg=JSON.parse(readFileSync(join(root,'data/config/runtime.json')));
