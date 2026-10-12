@@ -87,7 +87,7 @@ and representative users, documents, conversations, settings and credentials.
 Make an independently verified private backup. Run the newer installer. Confirm
 quiescence, verified cold snapshot, migrations-before-writers and preserved data.
 Compare login/data behavior, reboot, then repeat the checklist. Same-version
-installation is refused. PostgreSQL major-version conversion is not implicit;
+installation performs a retained-data repair. PostgreSQL major-version conversion is not implicit;
 this candidate uses major 16. Isolated child-process upgrade tests are not this
 physical upgrade procedure and do not authorize changing an existing installation.
 
@@ -98,8 +98,13 @@ versions/<version>. Never remove failed data, snapshots, identities, keys, old
 programs or incomplete journals. Before migration, recovery restarts the intact
 previous installation. After migration but before activation, it verifies the
 cold snapshot, retains failed data, then restores the previous version. Once
-activation begins, automatic rollback is refused to protect newer writes; preserve
-everything for lossless review. Fresh partial provisioning is retained for review.
+activation begins, automatic rollback is refused to protect newer writes. Rerunning
+the package automatically upgrades or repairs that current data after verifying
+its version, ownership, service definitions and transaction records. Before
+activation, package recovery restores a verified snapshot or retains incomplete
+fresh provisioning and retries. Empty owned transaction directories can be
+removed; databases, user folders, snapshots and failed-data copies are retained.
+Ambiguous or damaged records still require lossless review.
 The fixed root-only helper supports `recover <32-hex transaction ID>`, using the
 trusted installed private Python (-I -B) and app/native/lifecycle.py. Review the
 transaction first; never elevate a helper from an untrusted download.

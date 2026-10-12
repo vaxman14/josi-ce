@@ -30,7 +30,8 @@ STOP = ('proxy','voice-control','voice','worker','web','database')
 ACCOUNTS = {'database':'_josice_db','web':'_josice_web','worker':'_josice_worker','proxy':'_josice_proxy','voice':'_josice_voice','voice-control':'_josice_control'}
 PHASES = ('prepared','verified','quiescing','quiesced','snapshot','provisioned','database-ready','migrating','migrated','activating','activated','healthy','committed')
 TRANSITIONS = {a:{b,'recovery-required'} for a,b in zip(PHASES,PHASES[1:])}
-TRANSITIONS.update({'recovery-required':{'rolling-back'},'rolling-back':{'rolled-back','recovery-required'}})
+TRANSITIONS.update({'recovery-required':{'rolling-back','preserving'},'rolling-back':{'rolled-back','recovery-required'},'preserving':{'preserved','recovery-required'}})
+TERMINAL = ('committed','rolled-back','preserved')
 
 def hashed(path):
     h=hashlib.sha256()
@@ -158,6 +159,12 @@ class Lifecycle:
         user=pwd.getpwnam(ACCOUNTS[role]);return user.pw_uid,user.pw_gid
     def identities(self,fresh):
         if self.isolated:return
+        if fresh and (self.root/'identities.json').exists():
+            # A retained, fully recorded identity set belongs to a previous
+            # interrupted provisioning attempt. Reuse it only after validation.
+            recorded=json.loads((self.root/'identities.json').read_text())
+            if set(recorded)!=set(ROLES):raise ValueError('Incomplete service identities require review')
+            return self.identities(False)
         for role in ROLES:
             name=ACCOUNTS[role]
             try:existing=pwd.getpwnam(name)
@@ -242,22 +249,23 @@ class Lifecycle:
         # Only the original interactive user receives this credential later.
         self.write(self.data/'secrets/bootstrap/browser-token',setup.encode())
         return cfg
-    def arguments(self,role,program=None):
-        p=program or self.installed;cfg=json.loads((self.data/'config/runtime.json').read_text());config=str(self.data/'config/runtime.json');test=['--isolated'] if self.isolated else []
+    def arguments(self,role,program=None,cfg=None):
+        p=program or self.installed;cfg=cfg if cfg is not None else json.loads((self.data/'config/runtime.json').read_text());config=str(self.data/'config/runtime.json');test=['--isolated'] if self.isolated else []
         if role=='database':return [str(p/'postgresql/bin/postgres'),'-D',str(self.data/'database')]
         if role=='proxy':return [str(p/'caddy/caddy'),'run','--config',str(self.data/'config/Caddyfile'),'--adapter','caddyfile']
         if role in ('voice','voice-control'):return [str(p/'python/bin/python3.11'),'-I','-B',str(p/'app/native/PythonRuntime.py'),role,config,*test]
         return [str(p/'node/bin/node'),str(p/'app/native/Runtime.mjs'),role,config,*test]
-    def plists(self,program=None):
-        return {role:{'Label':LABEL+role,'ProgramArguments':self.arguments(role,program),'UserName':ACCOUNTS[role],'GroupName':ACCOUNTS[role],
+    def plists(self,program=None,cfg=None):
+        return {role:{'Label':LABEL+role,'ProgramArguments':self.arguments(role,program,cfg),'UserName':ACCOUNTS[role],'GroupName':ACCOUNTS[role],
             'RunAtLoad':True,'KeepAlive':{'SuccessfulExit':False},'ThrottleInterval':10,'ExitTimeOut':60,'Umask':0o077,
             'WorkingDirectory':str((program or self.installed)/'app'),
             'EnvironmentVariables':{'PATH':'/usr/bin:/bin','TMPDIR':str(self.data/'temp'/role),'XDG_DATA_HOME':str(self.data/'proxy'),'XDG_CONFIG_HOME':str(self.data/'proxy')},
             'StandardOutPath':str(self.data/'logs'/role/'stdout.log'),'StandardErrorPath':str(self.data/'logs'/role/'stderr.log')}
             for role in ROLES}
-    def check_owned(self,program):
+    def check_owned(self,program,alternatives=(),configuration=None):
         if self.isolated:return
-        for role,definition in self.plists(program).items():
+        definitions=[self.plists(p,configuration) for p in (program,*alternatives)]
+        for role,definition in self.plists(program,configuration).items():
             p=Path('/Library/LaunchDaemons')/(LABEL+role+'.plist');plain(p,0)
             if not p.exists():
                 # Uninstall retains the exact owned definitions for repair or
@@ -267,7 +275,7 @@ class Lifecycle:
                 if not re.fullmatch(re.escape(LABEL+role)+r'\.[a-f0-9]{32}\.plist',name):raise ValueError('Invalid retained service identity')
                 p=self.root/'disabled-launchd'/name;plain(p,0)
                 if not p.is_file() or p.stat().st_mode&0o022:raise ValueError('Unprotected retained service definition')
-            if plistlib.loads(p.read_bytes())!=definition:raise ValueError('Unowned service definition')
+            if not any(plistlib.loads(p.read_bytes())==value[role] for value in definitions):raise ValueError('Unowned service definition')
     def stop(self):
         for role in STOP:
             self.progress('Stopping services',role)
@@ -357,6 +365,84 @@ class Lifecycle:
         for p in [directory,*directory.rglob('*')]:
             os.lchown(p,0,0)
             if not p.is_symlink():os.chmod(p,0o755 if p.is_dir() or p.stat().st_mode&0o111 else 0o644)
+    def retained_program(self,version):
+        if not re.fullmatch(r'\d+\.\d+\.\d+-[a-z0-9.]+',version):raise ValueError('Invalid retained version')
+        program=plain(self.root/'versions'/version,os.getuid())
+        if not program.is_dir():raise ValueError('Retained program missing')
+        if not self.isolated:
+            for p in (program,*program.rglob('*')):
+                if p.lstat().st_uid!=0 or (not p.is_symlink() and p.stat().st_mode&0o022):raise ValueError('Unprotected retained program')
+                if p.is_symlink() and not p.resolve().is_relative_to(program):raise ValueError('Escaping retained program link')
+        return program
+    def automatic_recovery(self,transactions):
+        """Called with the lifecycle lock held; never erase an active database.
+
+        Before activation, restore a verified old snapshot or retain incomplete
+        fresh provisioning. After activation, keep current data authoritative
+        and let the normal upgrade run against it. Resolve one interruption at
+        a time so mixed or damaged evidence cannot silently select a database.
+        """
+        pending=[]
+        for folder in sorted(transactions.iterdir()):
+            plain(folder,os.getuid())
+            if not folder.is_dir() or folder.stat().st_mode&0o077:raise ValueError('Unprotected transaction directory')
+            j=Journal(folder)
+            if not j.records:
+                # Only a truly empty, owned directory is disposable. Preserve
+                # any unrecorded files for inspection rather than guessing.
+                folder.rmdir();self.progress('Clearing empty installation records','installer');continue
+            if j.records[-1]['phase'] not in TERMINAL:pending.append(j)
+        if len(pending)>1:raise RuntimeError('Multiple interrupted installations require review')
+        if not pending:return
+        j=pending[0];phases=[r['phase'] for r in j.records]
+        if phases[-1] not in ('recovery-required','rolling-back','preserving'):j.phase('recovery-required')
+        if 'activating' in phases:
+            self.progress('Keeping existing data for upgrade','installer')
+            cfg=json.loads((self.data/'config/runtime.json').read_text())
+            if cfg['version'] not in (j.identity['from'],j.identity['to']):raise ValueError('Interrupted activation identity changed')
+            self.installed=self.retained_program(cfg['version'])
+            programs=tuple(self.retained_program(v) for v in (j.identity['from'],j.identity['to']) if v and (self.root/'versions'/v).exists())
+            self.identities(False);self.check_owned(self.installed,programs)
+            self.stop()
+            durable(j.folder/'automatic-recovery',{'action':'upgrade-current-data','activeVersion':cfg['version'],'targetVersion':self.version},replace=True)
+            if j.records[-1]['phase']!='preserving':j.phase('preserving')
+            # Finish only the old activation's version pointer and owned job
+            # definitions. Data stays in place; services stay stopped until
+            # the ordinary upgrade commits. This also makes retries after a
+            # crash following the terminal record independently verifiable.
+            cfg['version']=j.identity['to'];self.installed=self.retained_program(cfg['version'])
+            durable(self.data/'config/runtime.json',cfg,replace=True,mode=0o644)
+            if not self.isolated:
+                for role,value in self.plists().items():durable(Path('/Library/LaunchDaemons')/(LABEL+role+'.plist'),plistlib.dumps(value),replace=True,mode=0o644)
+            j.phase('preserved')
+        elif j.identity['from']:
+            self.progress('Restoring the verified safety copy','installer')
+            self._recover_locked(j,restart=False)
+        else:
+            self.progress('Retrying incomplete setup','installer')
+            # No candidate service was activated. Retain all incomplete
+            # provisioning, then start fresh using validated owned accounts.
+            program=self.root/'versions'/j.identity['to']
+            if program.exists():self.installed=self.retained_program(j.identity['to'])
+            elif (self.data/'database/postmaster.pid').exists():raise ValueError('Cannot stop unverified provisioning process')
+            if not self.isolated:
+                for role in ROLES:
+                    query=subprocess.run(['/bin/launchctl','print','system/'+LABEL+role],capture_output=True,text=True,timeout=10)
+                    if (Path('/Library/LaunchDaemons')/(LABEL+role+'.plist')).exists() or query.returncode!=113 or 'Could not find service "'+LABEL+role+'" in domain for system' not in query.stderr:
+                        raise ValueError('Existing service lacks an activation record; preserve it')
+                if (self.data/'database/postmaster.pid').exists():self.identities(False)
+            self.stop()
+            retained=j.folder/'incomplete-data'
+            if self.data.exists() and retained.exists():raise ValueError('Both provisioning data copies exist; preserve them')
+            if self.data.exists():
+                inventory=self.snapshot_inventory(self.data)
+                durable(j.folder/'incomplete-data-inventory',inventory,replace=True)
+            if j.records[-1]['phase']!='preserving':j.phase('preserving')
+            if self.data.exists():os.rename(self.data,retained)
+            durable(j.folder/'automatic-recovery',{'action':'retry-fresh-setup','dataRetained':retained.exists(),'targetVersion':self.version},replace=True)
+            j.phase('preserved')
+        self.installed=self.root/'versions'/self.version
+        self.progress('Continuing installation','installer')
     def install(self,ports=(15432,18080,8080,18081,18082),fail_at=None,interactive_uid=None,repair=False):
         if not self.isolated and (interactive_uid is None or interactive_uid<501 or os.stat('/dev/console').st_uid!=interactive_uid):raise ValueError('Logged-in installer user required')
         if fail_at and not self.isolated:raise ValueError('Fault injection is isolated only')
@@ -372,12 +458,12 @@ class Lifecycle:
         if lock_info.st_nlink!=1 or lock_info.st_uid!=os.getuid() or lock_info.st_mode&0o077:os.close(lock);raise ValueError('Unsafe lifecycle lock')
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         transactions=self.root/'transactions';transactions.mkdir(mode=0o700,exist_ok=True)
+        self.journal=None
         try:
             maintenance=self.root/'maintenance.json'
             if maintenance.exists() and json.loads(maintenance.read_text()).get('state')!='complete':raise RuntimeError('Earlier settings change requires review')
-            for folder in transactions.iterdir():
-                prior=Journal(folder)
-                if not prior.records or prior.records[-1]['phase'] not in ('committed','rolled-back'):raise RuntimeError('Earlier transaction requires recovery')
+            if (self.root/'installation.json').exists() and json.loads((self.root/'installation.json').read_text()).get('product')!='Josi CE Server':raise ValueError('Unrelated data')
+            self.automatic_recovery(transactions)
             fresh=not self.data.exists();old=None
             if not fresh:
                 marker=json.loads((self.root/'installation.json').read_text())
@@ -391,6 +477,7 @@ class Lifecycle:
                 if fail_at==name:raise RuntimeError('Injected isolated failure')
             phase('prepared');phase('verified')
             if fresh:
+                if not (self.root/'installation.json').exists():durable(self.root/'installation.json',{'product':'Josi CE Server','id':secrets.token_hex(16)})
                 if not self.isolated:
                     for role in ROLES:
                         if (Path('/Library/LaunchDaemons')/(LABEL+role+'.plist')).exists() or subprocess.run(['/bin/launchctl','print','system/'+LABEL+role],capture_output=True).returncode==0:raise ValueError('Existing launchd label must be preserved')
@@ -414,7 +501,10 @@ class Lifecycle:
                 staged=folder/'program';self.copy(self.runtime,staged);self.seal_program(staged);self.verify(staged)
                 os.rename(staged,self.installed)
             phase('quiescing')
-            if not fresh:self.stop()
+            if not fresh:
+                candidate_program=self.installed
+                self.installed=self.root/'versions'/old
+                self.stop();self.installed=candidate_program
             phase('quiesced')
             if not fresh:
                 before=self.snapshot_inventory(self.data)
@@ -423,7 +513,6 @@ class Lifecycle:
                 durable(folder/'snapshot-inventory',before)
             phase('snapshot')
             if fresh:
-                durable(self.root/'installation.json',{'product':'Josi CE Server','id':secrets.token_hex(16)})
                 cfg=self.layout(ports)
                 self.run([self.installed/'postgresql/bin/initdb','-D',self.data/'database','-U','bootstrap_admin','--pwfile='+str(self.data/'secrets/database/init-password'),'--auth-host=scram-sha-256','--auth-local=scram-sha-256','--encoding=UTF8','--locale=C'],'database')
                 settings=f"listen_addresses='127.0.0.1'\nport={cfg['databasePort']}\nunix_socket_directories=''\npassword_encryption='scram-sha-256'\nlog_statement='none'\nlog_min_error_statement='panic'\nlog_parameter_max_length=0\nlog_parameter_max_length_on_error=0\n"
@@ -459,7 +548,7 @@ class Lifecycle:
         except Exception as error:
             if self.journal:
                 durable(self.journal.folder/'failure-diagnostics',diagnostic(error),replace=True)
-            if self.journal and self.journal.records[-1]['phase'] not in ('committed','rolled-back','recovery-required'):
+            if self.journal and self.journal.records[-1]['phase'] not in (*TERMINAL,'recovery-required'):
                 self.journal.phase('recovery-required')
             self.progress('Recovery required; existing data retained','installer')
             raise
@@ -478,32 +567,47 @@ class Lifecycle:
             info=os.fstat(lock)
             if info.st_nlink!=1 or info.st_uid!=os.getuid() or info.st_mode&0o077:raise ValueError('Unsafe recovery lock')
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            journal=Journal(folder);phases=[r['phase'] for r in journal.records]
-            if 'activating' in phases:raise RuntimeError('Activation began; preserve current data for lossless manual recovery')
-            if not phases or phases[-1]!='recovery-required':raise ValueError('Not a recoverable transaction')
-            if not journal.identity['from']:
-                raise RuntimeError('No verified previous installation; preserve provisioning evidence for review')
-            self.check_owned(self.root/'versions'/journal.identity['from'])
-            if 'migrating' not in phases:
-                # Before migration starts the original cold database remains
-                # authoritative; never replace it with an incomplete copy.
-                if json.loads((self.data/'config/runtime.json').read_text())['version']!=journal.identity['from']:raise ValueError('Previous activation identity changed')
-                self.stop();journal.phase('rolling-back');self.installed=self.root/'versions'/journal.identity['from']
-                for role in ROLES:self.start(role)
-                self.ready();journal.phase('rolled-back');return
+            self._recover_locked(Journal(folder),restart=True)
+        finally:fcntl.flock(lock,fcntl.LOCK_UN);os.close(lock)
+
+    def _recover_locked(self,journal,restart):
+        phases=[r['phase'] for r in journal.records];folder=journal.folder
+        if 'activating' in phases:raise RuntimeError('Activation began; preserve current data for lossless manual recovery')
+        if not phases or phases[-1] not in ('recovery-required','rolling-back'):raise ValueError('Not a recoverable transaction')
+        if not journal.identity['from']:raise RuntimeError('No verified previous installation; preserve provisioning evidence for review')
+        self.installed=self.root/'versions'/journal.identity['from']
+        self.identities(False)
+        configuration=json.loads((folder/'snapshot/config/runtime.json').read_text()) if 'migrating' in phases and not self.isolated else None
+        self.check_owned(self.installed,configuration=configuration)
+        if 'migrating' not in phases:
+            # No SQL migration began, so the original data remains authoritative.
+            if json.loads((self.data/'config/runtime.json').read_text())['version']!=journal.identity['from']:raise ValueError('Previous activation identity changed')
+            self.stop()
+            if journal.records[-1]['phase']!='rolling-back':journal.phase('rolling-back')
+        else:
             if 'snapshot' not in phases:raise ValueError('Migration lacks a verified snapshot')
             expected=json.loads((folder/'snapshot-inventory').read_text())
             if self.snapshot_inventory(folder/'snapshot')!=expected:raise ValueError('Snapshot integrity failed')
-            self.stop();journal.phase('rolling-back')
+            self.stop()
+            if journal.records[-1]['phase']!='rolling-back':journal.phase('rolling-back')
             retained=folder/'failed-data'
-            if retained.exists():raise ValueError('Recovery already started; preserve both copies')
-            os.rename(self.data,retained)
-            self.copy(folder/'snapshot',self.data)
-            if self.snapshot_inventory(self.data)!=expected:raise ValueError('Restored data integrity failed')
-            self.installed=self.root/'versions'/journal.identity['from']
+            if not retained.exists():
+                os.rename(self.data,retained)
+            elif self.data.exists() and self.snapshot_inventory(self.data)!=expected:
+                raise ValueError('Interrupted restore has changed data; preserve both copies')
+            if not self.data.exists():
+                # Verify a private copy before the atomic rename. An interrupted
+                # copy remains evidence and never becomes the active database.
+                restored=folder/('restored-data-'+secrets.token_hex(16))
+                self.copy(folder/'snapshot',restored)
+                if self.snapshot_inventory(restored)!=expected:raise ValueError('Restored data integrity failed')
+                os.rename(restored,self.data)
+        # Persist completion before any old services can accept writes. The
+        # automatic path leaves them stopped for the next upgrade's cold copy.
+        journal.phase('rolled-back')
+        if restart:
             for role in ROLES:self.start(role)
-            self.ready();journal.phase('rolled-back')
-        finally:fcntl.flock(lock,fcntl.LOCK_UN);os.close(lock)
+            self.ready()
 
 if __name__=='__main__':
     try:

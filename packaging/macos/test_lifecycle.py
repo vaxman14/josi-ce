@@ -96,6 +96,75 @@ class Tests(unittest.TestCase):
         j=self.prepare_snapshot();(j.folder/'snapshot/row').write_text('tampered')
         with self.assertRaisesRegex(ValueError,'integrity'):self.obj.recover(j.folder)
         self.assertEqual((self.obj.data/'row').read_text(),'new schema retained')
+    def test_automatic_pre_activation_restore_does_not_start_old_writers(self):
+        j=self.prepare_snapshot();self.obj.start=lambda role:self.fail('Old writers must stay stopped during automatic recovery')
+        self.obj.automatic_recovery(self.root/'transactions')
+        self.assertEqual((self.obj.data/'row').read_text(),'old schema')
+        self.assertEqual((j.folder/'failed-data/row').read_text(),'new schema retained')
+        self.assertEqual(m.Journal(j.folder).records[-1]['phase'],'rolled-back')
+    def test_automatic_post_activation_keeps_data_and_resolves_previous_failure(self):
+        j=self.journal('activated')
+        (self.obj.data/'config').mkdir(parents=True)
+        (self.obj.data/'config/runtime.json').write_text(json.dumps({'version':j.identity['to']}))
+        (self.obj.data/'row').write_text('user writes after activation')
+        (self.root/'versions'/j.identity['to']).mkdir(parents=True)
+        self.obj.stop=lambda:None
+        self.obj.automatic_recovery(self.root/'transactions')
+        self.assertEqual((self.obj.data/'row').read_text(),'user writes after activation')
+        self.assertEqual(m.Journal(j.folder).records[-1]['phase'],'preserved')
+        self.obj.automatic_recovery(self.root/'transactions')
+        self.assertEqual((self.obj.data/'row').read_text(),'user writes after activation')
+    def test_automatic_repair_of_activated_fresh_install(self):
+        j=self.journal('activated')
+        for path in j.folder.glob('*.json'):path.unlink()
+        j=m.Journal(j.folder,{'from':None,'to':'1.0.0-macos.1','manifest':'0'*64})
+        for phase in m.PHASES[:11]:j.phase(phase)
+        j.phase('recovery-required')
+        (self.obj.data/'config').mkdir(parents=True)
+        (self.obj.data/'config/runtime.json').write_text(json.dumps({'version':j.identity['to']}))
+        (self.obj.data/'row').write_text('retained fresh data')
+        (self.root/'versions'/j.identity['to']).mkdir(parents=True)
+        self.obj.stop=lambda:None
+        self.obj.automatic_recovery(self.root/'transactions')
+        self.assertEqual((self.obj.data/'row').read_text(),'retained fresh data')
+        self.assertEqual(m.Journal(j.folder).records[-1]['phase'],'preserved')
+    def test_changed_activation_identity_is_never_overwritten(self):
+        j=self.journal('activated')
+        (self.obj.data/'config').mkdir(parents=True)
+        path=self.obj.data/'config/runtime.json';path.write_text('{"version":"9.0.0-macos.1"}')
+        with self.assertRaisesRegex(ValueError,'identity changed'):self.obj.automatic_recovery(self.root/'transactions')
+        self.assertEqual(json.loads(path.read_text())['version'],'9.0.0-macos.1')
+        self.assertEqual(m.Journal(j.folder).records[-1]['phase'],'recovery-required')
+    def test_fresh_pre_activation_retry_retains_incomplete_data(self):
+        folder=self.root/'transactions'/'fresh';folder.parent.mkdir()
+        j=m.Journal(folder,{'from':None,'to':self.obj.version,'manifest':'0'*64})
+        for phase in m.PHASES[:7]:j.phase(phase)
+        # An abrupt termination has no explicit failure record.
+        self.obj.data.mkdir();(self.obj.data/'row').write_text('partial provisioning')
+        self.obj.stop=lambda:None
+        self.obj.automatic_recovery(folder.parent)
+        self.assertFalse(self.obj.data.exists())
+        self.assertEqual((folder/'incomplete-data/row').read_text(),'partial provisioning')
+        self.assertEqual(m.Journal(folder).records[-1]['phase'],'preserved')
+    def test_interrupted_restore_continues_from_retained_failed_data(self):
+        j=self.prepare_snapshot();j.phase('rolling-back')
+        os.rename(self.obj.data,j.folder/'failed-data')
+        self.obj.automatic_recovery(self.root/'transactions')
+        self.assertEqual((self.obj.data/'row').read_text(),'old schema')
+        self.assertEqual((j.folder/'failed-data/row').read_text(),'new schema retained')
+    def test_interrupted_restore_with_changed_data_refuses_to_discard_it(self):
+        j=self.prepare_snapshot();j.phase('rolling-back')
+        (j.folder/'failed-data').mkdir();(j.folder/'failed-data/row').write_text('failed retained')
+        with self.assertRaisesRegex(ValueError,'changed data'):self.obj.automatic_recovery(self.root/'transactions')
+        self.assertEqual((self.obj.data/'row').read_text(),'new schema retained')
+    def test_empty_owned_transaction_directory_is_cleared(self):
+        folder=self.root/'transactions'/'empty';folder.mkdir(parents=True,mode=0o700)
+        self.obj.automatic_recovery(folder.parent);self.assertFalse(folder.exists())
+    def test_multiple_pending_transactions_are_not_guessed(self):
+        j=self.journal()
+        other=m.Journal(j.folder.parent/'other',{'from':None,'to':self.obj.version,'manifest':'0'*64});other.phase('prepared')
+        with self.assertRaisesRegex(RuntimeError,'Multiple interrupted'):self.obj.automatic_recovery(j.folder.parent)
+        self.assertEqual(m.Journal(j.folder).records[-1]['phase'],'recovery-required')
     def test_snapshot_rejects_links(self):
         self.obj.data.mkdir();(self.obj.data/'link').symlink_to('/etc/passwd')
         with self.assertRaises(ValueError):self.obj.snapshot_inventory(self.obj.data)

@@ -35,7 +35,14 @@ and checksums for signing and notarization results before physical testing.
    Move Josi CE.app to Trash separately to remove the desktop client; this
    does not remove server data. Move Josi Server.app to Trash only after the
    server is stopped if you also want to remove its management application.
-8. Failure: If installation fails, use Copy Diagnostics in the progress window.
+8. Recovery: Rerunning this package automatically handles verified interrupted
+   installations. Before activation it can restore a verified safety copy or
+   retain incomplete fresh setup and retry. After activation it preserves the
+   current database and settings, then continues with an upgrade or repair.
+   Recovery evidence remains in the product's transactions folder. It never
+   deletes user data, the selected workspace folder, or existing snapshots.
+   Damaged records, changed ownership, or ambiguous data still require review.
+9. Failure: If installation fails, use Copy Diagnostics in the progress window.
    Also inspect /Library/Logs/Josi CE Server/Install-*.jsonl or use Installer’s
    Window > Installer Log. The output must identify verification vs installation
    and the cause. An upgrade failure before activation may restore the old
@@ -43,6 +50,6 @@ and checksums for signing and notarization results before physical testing.
    refuse to discard possible new writes. Do not keep clicking install after
    an unresolved failure. Save diagnostics first.
 
-No clean install, real upgrade, reboot, workspace authorization, desktop-client
-operation, or uninstall acceptance has been performed on the build Mac.
+This candidate's physical acceptance remains unproven. Earlier candidates have
+failed on this Mac; their logs and data remain available for recovery.
 Record PASS/FAIL for each step, OS version and exact candidate checksum.

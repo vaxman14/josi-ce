@@ -27,13 +27,10 @@ import Darwin
     var port = 8080
     var completedProgress = false
     func applicationDidFinishLaunching(_ notification: Notification) {
-        window = NSWindow(contentRect: NSRect(x: 0,y: 0,width: 600,height: 560),styleMask: [.titled,.closable,.miniaturizable],backing: .buffered,defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0,y: 0,width: 640,height: 660),styleMask: [.titled,.closable,.miniaturizable,.resizable],backing: .buffered,defer: false)
+        window.contentMinSize = NSSize(width: 640, height: 660)
         window.title = "Josi Server"
-        let icon = NSImageView(image: NSImage(named: "Josi") ?? NSImage())
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.widthAnchor.constraint(equalToConstant: 64).isActive = true
-        icon.heightAnchor.constraint(equalToConstant: 64).isActive = true
-        icon.setAccessibilityLabel("Josi: white J on navy")
+        let artwork = JosiArtworkView(logo: NSImage(named: "Josi") ?? NSImage())
         heading.font = .boldSystemFont(ofSize: 26)
         detail.font = .systemFont(ofSize: 14); detail.maximumNumberOfLines = 4
         folderLabel.font = .systemFont(ofSize: 13)
@@ -46,16 +43,15 @@ import Darwin
         copyLog.target = self;copyLog.action = #selector(copyDiagnostics)
         repair.target = self;repair.action = #selector(restorePrevious)
         remove.target = self;remove.action = #selector(uninstallServer)
-        let header = NSStackView(views: [icon, heading]);header.spacing = 18;header.alignment = .centerY
         let progress = NSStackView(views: [spinner,activity]);progress.spacing = 8
         let folders = NSStackView(views: [choose,decline]);folders.spacing = 10
         let actions = NSStackView(views: [open,desktop]);actions.spacing = 10
         let maintenance = NSStackView(views: [copyLog,repair,remove]);maintenance.spacing = 8
-        let stack = NSStackView(views: [header,detail,progress,folderLabel,folders,actions,logLabel,maintenance])
+        let stack = NSStackView(views: [artwork,heading,detail,progress,folderLabel,folders,actions,logLabel,maintenance])
         stack.orientation = .vertical;stack.alignment = .leading;stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(stack)
-        NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor,constant: 28),stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor,constant: -28),stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor,constant: 28),stack.bottomAnchor.constraint(lessThanOrEqualTo: window.contentView!.bottomAnchor,constant: -24)])
+        NSLayoutConstraint.activate([artwork.widthAnchor.constraint(equalTo: stack.widthAnchor),stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor,constant: 28),stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor,constant: -28),stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor,constant: 28),stack.bottomAnchor.constraint(lessThanOrEqualTo: window.contentView!.bottomAnchor,constant: -24)])
         if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--progress" {
             let candidate = URL(fileURLWithPath: CommandLine.arguments[2])
             if candidate.deletingLastPathComponent().path == "/Library/Logs/Josi CE Server" && candidate.lastPathComponent.hasPrefix("Install-") && candidate.pathExtension == "jsonl" { log = candidate;state = .working }

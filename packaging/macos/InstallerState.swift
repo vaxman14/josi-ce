@@ -15,6 +15,8 @@ enum InstallerState: Equatable {
         if raw == "Checking readiness" {
             return "Waiting for the server, background tasks and voice connection to become ready. Checks repeat for up to four minutes; a failure stops installation and retains your data."
         }
+        let recovery = ["Keeping existing data for upgrade":"Keeping your data and preparing an upgrade", "Restoring the verified safety copy":"Restoring your verified safety copy", "Retrying incomplete setup":"Saving the incomplete setup and retrying", "Continuing installation":"Recovery complete; continuing installation", "Clearing empty installation records":"Cleaning up an interrupted setup"]
+        if let message = recovery[raw] { return message }
         return (names[raw] ?? "Preparing Josi") + (services[service].map { " · " + $0 } ?? "")
     }
     static func from(_ event: [String: Any]) -> InstallerState {

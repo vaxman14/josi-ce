@@ -66,18 +66,40 @@ try:
     except RuntimeError as error:
         if str(error)!='Injected isolated failure':raise
     else:raise AssertionError('Migration fault did not fire')
-    instance.recover(instance.journal.folder)
-    subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(root),'verify'],env=env,check=True,timeout=30)
+    interrupted=instance.journal.folder
     instance.stop();instance=mod.Lifecycle(candidate/'runtime',root,isolated=True)
     instance.install(tuple(ports))
+    assert mod.Journal(interrupted).records[-1]['phase']=='rolled-back'
+    assert (interrupted/'failed-data/database/PG_VERSION').exists()
     subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(root),'verify'],env=env,check=True,timeout=30)
-    print('PASS isolated migration failure recovery, retained failed data, and separate upgrade activation',flush=True)
+    print('PASS automatic migration failure recovery, retained failed data, and continuing upgrade activation',flush=True)
     if (RUNTIME/'app/native/maintenance.py').exists():
         maintenance.uninstall(instance)
         assert not instance.children and (instance.data/'database/PG_VERSION').exists()
         instance.install(tuple(ports),repair=True)
         subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(root),'verify'],env=env,check=True,timeout=30)
         print('PASS isolated retained-data uninstall and same-version repair reinstall',flush=True)
+    instance.stop()
+    # Reproduce the actual blocked Mac: a fresh install activated, then failed
+    # before health/commit. A subsequent package must preserve that database
+    # and finish a repair without asking the user to erase its journal.
+    failed_root=test_base/('activated-fresh-'+str(time.time_ns()))
+    instance=mod.Lifecycle(RUNTIME,failed_root,isolated=True)
+    try:instance.install(tuple(ports),fail_at='activated')
+    except RuntimeError as error:
+        if str(error)!='Injected isolated failure':raise
+    else:raise AssertionError('Activation fault did not fire')
+    interrupted=instance.journal.folder
+    # Save a database sentinel after activation, proving that even later writes
+    # survive automatic recovery. Start the temporary DB only for this proof.
+    instance.stop()
+    instance.run([instance.installed/'postgresql/bin/pg_ctl','-D',instance.data/'database','-l',instance.data/'logs/database/setup.log','-w','-t','60','start'],'database')
+    subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(failed_root),'seed'],env=env,check=True,timeout=30)
+    instance.stop();instance=mod.Lifecycle(RUNTIME,failed_root,isolated=True)
+    instance.install(tuple(ports),repair=True)
+    assert mod.Journal(interrupted).records[-1]['phase']=='preserved'
+    subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(failed_root),'verify'],env=env,check=True,timeout=30)
+    print('PASS automatic repair of an activated fresh-install failure, retaining post-activation database writes',flush=True)
 except Exception as error:
     if isinstance(error,subprocess.CalledProcessError):
         private=root/'private-failure.txt'

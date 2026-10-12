@@ -8,7 +8,7 @@ import stat
 import sys
 import secrets
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from lifecycle import Lifecycle, PRODUCT, LABEL, ROLES, durable, plain, diagnostic, emit
+from lifecycle import Lifecycle, PRODUCT, LABEL, ROLES, TERMINAL, durable, plain, diagnostic, emit
 
 def selected_folder(path,uid):
     p=plain(Path(path))
@@ -37,7 +37,7 @@ def clean_transactions(obj,allow_uninstall=False):
     from lifecycle import Journal
     for folder in (obj.root/'transactions').iterdir():
         j=Journal(folder)
-        if not j.records or j.records[-1]['phase'] not in ('committed','rolled-back'):raise RuntimeError('Installation needs repair before settings can change')
+        if not j.records or j.records[-1]['phase'] not in TERMINAL:raise RuntimeError('Installation needs repair before settings can change')
     status=obj.root/'maintenance.json'
     if status.exists():
         saved=json.loads(status.read_text())
