@@ -333,6 +333,8 @@ def sign_native(out,standard_mount,workspace):
     (image_root/'.background').mkdir();shutil.copyfile(out/'background.png',image_root/'.background/background.png')
     shutil.copyfile(app/'Contents/Resources/Josi.icns',image_root/'.VolumeIcon.icns')
     run('volume-icon.log',['/usr/bin/xcrun','SetFile','-a','C',image_root])
+    clean_candidate_metadata(out,image_root/'Uninstall Josi.app',workspace)
+    run('dmg-uninstaller-staging-signature.log',['/usr/bin/codesign','--verify','--deep','--strict',image_root/'Uninstall Josi.app'])
     dmg=out/'Josi-Server-macos-arm64.dmg'
     writable=out/'Josi-Server-layout.dmg'
     local_writable=workspace/writable.name
@@ -350,6 +352,10 @@ def sign_native(out,standard_mount,workspace):
     try:
         run('dmg-layout.log',[BASE/'prefix/python/bin/python3.11','-I','-B',REPO/'scripts/macos/dmg-layout.py',out,mount,*(['--standard-mount'] if standard_mount else [])])
         run('mounted-volume-icon.log',['/usr/bin/xcrun','SetFile','-a','C',mount])
+        # DiskImages/Finder can attach bundle FinderInfo while copying the
+        # standalone app. Verify the actual writable image before compressing.
+        clean_candidate_metadata(out,mount/'Uninstall Josi.app',mount)
+        run('dmg-uninstaller-mounted-signature.log',['/usr/bin/codesign','--verify','--deep','--strict',mount/'Uninstall Josi.app'])
     finally:run('dmg-detach.log',['/usr/bin/hdiutil','detach',mount])
     run('dmg-compress.log',['/usr/bin/hdiutil','convert',writable,'-format','UDZO','-o',dmg])
     run('sign-dmg.log',['/usr/bin/codesign','--keychain',KEYCHAIN,'--sign',APP_IDENTITY,'--timestamp',dmg])
