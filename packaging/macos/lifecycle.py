@@ -33,6 +33,15 @@ TRANSITIONS = {a:{b,'recovery-required'} for a,b in zip(PHASES,PHASES[1:])}
 TRANSITIONS.update({'recovery-required':{'rolling-back','preserving'},'rolling-back':{'rolled-back','recovery-required'},'preserving':{'preserved','recovery-required'}})
 TERMINAL = ('committed','rolled-back','preserved')
 
+def bind_probe(port):
+    probe=socket.socket()
+    # Match native servers: closed connections may still be in TIME_WAIT
+    # immediately after uninstall, while an active listener must still refuse.
+    probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+    try:probe.bind(('127.0.0.1',port))
+    except Exception:probe.close();raise
+    return probe
+
 def hashed(path):
     h=hashlib.sha256()
     with open(path,'rb') as f:
@@ -571,7 +580,7 @@ class Lifecycle:
                 try:
                     if len(set(ports))!=5 or any(not isinstance(p,int) or p<1024 or p>65535 for p in ports):raise ValueError('Invalid ports')
                     for port in ports:
-                        probe=socket.socket();probes.append(probe);probe.bind(('127.0.0.1',port))
+                        probes.append(bind_probe(port))
                 finally:
                     for probe in probes:probe.close()
             self.identities(fresh)

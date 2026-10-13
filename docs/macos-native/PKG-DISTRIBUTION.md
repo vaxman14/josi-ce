@@ -94,6 +94,37 @@ rejected by Gatekeeper; that verdict is recorded, never treated as acceptance.
 
 ## Root-cause evidence
 
+macos.12 installs a separate `Uninstall Josi.app` and includes the same signed
+app on the DMG. It carries its own minimal Python standard library and cleanup
+code, so server startup and the management app are not dependencies. Keep-data
+removal preserves server versions, identities, recovery copies and subscription
+configuration for repair/reinstall; Complete removal also removes those, local
+client state, the desktop encryption key and exact package receipts. Workspace
+files and owner Codex/Claude installations are outside the deletion list.
+Cleanup records its intent in a protected journal and can continue after partial
+account deletion. Owned service definitions are validated before shutdown;
+changed installation identities or unrelated app identifiers refuse removal.
+The native window copies its helper into root-owned temporary staging, verifies
+the SOCAL signature, and uses the standard macOS administrator prompt. It does
+not install a persistent privileged background helper.
+
+The Documents/RV failure reported `Expected “\"” but found unknown token (-2741)`.
+JSONEncoder escaped path slashes as `\/`, which AppleScript rejects. The shared
+authorization encoder escapes quotes and backslashes without JSON slash escapes;
+tests compile the actual authorization script with Apple's parser, without
+executing privileged operations. A failed folder change retains its heading
+and diagnostic message even when the readiness poll succeeds.
+
+Folder selection now explicitly asks to append read-only access for the web and
+worker accounts to the selected directory and search-only access to private
+parents owned by the selecting user. Original modes and unrelated ACL entries
+are preserved. Only added entries are recorded and revoked, using pinned file
+descriptors and inode checks. Existing descendants are not recursively rewritten
+and macOS privacy restrictions remain in force. Failed changes restore the
+previous grants and configuration. Codex's shell, local image viewer and agent
+delegation built-ins are disabled so subscription file access uses Josi MCP
+permission gates; supplied-image model input remains supported.
+
 The native subscription environment must set `JOSI_MCP_SERVER` to the activated
 version's `app/packages/agent/dist/mcp/server.js`. Without it, both subscription
 providers fall back to Docker's `/app` path and refuse tool requests before

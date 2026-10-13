@@ -17,7 +17,7 @@ import Darwin
     let desktop = NSButton(title: "Open Desktop Client", target: nil, action: nil)
     let copyLog = NSButton(title: "Copy Diagnostics", target: nil, action: nil)
     let repair = NSButton(title: "Restore Previous Version…", target: nil, action: nil)
-    let remove = NSButton(title: "Uninstall Server…", target: nil, action: nil)
+    let remove = NSButton(title: "Uninstall Josi…", target: nil, action: nil)
     let spinner = NSProgressIndicator()
     var log: URL?
     var started = Date()
@@ -26,6 +26,7 @@ import Darwin
     var probing = false
     var port = 8080
     var completedProgress = false
+    var maintenanceFailure: String?
     func applicationDidFinishLaunching(_ notification: Notification) {
         window = NSWindow(contentRect: NSRect(x: 0,y: 0,width: 640,height: 660),styleMask: [.titled,.closable,.miniaturizable,.resizable],backing: .buffered,defer: false)
         window.contentMinSize = NSSize(width: 640, height: 660)
@@ -62,7 +63,7 @@ import Darwin
     }
     func applyState() {
         open.isEnabled = state.canOpen && !busy;choose.isEnabled = state.canChangeFolder && !busy
-        decline.isEnabled = choose.isEnabled;remove.isEnabled = state.canOpen && !busy
+        decline.isEnabled = choose.isEnabled;remove.isEnabled = !busy && FileManager.default.fileExists(atPath:"/Applications/Uninstall Josi.app")
         desktop.isHidden = !FileManager.default.fileExists(atPath: "/Applications/Josi CE.app")
         desktop.isEnabled = open.isEnabled
         repair.isHidden = state != .failed;repair.isEnabled = state == .failed && !busy
@@ -111,7 +112,7 @@ import Darwin
             do {
                 let (_,response) = try await URLSession.shared.data(for: request)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NSError(domain:"JosiReady",code:1) }
-                state = .ready;heading.stringValue = "Josi is ready"
+                state = .ready;heading.stringValue = maintenanceFailure == nil ? "Josi is ready" : "Folder connection not changed"
                 if !completedProgress { detail.stringValue = "Open Josi in your browser to finish setup. Your server runs locally on this Mac." }
             } catch { state = .waiting;detail.stringValue = "Josi is starting or unavailable. This window will check again." }
             applyState()
@@ -138,9 +139,9 @@ import Darwin
         let requirement = "=anchor apple generic and identifier \"com.heyjosi.ce.server\" and certificate leaf[subject.OU] = \"LRH75YR6QW\" and certificate leaf[subject.CN] = \"Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)\""
         let runtime = "/Applications/Josi Server.app/Contents/Resources/runtime"
         let command = "set -eu; /usr/bin/codesign --verify --deep --strict -R " + shell(requirement) + " '/Applications/Josi Server.app'; /usr/bin/env -i PATH=/usr/bin:/bin " + shell(runtime + "/python/bin/python3.11") + " -I -B " + shell(runtime + "/app/native/maintenance.py") + " " + shell(operation) + (path.map { " " + shell($0) } ?? "")
-        let quoted = String(data: try! JSONEncoder().encode(command),encoding:.utf8)!
+        maintenanceFailure = nil
         DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process();process.executableURL = URL(fileURLWithPath:"/usr/bin/osascript");process.arguments = ["-e","do shell script " + quoted + " with administrator privileges"]
+            let process = Process();process.executableURL = URL(fileURLWithPath:"/usr/bin/osascript");process.arguments = ["-e",NativeAuthorization.script(command)]
             process.environment = ["PATH":"/usr/bin:/bin:/usr/sbin:/sbin"]
             let pipe = Pipe();process.standardOutput = pipe;process.standardError = pipe
             var success = false
@@ -150,8 +151,8 @@ import Darwin
             DispatchQueue.main.async {
                 self.busy = false
                 if passed && operation == "uninstall" { self.state = .removed;self.heading.stringValue = "Josi Server uninstalled";self.detail.stringValue = "The server is stopped. Your data and recovery copies are retained for reinstalling. The optional desktop client can be removed separately by moving Josi CE.app to Trash." }
-                else if passed { self.state = .ready;self.detail.stringValue = "Saved. Josi is ready.";self.folderLabel.stringValue = operation == "workspace" ? (path?.isEmpty == false ? "Connected as /workspace (read only): " + path! : "Folder access declined.") : self.folderLabel.stringValue }
-                else { self.state = InstallerState.afterMaintenanceFailure(operation);self.detail.stringValue = "The change did not complete. Copy Diagnostics for details. If the folder is protected by macOS or unreadable by the server, choose a shared documents folder after Josi is ready. Existing data is retained." }
+                else if passed { self.state = .ready;self.heading.stringValue = "Josi is ready";self.detail.stringValue = "Saved. Josi is ready.";self.folderLabel.stringValue = operation == "workspace" ? (path?.isEmpty == false ? "Connected as /workspace (read only): " + path! : "Folder access declined.") : self.folderLabel.stringValue }
+                else { self.state = InstallerState.afterMaintenanceFailure(operation);self.maintenanceFailure = operation;self.heading.stringValue = operation == "workspace" ? "Folder connection not changed" : "Change not completed";self.detail.stringValue = operation == "workspace" ? "Josi could not save this folder connection. Your previous connection and data are retained. Copy Diagnostics for the exact cause. If macOS denies access, check Josi’s privacy permissions or choose a shared folder." : "The change did not complete. Your data is retained. Copy Diagnostics for details." }
                 self.activity.stringValue = passed ? "Completed" : "Stopped";self.applyState()
             }
         }
@@ -161,7 +162,7 @@ import Darwin
         let panel = NSOpenPanel();panel.canChooseDirectories = true;panel.canChooseFiles = false;panel.allowsMultipleSelection = false
         panel.title = "Choose Josi’s workspace folder";panel.message = "Josi can read files in this folder as /workspace. File changes stay disabled. Choose a folder readable by the local server. You can change or disconnect it later.";panel.prompt = "Connect Folder"
         guard panel.runModal() == .OK, let url = panel.url,
-              confirmation("Connect this folder?","Josi will receive read access to \(url.path). Administrator authorization saves the server setting and restarts Josi. It does not change your folder’s permissions.","Connect") else { return }
+              confirmation("Connect this folder?","Josi’s server and background tasks will receive read-only access to \(url.path). Administrator authorization adds folder-specific read permissions and access through its parent folders, then restarts Josi. Write permissions are unchanged. Disconnecting or uninstalling removes permissions added by Josi.","Connect") else { return }
         helper("workspace",url.path)
     }
     @objc func declineFolder() {
@@ -173,8 +174,10 @@ import Darwin
         helper("recover-latest")
     }
     @objc func uninstallServer() {
-        guard state.canOpen && confirmation("Uninstall Josi Server?","Administrator authorization stops Josi and removes it from automatic startup. Your data, installed files and recovery copies are kept. The desktop client is separate.","Uninstall") else { return }
-        helper("uninstall")
+        guard !busy else { return }
+        NSWorkspace.shared.openApplication(at:URL(fileURLWithPath:"/Applications/Uninstall Josi.app"),configuration:NSWorkspace.OpenConfiguration()) { _,error in
+            if error != nil { DispatchQueue.main.async { self.detail.stringValue = "Open Uninstall Josi from the installer disk image to remove this installation." } }
+        }
     }
     @objc func openDesktop() { guard state.canOpen && !busy else { return };NSWorkspace.shared.openApplication(at:URL(fileURLWithPath:"/Applications/Josi CE.app"),configuration:NSWorkspace.OpenConfiguration()) { _,_ in } }
     @objc func openBrowser() {

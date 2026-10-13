@@ -132,6 +132,24 @@ try:
     assert mod.Journal(interrupted).records[-1]['phase']=='preserved'
     subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(failed_root),'verify'],env=env,check=True,timeout=30)
     print('PASS automatic repair of an activated fresh-install failure, retaining post-activation database writes',flush=True)
+    # Exercise the standalone cleanup engine against real disposable services.
+    # OS account/receipt calls use a fixture adapter; no live Mac identities,
+    # applications, user profiles or Keychains enter these tests.
+    uninstaller=RUNTIME.parents[3]/'Uninstall Josi.app/Contents/Resources/runtime'
+    uspec=importlib.util.spec_from_file_location('packaged_uninstall',uninstaller/'app/native/uninstall.py');cleanup=importlib.util.module_from_spec(uspec);uspec.loader.exec_module(cleanup)
+    fixture_spec=importlib.util.spec_from_file_location('uninstall_fixture',repo/'packaging/macos/test_uninstall.py');fixture=importlib.util.module_from_spec(fixture_spec);fixture_spec.loader.exec_module(fixture)
+    system=fixture.FixtureSystem(instance.root)
+    (instance.root/'identities.json').write_text(json.dumps(system.accounts))
+    cleanup.uninstall(instance,'keep',system,str(__import__('uuid').uuid4()))
+    instance=mod.Lifecycle(RUNTIME,failed_root,isolated=True);instance.install(tuple(fresh_ports),repair=True)
+    subprocess.run([str(instance.installed/'node/bin/node'),str(proof),str(failed_root),'verify'],env=env,check=True,timeout=30)
+    print('PASS packaged native uninstaller keep-data engine, stopped real services, and retained database after reinstall',flush=True)
+    before=json.loads((instance.root/'installation.json').read_text())['id']
+    cleanup.uninstall(instance,'erase',system,str(__import__('uuid').uuid4()))
+    assert not failed_root.exists()
+    instance=mod.Lifecycle(RUNTIME,failed_root,isolated=True);instance.install(tuple(fresh_ports))
+    assert json.loads((instance.root/'installation.json').read_text())['id']!=before
+    print('PASS packaged complete-removal engine followed by a fresh real installation with a new installation identity',flush=True)
 except Exception as error:
     if isinstance(error,subprocess.CalledProcessError):
         private=root/'private-failure.txt'

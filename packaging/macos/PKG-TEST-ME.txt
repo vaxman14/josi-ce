@@ -12,10 +12,12 @@ and checksums for signing and notarization results before physical testing.
    disabled until installation completes and services are ready.
 2. Folder: In Josi Server, choose a folder you own that the server can read.
    A native folder chooser should appear. The connection is read only and
-   appears in Josi as /workspace after owner setup. A protected/unreadable
-   folder must be refused with copyable diagnostics; no folder permissions
-   should be changed. Change folders, then select No Folder Access and check
-   that discovery/access stops. The chosen folder is never deleted.
+   appears in Josi as /workspace after owner setup. Confirm the explicit
+   read-only folder grant. Check that private parents receive search only,
+   write permissions stay unchanged, and unrelated ACL entries remain.
+   macOS privacy denials must be reported with copyable diagnostics. Change
+   folders, then select No Folder Access and check that added grants and
+   discovery/access stop. The chosen folder is never deleted.
 3. Launch: Click Open Josi in Browser and complete owner setup. Verify a
    single-use setup link, the selected /workspace content and read-only limits.
    Document indexing remains unavailable until a supported scanner is ready.
@@ -33,12 +35,16 @@ and checksums for signing and notarization results before physical testing.
    save a harmless sentinel and owner settings. Install this PKG, then check
    the sentinel, settings, workspace and startup. Never reuse production data
    for injected failure tests. Same-version reruns are repair installs.
-7. Uninstall: In Josi Server, choose Uninstall Server and read the confirmation.
-   Authorize it. Check that Josi stops and no longer starts after reboot.
-   Data, program versions and recovery copies remain for reinstalling.
-   Move Josi CE.app to Trash separately to remove the desktop client; this
-   does not remove server data. Move Josi Server.app to Trash only after the
-   server is stopped if you also want to remove its management application.
+7. Uninstall: Open Uninstall Josi from Applications, Josi Server, or the DMG.
+   Keep my data removes both apps and automatic startup, disconnects folder
+   access, and retains data for reinstalling. Complete removal permanently
+   deletes Josi data, sign-ins, recovery copies, service accounts, client
+   caches and receipts. Workspace files remain. Confirm once, authorize
+   locally in macOS, and wait for Removal verified. Retry the same choice if
+   cleanup is interrupted. Before a fresh-install test, clear Josi browser
+   site data for localhost:8080 (and 127.0.0.1 if used). Actual browser data is
+   not deleted by the app. Keychain cleanup targets only the desktop Safe
+   Storage entry; signing certificates and josi-notary remain.
 8. Recovery: Rerunning this package automatically handles verified interrupted
    installations. Before activation it can restore a verified safety copy or
    retain incomplete fresh setup and retry. After activation it preserves the

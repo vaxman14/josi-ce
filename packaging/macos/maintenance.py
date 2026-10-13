@@ -9,6 +9,7 @@ import sys
 import secrets
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from lifecycle import Lifecycle, PRODUCT, LABEL, ROLES, TERMINAL, durable, plain, diagnostic, emit
+import workspace_access
 
 def selected_folder(path,uid):
     p=plain(Path(path))
@@ -51,25 +52,27 @@ def workspace(obj,path,uid):
         cfg_path=obj.data/'config/runtime.json';plain(cfg_path,os.getuid())
         cfg=json.loads(cfg_path.read_text())
         previous=dict(cfg)
-        if selection:
-            # Test as the real server identity using its scrubbed environment.
-            # No chmod, recursive ACL rewriting, or silent Full Disk Access.
-            probe="import os,sys; p=sys.argv[1]; f=os.open(p,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW); s=os.fstat(f); assert (s.st_dev,s.st_ino)==(int(sys.argv[2]),int(sys.argv[3])); os.listdir(f); os.close(f)"
-            obj.run([obj.installed/'python/bin/python3.11','-I','-B','-c',probe,selection['path'],str(selection['dev']),str(selection['ino'])],'web')
-            cfg['workspace']=selection
+        previous_access=workspace_access.read(obj.root)
+        if selection:cfg['workspace']=selection
         else:cfg.pop('workspace',None)
         # Durable intent precedes stopping or changing configuration. Data is
         # retained even on an interruption; repair never restores SQL here.
         intent=obj.root/'maintenance.json'
-        durable(intent,{'operation':'workspace','state':'pending','previous':previous,'next':cfg},replace=True)
+        durable(intent,{'operation':'workspace','state':'pending','previous':previous,'next':cfg,'previousAccess':previous_access},replace=True)
         try:
             obj.stop()
+            workspace_access.revoke(obj.root)
+            if selection:
+                users=[pwd.getpwuid(obj.account(role)[0]).pw_name for role in ('web','worker')]
+                workspace_access.grant(obj.root,selection,users,Path(selection['path']) if obj.isolated else Path('/'))
+                probe="import os,sys; p=sys.argv[1]; f=os.open(p,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW); s=os.fstat(f); assert (s.st_dev,s.st_ino)==(int(sys.argv[2]),int(sys.argv[3])); os.listdir(f); os.close(f)"
+                obj.run([obj.installed/'python/bin/python3.11','-I','-B','-c',probe,selection['path'],str(selection['dev']),str(selection['ino'])],'web')
             durable(cfg_path,cfg,replace=True,mode=0o644)
             for role in ROLES:obj.start(role)
             obj.ready()
         except Exception:
             # Only settings are reverted. Database/user writes are retained.
-            obj.stop();durable(cfg_path,previous,replace=True,mode=0o644)
+            obj.stop();workspace_access.revoke(obj.root);workspace_access.restore(obj.root,previous_access);durable(cfg_path,previous,replace=True,mode=0o644)
             for role in ROLES:obj.start(role)
             obj.ready()
             durable(intent,{'operation':'workspace','state':'complete','settingsRestored':True},replace=True)
@@ -87,6 +90,7 @@ def uninstall(obj):
         obj.check_owned(obj.root/'versions'/cfg['version'])
         durable(obj.root/'maintenance.json',{'operation':'uninstall','state':'pending'},replace=True)
         obj.stop()
+        workspace_access.revoke(obj.root)
         if not obj.isolated:
             # Retain validated definitions rather than deleting them.
             retained=obj.root/'disabled-launchd';retained.mkdir(mode=0o700,exist_ok=True)
@@ -124,7 +128,7 @@ def main():
             if saved.get('state')=='pending' and saved.get('operation')=='workspace':
                 lock=owned_lock(obj)
                 try:
-                    obj.stop();durable(obj.data/'config/runtime.json',saved['previous'],replace=True,mode=0o644)
+                    obj.stop();workspace_access.revoke(obj.root);workspace_access.restore(obj.root,saved.get('previousAccess',[]));durable(obj.data/'config/runtime.json',saved['previous'],replace=True,mode=0o644)
                     for role in ROLES:obj.start(role)
                     obj.ready();durable(settings,{'operation':'workspace','state':'complete','settingsRestored':True},replace=True)
                 finally:fcntl.flock(lock,fcntl.LOCK_UN);os.close(lock)

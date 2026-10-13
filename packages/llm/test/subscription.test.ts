@@ -67,6 +67,7 @@ describe('it delegates to the documented CLI and nothing else (L3.2)', () => {
   it('runs the exact non-interactive form OpenAI documents', () => {
     expect(codexArgs('gpt-5-codex')).toEqual([
       'exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check',
+      '-c', 'features.shell_tool=false', '-c', 'features.view_image=false', '-c', 'features.multi_agent=false',
       '--model', 'gpt-5-codex', '-',
     ]);
     expect(codexArgs('')).not.toContain('--model');

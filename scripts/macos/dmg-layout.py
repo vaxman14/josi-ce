@@ -25,10 +25,11 @@ with DSStore.open(str(mount/'.DS_Store'),'w+') as store:
     store['.']['pBBk']=Bookmark.for_file(str(background))
     store['.']['bwsp']={'ShowStatusBar':False,'ShowTabView':False,'ShowToolbar':False,'ShowPathbar':False,'ShowSidebar':False,'ContainerShowSidebar':False,'PreviewPaneVisibility':False,'SidebarWidth':0,'WindowBounds':'{{200, 160}, {720, 520}}'}
     store['.']['icvp']={'viewOptionsVersion':1,'backgroundType':2,'backgroundColorRed':0.97,'backgroundColorGreen':0.97,'backgroundColorBlue':0.97,'backgroundImageAlias':alias,'iconSize':80.0,'textSize':13.0,'labelOnBottom':True,'arrangeBy':'none','showIconPreview':True,'showItemInfo':False,'gridSpacing':100.0,'gridOffsetX':0.0,'gridOffsetY':0.0,'scrollPositionX':0.0,'scrollPositionY':0.0}
-    for name,position in [('Install Josi.pkg',(170,220)),('TEST-ME.txt',(365,220)),('Licenses and Sources',(555,220))]:
+    for name,position in [('Install Josi.pkg',(120,220)),('Uninstall Josi.app',(280,220)),('TEST-ME.txt',(450,220)),('Licenses and Sources',(610,220))]:
         store[name]['Iloc']=position
 with DSStore.open(str(mount/'.DS_Store'),'r') as store:
     assert store['.']['icvp']['backgroundType']==2
     assert store['.']['icvl'][1]==b'icnv'
-    assert store['Install Josi.pkg']['Iloc']==(170,220)
+    assert store['Install Josi.pkg']['Iloc']==(120,220)
+    assert store['Uninstall Josi.app']['Iloc']==(280,220)
 print(json.dumps({'backgroundConfigured':True,'packageIconPositioned':True,'dragToApplications':False}))

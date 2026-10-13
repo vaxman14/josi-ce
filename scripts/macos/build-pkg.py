@@ -25,7 +25,7 @@ CLIENT=CLIENT_ROOT/'release-public-20261001-2321/mac-arm64/Josi CE.app'
 APP_IDENTITY='Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
 PKG_IDENTITY='Developer ID Installer: Socal Receptionist LLC (LRH75YR6QW)'
 KEYCHAIN='/Users/roman/Library/Keychains/login.keychain-db'
-VERSION='0.1.78-macos.11'
+VERSION='0.1.78-macos.12'
 SDK='/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
 SWIFTC='/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc'
 ENV={**os.environ,'DEVELOPER_DIR':'/Applications/Xcode.app/Contents/Developer','TMPDIR':str(BASE/'tmp'),'CLANG_MODULE_CACHE_PATH':str(BASE/'clang-cache'),'npm_config_cache':'/Users/roman/Documents/Josi Mac Native/JosiDrive/Caches/codex-macos-native-20261009/npm'}
@@ -72,7 +72,8 @@ def compile(run,out,name,sources):
 def component_plan(out,name):
     path=out/(name+'-component.plist')
     if not path.exists():
-        path.write_bytes(plistlib.dumps([{'RootRelativeBundlePath':'Applications/'+('Josi Server.app' if name=='server' else 'Josi CE.app'),'BundleIsRelocatable':False,'BundleIsVersionChecked':False,'BundleHasStrictIdentifier':True,'BundleOverwriteAction':'upgrade'}]))
+        names=['Josi Server.app','Uninstall Josi.app'] if name=='server' else ['Josi CE.app']
+        path.write_bytes(plistlib.dumps([{'RootRelativeBundlePath':'Applications/'+app,'BundleIsRelocatable':False,'BundleIsVersionChecked':False,'BundleHasStrictIdentifier':True,'BundleOverwriteAction':'upgrade'} for app in names]))
     return path
 
 def distribution():
@@ -88,7 +89,7 @@ def distribution():
  <choices-outline><line choice="server"/><line choice="client"/></choices-outline>
  <choice id="server" title="Josi Server" description="Required. Installs the local server and Josi Server management app. Your existing server data is retained." start_selected="true" start_enabled="false"><pkg-ref id="com.heyjosi.ce.server.pkg"/></choice>
  <choice id="client" title="Desktop Client (optional)" description="Adds the real Josi CE desktop app. It can be removed separately. Leave unchecked if you already have this client." start_selected="false"><pkg-ref id="com.heyjosi.ce.desktop.pkg"/></choice>
- <pkg-ref id="com.heyjosi.ce.server.pkg" version="0.1.78.11" onConclusion="none">server.pkg</pkg-ref>
+ <pkg-ref id="com.heyjosi.ce.server.pkg" version="0.1.78.12" onConclusion="none">server.pkg</pkg-ref>
  <pkg-ref id="com.heyjosi.ce.desktop.pkg" version="0.6.5" onConclusion="none">client.pkg</pkg-ref>
 </installer-gui-script>
 '''
@@ -120,7 +121,7 @@ def prepare_native(out,workspace):
         destination=runtime/'app'/p.relative_to(REPO)
         if destination.exists():shutil.rmtree(destination)
         shutil.copytree(p,destination)
-    for name in ['lifecycle.py','maintenance.py','pkg-driver.py','Runtime.mjs','SubscriptionEnvironment.mjs','PythonRuntime.py']:
+    for name in ['lifecycle.py','maintenance.py','workspace_access.py','pkg-driver.py','Runtime.mjs','SubscriptionEnvironment.mjs','PythonRuntime.py']:
         shutil.copyfile(REPO/'packaging/macos'/name,runtime/'app/native'/name)
     cli_spec=importlib.util.spec_from_file_location('subscription_cli',REPO/'scripts/macos/bundle-subscription-cli.py');cli=importlib.util.module_from_spec(cli_spec);cli_spec.loader.exec_module(cli)
     cli.bundle(runtime)
@@ -134,10 +135,33 @@ def prepare_native(out,workspace):
             run('icon-'+name+'.log',['/usr/bin/sips','-z',size*scale,size*scale,resources/'Josi.png','--out',icons/name])
     run('iconutil.log',['/usr/bin/iconutil','-c','icns',icons,'-o',resources/'Josi.icns'])
     macos=app/'Contents/MacOS';macos.mkdir()
-    compile(run,out,'JosiServer',['ServerApp.swift','JosiArtworkView.swift','InstallerState.swift','DiagnosticLog.swift','ProgressState.swift','BrowserHandoff.swift'])
+    compile(run,out,'JosiServer',['ServerApp.swift','NativeAuthorization.swift','JosiArtworkView.swift','InstallerState.swift','DiagnosticLog.swift','ProgressState.swift','BrowserHandoff.swift'])
     shutil.copyfile(out/'JosiServer',macos/'JosiServer');(macos/'JosiServer').chmod(0o755)
-    plist={'CFBundleIdentifier':'com.heyjosi.ce.server','CFBundleName':'Josi Server','CFBundleDisplayName':'Josi Server','CFBundleExecutable':'JosiServer','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.1.78','CFBundleVersion':'20261011.11','CFBundleIconFile':'Josi.icns','LSMinimumSystemVersion':'14.0','NSHighResolutionCapable':True,'NSAppTransportSecurity':{'NSAllowsLocalNetworking':True},'NSHumanReadableCopyright':'Copyright SOCAL RECEPTIONIST LLC. AGPL-3.0-or-later; bundled notices and corresponding sources apply.'}
+    plist={'CFBundleIdentifier':'com.heyjosi.ce.server','CFBundleName':'Josi Server','CFBundleDisplayName':'Josi Server','CFBundleExecutable':'JosiServer','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.1.78','CFBundleVersion':'20261013.12','CFBundleIconFile':'Josi.icns','LSMinimumSystemVersion':'14.0','NSHighResolutionCapable':True,'NSAppTransportSecurity':{'NSAllowsLocalNetworking':True},'NSHumanReadableCopyright':'Copyright SOCAL RECEPTIONIST LLC. AGPL-3.0-or-later; bundled notices and corresponding sources apply.'}
     (app/'Contents/Info.plist').write_bytes(plistlib.dumps(plist))
+    uninstaller=workspace/'payload/Applications/Uninstall Josi.app'
+    ur=uninstaller/'Contents/Resources';ur.mkdir(parents=True)
+    (uninstaller/'Contents/MacOS').mkdir()
+    compile(run,out,'JosiUninstall',['UninstallApp.swift','NativeAuthorization.swift','JosiArtworkView.swift','DiagnosticLog.swift'])
+    shutil.copyfile(out/'JosiUninstall',uninstaller/'Contents/MacOS/JosiUninstall');(uninstaller/'Contents/MacOS/JosiUninstall').chmod(0o755)
+    up=dict(plist);up.update(CFBundleIdentifier='com.heyjosi.ce.uninstaller',CFBundleName='Uninstall Josi',CFBundleDisplayName='Uninstall Josi',CFBundleExecutable='JosiUninstall');up.pop('NSAppTransportSecurity')
+    (uninstaller/'Contents/Info.plist').write_bytes(plistlib.dumps(up))
+    for name in ['Josi.png','Josi.icns']:shutil.copyfile(resources/name,ur/name)
+    minimal=ur/'runtime';(minimal/'python/bin').mkdir(parents=True);(minimal/'python/lib').mkdir()
+    shutil.copyfile(runtime/'python/bin/python3.11',minimal/'python/bin/python3.11');(minimal/'python/bin/python3.11').chmod(0o755)
+    shutil.copytree(runtime/'python/lib/python3.11',minimal/'python/lib/python3.11',ignore=shutil.ignore_patterns('site-packages','__pycache__'),symlinks=True)
+    (minimal/'app/native').mkdir(parents=True)
+    (minimal/'app/package.json').write_text(json.dumps({'version':VERSION})+'\n')
+    for name in ['uninstall.py','lifecycle.py','workspace_access.py']:shutil.copyfile(REPO/'packaging/macos'/name,minimal/'app/native'/name)
+    shutil.copytree(runtime/'licenses',minimal/'licenses')
+    shutil.copyfile(REPO/'LICENSE',ur/'LICENSE.txt')
+    run('uninstaller-python-smoke.log',[minimal/'python/bin/python3.11','-I','-B','-c','import ctypes,fcntl,grp,json,pathlib,plistlib,pwd,shutil,signal,subprocess; print("PASS standalone uninstaller standard library")'])
+    gate=run('maintenance-isolated-import-gate.log',[runtime/'python/bin/python3.11','-I','-B',runtime/'app/native/maintenance.py','uninstall'],accepted=(1,))
+    if 'Administrator authorization required' not in gate:raise ValueError('Native maintenance import/privilege gate failed')
+    gate=run('uninstaller-isolated-import-gate.log',[minimal/'python/bin/python3.11','-I','-B',minimal/'app/native/uninstall.py'],accepted=(1,))
+    if 'administrator authorization' not in gate:raise ValueError('Standalone cleanup import/privilege gate failed')
+    compile(run,out,'authorization-tests',['NativeAuthorization.swift','NativeAuthorizationTests.swift'])
+    run('authorization-tests.log',[out/'authorization-tests'])
     for executable,sources in [('state-tests',['InstallerState.swift','InstallerStateTests.swift']),('diagnostic-tests',['DiagnosticLog.swift','DiagnosticTests.swift']),('progress-tests',['ProgressState.swift','ProgressTests.swift'])]:
         compile(run,out,executable,sources)
         run(executable+'.log',[out/executable,*([out] if executable=='diagnostic-tests' else [])])
@@ -202,15 +226,16 @@ def prepare_native(out,workspace):
         'Open Josi Server in Applications. Choose a workspace folder or continue without access, then click Open Josi in Browser.',
         'Connect the optional desktop client to http://localhost:8080 after owner setup.',
         'For failures, choose Copy Diagnostics in Josi Server. Installation logs are in /Library/Logs/Josi CE Server.',
-        'To uninstall, choose Uninstall Server in Josi Server. Your data and recovery copies are retained.'
+        'To uninstall, open Uninstall Josi in Applications or from this disk image. Choose Keep my data or Complete removal. Connected workspace files are retained.'
     ]))
     (out/'Distribution.xml').write_text(distribution())
     clean_candidate_metadata(out,app,workspace)
     spec=importlib.util.spec_from_file_location('inventory',REPO/'scripts/macos/inventory.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     m.inventory(runtime)
+    m.inventory(minimal)
     run('unsigned-runtime-integrity.log',[runtime/'python/bin/python3.11','-I','-B',runtime/'app/native/lifecycle.py','verify'])
     packages=out/'unsigned-packages';packages.mkdir()
-    for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.11'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
+    for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.12'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
         root=workspace/('payload' if name=='server' else 'client-payload')
         run('unsigned-'+name+'-pkg.log',['/usr/bin/pkgbuild','--root',root,'--component-plist',component_plan(out,name),'--install-location','/','--ownership','recommended','--identifier',identifier,'--version',version,'--scripts',out/(name+'-scripts'),packages/(name+'.pkg')])
     run('unsigned-productbuild.log',['/usr/bin/productbuild','--distribution',out/'Distribution.xml','--resources',out/'package-resources','--package-path',packages,out/'Install Josi-unsigned.pkg'])
@@ -246,6 +271,13 @@ def sign_native(out,standard_mount,workspace):
     run('signing-client-input-verify.log',['/usr/bin/codesign','--verify','--deep','--strict',client])
     # No probe, alternate identity, or automatic retry. This is actual candidate code.
     run('sign-server-executable.log',['/usr/bin/codesign','--force','--keychain',KEYCHAIN,'--sign',APP_IDENTITY,'--options','runtime','--timestamp',app/'Contents/MacOS/JosiServer'])
+    uninstaller=workspace/'payload/Applications/Uninstall Josi.app'
+    minimal=uninstaller/'Contents/Resources/runtime'
+    (minimal/'licenses/build.json').write_text(json.dumps({'sourceCommit':commit,'architecture':'arm64','minimumMacOS':'14.0','component':'native uninstaller'},indent=2)+'\n')
+    spec=importlib.util.spec_from_file_location('uninstall_inventory',REPO/'scripts/macos/inventory.py');ui=importlib.util.module_from_spec(spec);spec.loader.exec_module(ui);ui.inventory(minimal)
+    run('sign-uninstaller-executable.log',['/usr/bin/codesign','--force','--keychain',KEYCHAIN,'--sign',APP_IDENTITY,'--options','runtime','--timestamp',uninstaller/'Contents/MacOS/JosiUninstall'])
+    run('sign-uninstaller-app.log',['/usr/bin/codesign','--force','--keychain',KEYCHAIN,'--sign',APP_IDENTITY,'--options','runtime','--timestamp',uninstaller])
+    run('verify-uninstaller-app.log',['/usr/bin/codesign','--verify','--deep','--strict',uninstaller])
     runtime=app/'Contents/Resources/runtime'
     spec=importlib.util.spec_from_file_location('inventory',REPO/'scripts/macos/inventory.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
     m.inventory(runtime)
@@ -254,7 +286,7 @@ def sign_native(out,standard_mount,workspace):
     identity=run('app-authority.log',['/usr/bin/codesign','-d','--verbose=4',app])
     if 'Authority='+APP_IDENTITY not in identity or 'TeamIdentifier=LRH75YR6QW' not in identity or 'Timestamp=' not in identity or '(runtime)' not in identity:raise ValueError('Wrong application identity, timestamp or hardened runtime')
     packages=out/'packages';packages.mkdir()
-    for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.11'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
+    for name,identifier,version in [('server','com.heyjosi.ce.server.pkg','0.1.78.12'),('client','com.heyjosi.ce.desktop.pkg','0.6.5')]:
         payload=workspace/('payload' if name=='server' else 'client-payload')
         run(name+'-pkg.log',['/usr/bin/pkgbuild','--root',payload,'--component-plist',component_plan(out,name),'--install-location','/','--ownership','recommended','--identifier',identifier,'--version',version,'--scripts',out/(name+'-scripts'),packages/(name+'.pkg')])
     pkg=out/'Install Josi.pkg'
@@ -288,6 +320,7 @@ def sign_native(out,standard_mount,workspace):
     # source tree, then preserve complete inspection/image files in Documents.
     image_root=workspace/'dmg-root';image_root.mkdir()
     shutil.copyfile(pkg,image_root/pkg.name);shutil.copyfile(out/'TEST-ME.txt',image_root/'TEST-ME.txt')
+    shutil.copytree(uninstaller,image_root/'Uninstall Josi.app',symlinks=True)
     legal_root=image_root/'Licenses and Sources';legal_root.mkdir()
     # Apple recursively scans archives inside the submitted image, including
     # upstream source fixtures. Keep the exact source closure beside the DMG.

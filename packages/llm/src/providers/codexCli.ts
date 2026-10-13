@@ -175,6 +175,11 @@ export function codexArgs(model: string, harness?: HarnessSession | null, imageP
     '--json',
     '--sandbox', 'read-only',
     '--skip-git-repo-check',
+    // Subscription transport may act only through Josi's MCP permission gates.
+    // A read-only shell could still read service secrets or sibling folders.
+    '-c', 'features.shell_tool=false',
+    '-c', 'features.view_image=false',
+    '-c', 'features.multi_agent=false',
     ...mcp,
     // An empty model means 'the plan's own default': the CLI chooses, exactly
     // as it does for its interactive users. Passing --model '' would instead
