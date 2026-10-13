@@ -4,6 +4,7 @@ prepare creates a reviewable unsigned product. sign finishes that same new
 directory after Roman authorizes Keychain use. Stop at the first signing error.
 """
 import argparse
+import ctypes
 import datetime
 import hashlib
 import importlib.util
@@ -40,14 +41,27 @@ def clean_candidate_metadata(out,app,workspace):
         value={'removedFinderMetadata':str(path.relative_to(workspace)),'sha256':digest(path)}
         path.unlink()
         with (out/'evidence/candidate-metadata.jsonl').open('a') as log:log.write(json.dumps(value)+'\n')
-    # This private Python does not expose os.listxattr on macOS. Use the native
-    # utility, which ignores missing attributes and preserves file contents.
-    for name in ('com.apple.FinderInfo','com.apple.ResourceFork'):
-        args=['/usr/bin/xattr','-dr',name,str(app)]
-        result=subprocess.run(args,capture_output=True,text=True,env=ENV)
-        with (out/'evidence/candidate-metadata.jsonl').open('a') as log:
-            log.write(json.dumps({'command':args,'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})+'\n')
-        if result.returncode:raise RuntimeError('Candidate metadata cleanup failed')
+    # This private Python does not expose os.listxattr. Only remove attributes
+    # which actually exist: HFS+ rejects deleting a nonexistent ResourceFork
+    # on directories, even when the mounted candidate is writable.
+    lib=ctypes.CDLL('/usr/lib/libSystem.B.dylib',use_errno=True)
+    lib.listxattr.argtypes=[ctypes.c_char_p,ctypes.c_void_p,ctypes.c_size_t,ctypes.c_int]
+    lib.listxattr.restype=ctypes.c_ssize_t
+    for path in [app,*app.rglob('*')]:
+        if path.is_symlink():continue
+        encoded=os.fsencode(path);size=lib.listxattr(encoded,None,0,1)
+        if size<0:raise OSError(ctypes.get_errno(),'Cannot inspect candidate metadata',str(path))
+        if not size:continue
+        buffer=ctypes.create_string_buffer(size);read=lib.listxattr(encoded,buffer,size,1)
+        if read<0:raise OSError(ctypes.get_errno(),'Cannot read candidate metadata',str(path))
+        names=buffer.raw[:read].split(b'\0')
+        for name in ('com.apple.FinderInfo','com.apple.ResourceFork'):
+            if name.encode() not in names:continue
+            args=['/usr/bin/xattr','-d',name,str(path)]
+            result=subprocess.run(args,capture_output=True,text=True,env=ENV)
+            with (out/'evidence/candidate-metadata.jsonl').open('a') as log:
+                log.write(json.dumps({'command':args,'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})+'\n')
+            if result.returncode:raise RuntimeError('Candidate metadata cleanup failed')
 
 def runner(out):
     def run(name,args,accepted=(0,),cwd=REPO):
