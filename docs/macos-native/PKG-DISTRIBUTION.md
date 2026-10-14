@@ -166,3 +166,12 @@ ID identities. Keychain settings and search lists have not been changed.
 References: [Apple distribution schema](https://developer.apple.com/library/archive/documentation/DeveloperTools/Reference/DistributionDefinitionRef/Chapters/Distribution_XML_Ref.html),
 [ds_store](https://ds-store.readthedocs.io/en/latest/), and the local `codesign`,
 `pkgbuild`, `productbuild` and `pkgutil` manual pages.
+
+macos.13 corrects complete-removal process classification. macOS can retain its
+Apple-signed distnoted and containermanagerd agents under Josi service UIDs after
+all Josi jobs have stopped. The helper uses proc_pidpath to inspect the kernel
+executable path and excludes only those two exact paths after verifying Apple
+signatures. It does not signal or wait for those OS agents. Other live service-
+UID processes must still stop, and a timeout reports their PIDs/executable paths.
+Roman’s macos.12 physical removal stopped at this gate before file deletion;
+it was not evidence of a cold snapshot, folder or authorization failure.

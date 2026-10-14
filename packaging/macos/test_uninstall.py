@@ -9,6 +9,7 @@ import socket
 import unittest
 import uuid
 from unittest.mock import patch
+from types import SimpleNamespace
 from lifecycle import Lifecycle,ACCOUNTS,bind_probe
 import uninstall as cleanup
 import workspace_access
@@ -103,6 +104,33 @@ class UninstallTests(unittest.TestCase):
         system=cleanup.NativeSystem.__new__(cleanup.NativeSystem)
         with patch.object(cleanup.pwd,'getpwnam',side_effect=KeyError),patch.object(cleanup.grp,'getgrnam',side_effect=KeyError),patch.object(cleanup.pwd,'getpwuid',return_value=object()):
             with self.assertRaisesRegex(ValueError,'another account'):system.identity('web',[404,404],missing=True)
+    def test_apple_per_uid_helpers_do_not_block_or_receive_signals(self):
+        system=cleanup.NativeSystem.__new__(cleanup.NativeSystem)
+        with patch.object(cleanup,'run',return_value=SimpleNamespace(stdout='404 10 S\n404 11 S\n')),patch.object(cleanup,'process_path',side_effect=lambda pid:'/usr/sbin/distnoted' if pid==10 else '/usr/libexec/containermanagerd'),patch.object(cleanup,'verify_apple_support') as verify,patch.object(cleanup.os,'kill') as signal:
+            system.finish_processes({'web':[404,404]})
+            self.assertEqual(verify.call_count,2);signal.assert_not_called()
+    def test_kernel_process_path_uses_current_executable(self):
+        self.assertEqual(Path(cleanup.process_path(os.getpid())).resolve(),Path(__import__('sys').executable).resolve())
+    def test_native_process_stops_while_apple_helper_remains(self):
+        system=cleanup.NativeSystem.__new__(cleanup.NativeSystem)
+        snapshots=[SimpleNamespace(stdout='404 10 S\n404 12 S\n'),SimpleNamespace(stdout='404 10 S\n')]
+        with patch.object(cleanup,'run',side_effect=snapshots),patch.object(cleanup,'process_path',side_effect=lambda pid:'/usr/sbin/distnoted' if pid==10 else '/Library/Application Support/Josi CE Server/versions/1.0.0-macos.1/node/bin/node'),patch.object(cleanup,'verify_apple_support') as verify,patch.object(cleanup.os,'kill') as signal:
+            system.finish_processes({'web':[404,404]})
+            signal.assert_called_once_with(12,cleanup.signal.SIGTERM);verify.assert_called_once_with('/usr/sbin/distnoted')
+    def test_same_named_non_apple_executable_is_not_exempt(self):
+        system=cleanup.NativeSystem.__new__(cleanup.NativeSystem)
+        with patch.object(cleanup,'run',side_effect=[SimpleNamespace(stdout='404 12 S\n'),SimpleNamespace(stdout='')]),patch.object(cleanup,'process_path',return_value='/private/tmp/distnoted'),patch.object(cleanup,'verify_apple_support') as verify,patch.object(cleanup.os,'kill') as signal:
+            system.finish_processes({'web':[404,404]})
+            signal.assert_called_once_with(12,cleanup.signal.SIGTERM);verify.assert_not_called()
+    def test_apple_signature_failure_refuses_cleanup(self):
+        system=cleanup.NativeSystem.__new__(cleanup.NativeSystem)
+        with patch.object(cleanup,'run',return_value=SimpleNamespace(stdout='404 10 S\n')),patch.object(cleanup,'process_path',return_value='/usr/sbin/distnoted'),patch.object(cleanup,'verify_apple_support',side_effect=RuntimeError('Invalid Apple signature')),patch.object(cleanup.os,'kill') as signal:
+            with self.assertRaisesRegex(RuntimeError,'Invalid Apple signature'):system.finish_processes({'web':[404,404]})
+            signal.assert_not_called()
+    def test_live_native_process_timeout_reports_executable(self):
+        system=cleanup.NativeSystem.__new__(cleanup.NativeSystem)
+        with patch.object(cleanup,'run',return_value=SimpleNamespace(stdout='404 12 S\n')),patch.object(cleanup,'process_path',return_value='/private/tmp/native-child'),patch.object(cleanup.os,'kill'),patch.object(cleanup.time,'monotonic',side_effect=[0,61]):
+            with self.assertRaisesRegex(RuntimeError,'12.*native-child'):system.finish_processes({'web':[404,404]})
     def test_fresh_port_probe_rejects_live_listener_and_accepts_closed_connections(self):
         server=socket.socket();server.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);server.bind(('127.0.0.1',0));server.listen(1)
         port=server.getsockname()[1]

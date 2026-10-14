@@ -4,6 +4,7 @@ Production entry is administrator-authorized by Uninstall Josi.app. Fixture
 adapters are import-only and never accepted as privileged command arguments.
 """
 import fcntl
+import ctypes
 import grp
 import json
 import os
@@ -25,6 +26,23 @@ import workspace_access
 ENV={'PATH':'/usr/bin:/bin:/usr/sbin:/sbin'}
 APP_IDS={'Josi Server.app':'com.heyjosi.ce.server','Josi CE.app':'com.romanvaxman.josi.desktop','Uninstall Josi.app':'com.heyjosi.ce.uninstaller'}
 RECEIPTS=('com.heyjosi.ce.server.pkg','com.heyjosi.ce.desktop.pkg')
+APPLE_SUPPORT_PATHS={'/usr/sbin/distnoted','/usr/libexec/containermanagerd'}
+
+def process_path(pid):
+    # ps names/argv can be changed by a process. Use the kernel's executable
+    # path before deciding that a service-UID process is an Apple helper.
+    lib=ctypes.CDLL('/usr/lib/libproc.dylib',use_errno=True)
+    lib.proc_pidpath.argtypes=[ctypes.c_int,ctypes.c_void_p,ctypes.c_uint32]
+    lib.proc_pidpath.restype=ctypes.c_int
+    buffer=ctypes.create_string_buffer(4096)
+    if lib.proc_pidpath(pid,buffer,len(buffer))<=0:
+        if ctypes.get_errno()==3:return None # Process exited during inspection.
+        raise RuntimeError('Cannot inspect service-account process: '+str(pid))
+    return os.fsdecode(buffer.value)
+
+def verify_apple_support(path):
+    if path not in APPLE_SUPPORT_PATHS:raise ValueError('Unexpected Apple support path')
+    run(['/usr/bin/codesign','--verify','--strict','-R','=anchor apple',path])
 
 def run(args):return subprocess.run([str(x) for x in args],env=ENV,capture_output=True,text=True,check=True)
 
@@ -84,14 +102,32 @@ class NativeSystem:
             if q.returncode!=113 or 'Could not find service "'+label+'" in domain for system' not in q.stderr:raise RuntimeError('Cannot confirm service stopped: '+role)
     def finish_processes(self,records):
         uids={x[0] for x in records.values()}
-        def pids():
-            return [int(parts[1]) for line in run(['/bin/ps','-axo','uid=,pid=']).stdout.splitlines() if len(parts:=line.split())==2 and int(parts[0]) in uids]
-        for pid in pids():
+        verified=set()
+        def processes():
+            result=[]
+            for line in run(['/bin/ps','-axo','uid=,pid=,state=']).stdout.splitlines():
+                parts=line.split()
+                if len(parts)!=3 or int(parts[0]) not in uids:continue
+                pid=int(parts[1]);state=parts[2]
+                if state.startswith('Z'):continue # Already exited; no live files.
+                path=process_path(pid)
+                if path is None:continue
+                # macOS can keep per-UID support agents alive after all Josi
+                # jobs exit. Do not signal or wait for these OS-owned agents.
+                # Exact kernel paths plus Apple's signature are required.
+                if path in APPLE_SUPPORT_PATHS:
+                    if path not in verified:verify_apple_support(path);verified.add(path)
+                    continue
+                result.append((pid,path))
+            return result
+        for pid,path in processes():
             try:os.kill(pid,signal.SIGTERM)
             except ProcessLookupError:pass
         deadline=time.monotonic()+60
-        while pids():
-            if time.monotonic()>deadline:raise RuntimeError('A Josi process has not stopped; files retained')
+        while remaining:=processes():
+            if time.monotonic()>deadline:
+                detail=', '.join(str(pid)+' ('+path+')' for pid,path in remaining[:5])
+                raise RuntimeError('A Josi process has not stopped; files retained: '+detail)
             time.sleep(.2)
     def delete_identities(self,records):
         for role,record in records.items():
