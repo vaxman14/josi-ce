@@ -66,4 +66,4 @@ export { nativeScanner, NativeScanFailure, type NativeScannerOptions, type Nativ
 export { nativeScannerHealth, type NativeScannerHealth } from './nativeScannerHealth.js';
 export { openStorageFile, pinWindowsDirectory, publishWindowsFile } from './windowsFiles.js';
 
-export { nativeMac, macScannerHealth, requireMacScan, MAC_SCAN_MESSAGE } from './macosScanner.js';
+export { nativeMac } from './nativeRuntime.js';

@@ -1,5 +1,4 @@
-// Isolated engine tests are independent of ingestion policy. The installed
-// Runtime.mjs always enforces native scanning; no runtime switch disables it.
+// Exercise the packaged extraction path with native macOS settings and no scanner.
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {dirname,resolve,join} from 'node:path';
@@ -15,10 +14,9 @@ ctx.fillStyle='white';ctx.fillRect(0,0,1200,160);ctx.fillStyle='black';ctx.font=
 const bytes=canvas.toBuffer('image/png'),png=join(root,'engine-fixture.png'),heic=join(root,'engine-fixture.heic');writeFileSync(png,bytes,{mode:0o600});
 const {extractRichSegments}=await import(pathToFileURL(join(program,'app/packages/storage/dist/extract.js')));
 process.env.JOSI_NATIVE_RUNTIME='1';process.env.JOSI_SCANNER_SOCKET='';
-await assert.rejects(extractRichSegments({extension:'png',bytes,ocrImages:true}),/blocked/);
-const {createWorker}=require('tesseract.js');
-const worker=await createWorker('eng',undefined,{langPath:require('@tesseract.js-data/eng').langPath,cacheMethod:'none'});
-try{assert.match((await worker.recognize(bytes)).data.text,/OCR 314159/);}finally{await worker.terminate();}
+const segments=await extractRichSegments({extension:'png',bytes,ocrImages:true});
+assert.match(segments.map(s=>s.content).join('\n'),/OCR 314159/);
+assert.match((await extractRichSegments({extension:'txt',bytes:Buffer.from('native document 271828')}))[0].content,/271828/);
 execFileSync('/usr/bin/sips',['-s','format','heic',png,'--out',heic],{stdio:'pipe'});
 const convert=require('heic-convert');const converted=Buffer.from(await convert({buffer:readFileSync(heic),format:'PNG'}));assert.equal(converted.subarray(1,4).toString(),'PNG');
-console.log('PASS packaged arm64 Argon2/canvas, offline OCR, HEIF conversion and native ingestion denial');
+console.log('PASS packaged arm64 Argon2/canvas, offline document extraction/OCR without a scanner, and HEIF conversion');

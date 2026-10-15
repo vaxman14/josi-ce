@@ -1,3 +1,9 @@
+> Current policy update, 15 October 2026: Roman explicitly requested removing
+> the native macOS scanner requirement. macos.17 source enables uploads,
+> indexing and OCR using the bundled engines with no scanner dependency.
+> The earlier scanner decisions and verification descriptions below are
+> historical and superseded. See PKG-DISTRIBUTION.md for current behavior.
+
 # Native macOS unsigned acceptance checkpoint — 2026-10-09
 
 Branch: `macos/native-distribution-20261009`. This continuation implements the

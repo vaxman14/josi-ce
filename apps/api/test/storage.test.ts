@@ -700,6 +700,17 @@ describe('the global pause and Sync now — M75, M77', () => {
 });
 
 describe('the policy screen says what the settings do — M61, M62, M73', () => {
+  it.skipIf(process.platform !== 'darwin')('does not expose a required scanner on native Mac and accepts disabling a legacy flag',async()=>{
+    vi.stubEnv('JOSI_NATIVE_RUNTIME','1');vi.stubEnv('JOSI_SCANNER_SOCKET','');
+    try {
+      const updated=await call('/api/storage/admin/policy',{method:'PUT',jar:cookies.admin,body:{clamavEnabled:false}});
+      expect(updated.status).toBe(200);expect(updated.body.policy.clamav_enabled).toBe(false);
+      expect(updated.body.malwareScanning).toBeUndefined();
+      const fetched=await call('/api/storage/admin/policy',{jar:cookies.admin});
+      expect(fetched.status).toBe(200);expect(fetched.body.malwareScanning).toBeUndefined();
+    } finally {vi.unstubAllEnvs();}
+  });
+
   it.skipIf(process.platform !== 'win32')('reports unavailable native scanning honestly with either optional or required policy', async () => {
     vi.stubEnv('JOSI_NATIVE_RUNTIME', '1');
     vi.stubEnv('JOSI_DATA_DIR', dir);

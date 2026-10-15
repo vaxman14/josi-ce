@@ -1,4 +1,3 @@
-import { nativeMac, macScanner, MAC_SCAN_MESSAGE } from './macosScanner.js';
 // Taking a file in: the gates applied, the outcome recorded, the reason kept.
 //
 // M74 asks for per-folder status with skipped-file reasons, and that is the
@@ -103,13 +102,13 @@ export async function ingestFile(
   // M56/M57/M59. The scanner runs on the bytes, and only after the cheap gates
   // have already refused everything they can.
   if (scanRequired(deps.policy, args.event ?? 'index')) {
-    const scanner = nativeMac() ? macScanner : deps.scanner;
-    if (!scanner || (nativeMac() && !deps.readFile)) {
+    const scanner = deps.scanner;
+    if (!scanner) {
       // Enabled but unreachable. Processing STOPS. An outage that silently
       // disables scanning is worse than no scanner, because the operator
       // believes files are being checked.
       await markSkipped(db, documentId, args.ownerUserId, 'unreadable');
-      throw new ScanBlocked(nativeMac() ? MAC_SCAN_MESSAGE : 'the malware scanner is enabled but not reachable');
+      throw new ScanBlocked('the malware scanner is enabled but not reachable');
     }
     const bytes = deps.readFile ? await deps.readFile(candidate.relativePath) : Buffer.alloc(0);
     const { result, hashBefore, hashAfter } = await scanDocument(scanner, bytes);

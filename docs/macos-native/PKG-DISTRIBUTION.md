@@ -34,7 +34,7 @@ The optional real Josi CE 0.6.5 desktop client is a separate package/app.
 - Protected runtime configuration binds the original directory device/inode;
   the database continues to use the logical /workspace root. Native local-file
   operations retain descriptor-relative traversal and original grant checks.
-  Folder replacement, links, revocation, writes and scanner bypass fail closed.
+  Folder replacement, links, revocation and unauthorized writes fail closed.
 - The existing six service identities, local-only listeners, protected secrets,
   durable journal, verified cold snapshots and migrations-before-activation
   remain. Preactivation upgrade failures may recover a verified previous
@@ -269,3 +269,23 @@ The released bug could also discard pre-existing ACL entries. Its old receipts
 do not contain a full baseline; do not invent ACLs or recursively reset users'
 folders to claim historical restoration. The fix preserves the permissions
 present when it starts. File contents are not modified by folder connection.
+
+
+## macos.17 document processing
+
+On 15 October Roman explicitly requested removing the macOS scanner requirement.
+The native Mac package now accepts uploads, indexes documents and performs OCR
+without a separate malware scanner. The former mandatory Mac scanner adapter
+and upload/extraction gates are removed. Shared ingestion does not require a
+scanner on native Mac even when an upgraded database has a legacy enabled
+ClamAV flag. Setup no longer emits the required-scanner warning, Admin Storage
+has no Mac scanner prerequisite, and diagnostics report scanning disabled.
+The legacy runtime scannerSocket field remains accepted to preserve existing
+configuration compatibility; it is not exported to the application.
+
+The packaged engine test calls real extractRichSegments OCR with native runtime
+settings and no scanner. Regression coverage also exercises authenticated Mac
+uploads and persisted extracted text, ingestion/index/search, both legacy policy
+values, setup and admin responses. Other platforms retain their existing scan
+policy. Document type/size/quota/ownership/archive and encryption checks remain.
+There is no fabricated antivirus verdict for documents processed without one.

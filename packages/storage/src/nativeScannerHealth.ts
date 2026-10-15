@@ -1,11 +1,10 @@
-import { nativeMac, macScannerHealth } from './macosScanner.js';
 import { constants } from 'node:fs';
 import { dirname } from 'node:path';
 import { resolveDataPath } from '@josi-ce/core';
 import { openStorageFile, pinWindowsDirectory } from './windowsFiles.js';
 
 export interface NativeScannerHealth {
-  provider: 'windows-amsi' | 'configured-local-scanner';
+  provider: 'windows-amsi';
   required?: boolean;
   enforced?: boolean;
   status: 'available' | 'error' | 'unavailable';
@@ -16,7 +15,6 @@ export interface NativeScannerHealth {
  * not a clean verdict for any user document, nor a real-time-protection guess.
  */
 export async function nativeScannerHealth(): Promise<NativeScannerHealth> {
-  if (nativeMac()) return macScannerHealth();
   const unavailable: NativeScannerHealth = { provider: 'windows-amsi', status: 'unavailable', checkedAt: null };
   if (process.platform !== 'win32' || process.env.JOSI_NATIVE_RUNTIME !== '1') return unavailable;
   let held, file;

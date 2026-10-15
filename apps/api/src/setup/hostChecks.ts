@@ -1,4 +1,4 @@
-import { nativeMac, macScannerHealth, MAC_SCAN_MESSAGE } from '@josi-ce/storage';
+import { nativeMac } from '@josi-ce/storage';
 // Can this machine actually run Josi?
 //
 // Two constraints shape every check here:
@@ -186,10 +186,6 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     });
   }
 
-  if (nativeMac()) {
-    const health = await macScannerHealth();
-    checks.push({id:'malware_scanning',label:'Required document scanning',mandatory:false,status:health.status==='available'?'pass':'warn',detail:health.status==='available'?'Configured local scanner is reachable. Each document still requires its own successful scan.':MAC_SCAN_MESSAGE});
-  }
   return checks;
 }
 

@@ -37,3 +37,16 @@ describe.skipIf(process.platform !== 'win32')('native setup antivirus policy', (
     expect(checks.some(check => check.id === 'malware_scanning')).toBe(false);
   });
 });
+
+
+describe.skipIf(process.platform !== 'darwin')('native Mac setup has no scanner prerequisite',()=>{
+  afterEach(()=>vi.unstubAllEnvs());
+  it('has no document-scanning warning for either legacy policy value',async()=>{
+    const db=await testDb();vi.stubEnv('JOSI_NATIVE_RUNTIME','1');vi.stubEnv('JOSI_SCANNER_SOCKET','');
+    for(const enabled of [false,true]) {
+      await db.query('update storage_policy set clamav_enabled=$1 where id=true',[enabled]);
+      const checks=await runHostChecks(db,{masterKey:false,freeBytes:()=>10*1024**3});
+      expect(checks.some(check=>check.id==='malware_scanning')).toBe(false);
+    }
+  });
+});

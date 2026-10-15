@@ -40,7 +40,7 @@ try {
     DATABASE_URL:`postgresql://josi@127.0.0.1:${cfg.databasePort}/josi`,PGHOST:'127.0.0.1',PGPORT:String(cfg.databasePort),POSTGRES_DB:'josi',POSTGRES_USER:'josi',JOSI_PG_BIN:join(PROGRAM,'postgresql/bin'),
     PORT:String(cfg.apiPort),APP_URL:`http://localhost:${cfg.publicPort}`,WEB_DIR:join(PROGRAM,'app/apps/web/dist'),
     JOSI_SETUP_TOKEN_SHA256:cfg.setupTokenSha256,JOSI_WORKER_HEARTBEAT_FILE:join(data,'state/worker-heartbeat'),
-    CODEX_HOME:join(data,'codex'),JOSI_VOICE_HELPER_TOKEN_FILE:join(secret,'voice-control-token'),JOSI_VOICE_HELPER_PORT:String(cfg.controlPort),JOSI_SCANNER_SOCKET:cfg.scannerSocket,
+    CODEX_HOME:join(data,'codex'),JOSI_VOICE_HELPER_TOKEN_FILE:join(secret,'voice-control-token'),JOSI_VOICE_HELPER_PORT:String(cfg.controlPort),
     ...(isolated?{JOSI_NATIVE_ISOLATED_ROOT:data}:{})
   });
   if(cfg.workspace) Object.assign(process.env,{JOSI_WORKSPACE_ENABLED:'1',JOSI_WORKSPACE_MODE:'ro',JOSI_WORKSPACE_NATIVE_PATH:cfg.workspace.path,JOSI_WORKSPACE_NATIVE_ID:`${cfg.workspace.dev}:${cfg.workspace.ino}`});

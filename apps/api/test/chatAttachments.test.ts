@@ -1,5 +1,5 @@
-import { beforeAll, afterAll, it, expect } from 'vitest';
-import { mkdtemp, mkdir, symlink, readdir } from 'node:fs/promises';
+import { beforeAll, afterAll, it, expect, vi } from 'vitest';
+import { mkdtemp, mkdir, symlink, readdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -22,7 +22,7 @@ async function upload(name='note.txt',data:BlobPart='hello',type='text/plain',us
   return call(`/api/assistant/threads/${threadId}/attachments`,'POST',form,user);
 }
 beforeAll(async()=>{
-  root=await mkdtemp(join(tmpdir(),'ce-upload-api-'));process.env.JOSI_UPLOAD_DIR=root;
+  root=await realpath(await mkdtemp(join(tmpdir(),'ce-upload-api-')));process.env.JOSI_UPLOAD_DIR=root;
   db=await testDb();await ensureWorkspace(db);
   for(const name of ['alice','bob','admin']) {
     const u=await createUser(db,{email:`${name}@test.invalid`,username:name,role:name==='admin'?'super_admin':'member',password:'fixture-password-123'});
@@ -114,4 +114,23 @@ it('does not expose pending files or permit model selection across threads',asyn
   expect((await call('/api/assistant/attachments/'+a)).status).toBe(404);
   const foreign=await call(`/api/assistant/threads/${otherThread}/talk`,'POST',{message:'look',attachmentIds:[a]},'bob');
   expect(foreign.status).toBe(404);
+});
+
+it.skipIf(process.platform!=='darwin')('uploads and extracts native Mac documents with no scanner and legacy scanning enabled',async()=>{
+  vi.stubEnv('JOSI_NATIVE_RUNTIME','1');vi.stubEnv('JOSI_SCANNER_SOCKET','');
+  const [prior]=await db.query<{clamav_enabled:boolean}>('select clamav_enabled from storage_policy where id=true');
+  try {
+    await db.query('update storage_policy set clamav_enabled=true where id=true');
+    const result=await upload('document.txt','Native Mac document upload 161803');
+    expect(result.status,await result.clone().text()).toBe(201);
+    const a=(await result.json()).attachment;
+    expect(a.analysis).toMatchObject({status:'available',kind:'text'});
+    const [saved]=await db.query<{extracted_text:string;storage_state:string}>('select extracted_text,storage_state from chat_attachments where id=$1',[a.id]);
+    expect(saved).toEqual({extracted_text:'Native Mac document upload 161803',storage_state:'ready'});
+    expect((await upload('forged.png','plain text','image/png')).status).toBe(415);
+    expect((await upload('foreign.txt','no','text/plain','alice',otherThread)).status).toBe(404);
+    expect((await call('/api/assistant/attachments/'+a.id,'DELETE')).status).toBe(200);
+  } finally {
+    await db.query('update storage_policy set clamav_enabled=$1 where id=true',[prior.clamav_enabled]);vi.unstubAllEnvs();
+  }
 });

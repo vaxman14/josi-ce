@@ -21,7 +21,7 @@ import {
   type BackupWriter, type LogWindow, type TelemetrySender, type TicketCategory,
 } from '@josi-ce/ops';
 import { UnsafeEndpointError } from '@josi-ce/llm';
-import { nativeMac, macScannerHealth } from '@josi-ce/storage';
+import { nativeMac } from '@josi-ce/storage';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { constants, existsSync } from 'node:fs';
 import { access, open, rm } from 'node:fs/promises';
@@ -230,7 +230,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         },
         configStatus: {
           smtp: (smtp?.n ?? 0) > 0,
-          ...(nativeMac() ? { malware_scanning: true, scanner_available: (await macScannerHealth()).status === 'available' }
+          ...(nativeMac() ? { malware_scanning: false }
             : process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
             ? { malware_scanning: policy?.clamav_enabled ?? false } : { clamav: policy?.clamav_enabled ?? false }),
           ocr: policy?.ocr_enabled ?? false,

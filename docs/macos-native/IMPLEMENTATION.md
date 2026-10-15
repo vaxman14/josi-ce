@@ -26,12 +26,12 @@ setup/CSRF/handoff state machine, storage policies and CPU speech engines are re
 | Recovery | Before migration, restart untouched previous data. Before activation, restore only a verified cold snapshot and retain failed data. After activation, refuse automatic rollback to protect newer writes. Partial fresh provisioning requires review. |
 | Readiness | Owned running PIDs; exact loopback TCP listeners; API and proxy /ready; fresh worker heartbeat; authenticated speech health or saved disabled state. |
 | Browser | Reused setup protocol with CSRF cookie/header, protected root bootstrap credential, expiring one-use handoff, HttpOnly setup cookie and replay denial. Native HTTP client refuses redirects. Only a private HTML filename goes to the default HTTP browser. |
-| Scanning | No ClamAV engine, signatures, updater, service or port. Mandatory fail-closed scanner policy overrides legacy disabled/on-index settings. Supported explicitly configured root-protected local Unix INSTREAM scanner only; every byte stream needs a clean verdict. |
+| Documents | Per Roman’s 15 October update, native Mac uploads, indexing and OCR have no scanner prerequisite. Bundled parsers and offline OCR remain subject to ownership, type, size, quota, encryption and archive limits. No malware verdict is claimed. |
 | Speech | Private CPython; offline Kokoro, Silero and Whisper CPU models; authenticated loopback transport. Existing manager preserves settings/rollback. No SCM, launchctl or downloader authority in the manager. Darwin rapid rebind uses SO_REUSEADDR, never SO_REUSEPORT. |
 | Progress | Main-thread AppKit timer, spinner and elapsed activity every half-second; bounded structured phase/service updates while privileged work runs asynchronously. Several-minute copy is explicit. |
 
-`packaging/macos/TEST-ME.txt` is the human checklist, service inventory, scanner
-configuration contract and separate clean-install/upgrade acceptance procedure.
+`packaging/macos/TEST-ME.txt` is the human checklist, service inventory, document
+processing checks and separate clean-install/upgrade acceptance procedure.
 Physical administrator authorization, launchd boot behavior, account/ACL creation,
 default-browser launch, microphone/speaker, reboot and LAN gates remain unverified.
 Isolated tests use the real payload and database, but cannot stand in for those gates.
@@ -75,8 +75,8 @@ dependency nodes through argparse and mammoth. Mammoth's public module is
 conversion API and does not execute that CLI. No high/critical finding was reported.
 This is retained as an inherited, non-invoked CLI advisory, not called a zero-finding
 scan and not "fixed" by downgrading the document parser to an obsolete release.
-Scanner absence separately blocks document ingestion; it is not claimed as a
-substitute for resolving future reachable parser vulnerabilities.
+The macOS scanner prerequisite was removed at Roman’s request on 15 October.
+This product choice does not resolve future reachable parser vulnerabilities.
 
 ## The 15 prior full-suite failures
 

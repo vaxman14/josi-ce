@@ -20,7 +20,8 @@ and checksums for signing and notarization results before physical testing.
    discovery/access stop. The chosen folder is never deleted.
 3. Launch: Click Open Josi in Browser and complete owner setup. Verify a
    single-use setup link, the selected /workspace content and read-only limits.
-   Document indexing remains unavailable until a supported scanner is ready.
+   Upload a harmless document, confirm its extracted text, and index/search it.
+   Test OCR with a scanned image. No separate scanner is required on macOS.
    Subscription models: Choose ChatGPT or Claude subscription and verify that
    the bundled CLI is installed but signed out. Complete the vendor browser
    sign-in yourself, test the model, then verify the connection after restart

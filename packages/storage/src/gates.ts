@@ -18,6 +18,7 @@
 // inside an encrypted file anyway, so a clean verdict on one would be
 // meaningless.
 import { createHash } from 'node:crypto';
+import { nativeMac } from './nativeRuntime.js';
 import { extensionOf } from './paths.js';
 
 export type SkipReason =
@@ -329,7 +330,9 @@ export function scanRequired(
   policy: StoragePolicy,
   event: 'index' | 'change',
 ): boolean {
-  if (process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1') return true;
+  // Native macOS has no scanner dependency, including upgrades carrying an
+  // enabled legacy ClamAV flag. Other deployments retain their stored policy.
+  if (nativeMac()) return false;
   if (!policy.clamav_enabled) return false;
   return policy.clamav_scan_mode === 'on_change' ? true : event === 'index';
 }

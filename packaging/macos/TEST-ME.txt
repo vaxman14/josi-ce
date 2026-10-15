@@ -51,29 +51,23 @@ HUMAN POST-INSTALL CHECKLIST
 [ ] Default browser opens setup; the handoff fragment disappears and replay
     fails. Complete ownership/vault recovery and normal sign-in in the browser.
     Keep recovery material privately, outside the installer and source control.
-[ ] Admin Storage shows scanner unavailable; uploads, indexing and OCR remain
-    blocked even if legacy settings disabled scanning.
+[ ] Setup has no required-scanner warning. Upload and extract a harmless
+    document, index/search it, and test OCR without a separate scanner.
 [ ] Enable/disable/restart CPU speech. Separately test microphone permission,
     real recording and speaker output; synthesized test audio is not this gate.
 [ ] Reboot the physical test Mac, then repeat readiness/listener/status checks.
 [ ] Inspect root-owned programs/config/secrets, per-service secret groups and
     web/worker data ACLs. Unrelated local users cannot read protected secrets.
 
-SCANNER POLICY — NO CLAMAV ENGINE, DEFINITIONS OR UPDATER IS BUNDLED
-The supported adapter uses PING and INSTREAM over an administrator-configured
-clamd-compatible Unix socket. Josi installs no scanner service/account/listener.
-An empty configuration blocks ingestion. PING establishes availability only;
-each exact document stream requires a clean verdict. Errors, timeouts, malformed
-replies, absent engines and malware detections fail closed.
-An administrator may set scannerSocket in the root-owned 0644 file:
-  /Library/Application Support/Josi CE Server/data/config/runtime.json
-Use a canonical absolute root-owned socket with no access for others. All parent
-directories must be root-owned and not group/world writable. Neither socket nor
-parents may have extended ACLs. Give web/worker access through a dedicated scanner
-group, never by broadening either primary service group. Restart those two jobs
-after group changes. Verify Admin Storage health, a harmless document and an
-approved scanner test signature. External scanner configuration/acceptance has
-not been performed. No Homebrew runtime is required by this package.
+DOCUMENT PROCESSING — NO SEPARATE SCANNER REQUIRED
+macOS document uploads, indexing and OCR use the bundled document engines.
+Old scannerSocket configuration is tolerated for upgrade compatibility but is
+not passed to the application or used to gate document processing. Existing
+legacy ClamAV policy flags do not require a scanner on native macOS.
+No scanner service, account, engine, definitions or updater is installed.
+File ownership/access, file-type/size limits, quotas, encryption handling and
+archive expansion limits still apply. OCR language data is bundled for offline
+use. Image OCR is part of document indexing; chat photos use model vision.
 
 CLEAN INSTALL — SEPARATE PHYSICAL PROCEDURE, NOT PERFORMED HERE
 Use a separately authorized disposable Mac with no existing product root, labels
