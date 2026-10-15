@@ -44,18 +44,25 @@ final class DiagnosticLog: @unchecked Sendable {
         }
         return result
     }
-    static func failureCause(in output: String) -> String? {
+    private static func failureDetails(in output: String) -> [String:Any]? {
         // osascript can wrap the final JSON in an execution-error prefix and
         // a trailing exit code. Show the helper's cause, not that wrapper.
         for line in output.split(separator: "\n").reversed() {
             guard let start = line.firstIndex(of: "{"), let end = line.lastIndex(of: "}"),start <= end,
                   let data = String(line[start...end]).data(using:.utf8),
                   let value = try? JSONSerialization.jsonObject(with:data) as? [String:Any],
-                  value["result"] as? String == "failure",let cause = value["cause"] as? String,!cause.isEmpty else { continue }
-            let safe = redact(cause)
-            return safe.count > 240 ? String(safe.prefix(240)) + "…" : safe
+                  value["result"] as? String == "failure" else { continue }
+            return value
         }
         return nil
+    }
+    static func failureCause(in output: String) -> String? {
+        guard let cause = failureDetails(in:output)?["cause"] as? String,!cause.isEmpty else { return nil }
+        let safe = redact(cause)
+        return safe.count > 240 ? String(safe.prefix(240)) + "…" : safe
+    }
+    static func requiresFullDiskAccess(in output: String) -> Bool {
+        failureDetails(in:output)?["recovery"] as? String == "full-disk-access"
     }
     func append(_ text: String) throws {
         lock.lock(); defer { lock.unlock() }

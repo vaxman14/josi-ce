@@ -200,3 +200,35 @@ files directly, or silently grant Full Disk Access as a workaround.
 Apple documents NSSystemAdministrationUsageDescription as required for apps
 using system-configuration APIs:
 https://developer.apple.com/documentation/bundleresources/information-property-list/nssystemadministrationusagedescription
+
+
+14 October follow-up: macos.14 still failed with eDSPermissionError. The exact
+20:06:11 macOS log records "Failed to delete record: disallowed by sandbox"
+and ODRecordDelete / ODErrorRecordPermissionError. Adding a usage description
+is not a privacy grant, and the empty-group check did not exercise user-record
+protection. After Roman explicitly enabled Full Disk Access for the running
+Uninstall Josi app, actual user/group deletion completed. Its immediate final
+verification then incorrectly reported "Service identity remains: database".
+Fresh queries found all six users and groups absent; Retry completed successfully.
+
+The next source revision queries /Local/Default with dscl for deletion presence
+and final verification instead of passwd/group name caches. Only an explicit
+exit 56 with eDSRecordNotFound means absent; other errors fail closed. A real
+remaining user or group still fails verification. Account-ownership and UID/GID
+collision checks are retained. Read-only checks after Roman's successful retry
+confirmed all six identities/groups, launchd jobs, receipts, app bundles,
+product data, cleanup journal and intended per-user profiles absent.
+
+Account-deletion denial now carries a structured full-disk-access recovery tag.
+The native window opens the appropriate Settings page only when the user clicks
+its button, reveals its exact app for adding to the list, explains the broad
+permission, and asks the user to quit/reopen before retry. Successful Complete
+removal reminds the user to disable that access and provides the Settings button.
+The app neither grants/revokes Full Disk Access nor edits the TCC database. The
+standard administrator prompt continues to provide temporary root elevation.
+This follow-up source is not in the immutable signed macos.14 artifacts.
+
+Apple's system-configuration access instructions:
+https://support.apple.com/en-hk/guide/mac-help/mchlccb25729/mac
+Apple's guidance on testing access and directing the user to Full Disk Access:
+https://developer.apple.com/videos/play/wwdc2019/701/

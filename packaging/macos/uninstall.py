@@ -28,6 +28,13 @@ APP_IDS={'Josi Server.app':'com.heyjosi.ce.server','Josi CE.app':'com.romanvaxma
 RECEIPTS=('com.heyjosi.ce.server.pkg','com.heyjosi.ce.desktop.pkg')
 APPLE_SUPPORT_PATHS={'/usr/sbin/distnoted','/usr/libexec/containermanagerd'}
 
+class AccountRemovalPermissionError(PermissionError):pass
+
+def failure(error):
+    value={'result':'failure',**diagnostic(error)}
+    if isinstance(error,AccountRemovalPermissionError):value['recovery']='full-disk-access'
+    return value
+
 def process_path(pid):
     # ps names/argv can be changed by a process. Use the kernel's executable
     # path before deciding that a service-UID process is an Apple helper.
@@ -45,6 +52,20 @@ def verify_apple_support(path):
     run(['/usr/bin/codesign','--verify','--strict','-R','=anchor apple',path])
 
 def run(args):return subprocess.run([str(x) for x in args],env=ENV,capture_output=True,text=True,check=True)
+
+def local_identity_present(database,name):
+    # libc's passwd/group lookups can briefly retain a deleted account. Ask
+    # the local directory node directly, and never treat a failed query as
+    # absence unless Directory Service explicitly reports record-not-found.
+    if database not in ('Users','Groups') or name not in ACCOUNTS.values():raise ValueError('Invalid service identity query')
+    args=['/usr/bin/dscl','-plist','/Local/Default','-read','/'+database+'/'+name,'RecordName']
+    result=subprocess.run(args,env=ENV,capture_output=True,text=True)
+    if result.returncode:
+        if result.returncode==56 and 'eDSRecordNotFound' in result.stdout+result.stderr:return False
+        raise subprocess.CalledProcessError(result.returncode,args,result.stdout,result.stderr)
+    value=plistlib.loads(result.stdout.encode())
+    if value.get('dsAttrTypeStandard:RecordName')!=[name]:raise ValueError('Unexpected service identity response')
+    return True
 
 def remove(path):
     path=Path(path)
@@ -133,13 +154,12 @@ class NativeSystem:
         for role,record in records.items():
             self.identity(role,record,missing=True)
             name=ACCOUNTS[role]
-            for database,lookup in [('Users',pwd.getpwnam),('Groups',grp.getgrnam)]:
-                try:lookup(name)
-                except KeyError:continue
+            for database in ('Users','Groups'):
+                if not local_identity_present(database,name):continue
                 try:run(['/usr/bin/dscl','/Local/Default', '-delete','/'+database+'/'+name])
                 except subprocess.CalledProcessError as error:
                     if error.returncode==40 and 'eDSPermissionError' in (error.stderr or ''):
-                        raise PermissionError('macOS denied removal of Josi '+database.lower()+' record '+name+'. Allow system-administration access for Uninstall Josi, then quit and reopen it before retrying. Josi data is retained.') from error
+                        raise AccountRemovalPermissionError('macOS blocked removal of '+name+'. Enable Uninstall Josi in System Settings > Privacy & Security > Full Disk Access, then quit and reopen it to retry. Josi data is retained.') from error
                     raise
     def forget_receipts(self):
         existing=set(run(['/usr/sbin/pkgutil','--pkgs']).stdout.splitlines())
@@ -148,10 +168,8 @@ class NativeSystem:
     def verify_erased(self,records):
         self.absent_jobs()
         for role in ROLES:
-            for lookup in (pwd.getpwnam,grp.getgrnam):
-                try:lookup(ACCOUNTS[role])
-                except KeyError:continue
-                raise RuntimeError('Service identity remains: '+role)
+            for database in ('Users','Groups'):
+                if local_identity_present(database,ACCOUNTS[role]):raise RuntimeError('Service identity remains: '+role+' ('+database.lower()+')')
         if set(run(['/usr/sbin/pkgutil','--pkgs']).stdout.splitlines()) & set(RECEIPTS):raise RuntimeError('Installer receipts remain')
 
 def uninstall(obj,mode,system,operation):
@@ -272,4 +290,4 @@ def main():
 
 if __name__=='__main__':
     try:main()
-    except Exception as error:print(json.dumps({'result':'failure',**diagnostic(error)}),flush=True);sys.exit(1)
+    except Exception as error:print(json.dumps(failure(error)),flush=True);sys.exit(1)

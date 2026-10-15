@@ -10,6 +10,8 @@ import Darwin
     let progress = NSTextField(wrappingLabelWithString:"")
     let button = NSButton(title:"Uninstall…",target:nil,action:nil)
     let copy = NSButton(title:"Copy Diagnostics",target:nil,action:nil)
+    let privacy = NSButton(title:"Open Full Disk Access Settings…",target:nil,action:nil)
+    let reveal = NSButton(title:"Show This App in Finder",target:nil,action:nil)
     let spinner = NSProgressIndicator()
     var busy = false
     var output = ""
@@ -28,10 +30,13 @@ import Darwin
         detail.font = .systemFont(ofSize:14)
         button.target = self;button.action = #selector(start)
         copy.target = self;copy.action = #selector(copyDiagnostics);copy.isEnabled = false
+        privacy.target = self;privacy.action = #selector(openPrivacy);privacy.isHidden = true
+        reveal.target = self;reveal.action = #selector(revealApp);reveal.isHidden = true
         spinner.style = .spinning;spinner.isDisplayedWhenStopped = false
         let actions = NSStackView(views:[button,copy]);actions.spacing = 12
         let status = NSStackView(views:[spinner,progress]);status.spacing = 10
-        let stack = NSStackView(views:[artwork,heading,choice,detail,status,actions]);stack.orientation = .vertical;stack.alignment = .leading;stack.spacing = 18;stack.translatesAutoresizingMaskIntoConstraints = false
+        let permissions = NSStackView(views:[privacy,reveal]);permissions.spacing = 12
+        let stack = NSStackView(views:[artwork,heading,choice,detail,status,permissions,actions]);stack.orientation = .vertical;stack.alignment = .leading;stack.spacing = 18;stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(stack)
         NSLayoutConstraint.activate([artwork.widthAnchor.constraint(equalTo:stack.widthAnchor),stack.leadingAnchor.constraint(equalTo:window.contentView!.leadingAnchor,constant:28),stack.trailingAnchor.constraint(equalTo:window.contentView!.trailingAnchor,constant:-28),stack.topAnchor.constraint(equalTo:window.contentView!.topAnchor,constant:28),stack.bottomAnchor.constraint(lessThanOrEqualTo:window.contentView!.bottomAnchor,constant:-24)])
         updateChoice();window.center();window.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
@@ -52,6 +57,12 @@ import Darwin
         progress.stringValue = phase
     }
     @objc func copyDiagnostics() { NSPasteboard.general.clearContents();NSPasteboard.general.setString(DiagnosticLog.redact(output),forType:.string) }
+    @objc func openPrivacy() {
+        // Navigation only. macOS permission grants and revocation remain
+        // explicit user actions in System Settings.
+        NSWorkspace.shared.open(URL(string:"x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
+    }
+    @objc func revealApp() { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) }
     @objc func start() {
         guard !busy else { return }
         let erase = choice.indexOfSelectedItem == 1
@@ -95,13 +106,22 @@ import Darwin
                 self.busy = false;self.spinner.stopAnimation(nil);self.output = diagnostics;self.copy.isEnabled = true
                 if result {
                     self.heading.stringValue = "Josi uninstalled";self.progress.stringValue = "Removal verified"
-                    self.detail.stringValue = erase ? "Josi apps, server data and saved Josi connections have been removed. Your workspace files are kept. Before a fresh install, clear Josi’s site data for localhost:8080 in the browser you used." : "Josi apps and automatic startup have been removed. Your server data remains for reinstalling. Your connected folder access has been revoked."
+                    self.detail.stringValue = erase ? "Josi apps, server data and saved Josi connections have been removed. Your workspace files are kept. You can now turn off Uninstall Josi in Full Disk Access. Before a fresh install, clear Josi’s site data for localhost:8080 in the browser you used." : "Josi apps and automatic startup have been removed. Your server data remains for reinstalling. Your connected folder access has been revoked."
+                    self.privacy.isHidden = !erase;self.reveal.isHidden = true
                     self.button.title = "Done";self.button.action = #selector(self.done);self.button.isEnabled = true
                 } else {
                     self.heading.stringValue = "Removal needs attention";self.progress.stringValue = "Not completed"
                     self.detail.stringValue = DiagnosticLog.failureCause(in:diagnostics).map { $0 + " Copy Diagnostics for details." } ?? "Some removal steps did not finish. Copy Diagnostics for the cause. Retry the same choice to continue the recorded cleanup. Data already deleted by Complete removal cannot be restored."
                     self.button.title = systemPassed ? "Retry desktop key cleanup…" : "Retry…"
                     if systemPassed { self.button.action = #selector(self.retryKey) }
+                    if DiagnosticLog.requiresFullDiskAccess(in:diagnostics) {
+                        self.heading.stringValue = "Allow account removal"
+                        self.detail.stringValue = "macOS needs Full Disk Access to remove Josi’s background accounts. Open Settings, add this Uninstall Josi app with +, and enable it. This is broad access; you can turn it off after removal. Then quit and reopen this app and retry the same removal choice. Your remaining Josi data is retained. App location: " + bundle
+                        self.privacy.isHidden = false;self.reveal.isHidden = false
+                        self.button.title = "Quit to Apply Permission";self.button.action = #selector(self.done)
+                        self.window.contentMinSize = NSSize(width:600,height:640)
+                        if self.window.contentView!.bounds.height < 640 { self.window.setContentSize(NSSize(width:self.window.contentView!.bounds.width,height:640)) }
+                    }
                     self.button.isEnabled = true
                 }
             }
@@ -114,7 +134,7 @@ import Darwin
             try task.run();let bytes = pipe.fileHandleForReading.readDataToEndOfFile();task.waitUntilExit()
             output += String(decoding:bytes,as:UTF8.self)
             if task.terminationStatus == 0 || task.terminationStatus == 44 {
-                heading.stringValue = "Josi uninstalled";detail.stringValue = "Josi apps, data and saved connections have been removed. Clear Josi’s browser site data before reinstalling.";progress.stringValue = "Removal verified";button.title = "Done";button.action = #selector(done)
+                heading.stringValue = "Josi uninstalled";detail.stringValue = "Josi apps, data and saved connections have been removed. You can now turn off Uninstall Josi in Full Disk Access. Clear Josi’s browser site data before reinstalling.";progress.stringValue = "Removal verified";button.title = "Done";button.action = #selector(done);privacy.isHidden = false;reveal.isHidden = true
             }
         } catch { output += error.localizedDescription }
     }

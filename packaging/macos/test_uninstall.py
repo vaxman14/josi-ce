@@ -75,13 +75,38 @@ class UninstallTests(unittest.TestCase):
     def test_directory_service_permission_denial_names_record_and_preserves_apps(self):
         system=cleanup.NativeSystem.__new__(cleanup.NativeSystem);system.identity=lambda *args,**kwargs:None
         failure=subprocess.CalledProcessError(40,['/usr/bin/dscl'],stderr='DS Error: -14120 (eDSPermissionError)')
-        with patch.object(cleanup.pwd,'getpwnam',return_value=object()),patch.object(cleanup,'run',side_effect=failure):
-            with self.assertRaisesRegex(PermissionError,'_josice_web.*system-administration'):
+        with patch.object(cleanup,'local_identity_present',return_value=True),patch.object(cleanup,'run',side_effect=failure):
+            with self.assertRaisesRegex(cleanup.AccountRemovalPermissionError,'_josice_web.*Full Disk Access') as caught:
                 system.delete_identities({'web':[404,404]})
+            self.assertEqual(cleanup.failure(caught.exception)['recovery'],'full-disk-access')
+        self.assertNotIn('recovery',cleanup.failure(PermissionError('Unrelated file permission')))
         self.system.delete_identities=lambda records:(_ for _ in ()).throw(PermissionError('Permission denied'))
         with self.assertRaises(PermissionError):self.call('erase')
         self.assertTrue((self.obj.data/'sentinel').exists())
         self.assertTrue(all((self.system.apps/name).is_dir() for name in cleanup.APP_IDS))
+    def test_final_check_uses_local_node_despite_stale_posix_accounts(self):
+        system=cleanup.NativeSystem.__new__(cleanup.NativeSystem);system.absent_jobs=lambda:None
+        absent=SimpleNamespace(returncode=56,stdout='',stderr='DS Error: -14136 (eDSRecordNotFound)')
+        with patch.object(cleanup.pwd,'getpwnam',return_value=object()) as user,patch.object(cleanup.grp,'getgrnam',return_value=object()) as group,patch.object(cleanup.subprocess,'run',return_value=absent) as query,patch.object(cleanup,'run',return_value=SimpleNamespace(stdout='')):
+            system.verify_erased({})
+            self.assertEqual(query.call_count,12);user.assert_not_called();group.assert_not_called()
+            self.assertTrue(all(call.args[0][2]=='/Local/Default' for call in query.call_args_list))
+    def test_direct_identity_query_does_not_treat_other_errors_as_absence(self):
+        for code,stderr in [(40,'eDSPermissionError'),(56,'Node unavailable')]:
+            with self.subTest(code=code),patch.object(cleanup.subprocess,'run',return_value=SimpleNamespace(returncode=code,stdout='',stderr=stderr)):
+                with self.assertRaises(subprocess.CalledProcessError):cleanup.local_identity_present('Users','_josice_db')
+        with patch.object(cleanup.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout='invalid plist',stderr='')):
+            with self.assertRaises(plistlib.InvalidFileException):cleanup.local_identity_present('Users','_josice_db')
+    def test_direct_identity_query_and_verification_refuse_a_real_remaining_group(self):
+        result=SimpleNamespace(returncode=0,stdout=plistlib.dumps({'dsAttrTypeStandard:RecordName':['_josice_db']}).decode(),stderr='')
+        with patch.object(cleanup.subprocess,'run',return_value=result):self.assertTrue(cleanup.local_identity_present('Groups','_josice_db'))
+        system=cleanup.NativeSystem.__new__(cleanup.NativeSystem);system.absent_jobs=lambda:None
+        with patch.object(cleanup,'local_identity_present',side_effect=lambda kind,name:kind=='Groups' and name=='_josice_db'):
+            with self.assertRaisesRegex(RuntimeError,r'database \(groups\)'):system.verify_erased({})
+    def test_retry_skips_absent_local_records_even_if_posix_cache_retains_them(self):
+        system=cleanup.NativeSystem.__new__(cleanup.NativeSystem);system.identity=lambda *args,**kwargs:None
+        with patch.object(cleanup.pwd,'getpwnam',return_value=object()),patch.object(cleanup.grp,'getgrnam',return_value=object()),patch.object(cleanup,'local_identity_present',return_value=False),patch.object(cleanup,'run') as delete:
+            system.delete_identities({'database':[401,401]});delete.assert_not_called()
     def test_retry_refuses_replaced_installation(self):
         self.system.fail=True
         with self.assertRaises(RuntimeError):self.call('erase')

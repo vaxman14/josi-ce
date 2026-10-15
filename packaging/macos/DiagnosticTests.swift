@@ -27,6 +27,10 @@ import Darwin
         let wrapped = "0:859: execution error: {\"phase\":\"Stopping Josi\"}\n{\"result\":\"failure\",\"cause\":\"macOS denied removal; token=unsafe\"} (1)"
         precondition(DiagnosticLog.failureCause(in:wrapped) == "macOS denied removal; token=[redacted]")
         precondition(DiagnosticLog.failureCause(in:"{\"result\":\"success\"}") == nil)
+        let denied = "0:859: execution error: {\"result\":\"failure\",\"cause\":\"Account deletion blocked\",\"recovery\":\"full-disk-access\"} (1)"
+        precondition(DiagnosticLog.requiresFullDiskAccess(in:denied))
+        precondition(!DiagnosticLog.requiresFullDiskAccess(in:wrapped))
+        precondition(!DiagnosticLog.requiresFullDiskAccess(in:"{\"result\":\"success\",\"recovery\":\"full-disk-access\"}"))
         print("PASS diagnostic durability, cause retention, credential redaction, private permissions and linked-folder refusal")
     }
 }

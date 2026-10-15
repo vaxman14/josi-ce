@@ -40,8 +40,15 @@ and checksums for signing and notarization results before physical testing.
    access, and retains data for reinstalling. Complete removal permanently
    deletes Josi data, sign-ins, recovery copies, service accounts, client
    caches and receipts. Workspace files remain. Confirm once, authorize
-   locally in macOS, and wait for Removal verified. Retry the same choice if
-   cleanup is interrupted. Before a fresh-install test, clear Josi browser
+   locally in macOS, and wait for Removal verified. Administrator elevation
+   is temporary. macOS may separately require Full Disk Access to remove
+   service users. If blocked, use Open Full Disk Access Settings and Show
+   This App in Finder, add this exact app with + and enable it yourself,
+   then quit/reopen it and retry the same removal choice. Full Disk Access
+   is broad permission and stays enabled until you turn it off in Settings;
+   it is not granted or revoked automatically. After removal, turn it off
+   or remove the Uninstall Josi entry. Retry the same choice if cleanup is
+   interrupted. Before a fresh-install test, clear Josi browser
    site data for localhost:8080 (and 127.0.0.1 if used). Actual browser data is
    not deleted by the app. Keychain cleanup targets only the desktop Safe
    Storage entry; signing certificates and josi-notary remain.
