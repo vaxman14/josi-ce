@@ -23,10 +23,14 @@ The optional real Josi CE 0.6.5 desktop client is a separate package/app.
   activity. Only explicit helper success enables browser/client launch. Lost
   helpers and failures disable actions and expose redacted copyable diagnostics.
 - A native folder chooser offers a read-only /workspace connection. Folder
-  ownership, links, exact directory identity and readability as the server
-  identity are checked. macOS privacy-protected or unreadable folders can be
-  refused. The installer does not change selected-folder permissions or silently
-  grant Full Disk Access. Users can change the folder or decline access.
+  ownership, links, exact directory identity and readability as both the web
+  and worker identities are checked. With explicit user consent, administrator
+  authorization adds narrow, reversible reader grants on the selected folder
+  and search-only grants on private parents. Existing permissions are preserved;
+  descendants are not recursively rewritten. macOS privacy protection still
+  applies. A recognized privacy denial offers Settings and exact-app Finder
+  buttons; the user grants Full Disk Access manually. Service access failures
+  are reported separately. Users can change the folder or decline access.
 - Protected runtime configuration binds the original directory device/inode;
   the database continues to use the logical /workspace root. Native local-file
   operations retain descriptor-relative traversal and original grant checks.
@@ -232,3 +236,36 @@ Apple's system-configuration access instructions:
 https://support.apple.com/en-hk/guide/mac-help/mchlccb25729/mac
 Apple's guidance on testing access and directing the user to Full Disk Access:
 https://developer.apple.com/videos/play/wwdc2019/701/
+
+
+## macos.16 folder-access correction
+
+On 15 October Roman's signed diagnostic found the web account denied while the
+worker account could read both a disposable private folder and Documents/RV.
+A local reproduction showed that `chmod +a ... /dev/fd/N` replaces existing ACL
+entries on this Mac. The second reader grant erased the first. The previous
+validation counted the new entry without detecting the lost one.
+
+The corrected code updates the target directly using `acl_get_fd_np` and
+`acl_set_fd_np`, appending only the requested read/search allow entry. Existing
+ACL entries, order and inherited flags are preserved and the full result is
+checked. Grant validation rejects any lost entry; revocation uses macOS's
+`ACL_NEXT_ENTRY` value (-1). The connection is committed only after both web
+and worker probes pass. Parent descriptors request traversal rather than a
+listing of unrelated Documents contents. Recognized root-helper privacy errors
+offer guided Full Disk Access settings; service read errors retain a separate
+cause, so they do not repeatedly prescribe privacy changes as a universal fix.
+
+Seventy focused tests passed, including real multi-principal grants with prior
+deny/inheritance entries, revoke/restore, loss detection and worker-denial
+rollback. Roman's signed v3 diagnostic then confirmed that both actual service
+accounts could read RV and the disposable folder with the new grants. Both
+lost access again after exact temporary-grant revocation. This is a real
+service-account diagnostic result, not a packaged macos.16 installation or a
+launchd daemon acceptance test. The new build still requires package testing
+and notarization before distribution; immutable macos.15 artifacts are unchanged.
+
+The released bug could also discard pre-existing ACL entries. Its old receipts
+do not contain a full baseline; do not invent ACLs or recursively reset users'
+folders to claim historical restoration. The fix preserves the permissions
+present when it starts. File contents are not modified by folder connection.

@@ -137,6 +137,44 @@ class UninstallTests(unittest.TestCase):
         workspace_access.grant(self.root,{'path':str(folder),'uid':os.getuid()},[pwd.getpwuid(os.getuid()).pw_name],folder)
         folder.rename(folder.with_name('original'));folder.mkdir()
         with self.assertRaisesRegex(ValueError,'identity changed'):workspace_access.revoke(self.root)
+    def test_two_folder_readers_preserve_existing_acl_and_each_other_on_restore(self):
+        parent=Path(self.other.name)/'private';parent.mkdir(mode=0o700);folder=parent/'RV';folder.mkdir(mode=0o700)
+        owner=pwd.getpwuid(os.getuid()).pw_name
+        originals={}
+        for path in (parent,folder):
+            subprocess.run(['/bin/chmod','+a','group:everyone deny writeextattr',str(path)],check=True,capture_output=True)
+            subprocess.run(['/bin/chmod','+a','user:'+owner+' allow readsecurity,directory_inherit',str(path)],check=True,capture_output=True)
+            fd=os.open(path,os.O_SEARCH|os.O_NOFOLLOW)
+            try:originals[str(path)]=workspace_access.entries(fd)
+            finally:os.close(fd)
+        readers=['root','nobody'];ids={workspace_access.identifier(user) for user in readers}
+        self.assertEqual(len(ids),2)
+        def verify_grants():
+            for path in (parent,folder):
+                fd=os.open(path,os.O_SEARCH|os.O_NOFOLLOW)
+                try:after=workspace_access.entries(fd)
+                finally:os.close(fd)
+                self.assertEqual(after[:len(originals[str(path)])],originals[str(path)])
+                added=after[len(originals[str(path)]):]
+                self.assertEqual(len(added),2)
+                self.assertEqual({entry.split(' ')[0][5:] for entry in added},ids)
+                self.assertTrue(all('write' not in entry and 'delete' not in entry for entry in added))
+        workspace_access.grant(self.root,{'path':str(folder),'uid':os.getuid()},readers,parent)
+        records=workspace_access.read(self.root);self.assertEqual(len(records),4);verify_grants()
+        for restore in (False,True):
+            if restore:workspace_access.restore(self.root,records);verify_grants()
+            workspace_access.revoke(self.root)
+            for path in (parent,folder):
+                fd=os.open(path,os.O_SEARCH|os.O_NOFOLLOW)
+                try:self.assertEqual(workspace_access.entries(fd),originals[str(path)])
+                finally:os.close(fd)
+    def test_folder_grant_detects_loss_of_an_existing_acl(self):
+        folder=Path(self.other.name)/'RV';folder.mkdir()
+        before=['group:00000000-0000-0000-0000-000000000000 deny writeextattr']
+        after=['user:00000000-0000-0000-0000-000000000001 allow execute']
+        with patch.object(workspace_access,'entries',side_effect=[before,after]),patch.object(workspace_access,'edit'):
+            with self.assertRaisesRegex(ValueError,'preserve'):workspace_access.grant(self.root,{'path':str(folder),'uid':os.getuid()},[pwd.getpwuid(os.getuid()).pw_name],folder)
+        self.assertEqual(len(workspace_access.read(self.root)),1)
     def test_missing_identity_cannot_target_a_reused_uid(self):
         system=cleanup.NativeSystem.__new__(cleanup.NativeSystem)
         with patch.object(cleanup.pwd,'getpwnam',side_effect=KeyError),patch.object(cleanup.grp,'getgrnam',side_effect=KeyError),patch.object(cleanup.pwd,'getpwuid',return_value=object()):

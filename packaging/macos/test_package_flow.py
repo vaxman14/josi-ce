@@ -4,6 +4,9 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import errno
+import subprocess
+from unittest.mock import patch
 
 HERE=Path(__file__).parent
 def module(name,file):
@@ -71,6 +74,56 @@ class PackageFlow(unittest.TestCase):
         with self.assertRaises(ValueError):maintenance.selected_folder(str(link),os.getuid())
         import pwd
         with self.assertRaises(ValueError):maintenance.selected_folder(pwd.getpwuid(os.getuid()).pw_dir,os.getuid())
+    def test_selected_folder_traverses_a_parent_without_listing_permission(self):
+        obj=self.fixture();parent=obj.root/'search-only';parent.mkdir();folder=parent/'RV';folder.mkdir()
+        parent.chmod(0o100)
+        try:
+            with self.assertRaises(PermissionError):os.close(os.open(parent,os.O_RDONLY|os.O_DIRECTORY))
+            selection=maintenance.selected_folder(str(folder),os.getuid())
+            self.assertEqual(selection['ino'],folder.stat().st_ino)
+            # ACL operations on that same parent must not require a listing
+            # descriptor either; no unrelated child names are read.
+            fd=maintenance.workspace_access.descriptor({'path':str(parent),'dev':parent.stat().st_dev,'ino':parent.stat().st_ino,'uid':os.getuid()})
+            try:self.assertIsInstance(maintenance.workspace_access.entries(fd),list)
+            finally:os.close(fd)
+        finally:parent.chmod(0o700)
+    def test_workspace_privacy_failure_is_distinct_from_service_and_ownership_errors(self):
+        self.assertEqual(maintenance.failure(PermissionError(errno.EPERM,'Documents'),'workspace')['recovery'],'full-disk-access')
+        self.assertNotIn('recovery',maintenance.failure(PermissionError('Choose a folder you own'),'workspace'))
+        self.assertNotIn('recovery',maintenance.failure(PermissionError(errno.EACCES,'File permission'),'workspace'))
+        self.assertNotIn('recovery',maintenance.failure(PermissionError(errno.EPERM,'Other operation'),'recover-latest'))
+        service=maintenance.WorkspaceServiceAccessError(errno.EACCES,'Service cannot read')
+        self.assertEqual(maintenance.failure(service,'workspace')['recovery'],'workspace-service-access')
+    def test_service_probe_preserves_errno_and_rolls_back_the_folder_connection(self):
+        obj=self.fixture();folder=obj.root/'chosen';folder.mkdir()
+        obj.run=lambda *a,**kw:(_ for _ in ()).throw(subprocess.CalledProcessError(77,['python3.11'],stderr=b'{"workspaceAccessErrno":13}'))
+        with self.assertRaises(maintenance.WorkspaceServiceAccessError) as caught:maintenance.workspace(obj,str(folder),os.getuid())
+        self.assertEqual(caught.exception.errno,errno.EACCES)
+        self.assertNotIn('workspace',json.loads((obj.data/'config/runtime.json').read_text()))
+        self.assertEqual(maintenance.workspace_access.read(obj.root),[])
+        self.assertEqual(json.loads((obj.root/'maintenance.json').read_text())['state'],'complete')
+        self.assertEqual((obj.data/'sentinel').read_text(),'preserve')
+    def test_unrelated_probe_failures_are_not_mislabeled_as_privacy_denials(self):
+        obj=self.fixture();selection={'path':str(obj.root),'dev':1,'ino':2}
+        for failure in [subprocess.CalledProcessError(1,['python3.11'],stderr=b'other failure'),subprocess.CalledProcessError(77,['python3.11'],stderr=b'{"workspaceAccessErrno":2}')]:
+            with self.subTest(failure=failure),patch.object(obj,'run',side_effect=failure):
+                with self.assertRaises(subprocess.CalledProcessError):maintenance.probe_workspace(obj,selection)
+    def test_workspace_requires_both_web_and_worker_read_access_before_commit(self):
+        for failing in (None,'worker'):
+            with self.subTest(failing=failing):
+                obj=self.fixture();folder=obj.root/'chosen';folder.mkdir();calls=[]
+                def run(args,role):
+                    calls.append(role)
+                    if role==failing:raise subprocess.CalledProcessError(77,['python3.11'],stderr=b'{"workspaceAccessErrno":13}')
+                obj.run=run
+                if failing:
+                    with self.assertRaisesRegex(maintenance.WorkspaceServiceAccessError,'worker'):maintenance.workspace(obj,str(folder),os.getuid())
+                    self.assertNotIn('workspace',json.loads((obj.data/'config/runtime.json').read_text()))
+                    self.assertEqual(maintenance.workspace_access.read(obj.root),[])
+                else:
+                    maintenance.workspace(obj,str(folder),os.getuid())
+                    self.assertIn('workspace',json.loads((obj.data/'config/runtime.json').read_text()))
+                self.assertEqual(calls,['web','worker'])
     def test_uninstall_preserves_data_and_records_disabled_state(self):
         obj=self.fixture();maintenance.uninstall(obj)
         self.assertEqual((obj.data/'sentinel').read_text(),'preserve')

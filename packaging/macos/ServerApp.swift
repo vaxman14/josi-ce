@@ -18,6 +18,8 @@ import Darwin
     let copyLog = NSButton(title: "Copy Diagnostics", target: nil, action: nil)
     let repair = NSButton(title: "Restore Previous Version…", target: nil, action: nil)
     let remove = NSButton(title: "Uninstall Josi…", target: nil, action: nil)
+    let privacy = NSButton(title: "Open Full Disk Access Settings…", target: nil, action: nil)
+    let reveal = NSButton(title: "Show Josi Server in Finder", target: nil, action: nil)
     let spinner = NSProgressIndicator()
     var log: URL?
     var started = Date()
@@ -27,6 +29,7 @@ import Darwin
     var port = 8080
     var completedProgress = false
     var maintenanceFailure: String?
+    var folderPrivacyDenied = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         window = NSWindow(contentRect: NSRect(x: 0,y: 0,width: 640,height: 660),styleMask: [.titled,.closable,.miniaturizable,.resizable],backing: .buffered,defer: false)
         window.contentMinSize = NSSize(width: 640, height: 660)
@@ -44,11 +47,14 @@ import Darwin
         copyLog.target = self;copyLog.action = #selector(copyDiagnostics)
         repair.target = self;repair.action = #selector(restorePrevious)
         remove.target = self;remove.action = #selector(uninstallServer)
+        privacy.target = self;privacy.action = #selector(openPrivacy)
+        reveal.target = self;reveal.action = #selector(revealServer)
         let progress = NSStackView(views: [spinner,activity]);progress.spacing = 8
         let folders = NSStackView(views: [choose,decline]);folders.spacing = 10
         let actions = NSStackView(views: [open,desktop]);actions.spacing = 10
         let maintenance = NSStackView(views: [copyLog,repair,remove]);maintenance.spacing = 8
-        let stack = NSStackView(views: [artwork,heading,detail,progress,folderLabel,folders,actions,logLabel,maintenance])
+        let permissions = NSStackView(views: [privacy,reveal]);permissions.spacing = 8;permissions.detachesHiddenViews = true
+        let stack = NSStackView(views: [artwork,heading,detail,progress,folderLabel,folders,permissions,actions,logLabel,maintenance])
         stack.orientation = .vertical;stack.alignment = .leading;stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(stack)
@@ -68,6 +74,8 @@ import Darwin
         desktop.isEnabled = open.isEnabled
         repair.isHidden = state != .failed;repair.isEnabled = state == .failed && !busy
         copyLog.isEnabled = log != nil
+        privacy.isHidden = !folderPrivacyDenied;reveal.isHidden = !folderPrivacyDenied
+        privacy.isEnabled = !busy;reveal.isEnabled = !busy
         if state == .working || busy { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
         if let log { logLabel.stringValue = "Diagnostic log: " + log.path }
     }
@@ -112,7 +120,7 @@ import Darwin
             do {
                 let (_,response) = try await URLSession.shared.data(for: request)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NSError(domain:"JosiReady",code:1) }
-                state = .ready;heading.stringValue = maintenanceFailure == nil ? "Josi is ready" : "Folder connection not changed"
+                state = .ready;heading.stringValue = folderPrivacyDenied ? "Allow folder access" : (maintenanceFailure == nil ? "Josi is ready" : "Folder connection not changed")
                 if !completedProgress { detail.stringValue = "Open Josi in your browser to finish setup. Your server runs locally on this Mac." }
             } catch { state = .waiting;detail.stringValue = "Josi is starting or unavailable. This window will check again." }
             applyState()
@@ -130,12 +138,23 @@ import Darwin
         return alert.runModal() == .alertFirstButtonReturn
     }
     func shell(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'",with: "'\\''") + "'" }
-    func helper(_ operation: String,_ path: String? = nil) {
+    @objc func openPrivacy() {
+        NSWorkspace.shared.open(URL(string:"x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
+    }
+    @objc func revealServer() { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) }
+    func folderPermissionPrompt() {
+        let alert = NSAlert();alert.messageText = "Allow Josi Server to read this folder?"
+        alert.informativeText = "macOS blocked folder access. Open Full Disk Access settings, add and enable Josi Server at " + Bundle.main.bundleURL.path + ". Then quit and reopen this Josi Server window and choose the folder again. This is separate from Uninstall Josi’s permission. Full Disk Access is broad access and remains enabled until you turn it off; revoking it may stop access to protected folders. Your previous connection and data are retained."
+        alert.addButton(withTitle:"Open Full Disk Access Settings…");alert.addButton(withTitle:"Not Now")
+        if alert.runModal() == .alertFirstButtonReturn { openPrivacy() }
+    }
+    func helper(_ operation: String,_ path: String? = nil,_ selectedURL: URL? = nil) {
         guard !busy else { return }
         let record: DiagnosticLog
         do { record = try DiagnosticLog(directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Josi CE Server/Setup"),operation:operation) }
         catch { detail.stringValue = "Cannot save diagnostics. Check that your home folder is writable.";return }
-        log = record.url;completedProgress = true;busy = true;started = Date();detail.stringValue = "Waiting for administrator authorization…";applyState()
+        let hasScopedAccess = selectedURL?.startAccessingSecurityScopedResource() ?? false
+        log = record.url;completedProgress = true;busy = true;folderPrivacyDenied = false;started = Date();detail.stringValue = "Waiting for administrator authorization…";applyState()
         let requirement = "=anchor apple generic and identifier \"com.heyjosi.ce.server\" and certificate leaf[subject.OU] = \"LRH75YR6QW\" and certificate leaf[subject.CN] = \"Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)\""
         let runtime = "/Applications/Josi Server.app/Contents/Resources/runtime"
         let command = "set -eu; /usr/bin/codesign --verify --deep --strict -R " + shell(requirement) + " '/Applications/Josi Server.app'; /usr/bin/env -i PATH=/usr/bin:/bin " + shell(runtime + "/python/bin/python3.11") + " -I -B " + shell(runtime + "/app/native/maintenance.py") + " " + shell(operation) + (path.map { " " + shell($0) } ?? "")
@@ -145,15 +164,27 @@ import Darwin
             process.environment = ["PATH":"/usr/bin:/bin:/usr/sbin:/sbin"]
             let pipe = Pipe();process.standardOutput = pipe;process.standardError = pipe
             var success = false
+            var permissionDenied = false
+            var failureCause: String?
             do { try process.run();let bytes = pipe.fileHandleForReading.readDataToEndOfFile();process.waitUntilExit();try record.append(String(decoding:bytes,as:UTF8.self));try record.append("Exit: \(process.terminationStatus)\n");success = process.terminationStatus == 0 }
             catch { try? record.append(error.localizedDescription) }
-            let passed = success
+            if !success,operation == "workspace",let text = try? String(contentsOf:record.url,encoding:.utf8) { permissionDenied = DiagnosticLog.requiresFullDiskAccess(in:text);failureCause = DiagnosticLog.failureCause(in:text) }
+            let passed = success;let needsPermission = permissionDenied;let reportedCause = failureCause
             DispatchQueue.main.async {
+                if hasScopedAccess { selectedURL?.stopAccessingSecurityScopedResource() }
                 self.busy = false
                 if passed && operation == "uninstall" { self.state = .removed;self.heading.stringValue = "Josi Server uninstalled";self.detail.stringValue = "The server is stopped. Your data and recovery copies are retained for reinstalling. The optional desktop client can be removed separately by moving Josi CE.app to Trash." }
                 else if passed { self.state = .ready;self.heading.stringValue = "Josi is ready";self.detail.stringValue = "Saved. Josi is ready.";self.folderLabel.stringValue = operation == "workspace" ? (path?.isEmpty == false ? "Connected as /workspace (read only): " + path! : "Folder access declined.") : self.folderLabel.stringValue }
                 else { self.state = InstallerState.afterMaintenanceFailure(operation);self.maintenanceFailure = operation;self.heading.stringValue = operation == "workspace" ? "Folder connection not changed" : "Change not completed";self.detail.stringValue = operation == "workspace" ? "Josi could not save this folder connection. Your previous connection and data are retained. Copy Diagnostics for the exact cause. If macOS denies access, check Josi’s privacy permissions or choose a shared folder." : "The change did not complete. Your data is retained. Copy Diagnostics for details." }
                 self.activity.stringValue = passed ? "Completed" : "Stopped";self.applyState()
+                if !passed,operation == "workspace",let reportedCause { self.detail.stringValue = reportedCause + " Your previous connection and data are retained. Copy Diagnostics for details." }
+                if needsPermission {
+                    self.folderPrivacyDenied = true;self.heading.stringValue = "Allow folder access"
+                    self.detail.stringValue = "macOS blocked this folder. Enable Josi Server in Full Disk Access, quit and reopen this window, then choose the folder again. Your previous connection and data are retained."
+                    self.window.contentMinSize = NSSize(width:640,height:720)
+                    if self.window.contentView!.bounds.height < 720 { self.window.setContentSize(NSSize(width:self.window.contentView!.bounds.width,height:720)) }
+                    self.applyState();self.folderPermissionPrompt()
+                }
             }
         }
     }
@@ -163,7 +194,7 @@ import Darwin
         panel.title = "Choose Josi’s workspace folder";panel.message = "Josi can read files in this folder as /workspace. File changes stay disabled. Choose a folder readable by the local server. You can change or disconnect it later.";panel.prompt = "Connect Folder"
         guard panel.runModal() == .OK, let url = panel.url,
               confirmation("Connect this folder?","Josi’s server and background tasks will receive read-only access to \(url.path). Administrator authorization adds folder-specific read permissions and access through its parent folders, then restarts Josi. Write permissions are unchanged. Disconnecting or uninstalling removes permissions added by Josi.","Connect") else { return }
-        helper("workspace",url.path)
+        helper("workspace",url.path,url)
     }
     @objc func declineFolder() {
         guard state.canChangeFolder && confirmation("Disconnect folder access?","Administrator authorization removes the workspace connection and restarts Josi. Your files are retained.","Disconnect") else { return }

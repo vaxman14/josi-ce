@@ -44,6 +44,9 @@ def main(out,expanded):
         result[name+'FilesVerified']=compare(source,payload)
         info=plistlib.loads((payload/'Applications'/appname/'Contents/Info.plist').read_bytes())
         assert info.get('CFBundleIconFile') and (payload/'Applications'/appname/'Contents/Resources'/info['CFBundleIconFile']).is_file()
+        if name=='server':
+            for key in ['NSDocumentsFolderUsageDescription','NSDesktopFolderUsageDescription','NSDownloadsFolderUsageDescription','NSSystemAdministrationUsageDescription']:
+                assert isinstance(info.get(key),str) and info[key].strip(),key
         for script in (out/(name+'-scripts')).iterdir():
             assert digest(script)==digest(expanded/(name+'.pkg')/'Scripts'/script.name)
     post=(expanded/'server.pkg/Scripts/postinstall').read_text()

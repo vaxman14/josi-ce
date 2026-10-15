@@ -6,12 +6,12 @@ restrictions remain enforced, and access is probed as the web service.
 """
 from collections import Counter
 import ctypes
+import errno
 import json
 import os
 from pathlib import Path
 import re
 import stat
-import subprocess
 import pwd
 import uuid
 from lifecycle import durable, plain
@@ -46,7 +46,10 @@ def identifier(user):
 
 def descriptor(record):
     path=plain(Path(record['path']))
-    fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    # ACL/identity operations need metadata, not a directory-listing handle.
+    # O_SEARCH also permits granting search-only access through private parents
+    # without requesting read access to their unrelated contents.
+    fd=os.open(path,os.O_SEARCH|os.O_NOFOLLOW)
     info=os.fstat(fd)
     if (info.st_dev,info.st_ino,info.st_uid)!=(record['dev'],record['ino'],record['uid']):
         os.close(fd);raise ValueError('Folder identity changed; permissions were not modified: '+str(path))
@@ -54,8 +57,9 @@ def descriptor(record):
 
 def edit(fd,operation,entry):
     if operation=='+a':
-        subprocess.run(['/bin/chmod',operation,entry,f'/dev/fd/{fd}'],pass_fds=(fd,),capture_output=True,check=True)
+        add(fd,entry)
         return
+    if operation!='-a':raise ValueError('Invalid folder permission operation')
     current=entries(fd)
     if entry not in current:return
     index=current.index(entry)
@@ -69,10 +73,45 @@ def edit(fd,operation,entry):
     if not acl:raise ValueError('Cannot revoke selected-folder permission')
     try:
         for n in range(index+1):
-            if lib.acl_get_entry(acl,0 if n==0 else 1,ctypes.byref(pointer)):raise ValueError('Folder permission changed during revocation')
+            if lib.acl_get_entry(acl,0 if n==0 else -1,ctypes.byref(pointer)):raise ValueError('Folder permission changed during revocation')
         if lib.acl_delete_entry(acl,pointer) or lib.acl_set_fd_np(fd,acl,0x100):raise ValueError('Cannot revoke selected-folder permission')
         if entries(fd)!=current[:index]+current[index+1:]:raise ValueError('Unexpected folder permission change')
     finally:lib.acl_free(acl)
+
+def add(fd,request):
+    # chmod +a /dev/fd/N reads the descriptor-filesystem node's ACL, then
+    # replaces the target ACL. A second grant can silently erase the first.
+    # Read and update the target itself through the already verified fd.
+    match=re.fullmatch(r'user:([A-Za-z0-9_.-]{1,64}) allow (execute|read,execute,readattr,readextattr,readsecurity)',request)
+    if not match:raise ValueError('Invalid folder permission grant')
+    user,rights=match.groups();principal=identifier(user);expected='user:'+principal+' allow '+rights
+    before=entries(fd)
+    if expected in before:return
+    lib=ctypes.CDLL('/usr/lib/libSystem.B.dylib',use_errno=True)
+    lib.acl_get_fd_np.argtypes=[ctypes.c_int,ctypes.c_int];lib.acl_get_fd_np.restype=ctypes.c_void_p
+    lib.acl_init.argtypes=[ctypes.c_int];lib.acl_init.restype=ctypes.c_void_p
+    lib.acl_from_text.argtypes=[ctypes.c_char_p];lib.acl_from_text.restype=ctypes.c_void_p
+    lib.acl_get_entry.argtypes=[ctypes.c_void_p,ctypes.c_int,ctypes.POINTER(ctypes.c_void_p)]
+    lib.acl_create_entry_np.argtypes=[ctypes.POINTER(ctypes.c_void_p),ctypes.POINTER(ctypes.c_void_p),ctypes.c_int]
+    lib.acl_copy_entry.argtypes=[ctypes.c_void_p,ctypes.c_void_p]
+    lib.acl_set_fd_np.argtypes=[ctypes.c_int,ctypes.c_void_p,ctypes.c_int]
+    lib.acl_free.argtypes=[ctypes.c_void_p]
+    acl=ctypes.c_void_p(lib.acl_get_fd_np(fd,0x100))
+    if not acl and ctypes.get_errno()==errno.ENOENT:acl=ctypes.c_void_p(lib.acl_init(1))
+    if not acl:raise ValueError('Cannot read selected-folder permissions for grant')
+    source=None
+    try:
+        source=lib.acl_from_text(('!#acl 1\nuser:'+principal+':::allow:'+rights+'\n').encode())
+        src=ctypes.c_void_p();dest=ctypes.c_void_p()
+        if not source or lib.acl_get_entry(source,0,ctypes.byref(src)):raise ValueError('Cannot construct folder permission')
+        # Append without moving existing deny/allow or inherited entries.
+        if lib.acl_create_entry_np(ctypes.byref(acl),ctypes.byref(dest),-2) or lib.acl_copy_entry(dest,src):raise ValueError('Cannot append folder permission')
+        if entries(fd)!=before:raise ValueError('Folder permissions changed during grant')
+        if lib.acl_set_fd_np(fd,acl,0x100):raise ValueError('Cannot grant selected-folder permission')
+        if entries(fd)!=before+[expected]:raise ValueError('Unexpected folder permission change during grant')
+    finally:
+        if source:lib.acl_free(source)
+        lib.acl_free(acl)
 
 def read(root):
     path=root/'workspace-access.json'
@@ -124,7 +163,7 @@ def grant(root,selection,users,boundary=Path('/')):
                 if record['entry'] in before:continue
                 records.append(record);save(root,records) # Durable intent before adding access.
                 edit(fd,'+a',record['request'])
-                added=list((Counter(entries(fd))-Counter(before)).elements())
-                if len(added)!=1:raise ValueError('Could not identify the added folder permission')
+                after=entries(fd);added=list((Counter(after)-Counter(before)).elements())
+                if Counter(before)-Counter(after) or len(added)!=1:raise ValueError('Could not preserve and identify the added folder permission')
                 record['entry']=added[0];save(root,records)
             finally:os.close(fd)

@@ -1,5 +1,6 @@
 """Narrow signed companion helper. Never deletes Josi data or user folders."""
 import fcntl
+import errno
 import json
 import os
 from pathlib import Path
@@ -7,19 +8,55 @@ import pwd
 import stat
 import sys
 import secrets
+import subprocess
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from lifecycle import Lifecycle, PRODUCT, LABEL, ROLES, TERMINAL, durable, plain, diagnostic, emit
 import workspace_access
+
+class WorkspaceServiceAccessError(PermissionError):pass
+
+def failure(error,operation):
+    value={'result':'failure',**diagnostic(error)}
+    if operation=='workspace':
+        if isinstance(error,WorkspaceServiceAccessError):value['recovery']='workspace-service-access'
+        elif isinstance(error,PermissionError) and error.errno==errno.EPERM:value['recovery']='full-disk-access'
+    return value
+
+def probe_workspace(obj,selection):
+    # Preserve the service-user errno without exposing file contents or an
+    # arbitrary traceback. The parent can then offer the correct privacy UI.
+    probe="""import os,sys,json
+try:
+    f=os.open(sys.argv[1],os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:
+        s=os.fstat(f)
+        assert (s.st_dev,s.st_ino)==(int(sys.argv[2]),int(sys.argv[3]))
+        os.listdir(f)
+    finally:os.close(f)
+except OSError as error:
+    print(json.dumps({'workspaceAccessErrno':error.errno}),file=sys.stderr)
+    sys.exit(77)
+"""
+    for role in ('web','worker'):
+        try:obj.run([obj.installed/'python/bin/python3.11','-I','-B','-c',probe,selection['path'],str(selection['dev']),str(selection['ino'])],role)
+        except subprocess.CalledProcessError as error:
+            try:code=json.loads(error.stderr)['workspaceAccessErrno'] if error.returncode==77 else None
+            except (ValueError,TypeError,KeyError):code=None
+            if code in (errno.EPERM,errno.EACCES):raise WorkspaceServiceAccessError(code,'Josi '+role+' service cannot read this folder',selection['path']) from error
+            raise
 
 def selected_folder(path,uid):
     p=plain(Path(path))
     home=Path(pwd.getpwuid(uid).pw_dir)
     if p==home or not (str(p).startswith('/Users/') or str(p).startswith('/Volumes/')) or any(x.startswith('.') for x in p.parts):
         raise ValueError('Choose a documents or project folder, rather than your entire home or a hidden folder')
-    fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY)
+    # A folder selected in NSOpenPanel does not imply consent to read all of
+    # Documents. Ancestors need traversal, not directory-listing access.
+    fd=os.open('/',os.O_SEARCH|os.O_NOFOLLOW)
     try:
-        for part in p.parts[1:]:
-            next_fd=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd);os.close(fd);fd=next_fd
+        for index,part in enumerate(p.parts[1:],start=1):
+            mode=os.O_RDONLY|os.O_DIRECTORY if index==len(p.parts)-1 else os.O_SEARCH
+            next_fd=os.open(part,mode|os.O_NOFOLLOW,dir_fd=fd);os.close(fd);fd=next_fd
         info=os.fstat(fd)
         if info.st_uid!=uid:raise PermissionError('Choose a folder you own')
         return {'path':str(p),'dev':info.st_dev,'ino':info.st_ino,'uid':uid}
@@ -65,8 +102,7 @@ def workspace(obj,path,uid):
             if selection:
                 users=[pwd.getpwuid(obj.account(role)[0]).pw_name for role in ('web','worker')]
                 workspace_access.grant(obj.root,selection,users,Path(selection['path']) if obj.isolated else Path('/'))
-                probe="import os,sys; p=sys.argv[1]; f=os.open(p,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW); s=os.fstat(f); assert (s.st_dev,s.st_ino)==(int(sys.argv[2]),int(sys.argv[3])); os.listdir(f); os.close(f)"
-                obj.run([obj.installed/'python/bin/python3.11','-I','-B','-c',probe,selection['path'],str(selection['dev']),str(selection['ino'])],'web')
+                probe_workspace(obj,selection)
             durable(cfg_path,cfg,replace=True,mode=0o644)
             for role in ROLES:obj.start(role)
             obj.ready()
@@ -142,4 +178,4 @@ def main():
 
 if __name__=='__main__':
     try:main()
-    except Exception as error:emit(diagnostic(error));sys.exit(1)
+    except Exception as error:emit(failure(error,sys.argv[1] if len(sys.argv)>1 else ''));sys.exit(1)
