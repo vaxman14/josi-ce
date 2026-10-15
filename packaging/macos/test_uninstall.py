@@ -6,6 +6,7 @@ import plistlib
 import tempfile
 import shutil
 import socket
+import subprocess
 import unittest
 import uuid
 from unittest.mock import patch
@@ -69,7 +70,18 @@ class UninstallTests(unittest.TestCase):
         self.system.fail=True
         with self.assertRaisesRegex(RuntimeError,'Injected'):self.call('erase')
         self.assertTrue(self.root.exists());self.assertTrue(self.system.journal.exists())
+        self.assertTrue(all((self.system.apps/name).is_dir() for name in cleanup.APP_IDS))
         self.assertTrue(self.call('erase')['verified']);self.assertFalse(self.root.exists())
+    def test_directory_service_permission_denial_names_record_and_preserves_apps(self):
+        system=cleanup.NativeSystem.__new__(cleanup.NativeSystem);system.identity=lambda *args,**kwargs:None
+        failure=subprocess.CalledProcessError(40,['/usr/bin/dscl'],stderr='DS Error: -14120 (eDSPermissionError)')
+        with patch.object(cleanup.pwd,'getpwnam',return_value=object()),patch.object(cleanup,'run',side_effect=failure):
+            with self.assertRaisesRegex(PermissionError,'_josice_web.*system-administration'):
+                system.delete_identities({'web':[404,404]})
+        self.system.delete_identities=lambda records:(_ for _ in ()).throw(PermissionError('Permission denied'))
+        with self.assertRaises(PermissionError):self.call('erase')
+        self.assertTrue((self.obj.data/'sentinel').exists())
+        self.assertTrue(all((self.system.apps/name).is_dir() for name in cleanup.APP_IDS))
     def test_retry_refuses_replaced_installation(self):
         self.system.fail=True
         with self.assertRaises(RuntimeError):self.call('erase')

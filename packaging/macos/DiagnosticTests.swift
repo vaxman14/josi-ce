@@ -24,6 +24,9 @@ import Darwin
         let linked = root.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: folder)
         do { _ = try DiagnosticLog(directory: linked, operation: "installation"); fatalError("Linked folder accepted") } catch {}
+        let wrapped = "0:859: execution error: {\"phase\":\"Stopping Josi\"}\n{\"result\":\"failure\",\"cause\":\"macOS denied removal; token=unsafe\"} (1)"
+        precondition(DiagnosticLog.failureCause(in:wrapped) == "macOS denied removal; token=[redacted]")
+        precondition(DiagnosticLog.failureCause(in:"{\"result\":\"success\"}") == nil)
         print("PASS diagnostic durability, cause retention, credential redaction, private permissions and linked-folder refusal")
     }
 }

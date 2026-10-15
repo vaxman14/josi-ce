@@ -99,7 +99,7 @@ import Darwin
                     self.button.title = "Done";self.button.action = #selector(self.done);self.button.isEnabled = true
                 } else {
                     self.heading.stringValue = "Removal needs attention";self.progress.stringValue = "Not completed"
-                    self.detail.stringValue = "Some removal steps did not finish. Copy Diagnostics for the cause. Retry the same choice to continue the recorded cleanup. Data already deleted by Complete removal cannot be restored."
+                    self.detail.stringValue = DiagnosticLog.failureCause(in:diagnostics).map { $0 + " Copy Diagnostics for details." } ?? "Some removal steps did not finish. Copy Diagnostics for the cause. Retry the same choice to continue the recorded cleanup. Data already deleted by Complete removal cannot be restored."
                     self.button.title = systemPassed ? "Retry desktop key cleanup…" : "Retry…"
                     if systemPassed { self.button.action = #selector(self.retryKey) }
                     self.button.isEnabled = true

@@ -175,3 +175,28 @@ signatures. It does not signal or wait for those OS agents. Other live service-
 UID processes must still stop, and a timeout reports their PIDs/executable paths.
 Roman’s macos.12 physical removal stopped at this gate before file deletion;
 it was not evidence of a cold snapshot, folder or authorization failure.
+
+
+macos.14 addresses the next physical Complete removal failure: Directory Service
+returned exit 40 / eDSPermissionError while deleting the first service user.
+Read-only inspection found all six service users/groups still present; the
+first account had Secure Token disabled. macos.13 had already removed the apps
+before reaching that denial. The uninstaller now declares the required
+NSSystemAdministrationUsageDescription and the app/data removal purpose strings,
+uses the explicit /Local/Default node, and reports the specific failure in its
+window. It validates all target app identifiers first, then removes service
+accounts before apps or product data, leaving the UI available if permission is
+denied. The existing recorded retry and identity-collision checks still apply.
+
+Roman ran a signed native access-check app with the uninstaller bundle identity
+and system-administration purpose string. Through the same administrator helper
+path it created and deleted one empty disposable group successfully. Existing
+Josi accounts and data were untouched. This supports the corrected permission
+path but does not prove actual Josi user deletion or complete removal. The
+original denial was not captured in TCC logs, so its precise privacy attribution
+remains an inference. Do not disable SIP, delete Directory Service database
+files directly, or silently grant Full Disk Access as a workaround.
+
+Apple documents NSSystemAdministrationUsageDescription as required for apps
+using system-configuration APIs:
+https://developer.apple.com/documentation/bundleresources/information-property-list/nssystemadministrationusagedescription

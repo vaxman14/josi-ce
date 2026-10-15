@@ -136,7 +136,11 @@ class NativeSystem:
             for database,lookup in [('Users',pwd.getpwnam),('Groups',grp.getgrnam)]:
                 try:lookup(name)
                 except KeyError:continue
-                run(['/usr/bin/dscl','.', '-delete','/'+database+'/'+name])
+                try:run(['/usr/bin/dscl','/Local/Default', '-delete','/'+database+'/'+name])
+                except subprocess.CalledProcessError as error:
+                    if error.returncode==40 and 'eDSPermissionError' in (error.stderr or ''):
+                        raise PermissionError('macOS denied removal of Josi '+database.lower()+' record '+name+'. Allow system-administration access for Uninstall Josi, then quit and reopen it before retrying. Josi data is retained.') from error
+                    raise
     def forget_receipts(self):
         existing=set(run(['/usr/sbin/pkgutil','--pkgs']).stdout.splitlines())
         for receipt in RECEIPTS:
@@ -222,16 +226,26 @@ def uninstall(obj,mode,system,operation):
             durable(obj.root/'maintenance.json',{'operation':'uninstall','state':'complete'},replace=True)
             intent['phase']='removing';durable(saved,intent,replace=True)
         system.absent_jobs();system.finish_processes(records)
-        progress('Removing Josi apps')
+        # Validate every app first. A foreign app must refuse cleanup before
+        # any account is deleted. Permission failures then leave apps available
+        # for retry instead of deleting the UI before Directory Service access.
+        targets=[]
         for name,identifier in APP_IDS.items():
             path=system.apps/name
             if not path.exists() and not path.is_symlink():continue
             plain(path)
             if plistlib.loads((path/'Contents/Info.plist').read_bytes()).get('CFBundleIdentifier')!=identifier:raise ValueError('Unrelated app at '+str(path))
+            targets.append((path,identifier))
+        if mode=='erase':
+            progress('Removing Josi service accounts')
+            system.delete_identities(records);system.forget_receipts()
+        progress('Removing Josi apps')
+        for path,identifier in targets:
+            plain(path)
+            if plistlib.loads((path/'Contents/Info.plist').read_bytes()).get('CFBundleIdentifier')!=identifier:raise ValueError('Application changed during removal')
             remove(path)
         if mode=='erase':
             progress('Deleting Josi data and saved connections')
-            system.delete_identities(records);system.forget_receipts()
             remove(obj.root);remove(system.logs)
             for path in profile_paths(system.home):remove(path)
         progress('Verifying removal')

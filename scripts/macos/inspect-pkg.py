@@ -47,6 +47,10 @@ def main(out,expanded):
         for script in (out/(name+'-scripts')).iterdir():
             assert digest(script)==digest(expanded/(name+'.pkg')/'Scripts'/script.name)
     post=(expanded/'server.pkg/Scripts/postinstall').read_text()
+    uninstall=plistlib.loads((expanded/'server.pkg/Payload/Applications/Uninstall Josi.app/Contents/Info.plist').read_bytes())
+    assert uninstall['CFBundleIdentifier']=='com.heyjosi.ce.uninstaller'
+    for key in ['NSSystemAdministrationUsageDescription','NSAppBundlesUsageDescription','NSAppDataUsageDescription']:
+        assert isinstance(uninstall.get(key),str) and uninstall[key].strip(),key
     assert 'pkg-driver.py' in post and '--verify --deep --strict' in post and "'=anchor" in post
     assert 'installer' not in post.splitlines()[-1] # No recursive Installer invocation.
     result.update(serverOnlyChoice=True,serverPlusRealClientChoice=True,scriptsMatch=True,iconsPresent=True,noSystemInstall=True)
