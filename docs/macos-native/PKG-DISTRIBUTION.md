@@ -289,3 +289,60 @@ uploads and persisted extracted text, ingestion/index/search, both legacy policy
 values, setup and admin responses. Other platforms retain their existing scan
 policy. Document type/size/quota/ownership/archive and encryption checks remain.
 There is no fabricated antivirus verdict for documents processed without one.
+
+## macos.18 native Doctor
+
+The system checkup now selects an in-process, read-only Mac adapter when the
+fixed native launcher sets `JOSI_NATIVE_RUNTIME=1` on Darwin. It does not require
+the container maintenance socket. It checks architecture, installed files and
+version agreement, application data access, free disk space, database/key
+readiness, the exact shipped migration ledger, the localhost proxy's readiness
+JSON, worker heartbeat, speech helper, any selected workspace, backup history,
+job backlog and notification delivery. Each failed probe produces a fixed,
+redacted check result. Missing application backups are warnings; recorded
+backups are not described as restore-verified.
+
+Doctor does not gain launchd control or new privileged permissions. Native
+service repairs continue through the signed installer and macOS authorization.
+The page explains that boundary and routes individual failures to the relevant
+settings. Container Doctor and its approved repair flow remain available on
+container installations. Empty helper reports cannot appear healthy, and an
+old approval cannot trigger a repair that the current diagnosis disallows.
+
+Mac update status reports the active native version and explains the signed
+installer update path. It ignores stale container release metadata, does not
+query the container release channel, and refuses browser-triggered installation.
+It does not claim to implement an automatic native updater.
+
+Verification includes native probe fault tests, authenticated API regression
+tests and packaged integration using disposable PostgreSQL/services with a
+selected workspace. The packaged test pauses only its fixture worker to prove
+that a stale heartbeat is detected and that a fresh one clears the failure.
+Physical installation remains a separate acceptance step.
+
+Native selected-folder discovery also retries reconciliation for the signed-in
+installation owner. A folder that was unavailable at startup can become
+connected after access is granted, without restarting the server. Discovery
+locks the owner row in a transaction; parallel browser/MCP requests cannot
+create duplicate grants. Capability revocation, paused mappings and explicit
+unmapping are preserved. Members cannot trigger owner grants or see the native
+selection metadata. A retained root that needs reconnection is connected by an
+explicit owner action in Local Workspace.
+
+Native mapping creation validates the logical `/workspace` root using pinned
+Mac descriptors instead of looking for a physical container mount. The page
+auto-selects a single active mapping, can refresh discovery, provides an
+explicit connection form and explains unavailable native access. Doctor checks
+both physical folder readability and active owner registration. Workspace AI
+access claims require a current discovery/read result; empty discovery and the
+vendor CLI's application working directory are not evidence of folder access.
+Filename claims are checked against workspace tool results as well.
+
+The Storage coding checkbox remains independent of folder connection consent.
+If a capability row already disables local mapping, even first discovery does
+not silently enable it. Local Workspace offers an explicit Connect folder
+action for the signed-in installation owner. Its CSRF-protected native endpoint
+accepts no path, owner, permission or other request options; it rechecks the
+installer selection and physical folder, refuses paused connections, and
+creates only the selected read-only mapping in a transaction. Existing coding
+settings are retained. Normal discovery never reverses a prior revocation.

@@ -42,7 +42,7 @@ import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
 import { nasController } from './http/nasController.js';
 import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
-import { doctorHelper, doctorRoutes, type DoctorHelper } from './http/doctorRoutes.js';
+import { doctorRoutes, type DoctorHelper } from './http/doctorRoutes.js';
 import { pcControlRoutes } from './http/pcControlRoutes.js';
 
 export interface AppConfig {
@@ -91,7 +91,7 @@ export interface AppConfig {
   /** How a subscription provider's local binary is run, injected by the tests
    * so no suite ever executes a program. Unset in production. */
   codexRunner?: import('@josi-ce/llm').SpawnRunner;
-  /** Narrow Unix-socket Josi Doctor helper. Tests inject it; production uses the installer-managed helper. */
+  /** Tests may inject Doctor. Production selects native Mac checks or the container's isolated helper. */
   doctorHelper?: DoctorHelper;
   /** Fixed public stable-release channel HTTP. Injected so tests never contact GitHub. */
   releaseFetch?: typeof fetch;
@@ -268,7 +268,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/workflows', adminWorkflowRoutes({ db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch }));
   api.use('/admin/maintenance', maintenanceRoutes({ db }));
   api.use('/admin/doctor', doctorRoutes({
-    db, masterKey: cfg.masterKeyCheck, helper: cfg.doctorHelper ?? doctorHelper(),
+    db, masterKey: cfg.masterKeyCheck, helper: cfg.doctorHelper,
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, codexRunner: cfg.codexRunner,
     releaseFetch: cfg.releaseFetch,
   }));

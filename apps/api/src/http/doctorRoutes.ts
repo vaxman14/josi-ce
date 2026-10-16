@@ -9,10 +9,12 @@ import { chat, LlmError, type SpawnRunner } from '@josi-ce/llm';
 import { isNewer } from '@josi-ce/ops';
 import { asyncRoute } from './async.js';
 import { requireSuperAdmin } from './authz.js';
+import { nativeMacDoctor } from './nativeMacDoctor.js';
 
 export type DoctorState = 'pass' | 'warn' | 'fail';
 export interface DoctorCheck { key: string; label: string; state: DoctorState; detail: string }
 export interface DoctorDiagnosis {
+  runtime?: 'macos';
   checkedAt: string;
   healthy: boolean;
   safeRepairAvailable: boolean;
@@ -34,7 +36,7 @@ export interface DoctorRoutesCtx {
 }
 
 type UpdateJobState = 'idle' | 'running' | 'complete' | 'rolled_back' | 'failed';
-interface UpdateJob { state: UpdateJobState; currentVersion: string; targetVersion: string | null; startedAt: string | null; finishedAt: string | null; message: string }
+interface UpdateJob { state: UpdateJobState; currentVersion: string; targetVersion: string | null; startedAt: string | null; finishedAt: string | null; message: string; applyMode?: 'installer' }
 interface StableRelease { version: string; name: string; notes: string; url: string; publishedAt: string }
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 const RELEASE_URL = 'https://api.github.com/repos/vaxman14/josi-ce/releases/latest';
@@ -46,7 +48,15 @@ function updateJob(value: unknown): UpdateJob {
   const targetVersion = typeof row.targetVersion === 'string' && VERSION.test(row.targetVersion) ? row.targetVersion : null;
   const date = (input: unknown) => typeof input === 'string' && !Number.isNaN(Date.parse(input)) ? input : null;
   const message = typeof row.message === 'string' ? row.message.slice(0, 300) : 'Update status is unavailable.';
-  return { state, currentVersion, targetVersion, startedAt: date(row.startedAt), finishedAt: date(row.finishedAt), message };
+  return { state, currentVersion, targetVersion, startedAt: date(row.startedAt), finishedAt: date(row.finishedAt), message,
+    ...(row.applyMode === 'installer' ? { applyMode: 'installer' as const } : {}) };
+}
+
+function nativeUpdateStatus(job: UpdateJob) {
+  // A container release is not a native Mac update. Never expose stale shared
+  // update_state metadata or offer the container updater to a native install.
+  return { currentVersion: job.currentVersion, availableVersion: null, updateAvailable: false,
+    lastCheckAt: null, lastCheckOk: null, automatic: false, job };
 }
 
 async function helperUpdateStatus(helper: DoctorHelper): Promise<UpdateJob> {
@@ -77,6 +87,12 @@ export async function fetchStableRelease(fetchImpl: typeof fetch = fetch): Promi
 }
 
 const CHECKS: Record<string, { label: string; pass: string; warn?: string; fail: string }> = {
+  native_runtime: { label: 'Mac installation', pass: 'The installed Mac files and active version agree.', fail: 'The installed Mac files or version do not agree. Review Josi Server and the signed installer.' },
+  native_worker: { label: 'Background worker', pass: 'The background worker has reported within the last 90 seconds.', fail: 'The background worker heartbeat is missing or stale. Review Josi Server before repairing the installation.' },
+  native_voice: { label: 'Speech service', pass: 'The speech helper is responding and its current settings are ready.', fail: 'The speech helper or its enabled speech models are unavailable. Review Voice Box settings.' },
+  native_workspace: { label: 'Local Workspace', pass: 'Josi can read the selected folder and its identity still matches your selection.', fail: 'Josi cannot read the selected folder or the folder was replaced. Review the folder selection in Josi Server.' },
+  native_workspace_mapping: { label: 'Connected workspace', pass: 'The selected folder is connected to the installation owner and available to workspace tools.', fail: 'The selected folder has no active owner connection. Open Local Workspace, refresh folders and review folder access.' },
+  native_backup_history: { label: 'Backup history', pass: 'A completed full backup is recorded. A restore test is still needed to prove recoverability.', warn: 'No completed full application backup is recorded yet. Create one in backup settings.', fail: 'Josi could not read its backup history.' },
   architecture: { label: 'Computer architecture', pass: 'This computer uses a supported architecture.', fail: 'This computer architecture is not supported by this Josi release.' },
   runtime: { label: 'Docker', pass: 'Docker and Docker Compose are available.', fail: 'Docker is unavailable or Josi cannot reach it.' },
   install_path: { label: 'Installation files', pass: 'The Josi installation files are available.', fail: 'The installation files are incomplete. Rerun the installer.' },
@@ -126,11 +142,13 @@ function normalizeReport(value: unknown): DoctorDiagnosis {
   const failed = checks.filter((check) => check.state === 'fail').map((check) => check.key).sort();
   const checkedAt = typeof raw.checkedAt === 'string' && !Number.isNaN(Date.parse(raw.checkedAt))
     ? raw.checkedAt : new Date().toISOString();
+  if (!checks.length) throw new Error('Doctor returned no recognized checks');
   const stable = JSON.stringify(checks.map(({ key, state }) => ({ key, state })).sort((a, b) => a.key.localeCompare(b.key)));
   return {
+    ...(raw.runtime === 'macos' ? { runtime: 'macos' as const } : {}),
     checkedAt,
     healthy: failed.length === 0,
-    safeRepairAvailable: raw.safeRepairAvailable === true && failed.length > 0,
+    safeRepairAvailable: raw.runtime !== 'macos' && raw.safeRepairAvailable === true && failed.length > 0,
     failed,
     checks,
     fingerprint: createHash('sha256').update(stable).digest('hex'),
@@ -190,7 +208,9 @@ async function check(helper: DoctorHelper): Promise<DoctorDiagnosis> {
 }
 
 export function doctorRoutes(ctx: DoctorRoutesCtx): Router {
-  const r = Router(); const helper = ctx.helper ?? doctorHelper();
+  const r = Router();
+  const helper = ctx.helper ?? (process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1'
+    ? nativeMacDoctor(ctx) : doctorHelper());
   r.use(requireSuperAdmin);
 
   const syncUpdate = async (job: UpdateJob) => {
@@ -216,6 +236,7 @@ export function doctorRoutes(ctx: DoctorRoutesCtx): Router {
     let job: UpdateJob;
     try { job = await helperUpdateStatus(helper); await syncUpdate(job); }
     catch { return res.status(503).json({ error: 'The isolated updater is unavailable. Run the current installer once to refresh it.' }); }
+    if (job.applyMode === 'installer') return res.json(nativeUpdateStatus(job));
     const [state] = await ctx.db.query<{ current_version: string; available_version: string | null; last_check_at: string | null; last_check_ok: boolean | null }>(
       `select current_version,available_version,last_check_at::text,last_check_ok from update_state where id=true`,
     );
@@ -230,6 +251,7 @@ export function doctorRoutes(ctx: DoctorRoutesCtx): Router {
     let job: UpdateJob;
     try { job = await helperUpdateStatus(helper); await syncUpdate(job); }
     catch { return res.status(503).json({ error: 'The isolated updater is unavailable. Run the current installer once to refresh it.' }); }
+    if (job.applyMode === 'installer') return res.json(nativeUpdateStatus(job));
     try {
       const release = await fetchStableRelease(ctx.releaseFetch);
       await ctx.db.query(`update update_state set current_version=$1,available_version=$2,last_check_at=now(),last_check_ok=true where id=true`, [job.currentVersion, release.version]);
@@ -247,11 +269,12 @@ export function doctorRoutes(ctx: DoctorRoutesCtx): Router {
     const confirm = typeof req.body?.confirm === 'string' ? req.body.confirm : '';
     if (!version || confirm !== `UPDATE ${version}` || Object.keys(req.body ?? {}).sort().join(',') !== 'confirm,version')
       return res.status(400).json({ error: 'Type the exact update confirmation shown in Josi.' });
-    const [state] = await ctx.db.query<{ available_version: string | null }>(`select available_version from update_state where id=true`);
-    if (state?.available_version !== version) return res.status(409).json({ error: 'That release is no longer the verified available update. Check again.' });
     let before: UpdateJob;
     try { before = await helperUpdateStatus(helper); }
     catch { return res.status(503).json({ error: 'The isolated updater is unavailable. Run the current installer once to refresh it.' }); }
+    if (before.applyMode === 'installer') return res.status(409).json({ error: 'Mac updates use the signed Josi installer. Browser-based installation is unavailable.' });
+    const [state] = await ctx.db.query<{ available_version: string | null }>(`select available_version from update_state where id=true`);
+    if (state?.available_version !== version) return res.status(409).json({ error: 'That release is no longer the verified available update. Check again.' });
     if (before.state === 'running') return res.status(409).json({ error: 'An update is already running.' });
     if (!isNewer(version, before.currentVersion)) return res.status(409).json({ error: 'That version is not newer than the installed release.' });
     const [run] = await ctx.db.query<{ id: string }>(
@@ -354,6 +377,7 @@ export function doctorRoutes(ctx: DoctorRoutesCtx): Router {
     let current: DoctorDiagnosis;
     try { current = await check(helper); }
     catch { return res.status(503).json({ error: 'Josi Doctor became unavailable before applying the repair.' }); }
+    if (!current.safeRepairAvailable || current.healthy) return res.status(409).json({ error: 'This check has no automatic repair available. Run a fresh system check and review its guidance.' });
     if (current.fingerprint !== row.diagnosis_fingerprint) {
       await ctx.db.query(`update doctor_plans set status='stale' where id=$1 and status='pending'`, [planId]);
       return res.status(409).json({ error: 'The system changed after this plan was created. Review a fresh check before repairing it.' });

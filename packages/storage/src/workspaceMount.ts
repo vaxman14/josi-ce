@@ -2,6 +2,8 @@ import { constants } from 'node:fs';
 import { access, readFile, stat } from 'node:fs/promises';
 import type { Db } from '@josi-ce/core';
 import { nativeWorkspaceProbe } from './nativeWorkspace.js';
+import { basename } from 'node:path';
+import { createMapping } from './mappings.js';
 
 export const WORKSPACE_MOUNT_PATH = '/workspace';
 
@@ -48,8 +50,62 @@ export function workspaceMountRootAllowed(path: string, env: NodeJS.ProcessEnv =
 }
 
 export type WorkspaceMountReconcileResult =
-  | { status: 'disabled' | 'unavailable' | 'awaiting_owner' | 'revoked' | 'awaiting_mapping' }
+  | { status: 'disabled' | 'unavailable' | 'awaiting_owner' | 'revoked' | 'paused' | 'awaiting_mapping' }
   | { status: 'ready'; rootId: string; mappingId: string; ownerUserId: string; writable: boolean };
+
+export interface NativeWorkspaceStatus {
+  status: WorkspaceMountReconcileResult['status'];
+  label: string;
+}
+
+/** Retry an installer-authorized selection when its owner opens discovery.
+ * Privacy access may become available after startup/owner creation. Lock the
+ * owner row so simultaneous browser/MCP discovery cannot create duplicate roots
+ * or grants. Existing capability revocations and unmapped folders stay revoked.
+ */
+export async function refreshNativeWorkspace(
+  db: Db, userId: string, probe: WorkspaceMountProbe = nativeWorkspaceProbe,
+): Promise<NativeWorkspaceStatus | undefined> {
+  if (process.platform !== 'darwin' || process.env.JOSI_NATIVE_RUNTIME !== '1') return;
+  if (!db.transaction) throw new Error('Native workspace discovery requires a transaction');
+  return db.transaction(async tx => {
+    const [owner] = await tx.query<{ id: string }>(
+      "select id from users where role='super_admin' and status='active' order by created_at,id limit 1 for update",
+    );
+    if (owner?.id !== userId) return;
+    const result = await reconcileWorkspaceMount(tx, workspaceMountConfiguration(), probe);
+    return { status: result.status, label: basename(process.env.JOSI_WORKSPACE_NATIVE_PATH || 'Workspace') };
+  });
+}
+
+/** Explicit owner consent reconnects only the installer-selected, verified
+ * read-only folder. The browser cannot choose a path or another owner.
+ */
+export async function connectNativeWorkspace(db: Db, userId: string): Promise<NativeWorkspaceStatus | undefined> {
+  if (process.platform !== 'darwin' || process.env.JOSI_NATIVE_RUNTIME !== '1'
+    || process.env.JOSI_WORKSPACE_ENABLED !== '1') return;
+  if (!db.transaction) throw new Error('Native workspace connection requires a transaction');
+  return db.transaction(async tx => {
+    const [owner] = await tx.query<{ id: string }>("select id from users where role='super_admin' and status='active' order by created_at,id limit 1 for update");
+    if (owner?.id !== userId) return;
+    const label = basename(process.env.JOSI_WORKSPACE_NATIVE_PATH || 'Workspace');
+    if (!(await nativeWorkspaceProbe.available('/workspace', false))) return { status: 'unavailable', label };
+    const [paused] = await tx.query(`select m.id from folder_mappings m join storage_roots r on r.id=m.root_id
+      where m.owner_user_id=$1 and r.container_path='/workspace' and m.status='paused' limit 1`, [userId]);
+    if (paused) return { status: 'paused', label };
+    await tx.query(`insert into storage_capabilities(user_id,may_map_local,granted_by) values($1,true,$1)
+      on conflict(user_id) do update set may_map_local=true,granted_by=excluded.granted_by,updated_at=now()`, [userId]);
+    const result = await reconcileWorkspaceMount(tx, { enabled: true, writable: false }, nativeWorkspaceProbe);
+    if (result.status === 'awaiting_mapping' || result.status === 'revoked') {
+      const [root] = await tx.query<{ id: string }>("select id from storage_roots where container_path='/workspace' and enabled=true");
+      if (!root) throw new Error('Selected workspace is unavailable');
+      await createMapping(tx, { ownerUserId: userId, provider: 'local', rootId: root.id, recursive: true });
+      return { status: 'ready', label };
+    }
+    if (result.status !== 'ready') throw new Error('Selected workspace connection could not be verified');
+    return { status: 'ready', label };
+  });
+}
 
 /**
  * Reconcile the installer's one explicit workspace mount into the application
@@ -105,7 +161,10 @@ export async function reconcileWorkspaceMount(
       [WORKSPACE_MOUNT_PATH, configuration.writable],
     );
 
-  if (rootWasNew) {
+  const [capability] = await db.query<{ may_map_local: boolean }>(
+    `select may_map_local from storage_capabilities where user_id = $1`, [owner.id],
+  );
+  if (rootWasNew && !capability) {
     // The installer selection is authority for the first grant only. A later
     // capability revocation must survive every restart.
     await db.query(
@@ -118,9 +177,6 @@ export async function reconcileWorkspaceMount(
       [owner.id],
     );
   } else {
-    const [capability] = await db.query<{ may_map_local: boolean }>(
-      `select may_map_local from storage_capabilities where user_id = $1`, [owner.id],
-    );
     if (!capability?.may_map_local) return { status: 'revoked' };
   }
 
@@ -131,6 +187,7 @@ export async function reconcileWorkspaceMount(
     [owner.id, root.id],
   );
   if (existing?.status === 'revoked') return { status: 'revoked' };
+  if (existing?.status === 'paused') return { status: 'paused' };
   if (!existing && !rootWasNew) return { status: 'awaiting_mapping' };
   const permissions = configuration.writable;
   let mappingId: string;

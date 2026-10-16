@@ -3,9 +3,18 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { doctorCheckDestination, orderDoctorChecks } from '../src/lib/doctorChecks.js';
-import { Diagnosis, type DoctorDiagnosis } from '../src/pages/admin/Diagnostics.js';
+import { Diagnosis, NativeMacRecovery, type DoctorDiagnosis } from '../src/pages/admin/Diagnostics.js';
 
 describe('Josi Doctor checkup navigation', () => {
+  it('routes native failures to their actual Mac settings and explains the native repair path', () => {
+    expect(doctorCheckDestination('native_voice').to).toBe('/admin/voice-box');
+    expect(doctorCheckDestination('native_workspace').to).toBe('/app/workspace');
+    expect(doctorCheckDestination('native_backup_history').to).toBe('/admin/backups');
+    const html = renderToStaticMarkup(React.createElement(NativeMacRecovery));
+    expect(html).toContain('Josi Server app');
+    expect(html).toContain('signed Josi installer');
+    expect(html).not.toContain('Docker');
+  });
   it('moves failures to the top while preserving order within each state', () => {
     const checks = [
       { key: 'runtime', state: 'pass' as const },

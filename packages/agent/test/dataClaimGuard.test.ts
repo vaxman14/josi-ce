@@ -34,7 +34,25 @@ describe('DATA_CLAIM_TOOLS', () => {
     expect([...DATA_CLAIM_TOOLS].sort()).toEqual([
       'check_email_availability', 'get_event', 'get_provider_status', 'list_documents',
       'query_calendar', 'read_email', 'search_contacts', 'search_documents', 'search_email',
+      'list_workspace_mappings', 'workspace_list', 'workspace_read',
     ].sort());
+  });
+});
+
+describe('local workspace access grounding', () => {
+  it('rejects the screenshot claim without proof, including a claim followed by inability to enumerate', () => {
+    for (const claim of ['Yes. I can access the local workspace in read-only mode.',
+      'I can see the local workspace, but I cannot enumerate its files from here. It is the application directory.']) {
+      expect(checkNarratedSearchWithoutTool(claim, []).fabricated).toBe(true);
+      expect(checkNarratedSearchWithoutTool(claim, [{ tool: 'list_workspace_mappings', result: { mappings: [] } }]).fabricated).toBe(true);
+      expect(checkNarratedSearchWithoutTool(claim, [{ tool: 'get_provider_status', result: { ok: true, receipt: 'metadata' } }]).fabricated).toBe(true);
+    }
+  });
+  it('accepts actual workspace discovery and detects invented filenames after a workspace listing', () => {
+    expect(checkNarratedSearchWithoutTool('I can access your local workspace.', [{ tool: 'list_workspace_mappings', result: { mappings: [{ mapping_id: 'selected' }] } }]).fabricated).toBe(false);
+    expect(checkNarratedSearchWithoutTool('I cannot access your local workspace yet.', []).fabricated).toBe(false);
+    expect(checkDataClaims('I found invented.pdf.', [{ tool: 'workspace_list', result: { entries: [{ name: 'actual.txt' }] } }]).fabricated).toBe(true);
+    expect(checkDataClaims('I found actual.txt.', [{ tool: 'workspace_list', result: { entries: [{ name: 'actual.txt' }] } }]).fabricated).toBe(false);
   });
 });
 

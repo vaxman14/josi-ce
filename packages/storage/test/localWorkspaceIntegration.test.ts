@@ -1,8 +1,8 @@
 import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
-import {mkdtemp,mkdir,writeFile,readFile,symlink,link,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,symlink,link,rm,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-vi.mock('../src/mappings.js',async original=>({...await original<object>(),ROOT_BASE:(await import('node:os')).tmpdir()}));
+vi.mock('../src/mappings.js',async original=>({...await original<object>(),ROOT_BASE:await (await import('node:fs/promises')).realpath((await import('node:os')).tmpdir())}));
 import {testDb,type TestDb} from '../../core/test/helpers.js';
 import {createUser} from '../../auth/src/users.js';
 import {decideApproval} from '../../core/src/approvals.js';
@@ -10,7 +10,7 @@ import {workspaceList,workspaceRead,workspaceChange} from '../src/localWorkspace
 import {proposeCodingRun,codingRunStatus} from '../src/workspaceCoding.js';
 let executeWorkspaceTool:typeof import('../../agent/src/workspaceTools.js').executeWorkspaceTool;
 let db:TestDb,root:string,user:string,other:string,mapping:string;
-beforeAll(async()=>{vi.doMock('@josi-ce/storage',async()=>await import('../src/index.js'));({executeWorkspaceTool}=await import('../../agent/src/workspaceTools.js'));db=await testDb();root=await mkdtemp(join(tmpdir(),'josi-workspace-integration-'));user=(await createUser(db,{email:'workspace@example.test',username:'workspace',role:'member'})).id;other=(await createUser(db,{email:'other@example.test',username:'other',role:'member'})).id;
+beforeAll(async()=>{vi.doMock('@josi-ce/storage',async()=>await import('../src/index.js'));({executeWorkspaceTool}=await import('../../agent/src/workspaceTools.js'));db=await testDb();root=await realpath(await mkdtemp(join(tmpdir(),'josi-workspace-integration-')));user=(await createUser(db,{email:'workspace@example.test',username:'workspace',role:'member'})).id;other=(await createUser(db,{email:'other@example.test',username:'other',role:'member'})).id;
  await db.query('insert into storage_capabilities(user_id,may_map_local) values($1,true)',[user]);
  const [r]=await db.query<{id:string}>(`insert into storage_roots(label,container_path,purpose,writable) values('Fixture',$1,'documents',true) returning id`,[root]);
  const [m]=await db.query<{id:string}>(`insert into folder_mappings(owner_user_id,provider,root_id,relative_path,display_path,recursive,may_create,may_edit,may_move,may_delete) values($1,'local',$2,'','Fixture',true,true,true,true,true) returning id`,[user,r.id]);mapping=m.id;

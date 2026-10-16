@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -823,6 +823,60 @@ describe('the policy screen says what the settings do — M61, M62, M73', () => 
 });
 
 describe('what a person can see about their own options', () => {
+  it.skipIf(process.platform !== 'darwin')('requires explicit owner consent when only the coding checkbox was enabled', async () => {
+    const nativePath = realpathSync(docsRoot), info = statSync(nativePath);
+    const updates = { JOSI_NATIVE_RUNTIME: '1', JOSI_WORKSPACE_ENABLED: '1', JOSI_WORKSPACE_MODE: 'ro',
+      JOSI_WORKSPACE_NATIVE_PATH: nativePath, JOSI_WORKSPACE_NATIVE_ID: `${info.dev}:${info.ino}` };
+    const previous = Object.fromEntries(Object.keys(updates).map(key => [key, process.env[key]]));
+    Object.assign(process.env, updates);
+    try {
+      await db.query('insert into storage_capabilities(user_id,may_map_local,coding_enabled) values($1,false,true)', [ids.admin]);
+      const before = await call('/api/storage/available', { jar: cookies.admin });
+      expect(before.body.nativeWorkspace.status).toBe('revoked');
+      expect(before.body.capability.may_map_local).toBe(false);
+      expect((await call('/api/storage/native-workspace/connect', { method: 'POST', jar: cookies.bob, body: {} })).status).toBe(403);
+      expect((await call('/api/storage/native-workspace/connect', { method: 'POST', jar: cookies.admin, body: { path: '/etc' } })).status).toBe(400);
+      const connected = await call('/api/storage/native-workspace/connect', { method: 'POST', jar: cookies.admin, body: {} });
+      expect(connected.status).toBe(201);
+      expect(connected.body.nativeWorkspace.status).toBe('ready');
+      expect((await call('/api/storage/mappings', { jar: cookies.admin })).body.mappings).toHaveLength(1);
+      expect((await db.query('select coding_enabled from storage_capabilities where user_id=$1', [ids.admin]))[0].coding_enabled).toBe(true);
+    } finally { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
+  });
+  it.skipIf(process.platform !== 'darwin')('registers the installer-selected folder when its owner opens discovery, and exposes it only to that owner', async () => {
+    const nativePath = realpathSync(docsRoot), info = statSync(nativePath);
+    const updates = { JOSI_NATIVE_RUNTIME: '1', JOSI_WORKSPACE_ENABLED: '1', JOSI_WORKSPACE_MODE: 'ro',
+      JOSI_WORKSPACE_NATIVE_PATH: nativePath, JOSI_WORKSPACE_NATIVE_ID: `${info.dev}:${info.ino}` };
+    const previous = Object.fromEntries(Object.keys(updates).map(key => [key, process.env[key]]));
+    Object.assign(process.env, updates);
+    try {
+      const reply = await call('/api/storage/mappings', { jar: cookies.admin });
+      expect(reply.status).toBe(200);
+      expect(reply.body.nativeWorkspace.status).toBe('ready');
+      expect(reply.body.mappings).toHaveLength(1);
+      expect(reply.body.mappings[0].may_edit).toBe(false);
+      expect((await call('/api/storage/mappings', { jar: cookies.bob })).body.mappings).toHaveLength(0);
+      expect((await call('/api/storage/available', { jar: cookies.bob })).body).not.toHaveProperty('nativeWorkspace');
+    } finally { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
+  });
+
+  it.skipIf(process.platform !== 'darwin')('connects a retained native root through the authenticated mapping route', async () => {
+    const nativePath = realpathSync(docsRoot), info = statSync(nativePath);
+    const updates = { JOSI_NATIVE_RUNTIME: '1', JOSI_WORKSPACE_ENABLED: '1', JOSI_WORKSPACE_MODE: 'ro',
+      JOSI_WORKSPACE_NATIVE_PATH: nativePath, JOSI_WORKSPACE_NATIVE_ID: `${info.dev}:${info.ino}` };
+    const previous = Object.fromEntries(Object.keys(updates).map(key => [key, process.env[key]]));
+    Object.assign(process.env, updates);
+    try {
+      await enable('admin');
+      const [root] = await db.query<{id:string}>("insert into storage_roots(container_path,label,writable) values('/workspace','Selected folder',false) returning id");
+      const available = await call('/api/storage/available', { jar: cookies.admin });
+      expect(available.body.nativeWorkspace.status).toBe('awaiting_mapping');
+      const mapped = await call('/api/storage/mappings', { method: 'POST', jar: cookies.admin,
+        body: { provider: 'local', rootId: root.id, relativePath: '', recursive: true } });
+      expect(mapped.status).toBe(201);
+      expect(mapped.body.mapping.may_edit).toBe(false);
+    } finally { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
+  });
   it('shows no roots at all before the administrator enables mapping', async () => {
     const res = await call('/api/storage/available', { jar: cookies.bob });
     expect(res.body.capability.may_map_local).toBe(false);

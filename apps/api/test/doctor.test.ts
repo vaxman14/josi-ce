@@ -15,6 +15,7 @@ let db: TestDb;
 const jars: Record<string, string> = {};
 let helperCalls: Array<{ path: string; body?: unknown }> = [];
 let modelCalls: string[] = [];
+let nativeMode = false;
 const keyPath = join(mkdtempSync(join(tmpdir(), 'josi-doctor-')), 'master.key');
 writeFileSync(keyPath, Buffer.alloc(32, 29).toString('base64'));
 
@@ -51,6 +52,13 @@ let currentReport: ReturnType<typeof passing> | ReturnType<typeof failing> = pas
 let updater = { state: 'idle', currentVersion: '0.1.68', targetVersion: null as string | null, startedAt: null as string | null, finishedAt: null as string | null, message: 'No update is running.' };
 const helper: DoctorHelper = async (path, body) => {
   helperCalls.push({ path, body });
+  if (nativeMode) {
+    if (path === '/update/status') return { status: 200, data: { ...updater, currentVersion: '0.1.78-macos.18', applyMode: 'installer' } };
+    if (path === '/doctor/check') return { status: 200, data: {
+      runtime: 'macos', safeRepairAvailable: true, checks: [{ check: 'native_worker', status: 'fail' }],
+    } };
+    throw new Error('Native Doctor must not call the container repair or updater');
+  }
   if (path === '/update/status') return { status: 200, data: updater };
   if (path === '/update/start') {
     const request = body as { version: string };
@@ -102,6 +110,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); });
 beforeEach(async () => {
+  nativeMode = false;
   currentReport = passing(); helperCalls = []; modelCalls = [];
   updater = { state: 'idle', currentVersion: '0.1.68', targetVersion: null, startedAt: null, finishedAt: null, message: 'No update is running.' };
   await db.query(`delete from doctor_plans`);
@@ -112,6 +121,35 @@ beforeEach(async () => {
 });
 
 describe('Josi Doctor browser routes', () => {
+  it('returns native checks and never prepares a container repair for a Mac', async () => {
+    nativeMode = true;
+    const status = await call('/api/admin/doctor', { jar: jars.admin });
+    expect(status.body).toMatchObject({ available: true, diagnosis: {
+      runtime: 'macos', healthy: false, safeRepairAvailable: false, failed: ['native_worker'],
+    } });
+    expect(status.body.diagnosis.checks[0].label).toBe('Background worker');
+    const plan = await call('/api/admin/doctor/plan', { method: 'POST', body: {}, jar: jars.admin });
+    expect(plan.status).toBe(409);
+    expect(await db.query('select 1 from doctor_plans')).toHaveLength(0);
+  });
+
+  it('ignores stale container release metadata and refuses native browser updates', async () => {
+    nativeMode = true;
+    await db.query("update update_state set available_version='99.0.0' where id=true");
+    for (const response of [await call('/api/admin/doctor/update', { jar: jars.admin }),
+      await call('/api/admin/doctor/update/check', { method: 'POST', body: {}, jar: jars.admin })]) {
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ currentVersion: '0.1.78-macos.18', availableVersion: null,
+        updateAvailable: false, job: { applyMode: 'installer' } });
+    }
+    const start = await call('/api/admin/doctor/update/start', { method: 'POST', jar: jars.admin,
+      body: { version: '99.0.0', confirm: 'UPDATE 99.0.0' } });
+    expect(start.status).toBe(409);
+    expect(start.body.error).toMatch(/signed Josi installer/);
+    expect(await db.query('select 1 from update_runs')).toHaveLength(0);
+    expect(helperCalls.some(call => call.path === '/update/start')).toBe(false);
+  });
+
   it('is super-admin only', async () => {
     const anon = mergeJar(undefined, (await call('/api/auth/csrf')).setCookie);
     expect((await call('/api/admin/doctor', { jar: anon })).status).toBe(401);

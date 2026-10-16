@@ -22,6 +22,8 @@ import {
   setGlobalPause, setIndexing, setPermissions, sharingPolicy, syncHealth, unmapFolder,
   SKIP_EXPLANATIONS,
   nativeScannerHealth,
+  refreshNativeWorkspace,
+  connectNativeWorkspace,
   type Provider as MappingProvider,
 } from '@josi-ce/storage';
 import { requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
@@ -105,6 +107,17 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
   const r = Router();
   r.use(requireAuth);
 
+  r.post('/native-workspace/connect', requireSuperAdmin, handle(async (req, res) => {
+    if (Object.keys(req.body ?? {}).length) return res.status(400).json({ error: 'Connect the selected folder without additional options.' });
+    const result = await connectNativeWorkspace(db, req.user!.id);
+    if (!result) return res.status(404).json({ error: 'Choose a folder in Josi Server on your Mac first.' });
+    if (result.status !== 'ready') return res.status(409).json({ error: result.status === 'paused'
+      ? 'This folder connection is paused. Review its access settings first.'
+      : 'The selected folder is unavailable. Review its selection and macOS access in Josi Server.' });
+    await appendEvent(db, { actor: 'user', actorUserId: req.user!.id, kind: 'storage.native_workspace_connected' });
+    return res.status(201).json({ nativeWorkspace: result });
+  }));
+
   /** The folders the operator has made available, and what this person may do.
    *
    * Deliberately shows roots to everyone who may map: they are operator-declared
@@ -113,6 +126,7 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
   r.get(
     '/available',
     handle(async (req, res) => {
+      const nativeWorkspace = await refreshNativeWorkspace(db, req.user!.id);
       const capability = await capabilityFor(db, req.user!.id);
       const roots = capability.may_map_local
         ? await db.query(
@@ -123,7 +137,8 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
       const [policy] = await db.query<{ processing_paused: boolean }>(
         `select processing_paused from storage_policy where id = true`,
       );
-      return res.json({ capability, roots, processingPaused: policy?.processing_paused ?? false });
+      return res.json({ capability, roots, processingPaused: policy?.processing_paused ?? false,
+        ...(nativeWorkspace ? { nativeWorkspace } : {}) });
     }),
   );
 
@@ -157,13 +172,14 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
   r.get(
     '/mappings',
     handle(async (req, res) => {
+      const nativeWorkspace = await refreshNativeWorkspace(db, req.user!.id);
       const mappings = await db.query(
-        `select id, provider, display_path, recursive, may_create, may_edit, may_move, may_delete,
+        `select id, provider, root_id, display_path, recursive, may_create, may_edit, may_move, may_delete,
                 indexing_enabled, status, paused_reason, created_at
          from folder_mappings where owner_user_id = $1 order by created_at desc`,
         [req.user!.id],
       );
-      return res.json({ mappings });
+      return res.json({ mappings, ...(nativeWorkspace ? { nativeWorkspace } : {}) });
     }),
   );
 

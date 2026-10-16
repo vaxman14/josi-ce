@@ -4,7 +4,7 @@ import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { executeWorkspaceTool } from '../../agent/src/workspaceTools.js';
 import { workspaceGrant } from '../src/localWorkspace.js';
 import {
-  WORKSPACE_MOUNT_PATH, reconcileWorkspaceMount, workspaceMountRootAllowed,
+  WORKSPACE_MOUNT_PATH, reconcileWorkspaceMount, workspaceMountRootAllowed, refreshNativeWorkspace,
   type WorkspaceMountProbe,
 } from '../src/workspaceMount.js';
 
@@ -27,6 +27,33 @@ async function owner(email = 'owner@example.test') {
 }
 
 describe('workspace mount bootstrap and reconciliation', () => {
+  it.skipIf(process.platform !== 'darwin')('retries native owner discovery after an initial access failure without restarting', async () => {
+    vi.stubEnv('JOSI_NATIVE_RUNTIME', '1');vi.stubEnv('JOSI_WORKSPACE_ENABLED', '1');vi.stubEnv('JOSI_WORKSPACE_MODE', 'ro');
+    const admin = await owner();
+    expect(await refreshNativeWorkspace(db, admin.id, missing)).toMatchObject({ status: 'unavailable' });
+    expect(await db.query('select id from folder_mappings')).toHaveLength(0);
+    const results = await Promise.all([refreshNativeWorkspace(db, admin.id, mounted), refreshNativeWorkspace(db, admin.id, mounted)]);
+    expect(results.every(result => result?.status === 'ready')).toBe(true);
+    expect(await db.query('select id from folder_mappings')).toHaveLength(1);
+    const member = await createUser(db, { email: 'discovery-member@example.test', username: 'discoverymember', role: 'member' });
+    expect(await refreshNativeWorkspace(db, member.id, mounted)).toBeUndefined();
+    expect(await db.query('select id from folder_mappings where owner_user_id=$1', [member.id])).toHaveLength(0);
+  });
+
+  it.skipIf(process.platform !== 'darwin')('native discovery preserves revoked capability, paused connections and explicit unmapping', async () => {
+    vi.stubEnv('JOSI_NATIVE_RUNTIME', '1');vi.stubEnv('JOSI_WORKSPACE_ENABLED', '1');vi.stubEnv('JOSI_WORKSPACE_MODE', 'ro');
+    const admin = await owner();
+    await refreshNativeWorkspace(db, admin.id, mounted);
+    await db.query('update storage_capabilities set may_map_local=false where user_id=$1', [admin.id]);
+    expect(await refreshNativeWorkspace(db, admin.id, mounted)).toMatchObject({ status: 'revoked' });
+    await db.query('update storage_capabilities set may_map_local=true where user_id=$1', [admin.id]);
+    await db.query("update folder_mappings set status='paused',paused_reason='admin_paused' where owner_user_id=$1", [admin.id]);
+    expect(await refreshNativeWorkspace(db, admin.id, mounted)).toMatchObject({ status: 'paused' });
+    expect((await db.query("select paused_reason from folder_mappings"))[0].paused_reason).toBe('admin_paused');
+    await db.query("update folder_mappings set status='revoked' where owner_user_id=$1", [admin.id]);
+    expect(await refreshNativeWorkspace(db, admin.id, mounted)).toMatchObject({ status: 'revoked' });
+    expect(await db.query("select id from folder_mappings where status='active'")).toHaveLength(0);
+  });
   it('creates the fixed root and a read/write grant for the installation owner', async () => {
     const admin = await owner();
     const result = await reconcileWorkspaceMount(db, { enabled: true, writable: true }, mounted);

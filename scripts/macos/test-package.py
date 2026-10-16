@@ -54,6 +54,13 @@ try:
         chosen=BASE/'tests'/('selected-folder-'+str(time.time_ns()));chosen.mkdir(mode=0o700);(chosen/'chosen.txt').write_text('selected native folder')
         maintenance.workspace(instance,str(chosen),__import__('os').getuid())
         subprocess.run([str(instance.installed/'node/bin/node'),str(workspace_proof),str(root),'verify'],env=env,check=True,timeout=30)
+        # Doctor is checked through the actual packaged server, not an injected
+        # helper. Pause only our owned disposable worker for the stale-HB probe.
+        import signal
+        worker=instance.children['worker']
+        os.kill(worker.pid,signal.SIGSTOP)
+        try:subprocess.run([str(instance.installed/'node/bin/node'),str(repo/'scripts/macos/test-doctor.mjs'),str(root)],env=env,check=True,timeout=60)
+        finally:os.kill(worker.pid,signal.SIGCONT)
         maintenance.workspace(instance,'',__import__('os').getuid())
         subprocess.run([str(instance.installed/'node/bin/node'),str(workspace_proof),str(root),'declined'],env=env,check=True,timeout=30)
     instance.stop()

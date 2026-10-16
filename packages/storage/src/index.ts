@@ -49,9 +49,11 @@ export {
   type SharingPolicy, type SyncPolicy,
 } from './versions.js';
 export { workspacePath, withWorkspaceDirectory, workspaceGrant, workspaceList, workspaceRead, workspaceChange, type WorkspaceChange } from './localWorkspace.js';
+export { nativeWorkspaceProbe } from './nativeWorkspace.js';
 export {
   WORKSPACE_MOUNT_PATH, linuxWorkspaceMountProbe, reconcileWorkspaceMount,
-  workspaceMountConfiguration, workspaceMountRootAllowed,
+  workspaceMountConfiguration, workspaceMountRootAllowed, refreshNativeWorkspace, connectNativeWorkspace,
+  type NativeWorkspaceStatus,
   type WorkspaceMountConfiguration, type WorkspaceMountProbe, type WorkspaceMountReconcileResult,
 } from './workspaceMount.js';
 export { ATTACHMENT_CAPABILITIES, attachmentLimit, maxAttachmentLimit,

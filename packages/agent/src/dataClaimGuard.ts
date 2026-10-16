@@ -48,6 +48,7 @@ export const DATA_CLAIM_TOOLS = new Set([
   'check_email_availability', 'search_email', 'read_email',
   'query_calendar', 'get_event',
   'search_contacts',
+  'list_workspace_mappings', 'workspace_list', 'workspace_read',
 ]);
 
 /** One data-returning tool's receipt for this turn: its name and whatever it
@@ -144,7 +145,21 @@ const RESULT_ARRAY_FIELD: Record<string, string> = {
   search_email: 'emails',
   query_calendar: 'events',
   search_contacts: 'contacts',
+  list_workspace_mappings: 'mappings',
+  workspace_list: 'entries',
 };
+
+function successfulDataResult(tool: string, result: unknown): result is Record<string, unknown> {
+  if (!result || typeof result !== 'object') return false;
+  const value = result as Record<string, unknown>;
+  if (value.error || value.ok === false) return false;
+  if (value.ok === true) return true;
+  // Workspace tools return their typed result directly rather than an ok
+  // envelope. These shapes are evidence only from the corresponding tool.
+  if (tool === 'list_workspace_mappings') return Array.isArray(value.mappings);
+  if (tool === 'workspace_list') return Array.isArray(value.entries);
+  return tool === 'workspace_read' && typeof value.text === 'string' && typeof value.receipt === 'string';
+}
 
 function buildVocabulary(receipts: DataToolReceipt[]): Vocabulary {
   const known = new Set<string>();
@@ -154,7 +169,7 @@ function buildVocabulary(receipts: DataToolReceipt[]): Vocabulary {
   for (const receipt of receipts) {
     if (!DATA_CLAIM_TOOLS.has(receipt.tool)) continue;
     const result = receipt.result;
-    if (!result || typeof result !== 'object' || (result as { ok?: unknown }).ok !== true) continue;
+    if (!successfulDataResult(receipt.tool, result)) continue;
     any = true;
 
     const strings: string[] = [];
@@ -388,6 +403,17 @@ export function checkNarratedSearchWithoutTool(
   const reasons: string[] = [];
   if (!reply) return { fabricated: false, reasons };
 
+  const workspaceAccess = /\bI\s+(?:can|am able to)\s+(?:see|access|read|browse)\s+(?:(?:the|your)\s+)?(?:local workspace|selected folder|connected folder)\b/i.test(reply);
+  if (workspaceAccess) {
+    const verified = receipts.some(({ tool, result }) => {
+      if (!successfulDataResult(tool, result)) return false;
+      return tool === 'list_workspace_mappings' ? Array.isArray(result.mappings) && result.mappings.length > 0
+        : tool === 'workspace_list' ? Array.isArray(result.entries)
+          : tool === 'workspace_read' && typeof result.text === 'string' && typeof result.receipt === 'string';
+    });
+    if (!verified) return { fabricated: true, reasons: ['local workspace access requires a current authorized workspace discovery or read result'] };
+  }
+
   // Mailbox reachability is volatile and stricter than stored connection
   // status: only the dedicated live probe can substantiate availability.
   const emailAvailable = /\b(?:email|mail|gmail|outlook|mailbox)\b[^.!?\n]{0,50}\b(?:is|are|looks?|seems?)\s+(?:currently\s+)?(?:available|connected|working|online|ready)\b|\bI\s+(?:can|am able to)\s+(?:see|access|read|reach)\s+(?:your\s+)?(?:emails?|mail|gmail|outlook|mailbox)\b/i.test(reply);
@@ -434,6 +460,7 @@ export const NARRATED_SEARCH_GUARD_REPROMPT =
   '[system integrity check] Your previous reply described running a search or lookup and reported '
   + 'specific results, but you did not call any tool this turn — nothing was actually searched. '
   + 'Runtime connectivity/indexing claims require get_provider_status this turn. Keep its receipt as internal evidence and never expose it. Either '
+  + 'For local workspace access, call list_workspace_mappings and use workspace_list/workspace_read with a returned mapping_id; an empty list does not prove access. '
   + 'call the appropriate tool NOW to really search, or rewrite your reply to say honestly that you have '
   + 'not searched yet. Never report file names, passages, counts, or other specifics from a search that '
   + 'did not happen.';

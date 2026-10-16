@@ -5,6 +5,23 @@ free space. Keep existing Josi data and recovery copies. Allow several minutes.
 Do not disable Gatekeeper globally. Check the accompanying candidate status
 and checksums for signing and notarization results before physical testing.
 
+macos.18 Doctor acceptance: After installation, open Admin > System checkup.
+Confirm that Mac installation, database, local address, worker and speech checks
+show real results without a missing-helper or Docker warning. If no full backup
+has been created in Josi, Backup history should show Attention. The update card
+should show the installed macos.18 version and explain the signed installer
+update path. Check system should refresh the report. Service repairs still
+require the signed installer and macOS approval.
+
+Selected-folder acceptance: Open Local Workspace and click Refresh folders.
+The installer-selected folder should appear and a single connection should be
+selected automatically. If a retained root is not yet connected, review the
+scope and click Connect folder. If Mac access is unavailable, the page should
+explain it. Ask the AI to list and read a harmless file in that folder; it must
+use the authorized workspace tools and must not describe its application folder
+as your selected workspace. Writes remain unavailable for the native read-only
+selection. Revoked permissions and paused connections must remain revoked/paused.
+
 1. Server only: Open the DMG and double-click Install Josi.pkg. Read Introduction.
    Use Customize to leave Desktop Client unchecked. Confirm the startup disk
    and authorize Installer with a Mac administrator account. The Josi progress

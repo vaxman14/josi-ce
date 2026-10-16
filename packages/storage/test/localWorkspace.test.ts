@@ -1,12 +1,12 @@
 import { macReadFile as readFile } from '../src/macosDirectory.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, symlink, rm, link } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, symlink, rm, link, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspacePath, withWorkspaceDirectory, workspaceGrant } from '../src/localWorkspace.js';
 const roots:string[]=[];
 afterEach(async()=>{await Promise.all(roots.splice(0).map(p=>rm(p,{recursive:true,force:true})));});
-async function fixture(){const root=await mkdtemp(join(tmpdir(),'josi-workspace-'));roots.push(root);await mkdir(join(root,'docs'));await writeFile(join(root,'docs','hello.txt'),'hello');return root;}
+async function fixture(){const root=await realpath(await mkdtemp(join(tmpdir(),'josi-workspace-')));roots.push(root);await mkdir(join(root,'docs'));await writeFile(join(root,'docs','hello.txt'),'hello');return root;}
 describe('Local Workspace containment',()=>{
  it.each(['../etc/passwd','/etc/passwd','a/../../etc','a\\b','C:/data','.env','.ssh/id_rsa','a/.git/config','x\0.txt','a\n.txt'])('refuses protected or malformed path %j',p=>expect(()=>workspacePath(p)).toThrow());
  it('accepts Unicode names without changing identity',()=>expect(workspacePath('Résumé/你好.txt')).toBe('Résumé/你好.txt'));

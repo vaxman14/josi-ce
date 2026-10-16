@@ -1,6 +1,6 @@
 import type { ToolSpec } from './tools.js';
 import type { Db } from '@josi-ce/core';
-import { workspaceList, workspaceRead, workspaceChange, proposeCodingRun, codingRunStatus, type WorkspaceChange } from '@josi-ce/storage';
+import { workspaceList, workspaceRead, workspaceChange, proposeCodingRun, codingRunStatus, refreshNativeWorkspace, type WorkspaceChange } from '@josi-ce/storage';
 const params={mapping_id:{type:'string',description:'Copy the exact mapping_id returned by list_workspace_mappings.'},path:{type:'string'}};
 export interface WorkspaceMappingDiscovery {
  mapping_id:string;
@@ -21,11 +21,12 @@ export async function executeWorkspaceTool(db:Db,userId:string,name:string,input
  // mappingId is a temporary compatibility alias for callers predating the canonical tool schema.
  const id=String(input.mapping_id??input.mappingId??'');const path=String(input.path??'');
  if(name==='list_workspace_mappings'){
+  const nativeWorkspace=await refreshNativeWorkspace(db,userId);
   const mappings=await db.query<{id:string;display_path:string;label:string;recursive:boolean;may_create:boolean;may_edit:boolean;may_move:boolean;may_delete:boolean;writable:boolean}>(`select m.id,m.display_path,r.label,m.recursive,m.may_create,m.may_edit,m.may_move,m.may_delete,r.writable
    from folder_mappings m join storage_roots r on r.id=m.root_id join storage_capabilities c on c.user_id=m.owner_user_id
    where m.owner_user_id=$1 and m.provider='local' and m.status='active' and r.enabled=true and c.may_map_local=true
    order by m.display_path,m.id`,[userId]);
-  return {mappings:mappings.map<WorkspaceMappingDiscovery>(m=>({mapping_id:m.id,name:m.display_path||m.label,recursive:m.recursive,permissions:{create:m.writable&&m.may_create,edit:m.writable&&m.may_edit,move:m.writable&&m.may_move,delete:m.writable&&m.may_delete}}))};
+  return {mappings:mappings.map<WorkspaceMappingDiscovery>(m=>({mapping_id:m.id,name:m.display_path||m.label,recursive:m.recursive,permissions:{create:m.writable&&m.may_create,edit:m.writable&&m.may_edit,move:m.writable&&m.may_move,delete:m.writable&&m.may_delete}})),...(nativeWorkspace?{nativeWorkspace}: {})};
  }
  if(name==='workspace_list')return workspaceList(db,userId,id,path);
  if(name==='workspace_read'){const f=await workspaceRead(db,userId,id,path);if(f.data.includes(0))return {error:'Binary files are available for download in Local Workspace'};return {receipt:f.receipt,mapping_id:id,path,size:f.size,modified:f.modified,text:f.data.toString('utf8').slice(0,50000),untrustedContent:true};}
@@ -35,6 +36,7 @@ export async function executeWorkspaceTool(db:Db,userId:string,name:string,input
  throw new Error('Unknown workspace tool');
 }
 export async function workspaceToolNames(db:Db,userId:string):Promise<Set<string>>{
+ await refreshNativeWorkspace(db,userId);
  const rows=await db.query<{coding_enabled:boolean}>(`select c.coding_enabled from folder_mappings m join storage_capabilities c on c.user_id=m.owner_user_id join storage_roots r on r.id=m.root_id where m.owner_user_id=$1 and m.provider='local' and m.status='active' and c.may_map_local=true and r.enabled=true limit 1`,[userId]);
  return new Set(rows.length?WORKSPACE_TOOLS.filter(t=>!t.def.name.includes('code')||(rows[0].coding_enabled&&!!process.env.JOSI_CODING_HELPER_SOCKET)).map(t=>t.def.name):[]);
 }

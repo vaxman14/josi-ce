@@ -13,6 +13,7 @@
 import { appendEvent, resolveAccess, type Db } from '@josi-ce/core';
 import { isAbsolute } from 'node:path';
 import { PathEscape, isInside, resolveWithin, safeRelativePath } from './paths.js';
+import { pinNativeWorkspace } from './nativeWorkspace.js';
 
 export class MappingError extends Error {
   constructor(message: string, readonly code: string = 'refused') {
@@ -135,11 +136,15 @@ async function createLocalMapping(db: Db, args: CreateMappingArgs): Promise<Mapp
   // access. Checking only at access time would let a mapping exist that names
   // somewhere outside the root, and a mapping that exists gets displayed,
   // counted, and eventually trusted.
-  const resolved = await resolveWithin(root.container_path, relativePath, { mustExist: true });
-
-  if (args.statImpl) {
-    const stat = await args.statImpl(resolved.absolute).catch(() => null);
-    if (!stat || !stat.isDirectory()) throw new MappingError('that is not a folder', 'not_a_directory');
+  if (process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1' && root.container_path === '/workspace') {
+    const directory = await pinNativeWorkspace('/workspace' + (relativePath ? '/' + relativePath : ''));
+    await directory.close();
+  } else {
+    const resolved = await resolveWithin(root.container_path, relativePath, { mustExist: true });
+    if (args.statImpl) {
+      const stat = await args.statImpl(resolved.absolute).catch(() => null);
+      if (!stat || !stat.isDirectory()) throw new MappingError('that is not a folder', 'not_a_directory');
+    }
   }
 
   const displayPath = relativePath ? `${root.label}/${relativePath}` : root.label;

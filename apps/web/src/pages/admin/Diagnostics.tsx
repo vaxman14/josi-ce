@@ -14,6 +14,7 @@ interface DoctorCheck {
 }
 
 export interface DoctorDiagnosis {
+  runtime?: 'macos';
   checkedAt: string;
   healthy: boolean;
   safeRepairAvailable: boolean;
@@ -45,6 +46,7 @@ interface RepairResult {
 }
 
 interface UpdateJob {
+  applyMode?: 'installer';
   state: 'idle' | 'running' | 'complete' | 'rolled_back' | 'failed';
   currentVersion: string;
   targetVersion: string | null;
@@ -67,6 +69,10 @@ interface UpdateStatus {
 const STATE_LABEL: Record<DoctorState, string> = {
   pass: 'Working', warn: 'Attention', fail: 'Needs repair',
 };
+
+export function NativeMacRecovery() {
+  return <p className="mt-3 text-sm text-muted-foreground">Review the failed checks below. Use the Josi Server app to review installation status. Service repairs use the signed Josi installer and macOS administrator approval; this page does not restart services or change file permissions.</p>;
+}
 
 export function Diagnosis({ value }: { value: DoctorDiagnosis }) {
   const checks = orderDoctorChecks(value.checks);
@@ -192,7 +198,9 @@ export function AdminDiagnostics() {
     try {
       const next = await api.post<DoctorDiagnosis>('/admin/doctor/check');
       setDiagnosis(next);
-      setNote(next.healthy ? 'Everything Josi checked is working.' : 'The check found something that needs attention.');
+      setNote(next.healthy ? next.checks.some(check => check.state === 'warn')
+        ? 'No failures were found. Some items still need attention.' : 'Everything Josi checked is working.'
+        : 'The check found something that needs attention.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The system check did not finish.');
     } finally { setBusy(null); }
@@ -226,19 +234,21 @@ export function AdminDiagnostics() {
 
   const unavailable = status?.available === false;
   const running = busy !== null;
+  const nativeMac = diagnosis?.runtime === 'macos';
+  const installerUpdates = update?.job.applyMode === 'installer';
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">System checkup</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Josi Doctor checks this installation, explains problems plainly, and can repair a limited set of safe problems after you approve the exact plan.</p>
+        <p className="mt-1 text-sm text-muted-foreground">{nativeMac ? 'Josi Doctor checks your Mac installation and explains anything that needs attention. Service repairs use the signed Josi installer with your approval.' : 'Josi Doctor checks this installation, explains problems plainly, and can repair a limited set of safe problems after you approve the exact plan.'}</p>
       </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {note ? <p role="status" className="rounded-lg border border-border bg-card p-3 text-sm">{note}</p> : null}
 
       <Card>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><CardTitle>Josi updates</CardTitle><p className="mt-1 text-sm text-muted-foreground">Updates never install automatically. Josi backs up first, verifies the new release, and rolls back when it safely can.</p></div>
+          <div><CardTitle>Josi updates</CardTitle><p className="mt-1 text-sm text-muted-foreground">{installerUpdates ? 'Mac updates use the signed Josi installer. Browser-based installation is unavailable. Your data is retained by the installer.' : 'Updates never install automatically. Josi backs up first, verifies the new release, and rolls back when it safely can.'}</p></div>
           {update ? <Badge tone={update.job.state === 'failed' ? 'danger' : update.updateAvailable ? 'primary' : 'ok'}>{update.job.state === 'running' ? 'Updating' : update.updateAvailable ? 'Available' : `v${update.currentVersion}`}</Badge> : null}
         </div>
         {updateError ? <div className="mt-3"><ErrorNote>{updateError}</ErrorNote></div> : null}
@@ -247,7 +257,7 @@ export function AdminDiagnostics() {
         ) : update?.job.state === 'rolled_back' || update?.job.state === 'failed' || update?.job.state === 'complete' ? (
           <p className="mt-3 text-sm" role="status">{update.job.message}</p>
         ) : null}
-        {update?.updateAvailable && update.availableVersion ? (
+        {!installerUpdates && update?.updateAvailable && update.availableVersion ? (
           <div className="mt-4 rounded-md border border-primary/40 p-3">
             <p className="text-sm font-medium">Version {update.availableVersion} is available</p>
             {update.release?.name ? <p className="mt-1 text-sm text-muted-foreground">{update.release.name}</p> : null}
@@ -258,7 +268,7 @@ export function AdminDiagnostics() {
             <div className="mt-3 flex flex-wrap gap-2"><Button type="button" disabled={updateBusy !== null || confirmation !== `UPDATE ${update.availableVersion}`} onClick={() => void startUpdate()}>{updateBusy === 'start' ? 'Starting…' : `Back up and update to ${update.availableVersion}`}</Button></div>
           </div>
         ) : null}
-        <div className="mt-4"><Button type="button" variant="secondary" disabled={updateBusy !== null || update?.job.state === 'running'} onClick={() => void checkUpdate()}>{updateBusy === 'check' || updateBusy === 'load' ? 'Checking…' : 'Check for updates'}</Button></div>
+        {!installerUpdates ? <div className="mt-4"><Button type="button" variant="secondary" disabled={updateBusy !== null || update?.job.state === 'running'} onClick={() => void checkUpdate()}>{updateBusy === 'check' || updateBusy === 'load' ? 'Checking…' : 'Check for updates'}</Button></div> : null}
       </Card>
 
       <div id="doctor-actions">
@@ -271,14 +281,14 @@ export function AdminDiagnostics() {
       ) : (
         <Card>
           <CardTitle>{diagnosis?.healthy ? 'Josi looks healthy' : diagnosis ? 'Josi found a problem' : 'Check this installation'}</CardTitle>
-          <p className="mt-2 text-sm text-muted-foreground">This checks Josi, Docker, storage, the database, networking, backups, notifications, and background work.</p>
+          <p className="mt-2 text-sm text-muted-foreground">{nativeMac ? 'This checks the Mac installation, storage, database, local address, speech, backup history, notifications, background worker, and any selected workspace folder.' : 'This checks Josi, Docker, storage, the database, networking, backups, notifications, and background work.'}</p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button type="button" disabled={running} onClick={() => void runCheck()}>{busy === 'check' || busy === 'load' ? 'Checking…' : 'Check system'}</Button>
             {diagnosis && !diagnosis.healthy && diagnosis.safeRepairAvailable ? (
               <Button type="button" variant="secondary" disabled={running} onClick={() => void prepareRepair()}>{busy === 'plan' ? 'Preparing…' : 'Prepare automatic fix'}</Button>
             ) : null}
           </div>
-          {diagnosis && !diagnosis.healthy && !diagnosis.safeRepairAvailable ? <p className="mt-3 text-sm text-muted-foreground">This problem is outside Doctor's safe repair boundary. It will not guess or change unrelated software.</p> : null}
+          {diagnosis && !diagnosis.healthy && !diagnosis.safeRepairAvailable ? nativeMac ? <NativeMacRecovery /> : <p className="mt-3 text-sm text-muted-foreground">This problem is outside Doctor's safe repair boundary. It will not guess or change unrelated software.</p> : null}
         </Card>
       )}
       </div>
@@ -297,7 +307,7 @@ export function AdminDiagnostics() {
         </Card>
       ) : null}
       {diagnosis ? <Diagnosis value={diagnosis} /> : null}
-      <p className="text-xs text-muted-foreground">If the Josi website itself will not open, rerun the installer command. A browser page cannot repair a server it cannot reach.</p>
+      <p className="text-xs text-muted-foreground">{nativeMac ? 'If the Josi website will not open, review Josi Server on your Mac and use the signed installer if a repair is needed. Keep your existing data.' : 'If the Josi website itself will not open, rerun the installer command. A browser page cannot repair a server it cannot reach.'}</p>
     </div>
   );
 }
