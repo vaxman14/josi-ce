@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Josi P0 Browser Proof",
+  "version": "0.0.1",
+  "description": "Disposable native messaging and page-observation proof. Not a production controller.",
+  "permissions": ["nativeMessaging", "activeTab", "scripting"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "action": {"default_popup": "probe.html"}
+}

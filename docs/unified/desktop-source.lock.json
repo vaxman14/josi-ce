@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "desktopVersion": "0.6.5",
+  "upstreamRevisionLabel": "e1d28de",
+  "upstreamGitObjectVerified": false,
+  "verifiedAgainst": "pkg-candidate-20261016T074431Z/Josi-corresponding-sources.zip",
+  "archivePrefix": "corresponding-sources/sources/desktop-client-0.6.5/",
+  "verifiedAt": "2026-10-19",
+  "files": {
+    "src/connection-policy.js": "2aa900306a9b429cade6425f7aa4edc45fce00dcb5699dba18e9891ee5c2273f",
+    "src/direct-preload.js": "4ab7dba12d9e84d28246c20e10ad6235418a61c2725287b0e5996b2c41627fbf",
+    "src/flight-recorder.js": "c75233c397dd9be0a8e744be4b26e07f1911ca7c60b08641a180c35ddd3082d1",
+    "src/index.html": "b83306cb51856908c3ddac1886d98ba10b30843152fe8f8034e05a672cde0956",
+    "src/local-workspace.js": "adc23193607d29b4e5796f1face909008aa384e47e4e42845581f0dfb835e614",
+    "src/main.js": "d36d1ef6f710112d40a2c2b00f19d7b18e916b19b0d5d6155b4601acd019b1cb",
+    "src/preload.js": "c8c86016775e65079a89afd7d21477ec52c126da4d2f2d5b78759e35631c6823",
+    "src/renderer.js": "680554d4dd962f8b807d0dfdd39614a115455b5656d4cfe23848ad5df234c71e",
+    "src/styles.css": "c99c7c306a6dfc569349dfbb6f0192834cb5ee40400513b77194aa0a6c64f5ff"
+  }
+}

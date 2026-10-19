@@ -1,6 +1,6 @@
 # Unified Josi app and autonomous work build plan
 
-Accepted product direction: 19 October 2026. Status: **planning approved; implementation phases pending**.
+Accepted product direction: 19 October 2026. Status: **implementation authorized; P0 in progress**. See [current build status](unified/BUILD_STATUS.md) and [P0 evidence](unified/P0_BASELINE.md).
 
 Josi will ship as one macOS app that includes the server and the user interface, completes setup inside the app, and continues to support clients connected to a server on another computer. It will own work through a verified outcome or a specific request for further instructions. A compact live summary in chat and a full task-manager page will show the same work. Browser and computer automation will run in a separate automation desktop from the first release, governed by explicit permissions and vault-backed Cardinal Rules.
 
@@ -170,7 +170,7 @@ Live viewing shows only the authorized automation desktop, with protected-conten
 
 ## Build phases and acceptance gates
 
-All phases below are **pending**. The default order is sequential; dependencies identify what must be proven before a later phase can enable execution. Each phase ends with a focused commit, applicable tests, evidence, and an updated status. A feasibility failure produces a concrete decision request; it does not silently remove an accepted requirement.
+P0 is in progress; later phase gates remain pending. The default order is sequential; dependencies identify what must be proven before a later phase can enable execution. The owner authorized independent development while pursuing commercial macOS VM permission. Work that does not depend on unresolved feasibility checks may proceed, with execution disabled until its gates pass. Each phase ends with a focused commit, applicable tests, evidence, and an updated status. A feasibility failure does not silently remove an accepted requirement.
 
 | Phase | Deliverable | Dependencies |
 |---|---|---|
@@ -273,7 +273,7 @@ Test server-only, client-only, combined, and remote-client installations; preser
 - Preserve historical artifacts, failed-run evidence, databases, keys, and recovery copies. Use disposable environments for fault injection and acceptance preparation.
 - Run relevant checks and the repository's public-data scanner for each change. Plan-only commits require document/link/traceability review and scanning, not unrelated runtime builds.
 - Use the available Ruflo route/memory tools when required by workspace instructions. If unavailable, record that limitation and use the committed plan and phase evidence; do not claim a swarm or memory operation ran.
-- No implementation, installation, signing, VM provisioning, or release publication is authorized by this documentation commit. The next build instruction begins P0.
+- The subsequent owner instruction authorized implementation, disposable development tests, and GitHub phase commits, beginning P0. Commercial VM licensing remains unresolved and is being pursued by the owner. Do not confuse development proofs with production acceptance or release publication.
 
 ## Reference points for feasibility work
 
