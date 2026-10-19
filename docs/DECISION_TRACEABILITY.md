@@ -163,6 +163,41 @@ Status accuracy matters more than a full column of ticks. A row that says
 
 ---
 
+## Unified app and autonomous work decisions
+
+Accepted 19 October 2026. The detailed requirements and acceptance gates live
+in [the unified build plan](UNIFIED_JOSI_BUILD_PLAN.md). These are planned
+changes, not claims about the currently installed product.
+
+For the new release, U08/U09 replace unconditional per-action prompts in
+M43/M44 and the storage section's M47 only when explicit supported automation
+grants and equivalent effect verification exist. Missing grants or unsupported
+verification retain ask/deny behavior. Admin mapping restrictions, user/device
+consent, and human-only rule administration remain. P0 inventories these
+boundaries; P4 publishes and tests their replacement mapping. Existing one-time
+approvals never migrate into standing authority automatically.
+
+| ID | Decision | Status | Build phases |
+|---|---|---|---|
+| U01 | One macOS app/installer with in-app setup and coordinated lifecycle. | Planned | P1, P5, P12 |
+| U02 | Preserve remote CE clients and local-host/remote-connect modes. | Planned | P1, P4, P5, P12 |
+| U03 | macOS first; portable contracts for later Windows/Linux work. | Planned | P0, P1 |
+| U04 | Remove OpenClaw/Hermes from the rebuilt client; retain CE. | Planned | P1, P5, P12 |
+| U05 | Chrome/Firefox/Safari/Brave extensions control dedicated workspaces only. | Planned | P0, P7 |
+| U06 | Separate automation desktop from first release; proposed managed macOS VM and separate window. | Planned; feasibility gate | P0, P6 |
+| U07 | Browser/computer tools work through authorized local or remote devices. | Planned | P4, P7, P8 |
+| U08 | Autonomous execution inside grants and rules; contextual review plus deterministic enforcement. | Planned | P3, P4, P7, P8 |
+| U09 | Detailed server permission settings plus device-owner consent and stop control. | Planned | P4 |
+| U10 | Explicit, supported, testable Cardinal Rules; reject vague rules and absolute reliability claims. | Planned | P3 |
+| U11 | Test Rule provides LLM advice and enforcement evidence; only super admin activates/changes/retires. | Planned | P3 |
+| U12 | Master Vault is the sole authority for secrets and rule versions/reviews/history. | Planned | P2, P3, P12 |
+| U13 | Automatic work memory and evidence-based learning with inspect/correct/pin/forget. | Planned | P10 |
+| U14 | Own verified outcomes or request specific further instructions; preserve unfinished goals. | Planned | P9 |
+| U15 | One live task record drives a compact chat summary and full task-manager page. | Planned | P9, P11 |
+| U16 | Readable activity, optional live viewing, steering, pause/takeover/resume/stop. | Planned | P4, P6, P11 |
+| U17 | Preserve CE data, vault/recovery material, tasks, and connections during migration. | Planned | P2, P5, P12 |
+| U18 | Phase-sized verified build checkpoints; Astra when selected by the operator. | Planned | P0–P12 |
+
 ## Open items requiring a human
 
 1. **Benchmarks before any capacity claim** (M97). No numbers ship until a Pi,

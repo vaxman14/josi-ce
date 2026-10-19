@@ -26,6 +26,7 @@ proven and what is not.
 | Document | What it is |
 |---|---|
 | [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) | Phases, acceptance criteria and risks |
+| [`docs/UNIFIED_JOSI_BUILD_PLAN.md`](docs/UNIFIED_JOSI_BUILD_PLAN.md) | Accepted next-build plan: unified Mac app, isolated automation, vault rules, memory, and live task progress; implementation pending |
 | [`docs/DECISION_TRACEABILITY.md`](docs/DECISION_TRACEABILITY.md) | Every product decision, linked to its implementation or marked deferred |
 | [`docs/TELEGRAM.md`](docs/TELEGRAM.md) | Reaching Josi from Telegram with your own bot |
 | [`docs/PWA.md`](docs/PWA.md) | Installing Josi on a phone or desktop, and exactly what is cached |

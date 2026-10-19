@@ -7,6 +7,19 @@ risk. A phase is not done until its tests pass and the diff has been scanned.
 Traceability to the canonical map lives in `DECISION_TRACEABILITY.md`. Extraction
 decisions live in `EXTRACTION_MAP.md`. Neither is summarised away here.
 
+## Accepted next build direction as of 19 October 2026
+
+[Unified Josi app and autonomous work build plan](UNIFIED_JOSI_BUILD_PLAN.md)
+is the governing plan for the next macOS build. It defines phases P0–P12 for
+one app with in-app setup, preserved remote CE clients, a separate automation
+desktop, four-browser extensions, computer use, vault-backed Cardinal Rules,
+customizable permissions, current-work memory, durable goal ownership, and a
+live chat summary paired with the full Tasks page. All implementation phases
+are pending. It supersedes the older optional-client/external-browser setup
+direction for the new release; historical acceptance claims below remain
+specific to their original versions. Decisions U01–U18 are indexed in
+[decision traceability](DECISION_TRACEABILITY.md#unified-app-and-autonomous-work-decisions).
+
 ---
 
 ## Phase 0 — Repository, guardrails, documentation ✅

@@ -1,5 +1,11 @@
 # Native PKG distribution
 
+> Next-build direction, accepted 19 October 2026:
+> [Unified Josi build plan](../UNIFIED_JOSI_BUILD_PLAN.md) replaces the separate
+> optional-client and external-browser setup experience in the planned release.
+> The behavior described below is the existing packaging baseline. The unified
+> implementation is pending and does not inherit physical acceptance from it.
+
 The macOS distribution now uses Apple's component/distribution PKG flow. Open
 the branded DMG and double-click Install Josi.pkg. Installer owns authorization,
 component selection and installation. Josi Server.app is a installed management

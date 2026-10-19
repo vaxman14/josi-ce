@@ -1,3 +1,7 @@
+> Next build, accepted 19 October 2026: use
+> [Unified Josi build plan](../UNIFIED_JOSI_BUILD_PLAN.md) and its P0–P12 gates.
+> The audit below remains historical evidence, not the new product roadmap.
+
 > Current policy update, 15 October 2026: Roman explicitly requested removing
 > the native macOS scanner requirement. macos.17 source enables uploads,
 > indexing and OCR using the bundled engines with no scanner dependency.
