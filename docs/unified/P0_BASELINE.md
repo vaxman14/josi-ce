@@ -11,14 +11,15 @@ Date: 19 October 2026. Baseline: `ed2987209a984ee412fc6334f5595ba794ea37ec`, bra
 | Retained desktop source tests | 21 tests passed | Includes static checks and actual local-workspace operations; not live UI acceptance. |
 | Apple virtualization | Supported on this Apple Silicon host outside the tool sandbox | Sandbox XPC denial is not a hardware failure. |
 | Restore image | Apple metadata retrieved; 26,637,307,067 bytes; pinned SHA-256 matched | OS 27.0.1 / 26A434; no production minimum inferred. |
-| VM install | Reached 78%; automatically cancelled below the free-space reserve | No completed installation, boot, or lifecycle claim. |
+| VM install and lifecycle | Retry installed successfully; start/pause/resume/cold restart passed | No network, guest-agent, or application automation claim. |
+| Guest view and input | Separate window rendered macOS Setup Assistant; pointer advanced language/region setup | Guest desktop account/consents and structured observations are still pending. |
 | Encrypted workspace primitive | Wrong key denied; synthetic data survived lock/reopen | No real browser, vault integration, session revocation, or crash test yet. |
 | Native message framing | 2 tests passed: multi-message/unicode and malformed/oversized/unsupported requests | Actual browser invocation still required for all four browsers. |
 | Safari app-extension packaging | Generated and compiled for macOS with signing disabled | Xcode's generated parent bundle ID required normalization; no installation or browser invocation. |
 
 Hardware: Mac16,5, arm64, 48 GiB RAM, 16 logical CPUs, hardware virtualization supported. Host macOS 27.0.1 (26A434), Xcode 27.0 (27A266a). Probe uses 4 CPUs, 8 GiB RAM, a sparse 64 GiB disk, 1440×900 display, no NIC, no host share, no audio, and a virtio socket device. Configuration validation passed before installation. This does not prove an authenticated guest socket or selective network enforcement. SDK minimums are not product requirements.
 
-The downloaded restore consumed 26,641,330,176 allocated bytes; the partial guest disk consumed 20,405,854,208. Both were disposable files created by this probe and removed after recording the failed run. The host-space guard worked. The owner subsequently made storage available and authorized a retry. Foundation reported 401.4 GiB available for important usage, including automatically reclaimable space, and 79.4 GiB immediately free. The revised preflight requires 64 GiB available and 16 GiB immediately free **after** the download; the 8 GiB actual-free emergency stop remains. These are conservative development thresholds, not measured customer minimums or a reservation. Do not manually delete user snapshots to force a retry. The retry is in progress; no success is claimed yet.
+The downloaded restore consumed 26,641,330,176 allocated bytes; the partial guest disk consumed 20,405,854,208. Both were disposable files created by this probe and removed after recording the failed run. The host-space guard worked. The owner subsequently made storage available and authorized a retry. Foundation reported 401.4 GiB available for important usage, including automatically reclaimable space, and 79.4 GiB immediately free. The revised preflight requires 64 GiB available and 16 GiB immediately free **after** the download; the 8 GiB actual-free emergency stop remains. These are conservative development thresholds, not measured customer minimums or a reservation. Do not manually delete user snapshots to force a retry. The retry succeeded. Preflight measured 60,256,559,104 bytes immediately free and 406,039,255,302 available for important usage. The installed sparse disk had 28,761,006,080 allocated bytes (64 GiB logical), before completing guest setup. These are observed development values, not customer minimums.
 
 ## Source and distribution baseline
 
@@ -53,7 +54,7 @@ Queue leases use fenced claim/renew/complete behavior. Durable effects retain co
 
 ## Remaining executable gates
 
-- Install/boot the disposable guest on sufficient storage; display, keyboard/pointer, guest Accessibility/screen consent, authenticated guest channel, pause/resume/cold restart and crash recovery.
+- Complete disposable guest setup, verify keyboard editing and a usable desktop, guest Accessibility/screen consent, authenticated guest channel, and crash recovery. Installation/lifecycle and initial display/pointer checks have now passed.
 - Prove guest egress allow/deny and host-file containment. A guest with no NIC proves neither usable browsing nor selective network access. Investigate an approved proxy through the authenticated guest channel; reject alternate ungoverned paths.
 - Run Chrome/Brave/Firefox/Safari in dedicated guest workspaces; prove browser/native round trips, observations, forms, redirects/popups/frames, restricted pages, permission loss, and reconnect. Compile/package results alone cannot pass these checks.
 - Prove vault-managed workspace reopen/lock/revocation/crash/session reset, with provider-session revocation distinguished from deleting local cookies.
@@ -67,3 +68,9 @@ Queue leases use fenced claim/renew/complete behavior. Durable effects retain co
 - [Safari packaging](https://developer.apple.com/documentation/safariservices/packaging-a-web-extension-for-safari), [Safari native messaging](https://developer.apple.com/documentation/safariservices/messaging-between-the-app-and-javascript-in-a-safari-web-extension), and [Brave extension support](https://support.brave.app/hc/en-us/articles/360017909112-How-can-I-add-extensions-to-Brave). Safari needs its native app-extension adapter; Chromium API parity is not presumed for Firefox or Safari.
 
 Storage semantics: [Apple Disk Utility](https://support.apple.com/en-euro/guide/disk-utility/dskutl1005/mac) distinguishes immediately free and automatically purgeable space; the probe uses Foundation’s `volumeAvailableCapacityForImportantUsage` for admission and actual free blocks for its emergency stop.
+
+## Guest display follow-up
+
+The separate ad-hoc signed AppKit viewer uses `VZVirtualMachineView` and guest keyboard/pointer devices. It does not request host Accessibility or screen-capture permission, attach personal profiles, or inject global host input. A black frame alone was not treated as proof of boot failure or display success; the observed macOS Setup Assistant and successful next-screen navigation established the initial view/input result.
+
+A subsequent launch stalled opening the probe marker under Documents (a process sample showed `Data(contentsOf:)` waiting in `open`). Only the disposable guest was moved, on the same volume, to `/private/tmp/josi-p0-guest-20261019`; `build/unified-p0/guest` remains a link to it. A copy of the test viewer there launched promptly. No broad Documents permission, user file change, or snapshot deletion was used. The production runtime must use its managed app-data location; this temporary guest remains disposable and may not survive system cleanup. Setup Assistant is still in progress.

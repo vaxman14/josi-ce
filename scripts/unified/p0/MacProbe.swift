@@ -5,7 +5,13 @@ import Virtualization
 
 @main
 struct MacProbe {
-    static let output = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.deletingLastPathComponent()
+    static let output: URL = {
+        let directory = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.deletingLastPathComponent()
+        // The same signed development binary also has a disposable view app.
+        return directory.lastPathComponent == "MacOS"
+            ? directory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            : directory
+    }()
     static let workspace = output.appendingPathComponent("guest", isDirectory: true)
 
     static func failure(_ message: String) -> NSError {
@@ -150,12 +156,29 @@ struct MacProbe {
     }
 
     @MainActor
-    static func main() async {
-        do {
-            guard CommandLine.arguments.count == 2 else {
-                throw failure("Use capabilities, restore-info, install, or lifecycle")
+    static func main() {
+        let mode = CommandLine.arguments.count == 1 && Bundle.main.bundleIdentifier == "com.socalreceptionist.josi.p0.guest-view"
+            ? "display" : CommandLine.arguments.dropFirst().first ?? ""
+        if mode == "display" {
+            do {
+                let marker = try JSONSerialization.jsonObject(with: Data(contentsOf: workspace.appendingPathComponent("proof.json"))) as? [String: Any]
+                guard marker?["state"] as? String == "installed" else { throw failure("A completed disposable installation is required") }
+                // AppKit must own the main run loop outside an executing Swift
+                // async-main actor job, so guest start/input callbacks can run.
+                GuestDisplay.run(machine: VZVirtualMachine(configuration: try configuration()))
+            } catch {
+                emit(["status": "failed", "message": (error as NSError).localizedDescription]); exit(1)
             }
-            switch CommandLine.arguments[1] {
+        } else {
+            Task { @MainActor in await command(mode) }
+            dispatchMain()
+        }
+    }
+
+    @MainActor
+    static func command(_ mode: String) async {
+        do {
+            switch mode {
             case "capabilities":
                 emit([
                     "probe": "macos-virtualization-capabilities",
@@ -193,6 +216,7 @@ struct MacProbe {
             default:
                 throw NSError(domain: "JosiP0", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unknown probe"])
             }
+            exit(0)
         } catch {
             let failure = error as NSError
             emit(["status": "failed", "domain": failure.domain, "code": failure.code, "message": failure.localizedDescription])
