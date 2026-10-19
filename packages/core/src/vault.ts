@@ -4,6 +4,9 @@ import { json } from './db.js';
 import { appendEvent } from './events.js';
 import { MasterKey } from './masterKey.js';
 import { Secret, openSealed, seal, unwrapSecrets } from './sealing.js';
+import { VaultRecordStore } from './vaultRecords.js';
+export { VaultRecordError, VaultRecordConflictError } from './vaultRecords.js';
+export type { VaultRecordKind, VaultRecordReference, VaultRecordValue } from './vaultRecords.js';
 
 export class VaultError extends Error {}
 export class VaultLockedError extends VaultError {}
@@ -60,7 +63,18 @@ export async function verifyRecoveryKey(db:Db,recoveryText:string):Promise<Maste
   return new MasterKey(Buffer.from(opened.key,'base64'));
 }
 
-export async function recoverVault(db:Db,installKey:MasterKey,recoveryText:string,actorUserId:string):Promise<void>{const vaultKey=await verifyRecoveryKey(db,recoveryText);await db.query(`update vault_state set master_key_enc=$1,locked=false,key_version=key_version+1,updated_at=now() where id=true`,[seal(installKey,{key:vaultKey.reveal().toString('base64')})]);await appendEvent(db,{actorUserId,actor:'super_admin',kind:'vault.recovered',subjectType:'vault'});}
+export async function recoverVault(db:Db,installKey:MasterKey,recoveryText:string,actorUserId:string):Promise<void>{
+  if(!db.transaction)throw new VaultError('Vault recovery requires database transactions');
+  await db.transaction(async tx=>{
+    await tx.query(`select id from vault_state where id=true for update`);
+    const vaultKey=await verifyRecoveryKey(tx,recoveryText);
+    await tx.query(`update vault_state set master_key_enc=$1,locked=false,key_version=key_version+1,
+      authority_epoch=authority_epoch+1,authority_reconciliation_required=true,updated_at=now() where id=true`,
+      [seal(installKey,{key:vaultKey.reveal().toString('base64')})]);
+    await tx.query(`delete from vault_unlocks`);
+    await appendEvent(tx,{actorUserId,actor:'super_admin',kind:'vault.recovered',subjectType:'vault'});
+  });
+}
 
 export async function vaultStatus(db:Db){
   const [state]=await db.query<{initialized_at:string|null;locked:boolean;key_version:number;recovery_key_fingerprint:string|null;updated_at:string}>(`select initialized_at,locked,key_version,recovery_key_fingerprint,updated_at from vault_state where id=true`);
@@ -73,6 +87,12 @@ async function blocked(db:Db,reason:'master_locked'|'key_unavailable'){await db.
 async function assertMasterOpen(db:Db):Promise<void>{const [s]=await db.query<{initialized_at:string|null;locked:boolean}>(`select initialized_at,locked from vault_state where id=true`);if(!s?.initialized_at){await blocked(db,'key_unavailable');throw new VaultLockedError('the Master Vault is not initialized');}if(s.locked){await blocked(db,'master_locked');throw new VaultLockedError('the Master Vault is locked');}}
 
 async function vaultMasterKey(db:Db,installKey:MasterKey):Promise<MasterKey>{await assertMasterOpen(db);const [state]=await db.query<{master_key_enc:string|null}>(`select master_key_enc from vault_state where id=true`);if(!state?.master_key_enc)throw new VaultLockedError('the Master Vault key is unavailable');const opened=openSealed<{key:string}>(installKey,state.master_key_enc);return keyFromBase64url(Buffer.from(opened.key,'base64').toString('base64url'));}
+
+/** Protected record storage shares this vault's existing root, never a second
+ * key or a plaintext settings copy. Activation is a separate P3 operation. */
+export function vaultRecords(db:Db,installKey:MasterKey):VaultRecordStore {
+  return new VaultRecordStore(db,tx=>vaultMasterKey(tx,installKey));
+}
 
 async function boxKey(db:Db,masterKey:MasterKey,ownerUserId:string,create=false):Promise<MasterKey>{
   const vaultKey=await vaultMasterKey(db,masterKey); let [box]=await db.query<{wrapped_key_enc:string;locked:boolean}>(`select wrapped_key_enc,locked from vault_boxes where owner_user_id=$1`,[ownerUserId]);
@@ -91,13 +111,13 @@ export async function putVaultItem(db:Db,masterKey:MasterKey,args:{ownerUserId:s
   await appendEvent(db,{actorUserId:args.actorUserId??args.ownerUserId,actor:args.actorUserId&&args.actorUserId!==args.ownerUserId?'guardian':'user',kind:'vault.item_stored',subjectType:'vault_item',subjectId:row.id,payload:{ownerUserId:args.ownerUserId,kind:args.kind,service:args.service}});return view(row);
 }
 
-export async function getVaultSecret(db:Db,masterKey:MasterKey,args:{ownerUserId:string;service:string;slot:string}):Promise<Secret>{const key=await boxKey(db,masterKey,args.ownerUserId);const [row]=await db.query<{value_enc:string}>(`select value_enc from vault_items where owner_user_id=$1 and service=$2 and slot=$3 and status='active'`,[args.ownerUserId,args.service,args.slot]);if(!row)throw new VaultError('credential not found');const opened=openSealed<{value:string;ownerUserId:string;service:string;slot:string}>(key,row.value_enc);if(opened.ownerUserId!==args.ownerUserId||opened.service!==args.service||opened.slot!==args.slot)throw new VaultError('credential context did not match');return new Secret(opened.value);}
+export async function getVaultSecret(db:Db,masterKey:MasterKey,args:{ownerUserId:string;service:string;slot:string;itemId?:string}):Promise<Secret>{const key=await boxKey(db,masterKey,args.ownerUserId);const [row]=await db.query<{id:string;value_enc:string}>(`select id,value_enc from vault_items where owner_user_id=$1 and service=$2 and slot=$3 and status='active'`,[args.ownerUserId,args.service,args.slot]);if(!row||(args.itemId!==undefined&&row.id!==args.itemId))throw new VaultError('credential not found');const opened=openSealed<{value:string;ownerUserId:string;service:string;slot:string}>(key,row.value_enc);if(opened.ownerUserId!==args.ownerUserId||opened.service!==args.service||opened.slot!==args.slot)throw new VaultError('credential context did not match');return new Secret(opened.value);}
 /** Store new subsystem credentials in the Vault while leaving only an opaque
  * reference in the legacy column. Before an upgraded installation has been
  * explicitly initialized, the old ciphertext remains readable; it is never
  * silently imported. */
 export async function storeCredentialPayload(db:Db,installKey:MasterKey,args:{ownerUserId:string;kind:VaultKind;service:string;slot:string;label:string;payload:Record<string,unknown>;actorUserId?:string}):Promise<string>{const status=await vaultStatus(db);if(!status.initialized)return seal(installKey,args.payload);const item=await putVaultItem(db,installKey,{ownerUserId:args.ownerUserId,kind:args.kind,service:args.service,slot:args.slot,label:args.label,value:new Secret(JSON.stringify(unwrapSecrets(args.payload))),actorUserId:args.actorUserId});return seal(installKey,{vaultItemId:item.id});}
-export async function openCredentialPayload<T extends object>(db:Db,installKey:MasterKey,args:{ownerUserId:string;service:string;slot:string;stored:string}):Promise<T>{const pointer=openSealed<T&{vaultItemId?:string}>(installKey,args.stored);if(!pointer.vaultItemId)return pointer;const raw=await getVaultSecret(db,installKey,{ownerUserId:args.ownerUserId,service:args.service,slot:args.slot});let parsed:unknown;try{parsed=JSON.parse(raw.reveal());}catch{throw new VaultError('stored credential payload is invalid');}if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new VaultError('stored credential payload is invalid');return parsed as T;}
+export async function openCredentialPayload<T extends object>(db:Db,installKey:MasterKey,args:{ownerUserId:string;service:string;slot:string;stored:string}):Promise<T>{const pointer=openSealed<T&{vaultItemId?:string}>(installKey,args.stored);if(!Object.prototype.hasOwnProperty.call(pointer,'vaultItemId'))return pointer;if(typeof pointer.vaultItemId!=='string'||!pointer.vaultItemId)throw new VaultError('stored credential reference is invalid');const raw=await getVaultSecret(db,installKey,{ownerUserId:args.ownerUserId,service:args.service,slot:args.slot,itemId:pointer.vaultItemId});let parsed:unknown;try{parsed=JSON.parse(raw.reveal());}catch{throw new VaultError('stored credential payload is invalid');}if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new VaultError('stored credential payload is invalid');return parsed as T;}
 export async function listVaultItems(db:Db,ownerUserId:string,masterKey?:MasterKey):Promise<VaultItemView[]>{
   const rows=await db.query<any>(`select id,owner_user_id,kind,service,slot,label,value_enc,last_four,metadata,status,created_at,updated_at,rotated_at from vault_items where owner_user_id=$1 order by service,label`,[ownerUserId]);
   if(masterKey&&rows.length){
@@ -121,7 +141,21 @@ export async function rotateVaultBox(db:Db,masterKey:MasterKey,args:{ownerUserId
   await db.query(`update vault_boxes set wrapped_key_enc=$2,key_version=key_version+1,rotated_at=now() where owner_user_id=$1`,[args.ownerUserId,seal(vaultKey,{key:current.reveal().toString('base64')})]);
   await appendEvent(db,{actorUserId:args.actorUserId,actor:args.actorUserId===args.ownerUserId?'user':'guardian',kind:'vault.box_rotated',subjectType:'vault_box',subjectId:args.ownerUserId});
 }
-export async function setVaultLock(db:Db,args:{master?:boolean;ownerUserId?:string;locked:boolean;actorUserId:string}){if(args.master){await db.query(`update vault_state set locked=$1,updated_at=now() where id=true`,[args.locked]);if(args.locked)await db.query(`delete from vault_unlocks`);}else if(args.ownerUserId){await db.query(`update vault_boxes set locked=$2 where owner_user_id=$1`,[args.ownerUserId,args.locked]);if(args.locked)await db.query(`delete from vault_unlocks where target_user_id=$1`,[args.ownerUserId]);}await appendEvent(db,{actorUserId:args.actorUserId,actor:'user',kind:args.locked?'vault.locked':'vault.unlocked_for_engine',subjectType:args.master?'vault':'vault_box',subjectId:args.ownerUserId});}
+export async function setVaultLock(db:Db,args:{master?:boolean;ownerUserId?:string;locked:boolean;actorUserId:string}){
+  if(!db.transaction)throw new VaultError('Vault locking requires database transactions');
+  await db.transaction(async tx=>{
+    await tx.query(`select id from vault_state where id=true for update`);
+    if(args.master){
+      await tx.query(`update vault_state set locked=$1,authority_epoch=authority_epoch+1,updated_at=now() where id=true`,[args.locked]);
+      if(args.locked)await tx.query(`delete from vault_unlocks`);
+    }else if(args.ownerUserId){
+      await tx.query(`update vault_boxes set locked=$2 where owner_user_id=$1`,[args.ownerUserId,args.locked]);
+      await tx.query(`update vault_state set authority_epoch=authority_epoch+1,updated_at=now() where id=true`);
+      if(args.locked)await tx.query(`delete from vault_unlocks where target_user_id=$1`,[args.ownerUserId]);
+    }else throw new VaultError('Vault lock target required');
+    await appendEvent(tx,{actorUserId:args.actorUserId,actor:'user',kind:args.locked?'vault.locked':'vault.unlocked_for_engine',subjectType:args.master?'vault':'vault_box',subjectId:args.ownerUserId});
+  });
+}
 export async function grantVaultUiUnlock(db:Db,args:{userId:string;targetUserId:string;sessionId:string;authority:'owner'|'guardian'}){await db.query(`insert into vault_unlocks(user_id,target_user_id,session_id,authority,expires_at) values($1,$2,$3,$4,now()+make_interval(secs=>$5)) on conflict(user_id,target_user_id,session_id) do update set authority=excluded.authority,expires_at=excluded.expires_at,created_at=now()`,[args.userId,args.targetUserId,args.sessionId,args.authority,VAULT_UNLOCK_SECONDS]);}
 export async function vaultUiUnlocked(db:Db,args:{userId:string;targetUserId:string;sessionId:string}){const rows=await db.query(`select 1 from vault_unlocks where user_id=$1 and target_user_id=$2 and session_id=$3 and expires_at>now()`,[args.userId,args.targetUserId,args.sessionId]);return rows.length>0;}
 
