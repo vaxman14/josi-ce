@@ -16,6 +16,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@josi-ce/protocol': fileURLToPath(new URL('./packages/protocol/src/index.ts', import.meta.url)),
       '@': fileURLToPath(new URL('./apps/web/src', import.meta.url)),
       '@josi-ce/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
       '@josi-ce/auth': fileURLToPath(new URL('./packages/auth/src/index.ts', import.meta.url)),

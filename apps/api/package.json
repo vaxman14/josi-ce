@@ -3,5 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/server.js"
+  "main": "dist/server.js",
+  "dependencies": { "@josi-ce/protocol": "0.1.0" }
 }

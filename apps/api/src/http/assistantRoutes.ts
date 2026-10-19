@@ -15,6 +15,7 @@ import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Router, type Request, type Response } from 'express';
+import { BASELINE_CAPABILITIES } from '@josi-ce/protocol';
 import multer from 'multer';
 import {
   addMessage, appendEvent, ApprovalError, createContact, createTask, createThread, decideActionApproval, markActionsPresented,
@@ -128,6 +129,12 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
   r.use(requireAuth);
+  // Additive discovery only. Existing clients keep their current routes; no
+  // device-control authority follows from notification-device registration.
+  r.get('/capabilities', (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json(BASELINE_CAPABILITIES);
+  });
   const uploadDir = attachmentRoot();
   // Busboy streams multipart bytes into a private bounded staging directory;
   // request bodies are never accumulated by multer.memoryStorage().

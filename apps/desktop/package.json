@@ -1,0 +1,13 @@
+{
+  "name": "@josi-ce/desktop",
+  "version": "0.7.0-dev.0",
+  "private": true,
+  "description": "Josi CE desktop shell",
+  "license": "AGPL-3.0-or-later",
+  "main": "src/main.cjs",
+  "scripts": {
+    "check": "node --check src/main.cjs && node --test test/*.test.cjs"
+  },
+  "dependencies": { "@josi-ce/protocol": "0.1.0" },
+  "josiRuntime": { "electron": "43.2.0", "sourceLock": "../../packaging/macos/desktop-sources.lock.json" }
+}

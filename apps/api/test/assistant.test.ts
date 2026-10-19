@@ -148,6 +148,18 @@ async function threadWith(owner: 'alice' | 'bob', text = 'PRIVATE-CONVERSATION-T
 }
 
 describe('durable native turns and devices',()=>{
+  it('advertises existing remote capabilities without exposing content or enabling automation', async () => {
+    expect((await call('/api/assistant/capabilities')).status).toBe(401);
+    for (const jar of [cookies.alice, cookies.bob, cookies.admin]) {
+      const response = await call('/api/assistant/capabilities', { jar });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(response.body).toEqual({ product: 'josi-ce', protocolVersions: [1], capabilities: [
+        { id: 'chat.messages', version: 1 }, { id: 'chat.durable-turns', version: 1 },
+        { id: 'tasks.poll', version: 1 }, { id: 'notifications.devices', version: 1 },
+      ] });
+    }
+  });
   it('returns 202 before model work, reconciles, and idempotently returns the stable turn',async()=>{
     const threadId=await threadWith('alice');
     const body={client_message_id:'phone-1',message:'continue after disconnect'};

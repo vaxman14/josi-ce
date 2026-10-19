@@ -5,7 +5,7 @@ Updated 19 October 2026. The owner authorized implementation, continued work, an
 | Phase | Status | Evidence / next work |
 |---|---|---|
 | P0 baseline and feasibility | In progress; disposable VM retry underway | [P0 evidence](P0_BASELINE.md). Source inventory, regression baseline, encryption primitive, native messaging fixture. Real guest/control/browser checks remain open. |
-| P1 shared contracts and CE client | Independent groundwork authorized; not complete | Preserve existing remote endpoints. Consolidate verified CE source without importing hosted-product configuration. |
+| P1 shared contracts and CE client | Tested foundation checkpoint; dependent acceptance remains open | [P1 evidence](P1_CONTRACTS.md). 79 protocol/API tests, 10 desktop tests, live Electron smoke and type build passed. |
 | P2–P12 | Pending | Follow [build plan](../UNIFIED_JOSI_BUILD_PLAN.md); no automation execution before its gates pass. |
 
 The VM installation reached 78% and the probe cancelled it to preserve an 8 GiB free-space reserve. Hardware/framework support and restore-image validation passed; installation, guest control, display, consent, network enforcement, and recovery have **not** passed. The probe's own failed guest disk and restore download were removed after recording sizes and the failure. User files, retained releases, and Time Machine snapshots were not changed. The owner subsequently made storage available and authorized a retry. The updated probe checks both macOS-reported available capacity (including automatically reclaimable space) and immediately free space, retaining the 8 GiB emergency stop. A fresh development test is underway; its outcome is not yet known.
