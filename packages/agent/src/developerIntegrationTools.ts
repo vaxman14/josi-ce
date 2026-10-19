@@ -1,4 +1,5 @@
-import { openCredentialPayload, type Db, type MasterKey } from "@josi-ce/core";
+import { DeveloperCredentialError, loadDeveloperCredentials, recordDeveloperCheck } from '@josi-ce/connectors';
+import { VaultError, type Db, type MasterKey } from "@josi-ce/core";
 import {
   discoverObsidianVaults,
   readObsidianNote,
@@ -94,50 +95,23 @@ export async function executeDeveloperResourceTool(
   const service = String(input.provider ?? "");
   if (!isDeveloperService(service))
     return { ok: false, message: "Choose a supported native provider." };
-  const [row] = await db.query<{ credentials_enc: string }>(
-    `select credentials_enc from developer_connections where owner_user_id=$1 and service=$2 and status='active' and exists (select 1 from developer_service_policy p where p.service=developer_connections.service and (p.mode='everyone' or (p.mode='specific_users' and exists (select 1 from developer_service_allowed_users a where a.service=p.service and a.user_id=$1))))`,
-    [userId, service],
-  );
-  if (!row)
-    return {
-      ok: false,
-      message: "That provider is not connected and active for this user.",
-    };
-  const credential = await openCredentialPayload<Record<string, string>>(
-    db,
-    access.masterKey(),
-    {
-      ownerUserId: userId,
-      service: `developer.${service}`,
-      slot: "token",
-      stored: row.credentials_enc,
-    },
-  );
+  let prepared;
   try {
-    const resources = await listDeveloperResources({
-      service,
-      token: credential.token ?? "",
-      username: credential.username,
-      email: credential.email,
-      baseUrl: credential.baseUrl,
-      fetchImpl: access.fetchImpl,
-    });
-    await db.query(
-      `update developer_connections set last_used_at=now(),last_check_at=now(),last_check_ok=true,last_error=null where owner_user_id=$1 and service=$2`,
-      [userId, service],
-    );
-    return { ok: true, provider: service, resources };
+    prepared = await loadDeveloperCredentials(db, access.masterKey(), { ownerUserId: userId, service });
   } catch (error) {
-    await db.query(
-      `update developer_connections set last_check_at=now(),last_check_ok=false,last_error='Resource discovery failed.' where owner_user_id=$1 and service=$2`,
-      [userId, service],
-    );
-    return {
-      ok: false,
-      provider: service,
-      message:
-        "Resource discovery failed. Recheck the provider credential and permissions.",
-    };
+    if (error instanceof VaultError || error instanceof DeveloperCredentialError) return { ok: false, message: error.message };
+    return { ok: false, message: 'The connection credentials are unavailable.' };
+  }
+  try {
+    const resources = await listDeveloperResources({ service, ...prepared.credentials, fetchImpl: access.fetchImpl });
+    const recorded = await recordDeveloperCheck(db, { ownerUserId: userId, service, reference: prepared.reference,
+      check: { ok: true, detail: 'Resource discovery completed.' }, used: true, preserveStatus: true });
+    if (!recorded) return { ok: false, message: 'The connection or its permission changed during discovery. Reload it before continuing.' };
+    return { ok: true, provider: service, resources };
+  } catch {
+    await recordDeveloperCheck(db, { ownerUserId: userId, service, reference: prepared.reference,
+      check: { ok: false, detail: 'Resource discovery failed.' }, preserveStatus: true });
+    return { ok: false, provider: service, message: 'Resource discovery failed. Recheck the provider credential and permissions.' };
   }
 }
 

@@ -15,8 +15,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { looksSealed } from '@josi-ce/core';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { isVaultCredentialReference, MasterKey, setVaultLock } from '@josi-ce/core';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -36,8 +36,10 @@ let serviceReply: { status: number; body: unknown } | 'throw' = {
   status: 200, body: { login: 'octocat' },
 };
 const seen: string[] = [];
+let beforeServiceReply: (() => Promise<void>) | undefined;
 const developerServiceFetch: typeof fetch = async (url) => {
   seen.push(String(url));
+  if (beforeServiceReply) { const work = beforeServiceReply; beforeServiceReply = undefined; await work(); }
   if (serviceReply === 'throw') throw new Error('ECONNREFUSED');
   return new Response(JSON.stringify(serviceReply.body), {
     status: serviceReply.status,
@@ -110,6 +112,8 @@ beforeEach(async () => {
   ids.admin = (await createUser(db, { email: 'admin@ce.test', username: 'admin', role: 'super_admin', password: PW })).id;
   ids.alice = (await createUser(db, { email: 'alice@ce.test', username: 'alice', role: 'member', password: PW })).id;
   ids.bob = (await createUser(db, { email: 'bob@ce.test', username: 'bob', role: 'member', password: PW })).id;
+  await testVault(db, new MasterKey(Buffer.alloc(32, 13)));
+  beforeServiceReply = undefined;
   jars.admin = await signIn('admin', PW);
   jars.alice = await signIn('alice', PW);
   jars.bob = await signIn('bob', PW);
@@ -255,7 +259,7 @@ describe('the credential belongs to the person, not the installation', () => {
     const [row] = await db.query<{ credentials_enc: string }>(
       `select credentials_enc from developer_connections`,
     );
-    expect(looksSealed(row.credentials_enc)).toBe(true);
+    expect(isVaultCredentialReference(row.credentials_enc)).toBe(true);
     expect(row.credentials_enc).not.toContain(TOKEN);
 
     const mine = await call('/api/connections/developer', { jar: jars.alice });
@@ -396,5 +400,40 @@ describe('only catalogued native services are accepted', () => {
       method: 'PUT', body: { mode: 'sometimes' },
     });
     expect(res.status).toBe(400);
+  });
+});
+
+
+describe('developer credential Vault boundaries', () => {
+  it('refuses a locked credential test before any provider request', async () => {
+    await permit('github', 'everyone');
+    await setVaultLock(db, { master: true, locked: true, actorUserId: ids.admin });
+    const res = await call('/api/connections/developer/github', { method: 'PUT', jar: jars.alice, body: { token: TOKEN } });
+    expect(res.status).toBe(423); expect(seen).toHaveLength(0);
+  });
+
+  it('does not commit a token if permission is removed during its identity check', async () => {
+    await permit('github', 'everyone');
+    beforeServiceReply = async () => { await permit('github', 'not_allowed'); };
+    const res = await call('/api/connections/developer/github', { method: 'PUT', jar: jars.alice, body: { token: TOKEN } });
+    expect(res.status).toBe(403);
+    expect(await db.query('select id from developer_connections')).toHaveLength(0);
+    expect(await db.query("select id from vault_items where service='developer.github'")).toHaveLength(0);
+  });
+
+  it('refuses a saved-credential recheck after policy revocation without contacting the provider', async () => {
+    await permit('github', 'everyone');
+    expect((await call('/api/connections/developer/github', { method: 'PUT', jar: jars.alice, body: { token: TOKEN } })).status).toBe(200);
+    await permit('github', 'not_allowed'); seen.length = 0;
+    expect((await call('/api/connections/developer/github/check', { method: 'POST', jar: jars.alice, body: {} })).status).toBe(403);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('commits policy and named-user changes atomically with their audit', async () => {
+    await permit('github', 'specific_users', [ids.alice]);
+    await db.exec("create function reject_policy() returns trigger as $$ begin if new.kind='developer_service.policy_set' then raise exception 'synthetic policy failure'; end if; return new; end; $$ language plpgsql; create trigger reject_policy before insert on events for each row execute function reject_policy();");
+    const res = await call('/api/admin/developer-services/github', { method: 'PUT', body: { mode: 'specific_users', userIds: [ids.bob] } });
+    expect(res.status).toBe(500);
+    expect(await db.query("select user_id from developer_service_allowed_users where service='github'")).toEqual([{ user_id: ids.alice }]);
   });
 });

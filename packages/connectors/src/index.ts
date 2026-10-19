@@ -18,3 +18,4 @@ export * from './customApiCalls.js';
 export * from './openapiImport.js';
 export * from './workflows.js';
 export * from './obsidian.js';
+export * from './developerCredentials.js';

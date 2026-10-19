@@ -15,12 +15,13 @@
 //     wanted it or nobody was permitted it.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, asSecret, deleteVaultSlot, loadMasterKey, openCredentialPayload, storeCredentialPayload,
+  appendEvent, asSecret, loadMasterKey, VaultError, VaultLockedError,
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
   DEVELOPER_SERVICES, DEVELOPER_SERVICE_CATALOG, checkDeveloperToken, describeDeveloperService,
-  discoverObsidianVaults, readObsidianNote,
+  discoverObsidianVaults, readObsidianNote, DeveloperCredentialError, checkDeveloperCredentialAccess,
+  saveDeveloperConnection, loadDeveloperCredentials, recordDeveloperCheck, deleteDeveloperConnection, withDeveloperServiceTransaction,
   isDeveloperService, isPermissionMode, mayConnect, summarizeScope,
   type DeveloperService, type EffectiveScope, type PermissionMode,
 } from '@josi-ce/connectors';
@@ -45,7 +46,9 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
     try {
       return await fn(req, res);
     } catch (err: unknown) {
-      if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
+      if (err instanceof VaultLockedError) return res.status(423).json({ error: err.message });
+      if (err instanceof VaultError) return res.status(409).json({ error: err.message });
+      if (err instanceof RouteError || err instanceof DeveloperCredentialError) return res.status(err.status).json({ error: err.message });
       throw err;
     }
   });
@@ -192,6 +195,8 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
         throw new RouteError(400, `a ${descriptor.tokenLabel.toLowerCase()} is required`);
       }
 
+      const key = requireKey(ctx);
+      await checkDeveloperCredentialAccess(db, userId, service);
       const check = await checkDeveloperToken({
         service,
         // Revealed for this one request and nothing else: not stored in the
@@ -206,29 +211,8 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
         throw new RouteError(400, check.detail);
       }
 
-      const stored = await storeCredentialPayload(db, requireKey(ctx), {
-        ownerUserId:userId,kind:'api_key',service:`developer.${service}`,slot:'token',
-        label:`${describeDeveloperService(service)!.label} credential`,payload:{token:token.reveal(),username:str(req.body?.username,200),email:str(req.body?.email,320),baseUrl:str(req.body?.baseUrl,500)},actorUserId:userId,
-      });
-      await db.query(
-        `insert into developer_connections
-           (owner_user_id, service, credentials_enc, account_label, status,
-            last_check_at, last_check_ok, last_error)
-         values ($1, $2, $3, $4, 'active', now(), true, null)
-         on conflict (owner_user_id, service) do update set
-           credentials_enc = excluded.credentials_enc,
-           account_label = excluded.account_label,
-           status = 'active', last_check_at = now(), last_check_ok = true, last_error = null`,
-        [userId, service, stored, check.accountLabel ?? null],
-      );
-      await appendEvent(db, {
-        actorUserId: userId,
-        actor: 'member',
-        kind: 'developer_service.connected',
-        // Which service, never the token and never anything from inside the
-        // account beyond the name the owner already sees.
-        payload: { service },
-      });
+      await saveDeveloperConnection(db, key, { ownerUserId: userId, service, accountLabel: check.accountLabel ?? null,
+        credentials: { token: token.reveal(), username: str(req.body?.username, 200), email: str(req.body?.email, 320), baseUrl: str(req.body?.baseUrl, 500) } });
       return res.json({ ok: true, accountLabel: check.accountLabel ?? null });
     }),
   );
@@ -239,32 +223,10 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
     handle(async (req, res) => {
       const service = param(req, 'service');
       if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
-      const [row] = await db.query<{ credentials_enc: string | null }>(
-        `select credentials_enc from developer_connections
-         where owner_user_id = $1 and service = $2`,
-        [req.user!.id, service],
-      );
-      if (!row?.credentials_enc) throw new RouteError(404, 'you have not connected that service');
-
-      const opened = await openCredentialPayload<Record<string,string>>(db,requireKey(ctx),{ownerUserId:req.user!.id,service:`developer.${service}`,slot:'token',stored:row.credentials_enc});
-      const check = await checkDeveloperToken({
-        service, token: opened.token ?? '', username:opened.username, email:opened.email,
-        baseUrl:opened.baseUrl, fetchImpl: ctx.fetchImpl,
-      });
-      await db.query(
-        `update developer_connections
-         set last_check_at = now(), last_check_ok = $1, last_error = $2,
-             status = $3, account_label = coalesce($4, account_label)
-         where owner_user_id = $5 and service = $6`,
-        [
-          check.ok,
-          check.ok ? null : check.detail,
-          check.ok ? 'active' : 'needs_reconnect',
-          check.accountLabel ?? null,
-          req.user!.id,
-          service,
-        ],
-      );
+      const { credentials: opened, reference } = await loadDeveloperCredentials(db, requireKey(ctx), { ownerUserId: req.user!.id, service, requireActive: false });
+      const check = await checkDeveloperToken({ service, ...opened, fetchImpl: ctx.fetchImpl });
+      if (!(await recordDeveloperCheck(db, { ownerUserId: req.user!.id, service, reference, check })))
+        throw new RouteError(409, 'The connection or its permission changed during the check. Check the current connection again.');
       return res.json({ ok: check.ok, detail: check.detail });
     }),
   );
@@ -275,15 +237,7 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
     handle(async (req, res) => {
       const service = param(req, 'service');
       if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
-      await db.query(
-        `delete from developer_connections where owner_user_id = $1 and service = $2`,
-        [req.user!.id, service],
-      );
-      await deleteVaultSlot(db,{ownerUserId:req.user!.id,service:`developer.${service}`,slot:'token',actorUserId:req.user!.id});
-      await appendEvent(db, {
-        actorUserId: req.user!.id, actor: 'member',
-        kind: 'developer_service.disconnected', payload: { service },
-      });
+      await deleteDeveloperConnection(db, req.user!.id, service);
       return res.status(204).end();
     }),
   );
@@ -390,44 +344,46 @@ export function adminDeveloperServiceRoutes(ctx: DeveloperServiceCtx): Router {
         ? req.body.userIds.filter((v: unknown): v is string => typeof v === 'string').slice(0, 500)
         : [];
 
-      // An empty list with `specific_users` is permitted and means nobody. It
-      // is a real state — an administrator part-way through choosing — and
-      // refusing it would force them to pick somebody they did not mean to.
-      await db.query(
-        `insert into developer_service_policy (service, mode, note, updated_at, updated_by)
-         values ($1, $2, $3, now(), $4)
-         on conflict (service) do update set
-           mode = excluded.mode, note = excluded.note,
-           updated_at = now(), updated_by = excluded.updated_by`,
-        [service, mode, note, req.user!.id],
-      );
+      await withDeveloperServiceTransaction(db, service, async tx => {
+        // An empty list with `specific_users` is permitted and means nobody. It
+        // is a real state — an administrator part-way through choosing — and
+        // refusing it would force them to pick somebody they did not mean to.
+        await tx.query(
+          `insert into developer_service_policy (service, mode, note, updated_at, updated_by)
+           values ($1, $2, $3, now(), $4)
+           on conflict (service) do update set
+             mode = excluded.mode, note = excluded.note,
+             updated_at = now(), updated_by = excluded.updated_by`,
+          [service, mode, note, req.user!.id],
+        );
 
-      if (mode === 'specific_users' && sentUserIds) {
-        // Replace the list rather than merge it: the request carries the whole
-        // selection, and merging would make removing somebody impossible.
-        const valid = userIds.length
-          ? await db.query<{ id: string }>(
-            `select id from users where id = any($1::uuid[])`, [userIds],
-          )
-          : [];
-        await db.query(`delete from developer_service_allowed_users where service = $1`, [service]);
-        for (const row of valid) {
-          await db.query(
-            `insert into developer_service_allowed_users (service, user_id) values ($1, $2)
-             on conflict do nothing`,
-            [service, row.id],
-          );
+        if (mode === 'specific_users' && sentUserIds) {
+          // Replace the list rather than merge it: the request carries the whole
+          // selection, and merging would make removing somebody impossible.
+          const valid = userIds.length
+            ? await tx.query<{ id: string }>(
+              `select id from users where id = any($1::uuid[])`, [userIds],
+            )
+            : [];
+          await tx.query(`delete from developer_service_allowed_users where service = $1`, [service]);
+          for (const row of valid) {
+            await tx.query(
+              `insert into developer_service_allowed_users (service, user_id) values ($1, $2)
+               on conflict do nothing`,
+              [service, row.id],
+            );
+          }
         }
-      }
-      // Other modes, and a request that names no list at all, leave the stored
-      // list alone on purpose: an administrator who switches to "everyone" and
-      // back has not lost the list they built.
+        // Other modes, and a request that names no list at all, leave the stored
+        // list alone on purpose: an administrator who switches to "everyone" and
+        // back has not lost the list they built.
 
-      await appendEvent(db, {
-        actorUserId: req.user!.id,
-        actor: 'super_admin',
-        kind: 'developer_service.policy_set',
-        payload: { service, mode, namedCount: mode === 'specific_users' ? userIds.length : 0 },
+        await appendEvent(tx, {
+          actorUserId: req.user!.id,
+          actor: 'super_admin',
+          kind: 'developer_service.policy_set',
+          payload: { service, mode, namedCount: mode === 'specific_users' ? userIds.length : 0 },
+        });
       });
       return res.json({ ok: true });
     }),
