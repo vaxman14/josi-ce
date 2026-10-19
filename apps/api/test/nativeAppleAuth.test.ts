@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generate, generateSecret } from 'otplib';
 import { MasterKey, seal } from '@josi-ce/core';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -72,6 +72,7 @@ beforeAll(async () => {
   mfaUserId = (await createUser(db, {
     email: 'mfa@ce.test', username: 'mfa', role: 'member', password: 'mfa-password-123',
   })).id;
+  await testVault(db, new MasterKey(masterBytes));
   await db.query(`update users set totp_secret_enc=$2,mfa_enabled_at=now() where id=$1`, [
     mfaUserId, seal(new MasterKey(masterBytes), { secret: mfaSecret }),
   ]);

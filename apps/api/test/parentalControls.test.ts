@@ -32,9 +32,10 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { generate as generateTotp } from 'otplib';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
+import { MasterKey } from '@josi-ce/core';
 
 const dir = mkdtempSync(join(tmpdir(), 'josi-ce-parental-'));
 const keyPath = join(dir, 'master.key');
@@ -178,6 +179,7 @@ beforeAll(async () => {
   ids.parent = (await createUser(db, { email: 'pc-parent@ce.test', username: 'pcparent', role: 'member', password: PW.parent })).id;
   ids.stranger = (await createUser(db, { email: 'pc-stranger@ce.test', username: 'pcstranger', role: 'member', password: PW.stranger })).id;
 
+  await testVault(db, new MasterKey(Buffer.alloc(32, 7)));
   const app = createApp(db, {
     cookieSecure: false,
     appUrl: 'http://localhost:3000',

@@ -37,18 +37,16 @@
 // The third is the one this module exists to protect. Everything else about a
 // person can be repaired; a relationship row silently added by somebody who
 // borrowed a laptop is a stranger reading a child's conversations.
-import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import {
   CHILD_DISCLOSURE, CHILD_DISCLOSURE_LIMITS, MAX_CHILDREN_PER_PARENT, PARENTAL_MODULE,
   ScheduleError, activateEntitlement, appendEvent, checkChildAccess, checkStepUp, childrenOf,
   consumeAuthorityGrant, controllerOf, createLink, endLink, entitlementStatus, getControls,
   issueAuthorityGrant, listMessages, loadMasterKey, minutesUsedToday, normalizeWindows,
-  openSealed, parentalAuthority, publisherKey, revokeEntitlement, setControls, usageSummary,
+  VaultError, VaultLockedError, parentalAuthority, publisherKey, revokeEntitlement, setControls, usageSummary,
   type Db, type LoadOptions,
 } from '@josi-ce/core';
-import { UserError, createUser, issueAuthToken, verifyPassword } from '@josi-ce/auth';
-import { verify as verifyTotp } from 'otplib';
+import { UserError, MfaError, createUser, issueAuthToken, verifyPassword, verifyMfaFactor } from '@josi-ce/auth';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 
@@ -83,6 +81,9 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
     try {
       return await fn(req, res);
     } catch (err) {
+      if (err instanceof VaultLockedError) return res.status(423).json({ error: err.message });
+      if (err instanceof VaultError) return res.status(409).json({ error: err.message });
+      if (err instanceof MfaError) return res.status(err.status).json({ error: err.message });
       if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
       if (err instanceof ScheduleError) return res.status(400).json({ error: err.message });
       throw err;
@@ -266,7 +267,7 @@ export function parentalRoutes(ctx: ParentalRoutesCtx): Router {
       `select password_hash, totp_secret_enc, mfa_enabled_at from users where id = $1`,
       [req.user!.id],
     );
-    if (!account?.totp_secret_enc || !account.mfa_enabled_at) {
+    if (!account?.mfa_enabled_at) {
       // Refused rather than downgraded to a password. Two-factor is the point
       // of this gate, and a gate that quietly accepts one factor when the
       // second is missing is a gate that says something untrue on screen.
@@ -286,20 +287,7 @@ export function parentalRoutes(ctx: ParentalRoutesCtx): Router {
 
     if (!(await verifyPassword(account.password_hash, password))) await failed('password');
 
-    const secret = openSealed<{ secret: string }>(
-      loadMasterKey(ctx.masterKey ?? {}), account.totp_secret_enc,
-    ).secret;
-    let ok = (await verifyTotp({ secret, token: code, epochTolerance: 30 })).valid;
-    if (!ok) {
-      // A recovery code is a second factor somebody printed out, and burning
-      // one here is the same act as burning one at sign-in.
-      const used = await db.query<{ id: string }>(
-        `update mfa_recovery_codes set used_at = now()
-         where user_id = $1 and code_hash = $2 and used_at is null returning id`,
-        [req.user!.id, createHash('sha256').update(code.toUpperCase()).digest('hex')],
-      );
-      ok = used.length > 0;
-    }
+    const ok = await verifyMfaFactor(db, loadMasterKey(ctx.masterKey ?? {}), req.user!.id, code);
     if (!ok) await failed('code');
 
     const grant = await issueAuthorityGrant(db, {

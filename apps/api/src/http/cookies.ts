@@ -99,6 +99,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * `/api/auth/csrf` before posting credentials. */
 export function requireCsrf(req: Request, res: Response, next: NextFunction): void {
   const nativeLogin = req.path === '/auth/login'
+    || req.path === '/auth/mfa/verify-login'
     || req.path === '/auth/google/native/exchange'
     || req.path === '/auth/apple/native/exchange'
     || req.path === '/auth/apple/native/complete';

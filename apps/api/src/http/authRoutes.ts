@@ -1,13 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import {
   SESSION_TTL_SECONDS, consumeAuthToken, createSession, issueAuthToken, login, peekAuthToken,
   revokeSession, setPassword, verifyPassword, startGoogleLogin, consumeGoogleLogin, GOOGLE_NATIVE_RETURN_URI,
+  MfaError, beginMfaSetup, enableMfa, disableMfa, completeMfaLogin, verifyMfaFactor,
 } from '@josi-ce/auth';
-import { appendEvent, loadMasterKey, openSealed, seal, type Db, type LoadOptions } from '@josi-ce/core';
+import { appendEvent, loadMasterKey, VaultError, VaultLockedError, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
 import { buildAuthUrl, exchangeCode, fetchIdentity, loadClient } from '@josi-ce/connectors';
-import { generateSecret, generateURI, verify } from 'otplib';
+import { generateURI } from 'otplib';
 import QRCode from 'qrcode';
 import { asyncRoute, param } from './async.js';
 import { clearSessionCookie, clientIp, isNativeClient, issueCsrfToken, setSessionCookie } from './cookies.js';
@@ -25,10 +26,24 @@ export interface AuthRoutesCtx {
   appleFetch?: typeof fetch;
 }
 
+const mfaRoute = (fn: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
+  try { return await fn(req, res); }
+  catch (err) {
+    if (err instanceof MfaError) return res.status(err.status).json({ error: err.message });
+    if (err instanceof VaultLockedError) return res.status(423).json({ error: err.message, code: 'vault_locked' });
+    if (err instanceof VaultError) return res.status(409).json({ error: err.message });
+    throw err;
+  }
+});
+
 export function authRoutes(ctx: AuthRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
   const cookieOpts = { secure: ctx.cookieSecure };
+  function mfaKey() {
+    try { return ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {}); }
+    catch { return null; } // Recovery codes still require the existing first factor.
+  }
 
   async function publicAppUrl(): Promise<string> {
     // APP_URL is the canonical browser-facing origin chosen by the installer.
@@ -100,12 +115,12 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       const [mfa] = await db.query<{ totp_secret_enc: string | null; mfa_enabled_at: string | null }>(
         `select totp_secret_enc, mfa_enabled_at from users where id = $1`, [result.user.id],
       );
-      if (mfa?.totp_secret_enc && mfa.mfa_enabled_at && ctx.masterKey !== false) {
+      if (mfa?.mfa_enabled_at) {
         const challenge = randomBytes(32).toString('base64url');
         await db.query(
           `insert into auth_mfa_challenges (user_id, token_hash, remember_me, ip, user_agent, expires_at)
            values ($1,$2,$3,$4,$5,now() + interval '5 minutes')`,
-          [result.user.id, createHash('sha256').update(challenge).digest('hex'), !!rememberMe, ip, req.header('user-agent')?.slice(0, 400) ?? null],
+          [result.user.id, createHash('sha256').update(challenge).digest('hex'), rememberMe === true || (isNativeClient(req) && rememberMe !== false), ip, req.header('user-agent')?.slice(0, 400) ?? null],
         );
         return res.status(202).json({ mfaRequired: true, challenge });
       }
@@ -208,41 +223,15 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     });
   }));
 
-  r.post('/mfa/verify-login', asyncRoute(async (req, res) => {
-    const challenge = typeof req.body?.challenge === 'string' ? req.body.challenge : '';
-    const code = typeof req.body?.code === 'string' ? req.body.code.replace(/\s/g, '') : '';
-    if (!challenge || !code || ctx.masterKey === false) return res.status(401).json({ error: 'That verification code did not work.' });
-    const [row] = await db.query<{ id: string; user_id: string; remember_me: boolean; totp_secret_enc: string }>(
-      `select c.id, c.user_id, c.remember_me, u.totp_secret_enc
-       from auth_mfa_challenges c join users u on u.id = c.user_id
-       where c.token_hash = $1 and c.used_at is null and c.expires_at > now() and c.attempts < 5 and u.status = 'active'`,
-      [createHash('sha256').update(challenge).digest('hex')],
-    );
-    if (!row) return res.status(401).json({ error: 'That verification code did not work.' });
-    const key = loadMasterKey(ctx.masterKey ?? {});
-    const secret = openSealed<{ secret: string }>(key, row.totp_secret_enc).secret;
-    const totp = (await verify({ secret, token: code, epochTolerance: 30 })).valid;
-    let recovery = false;
-    if (!totp) {
-      const used = await db.query<{ id: string }>(
-        `update mfa_recovery_codes set used_at = now()
-         where user_id = $1 and code_hash = $2 and used_at is null returning id`,
-        [row.user_id, createHash('sha256').update(code.toUpperCase()).digest('hex')],
-      );
-      recovery = used.length > 0;
-    }
-    if (!totp && !recovery) {
-      await db.query(`update auth_mfa_challenges set attempts = least(attempts + 1, 5) where id = $1`, [row.id]);
-      return res.status(401).json({ error: 'That verification code did not work.' });
-    }
-    await db.query(`update auth_mfa_challenges set used_at = now() where id = $1`, [row.id]);
-    const ttlSeconds = row.remember_me ? SESSION_TTL_SECONDS : 60 * 60 * 12;
-    const session = await createSession(db, { userId: row.user_id, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds });
-    setSessionCookie(res, session.token, ttlSeconds, cookieOpts); issueCsrfToken(res, cookieOpts);
-    const [user] = await db.query<{ id: string; email: string; username: string; role: string; display_name: string | null }>(
-      `select id,email,username,role,display_name from users where id = $1`, [row.user_id],
-    );
-    return res.json({ user: publicUser(user) });
+  r.post('/mfa/verify-login', mfaRoute(async (req, res) => {
+    const result = await completeMfaLogin(db, mfaKey(), {
+      challenge: typeof req.body?.challenge === 'string' ? req.body.challenge : '',
+      code: typeof req.body?.code === 'string' ? req.body.code : '',
+      ip: clientIp(req), userAgent: req.header('user-agent'),
+    });
+    if (!result) return res.status(401).json({ error: 'That verification code did not work.' });
+    setSessionCookie(res, result.token, result.ttlSeconds, cookieOpts); issueCsrfToken(res, cookieOpts);
+    return res.json({ user: publicUser(result.user), ...(isNativeClient(req) ? { sessionToken: result.token } : {}) });
   }));
 
   r.get('/mfa', requireAuth, asyncRoute(async (req, res) => {
@@ -251,43 +240,24 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return res.json({ enabled: !!row?.mfa_enabled_at, recoveryCodesRemaining: codes?.n ?? 0 });
   }));
 
-  r.post('/mfa/setup', requireAuth, asyncRoute(async (req, res) => {
-    if (ctx.masterKey === false) return res.status(503).json({ error: 'This installation cannot store MFA secrets.' });
-    const [current] = await db.query<{ mfa_enabled_at: string | null }>(
-      `select mfa_enabled_at from users where id = $1`, [req.user!.id],
-    );
-    // Never replace a working factor merely because an authenticated browser
-    // called setup again. Disabling MFA requires the account password below.
-    if (current?.mfa_enabled_at) return res.status(409).json({ error: 'MFA is already enabled. Disable it before setting up a new authenticator.' });
-    const secret = generateSecret(); const key = loadMasterKey(ctx.masterKey ?? {});
-    await db.query(`update users set totp_secret_enc = $2, mfa_enabled_at = null where id = $1`, [req.user!.id, seal(key, { secret })]);
+  r.post('/mfa/setup', requireAuth, mfaRoute(async (req, res) => {
+    const key = mfaKey();
+    if (!key) throw new MfaError(503, 'This installation cannot store MFA secrets.');
+    const secret = await beginMfaSetup(db, key, req.user!.id);
     const uri = generateURI({ issuer: 'Josi CE', label: req.user!.email, secret });
     return res.json({ secret, qrDataUrl: await QRCode.toDataURL(uri) });
   }));
 
-  r.post('/mfa/enable', requireAuth, asyncRoute(async (req, res) => {
-    if (ctx.masterKey === false) return res.status(503).json({ error: 'This installation cannot store MFA secrets.' });
-    const code = typeof req.body?.code === 'string' ? req.body.code.replace(/\s/g, '') : '';
-    const [row] = await db.query<{ totp_secret_enc: string | null }>(`select totp_secret_enc from users where id = $1`, [req.user!.id]);
-    if (!row?.totp_secret_enc) return res.status(409).json({ error: 'Start MFA setup first.' });
-    const secret = openSealed<{ secret: string }>(loadMasterKey(ctx.masterKey ?? {}), row.totp_secret_enc).secret;
-    if (!(await verify({ secret, token: code, epochTolerance: 30 })).valid) return res.status(400).json({ error: 'That code did not match.' });
-    const codes = Array.from({ length: 10 }, () => `${randomBytes(3).toString('hex')}-${randomBytes(3).toString('hex')}`.toUpperCase());
-    await db.query(`delete from mfa_recovery_codes where user_id = $1`, [req.user!.id]);
-    for (const recovery of codes) await db.query(`insert into mfa_recovery_codes (user_id, code_hash) values ($1,$2)`,
-      [req.user!.id, createHash('sha256').update(recovery).digest('hex')]);
-    await db.query(`update users set mfa_enabled_at = now() where id = $1`, [req.user!.id]);
-    await appendEvent(db, { actorUserId: req.user!.id, actor: 'user', kind: 'auth.mfa_enabled', subjectType: 'user', subjectId: req.user!.id });
+  r.post('/mfa/enable', requireAuth, mfaRoute(async (req, res) => {
+    const key = mfaKey();
+    if (!key) throw new MfaError(503, 'This installation cannot store MFA secrets.');
+    const code = typeof req.body?.code === 'string' ? req.body.code : '';
+    const codes = await enableMfa(db, key, req.user!.id, code);
     return res.json({ enabled: true, recoveryCodes: codes });
   }));
 
-  r.post('/mfa/disable', requireAuth, asyncRoute(async (req, res) => {
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const [account] = await db.query<{ password_hash: string | null }>(`select password_hash from users where id = $1`, [req.user!.id]);
-    if (!(await verifyPassword(account?.password_hash ?? null, password))) return res.status(401).json({ error: 'That password did not match.' });
-    await db.query(`update users set totp_secret_enc = null, mfa_enabled_at = null where id = $1`, [req.user!.id]);
-    await db.query(`delete from mfa_recovery_codes where user_id = $1`, [req.user!.id]);
-    await appendEvent(db, { actorUserId: req.user!.id, actor: 'user', kind: 'auth.mfa_disabled', subjectType: 'user', subjectId: req.user!.id });
+  r.post('/mfa/disable', requireAuth, mfaRoute(async (req, res) => {
+    await disableMfa(db, req.user!.id, typeof req.body?.password === 'string' ? req.body.password : '');
     return res.json({ enabled: false });
   }));
   r.get('/google/callback', asyncRoute(async (req, res) => {
@@ -445,7 +415,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return res.json({ user: publicUser(user), sessionToken: token });
   }));
 
-  r.post('/apple/native/complete', asyncRoute(async (req, res) => {
+  r.post('/apple/native/complete', mfaRoute(async (req, res) => {
     if (!isNativeClient(req)) return res.status(403).json({ error: 'native client required' });
     const challenge = typeof req.body?.challenge === 'string' ? req.body.challenge : '';
     const identifier = typeof req.body?.identifier === 'string' ? req.body.identifier.trim() : '';
@@ -480,10 +450,9 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       `select totp_secret_enc,mfa_enabled_at from users where id=$1 and status='active'`, [userId],
     );
     if (!account) return res.status(401).json({ error: 'That Apple sign-in expired. Start again.' });
-    if (account.totp_secret_enc && account.mfa_enabled_at) {
-      if (!mfaCode || ctx.masterKey === false) return res.status(202).json({ mfaRequired: true, challenge });
-      const secret = openSealed<{ secret: string }>(loadMasterKey(ctx.masterKey ?? {}), account.totp_secret_enc).secret;
-      if (!(await verify({ secret, token: mfaCode, epochTolerance: 30 })).valid) {
+    if (account.mfa_enabled_at) {
+      if (!mfaCode) return res.status(202).json({ mfaRequired: true, challenge });
+      if (!(await verifyMfaFactor(db, mfaKey(), userId, mfaCode))) {
         await db.query(`update auth_apple_challenges set attempts=least(attempts+1,5) where challenge_hash=$1`, [
           createHash('sha256').update(challenge).digest('hex'),
         ]);
