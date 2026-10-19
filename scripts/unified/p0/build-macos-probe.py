@@ -4,6 +4,9 @@ import platform
 import plistlib
 import shutil
 import subprocess
+import json
+import base64
+import secrets
 
 root = Path(__file__).resolve().parents[3]
 source = Path(__file__).resolve().parent
@@ -17,7 +20,7 @@ subprocess.run([
     "xcrun", "swiftc", "-parse-as-library", "-swift-version", "5",
     "-target", "arm64-apple-macos14.0", "-sdk", sdk,
     "-module-cache-path", str(output / "module-cache"),
-    str(source / "MacProbe.swift"), str(source / "GuestDisplay.swift"), "-o", str(binary),
+    *[str(source / name) for name in ("MacProbe.swift", "GuestDisplay.swift", "ProbeListener.swift", "ProbeWire.swift")], "-o", str(binary),
 ], check=True)
 subprocess.run([
     "codesign", "--force", "--sign", "-", "--entitlements",
@@ -47,3 +50,22 @@ subprocess.run(["codesign", "--force", "--sign", "-", "--entitlements",
                 str(source / "virtualization.entitlements.plist"), str(app)], check=True)
 subprocess.run(["codesign", "--verify", "--strict", str(app)], check=True)
 print(app)
+
+payload = output / "probe-payload"
+payload.mkdir(mode=0o700, exist_ok=True)
+fixture = payload / "fixture.json"
+if not fixture.exists():
+    fixture.write_text(json.dumps({"purpose": "disposable-josi-p0", "workspace": "p0-development-guest",
+        "key": base64.b64encode(secrets.token_bytes(32)).decode()}))
+    fixture.chmod(0o600)
+subprocess.run([
+    "xcrun", "swiftc", "-parse-as-library", "-swift-version", "5",
+    "-target", "arm64-apple-macos14.0", "-sdk", sdk,
+    "-module-cache-path", str(output / "module-cache"),
+    str(source / "GuestProbe.swift"), str(source / "ProbeWire.swift"), "-o", str(payload / "guest-probe"),
+], check=True)
+subprocess.run(["codesign", "--force", "--sign", "-", str(payload / "guest-probe")], check=True)
+subprocess.run(["codesign", "--verify", "--strict", str(payload / "guest-probe")], check=True)
+subprocess.run(["hdiutil", "makehybrid", "-iso", "-joliet", "-default-volume-name", "josiprobe",
+    "-o", str(output / "probe-payload.iso"), str(payload), "-ov"], check=True)
+print("Generated read-only disposable guest fixture disk; no production enrollment material.")

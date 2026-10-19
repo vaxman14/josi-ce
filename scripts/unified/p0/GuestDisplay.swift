@@ -8,6 +8,7 @@ final class GuestDisplay: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let machine: VZVirtualMachine
     var window: NSWindow?
     var stopping = false
+    var channelProbe: ProbeListener?
     init(machine: VZVirtualMachine) { self.machine = machine }
 
     static func run(machine: VZVirtualMachine) {
@@ -19,6 +20,15 @@ final class GuestDisplay: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let fixtureURL = MacProbe.output.appendingPathComponent("probe-payload/fixture.json")
+        if FileManager.default.fileExists(atPath: fixtureURL.path) {
+            do {
+                let probe = ProbeListener(fixture: try ProbeFixture.load(fixtureURL), output: MacProbe.workspace.appendingPathComponent("control-proof.json"))
+                guard let socket = machine.socketDevices.first as? VZVirtioSocketDevice else { throw ProbeWireError.rejected }
+                socket.setSocketListener(probe.listener, forPort: 40501)
+                channelProbe = probe
+            } catch { showFailure(error); NSApplication.shared.terminate(nil); return }
+        }
         let view = VZVirtualMachineView(frame: NSRect(x: 0, y: 0, width: 1080, height: 675))
         view.virtualMachine = machine
         view.capturesSystemKeys = false

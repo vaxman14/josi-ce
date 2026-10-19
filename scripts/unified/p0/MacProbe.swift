@@ -46,6 +46,11 @@ struct MacProbe {
         config.keyboards = [VZUSBKeyboardConfiguration()]
         config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
         config.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: workspace.appendingPathComponent("disk.img"), readOnly: false))]
+        let payload = output.appendingPathComponent("probe-payload.iso")
+        if FileManager.default.fileExists(atPath: payload.path) {
+            // A generated read-only fixture disk, never a shared host folder.
+            config.storageDevices.append(VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: payload, readOnly: true)))
+        }
         config.socketDevices = [VZVirtioSocketDeviceConfiguration()]
         // Isolation starts at the hardware boundary. No NAT, bridge, host folders,
         // clipboard, microphone, camera, or personal browser storage is attached.
