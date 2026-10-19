@@ -14,8 +14,9 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { MasterKey, seal, initializeVault } from '@josi-ce/core';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
+import { MasterKey, seal, isVaultCredentialReference, setVaultLock } from '@josi-ce/core';
+import { verifyOAuthClient } from '../src/setup/verifySteps.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -122,6 +123,7 @@ beforeAll(async () => {
   ids.admin = (await createUser(db, { email: 'admin@ce.test', username: 'admin', role: 'super_admin', password: PW.admin })).id;
   ids.alice = (await createUser(db, { email: 'alice@ce.test', username: 'alice', role: 'member', password: PW.alice })).id;
   ids.bob = (await createUser(db, { email: 'bob@ce.test', username: 'bob', role: 'member', password: PW.bob })).id;
+  await testVault(db, key);
 
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000',
@@ -232,6 +234,35 @@ describe('the operator OAuth application', () => {
 describe('connecting an account', () => {
   beforeEach(configureClient);
 
+  it('leaves a valid callback unconsumed while the Vault is locked', async () => {
+    const started = await call('/api/connections/google/start', { method: 'POST', jar: cookies.alice, body: {} });
+    const state = new URL(started.body.url).searchParams.get('state')!;
+    await setVaultLock(db, { master: true, locked: true, actorUserId: ids.admin });
+    try {
+      const blocked = await call(`/api/connections/google/callback?state=${encodeURIComponent(state)}&code=abc`, { jar: cookies.alice });
+      expect(blocked.status).toBe(423);
+      expect(providerCalls).toHaveLength(0);
+      expect((await db.query('select consumed_at from oauth_states where id=$1', [state]))[0].consumed_at).toBeNull();
+    } finally { await setVaultLock(db, { master: true, locked: false, actorUserId: ids.admin }); }
+    expect((await call(`/api/connections/google/callback?state=${encodeURIComponent(state)}&code=abc`, { jar: cookies.alice })).status).toBe(302);
+    expect((await db.query('select consumed_at from oauth_states where id=$1', [state]))[0].consumed_at).not.toBeNull();
+  });
+
+  it('uses the Vault for setup verification and sends nothing while locked', async () => {
+    let sent = 0;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      sent++;
+      expect(new URLSearchParams(String(init?.body)).get('client_secret')).toBe(CLIENT_SECRET);
+      return new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 });
+    };
+    expect((await verifyOAuthClient({ db, masterKey: key, provider: 'google', fetchImpl })).status).toBe('passed');
+    await setVaultLock(db, { master: true, locked: true, actorUserId: ids.admin });
+    try {
+      expect((await verifyOAuthClient({ db, masterKey: key, provider: 'google', fetchImpl })).category).toBe('vault_locked');
+      expect(sent).toBe(1);
+    } finally { await setVaultLock(db, { master: true, locked: false, actorUserId: ids.admin }); }
+  });
+
   it('asks once for the complete provider bundle while local capabilities remain off', async () => {
     const started = await call('/api/connections/google/start', {
       method: 'POST', jar: cookies.alice, body: {},
@@ -250,7 +281,7 @@ describe('connecting an account', () => {
     const [row] = await db.query<{ secrets_enc: string }>(
       `select secrets_enc from connections where id = $1`, [id],
     );
-    expect(row.secrets_enc).toMatch(/^v1\./);
+    expect(isVaultCredentialReference(row.secrets_enc)).toBe(true);
     expect(row.secrets_enc).not.toContain(ACCESS_TOKEN);
 
     const mine = await call('/api/connections', { jar: cookies.alice });
@@ -531,7 +562,6 @@ describe('disconnecting', () => {
   beforeEach(configureClient);
 
   it('removes the Vault tokens and capability grants after immediately withdrawing local authority', async () => {
-    await initializeVault(db,key,ids.admin);
     const id = await connect('alice', ['google.mail.send'], 'https://www.googleapis.com/auth/gmail.send');
     await call(`/api/connections/${id}/capabilities/google.mail.send`, {
       method: 'PUT', jar: cookies.alice, body: { enabled: true },

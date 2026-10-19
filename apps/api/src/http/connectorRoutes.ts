@@ -11,7 +11,7 @@
 //   * The callback believes the stored handshake, not the query string.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, asSecret, loadMasterKey, type Db, type LoadOptions, type MasterKey,
+  appendEvent, asSecret, loadMasterKey, VaultError, VaultLockedError, type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
   CAPABILITIES, CapabilityError, ConnectorError, NoClientError, NEXTCLOUD_STORAGE_CAPABILITY,
@@ -98,6 +98,8 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
     try {
       return await fn(req, res);
     } catch (err: unknown) {
+      if (err instanceof VaultLockedError) return res.status(423).json({ error: err.message });
+      if (err instanceof VaultError) return res.status(409).json({ error: err.message });
       if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
       if (err instanceof NoClientError) return res.status(409).json({ error: err.message });
       if (err instanceof CapabilityError) {

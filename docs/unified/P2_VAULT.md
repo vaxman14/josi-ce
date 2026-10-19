@@ -14,6 +14,8 @@ Executed checks: 13 core vault/record tests passed; 71 API vault/LLM and registr
 
 ## Remaining P2 work
 
+The [credential inventory](P2_CREDENTIAL_INVENTORY.md) tracks all consumers, including authentication factors, temporary login verifiers, installer service material and CLI login projections.
+
 - Migrate all identified canonical credential consumers and eliminate legacy direct-ciphertext writes once their compatibility migrations are verified. Current ordinary credential helpers still retain their preexisting legacy behavior; this checkpoint does not claim vault-only migration is finished.
 - Complete OAuth temporary verifier handling, remaining connector/LLM/mail paths, and desktop session projections. Telegram/external channels, mobile push and Custom API credentials have focused migration checkpoints below. Preserve owner and device registration fencing, revocation, and backup/recovery.
 - Implement browser encrypted-workspace authority and short-lived execution projections in the dependent runtime phases.
@@ -47,3 +49,11 @@ Migration 0069 preserves a stable Vault owner on each Custom API connection. Cre
 API and agent callers await credential resolution. A known Vault lock leaves a pending approval unconsumed and performs no external request. The existing conditional approval claim still permits only one winner; credentials and enabled switches are checked again afterward. A lock that races after the claim fails closed and may require a new proposal; it does not blindly retry an uncertain external effect. Vault failures do not mark the provider unhealthy.
 
 Executed: the existing connector/API/agent suites passed 123 tests. After adding eight credential migration/rollback tests and three API/agent lock tests, the affected API/agent/new-Vault suites passed 70 tests (134 distinct passing tests across the two runs). Connector/agent/API type builds, whitespace checks and the public-source secret scan passed. Tests include replacement-key recovery, old-reference upgrade, cross-connection substitution, master/box locks, pending-approval preservation, import/rotation/create rollback and stale configuration. Fixtures use synthetic secrets only.
+
+## OAuth applications and account-connection handshakes
+
+Migration 0070 binds OAuth application credentials to a stable Vault owner. Create/replace/import/remove and audit now share a transaction; an advisory fence serializes changes even when a provider row does not exist yet. Legacy payloads and older install-key references upgrade through the recoverable Vault. Setup verification now uses the same reader, fixing its obsolete direct-ciphertext path.
+
+New account-connection PKCE verifiers require the Vault and use temporary items keyed by a hash of their state. Callback/provider/session checks remain in place. A locked or unreadable Vault leaves a valid handshake unconsumed; callbacks never silently omit an unavailable verifier. Successful consumption removes both the temporary canonical item and its reference atomically. Existing in-flight legacy verifiers use the same Vault checks during consumption. Every worker queue pass clears expired verifier material, including while locked or without a decryption key; diagnostic state rows retain their existing grace period. Google web/native **Josi login** has a separate state store and remains listed as pending migration.
+
+Executed: 425 tests passed across 17 affected connector, sync, agent, API, setup, worker and native-login suites. They cover legacy/reference migration, replacement-key recovery, ownership and cross-provider/state substitution, competing callbacks, master/box locks, pending-callback preservation, missing/corrupt PKCE, create/rotate/import/state rollback, cleanup without a key and setup verification without credential leakage. Existing fixtures now initialize a synthetic Vault, matching the real setup prerequisite. Connector/agent/API/worker type builds, whitespace and public-source secret checks passed. No live provider or installed-server test is implied.

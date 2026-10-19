@@ -16,7 +16,7 @@ import {
   expirePreparedActionApprovals, settleActionForTask, transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
-  accessTokenFor, can, connectionsWithCapability, createInternalEvent, dueCalendarOrigins, dueCloudMappings, dueOrigins, expireCustomApiCalls,
+  accessTokenFor, can, connectionsWithCapability, createInternalEvent, createStateStore, dueCalendarOrigins, dueCloudMappings, dueOrigins, expireCustomApiCalls,
   ensureInternalCalendar, loadClient, markAttempted, markCalendarAttempted, markSyncScheduled, provisionCalendarOrigins,
   processCalendarOutbox, syncCalendarOrigin, syncCloudMapping, syncOrigin, updateInternalEvent,
 } from '@josi-ce/connectors';
@@ -507,6 +507,7 @@ export async function processQueue(
   ctx: WorkerContext = {},
 ): Promise<JobOutcome> {
   ctx={...ctx,workerId};
+  await createStateStore(db, ctx.masterKey ?? null).purge();
   await tickSchedules(db);
   const jobs = await claimJobs(db, workerId, limit);
   let done = 0;

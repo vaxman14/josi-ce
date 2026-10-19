@@ -6,7 +6,7 @@
 // are the ones item 17 (round 2) exists for — the switch honoured at offering
 // time AND execution time, cross-user isolation, and empty reported as empty.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { addMessage, markActionsPresented, MasterKey } from '@josi-ce/core';
 import {
@@ -35,6 +35,7 @@ beforeEach(async () => {
   db = await testDb();
   alice = (await createUser(db, { email: 'a@ce.test', username: 'alice', role: 'super_admin' })).id;
   bob = (await createUser(db, { email: 'b@ce.test', username: 'bob', role: 'member' })).id;
+  await testVault(db, key);
   await saveClient(db, key, {
     provider: 'google',
     clientId: 'google-client-id',

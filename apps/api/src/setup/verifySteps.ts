@@ -15,8 +15,8 @@ import {
   type LlmErrorCategory,
 } from '@josi-ce/llm';
 import { classifySmtpError, loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
-import { ENDPOINTS } from '@josi-ce/connectors';
-import { openSealed, type Db, type MasterKey } from '@josi-ce/core';
+import { ENDPOINTS, loadClient, NoClientError } from '@josi-ce/connectors';
+import { VaultLockedError, type Db, type MasterKey } from '@josi-ce/core';
 
 export interface VerifyOutcome {
   status: 'passed' | 'failed';
@@ -236,26 +236,22 @@ export async function verifyOAuthClient(
     timeoutMs?: number;
   },
 ): Promise<VerifyOutcome> {
-  const [row] = await opts.db.query<{ client_id: string; client_secret_enc: string; redirect_uri: string }>(
-    `select client_id, client_secret_enc, redirect_uri from oauth_clients where provider = $1`,
-    [opts.provider],
-  );
-  if (!row) return failed('malformed_request', 'No application has been registered for this provider yet.');
-
-  let clientSecret: string;
+  let client;
   try {
-    clientSecret = openSealed<{ clientSecret: string }>(opts.masterKey, row.client_secret_enc).clientSecret;
-  } catch {
-    return failed('malformed_request', 'The stored client secret could not be opened with this installation master key.');
+    client = await loadClient(opts.db, opts.masterKey, opts.provider);
+  } catch (err) {
+    if (err instanceof NoClientError) return failed('malformed_request', 'No application has been registered for this provider yet.');
+    if (err instanceof VaultLockedError) return failed('vault_locked', 'Initialize and unlock the Vault to test this application.');
+    return failed('malformed_request', 'The stored application credential could not be opened.');
   }
 
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     // Deliberately invalid, and deliberately obvious in a provider's logs.
     code: 'josi-setup-verification-not-a-real-code',
-    client_id: row.client_id,
-    client_secret: clientSecret,
-    redirect_uri: row.redirect_uri,
+    client_id: client.clientId,
+    client_secret: client.clientSecret,
+    redirect_uri: client.redirectUri,
   });
 
   const controller = new AbortController();
@@ -283,7 +279,7 @@ export async function verifyOAuthClient(
       detail:
         'The application was accepted. This proves the client ID and secret are right; '
         + 'the redirect URI is checked the first time somebody connects an account.',
-      target: row.client_id,
+      target: client.clientId,
     };
   }
   if (error === 'invalid_client' || res.status === 401) {

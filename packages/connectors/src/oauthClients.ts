@@ -2,8 +2,8 @@
 //
 // M28: CE ships with no client of its own. Each installation registers its own
 // Google/Microsoft/Dropbox/Box application, exactly as other self-hosted
-// products require, and the secret is sealed with the installation master key
-// before storage.
+// products require. Canonical secrets live in the recoverable Master Vault;
+// this table holds opaque, owner-bound references.
 //
 // Nextcloud never appears here. It has no OAuth application to register at
 // all — see `OAUTH_PROVIDERS` in capabilities.ts — so there is deliberately no
@@ -12,7 +12,9 @@
 // There is no environment variable for these and no default. A CE image that
 // carried a client secret would be handing every installation the same
 // credential, and the first person to extract it could impersonate all of them.
-import { appendEvent, deleteVaultSlot, openCredentialPayload, storeCredentialPayload, type Db, type MasterKey } from '@josi-ce/core';
+import { appendEvent, deleteVaultSlot, openCredentialPayload, storeVaultCredentialPayload, isVaultCredentialReference,
+  VaultError, type Db, type MasterKey } from '@josi-ce/core';
+import { requireConnectorVault } from './credentialVault.js';
 import { OAUTH_PROVIDERS, type OAuthProvider } from './capabilities.js';
 import type { OAuthClient } from './providers.js';
 
@@ -58,24 +60,33 @@ export async function saveClient(
     actorUserId: string;
   },
 ): Promise<void> {
-  const stored=await storeCredentialPayload(db,key,{ownerUserId:args.actorUserId,kind:'oauth_token',service:'oauth_client',slot:args.provider,label:`${args.provider} OAuth client secret`,payload:{clientSecret:args.clientSecret},actorUserId:args.actorUserId});
-  await db.query(
-    `insert into oauth_clients (provider, client_id, client_secret_enc, redirect_uri, configured_by)
-     values ($1, $2, $3, $4, $5)
-     on conflict (provider) do update set
-       client_id = excluded.client_id,
-       client_secret_enc = excluded.client_secret_enc,
-       redirect_uri = excluded.redirect_uri,
-       configured_by = excluded.configured_by`,
-    [args.provider, args.clientId, stored, args.redirectUri, args.actorUserId],
-  );
-  await appendEvent(db, {
-    actorUserId: args.actorUserId,
-    actor: 'super_admin',
-    kind: 'connector.client_configured',
-    // The provider and the fact it changed. Not the id, not the secret, not
-    // the URI — the audit log answers "who changed what kind of thing, when".
-    payload: { provider: args.provider },
+  if (!db.transaction) throw new VaultError('OAuth client storage requires transactions');
+  await db.transaction(async tx => {
+    await requireConnectorVault(tx);
+    await lockClients(tx);
+    const [before] = await tx.query<ClientRow>('select * from oauth_clients where provider=$1 for update', [args.provider]);
+    const owner = before ? await clientOwner(tx, before) : args.actorUserId;
+    const stored = await storeVaultCredentialPayload(tx, key, { ownerUserId: owner, kind: 'oauth_token', service: 'oauth_client', slot: args.provider,
+      label: `${args.provider} OAuth client secret`, payload: { clientSecret: args.clientSecret }, actorUserId: args.actorUserId });
+    await tx.query(
+      `insert into oauth_clients (provider, client_id, client_secret_enc, redirect_uri, configured_by, vault_owner_user_id)
+       values ($1, $2, $3, $4, $5, $6)
+       on conflict (provider) do update set
+         client_id = excluded.client_id,
+         client_secret_enc = excluded.client_secret_enc,
+         redirect_uri = excluded.redirect_uri,
+         configured_by = excluded.configured_by,
+         vault_owner_user_id = excluded.vault_owner_user_id`,
+      [args.provider, args.clientId, stored, args.redirectUri, args.actorUserId, owner],
+    );
+    await appendEvent(tx, {
+      actorUserId: args.actorUserId,
+      actor: 'super_admin',
+      kind: 'connector.client_configured',
+      // The provider and the fact it changed. Not the id, not the secret, not
+      // the URI — the audit log answers "who changed what kind of thing, when".
+      payload: { provider: args.provider },
+    });
   });
 }
 
@@ -83,14 +94,18 @@ export async function deleteClient(
   db: Db,
   args: { provider: OAuthProvider; actorUserId: string },
 ): Promise<void> {
-  await db.query(`delete from oauth_clients where provider = $1`, [args.provider]);
-  const [owner]=await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);
-  if(owner)await deleteVaultSlot(db,{ownerUserId:owner.id,service:'oauth_client',slot:args.provider,actorUserId:args.actorUserId});
-  await appendEvent(db, {
-    actorUserId: args.actorUserId,
-    actor: 'super_admin',
-    kind: 'connector.client_removed',
-    payload: { provider: args.provider },
+  if (!db.transaction) throw new VaultError('OAuth client deletion requires transactions');
+  await db.transaction(async tx => {
+    await tx.query('select id from vault_state where id=true for share');
+    await lockClients(tx);
+    const [row] = await tx.query<ClientRow>('delete from oauth_clients where provider=$1 returning *', [args.provider]);
+    if (row) await deleteVaultSlot(tx, { ownerUserId: await clientOwner(tx, row), service: 'oauth_client', slot: args.provider, actorUserId: args.actorUserId });
+    await appendEvent(tx, {
+      actorUserId: args.actorUserId,
+      actor: 'super_admin',
+      kind: 'connector.client_removed',
+      payload: { provider: args.provider },
+    });
   });
 }
 
@@ -98,19 +113,44 @@ export class NoClientError extends Error {}
 
 /** Opens the client for use. The only place the secret is decrypted. */
 export async function loadClient(db: Db, key: MasterKey, provider: OAuthProvider): Promise<OAuthClient> {
-  const [row] = await db.query<{ client_id: string; client_secret_enc: string; redirect_uri: string }>(
-    `select client_id, client_secret_enc, redirect_uri from oauth_clients where provider = $1`,
-    [provider],
-  );
-  if (!row) {
-    throw new NoClientError(
-      `no ${provider} application is configured for this installation — an administrator sets that up first`,
+  if (!db.transaction) throw new VaultError('OAuth client access requires transactions');
+  return db.transaction(async tx => {
+    await requireConnectorVault(tx);
+    await lockClients(tx);
+    const [row] = await tx.query<ClientRow>(
+      `select * from oauth_clients where provider = $1 for update`,
+      [provider],
     );
-  }
-  return {
-    provider,
-    clientId: row.client_id,
-    clientSecret: (await (async()=>{const [owner]=await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);return openCredentialPayload<{clientSecret:string}>(db,key,{ownerUserId:owner?.id??'',service:'oauth_client',slot:provider,stored:row.client_secret_enc});})()).clientSecret,
-    redirectUri: row.redirect_uri,
-  };
+    if (!row) {
+      throw new NoClientError(
+        `no ${provider} application is configured for this installation — an administrator sets that up first`,
+      );
+    }
+    const owner = await clientOwner(tx, row);
+    const payload = await openCredentialPayload<{ clientSecret: string }>(tx, key, { ownerUserId: owner, service: 'oauth_client', slot: provider, stored: row.client_secret_enc });
+    if (typeof payload.clientSecret !== 'string' || !payload.clientSecret) throw new VaultError('The OAuth application credential is invalid.');
+    if (!isVaultCredentialReference(row.client_secret_enc)) {
+      const reference = await storeVaultCredentialPayload(tx, key, { ownerUserId: owner, kind: 'oauth_token', service: 'oauth_client', slot: provider,
+        label: `${provider} OAuth client secret`, payload });
+      await tx.query('update oauth_clients set client_secret_enc=$2,vault_owner_user_id=$3 where provider=$1', [provider, reference, owner]);
+    }
+    return {
+      provider,
+      clientId: row.client_id,
+      clientSecret: payload.clientSecret,
+      redirectUri: row.redirect_uri,
+    };
+  });
+}
+
+interface ClientRow { client_id: string; client_secret_enc: string; redirect_uri: string; configured_by: string | null; vault_owner_user_id: string | null }
+async function clientOwner(tx: Db, row: ClientRow): Promise<string> {
+  if (row.vault_owner_user_id || row.configured_by) return (row.vault_owner_user_id ?? row.configured_by)!;
+  const [admin] = await tx.query<{ id: string }>("select id from users where role='super_admin' order by created_at limit 1");
+  if (!admin) throw new VaultError('OAuth application credential owner is unavailable.');
+  return admin.id;
+}
+async function lockClients(tx: Db): Promise<void> {
+  // Serializes create/replace/remove even when the provider row is absent.
+  await tx.query("select pg_advisory_xact_lock(hashtext('josi_oauth_clients'))");
 }

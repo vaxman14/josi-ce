@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MasterKey } from '@josi-ce/core';
 import { saveClient } from '@josi-ce/connectors';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -53,7 +53,10 @@ beforeAll(async () => {
      values ($1, 'google', 'active', 'google-linked-1', 'linked@google.test', 'openid email profile', 'sealed-test')`,
     [userId],
   );
+  await testVault(db, new MasterKey(keyBytes));
+  const [admin] = await db.query<{id:string}>("select id from users where role='super_admin'");
   await saveClient(db, new MasterKey(keyBytes), {
+    actorUserId: admin.id,
     provider: 'google', clientId: 'client-id', clientSecret: 'client-secret',
     redirectUri: 'http://localhost:3000/api/auth/google/callback',
   });

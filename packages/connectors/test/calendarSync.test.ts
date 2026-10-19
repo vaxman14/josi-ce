@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { MasterKey } from '@josi-ce/core';
 import {
@@ -16,6 +16,7 @@ beforeEach(async () => {
   db = await testDb();
   alice = (await createUser(db,{email:'alice@calendar.test',username:'alice',role:'super_admin'})).id;
   bob = (await createUser(db,{email:'bob@calendar.test',username:'bob',role:'member'})).id;
+  await testVault(db, key);
   await saveClient(db,key,{provider:'google',clientId:'client',clientSecret:'calendar-CLIENT-SECRET',redirectUri:'https://example.test/callback',actorUserId:alice});
 });
 

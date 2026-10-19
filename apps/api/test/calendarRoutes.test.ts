@@ -4,7 +4,7 @@ import type {Server} from 'node:http';
 import type {AddressInfo} from 'node:net';
 import {MasterKey} from '@josi-ce/core';
 import {saveClient,setCapability,upsertConnection,type ConnectionRow} from '@josi-ce/connectors';
-import {testDb,type TestDb} from '../../../packages/core/test/helpers.js';
+import {testDb, testVault, type TestDb} from '../../../packages/core/test/helpers.js';
 import {createUser} from './fixtures.js';
 import {calendarRoutes} from '../src/http/calendarRoutes.js';
 const bytes=Buffer.alloc(32,42),key=new MasterKey(bytes);
@@ -12,6 +12,7 @@ let db:TestDb,server:Server,base:string,owner:string,other:string,source:string,
 let urls:string[];
 beforeEach(async()=>{
  db=await testDb();owner=(await createUser(db,{email:'owner@fixture.test',username:'calendar-owner',role:'super_admin'})).id;other=(await createUser(db,{email:'other@fixture.test',username:'calendar-other',role:'member'})).id;
+  await testVault(db, key);
  await saveClient(db,key,{provider:'google',clientId:'fixture-client',clientSecret:'fixture-secret',redirectUri:'https://fixture.test/callback',actorUserId:owner});
  connection=await upsertConnection(db,key,{ownerUserId:owner,provider:'google',accountEmail:'calendar@fixture.test',providerAccountId:'fixture-calendar',tokens:{accessToken:'fixture-token',refreshToken:'fixture-refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar.readonly'},requestedCapabilities:['google.calendar.read']});
  await setCapability(db,{connection,capability:'google.calendar.read',enabled:true,actorUserId:owner});

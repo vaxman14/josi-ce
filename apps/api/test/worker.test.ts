@@ -3,10 +3,10 @@
 // Exercised as a function rather than by starting the process, so the failure
 // paths — unknown kind, missing task, retry, dead — are actually reachable.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
 import { MasterKey, addMessage, attachCollectingAction, authorizeActionByUserPolicy, createTask, createThread, enqueue, markActionsPresented, placeHold, prepareAction, requestApproval, resolveConversationalAction, setSlots, setUserApprovalLevel, transition } from '@josi-ce/core';
-import { saveClient, setCapability, setSyncMode, upsertConnection } from '@josi-ce/connectors';
+import { createStateStore, saveClient, setCapability, setSyncMode, upsertConnection } from '@josi-ce/connectors';
 import { processQueue } from '../../worker/src/jobs.js';
 
 let db: TestDb;
@@ -18,6 +18,17 @@ beforeEach(async () => {
 });
 
 describe('the worker drains the queue', () => {
+  it('removes expired connection verifiers even without an available decryption key', async () => {
+    const key = new MasterKey(Buffer.alloc(32, 54));
+    await testVault(db, key);
+    const { state } = await createStateStore(db, key).start({ userId: owner, provider: 'google', capabilities: [], scopes: '' });
+    await db.query("update oauth_states set expires_at=now()-interval '1 minute' where id=$1", [state]);
+    await db.query('update vault_state set locked=true');
+    await processQueue(db, 'cleanup-fixture');
+    expect(await db.query("select id from vault_items where service='oauth.pkce'")).toHaveLength(0);
+    expect((await db.query('select verifier_enc from oauth_states where id=$1', [state]))[0].verifier_enc).toBeNull();
+  });
+
   it('claims, runs and completes a job', async () => {
     const task = await createTask(db, { ownerUserId: owner, templateKey: 'follow_up' });
     await enqueue(db, { kind: 'task.wake', payload: { taskId: task.id } });
@@ -182,6 +193,7 @@ describe('user-policy-authorized calendar execution',()=>{
 describe('approved conversational email execution',()=>{
   const key=new MasterKey(Buffer.alloc(32,12));
   async function approvedEmail(){
+    await testVault(db, key);
     await saveClient(db,key,{provider:'google',clientId:'cid',clientSecret:'secret',redirectUri:'https://example.test/callback',actorUserId:owner});
     const connection=await upsertConnection(db,key,{ownerUserId:owner,provider:'google',providerAccountId:'mail-worker',accountEmail:'worker@example.test',
       tokens:{accessToken:'mail-access',refreshToken:'mail-refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/gmail.send'},requestedCapabilities:['google.mail.send']});
@@ -261,6 +273,7 @@ describe('the worker syncs contacts on a schedule', () => {
 
   beforeEach(async () => {
     for (const k of Object.keys(books)) delete books[k];
+    await testVault(db, key);
     await saveClient(db, key, {
       provider: 'google', clientId: 'cid', clientSecret: 'SECRET',
       redirectUri: 'https://josi.example.test/api/connections/google/callback',

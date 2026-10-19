@@ -16,7 +16,7 @@
 //     the same walk as every OAuth provider, and a revoked/wrong app password
 //     fails the same way an expired OAuth token does
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { MasterKey } from '@josi-ce/core';
 import { createMapping, searchDocuments, setIndexing } from '@josi-ce/storage';
@@ -34,6 +34,7 @@ beforeAll(async () => {
   db = await testDb();
   admin = (await createUser(db, { email: 'ad2@ce.test', username: 'admin2', role: 'super_admin' })).id;
   alice = (await createUser(db, { email: 'a2@ce.test', username: 'alice2', role: 'member' })).id;
+  await testVault(db, key);
   for (const provider of ['dropbox', 'box'] as const) {
     await saveClient(db, key, {
       provider, clientId: `${provider}-client-id`, clientSecret: `${provider}-CLIENT-SECRET-value`,

@@ -5,9 +5,9 @@
 // project, and it is also the only way to exercise what happens when a provider
 // misbehaves.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
-import { MasterKey, looksSealed, openSealed } from '@josi-ce/core';
+import { MasterKey, isVaultCredentialReference, openCredentialPayload } from '@josi-ce/core';
 import {
   ConnectorError, accessTokenFor, buildAuthUrl, can, capabilityViews, createPkcePair,
   createStateStore, deleteConnection, exchangeCode, fetchIdentity, loadClient, markUnhealthy,
@@ -39,6 +39,7 @@ beforeEach(async () => {
   db = await testDb();
   alice = (await createUser(db, { email: 'a@ce.test', username: 'alice', role: 'super_admin' })).id;
   bob = (await createUser(db, { email: 'b@ce.test', username: 'bob', role: 'member' })).id;
+  await testVault(db, key);
 });
 
 // ---------------------------------------------------------- operator client
@@ -50,7 +51,7 @@ describe("the operator's own OAuth application", () => {
     const [row] = await db.query<{ client_secret_enc: string }>(
       `select client_secret_enc from oauth_clients where provider = 'google'`,
     );
-    expect(looksSealed(row.client_secret_enc)).toBe(true);
+    expect(isVaultCredentialReference(row.client_secret_enc)).toBe(true);
     expect(row.client_secret_enc).not.toContain(CLIENT.clientSecret);
 
     const statuses = JSON.stringify(await clientStatuses(db));
@@ -137,10 +138,11 @@ describe('the handshake', () => {
   });
 
   it('seals the PKCE verifier at rest', async () => {
-    await start();
+    const { state, verifier } = await start();
     const [row] = await db.query<{ verifier_enc: string }>(`select verifier_enc from oauth_states`);
-    expect(looksSealed(row.verifier_enc)).toBe(true);
-    expect(openSealed<{ verifier: string }>(key, row.verifier_enc).verifier).toMatch(/^[A-Za-z0-9_-]{43,128}$/);
+    expect(isVaultCredentialReference(row.verifier_enc)).toBe(true);
+    const result = await createStateStore(db, key).consume({ state, provider: 'google', sessionId: SESSION });
+    expect(result.ok && result.handshake.verifier).toBe(verifier);
   });
 
   it('produces a valid S256 pair', async () => {
@@ -263,7 +265,7 @@ describe('storing a connection', () => {
     });
 
     const [row] = await db.query<{ secrets_enc: string }>(`select secrets_enc from connections`);
-    expect(looksSealed(row.secrets_enc)).toBe(true);
+    expect(isVaultCredentialReference(row.secrets_enc)).toBe(true);
     expect(row.secrets_enc).not.toContain('ACCESS-TOKEN-VALUE');
     expect(row.secrets_enc).not.toContain('REFRESH-TOKEN-VALUE');
 
@@ -358,7 +360,7 @@ describe('storing a connection', () => {
     });
 
     const connection = await connectionFor(db, { ownerUserId: alice, provider: 'google' });
-    const opened = openSealed<{ refreshToken: string | null }>(key, connection!.secrets_enc!);
+    const opened = await openCredentialPayload<{ refreshToken: string | null }>(db,key,{ownerUserId:alice,service:'connector.google',slot:connection!.id,stored:connection!.secrets_enc!});
     expect(opened.refreshToken).toBe('REFRESH-TOKEN-VALUE');
   });
 
@@ -475,7 +477,7 @@ describe('token refresh and health', () => {
     // And the refresh token we already held survives, because Google will not
     // reissue it.
     const after = await connectionFor(db, { ownerUserId: alice, provider: 'google' });
-    expect(openSealed<{ refreshToken: string }>(key, after!.secrets_enc!).refreshToken).toBe('RT');
+    expect((await openCredentialPayload<{ refreshToken: string }>(db,key,{ownerUserId:alice,service:'connector.google',slot:after!.id,stored:after!.secrets_enc!})).refreshToken).toBe('RT');
   });
 
   it('marks the connection for reconnection when the grant is gone', async () => {

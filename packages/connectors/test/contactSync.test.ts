@@ -8,7 +8,7 @@
 // that comes back, two edits where one is silently discarded, a disconnect that
 // takes the contacts with it, and one person's address book reaching another's.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { MasterKey } from '@josi-ce/core';
 import {
@@ -28,6 +28,7 @@ beforeEach(async () => {
   db = await testDb();
   alice = (await createUser(db, { email: 'a@ce.test', username: 'alice', role: 'super_admin' })).id;
   bob = (await createUser(db, { email: 'b@ce.test', username: 'bob', role: 'member' })).id;
+  await testVault(db, key);
   for (const provider of ['google', 'microsoft'] as const) {
     await saveClient(db, key, {
       provider,

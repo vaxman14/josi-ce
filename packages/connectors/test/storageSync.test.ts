@@ -7,7 +7,7 @@
 // a truncated walk, a capability check skipped, one person's files reaching
 // another's search results.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { MasterKey } from '@josi-ce/core';
 import { createMapping, searchDocuments, setIndexing } from '@josi-ce/storage';
@@ -27,6 +27,7 @@ beforeAll(async () => {
   admin = (await createUser(db, { email: 'ad@ce.test', username: 'admin', role: 'super_admin' })).id;
   alice = (await createUser(db, { email: 'a@ce.test', username: 'alice', role: 'member' })).id;
   bob = (await createUser(db, { email: 'b@ce.test', username: 'bob', role: 'member' })).id;
+  await testVault(db, key);
   await saveClient(db, key, {
     provider: 'google',
     clientId: 'client-id',
