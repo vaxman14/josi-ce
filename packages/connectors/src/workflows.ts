@@ -13,12 +13,14 @@ import {
   json,
   openSealed,
   seal,
-  openCredentialPayload,
-  storeCredentialPayload,
+  storeVaultCredentialPayload,
+  VaultError, VaultLockedError,
   deleteVaultSlot,
   type Db,
   type MasterKey,
 } from "@josi-ce/core";
+import { requireConnectorVault } from './credentialVault.js';
+import { withWorkflowTransaction, openWorkflowCallback, prepareWorkflowCredentials, sameWorkflowCredentials } from './workflowVault.js';
 import { assertPublicHost } from "./customApiRequest.js";
 
 /** Reuse the network policy, not the Custom API connector protocol. */
@@ -218,6 +220,12 @@ export async function saveWorkflowIntegration(
     (!args.workspaceId || !/^\d+$/.test(args.workspaceId))
   )
     throw new WorkflowError("Make requires a numeric team or organization id.");
+  await withWorkflowTransaction(db, async tx => {
+    await requireConnectorVault(tx);
+    const [existing] = await tx.query<{ created_by: string }>('select created_by from workflow_integrations where provider=$1 and name=$2', [args.provider, args.name.trim()]);
+    const [box] = await tx.query<{ locked: boolean }>('select locked from vault_boxes where owner_user_id=$1', [existing?.created_by ?? args.actorUserId]);
+    if (box?.locked) throw new VaultLockedError('Unlock the workflow owner’s Vault box before connecting.');
+  });
   const identity = await testWorkflowCredential({
     provider: args.provider,
     baseUrl: base,
@@ -230,58 +238,62 @@ export async function saveWorkflowIntegration(
         ? publicWorkflowFetch
         : fetch),
   });
-  // Reserve the stable provider/name identity before writing Vault slots. Two
-  // administrators cannot create competing slot ids for the same connection.
-  const [existing]=await db.query<WorkflowIntegration>(`insert into workflow_integrations(id,provider,name,base_url,credentials_enc,callback_secret_enc,created_by,status,enabled)
-    values($1,$2,$3,$4,'','',$5,'error',false) on conflict(provider,name) do update set enabled=false returning *`,[randomUUID(),args.provider,args.name.trim(),base,args.actorUserId]);
-  const id=existing.id,owner=existing.created_by;
-  const secret=existing.callback_secret_enc&&existing.status!=='disconnected'?(await workflowSecret<{secret:string}>(db,key,existing,'callback')).secret:randomBytes(32).toString('base64url');
-  const credential = await storeCredentialPayload(db, key, {
-    ownerUserId: owner,
-    kind: "api_key",
-    service: `workflow.${args.provider}`,
-    slot: id,
-    label: args.name,
-    payload: {
-      token: args.token,
-      workspaceId: args.workspaceId,
-      workspaceType: args.workspaceType,
-    },
-    actorUserId: args.actorUserId,
+  return withWorkflowTransaction(db, async tx => {
+    await requireConnectorVault(tx);
+    // Reserve the stable provider/name identity before writing Vault slots. Two
+    // administrators cannot create competing slot ids for the same connection.
+    const [existing]=await tx.query<WorkflowIntegration>(`insert into workflow_integrations(id,provider,name,base_url,credentials_enc,callback_secret_enc,created_by,status,enabled)
+      values($1,$2,$3,$4,'','',$5,'error',false) on conflict(provider,name) do update set enabled=false returning *`,[randomUUID(),args.provider,args.name.trim(),base,args.actorUserId]);
+    const id=existing.id,owner=existing.created_by;
+    const secret=existing.callback_secret_enc&&existing.status!=='disconnected'?(await openWorkflowCallback(tx,key,existing)):randomBytes(32).toString('base64url');
+    const credential = await storeVaultCredentialPayload(tx, key, {
+      ownerUserId: owner,
+      kind: "api_key",
+      service: `workflow.${args.provider}`,
+      slot: id,
+      label: args.name,
+      payload: {
+        token: args.token,
+        workspaceId: args.workspaceId,
+        workspaceType: args.workspaceType,
+      },
+      actorUserId: args.actorUserId,
+    });
+    const callback = await storeVaultCredentialPayload(tx, key, {
+      ownerUserId: owner,
+      kind: "api_key",
+      service: `workflow.${args.provider}`,
+      slot: `${id}.callback`,
+      label: `${args.name} callback`,
+      payload: { secret },
+      actorUserId: args.actorUserId,
+    });
+    const rows = await tx.query<WorkflowIntegration>(
+      `insert into workflow_integrations(id,provider,name,base_url,credentials_enc,callback_secret_enc,created_by,allow_private_network,account_identity,workspace_identity,status,last_check_at,last_check_ok)
+      values($10,$1,$2,$3,$4,$5,$6,$7,$8,$9,'active',now(),true) on conflict(provider,name) do update set base_url=excluded.base_url,credentials_enc=excluded.credentials_enc,callback_secret_enc=excluded.callback_secret_enc,allow_private_network=excluded.allow_private_network,account_identity=excluded.account_identity,workspace_identity=excluded.workspace_identity,status='active',enabled=false,last_check_at=now(),last_check_ok=true,updated_at=now() returning *`,
+      [
+        args.provider,
+        args.name.trim(),
+        base,
+        credential,
+        callback,
+        owner,
+        args.allowPrivateNetwork === true,
+        identity.account,
+        identity.workspace,
+        id,
+      ],
+    );
+    // A credential rotation must not silently rotate the callback verifier: the
+    // provider still has the old value until the operator explicitly changes it.
+    await tx.query(
+      `update workflow_definitions set exposed=false where integration_id=$1`,
+      [id],
+    );
+    const callbackSecret = secret;
+    await appendEvent(tx, { actorUserId: args.actorUserId, actor: 'super_admin', kind: 'workflow.connected', subjectType: 'workflow_integration', subjectId: id, payload: { provider: args.provider } });
+    return { ...rows[0], callbackSecret };
   });
-  const callback = await storeCredentialPayload(db, key, {
-    ownerUserId: owner,
-    kind: "api_key",
-    service: `workflow.${args.provider}`,
-    slot: `${id}.callback`,
-    label: `${args.name} callback`,
-    payload: { secret },
-    actorUserId: args.actorUserId,
-  });
-  const rows = await db.query<WorkflowIntegration>(
-    `insert into workflow_integrations(id,provider,name,base_url,credentials_enc,callback_secret_enc,created_by,allow_private_network,account_identity,workspace_identity,status,last_check_at,last_check_ok)
-    values($10,$1,$2,$3,$4,$5,$6,$7,$8,$9,'active',now(),true) on conflict(provider,name) do update set base_url=excluded.base_url,credentials_enc=excluded.credentials_enc,callback_secret_enc=excluded.callback_secret_enc,allow_private_network=excluded.allow_private_network,account_identity=excluded.account_identity,workspace_identity=excluded.workspace_identity,status='active',enabled=false,last_check_at=now(),last_check_ok=true,updated_at=now() returning *`,
-    [
-      args.provider,
-      args.name.trim(),
-      base,
-      credential,
-      callback,
-      owner,
-      args.allowPrivateNetwork === true,
-      identity.account,
-      identity.workspace,
-      id,
-    ],
-  );
-  // A credential rotation must not silently rotate the callback verifier: the
-  // provider still has the old value until the operator explicitly changes it.
-  await db.query(
-    `update workflow_definitions set exposed=false where integration_id=$1`,
-    [id],
-  );
-  const callbackSecret = secret;
-  return { ...rows[0], callbackSecret };
 }
 async function workflowSecret<T extends object>(
   db: Db,
@@ -289,13 +301,10 @@ async function workflowSecret<T extends object>(
   row: WorkflowIntegration,
   kind: "credential" | "callback",
 ): Promise<T> {
-  return openCredentialPayload<T>(db, key, {
-    ownerUserId: row.created_by,
-    service: `workflow.${row.provider}`,
-    slot: kind === "callback" ? `${row.id}.callback` : row.id,
-    stored: kind === "callback" ? row.callback_secret_enc : row.credentials_enc,
-  });
+  const prepared = await prepareWorkflowCredentials(db, key, row);
+  return (kind === 'callback' ? { secret: prepared.callbackSecret } : prepared.credentials) as unknown as T;
 }
+
 const auth = (p: WorkflowProvider, token: string): Record<string, string> =>
   p === "n8n"
     ? { "X-N8N-API-KEY": token }
@@ -500,17 +509,24 @@ function makeSchema(fields: any[]): Record<string, unknown> {
   }
   return { type: "object", properties, required, additionalProperties: false };
 }
-export async function discoverWorkflows(db:Db,key:MasterKey,integration:WorkflowIntegration,fetchImpl:typeof fetch=fetch):Promise<WorkflowDefinition[]>{
- try{return await discoverWorkflowsImpl(db,key,integration,fetchImpl);}catch{
-  await db.query(`update workflow_integrations set status='error',enabled=false,last_check_at=now(),last_check_ok=false where id=$1`,[integration.id]);
-  throw new WorkflowError('Workflow discovery failed. Recheck the credential, permissions and provider availability.',502);
- }
+export async function discoverWorkflows(db:Db,key:MasterKey,integration:WorkflowIntegration,fetchImpl:typeof fetch=fetch):Promise<WorkflowDefinition[]> {
+  const prepared = await prepareWorkflowCredentials(db, key, integration);
+  try { return await discoverWorkflowsImpl(db, prepared.integration, fetchImpl, prepared.credentials); }
+  catch (error) {
+    if (error instanceof VaultError) throw error;
+    await withWorkflowTransaction(db, async tx => {
+      const [current] = await tx.query<WorkflowIntegration>('select * from workflow_integrations where id=$1 for update', [integration.id]);
+      if (current && current.status !== 'disconnected' && sameWorkflowCredentials(current, prepared.integration))
+        await tx.query("update workflow_integrations set status='error',enabled=false,last_check_at=now(),last_check_ok=false where id=$1", [integration.id]);
+    });
+    throw new WorkflowError('Workflow discovery failed. Recheck the credential, permissions and provider availability.',502);
+  }
 }
 async function discoverWorkflowsImpl(
   db: Db,
-  key: MasterKey,
   integration: WorkflowIntegration,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch,
+  credentials: Credentials,
 ): Promise<WorkflowDefinition[]> {
   if (
     integration.provider === "n8n" &&
@@ -518,12 +534,6 @@ async function discoverWorkflowsImpl(
     fetchImpl === fetch
   )
     fetchImpl = publicWorkflowFetch;
-  const credentials = await workflowSecret<Credentials>(
-    db,
-    key,
-    integration,
-    "credential",
-  );
   const { token } = credentials;
   const items:any[]=[];let cursor:string|undefined,offset=0;
   for(let page=0;page<5;page++){
@@ -544,7 +554,7 @@ async function discoverWorkflowsImpl(
     if(!more)break;
     if(page===4)throw new WorkflowError('The catalog exceeds 500 workflows; narrow the provider connection.',422);
   }
-  const found: WorkflowDefinition[] = [];
+  const catalog: Array<{ external: string; name: string; description: string | null; schema: Record<string, unknown>; execution: string }> = [];
   for (const item of items) {
     const external = String(item.id ?? item.name ?? item.scenarioId ?? "");
     if (!external) continue;
@@ -568,29 +578,26 @@ async function discoverWorkflowsImpl(
       schema = makeSchema(body.interface.input);
     }
 
-    const [row] = await db.query<WorkflowDefinition>(
-      `insert into workflow_definitions(integration_id,external_id,name,description,input_schema,execution_ref,active)
-      values($1,$2,$3,$4,$5,$6,true) on conflict(integration_id,external_id) do update set name=excluded.name,description=excluded.description,input_schema=case when excluded.execution_ref='' then workflow_definitions.input_schema else excluded.input_schema end,execution_ref=case when excluded.execution_ref='' then workflow_definitions.execution_ref else excluded.execution_ref end,active=true,discovered_at=now() returning *`,
-      [
-        integration.id,
-        external,
-        String(item.name ?? item.title ?? "Workflow"),
-        item.description ?? null,
-        json(schema),
-        execution,
-      ],
-    );
-    found.push(row);
+    catalog.push({ external, name: String(item.name ?? item.title ?? 'Workflow'), description: item.description ?? null, schema, execution });
   }
-  await db.query(
-    `update workflow_definitions set active=false where integration_id=$1 and not(external_id=any($2::text[]))`,
-    [integration.id, found.map((x) => x.external_id)],
-  );
-  await db.query(
-    `update workflow_integrations set status='active',last_check_at=now(),last_check_ok=true where id=$1`,
-    [integration.id],
-  );
-  return found;
+  return withWorkflowTransaction(db, async tx => {
+    await requireConnectorVault(tx);
+    const [current] = await tx.query<WorkflowIntegration>('select * from workflow_integrations where id=$1 for update', [integration.id]);
+    if (!current || current.status === 'disconnected' || !sameWorkflowCredentials(current, integration))
+      throw new VaultError('The workflow connection changed during discovery. Discover the current connection again.');
+    const found: WorkflowDefinition[] = [];
+    for (const item of catalog) {
+      const [row] = await tx.query<WorkflowDefinition>(`insert into workflow_definitions(integration_id,external_id,name,description,input_schema,execution_ref,active)
+        values($1,$2,$3,$4,$5,$6,true) on conflict(integration_id,external_id) do update set name=excluded.name,description=excluded.description,
+        input_schema=case when excluded.execution_ref='' then workflow_definitions.input_schema else excluded.input_schema end,
+        execution_ref=case when excluded.execution_ref='' then workflow_definitions.execution_ref else excluded.execution_ref end,active=true,discovered_at=now() returning *`,
+      [integration.id, item.external, item.name, item.description, json(item.schema), item.execution]);
+      found.push(row);
+    }
+    await tx.query('update workflow_definitions set active=false where integration_id=$1 and not(external_id=any($2::text[]))', [integration.id, found.map(row => row.external_id)]);
+    await tx.query("update workflow_integrations set status='active',last_check_at=now(),last_check_ok=true where id=$1", [integration.id]);
+    return found;
+  });
 }
 
 const schemaValidator = new Ajv({
@@ -648,23 +655,26 @@ export async function registerN8nWebhook(
   return rows[0];
 }
 export async function disconnectWorkflowIntegration(db: Db, id: string) {
-  const rows = await db.query(
-    `update workflow_integrations set enabled=false,status='disconnected',credentials_enc='',last_check_ok=false,updated_at=now() where id=$1 returning id,provider,created_by`,
-    [id],
-  );
-  if (!rows.length) throw new WorkflowError("Integration not found.", 404);
-  await db.query(
-    `update workflow_definitions set exposed=false where integration_id=$1`,
-    [id],
-  );
-  for (const slot of [id, `${id}.callback`])
-    await deleteVaultSlot(db, {
-      ownerUserId: String(rows[0].created_by),
-      service: `workflow.${rows[0].provider}`,
-      slot,
-      actorUserId: String(rows[0].created_by),
-    });
-  return { disconnected: true };
+  return withWorkflowTransaction(db, async tx => {
+    const rows = await tx.query(
+      `update workflow_integrations set enabled=false,status='disconnected',credentials_enc='',callback_secret_enc='',last_check_ok=false,updated_at=now() where id=$1 returning id,provider,created_by`,
+      [id],
+    );
+    if (!rows.length) throw new WorkflowError("Integration not found.", 404);
+    await tx.query(
+      `update workflow_definitions set exposed=false where integration_id=$1`,
+      [id],
+    );
+    for (const slot of [id, `${id}.callback`])
+      await deleteVaultSlot(tx, {
+        ownerUserId: String(rows[0].created_by),
+        service: `workflow.${rows[0].provider}`,
+        slot,
+        actorUserId: String(rows[0].created_by),
+      });
+    await appendEvent(tx, { actorUserId: String(rows[0].created_by), actor: 'super_admin', kind: 'workflow.disconnected', subjectType: 'workflow_integration', subjectId: id });
+    return { disconnected: true };
+  });
 }
 
 function workflowBoundary(row: any): string {
@@ -674,6 +684,8 @@ function workflowBoundary(row: any): string {
         row.provider,
         row.base_url,
         row.credentials_enc,
+        row.callback_secret_enc,
+        row.allow_private_network,
         row.execution_ref,
         row.input_schema,
       ]),
@@ -699,38 +711,48 @@ export async function requestWorkflowRun(
     );
     if (!thread) throw new WorkflowError("Thread not found.", 404);
   }
+  const prepared = await prepareWorkflowCredentials(db, key, args.integration);
   validateWorkflowInput(args.workflow.input_schema, args.input);
   const canonical = JSON.stringify(args.input);
   const hash = createHash("sha256").update(canonical).digest("hex");
   if (Buffer.byteLength(canonical) > 64 * 1024)
     throw new WorkflowError("Workflow input is larger than 64 KB.", 413);
-  const [run] = await db.query<WorkflowRun>(
-    `insert into workflow_runs(integration_id,external_workflow_id,owner_user_id,thread_id,status,input_enc,input_hash,expires_at)
-    values($1,$2,$3,$4,'pending',$5,$6,now()+interval '15 minutes') returning *`,
-    [
-      args.integration.id,
-      args.workflow.external_id,
-      args.ownerUserId,
-      args.threadId ?? null,
-      seal(key, {
-        input: args.input,
-        boundary: workflowBoundary({ ...args.integration, ...args.workflow }),
-      }),
-      hash,
-    ],
-  );
-  await appendEvent(db, {
-    actorUserId: args.ownerUserId,
-    actor: "agent",
-    kind: "workflow.run_requested",
-    subjectType: "workflow_run",
-    subjectId: run.id,
-    payload: {
-      provider: args.integration.provider,
-      workflow: args.workflow.name,
-    },
+  return withWorkflowTransaction(db, async tx => {
+    await requireConnectorVault(tx);
+    const [current] = await tx.query<WorkflowIntegration>('select * from workflow_integrations where id=$1 for update', [prepared.integration.id]);
+    if (!current || current.status !== 'active' || !current.enabled || !sameWorkflowCredentials(current, prepared.integration))
+      throw new WorkflowError('That workflow connection is unavailable or changed. Reload it before preparing a run.', 409);
+    const [workflow] = await tx.query<WorkflowDefinition>("select * from workflow_definitions where integration_id=$1 and external_id=$2 and active=true and exposed=true for share", [current.id, args.workflow.external_id]);
+    if (!workflow) throw new WorkflowError('That workflow is not available for use.', 409);
+    validateWorkflowInput(workflow.input_schema, args.input);
+    const [run] = await tx.query<WorkflowRun>(
+      `insert into workflow_runs(integration_id,external_workflow_id,owner_user_id,thread_id,status,input_enc,input_hash,expires_at)
+      values($1,$2,$3,$4,'pending',$5,$6,now()+interval '15 minutes') returning *`,
+      [
+        args.integration.id,
+        args.workflow.external_id,
+        args.ownerUserId,
+        args.threadId ?? null,
+        seal(key, {
+          input: args.input,
+          boundary: workflowBoundary({ ...prepared.integration, ...workflow }),
+        }),
+        hash,
+      ],
+    );
+    await appendEvent(tx, {
+      actorUserId: args.ownerUserId,
+      actor: "agent",
+      kind: "workflow.run_requested",
+      subjectType: "workflow_run",
+      subjectId: run.id,
+      payload: {
+        provider: args.integration.provider,
+        workflow: workflow.name,
+      },
+    });
+    return run;
   });
-  return run;
 }
 export async function executeWorkflowRun(
   db: Db,
@@ -779,19 +801,16 @@ export async function executeWorkflowRun(
     );
     return { status: "denied" };
   }
-  const claimed = await db.query<any>(
-    `update workflow_runs set status='running',decided_at=now(),started_at=now() where id=$1 and status='pending' returning *`,
-    [row.id],
-  );
-  if (!claimed.length)
-    throw new WorkflowError("That workflow request was already decided.", 409);
+  const prepared = await prepareWorkflowCredentials(db, key, { ...row, id: row.integration_id });
+  row.credentials_enc = prepared.integration.credentials_enc;
+  row.callback_secret_enc = prepared.integration.callback_secret_enc;
   const { input, boundary } = openSealed<{
     input: Record<string, unknown>;
     boundary: string;
   }>(key, row.input_enc);
   if (boundary !== workflowBoundary(row)) {
     await db.query(
-      `update workflow_runs set status='denied',error_category='authorization_changed' where id=$1`,
+      `update workflow_runs set status='denied',error_category='authorization_changed' where id=$1 and status='pending'`,
       [row.id],
     );
     throw new WorkflowError(
@@ -800,12 +819,26 @@ export async function executeWorkflowRun(
     );
   }
   validateWorkflowInput(row.input_schema, input);
-  const { token } = await workflowSecret<Credentials>(
-    db,
-    key,
-    { ...row, id: row.integration_id },
-    "credential",
+  const claimed = await db.query<any>(
+    `update workflow_runs r set status='running',decided_at=now(),started_at=now()
+     where r.id=$1 and r.status='pending' and r.expires_at>now() and exists(
+       select 1 from workflow_integrations i join workflow_definitions w on w.integration_id=i.id
+       where i.id=r.integration_id and w.external_id=r.external_workflow_id and i.status='active' and i.enabled=true
+       and w.active=true and w.exposed=true and i.base_url=$2 and i.credentials_enc=$3 and i.callback_secret_enc=$4
+       and i.allow_private_network=$5 and w.execution_ref=$6 and w.input_schema=$7) returning r.*`,
+    [row.id, row.base_url, row.credentials_enc, row.callback_secret_enc, row.allow_private_network, row.execution_ref, json(row.input_schema)],
   );
+  if (!claimed.length)
+    throw new WorkflowError("That workflow request was already decided.", 409);
+  let authorized;
+  try {
+    authorized = await prepareWorkflowCredentials(db, key, { ...row, id: row.integration_id });
+    if (!authorized.integration.enabled || authorized.integration.status !== 'active') throw new WorkflowError('Workflow authorization changed. Prepare a new request.', 409);
+  } catch (error) {
+    await db.query("update workflow_runs set status='failed',error_category='credential_unavailable',finished_at=now() where id=$1 and status='running'", [row.id]);
+    throw error;
+  }
+  const { token } = authorized.credentials;
   try {
     if (row.provider === "n8n" && !row.allow_private_network && !args.fetchImpl)
       await assertPublicHost(new URL(row.base_url).hostname);
@@ -837,14 +870,7 @@ export async function executeWorkflowRun(
           "X-Josi-Run-Id": row.id,
           ...(row.provider === "n8n"
             ? {
-                "X-Josi-Workflow-Key": (
-                  await workflowSecret<{ secret: string }>(
-                    db,
-                    key,
-                    { ...row, id: row.integration_id },
-                    "callback",
-                  )
-                ).secret,
+                "X-Josi-Workflow-Key": authorized.callbackSecret,
               }
             : auth(row.provider, token)),
         },

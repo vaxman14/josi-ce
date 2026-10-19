@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import { MasterKey } from '../../core/src/index.js';
 import { createUser } from '../../auth/src/users.js';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { discoverWorkflows, executeWorkflowRun, previewWorkflowRun, recordWorkflowCallback, requestWorkflowRun, saveWorkflowIntegration, verifyWorkflowCallback, WorkflowError, type WorkflowIntegration } from '../src/index.js';
 
 let db:TestDb; let admin:string; let member:string; const key=new MasterKey(Buffer.alloc(32,19));
 const credentialOk=async(url:RequestInfo|URL,init?:RequestInit)=>new Response(String(url).includes('mcp.zapier.com')?JSON.stringify({jsonrpc:'2.0',id:JSON.parse(String(init?.body??'{}')).id,result:{tools:[],protocolVersion:'2025-03-26'}}):JSON.stringify({data:[],scenarios:[]}),{status:200,headers:{'content-type':'application/json'}});
-beforeEach(async()=>{db=await testDb();admin=(await createUser(db,{email:'flow-admin@test.invalid',username:'flowadmin',role:'super_admin'})).id;member=(await createUser(db,{email:'flow-member@test.invalid',username:'flowmember',role:'member'})).id;});
+beforeEach(async()=>{db=await testDb();admin=(await createUser(db,{email:'flow-admin@test.invalid',username:'flowadmin',role:'super_admin'})).id;member=(await createUser(db,{email:'flow-member@test.invalid',username:'flowmember',role:'member'})).id;await testVault(db,key);});
 
 describe('native workflow providers',()=>{
   it('does not let a Custom API host masquerade as Zapier or Make',async()=>{
@@ -58,7 +58,6 @@ describe('native workflow providers',()=>{
 import {initializeVault,openCredentialEnvelope} from '../../core/src/index.js';
 import {disconnectWorkflowIntegration,validateWorkflowInput,registerN8nWebhook} from '../src/workflows.js';
 it('stores provider and callback credentials in the Vault and revokes both slots immediately',async()=>{
- await initializeVault(db,key,admin);
  const integration=await saveWorkflowIntegration(db,key,{provider:'n8n',name:'vault-backed',baseUrl:'https://n8n.example.test',token:'credential-fixture',actorUserId:admin,fetchImpl:credentialOk});
  expect((await openCredentialEnvelope(db,key,integration.credentials_enc)).vaultItemId).toBeTruthy();
  expect((await openCredentialEnvelope(db,key,integration.callback_secret_enc)).vaultItemId).toBeTruthy();

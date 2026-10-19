@@ -10,14 +10,16 @@ describe('native workflow assistant tools', () => {
   });
 });
 
-import {MasterKey} from '@josi-ce/core';
-import {testDb} from '../../core/test/helpers.js';
+import {MasterKey,seal,setVaultLock,storeVaultCredentialPayload} from '@josi-ce/core';
+import {testDb,testVault} from '../../core/test/helpers.js';
 import {createUser} from '../../auth/src/users.js';
 import {executeWorkflowTool,workflowToolAvailability} from '../src/workflowTools.js';
 it('enforces assistant exposure and revocation and only prepares an owner approval',async()=>{
  const db=await testDb(),key=new MasterKey(Buffer.alloc(32,29));
  const owner=await createUser(db,{email:'workflow-owner@example.test',username:'workflowowner',role:'member'});
- const [integration]=await db.query<{id:string}>(`insert into workflow_integrations(provider,name,base_url,credentials_enc,callback_secret_enc,created_by,enabled,status) values('n8n','Office','https://n8n.example.test','synthetic-sealed-placeholder','synthetic-callback-placeholder',$1,true,'active') returning id`,[owner.id]);
+ await testVault(db,key);
+ await storeVaultCredentialPayload(db,key,{ownerUserId:owner.id,kind:'other',service:'fixture',slot:'box',label:'Fixture box',payload:{value:'synthetic'}});
+ const [integration]=await db.query<{id:string}>(`insert into workflow_integrations(provider,name,base_url,credentials_enc,callback_secret_enc,created_by,enabled,status) values('n8n','Office','https://n8n.example.test',$2,$3,$1,true,'active') returning id`,[owner.id,seal(key,{token:'synthetic-provider-token'}),seal(key,{secret:'synthetic-callback-secret'})]);
  await db.query(`insert into workflow_definitions(integration_id,external_id,name,input_schema,execution_ref,active,exposed) values($1,'report','Report','{"type":"object","properties":{"lead":{"type":"string"}},"required":["lead"]}','/webhook/report',true,false)`,[integration.id]);
  const ctx={userId:owner.id,threadId:null,masterKey:()=>key};
  const input={integration_id:integration.id,workflow_id:'report',input:{lead:'Reviewed input'}};
@@ -26,6 +28,10 @@ it('enforces assistant exposure and revocation and only prepares an owner approv
  expect(await db.query('select id from workflow_runs')).toHaveLength(0);
  await db.query(`update workflow_definitions set exposed=true where integration_id=$1`,[integration.id]);
  expect(await workflowToolAvailability(db)).toHaveLength(2);
+ await setVaultLock(db,{ownerUserId:owner.id,locked:true,actorUserId:owner.id});
+ expect(await executeWorkflowTool(db,ctx,'run_native_workflow',input)).toMatchObject({ok:false});
+ expect(await db.query('select id from workflow_runs')).toHaveLength(0);
+ await setVaultLock(db,{ownerUserId:owner.id,locked:false,actorUserId:owner.id});
  expect(await executeWorkflowTool(db,ctx,'run_native_workflow',input)).toMatchObject({ok:true,status:'pending'});
  const runs=await db.query<{status:string;owner_user_id:string;external_run_id:string|null}>('select status,owner_user_id,external_run_id from workflow_runs');
  expect(runs).toEqual([{status:'pending',owner_user_id:owner.id,external_run_id:null}]);

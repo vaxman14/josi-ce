@@ -17,7 +17,7 @@ Source audit updated 19 October 2026. This is a work ledger, not a claim that Va
 | SMTP | Recoverable owner-bound references; paired-profile transaction, legacy import, atomic removal and shared-password lifecycle | Full upgrade migration; P4 dispatch freshness. Setup test proves server acceptance, not recipient delivery. |
 | Developer services | Owner/service-bound recoverable references; atomic save/import/delete, policy rechecks and stale-reply fencing across HTTP/tools | Full upgrade migration and P4 final dispatch authority. |
 | Backup destination / encryption key | Existing Vault helper references | Transactional migration, backup/restore bootstrapping and rotation; avoid circular recovery dependencies. |
-| Workflow credentials / callback secrets | Existing Vault helpers, sealed pending inputs | Transactional legacy migration and paired-secret rotation; classify input payloads separately. |
+| Workflow credentials / callback secrets | Recoverable Vault pair, transactional save/import/delete, approval binding and stale discovery checks tested | Full upgrade migration; pending input rewrap/expiry; P4 final dispatch and P9 uncertain-effect recovery. |
 | Desktop sessions | P1 uses memory-only connection sessions | P5 Vault-issued, revocable projections; no independent persistent credential store. |
 | Browser sign-ins | No production implementation | P6/P7 Vault-controlled encrypted workspace lifecycle, crash recovery, local reset and provider logout distinctions. |
 | Subscription CLI logins | Existing CLI-owned login directories | Inventory and govern application-managed runtime projections; do not import personal login directories or treat external CLI storage as an implicit exception. |

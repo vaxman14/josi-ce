@@ -1,6 +1,7 @@
-import type { Db, MasterKey } from "@josi-ce/core";
+import { VaultError, type Db, type MasterKey } from "@josi-ce/core";
 import {
   requestWorkflowRun,
+  WorkflowError,
   type WorkflowDefinition,
   type WorkflowIntegration,
 } from "@josi-ce/connectors";
@@ -71,7 +72,8 @@ export async function executeWorkflowTool(
     execution_ref: row.execution_ref,
     active: row.active,
   };
-  const run = await requestWorkflowRun(db, ctx.masterKey(), {
+  let run;
+  try { run = await requestWorkflowRun(db, ctx.masterKey(), {
     integration: row as WorkflowIntegration,
     workflow,
     ownerUserId: ctx.userId,
@@ -82,6 +84,10 @@ export async function executeWorkflowTool(
       ? input.input
       : {}) as Record<string, unknown>,
   });
+  } catch (error) {
+    if (error instanceof VaultError || error instanceof WorkflowError) return { ok: false, message: error.message };
+    throw error;
+  }
   return {
     ok: true,
     status: "pending",

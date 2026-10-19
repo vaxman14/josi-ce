@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { Router } from "express";
 import {
   loadMasterKey,
+  VaultError, VaultLockedError,
   openSealed,
   type Db,
   type LoadOptions,
@@ -42,6 +43,8 @@ const handle = (fn: any) =>
     try {
       return await fn(req, res);
     } catch (e) {
+      if (e instanceof VaultLockedError) return res.status(423).json({ error: e.message });
+      if (e instanceof VaultError) return res.status(409).json({ error: e.message });
       if (e instanceof WorkflowError)
         return res.status(e.status).json({ error: e.message });
       throw e;
