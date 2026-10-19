@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { appendEvent, openSealed, seal, type Db, type MasterKey } from '@josi-ce/core';
+import { appendEvent, openSealed, openCredentialPayload, storeVaultCredentialPayload, VaultLockedError, type Db, type MasterKey } from '@josi-ce/core';
 import type { ExternalChannel } from './shared.js';
 
 export interface ExternalConfigRow {
   provider: ExternalChannel;
+  vault_owner_user_id: string | null;
   enabled: boolean;
   credentials_enc: string | null;
   webhook_secret_enc: string | null;
@@ -40,13 +41,50 @@ export function describeExternalConfig(row: ExternalConfigRow) {
   };
 }
 
-export function openExternalConfig(masterKey: MasterKey | null, row: ExternalConfigRow): Record<string, string> {
+export async function openExternalConfig(db: Db, masterKey: MasterKey | null, row: ExternalConfigRow): Promise<Record<string, string>> {
   if (!masterKey || !row.credentials_enc || !row.webhook_secret_enc) {
     throw new ExternalChannelError('the channel is not configured or the installation key is unavailable', 'not_configured');
   }
-  const credentials = openSealed<Record<string, string>>(masterKey, row.credentials_enc);
-  const webhook = openSealed<{ secret: string }>(masterKey, row.webhook_secret_enc);
-  return { ...credentials, webhookSecret: webhook.secret };
+  if (!db.transaction) throw new ExternalChannelError('Channel Vault access requires database transactions');
+  return db.transaction(async tx => {
+    const [state] = await tx.query<{ initialized_at: string | null; locked: boolean }>('select initialized_at,locked from vault_state where id=true for share');
+    if (!state?.initialized_at || state.locked) throw new VaultLockedError('Initialize and unlock the Master Vault to use channel credentials.');
+    const [current] = await tx.query<ExternalConfigRow>('select * from external_channel_configs where provider=$1 for update', [row.provider]);
+    if (!current || current.credentials_enc !== row.credentials_enc || current.webhook_secret_enc !== row.webhook_secret_enc) {
+      throw new ExternalChannelError('Channel configuration changed; retry with current configuration');
+    }
+    let owner = current.vault_owner_user_id;
+    if (!owner) {
+      const [admin] = await tx.query<{ id: string }>("select id from users where role='super_admin'");
+      if (!admin) throw new ExternalChannelError('Channel credential owner is unavailable');
+      owner = admin.id;
+    }
+    const service = `channel.${current.provider}`;
+    async function resolve(slot: 'credentials' | 'webhook', stored: string) {
+      const decoded = openSealed<Record<string, unknown>>(masterKey!, stored);
+      if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw new ExternalChannelError('Channel credential is invalid');
+      if (Object.prototype.hasOwnProperty.call(decoded, 'vaultItemId')) {
+        return { reference: stored, payload: await openCredentialPayload<Record<string, string>>(tx, masterKey!, { ownerUserId: owner!, service, slot, stored }) };
+      }
+      if (!Object.keys(decoded).length || !Object.values(decoded).every(value => typeof value === 'string' && value.length > 0)) {
+        throw new ExternalChannelError('Channel credential is invalid');
+      }
+      const reference = await storeVaultCredentialPayload(tx, masterKey!, { ownerUserId: owner!, kind: 'api_key', service, slot,
+        label: `${current.provider} ${slot}`, payload: decoded });
+      return { reference, payload: decoded as Record<string, string> };
+    }
+    const credentials = await resolve('credentials', current.credentials_enc!);
+    const webhook = await resolve('webhook', current.webhook_secret_enc!);
+    if (!Object.keys(credentials.payload).length || !Object.values(credentials.payload).every(value => typeof value === 'string' && value.length > 0)) {
+      throw new ExternalChannelError('Channel credential is invalid');
+    }
+    if (typeof webhook.payload.secret !== 'string' || !webhook.payload.secret) throw new ExternalChannelError('Channel webhook credential is invalid');
+    if (credentials.reference !== current.credentials_enc || webhook.reference !== current.webhook_secret_enc || !current.vault_owner_user_id) {
+      await tx.query('update external_channel_configs set credentials_enc=$2,webhook_secret_enc=$3,vault_owner_user_id=$4 where provider=$1',
+        [current.provider, credentials.reference, webhook.reference, owner]);
+    }
+    return { ...credentials.payload, webhookSecret: webhook.payload.secret };
+  });
 }
 
 export async function storeExternalConfig(db: Db, args: {
@@ -54,21 +92,31 @@ export async function storeExternalConfig(db: Db, args: {
   webhookSecret?: string; actorUserId: string; riskAcknowledged?: boolean;
 }): Promise<void> {
   if (!args.masterKey) throw new ExternalChannelError('the installation master key is unavailable', 'no_master_key');
-  if (!Object.values(args.credentials).every((v) => typeof v === 'string' && v.trim())) {
+  if (!Object.keys(args.credentials).length || !Object.values(args.credentials).every((v) => typeof v === 'string' && v.trim())) {
     throw new ExternalChannelError('all channel configuration fields are required');
   }
   if (args.provider === 'signal' && !args.riskAcknowledged) {
     throw new ExternalChannelError('acknowledge the Signal bridge and account risk before configuring it', 'risk_not_acknowledged');
   }
   const secret = args.webhookSecret?.trim() || randomBytes(32).toString('base64url');
-  await db.query(
-    `update external_channel_configs set credentials_enc=$2, webhook_secret_enc=$3,
-       risk_acknowledged_at=case when $4 then now() else risk_acknowledged_at end,
-       configured_at=now(), enabled=false, probe_ok=null, probe_error_category=null, updated_at=now()
-     where provider=$1`,
-    [args.provider, seal(args.masterKey, args.credentials), seal(args.masterKey, { secret }), !!args.riskAcknowledged],
-  );
-  await appendEvent(db, { actorUserId: args.actorUserId, actor: 'super_admin', kind: 'external_channel.configured', subjectType: 'external_channel', subjectId: args.provider, payload: { provider: args.provider } });
+  const masterKey = args.masterKey;
+  if (!db.transaction) throw new ExternalChannelError('Channel configuration requires database transactions');
+  await db.transaction(async tx => {
+    await tx.query('select id from vault_state where id=true for share');
+    const current = await tx.query('select provider from external_channel_configs where provider=$1 for update', [args.provider]);
+    if (!current.length) throw new ExternalChannelError('Channel is unavailable');
+    await tx.query(
+      `update external_channel_configs set credentials_enc=$2, webhook_secret_enc=$3,vault_owner_user_id=$5,
+         risk_acknowledged_at=case when $4 then now() else risk_acknowledged_at end,
+         configured_at=now(), enabled=false, probe_ok=null, probe_error_category=null, updated_at=now()
+       where provider=$1`,
+      [args.provider,
+        await storeVaultCredentialPayload(tx, masterKey, { ownerUserId: args.actorUserId, kind: 'api_key', service: `channel.${args.provider}`, slot: 'credentials', label: `${args.provider} credentials`, payload: args.credentials }),
+        await storeVaultCredentialPayload(tx, masterKey, { ownerUserId: args.actorUserId, kind: 'api_key', service: `channel.${args.provider}`, slot: 'webhook', label: `${args.provider} webhook`, payload: { secret } }),
+        !!args.riskAcknowledged, args.actorUserId],
+    );
+    await appendEvent(tx, { actorUserId: args.actorUserId, actor: 'super_admin', kind: 'external_channel.configured', subjectType: 'external_channel', subjectId: args.provider, payload: { provider: args.provider } });
+  });
 }
 
 export async function setExternalProbe(db: Db, provider: ExternalChannel, ok: boolean, category: string | null): Promise<void> {

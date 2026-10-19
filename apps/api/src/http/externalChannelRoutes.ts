@@ -72,7 +72,7 @@ export function adminExternalChannelRoutes(ctx: ExternalChannelCtx): Router {
   }));
   r.post('/:provider/probe', asyncRoute(async (req, res) => {
     const provider = providerOf(param(req, 'provider')); if (!provider) return res.status(404).json({ error: 'no such channel' });
-    const row = await loadExternalConfig(ctx.db, provider); const secrets = openExternalConfig(keyOf(ctx), row);
+    const row = await loadExternalConfig(ctx.db, provider); const secrets = await openExternalConfig(ctx.db, keyOf(ctx), row);
     let ok = false; let category: string | null = null;
     try { ok = await probe(provider, secrets, ctx.fetchImpl); category = ok ? null : 'rejected'; } catch { category = 'network'; }
     await setExternalProbe(ctx.db, provider, ok, category);
@@ -108,7 +108,7 @@ export function mountExternalChannelWebhooks(app: Express, ctx: ExternalChannelC
   app.get('/channels/whatsapp/webhook', asyncRoute(async (req, res) => {
     const row = await loadExternalConfig(ctx.db, 'whatsapp');
     if (!row.enabled) return res.status(404).send('not found');
-    let s: Record<string, string>; try { s = openExternalConfig(keyOf(ctx), row); } catch { return res.status(404).send('not found'); }
+    let s: Record<string, string>; try { s = await openExternalConfig(ctx.db, keyOf(ctx), row); } catch { return res.status(404).send('not found'); }
     const challenge = verifyWhatsAppChallenge(req.query, s.webhookSecret);
     if (challenge === null) return res.status(404).send('not found');
     res.type('text/plain').send(challenge);
@@ -117,7 +117,7 @@ export function mountExternalChannelWebhooks(app: Express, ctx: ExternalChannelC
     res.set('Cache-Control', 'no-store');
     const provider = providerOf(param(req, 'provider')); if (!provider) return res.status(404).json({ error: 'not found' });
     const row = await loadExternalConfig(ctx.db, provider); if (!row.enabled) return res.status(404).json({ error: 'not found' });
-    let s: Record<string, string>; try { s = openExternalConfig(keyOf(ctx), row); } catch { return res.status(404).json({ error: 'not found' }); }
+    let s: Record<string, string>; try { s = await openExternalConfig(ctx.db, keyOf(ctx), row); } catch { return res.status(404).json({ error: 'not found' }); }
     const raw = req.rawBody ?? Buffer.from(JSON.stringify(req.body ?? {}));
     const authentic = provider === 'whatsapp' ? verifyWhatsAppSignature(raw, req.get('x-hub-signature-256'), s.appSecret)
       : provider === 'slack' ? verifySlackSignature(raw, req.get('x-slack-request-timestamp'), req.get('x-slack-signature'), s.signingSecret)
