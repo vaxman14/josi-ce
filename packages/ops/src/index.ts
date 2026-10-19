@@ -30,3 +30,5 @@ export {
   pgBackupWriter, pgRestoreReader, pgToolsAvailable, type PgConnection,
 } from './pgWriter.js';
 export { createNativeSnapshot, restoreNativeSnapshot, verifyNativeSnapshot } from './nativeSnapshot.js';
+export { BackupConfigurationError, prepareBackupDestinationSave, commitBackupDestinationSave, loadBackupDestination,
+  recordBackupDestinationCheck, removeBackupDestination, type BackupDestinationRow, type BackupDestinationInput } from './backupCredentials.js';

@@ -16,10 +16,12 @@ Source audit updated 19 October 2026. This is a work ledger, not a claim that Va
 | LLM API credentials | Stable owner, recoverable reference, transactional configuration/import/rotation/removal; registry rejects replaced selections | Full upgrade migration; P4 dispatch freshness. CLI-owned subscription logins remain a separate open consumer below. |
 | SMTP | Recoverable owner-bound references; paired-profile transaction, legacy import, atomic removal and shared-password lifecycle | Full upgrade migration; P4 dispatch freshness. Setup test proves server acceptance, not recipient delivery. |
 | Developer services | Owner/service-bound recoverable references; atomic save/import/delete, policy rechecks and stale-reply fencing across HTTP/tools | Full upgrade migration and P4 final dispatch authority. |
-| Backup destination / encryption key | Existing Vault helper references | Transactional migration, backup/restore bootstrapping and rotation; avoid circular recovery dependencies. |
+| Backup destination / encryption key | Independently owner-bound Vault references, atomic pair migration/configuration, revision-bound tests/upload preparation and replacement-key recovery tested | Full upgrade; outer-envelope import/restore; offline key acknowledgment and historical-key removal semantics. |
+| NAS runtime credentials | Supplied Vault projection, isolated browsing, configuration receipt matching | P4/P5 revocable mount/file lifecycle, durable cleanup retry and controller restart acceptance; current helper projection is not yet sufficient for Vault-only completion. |
 | Workflow credentials / callback secrets | Recoverable Vault pair, transactional save/import/delete, approval binding and stale discovery checks tested | Full upgrade migration; pending input rewrap/expiry; P4 final dispatch and P9 uncertain-effect recovery. |
 | Desktop sessions | P1 uses memory-only connection sessions | P5 Vault-issued, revocable projections; no independent persistent credential store. |
 | Browser sign-ins | No production implementation | P6/P7 Vault-controlled encrypted workspace lifecycle, crash recovery, local reset and provider logout distinctions. |
+| Legacy PC permissions and prepared actions | Installation-key-encrypted policies/requests, no production executor | P4 migration/revalidation into Vault authority; preserve user settings/history without silently activating old grants. |
 | Subscription CLI logins | Existing CLI-owned login directories | Inventory and govern application-managed runtime projections; do not import personal login directories or treat external CLI storage as an implicit exception. |
 
 ## Bootstrap and nonsecret verification material

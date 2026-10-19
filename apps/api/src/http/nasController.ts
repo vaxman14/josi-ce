@@ -8,12 +8,16 @@ export interface NasSharePlan {
   username?: string;
   password?: string;
   readOnly?: boolean;
+  configurationRevision?: string;
 }
+
+export interface NasMountStatus { mountedPath: string; configurationRevision: string }
 
 export interface NasController {
   browse(plan: Omit<NasSharePlan, 'folder'>): Promise<string[]>;
-  configure(plan: NasSharePlan): Promise<{ mountedPath: string }>;
-  remove(): Promise<void>;
+  configure(plan: NasSharePlan): Promise<NasMountStatus>;
+  status(): Promise<NasMountStatus | null>;
+  remove(expectedRevision?: string): Promise<void>;
 }
 
 /** Narrow Unix-socket client. The API never receives Docker authority; the
@@ -39,6 +43,7 @@ export function nasController(socketPath = process.env.JOSI_STORAGE_HELPER_SOCKE
   return {
     browse: (plan) => call<{ folders: string[] }>('/browse', plan).then((r) => r.folders),
     configure: (plan) => call('/configure', plan),
-    remove: () => call('/remove', {}).then(() => undefined),
+    status: () => call('/status', {}),
+    remove: (expectedRevision) => call('/remove', { expectedRevision }).then(() => undefined),
   };
 }

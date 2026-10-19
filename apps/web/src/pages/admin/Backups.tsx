@@ -282,8 +282,10 @@ function BackupDestination() {
   }
 
   /** A stored credential may be left blank to keep it, but only while the
-   * vendor is unchanged — which is exactly what the server enforces. */
-  const keepingCredential = !!destination?.credentialsSet && destination.kind === kind;
+   * destination endpoint is unchanged. The server checks this again on save. */
+  const keepingCredential = !!destination?.credentialsSet && destination.kind === kind
+    && (kind === 'nas' ? (values.shareHost ?? '') === destination.shareHost && (values.shareName ?? '') === destination.shareName
+      : (values.region ?? '') === destination.region && (values.endpoint || null) === destination.endpoint && (values.accountId || null) === destination.accountId);
   const missing = (entry?.fields ?? []).filter((f) => {
     if (!f.required) return false;
     if (f.secret && keepingCredential) return false;
@@ -295,8 +297,9 @@ function BackupDestination() {
     setError('');
     setResult(null);
     try {
-      const saved = await api.put<{ recoveryKey?: string | null }>('/ops/admin/backups/destination', { kind, ...values, encryptionEnabled: values.encryptionEnabled !== 'false' });
+      const saved = await api.put<{ recoveryKey?: string | null; warning?: string | null }>('/ops/admin/backups/destination', { kind, ...values, encryptionEnabled: values.encryptionEnabled !== 'false' });
       if (saved.recoveryKey) setRecoveryKey(saved.recoveryKey);
+      if (saved.warning) setError(saved.warning);
       setEditing(false);
       setValues({});
       await load();
@@ -428,6 +431,7 @@ function BackupDestination() {
                         shareProtocol: destination.shareProtocol ?? 'smb',
                         shareHost: destination.shareHost ?? '',
                         shareName: destination.shareName ?? '',
+                        folder: destination.kind === 'nas' ? destination.bucket.replace(/^\/mnt\/josi-nas\/?/, '') : '',
                         encryptionEnabled: String(destination.encryptionEnabled),
                       });
                       setEditing(true);

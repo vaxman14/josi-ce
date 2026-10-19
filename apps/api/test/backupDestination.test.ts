@@ -16,10 +16,11 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { looksSealed } from '@josi-ce/core';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { MasterKey, isVaultCredentialReference, setVaultLock } from '@josi-ce/core';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
+import { sha256Of } from '@josi-ce/ops';
 
 const dir = mkdtempSync(join(tmpdir(), 'josi-ce-dest-'));
 const keyPath = join(dir, 'master.key');
@@ -29,6 +30,7 @@ let server: Server;
 let base: string;
 let db: TestDb;
 const nasCalls: Array<{ operation: string; body?: unknown }> = [];
+let mountStatus: { mountedPath: string; configurationRevision: string } | null = null;
 
 // Not credential-shaped on purpose: the pre-commit scanner rejects anything
 // that looks real, and what matters here is only that distinct secret fields
@@ -40,12 +42,20 @@ const SECRET_KEY = 'not-a-real-secret-value-for-tests';
  * suite reaches a real storage service. */
 let bucketReply: { status: number; body: string } | 'throw' = { status: 200, body: '<ListBucketResult/>' };
 const requests: Array<{ url: string; headers: Record<string, string> }> = [];
+let onRequest: (() => Promise<void>) | undefined;
+let beforeArchive: (() => Promise<void>) | undefined;
+let nasFailure = false;
+let uploadSize = 0;
+let uploaded: Buffer | null = null;
 const destinationFetch: typeof fetch = async (url, init) => {
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries((init?.headers ?? {}) as Record<string, string>)) {
     headers[k.toLowerCase()] = v;
   }
   requests.push({ url: String(url), headers });
+  if (onRequest) { const hook = onRequest; onRequest = undefined; await hook(); }
+  if (init?.method === 'PUT') { uploaded = Buffer.from(init.body as Uint8Array); uploadSize = uploaded.length; return new Response(''); }
+  if (init?.method === 'HEAD') return new Response(null, { headers: { 'content-length': String(uploadSize) } });
   if (bucketReply === 'throw') throw new Error('ECONNREFUSED');
   return new Response(bucketReply.body, { status: bucketReply.status });
 };
@@ -102,15 +112,21 @@ async function signIn(identifier: string, password: string): Promise<string> {
 
 beforeEach(async () => {
   db = await testDb();
-  requests.length = 0;
+  requests.length = 0; onRequest = undefined; beforeArchive = undefined; uploadSize = 0; uploaded = null; nasFailure = false;
   bucketReply = { status: 200, body: '<ListBucketResult/>' };
-  nasCalls.length = 0;
+  nasCalls.length = 0; mountStatus = null;
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost', masterKeyCheck: { path: keyPath },
     destinationFetch,
+    backupWriter: {
+      async write() { if (beforeArchive) await beforeArchive(); return { byteSize: 128, sha256: sha256Of(Buffer.alloc(128)) }; },
+      async read() { return Buffer.alloc(128); },
+      async remove() {},
+    },
     nasController: {
       async browse(body) { nasCalls.push({ operation: 'browse', body }); return ['daily', 'offsite']; },
-      async configure(body) { nasCalls.push({ operation: 'configure', body }); return { mountedPath: '/mnt/josi-nas/offsite' }; },
+      async configure(body) { nasCalls.push({ operation: 'configure', body }); if (nasFailure) throw new Error('synthetic-private-helper-error'); return mountStatus = { mountedPath: '/mnt/josi-nas/offsite', configurationRevision: body.configurationRevision! }; },
+      async status() { return mountStatus; },
       async remove() { nasCalls.push({ operation: 'remove' }); },
     },
   });
@@ -124,6 +140,7 @@ beforeEach(async () => {
   await createUser(db, {
     email: 'alice@ce.test', username: 'alice', role: 'member', password: 'alice-password-123',
   });
+  await testVault(db, new MasterKey(Buffer.alloc(32, 11)));
   adminJar = await signIn('admin', 'admin-password-123');
   memberJar = await signIn('alice', 'alice-password-123');
 });
@@ -206,7 +223,7 @@ describe('the credential is managed, not mounted', () => {
     const [row] = await db.query<{ credentials_enc: string | null }>(
       `select credentials_enc from backup_destination where id = true`,
     );
-    expect(looksSealed(row.credentials_enc!)).toBe(true);
+    expect(isVaultCredentialReference(row.credentials_enc!)).toBe(true);
     expect(row.credentials_enc).not.toContain(ACCESS_KEY);
     expect(row.credentials_enc).not.toContain(SECRET_KEY);
 
@@ -234,7 +251,8 @@ describe('the credential is managed, not mounted', () => {
       `select credentials_enc, bucket from backup_destination where id = true`,
     );
     expect(after.bucket).toBe('renamed');
-    expect(after.credentials_enc).toBe(before.credentials_enc);
+    expect(isVaultCredentialReference(after.credentials_enc)).toBe(true);
+    expect((await call('/api/ops/admin/backups/destination/test', { method: 'POST', body: {} })).body.ok).toBe(true);
 
     // A different vendor with blank secrets is refused rather than silently
     // sending an AWS key to Cloudflare.
@@ -415,4 +433,93 @@ describe('the destination cannot be pointed somewhere unsafe', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/choose where backups should be stored/i);
   });
+});
+
+
+describe('Vault authority and concurrent backup settings', () => {
+  it('reports a Vault lock without sending a connection test or overwriting health', async () => {
+    await call('/api/ops/admin/backups/destination', { method: 'PUT', body: S3 });
+    await call('/api/ops/admin/backups/destination/test', { method: 'POST', body: {} });
+    const [owner] = await db.query<{ id: string }>("select id from users where role='super_admin'");
+    await setVaultLock(db, { master: true, locked: true, actorUserId: owner.id });
+    requests.length = 0;
+    expect((await call('/api/ops/admin/backups/destination/test', { method: 'POST', body: {} })).status).toBe(423);
+    expect((await call('/api/ops/admin/backups/destination', { method: 'PUT', body: S3 })).status).toBe(423);
+    expect(requests).toHaveLength(0);
+    expect((await call('/api/ops/admin/backups/destination')).body.destination.lastCheckOk).toBe(true);
+    expect((await call('/api/ops/admin/backups/destination', { method: 'DELETE' })).status).toBe(204);
+    expect(await db.query("select id from vault_items where service='backup'")).toHaveLength(0);
+  });
+
+  it('cannot apply a late passing test to replacement settings', async () => {
+    await call('/api/ops/admin/backups/destination', { method: 'PUT', body: S3 });
+    onRequest = async () => {
+      expect((await call('/api/ops/admin/backups/destination', { method: 'PUT', body: { ...S3, bucket: 'changed' } })).status).toBe(200);
+    };
+    expect((await call('/api/ops/admin/backups/destination/test', { method: 'POST', body: {} })).status).toBe(409);
+    const view = (await call('/api/ops/admin/backups/destination')).body.destination;
+    expect(view.bucket).toBe('changed'); expect(view.lastCheckOk).toBeNull();
+  });
+
+  it('refuses to reuse a saved credential at another endpoint', async () => {
+    await call('/api/ops/admin/backups/destination', { method: 'PUT', body: S3 });
+    const changed = await call('/api/ops/admin/backups/destination', { method: 'PUT', body: { kind: 's3', bucket: S3.bucket, region: S3.region, endpoint: 'https://elsewhere.fixture.test' } });
+    expect(changed.status).toBe(400);
+    expect((await call('/api/ops/admin/backups/destination')).body.destination.endpoint).toBeNull();
+  });
+
+  it('does not use a mounted NAS whose receipt belongs to another configuration', async () => {
+    const saved = await call('/api/ops/admin/backups/destination', { method: 'PUT', body: { kind: 'nas', shareProtocol: 'smb', shareHost: 'nas.fixture.test', shareName: 'backup', folder: 'offsite', username: 'fixture', password: 'fixture-password' } });
+    expect(saved.status).toBe(200);
+    mountStatus = { mountedPath: '/mnt/josi-nas/offsite', configurationRevision: 'wrong-revision' };
+    const checked = await call('/api/ops/admin/backups/destination/test', { method: 'POST', body: {} });
+    expect(checked.status).toBe(409);
+    expect((await call('/api/ops/admin/backups/destination')).body.destination.lastCheckOk).toBeNull();
+  });
+});
+
+
+it('uploads an encrypted full backup and verifies the remote size', async () => {
+  const saved = await call('/api/ops/admin/backups/destination', { method: 'PUT', body: { ...S3, encryptionEnabled: true } });
+  expect(saved.status).toBe(200);
+  await call('/api/ops/admin/backups/destination/test', { method: 'POST', body: {} });
+  const backup = await call('/api/ops/admin/backups', { method: 'POST', body: { kind: 'full', masterKeyConfirmed: true } });
+  expect(backup.status).toBe(201); expect(backup.body.backup.state).toBe('complete');
+  expect(uploaded?.subarray(0, 5).toString()).toBe('JOSI1');
+  expect(requests.filter(request => request.url.includes('.zip.enc'))).toHaveLength(2);
+});
+
+it.each(['lock', 'replacement'])('does not upload if %s occurs while the local archive is being created', async condition => {
+  await call('/api/ops/admin/backups/destination', { method: 'PUT', body: S3 });
+  await call('/api/ops/admin/backups/destination/test', { method: 'POST', body: {} });
+  beforeArchive = async () => {
+    if (condition === 'replacement') await call('/api/ops/admin/backups/destination', { method: 'PUT', body: { ...S3, bucket: 'replacement' } });
+    else {
+      const [owner] = await db.query<{ id: string }>("select id from users where role='super_admin'");
+      await setVaultLock(db, { master: true, locked: true, actorUserId: owner.id });
+    }
+  };
+  requests.length = 0;
+  const backup = await call('/api/ops/admin/backups', { method: 'POST', body: { kind: 'full', masterKeyConfirmed: true } });
+  expect(backup.status).toBe(500); expect(requests).toHaveLength(0); expect(uploaded).toBeNull();
+  expect((await db.query('select state from backups'))[0].state).toBe('failed');
+});
+
+
+it('reports a failed NAS projection separately from saved Vault settings and preserves the recovery-key response', async () => {
+  nasFailure = true;
+  const saved = await call('/api/ops/admin/backups/destination', { method: 'PUT', body: { kind: 'nas', shareProtocol: 'smb', shareHost: 'nas.fixture.test', shareName: 'backup', folder: 'offsite', username: 'fixture', password: 'fixture-password', encryptionEnabled: true } });
+  expect(saved.status).toBe(200); expect(saved.body.applied).toBe(false);
+  expect(saved.body.warning).toMatch(/saved.*not confirmed/);
+  expect(saved.body.recoveryKey).toHaveLength(43);
+  expect(JSON.stringify(saved.body)).not.toContain('synthetic-private-helper-error');
+  expect((await call('/api/ops/admin/backups/destination')).body.destination.lastCheckOk).toBeNull();
+  expect(await db.query("select id from vault_items where service='backup'")).toHaveLength(2);
+});
+
+it.each(['https://user:synthetic-secret@storage.fixture.test', 'https://storage.fixture.test/?token=synthetic-secret'])('does not store credentials embedded in an endpoint (%s)', async endpoint => {
+  const result = await call('/api/ops/admin/backups/destination', { method: 'PUT', body: { ...S3, endpoint } });
+  expect(result.status).toBe(400);
+  expect(await db.query('select * from backup_destination')).toHaveLength(0);
+  expect(await db.query("select id from vault_items where service='backup'")).toHaveLength(0);
 });

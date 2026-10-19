@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Narrow Docker-socket helper for one Josi NAS backup mount."""
-import argparse, json, os, re, shutil, socketserver, subprocess, tempfile, threading
+import argparse, json, os, re, shutil, socketserver, subprocess, tempfile, threading, uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -54,39 +54,63 @@ class Manager:
             raise ValueError('NAS address, share, or folder is invalid')
         return protocol, host, share, folder
 
-    def mount(self, body):
+    def mount(self, body, volume=None, credential_path=None):
         protocol, host, share, folder = self.validate(body)
-        self.run(['volume','rm','-f',self.volume], timeout=30)
+        volume = volume or self.volume
+        self.run(['volume','rm','-f',volume], timeout=30)
         args = ['volume','create','--driver','local']
         if protocol == 'smb':
-            cred = self.state / 'nas.credentials'
+            cred = credential_path or self.state / 'nas.credentials'
             username, password = str(body.get('username','')), str(body.get('password',''))
-            # Blank secret fields mean "keep the stored credential" during an
-            # edit. Replacing this file with two blank lines would make the UI
-            # look non-destructive while silently breaking the actual mount.
-            if username or password or not cred.exists():
-                fd, name = tempfile.mkstemp(dir=self.state, prefix='.nas.', text=True)
-                with os.fdopen(fd, 'w') as out:
-                    out.write('username=' + username + '\npassword=' + password + '\n')
-                    out.flush(); os.fsync(out.fileno())
-                os.chmod(name, 0o600); os.replace(name, cred)
+            if any(ch in username + password for ch in ('\n', '\r', '\x00')):
+                raise ValueError('NAS credentials contain unsupported control characters')
+            # Always replace this runtime projection from the supplied Vault
+            # credential. A file left by an earlier setup is never authority.
+            fd, name = tempfile.mkstemp(dir=self.state, prefix='.nas.', text=True)
+            with os.fdopen(fd, 'w') as out:
+                out.write('username=' + username + '\npassword=' + password + '\n')
+                out.flush(); os.fsync(out.fileno())
+            os.chmod(name, 0o600); os.replace(name, cred)
             opts = f'credentials={cred},uid=1000,gid=1000,file_mode=0600,dir_mode=0700,noserverino'
             args += ['--opt','type=cifs','--opt',f'device=//{host}/{share}','--opt',f'o={opts}']
         else:
+            (credential_path or self.state / 'nas.credentials').unlink(missing_ok=True)
             args += ['--opt','type=nfs','--opt',f'device=:{share if share.startswith("/") else "/"+share}','--opt',f'o=addr={host},rw,nfsvers=4']
-        args.append(self.volume); self.run(args, timeout=60)
+        args.append(volume); self.run(args, timeout=60)
         return folder
 
     def browse(self, body):
+        # Browsing must not replace the live backup volume or its credentials.
         with self.lock:
-            self.mount(body)
-            result = self.run(['run','--rm','--network','none','-v',f'{self.volume}:/share:ro',
-                '--entrypoint','python3',self.image,'-c',
-                "import json,os; print(json.dumps(sorted([x for x in os.listdir('/share') if os.path.isdir('/share/'+x)])))"], capture=True)
-            return {'folders': json.loads(result.stdout or '[]')[:500]}
+            volume = 'josi-ce_nas_browse_' + uuid.uuid4().hex
+            cred = self.state / (volume + '.credentials')
+            try:
+                self.mount(body, volume, cred)
+                result = self.run(['run','--rm','--network','none','-v',f'{volume}:/share:ro',
+                    '--entrypoint','python3',self.image,'-c',
+                    "import json,os; print(json.dumps(sorted([x for x in os.listdir('/share') if os.path.isdir('/share/'+x)])))"], capture=True)
+                return {'folders': json.loads(result.stdout or '[]')[:500]}
+            finally:
+                cred.unlink(missing_ok=True)
+                self.run(['volume','rm','-f',volume], timeout=30)
+
+    def status(self):
+        with self.lock:
+            return self._status()
+
+    def _status(self):
+        marker = self.state / 'nas.mount.json'
+        if not marker.exists():
+            return None
+        return json.loads(marker.read_text())
 
     def configure(self, body):
+        revision = str(body.get('configurationRevision', ''))
+        if str(uuid.UUID(revision)) != revision:
+            raise ValueError('a valid configuration revision is required')
         with self.lock:
+            marker = self.state / 'nas.mount.json'
+            marker.unlink(missing_ok=True)
             folder = self.mount(body)
             mount = '/mnt/josi-nas' + (('/' + folder) if folder else '')
             override = self.root / 'docker-compose.storage.yml'
@@ -96,10 +120,17 @@ class Manager:
             temp = override.with_suffix('.tmp'); temp.write_text(json.dumps(data)); os.replace(temp, override)
             compose = self.compose_files(True) + ['up','-d','--no-deps','--force-recreate','web','worker']
             self.run(compose)
-            return {'mountedPath': mount}
+            status = {'mountedPath': mount, 'configurationRevision': revision}
+            temp = marker.with_suffix('.tmp'); temp.write_text(json.dumps(status)); os.chmod(temp, 0o600); os.replace(temp, marker)
+            return status
 
-    def remove(self):
+    def remove(self, body=None):
         with self.lock:
+            expected = (body or {}).get('expectedRevision')
+            current = self._status()
+            if expected and current and current.get('configurationRevision') != expected:
+                raise ValueError('the NAS configuration changed before removal')
+            (self.state/'nas.mount.json').unlink(missing_ok=True)
             (self.root/'docker-compose.storage.yml').unlink(missing_ok=True)
             (self.state/'nas.credentials').unlink(missing_ok=True)
             self.run(self.compose_files(False) + ['up','-d','--no-deps','--force-recreate','web','worker'])
@@ -115,7 +146,8 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(size) or b'{}')
             if self.path == '/browse': result = self.manager.browse(body)
             elif self.path == '/configure': result = self.manager.configure(body)
-            elif self.path == '/remove': result = self.manager.remove()
+            elif self.path == '/remove': result = self.manager.remove(body)
+            elif self.path == '/status': result = self.manager.status()
             else: self.send_error(404); return
             self.send_response(200); self.send_header('content-type','application/json'); self.end_headers(); self.wfile.write(json.dumps(result).encode())
         except Exception as exc:

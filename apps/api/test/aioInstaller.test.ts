@@ -98,7 +98,7 @@ describe('the browser-first AIO installer', () => {
     expect(controller).toContain('storage-helper-socket/helper.sock');
     expect(controller).toContain('storage_helper.py');
     const storageHelper = readFileSync(join(root, 'services/installer/storage_helper.py'), 'utf8');
-    expect(storageHelper).toContain('if username or password or not cred.exists()');
+    expect(storageHelper).not.toContain('if username or password or not cred.exists()');
     expect(storageHelper).toContain("docker-compose.workspace.yml");
     expect(storageHelper).toContain("docker-compose.noproxy.yml");
     expect(storageHelper).toContain("self.compose_files(False)");
