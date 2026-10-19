@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb,testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { createSession } from '../../auth/src/sessions.js';
 import { addMessage, claimDurableTurn, createThread, markActionsPresented, MasterKey, submitDurableTurn } from '@josi-ce/core';
@@ -23,6 +23,7 @@ function contextPath(args:string[]):string{
 beforeEach(async()=>{
   db=await testDb();
   userId=(await createUser(db,{email:'subscription-turn@ce.test',username:'subscription-turn',role:'super_admin'})).id;
+  await testVault(db,key);
   threadId=(await createThread(db,{ownerUserId:userId})).id;
   await db.query(`insert into llm_providers(role,provider,model,external_acknowledged,activated_at,probed_at,cap_chat,cap_structured_output,cap_tool_calling,cap_context_tokens) values('primary','openai_subscription','',true,now(),now(),true,false,true,8000)`);
   const dir=mkdtempSync(join(tmpdir(),'josi-subscription-turn-'));

@@ -1,12 +1,13 @@
 // Stored connections: tokens, capability grants, and health.
 //
-// Tokens are sealed with the installation master key before they touch
-// PostgreSQL and are opened only here, at the moment of use. Nothing in this
+// Tokens live in the recoverable Master Vault; connection rows hold only
+// owner-bound references opened at the moment of use. Nothing in this
 // file returns a token to a caller, and nothing writes one to the audit log —
 // `appendEvent` would refuse the payload key anyway, which is the backstop
 // working rather than a reason not to be careful.
 import { randomUUID } from 'node:crypto';
-import { appendEvent, json, openCredentialPayload, storeCredentialPayload, type Db, type MasterKey } from '@josi-ce/core';
+import { appendEvent, json, openCredentialPayload, storeVaultCredentialPayload, isVaultCredentialReference, VaultError, type Db, type MasterKey } from '@josi-ce/core';
+import { requireConnectorVault } from './credentialVault.js';
 import {
   CAPABILITIES, capabilitySpec, grantedCapabilities, capabilityState, effectiveCapability,
   type CapabilityState, type Provider,
@@ -78,114 +79,116 @@ export async function upsertConnection(
     enableRequestedCapabilities?: boolean;
   },
 ): Promise<ConnectionRow> {
-  const existingRows = args.targetConnectionId
-    ? await db.query<ConnectionRow>(
-        `select * from connections where id = $1 and owner_user_id = $2 and provider = $3`,
-        [args.targetConnectionId, args.ownerUserId, args.provider],
-      )
-    : args.providerAccountId
-      ? await db.query<ConnectionRow>(
-          `select * from connections where owner_user_id = $1 and provider = $2 and provider_account_id = $3`,
-          [args.ownerUserId, args.provider, args.providerAccountId],
+  if (!db.transaction) throw new VaultError('Connection storage requires transactions');
+  return db.transaction(async tx => {
+    await lockConnectionOwner(tx, args.ownerUserId, args.provider);
+    await requireConnectorVault(tx);
+    const existingRows = args.targetConnectionId
+      ? await tx.query<ConnectionRow>(
+          `select * from connections where id = $1 and owner_user_id = $2 and provider = $3 for update`,
+          [args.targetConnectionId, args.ownerUserId, args.provider],
         )
-      : args.accountEmail
-        ? await db.query<ConnectionRow>(
-            `select * from connections where owner_user_id = $1 and provider = $2
-             and provider_account_id is null and lower(account_email) = lower($3)`,
-            [args.ownerUserId, args.provider, args.accountEmail],
+      : args.providerAccountId
+        ? await tx.query<ConnectionRow>(
+            `select * from connections where owner_user_id = $1 and provider = $2 and provider_account_id = $3 for update`,
+            [args.ownerUserId, args.provider, args.providerAccountId],
           )
-        : await db.query<ConnectionRow>(
-            `select * from connections where owner_user_id = $1 and provider = $2
-             order by created_at limit 1`,
-            [args.ownerUserId, args.provider],
-          );
-  const existing = existingRows[0];
-  if (args.targetConnectionId && existing?.provider_account_id
-      && existing.provider_account_id !== args.providerAccountId) {
-    throw new ConnectorError('the provider returned a different account; use Add another account instead', {
-      category: 'provider_error',
-    });
-  }
-
-  const merged = new Set([
-    ...args.tokens.grantedScopes.split(/\s+/).filter(Boolean),
-  ]);
-  const grantedScopes = [...merged].join(' ');
-
-  // Google does not return a refresh token on a re-auth unless it feels like
-  // it. Losing the one we already hold would silently turn a working
-  // connection into one that dies at the next access-token expiry.
-  let refreshToken = args.tokens.refreshToken;
-  if (!refreshToken && existing?.secrets_enc) {
-    try {
-      refreshToken = (await openCredentialPayload<SealedTokens>(db,key,{ownerUserId:args.ownerUserId,service:`connector.${args.provider}`,slot:existing.id,stored:existing.secrets_enc})).refreshToken;
-    } catch {
-      refreshToken = null;
+        : args.accountEmail
+          ? await tx.query<ConnectionRow>(
+              `select * from connections where owner_user_id = $1 and provider = $2
+               and provider_account_id is null and lower(account_email) = lower($3) for update`,
+              [args.ownerUserId, args.provider, args.accountEmail],
+            )
+          : await tx.query<ConnectionRow>(
+              `select * from connections where owner_user_id = $1 and provider = $2
+               order by created_at limit 1 for update`,
+              [args.ownerUserId, args.provider],
+            );
+    const existing = existingRows[0];
+    if (args.targetConnectionId && !existing) throw new ConnectorError('the connection is gone; start connecting again', { category: 'revoked', revoked: true });
+    if (args.targetConnectionId && existing?.provider_account_id
+        && existing.provider_account_id !== args.providerAccountId) {
+      throw new ConnectorError('the provider returned a different account; use Add another account instead', {
+        category: 'provider_error',
+      });
     }
-  }
 
-  const connectionId=existing?.id??randomUUID();
-  const sealed = await storeCredentialPayload(db,key,{ownerUserId:args.ownerUserId,kind:'oauth_token',service:`connector.${args.provider}`,slot:connectionId,label:`${args.provider} connection`,payload:{accessToken:args.tokens.accessToken,refreshToken},actorUserId:args.ownerUserId});
-  const expiresAt = args.tokens.expiresIn
-    ? new Date(Date.now() + args.tokens.expiresIn * 1000).toISOString()
-    : null;
+    const merged = new Set([
+      ...args.tokens.grantedScopes.split(/\s+/).filter(Boolean),
+    ]);
+    const grantedScopes = [...merged].join(' ');
 
-  const rows = existing
-    ? await db.query<ConnectionRow>(
-      `update connections set account_email = $2, provider_account_id = coalesce($3, provider_account_id),
-         granted_scopes = $4, secrets_enc = $5, status = 'active', last_check_at = now(),
-         last_check_ok = true, last_error_category = null, token_expires_at = $6
-       where id = $1 returning *`,
-      [existing.id, args.accountEmail ?? existing.account_email, args.providerAccountId, grantedScopes, sealed, expiresAt],
-    )
-    : await db.query<ConnectionRow>(
-      `insert into connections
-       (id, owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
-        status, last_check_at, last_check_ok, last_error_category, token_expires_at)
-     values ($1, $2, $3, $4, $5, $6, $7, 'active', now(), true, null, $8)
-     returning *`,
-    [
-      connectionId,args.ownerUserId, args.provider, args.accountEmail, args.providerAccountId,
-      grantedScopes, sealed, expiresAt,
-    ],
-  );
-  const connection = rows[0];
+    // Google does not return a refresh token on a re-auth unless it feels like
+    // it. Losing the one we already hold would silently turn a working
+    // connection into one that dies at the next access-token expiry.
+    let refreshToken = args.tokens.refreshToken;
+    if (!refreshToken && existing?.secrets_enc) {
+      refreshToken = (await openCredentialPayload<SealedTokens>(tx,key,{ownerUserId:args.ownerUserId,service:`connector.${args.provider}`,slot:existing.id,stored:existing.secrets_enc})).refreshToken;
+    }
 
-  // Record which capabilities the provider now covers. A normal first connect
-  // leaves the default read bundle off: consent to CONNECT is not consent to
-  // ACT. An explicitly requested write/storage capability is different: the
-  // owner pressed "Approve at provider" for that exact switch, so returning
-  // from a successful incremental-consent trip must finish turning it on.
-  // Otherwise the UI sends them through consent and then leaves the switch off,
-  // which was the live Calendar-write failure reproduced on 2026-09-04.
-  const covered = grantedCapabilities(args.provider, grantedScopes);
-  await db.query(`update connection_capabilities set enabled=false,scopes_granted_at=null where connection_id=$1 and not(capability=any($2::text[]))`,[connection.id,covered]);
-  for (const capability of covered) {
-    const spec = capabilitySpec(capability);
-    const enableAfterExplicitConsent = args.enableRequestedCapabilities === true
-      && args.requestedCapabilities.includes(capability)
-      && (spec?.kind === 'write' || spec?.connectOptIn === true);
-    await db.query(
-      `insert into connection_capabilities (connection_id, capability, enabled, scopes_granted_at)
-       values ($1, $2, $3, now())
-       on conflict (connection_id, capability) do update set
-         scopes_granted_at = now(),
-         enabled = connection_capabilities.enabled or excluded.enabled`,
-      [connection.id, capability, enableAfterExplicitConsent],
+    const connectionId=existing?.id??randomUUID();
+    const sealed = await storeVaultCredentialPayload(tx,key,{ownerUserId:args.ownerUserId,kind:'oauth_token',service:`connector.${args.provider}`,slot:connectionId,label:`${args.provider} connection`,payload:{accessToken:args.tokens.accessToken,refreshToken},actorUserId:args.ownerUserId});
+    const expiresAt = args.tokens.expiresIn
+      ? new Date(Date.now() + args.tokens.expiresIn * 1000).toISOString()
+      : null;
+
+    const rows = existing
+      ? await tx.query<ConnectionRow>(
+        `update connections set account_email = $2, provider_account_id = coalesce($3, provider_account_id),
+           granted_scopes = $4, secrets_enc = $5, status = 'active', last_check_at = now(),
+           last_check_ok = true, last_error_category = null, token_expires_at = $6
+         where id = $1 returning *`,
+        [existing.id, args.accountEmail ?? existing.account_email, args.providerAccountId, grantedScopes, sealed, expiresAt],
+      )
+      : await tx.query<ConnectionRow>(
+        `insert into connections
+         (id, owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
+          status, last_check_at, last_check_ok, last_error_category, token_expires_at)
+       values ($1, $2, $3, $4, $5, $6, $7, 'active', now(), true, null, $8)
+       returning *`,
+      [
+        connectionId,args.ownerUserId, args.provider, args.accountEmail, args.providerAccountId,
+        grantedScopes, sealed, expiresAt,
+      ],
     );
-  }
+    const connection = rows[0];
 
-  await appendEvent(db, {
-    actorUserId: args.ownerUserId,
-    actor: 'user',
-    kind: 'connection.authorized',
-    subjectType: 'connection',
-    subjectId: connection.id,
-    // Which capabilities, never which mailbox and never a token.
-    payload: { provider: args.provider, capabilities: covered, requested: args.requestedCapabilities },
+    // Record which capabilities the provider now covers. A normal first connect
+    // leaves the default read bundle off: consent to CONNECT is not consent to
+    // ACT. An explicitly requested write/storage capability is different: the
+    // owner pressed "Approve at provider" for that exact switch, so returning
+    // from a successful incremental-consent trip must finish turning it on.
+    // Otherwise the UI sends them through consent and then leaves the switch off,
+    // which was the live Calendar-write failure reproduced on 2026-09-04.
+    const covered = grantedCapabilities(args.provider, grantedScopes);
+    await tx.query(`update connection_capabilities set enabled=false,scopes_granted_at=null where connection_id=$1 and not(capability=any($2::text[]))`,[connection.id,covered]);
+    for (const capability of covered) {
+      const spec = capabilitySpec(capability);
+      const enableAfterExplicitConsent = args.enableRequestedCapabilities === true
+        && args.requestedCapabilities.includes(capability)
+        && (spec?.kind === 'write' || spec?.connectOptIn === true);
+      await tx.query(
+        `insert into connection_capabilities (connection_id, capability, enabled, scopes_granted_at)
+         values ($1, $2, $3, now())
+         on conflict (connection_id, capability) do update set
+           scopes_granted_at = now(),
+           enabled = connection_capabilities.enabled or excluded.enabled`,
+        [connection.id, capability, enableAfterExplicitConsent],
+      );
+    }
+
+    await appendEvent(tx, {
+      actorUserId: args.ownerUserId,
+      actor: 'user',
+      kind: 'connection.authorized',
+      subjectType: 'connection',
+      subjectId: connection.id,
+      // Which capabilities, never which mailbox and never a token.
+      payload: { provider: args.provider, capabilities: covered, requested: args.requestedCapabilities },
+    });
+
+    return connection;
   });
-
-  return connection;
 }
 
 export async function getConnection(db: Db, connectionId: string): Promise<ConnectionRow | null> {
@@ -405,49 +408,45 @@ export async function accessTokenFor(
   args: { connection: ConnectionRow; client: OAuthClient },
   opts: FetchOptions = {},
 ): Promise<string> {
-  if (!args.connection.secrets_enc) {
-    throw new ConnectorError('this connection has no stored credentials', { category: 'revoked', revoked: true });
-  }
-  const tokens = await openCredentialPayload<SealedTokens>(db,key,{ownerUserId:args.connection.owner_user_id,service:`connector.${args.connection.provider}`,slot:args.connection.id,stored:args.connection.secrets_enc});
+  if (!db.transaction) throw new VaultError('Connection access requires transactions');
+  const result = await db.transaction(async tx => {
+    await lockConnectionOwner(tx, args.connection.owner_user_id, args.connection.provider);
+    await requireConnectorVault(tx);
+    const current = await currentConnection(tx, args.connection);
+    if (args.client.provider !== current.provider) throw new VaultError('The OAuth application does not match this connection.');
+    const tokens = await connectionPayload<SealedTokens>(tx, key, current);
+    if (typeof tokens.accessToken !== 'string' || !tokens.accessToken || (tokens.refreshToken !== null && typeof tokens.refreshToken !== 'string')) {
+      throw new VaultError('The stored connection credential is invalid.');
+    }
+    const expiresAt = current.token_expires_at ? new Date(current.token_expires_at).getTime() : 0;
+    if (expiresAt > Date.now() + 60_000) return { token: tokens.accessToken };
 
-  const expiresAt = args.connection.token_expires_at
-    ? new Date(args.connection.token_expires_at).getTime()
-    : 0;
-  const stillValid = expiresAt > Date.now() + 60_000;
-  if (stillValid) return tokens.accessToken;
-
-  if (!tokens.refreshToken) {
-    await markUnhealthy(db, args.connection.id, 'revoked');
-    throw new ConnectorError('this connection needs to be reconnected', { category: 'revoked', revoked: true });
-  }
-
-  try {
-    const refreshed = await refreshTokens(
-      args.client,
-      { refreshToken: tokens.refreshToken, scopes: args.connection.granted_scopes },
-      opts,
-    );
-    const sealed = await storeCredentialPayload(db,key,{ownerUserId:args.connection.owner_user_id,kind:'oauth_token',service:`connector.${args.connection.provider}`,slot:args.connection.id,label:`${args.connection.provider} connection`,payload:{
-      accessToken: refreshed.accessToken,
-      // Google does not reissue one; keep what we have.
-      refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
-    } satisfies SealedTokens,actorUserId:args.connection.owner_user_id});
-    await db.query(
-      `update connections set secrets_enc = $2, token_expires_at = $3,
-         status = 'active', last_check_at = now(), last_check_ok = true, last_error_category = null
-       where id = $1`,
-      [
-        args.connection.id,
-        sealed,
-        refreshed.expiresIn ? new Date(Date.now() + refreshed.expiresIn * 1000).toISOString() : null,
-      ],
-    );
-    return refreshed.accessToken;
-  } catch (err) {
-    const category = err instanceof ConnectorError ? err.category : 'provider_error';
-    await markUnhealthy(db, args.connection.id, category);
-    throw err;
-  }
+    if (!tokens.refreshToken) {
+      await markUnhealthy(tx, current.id, 'revoked');
+      return { error: new ConnectorError('this connection needs to be reconnected', { category: 'revoked', revoked: true }) };
+    }
+    // Serialize refreshes with reconnect/removal. The provider request already
+    // has a deadline; a later Vault lock waits for this bounded transaction.
+    // No external business action is performed here, only token renewal.
+    let refreshed: TokenSet;
+    try {
+      refreshed = await refreshTokens(args.client, { refreshToken: tokens.refreshToken, scopes: current.granted_scopes },
+        { ...opts, timeoutMs: Math.min(opts.timeoutMs ?? 20_000, 20_000) });
+    } catch (err) {
+      if (!(err instanceof ConnectorError)) throw err;
+      await markUnhealthy(tx, current.id, err.category);
+      return { error: err };
+    }
+    const reference = await storeVaultCredentialPayload(tx, key, { ownerUserId: current.owner_user_id, kind: 'oauth_token',
+      service: `connector.${current.provider}`, slot: current.id, label: `${current.provider} connection`, payload: {
+        accessToken: refreshed.accessToken, refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
+      } satisfies SealedTokens, actorUserId: current.owner_user_id });
+    await tx.query(`update connections set secrets_enc=$2,token_expires_at=$3,status='active',last_check_at=now(),last_check_ok=true,last_error_category=null where id=$1`,
+      [current.id, reference, refreshed.expiresIn ? new Date(Date.now() + refreshed.expiresIn * 1000).toISOString() : null]);
+    return { token: refreshed.accessToken };
+  });
+  if (result.error) throw result.error;
+  return result.token!;
 }
 
 // -------------------------------------------------------------- nextcloud
@@ -465,55 +464,61 @@ export async function connectNextcloud(
   key: MasterKey,
   args: { ownerUserId: string; serverUrl: string; username: string; appPassword: string },
 ): Promise<ConnectionRow> {
-  const connectionId=randomUUID();
-  const sealed = await storeCredentialPayload(db,key,{ownerUserId:args.ownerUserId,kind:'password',service:'connector.nextcloud',slot:connectionId,label:'Nextcloud app password',payload:{
-    serverUrl: args.serverUrl, username: args.username, appPassword: args.appPassword,
-  } satisfies NextcloudCredentials,actorUserId:args.ownerUserId});
+  if (!db.transaction) throw new VaultError('Connection storage requires transactions');
+  return db.transaction(async tx => {
+    await lockConnectionOwner(tx, args.ownerUserId, 'nextcloud');
+    await requireConnectorVault(tx);
+    const [existing] = await tx.query<ConnectionRow>("select * from connections where owner_user_id=$1 and provider='nextcloud' for update", [args.ownerUserId]);
+    const connectionId=existing?.id??randomUUID();
+    const sealed = await storeVaultCredentialPayload(tx,key,{ownerUserId:args.ownerUserId,kind:'password',service:'connector.nextcloud',slot:connectionId,label:'Nextcloud app password',payload:{
+      serverUrl: args.serverUrl, username: args.username, appPassword: args.appPassword,
+    } satisfies NextcloudCredentials,actorUserId:args.ownerUserId});
 
-  const rows = await db.query<ConnectionRow>(
-    `insert into connections
-       (id,owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
-        status, last_check_at, last_check_ok, last_error_category, meta)
-     values ($1,$2, 'nextcloud', $3, null, '', $4, 'active', now(), true, null, $5)
-     on conflict (owner_user_id, provider) where provider = 'nextcloud' do update set
-       account_email = excluded.account_email,
-       secrets_enc = excluded.secrets_enc,
-       status = 'active',
-       last_check_at = now(), last_check_ok = true, last_error_category = null,
-       meta = excluded.meta
-     returning *`,
-    [
-      connectionId,args.ownerUserId, args.username, sealed,
-      json({ serverUrl: args.serverUrl, username: args.username }),
-    ],
-  );
-  const connection = rows[0];
+    const rows = await tx.query<ConnectionRow>(
+      `insert into connections
+         (id,owner_user_id, provider, account_email, provider_account_id, granted_scopes, secrets_enc,
+          status, last_check_at, last_check_ok, last_error_category, meta)
+       values ($1,$2, 'nextcloud', $3, null, '', $4, 'active', now(), true, null, $5)
+       on conflict (owner_user_id, provider) where provider = 'nextcloud' do update set
+         account_email = excluded.account_email,
+         secrets_enc = excluded.secrets_enc,
+         status = 'active',
+         last_check_at = now(), last_check_ok = true, last_error_category = null,
+         meta = excluded.meta
+       returning *`,
+      [
+        connectionId,args.ownerUserId, args.username, sealed,
+        json({ serverUrl: args.serverUrl, username: args.username }),
+      ],
+    );
+    const connection = rows[0];
 
-  // The one capability this provider has, granted immediately — there is no
-  // incremental-scope dance to model: the app password the person generated
-  // either works for WebDAV or it does not, and there is nothing narrower to
-  // ask Nextcloud for. Still OFF by default (M32's "consent to connect is not
-  // consent to act" applies here exactly as it does to an OAuth grant).
-  await db.query(
-    `insert into connection_capabilities (connection_id, capability, enabled, scopes_granted_at)
-     values ($1, 'nextcloud.files.read', false, now())
-     on conflict (connection_id, capability) do update set scopes_granted_at = now()`,
-    [connection.id],
-  );
+    // The one capability this provider has, granted immediately — there is no
+    // incremental-scope dance to model: the app password the person generated
+    // either works for WebDAV or it does not, and there is nothing narrower to
+    // ask Nextcloud for. Still OFF by default (M32's "consent to connect is not
+    // consent to act" applies here exactly as it does to an OAuth grant).
+    await tx.query(
+      `insert into connection_capabilities (connection_id, capability, enabled, scopes_granted_at)
+       values ($1, 'nextcloud.files.read', false, now())
+       on conflict (connection_id, capability) do update set scopes_granted_at = now()`,
+      [connection.id],
+    );
 
-  await appendEvent(db, {
-    actorUserId: args.ownerUserId,
-    actor: 'user',
-    kind: 'connection.authorized',
-    subjectType: 'connection',
-    subjectId: connection.id,
-    // The server URL is the owner's own infrastructure, not a secret account
-    // identity — still left out of the audit payload, matching every other
-    // provider's "which capabilities, never which account" rule.
-    payload: { provider: 'nextcloud', capabilities: ['nextcloud.files.read'] },
+    await appendEvent(tx, {
+      actorUserId: args.ownerUserId,
+      actor: 'user',
+      kind: 'connection.authorized',
+      subjectType: 'connection',
+      subjectId: connection.id,
+      // The server URL is the owner's own infrastructure, not a secret account
+      // identity — still left out of the audit payload, matching every other
+      // provider's "which capabilities, never which account" rule.
+      payload: { provider: 'nextcloud', capabilities: ['nextcloud.files.read'] },
+    });
+
+    return connection;
   });
-
-  return connection;
 }
 
 /** The WebDAV credential for use right now.
@@ -527,10 +532,61 @@ export async function nextcloudCredentialsFor(
   key: MasterKey,
   connection: ConnectionRow,
 ): Promise<NextcloudCredentials> {
-  if (!connection.secrets_enc) {
-    throw new ConnectorError('this connection has no stored credentials', { category: 'revoked', revoked: true });
+  if (!db.transaction) throw new VaultError('Connection access requires transactions');
+  return db.transaction(async tx => {
+    await lockConnectionOwner(tx, connection.owner_user_id, connection.provider);
+    await requireConnectorVault(tx);
+    const current = await currentConnection(tx, connection);
+    if (current.provider !== 'nextcloud') throw new VaultError('The connection is not a Nextcloud account.');
+    const payload = await connectionPayload<NextcloudCredentials>(tx, key, current);
+    if (typeof payload.appPassword !== 'string' || !payload.appPassword || payload.serverUrl !== current.meta?.serverUrl || payload.username !== current.meta?.username) {
+      throw new VaultError('The Nextcloud credential does not match its configured destination.');
+    }
+    return payload;
+  });
+}
+
+// Take the advisory fence before Vault state, then the connection row. Queued
+// refreshes must not hold a shared Vault lock while waiting behind a provider.
+async function lockConnectionOwner(tx: Db, owner: string, provider: Provider): Promise<void> {
+  await tx.query("select pg_advisory_xact_lock(hashtext('josi_connection_owner'),hashtext($1))", [JSON.stringify([owner, provider])]);
+}
+async function currentConnection(tx: Db, observed: ConnectionRow): Promise<ConnectionRow> {
+  const [row] = await tx.query<ConnectionRow>('select * from connections where id=$1 and owner_user_id=$2 and provider=$3 for update',
+    [observed.id, observed.owner_user_id, observed.provider]);
+  if (!row || row.status !== 'active') throw new ConnectorError('this connection is no longer active', { category: 'revoked', revoked: true });
+  if (row.granted_scopes !== observed.granted_scopes || row.provider_account_id !== observed.provider_account_id
+      || row.account_email !== observed.account_email || JSON.stringify(row.meta) !== JSON.stringify(observed.meta)) {
+    throw new VaultError('Connection configuration changed; retry with current configuration.');
   }
-  return openCredentialPayload<NextcloudCredentials>(db,key,{ownerUserId:connection.owner_user_id,service:'connector.nextcloud',slot:connection.id,stored:connection.secrets_enc});
+  return row;
+}
+async function connectionPayload<T extends object>(tx: Db, key: MasterKey, row: ConnectionRow): Promise<T> {
+  if (!row.secrets_enc) throw new ConnectorError('this connection has no stored credentials', { category: 'revoked', revoked: true });
+  const payload = await openCredentialPayload<T>(tx, key, { ownerUserId: row.owner_user_id, service: `connector.${row.provider}`, slot: row.id, stored: row.secrets_enc });
+  if (!isVaultCredentialReference(row.secrets_enc)) {
+    const reference = await storeVaultCredentialPayload(tx, key, { ownerUserId: row.owner_user_id, kind: row.provider === 'nextcloud' ? 'password' : 'oauth_token',
+      service: `connector.${row.provider}`, slot: row.id, label: `${row.provider} connection`, payload: payload as Record<string, unknown> });
+    await tx.query('update connections set secrets_enc=$2 where id=$1', [row.id, reference]);
+    row.secrets_enc = reference;
+  }
+  return payload;
+}
+
+/** Only the disconnect path may read a withdrawn connection, to revoke the
+ * same credential at its provider. It is never an access-token grant. */
+export async function refreshTokenForRevocation(db: Db, key: MasterKey, observed: ConnectionRow): Promise<string | null> {
+  if (!db.transaction) throw new VaultError('Credential revocation requires transactions');
+  return db.transaction(async tx => {
+    await lockConnectionOwner(tx, observed.owner_user_id, observed.provider);
+    await requireConnectorVault(tx);
+    const [row] = await tx.query<ConnectionRow>('select * from connections where id=$1 and owner_user_id=$2 and provider=$3 for update',
+      [observed.id, observed.owner_user_id, observed.provider]);
+    if (!row || row.status !== 'revoked' || row.secrets_enc !== observed.secrets_enc) throw new VaultError('The connection changed during revocation.');
+    const payload = await connectionPayload<SealedTokens>(tx, key, row);
+    if (payload.refreshToken != null && typeof payload.refreshToken !== 'string') throw new VaultError('The stored revocation credential is invalid.');
+    return payload.refreshToken ?? null;
+  });
 }
 
 export async function markUnhealthy(db: Db, connectionId: string, category: ErrorCategory): Promise<void> {
@@ -558,15 +614,21 @@ export async function deleteConnection(
   db: Db,
   args: { connectionId: string; actorUserId: string; actor: 'user' | 'super_admin' },
 ): Promise<void> {
-  await db.query(`with removed as (
-    delete from connections where id=$1 returning id,owner_user_id,provider
-  ) delete from vault_items v using removed r where v.owner_user_id=r.owner_user_id
-    and v.service='connector.' || r.provider and v.slot=r.id::text`, [args.connectionId]);
-  await appendEvent(db, {
-    actorUserId: args.actorUserId,
-    actor: args.actor,
-    kind: 'connection.removed',
-    subjectType: 'connection',
-    subjectId: args.connectionId,
+  if (!db.transaction) throw new VaultError('Connection deletion requires transactions');
+  await db.transaction(async tx => {
+    const [row] = await tx.query<ConnectionRow>('select * from connections where id=$1', [args.connectionId]);
+    if (row) await lockConnectionOwner(tx, row.owner_user_id, row.provider);
+    await tx.query('select id from vault_state where id=true for share');
+    await tx.query(`with removed as (
+      delete from connections where id=$1 returning id,owner_user_id,provider
+    ) delete from vault_items v using removed r where v.owner_user_id=r.owner_user_id
+      and v.service='connector.' || r.provider and v.slot=r.id::text`, [args.connectionId]);
+    await appendEvent(tx, {
+      actorUserId: args.actorUserId,
+      actor: args.actor,
+      kind: 'connection.removed',
+      subjectType: 'connection',
+      subjectId: args.connectionId,
+    });
   });
 }

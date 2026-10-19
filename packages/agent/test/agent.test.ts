@@ -4,7 +4,7 @@
 // test says, which is the only way to assert what the agent does when a model
 // misbehaves — refuses, loops, calls a tool it should not have been offered.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb,testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { MasterKey, createThread, seal, verifyStepUp, listTasksFor, createTask } from '@josi-ce/core';
 import { runAssistantTurn } from '../src/index.js';
@@ -66,6 +66,7 @@ beforeEach(async () => {
   requests = [];
   alice = (await createUser(db, { email: 'a@ce.test', username: 'alice', role: 'super_admin' })).id;
   bob = (await createUser(db, { email: 'b@ce.test', username: 'bob', role: 'member' })).id;
+  await testVault(db,key);
 });
 
 describe('refusing honestly', () => {

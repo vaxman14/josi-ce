@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { testDb,testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
 import { createThread, decideActionApproval, getTask, MasterKey, seal } from '@josi-ce/core';
 import { setCapability, upsertConnection } from '@josi-ce/connectors';
@@ -10,7 +10,7 @@ import { runJob } from '../src/jobs.js';
 let db:TestDb, owner:string, thread:string;
 const key=new MasterKey(Buffer.alloc(32,9));
 const template={name:'Invitation',subject:'For {{name}}',heading:'Invitation',body:'Meet {{recipient}} on {{date}} at {{time}}.',accentColor:'#2563eb',ctaLabel:'Details',ctaUrl:'https://example.test',footer:'Thanks'};
-beforeEach(async()=>{db=await testDb();owner=(await createUser(db,{email:'worker@template.test',username:'worker',role:'super_admin'})).id;thread=(await createThread(db,{ownerUserId:owner})).id;});
+beforeEach(async()=>{db=await testDb();owner=(await createUser(db,{email:'worker@template.test',username:'worker',role:'super_admin'})).id;thread=(await createThread(db,{ownerUserId:owner})).id;await testVault(db,key);});
 async function connect(provider:'google'|'microsoft') {
   const capability=`${provider}.mail.send`;
   await db.query(`insert into oauth_clients(provider,client_id,client_secret_enc,redirect_uri,configured_by) values($1,'client',$2,'https://example.test/callback',$3)`,[provider,seal(key,{clientSecret:'test'}),owner]);

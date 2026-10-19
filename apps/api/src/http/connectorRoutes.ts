@@ -19,11 +19,10 @@ import {
   accessTokenFor, buildAuthUrl, can, capabilitySpec, capabilityViews, clientStatuses, connectNextcloud,
   connectionFor, connectionsFor, createStateStore, deleteClient, deleteConnection, exchangeCode, fetchIdentity, getConnection,
   listFolderPage, listNextcloudFolder, loadClient, nextcloudCredentialsFor, normalizeServerUrl,
-  refusalReason, revokeAtProvider, safeReturnPath, saveClient, scopesFor, setCapability, upsertConnection,
+  refusalReason, refreshTokenForRevocation, revokeAtProvider, safeReturnPath, saveClient, scopesFor, setCapability, upsertConnection,
   verifyWebdavCredentials,
   type EntryPage, type OAuthProvider, type Provider,
 } from '@josi-ce/connectors';
-import { openCredentialPayload } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 
@@ -442,9 +441,9 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         try {
           const key = requireKey(ctx);
           const client = await loadClient(db, key, connection.provider);
-          const secrets = await openCredentialPayload<{ refreshToken: string | null }>(db,key,{ownerUserId:connection.owner_user_id,service:`connector.${connection.provider}`,slot:connection.id,stored:connection.secrets_enc});
-          if (secrets.refreshToken) {
-            const result = await revokeAtProvider(client, secrets.refreshToken, { fetchImpl: ctx.fetchImpl });
+          const refreshToken = await refreshTokenForRevocation(db, key, connection);
+          if (refreshToken) {
+            const result = await revokeAtProvider(client, refreshToken, { fetchImpl: ctx.fetchImpl });
             note = result.note;
           }
         } catch {

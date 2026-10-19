@@ -1,5 +1,5 @@
 import {beforeEach,describe,expect,it} from 'vitest';
-import {testDb,type TestDb} from '../../core/test/helpers.js';
+import {testDb,testVault,type TestDb} from '../../core/test/helpers.js';
 import {createUser} from '../../auth/src/users.js';
 import {addMessage,createThread,getTask,markActionsPresented,MasterKey,setUserApprovalLevel} from '@josi-ce/core';
 import {ensureInternalCalendar,setCapability,upsertConnection} from '@josi-ce/connectors';
@@ -14,6 +14,7 @@ const key=new MasterKey(Buffer.alloc(32,8));
 beforeEach(async()=>{
   db=await testDb();
   user=(await createUser(db,{email:'state@example.test',username:'state',role:'super_admin'})).id;
+  await testVault(db,key);
   thread=(await createThread(db,{ownerUserId:user})).id;
 });
 

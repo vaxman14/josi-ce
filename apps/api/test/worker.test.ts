@@ -153,6 +153,7 @@ describe('the worker drains the queue', () => {
 describe('user-policy-authorized calendar execution',()=>{
   const key=new MasterKey(Buffer.alloc(32,19));
   async function automaticCalendar(){
+    await testVault(db,key);
     await db.query(`insert into workspace(id,name,timezone) values(true,'Test','America/Los_Angeles') on conflict(id) do update set timezone=excluded.timezone`);
     await setUserApprovalLevel(db,{userId:owner,actionClass:'calendar_write',level:'automatic'});
     const connection=await upsertConnection(db,key,{ownerUserId:owner,provider:'google',providerAccountId:'calendar-worker',accountEmail:'calendar@example.test',tokens:{accessToken:'calendar-access',refreshToken:'calendar-refresh',expiresIn:3600,grantedScopes:'https://www.googleapis.com/auth/calendar'},requestedCapabilities:['google.calendar.write']});
