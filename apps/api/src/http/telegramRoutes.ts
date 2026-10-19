@@ -351,7 +351,7 @@ export function mountTelegramWebhook(app: Express, ctx: TelegramRoutesCtx): void
 
       let expected: Secret;
       try {
-        expected = openWebhookSecret(key, config);
+        expected = await openWebhookSecret(ctx.db, key, config);
       } catch {
         res.status(404).json({ error: 'not found' });
         return;
@@ -373,7 +373,7 @@ export function mountTelegramWebhook(app: Express, ctx: TelegramRoutesCtx): void
 
       const update = (req.body ?? {}) as TelegramUpdate;
       const api = new TelegramBotApi({
-        token: openToken(key, config), fetchImpl: ctx.fetchImpl,
+        token: await openToken(ctx.db, key, config), fetchImpl: ctx.fetchImpl,
       });
       const policy = await mailPolicy(db);
 

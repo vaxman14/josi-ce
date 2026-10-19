@@ -107,7 +107,7 @@ export async function restoreRemotePublicAddress(db:Db,masterKey:import('@josi-c
   if(previous.telegram?.webhook_set_at&&typeof previous.telegram.webhook_url==='string'){
     const {loadConfig,openToken,openWebhookSecret,TelegramBotApi}=await import('@josi-ce/channels');
     const config=await loadConfig(db);
-    const api=new TelegramBotApi({token:openToken(masterKey,config),fetchImpl});
-    await api.setWebhook({url:previous.telegram.webhook_url,secretToken:openWebhookSecret(masterKey,config)});
+    const api=new TelegramBotApi({token:await openToken(db,masterKey,config),fetchImpl});
+    await api.setWebhook({url:previous.telegram.webhook_url,secretToken:await openWebhookSecret(db,masterKey,config)});
   }
 }

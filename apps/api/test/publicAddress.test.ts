@@ -73,11 +73,13 @@ it.each(['deployment_config','workspace','oauth_clients','telegram_config'])('da
 });
 
 
-import {MasterKey,seal} from '@josi-ce/core';
+import {MasterKey,seal,initializeVault} from '@josi-ce/core';
 import {verifyPublicAddress,restoreRemotePublicAddress} from '../src/setup/publicAddress.js';
 it('finalizes remote Telegram registration only after health and can restore its prior URL', async()=>{
  const db=await testDb(),key=new MasterKey(Buffer.alloc(32,23));
  await db.query(`insert into users(email,username,role,status) values('address@example.test','address-admin','super_admin','active')`);
+ const [admin]=await db.query<{id:string}>("select id from users where role='super_admin'");
+ await initializeVault(db,key,admin.id);
  await db.query(`update telegram_config set bot_token_enc=$1,webhook_secret_enc=$2,webhook_url='https://old.example.test/telegram/webhook',webhook_set_at='2026-01-01'`,[seal(key,{token:'synthetic-bot-token'}),seal(key,{secret:'synthetic-webhook-secret'})]);
  const before=await snapshotPublicAddress(db),bodies:any[]=[];
  const fetchImpl=(async(_url:any,init:any)=>{bodies.push(JSON.parse(init.body));return new Response(JSON.stringify({ok:true,result:true}),{status:200});}) as typeof fetch;

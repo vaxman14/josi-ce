@@ -21,3 +21,9 @@ Executed checks: 13 core vault/record tests passed; 71 API vault/LLM and registr
 - A complete database rollback cannot be detected by a counter stored only in that same database. Paired devices must retain their last acknowledged authority generation and refuse rollback/re-enrollment shortcuts; restore workflows must reconcile before execution. Do not claim this unimplemented integration is proved by storage tests.
 
 The installation key and recovery material remain the bootstrap root of trust. This implementation neither replaces them nor silently imports live user secrets. Tests do not alter an installed server or current user vault.
+
+## Telegram migration checkpoint
+
+Migration 0067 binds Telegram configuration to its Vault owner. New bot/webhook credentials now write only to the Vault; the old columns hold encrypted opaque references. Reads require an initialized, unlocked Vault and migrate legacy ciphertext plus its audit/reference replacement in one transaction. A concurrent rotation invalidates an older configuration snapshot. Local removal clears both canonical slots even while the Vault is locked or remote webhook cleanup fails. API, worker reminder delivery, and public-address restore paths now await Vault resolution.
+
+Executed: the existing Telegram/public-address/channel suites passed 184 tests; five additional migration tests passed (legacy import, locked access, rollback on reference-write failure, rotation/revocation, and no uninitialized fallback). The channel/API/worker TypeScript build passed. Migration uses synthetic credentials only. Old installations without an initialized Vault must complete the existing recovery-key setup before migrated Telegram credentials can be used; upgrade UX for this prerequisite remains P5/P12 work.

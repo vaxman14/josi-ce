@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { MasterKey, openSealed, seal } from '@josi-ce/core';
+import { MasterKey, openSealed, seal, initializeVault, openCredentialPayload } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import express from 'express';
 import { createApp } from '../src/app.js';
@@ -108,7 +108,7 @@ async function webhookSecret(): Promise<string> {
   const [row] = await db.query<{ webhook_secret_enc: string }>(
     `select webhook_secret_enc from telegram_config where id = true`,
   );
-  return openSealed<{ secret: string }>(KEY, row.webhook_secret_enc).secret;
+  return (await openCredentialPayload<{ secret: string }>(db, KEY, { ownerUserId: ids.admin, service: 'channel.telegram', slot: 'webhook', stored: row.webhook_secret_enc })).secret;
 }
 
 /** A model that answers, so a routing test exercises a real turn rather than
@@ -167,6 +167,8 @@ beforeAll(async () => {
   ids.alice = (await createUser(db, { email: 'alice@ce.test', username: 'alice', role: 'member', password: PW.alice })).id;
   ids.bob = (await createUser(db, { email: 'bob@ce.test', username: 'bob', role: 'member', password: PW.bob })).id;
 
+  await initializeVault(db, KEY, ids.admin);
+
   const app = createApp(db, {
     cookieSecure: false,
     appUrl: 'https://josi.example',
@@ -206,7 +208,7 @@ beforeEach(async () => {
   await db.query(`delete from messages`);
   await db.query(`delete from threads`);
   await db.query(
-    `update telegram_config set enabled = false, bot_token_enc = null, webhook_secret_enc = null,
+    `update telegram_config set enabled = false, bot_token_enc = null, webhook_secret_enc = null, vault_owner_user_id = null,
        bot_id = null, bot_username = null, webhook_url = null, webhook_set_at = null,
        probed_at = null, probe_ok = null, probe_error = null,
        attachments_enabled = false, max_attachment_bytes = 5242880
@@ -320,7 +322,8 @@ describe('setting up the bot (L1.1)', () => {
       `select bot_token_enc from telegram_config where id = true`,
     );
     expect(row.bot_token_enc).not.toContain(TOKEN);
-    expect(openSealed<{ token: string }>(KEY, row.bot_token_enc).token).toBe(TOKEN);
+    expect(openSealed<{ vaultItemId: string }>(KEY, row.bot_token_enc).vaultItemId).toBeTruthy();
+    expect(await openCredentialPayload(db, KEY, { ownerUserId: ids.admin, service: 'channel.telegram', slot: 'bot', stored: row.bot_token_enc })).toEqual({ token: TOKEN });
 
     const view = await call('/api/admin/telegram', { jar: cookies.admin });
     const serialised = JSON.stringify(view.body);

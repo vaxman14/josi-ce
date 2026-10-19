@@ -485,7 +485,7 @@ async function deliverReminderToTelegram(
   if (!links.length) return;
 
   const api = new TelegramBotApi({
-    token: openToken(ctx.masterKey, config),
+    token: await openToken(db, ctx.masterKey, config),
     fetchImpl: ctx.telegramFetch,
   });
   const policy = await mailPolicy(db);

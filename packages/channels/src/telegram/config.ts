@@ -15,7 +15,7 @@
 // generated separately, sealed separately, and only ever compared in constant
 // time.
 import {
-  Secret, appendEvent, asSecret, openSealed, seal, type Db, type MasterKey,
+  Secret, appendEvent, asSecret, openSealed, openCredentialPayload, storeVaultCredentialPayload, deleteVaultSlot, VaultLockedError, type Db, type MasterKey,
 } from '@josi-ce/core';
 import { randomBytes } from 'node:crypto';
 import { TelegramApiError, TelegramBotApi, type TelegramErrorCategory } from './api.js';
@@ -28,6 +28,7 @@ export class TelegramConfigError extends Error {
 
 export interface TelegramConfigRow {
   enabled: boolean;
+  vault_owner_user_id: string | null;
   bot_token_enc: string | null;
   bot_id: string | null;
   bot_username: string | null;
@@ -43,7 +44,7 @@ export interface TelegramConfigRow {
 
 export async function loadConfig(db: Db): Promise<TelegramConfigRow> {
   const [row] = await db.query<TelegramConfigRow>(
-    `select enabled, bot_token_enc, bot_id, bot_username, webhook_secret_enc, webhook_url,
+    `select enabled, vault_owner_user_id, bot_token_enc, bot_id, bot_username, webhook_secret_enc, webhook_url,
             webhook_set_at, probed_at, probe_ok, probe_error, attachments_enabled,
             max_attachment_bytes
      from telegram_config where id = true`,
@@ -97,30 +98,47 @@ export function looksLikeBotToken(value: string): boolean {
   return /^\d{5,16}:[A-Za-z0-9_-]{30,}$/.test(value);
 }
 
-export function openToken(masterKey: MasterKey | null, row: TelegramConfigRow): Secret {
-  if (!row.bot_token_enc) {
-    throw new TelegramConfigError('no Telegram bot token is configured', 'not_configured');
-  }
-  if (!masterKey) {
-    throw new TelegramConfigError(
-      'the installation master key is unavailable, so the stored bot token cannot be opened',
-      'no_master_key',
-    );
-  }
-  return asSecret(openSealed<{ token: string }>(masterKey, row.bot_token_enc).token);
+/** Read/migrate the exact observed configuration. Migration, its Vault write,
+ * and the legacy-column replacement commit together; a rotated config never
+ * silently resolves an old snapshot. No credential is copied to logs. */
+async function openTelegramPayload<T extends object>(db: Db, masterKey: MasterKey | null,
+  row: TelegramConfigRow, slot: 'bot' | 'webhook'): Promise<T> {
+  const column = slot === 'bot' ? 'bot_token_enc' : 'webhook_secret_enc';
+  if (!row[column]) throw new TelegramConfigError('Telegram credential is not configured', 'not_configured');
+  if (!masterKey) throw new TelegramConfigError('the installation master key is unavailable', 'no_master_key');
+  if (!db.transaction) throw new TelegramConfigError('Telegram Vault access requires database transactions');
+  return db.transaction(async tx => {
+    // Same state-first order as Vault lock/recovery and channel configuration.
+    const [state] = await tx.query<{ initialized_at: string | null; locked: boolean }>('select initialized_at,locked from vault_state where id=true for share');
+    if (!state?.initialized_at || state.locked) throw new VaultLockedError('Initialize and unlock the Master Vault to use Telegram credentials.');
+    const [current] = await tx.query<TelegramConfigRow>('select * from telegram_config where id=true for update');
+    if (!current || current[column] !== row[column]) throw new TelegramConfigError('Telegram configuration changed; retry with current configuration');
+    let owner = current.vault_owner_user_id;
+    if (!owner) {
+      const [admin] = await tx.query<{ id: string }>("select id from users where role='super_admin'");
+      if (!admin) throw new TelegramConfigError('Telegram credential owner is unavailable');
+      owner = admin.id;
+    }
+    const stored = current[column]!;
+    const decoded = openSealed<Record<string, unknown>>(masterKey, stored);
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw new TelegramConfigError('Telegram credential is invalid');
+    if (Object.prototype.hasOwnProperty.call(decoded, 'vaultItemId')) {
+      return openCredentialPayload<T>(tx, masterKey, { ownerUserId: owner, service: 'channel.telegram', slot, stored });
+    }
+    const field = slot === 'bot' ? 'token' : 'secret';
+    if (typeof decoded[field] !== 'string' || !decoded[field]) throw new TelegramConfigError('Telegram credential is invalid');
+    const reference = await storeVaultCredentialPayload(tx, masterKey, { ownerUserId: owner, kind: 'api_key',
+      service: 'channel.telegram', slot, label: slot === 'bot' ? 'Telegram bot' : 'Telegram webhook', payload: decoded });
+    await tx.query(`update telegram_config set ${column}=$1,vault_owner_user_id=$2 where id=true`, [reference, owner]);
+    return decoded as T;
+  });
 }
 
-export function openWebhookSecret(masterKey: MasterKey | null, row: TelegramConfigRow): Secret {
-  if (!row.webhook_secret_enc) {
-    throw new TelegramConfigError('no webhook secret is configured', 'not_configured');
-  }
-  if (!masterKey) {
-    throw new TelegramConfigError(
-      'the installation master key is unavailable, so the webhook secret cannot be opened',
-      'no_master_key',
-    );
-  }
-  return asSecret(openSealed<{ secret: string }>(masterKey, row.webhook_secret_enc).secret);
+export async function openToken(db: Db, masterKey: MasterKey | null, row: TelegramConfigRow): Promise<Secret> {
+  return asSecret((await openTelegramPayload<{ token: string }>(db, masterKey, row, 'bot')).token);
+}
+export async function openWebhookSecret(db: Db, masterKey: MasterKey | null, row: TelegramConfigRow): Promise<Secret> {
+  return asSecret((await openTelegramPayload<{ secret: string }>(db, masterKey, row, 'webhook')).secret);
 }
 
 /**
@@ -196,39 +214,48 @@ export async function setBotToken(
   // should not be the one that was in place while it was leaking.
   const webhookSecret = generateWebhookSecret();
 
-  await db.query(
-    `update telegram_config set
-       bot_token_enc = $1,
-       webhook_secret_enc = $2,
-       bot_id = $3,
-       bot_username = $4,
-       probed_at = now(),
-       probe_ok = true,
-       probe_error = null,
-       -- Changing the token invalidates any registration made with the old one.
-       webhook_url = null,
-       webhook_set_at = null,
-       -- Never auto-enable. Setting a token is one decision and turning the
-       -- channel on is another, and the second one deserves its own click.
-       enabled = false
-     where id = true`,
-    [
-      seal(args.masterKey, { token: args.token }),
-      seal(args.masterKey, { secret: webhookSecret }),
-      String(me.id),
-      me.username ?? null,
-    ],
-  );
+  const masterKey = args.masterKey;
+  if (!db.transaction) throw new TelegramConfigError('Telegram configuration requires database transactions');
+  await db.transaction(async tx => {
+    await tx.query('select id from vault_state where id=true for share');
+    await tx.query('select id from telegram_config where id=true for update');
+    await tx.query(
+      `update telegram_config set
+         bot_token_enc = $1,
+         webhook_secret_enc = $2,
+         vault_owner_user_id = $5,
+         bot_id = $3,
+         bot_username = $4,
+         probed_at = now(),
+         probe_ok = true,
+         probe_error = null,
+         -- Changing the token invalidates any registration made with the old one.
+         webhook_url = null,
+         webhook_set_at = null,
+         -- Never auto-enable. Setting a token is one decision and turning the
+         -- channel on is another, and the second one deserves its own click.
+         enabled = false
+       where id = true`,
+      [
+        await storeVaultCredentialPayload(tx, masterKey, { ownerUserId: args.actorUserId, kind: 'api_key', service: 'channel.telegram', slot: 'bot', label: 'Telegram bot', payload: { token: args.token } }),
+        await storeVaultCredentialPayload(tx, masterKey, { ownerUserId: args.actorUserId, kind: 'api_key', service: 'channel.telegram', slot: 'webhook', label: 'Telegram webhook', payload: { secret: webhookSecret } }),
+        String(me.id),
+        me.username ?? null,
+        args.actorUserId,
+      ],
+    );
 
-  await appendEvent(db, {
-    actorUserId: args.actorUserId,
-    actor: 'super_admin',
-    kind: 'telegram.token_set',
-    subjectType: 'telegram_config',
-    // The bot's own id and public @username are the bot's public identity, not
-    // anybody's content. The token is not here and cannot be: `appendEvent`
-    // refuses a payload key named `token`.
-    payload: { botId: String(me.id), botUsername: me.username ?? null },
+    await appendEvent(tx, {
+      actorUserId: args.actorUserId,
+      actor: 'super_admin',
+      kind: 'telegram.token_set',
+      subjectType: 'telegram_config',
+      // The bot's own id and public @username are the bot's public identity, not
+      // anybody's content. The token is not here and cannot be: `appendEvent`
+      // refuses a payload key named `token`.
+      payload: { botId: String(me.id), botUsername: me.username ?? null },
+    });
+
   });
 
   return { botId: me.id, botUsername: me.username ?? null };
@@ -256,7 +283,7 @@ export async function probeBot(
   args: { masterKey: MasterKey | null; actorUserId: string; fetchImpl?: typeof fetch; timeoutMs?: number },
 ): Promise<{ ok: boolean; botUsername: string | null; category?: string }> {
   const row = await loadConfig(db);
-  const token = openToken(args.masterKey, row);
+  const token = await openToken(db, args.masterKey, row);
   const api = new TelegramBotApi({ token, fetchImpl: args.fetchImpl, timeoutMs: args.timeoutMs });
   try {
     const me = await api.getMe();
@@ -332,7 +359,7 @@ export async function removeBot(
   if (row.bot_token_enc && args.masterKey) {
     try {
       const api = new TelegramBotApi({
-        token: openToken(args.masterKey, row), fetchImpl: args.fetchImpl,
+        token: await openToken(db, args.masterKey, row), fetchImpl: args.fetchImpl,
       });
       await api.deleteWebhook();
       webhookDeleted = true;
@@ -340,16 +367,26 @@ export async function removeBot(
       webhookDeleted = false;
     }
   }
-  await db.query(
-    `update telegram_config set enabled = false, bot_token_enc = null, webhook_secret_enc = null,
-            bot_id = null, bot_username = null, webhook_url = null, webhook_set_at = null,
-            probed_at = null, probe_ok = null, probe_error = null
-     where id = true`,
-  );
-  await appendEvent(db, {
-    actorUserId: args.actorUserId, actor: 'super_admin', kind: 'telegram.removed',
-    subjectType: 'telegram_config', payload: { webhookDeleted },
+  if (!db.transaction) throw new TelegramConfigError('Telegram removal requires database transactions');
+  await db.transaction(async tx => {
+    await tx.query('select id from vault_state where id=true for share');
+    const [current] = await tx.query<{ vault_owner_user_id: string | null }>('select vault_owner_user_id from telegram_config where id=true for update');
+    if (current?.vault_owner_user_id) {
+      for (const slot of ['bot', 'webhook']) await deleteVaultSlot(tx, { ownerUserId: current.vault_owner_user_id,
+        service: 'channel.telegram', slot, actorUserId: args.actorUserId });
+    }
+    await tx.query(
+      `update telegram_config set enabled = false, bot_token_enc = null, webhook_secret_enc = null, vault_owner_user_id = null,
+              bot_id = null, bot_username = null, webhook_url = null, webhook_set_at = null,
+              probed_at = null, probe_ok = null, probe_error = null
+       where id = true`,
+    );
+    await appendEvent(tx, {
+      actorUserId: args.actorUserId, actor: 'super_admin', kind: 'telegram.removed',
+      subjectType: 'telegram_config', payload: { webhookDeleted },
+    });
   });
+
   return { webhookDeleted };
 }
 
@@ -361,8 +398,8 @@ export async function registerWebhook(
   args: { masterKey: MasterKey | null; appUrl: string; actorUserId: string; fetchImpl?: typeof fetch },
 ): Promise<{ url: string }> {
   const row = await loadConfig(db);
-  const token = openToken(args.masterKey, row);
-  const secret = openWebhookSecret(args.masterKey, row);
+  const token = await openToken(db, args.masterKey, row);
+  const secret = await openWebhookSecret(db, args.masterKey, row);
 
   let base: URL;
   try {
