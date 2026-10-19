@@ -37,7 +37,7 @@
 //     unexecuted or be spent twice.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, loadMasterKey, type Db, type LoadOptions, type MasterKey,
+  appendEvent, loadMasterKey, VaultError, VaultLockedError, type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
   CREDENTIAL_MASK, CustomApiCallError, CustomApiError, CustomApiInputError,
@@ -45,7 +45,7 @@ import {
   customApiById, customApiEndpointById, customApiFetch, customApiSentence,
   deleteCustomApi, deleteCustomApiEndpoint, denyCustomApiCall, disableCustomApi,
   enableCustomApi, listCustomApiEndpoints, listCustomApis, listPendingCalls,
-  openApprovedRequest, openCustomApiCredentials, parseOpenApiDocument, proposeFromOpenApi, recordCallResult, recordCustomApiCheck, setCustomApiEndpointEnabled,
+  pendingCallById, openApprovedRequest, openCustomApiCredentials, parseOpenApiDocument, proposeFromOpenApi, recordCallResult, recordCustomApiCheck, setCustomApiEndpointEnabled,
   updateCustomApi, updateCustomApiEndpoint,
   validateCustomApiAuthHeader, validateCustomApiAuthKind, validateCustomApiBaseUrl,
   validateCustomApiCredentials, validateCustomApiMethod, validateCustomApiName,
@@ -78,6 +78,8 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
     try {
       return await fn(req, res);
     } catch (err: unknown) {
+      if (err instanceof VaultLockedError) return res.status(423).json({ error: err.message });
+      if (err instanceof VaultError) return res.status(409).json({ error: err.message });
       if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
       if (err instanceof CustomApiInputError) return res.status(400).json({ error: err.message });
       // A pending request that is not yours reads exactly like one that never
@@ -223,7 +225,7 @@ async function runTest(
   const request = buildCustomApiTestRequest(connection);
   try {
     const response = await customApiFetch(
-      { connection, request, secret: openCustomApiCredentials(key, connection) },
+      { connection, request, secret: await openCustomApiCredentials(ctx.db, key, connection) },
       { fetchImpl: ctx.fetchImpl, resolve: ctx.resolve },
     );
     const ok = response.status < 400;
@@ -620,6 +622,16 @@ export function customApiRoutes(ctx: CustomApiRoutesCtx): Router {
     '/pending/:id/approve',
     handle(async (req, res) => {
       const key = requireKey(ctx);
+      // A known Vault lock must not consume a still-pending approval. The
+      // conditional claim below remains the authority; credentials and switches
+      // are re-read afterward, so this preflight is never an execution grant.
+      const pending = await pendingCallById(db, param(req, 'id'));
+      if (!pending || pending.owner_user_id !== req.user!.id) throw new CustomApiCallError('there is no request with that id', true);
+      if (pending.status === 'pending' && new Date(pending.expires_at) > new Date()) {
+        const candidateEndpoint = await customApiEndpointById(db, pending.endpoint_id);
+        const candidate = candidateEndpoint ? await customApiById(db, candidateEndpoint.connection_id) : null;
+        if (candidate?.enabled) await openCustomApiCredentials(db, key, candidate);
+      }
       const call = await claimApproved(db, { callId: param(req, 'id'), decidedBy: req.user!.id });
 
       const endpoint = await customApiEndpointById(db, call.endpoint_id);
@@ -659,7 +671,7 @@ export function customApiRoutes(ctx: CustomApiRoutesCtx): Router {
               method: payload.method as CustomApiMethod,
               body: payload.body,
             },
-            secret: openCustomApiCredentials(key, connection),
+            secret: await openCustomApiCredentials(ctx.db, key, connection),
           },
           { fetchImpl: ctx.fetchImpl, resolve: ctx.resolve },
         );
@@ -684,7 +696,7 @@ export function customApiRoutes(ctx: CustomApiRoutesCtx): Router {
         });
       } catch (err) {
         const category = err instanceof CustomApiError ? err.category : 'provider_error';
-        await recordCustomApiCheck(db, { connectionId: connection.id, ok: false, category });
+        if (!(err instanceof VaultError)) await recordCustomApiCheck(db, { connectionId: connection.id, ok: false, category });
         await recordCallResult(db, {
           callId: call.id, ownerUserId: req.user!.id, ok: false, status: null,
           slug: connection.slug, operationId: endpoint.operation_id,

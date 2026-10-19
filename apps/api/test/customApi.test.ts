@@ -27,8 +27,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { MasterKey, looksSealed } from '@josi-ce/core';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
+import { MasterKey, isVaultCredentialReference, looksSealed, setVaultLock } from '@josi-ce/core';
 import {
   buildCustomApiRequest, customApiById, customApiEndpointById, describeCustomApiCall,
   listCustomApiEndpoints, requestCustomApiCall,
@@ -145,6 +145,7 @@ beforeAll(async () => {
   ids.alice = (await createUser(db, { email: 'ca-alice@ce.test', username: 'caalice', role: 'member', password: PW.alice })).id;
   ids.bob = (await createUser(db, { email: 'ca-bob@ce.test', username: 'cabob', role: 'member', password: PW.bob })).id;
 
+  await testVault(db, masterKey);
   const app = createApp(db, {
     cookieSecure: false,
     appUrl: 'http://localhost:3000',
@@ -337,7 +338,7 @@ describe('the credential never comes back', () => {
       `select credentials_enc from custom_api_connections where id = $1`,
       [created.body.connection.id],
     );
-    expect(looksSealed(row.credentials_enc)).toBe(true);
+    expect(isVaultCredentialReference(row.credentials_enc)).toBe(true);
     expect(row.credentials_enc).not.toContain(CREDENTIAL);
 
     // The ciphertext is not served either — it is something an attacker can
@@ -523,6 +524,20 @@ describe('a write waits for its owner', () => {
       method: 'POST', jar: cookies.alice,
     });
     expect(again.status).toBe(409);
+    expect(seen).toHaveLength(1);
+  });
+
+  it.each(['master', 'box'])('preserves a pending approval through a %s Vault lock and sends only after unlocking', async kind => {
+    const row = await pending('alice');
+    const target = { ...(kind === 'master' ? { master: true } : { ownerUserId: ids.admin }), actorUserId: ids.admin };
+    await setVaultLock(db, { ...target, locked: true });
+    try {
+      const res = await call(`/api/custom-apis/pending/${row.id}/approve`, { method: 'POST', jar: cookies.alice });
+      expect(res.status).toBe(423);
+      expect(seen).toHaveLength(0);
+      expect((await db.query<{ status: string }>('select status from custom_api_pending_calls where id=$1', [row.id]))[0].status).toBe('pending');
+    } finally { await setVaultLock(db, { ...target, locked: false }); }
+    expect((await call(`/api/custom-apis/pending/${row.id}/approve`, { method: 'POST', jar: cookies.alice })).status).toBe(200);
     expect(seen).toHaveLength(1);
   });
 

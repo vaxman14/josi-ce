@@ -36,7 +36,9 @@
 //
 // NOTHING IN THIS FILE RETURNS A CREDENTIAL. `openCustomApiCredentials` is the single
 // exception and it hands the value to one caller at the moment of a request.
-import { appendEvent, json, openSealed, seal, type Db, type MasterKey } from '@josi-ce/core';
+import { randomUUID } from 'node:crypto';
+import { appendEvent, json, openCredentialPayload, storeVaultCredentialPayload, isVaultCredentialReference,
+  deleteVaultSlot, VaultLockedError, VaultError, type Db, type MasterKey } from '@josi-ce/core';
 import type { ErrorCategory } from './providers.js';
 
 // ------------------------------------------------------------------- shapes
@@ -89,6 +91,7 @@ export interface CustomApiConnectionRow {
   last_check_ok: boolean | null;
   last_error_category: ErrorCategory | null;
   created_by_user_id: string | null;
+  vault_owner_user_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -501,30 +504,36 @@ export async function createCustomApi(
   key: MasterKey,
   args: CreateCustomApiArgs,
 ): Promise<CustomApiConnectionRow> {
-  const sealed = seal(key, args.credentials);
-  const rows = await db.query<CustomApiConnectionRow>(
-    `insert into custom_api_connections
-       (name, slug, base_url, host, auth_kind, auth_header, credentials_enc, test_path, created_by_user_id)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     returning *`,
-    [
-      args.name, args.slug, args.baseUrl, args.host, args.authKind,
-      args.authKind === 'api_key' ? args.authHeader : null,
-      sealed, args.testPath, args.actorUserId,
-    ],
-  );
-  await appendEvent(db, {
-    actorUserId: args.actorUserId,
-    actor: 'super_admin',
-    kind: 'custom_api.connection_created',
-    subjectType: 'custom_api_connection',
-    subjectId: rows[0].id,
-    // The slug, the host and which KIND of authentication. Never the credential
-    // — and `appendEvent` would refuse a `secret` key anyway, which is the
-    // backstop working rather than a reason to be careless here.
-    payload: { slug: args.slug, host: args.host, authKind: args.authKind },
+  if (!db.transaction) throw new Error('Custom API credential storage requires transactions');
+  return db.transaction(async tx => {
+    await requireCustomApiVault(tx);
+    const id = randomUUID();
+    const sealed = await storeVaultCredentialPayload(tx, key, { ownerUserId: args.actorUserId, kind: 'api_key', service: 'custom_api', slot: id,
+      label: 'Custom API credential', payload: validateCustomApiCredentials(args.authKind, args.credentials) });
+    const rows = await tx.query<CustomApiConnectionRow>(
+      `insert into custom_api_connections
+         (name, slug, base_url, host, auth_kind, auth_header, credentials_enc, test_path, created_by_user_id, id, vault_owner_user_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $9)
+       returning *`,
+      [
+        args.name, args.slug, args.baseUrl, args.host, args.authKind,
+        args.authKind === 'api_key' ? args.authHeader : null,
+        sealed, args.testPath, args.actorUserId, id,
+      ],
+    );
+    await appendEvent(tx, {
+      actorUserId: args.actorUserId,
+      actor: 'super_admin',
+      kind: 'custom_api.connection_created',
+      subjectType: 'custom_api_connection',
+      subjectId: rows[0].id,
+      // The slug, the host and which KIND of authentication. Never the credential
+      // — and `appendEvent` would refuse a `secret` key anyway, which is the
+      // backstop working rather than a reason to be careless here.
+      payload: { slug: args.slug, host: args.host, authKind: args.authKind },
+    });
+    return rows[0];
   });
-  return rows[0];
 }
 
 export interface UpdateCustomApiArgs {
@@ -557,60 +566,75 @@ export async function updateCustomApi(
   key: MasterKey,
   args: UpdateCustomApiArgs,
 ): Promise<CustomApiConnectionRow> {
-  const before = args.connection;
-  const baseUrl = args.baseUrl ?? before.base_url;
-  const host = args.host ?? before.host;
-  const authKind = args.authKind ?? before.auth_kind;
-  const authHeader = authKind === 'api_key'
-    ? (args.authHeader ?? before.auth_header)
-    : null;
-  const testPath = args.testPath ?? before.test_path;
+  if (!db.transaction) throw new Error('Custom API updates require transactions');
+  return db.transaction(async tx => {
+    // State before connection, matching migration/lock order. Metadata edits and
+    // revocation need no secret access, and remain available while locked.
+    await tx.query('select id from vault_state where id=true for share');
+    const current = await currentCustomApi(tx, args.connection);
+    const before = args.connection;
+    const baseUrl = args.baseUrl ?? before.base_url;
+    const host = args.host ?? before.host;
+    const authKind = args.authKind ?? before.auth_kind;
+    const authHeader = authKind === 'api_key'
+      ? (args.authHeader ?? before.auth_header)
+      : null;
+    const testPath = args.testPath ?? before.test_path;
 
-  const reconnects = baseUrl !== before.base_url
-    || host !== before.host
-    || authKind !== before.auth_kind
-    || authHeader !== before.auth_header
-    || args.credentials !== undefined;
+    const reconnects = baseUrl !== before.base_url
+      || host !== before.host
+      || authKind !== before.auth_kind
+      || authHeader !== before.auth_header
+      || args.credentials !== undefined;
 
-  const rows = await db.query<CustomApiConnectionRow>(
-    `update custom_api_connections set
-       name = $2,
-       base_url = $3,
-       host = $4,
-       auth_kind = $5,
-       auth_header = $6,
-       credentials_enc = coalesce($7, credentials_enc),
-       test_path = $8,
-       enabled = case when $9 then false else enabled end,
-       status = case when $9 then 'unverified' else status end,
-       last_check_at = case when $9 then null else last_check_at end,
-       last_check_ok = case when $9 then null else last_check_ok end,
-       last_error_category = case when $9 then null else last_error_category end
-     where id = $1
-     returning *`,
-    [
-      before.id, args.name ?? before.name, baseUrl, host, authKind, authHeader,
-      args.credentials ? seal(key, args.credentials) : null,
-      testPath, reconnects,
-    ],
-  );
-  await appendEvent(db, {
-    actorUserId: args.actorUserId,
-    actor: 'super_admin',
-    kind: 'custom_api.connection_updated',
-    subjectType: 'custom_api_connection',
-    subjectId: before.id,
-    payload: {
-      slug: before.slug,
-      host,
-      authKind,
-      credentialReplaced: args.credentials !== undefined,
-      // Named so an audit reader can see the verification was reset without
-      // having to diff two rows.
-      requiresRetest: reconnects,
-    },
+    let credential: string | null = null;
+    let owner = current.vault_owner_user_id;
+    if (args.credentials !== undefined) {
+      await requireCustomApiVault(tx);
+      owner = await customApiVaultOwner(tx, current);
+      credential = await storeVaultCredentialPayload(tx, key, { ownerUserId: owner, actorUserId: args.actorUserId, kind: 'api_key', service: 'custom_api', slot: before.id,
+        label: 'Custom API credential', payload: validateCustomApiCredentials(authKind, args.credentials) });
+    }
+    const rows = await tx.query<CustomApiConnectionRow>(
+      `update custom_api_connections set
+         name = $2,
+         base_url = $3,
+         host = $4,
+         auth_kind = $5,
+         auth_header = $6,
+         credentials_enc = coalesce($7, credentials_enc),
+         vault_owner_user_id = $10,
+         test_path = $8,
+         enabled = case when $9 then false else enabled end,
+         status = case when $9 then 'unverified' else status end,
+         last_check_at = case when $9 then null else last_check_at end,
+         last_check_ok = case when $9 then null else last_check_ok end,
+         last_error_category = case when $9 then null else last_error_category end
+       where id = $1
+       returning *`,
+      [
+        before.id, args.name ?? before.name, baseUrl, host, authKind, authHeader,
+        credential, testPath, reconnects, owner,
+      ],
+    );
+    await appendEvent(tx, {
+      actorUserId: args.actorUserId,
+      actor: 'super_admin',
+      kind: 'custom_api.connection_updated',
+      subjectType: 'custom_api_connection',
+      subjectId: before.id,
+      payload: {
+        slug: before.slug,
+        host,
+        authKind,
+        credentialReplaced: args.credentials !== undefined,
+        // Named so an audit reader can see the verification was reset without
+        // having to diff two rows.
+        requiresRetest: reconnects,
+      },
+    });
+    return rows[0];
   });
-  return rows[0];
 }
 
 /**
@@ -668,24 +692,58 @@ export async function deleteCustomApi(
   db: Db,
   args: { actorUserId: string; connection: CustomApiConnectionRow },
 ): Promise<void> {
-  // The endpoints and any pending calls under it go with it, by cascade. A
-  // pending write against an API that no longer exists is a request nobody
-  // could honour and nobody should be asked about.
-  await db.query(`delete from custom_api_connections where id = $1`, [args.connection.id]);
-  await appendEvent(db, {
-    actorUserId: args.actorUserId,
-    actor: 'super_admin',
-    kind: 'custom_api.connection_deleted',
-    subjectType: 'custom_api_connection',
-    subjectId: args.connection.id,
-    payload: { slug: args.connection.slug },
+  if (!db.transaction) throw new Error('Custom API deletion requires transactions');
+  await db.transaction(async tx => {
+    await tx.query('select id from vault_state where id=true for share');
+    const current = await currentCustomApi(tx, args.connection);
+    // The endpoints and any pending calls under it go with it, by cascade. A
+    // pending write against an API that no longer exists is a request nobody
+    // could honour and nobody should be asked about.
+    await tx.query(`delete from custom_api_connections where id = $1`, [args.connection.id]);
+    if (current.vault_owner_user_id) await deleteVaultSlot(tx, { ownerUserId: current.vault_owner_user_id, service: 'custom_api', slot: current.id, actorUserId: args.actorUserId });
+    await appendEvent(tx, {
+      actorUserId: args.actorUserId,
+      actor: 'super_admin',
+      kind: 'custom_api.connection_deleted',
+      subjectType: 'custom_api_connection',
+      subjectId: args.connection.id,
+      payload: { slug: args.connection.slug },
+    });
   });
 }
 
 /** The credential, for use right now. Returned to one caller, never stored
  * anywhere else, never logged, and never put in a response body. */
-export function openCustomApiCredentials(key: MasterKey, row: CustomApiConnectionRow): CustomApiSecret {
-  return openSealed<CustomApiSecret>(key, row.credentials_enc);
+export async function openCustomApiCredentials(db: Db, key: MasterKey, row: CustomApiConnectionRow): Promise<CustomApiSecret> {
+  if (!db.transaction) throw new Error('Custom API credential access requires transactions');
+  return db.transaction(async tx => {
+    await requireCustomApiVault(tx);
+    const current = await currentCustomApi(tx, row), owner = await customApiVaultOwner(tx, current);
+    const payload = validateCustomApiCredentials(current.auth_kind, await openCredentialPayload<CustomApiSecret>(tx, key,
+      { ownerUserId: owner, service: 'custom_api', slot: current.id, stored: current.credentials_enc }));
+    if (!isVaultCredentialReference(current.credentials_enc)) {
+      const reference = await storeVaultCredentialPayload(tx, key, { ownerUserId: owner, kind: 'api_key', service: 'custom_api', slot: current.id, label: 'Custom API credential', payload });
+      await tx.query('update custom_api_connections set credentials_enc=$2,vault_owner_user_id=$3 where id=$1', [current.id, reference, owner]);
+    }
+    return payload;
+  });
+}
+
+async function requireCustomApiVault(tx: Db): Promise<void> {
+  const [state] = await tx.query<{ initialized_at: string | null; locked: boolean }>('select initialized_at,locked from vault_state where id=true for share');
+  if (!state?.initialized_at || state.locked) throw new VaultLockedError('Initialize and unlock the Master Vault to use Custom API credentials.');
+}
+async function customApiVaultOwner(tx: Db, row: CustomApiConnectionRow): Promise<string> {
+  if (row.vault_owner_user_id || row.created_by_user_id) return (row.vault_owner_user_id ?? row.created_by_user_id)!;
+  const [admin] = await tx.query<{ id: string }>("select id from users where role='super_admin'");
+  if (!admin) throw new Error('Custom API credential owner is unavailable');
+  return admin.id;
+}
+async function currentCustomApi(tx: Db, observed: CustomApiConnectionRow): Promise<CustomApiConnectionRow> {
+  const [row] = await tx.query<CustomApiConnectionRow>('select * from custom_api_connections where id=$1 for update', [observed.id]);
+  const fields = ['credentials_enc', 'base_url', 'host', 'auth_kind', 'auth_header', 'test_path', 'enabled', 'status', 'vault_owner_user_id'] as const;
+  if (!row || fields.some(field => row[field] !== observed[field])) throw new VaultError('Custom API configuration changed; retry with current configuration');
+  return row;
 }
 
 /**

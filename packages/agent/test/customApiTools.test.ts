@@ -11,8 +11,8 @@
 // own agent loop. A guarantee proved anywhere else would be a guarantee one of
 // those two does not have.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MasterKey, looksSealed, openSealed } from '../../core/src/index.js';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { MasterKey, looksSealed, openSealed, setVaultLock } from '../../core/src/index.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import {
   createCustomApi, createCustomApiEndpoint, customApiById, enableCustomApi,
@@ -82,6 +82,7 @@ beforeEach(async () => {
   adminId = (await createUser(db, { email: 'cat-admin@ce.test', username: 'catadmin', role: 'super_admin' })).id;
   aliceId = (await createUser(db, { email: 'cat-alice@ce.test', username: 'catalice', role: 'member' })).id;
 
+  await testVault(db, key);
   connection = await createCustomApi(db, key, {
     actorUserId: adminId,
     name: 'Booking system',
@@ -381,6 +382,14 @@ describe('there is no way to reach anything not on the list', () => {
     ) as Record<string, unknown>;
     expect(result.ok).toBe(false);
     expect(seen).toHaveLength(0);
+  });
+
+  it('reports a Vault lock without contacting or marking the external API unhealthy', async () => {
+    await allow();
+    await setVaultLock(db, { master: true, locked: true, actorUserId: adminId });
+    expect(await run('call_custom_api', { connection: 'booking', operation: 'list_customers' })).toMatchObject({ ok: false, error: 'vault_locked' });
+    expect(seen).toHaveLength(0);
+    expect((await customApiById(db, connection.id))!.last_check_ok).toBe(true);
   });
 });
 

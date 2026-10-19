@@ -28,7 +28,7 @@
 // through it is made FOR one person, and a pending approval is visible only to
 // them. An administrator configures the pipe and does not get to see what
 // somebody sent through it.
-import type { Db, MasterKey } from '@josi-ce/core';
+import { VaultError, VaultLockedError, type Db, type MasterKey } from '@josi-ce/core';
 import {
   CustomApiError, CustomApiInputError,
   availableCustomApiActions, buildCustomApiRequest, categoryForCustomApiStatus, customApiFetch,
@@ -315,10 +315,11 @@ async function callAction(
   let response;
   try {
     response = await customApiFetch(
-      { connection, request, secret: openCustomApiCredentials(ctx.access.masterKey(), connection) },
+      { connection, request, secret: await openCustomApiCredentials(db, ctx.access.masterKey(), connection) },
       { fetchImpl: ctx.access.customApiFetch, resolve: ctx.access.resolve } satisfies CustomApiFetchOptions,
     );
   } catch (err) {
+    if (err instanceof VaultError) return { ok: false, error: err instanceof VaultLockedError ? 'vault_locked' : 'credential_unavailable', message: err.message };
     const category = err instanceof CustomApiError ? err.category : 'provider_error';
     await recordCustomApiCheck(db, { connectionId: connection.id, ok: false, category });
     return {

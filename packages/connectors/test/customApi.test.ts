@@ -8,8 +8,8 @@
 //
 // Nothing in this file performs DNS or contacts an API: both seams are injected.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MasterKey, looksSealed, openSealed } from '../../core/src/index.js';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { MasterKey, isVaultCredentialReference } from '../../core/src/index.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import {
   CustomApiError, CustomApiInputError,
@@ -70,6 +70,7 @@ beforeEach(async () => {
   adminId = (await createUser(db, {
     email: 'ca-admin@ce.test', username: 'caadmin', role: 'super_admin',
   })).id;
+  await testVault(db, key);
 });
 
 // ------------------------------------------------------------- the base URL
@@ -359,33 +360,33 @@ describe('nothing is available until somebody makes it so', () => {
 describe('the credential is sealed and never derived from', () => {
   it('stores ciphertext, and the row holds no plaintext', async () => {
     const conn = await connection();
-    expect(looksSealed(conn.credentials_enc)).toBe(true);
+    expect(isVaultCredentialReference(conn.credentials_enc)).toBe(true);
     expect(JSON.stringify(conn)).not.toContain('fixture-credential-value');
     const [raw] = await db.query<Record<string, unknown>>(
       `select * from custom_api_connections where id = $1`, [conn.id],
     );
     expect(JSON.stringify(raw)).not.toContain('fixture-credential-value');
-    expect(openSealed<{ secret: string }>(key, conn.credentials_enc).secret)
+    expect((await openCustomApiCredentials(db, key, conn) as {secret:string}).secret)
       .toBe('fixture-credential-value');
   });
 
   it('puts the credential in a header and never in the URL', async () => {
     const conn = await connection();
-    expect(authHeaders(conn, openCustomApiCredentials(key, conn)))
+    expect(authHeaders(conn, await openCustomApiCredentials(db, key, conn)))
       .toEqual({ authorization: 'Bearer fixture-credential-value' });
 
     const apiKey = await connection({
       slug: 'keyed', authKind: 'api_key', authHeader: 'X-API-Key',
       credentials: { secret: 'fixture-api-key-value' },
     });
-    expect(authHeaders(apiKey, openCustomApiCredentials(key, apiKey)))
+    expect(authHeaders(apiKey, await openCustomApiCredentials(db, key, apiKey)))
       .toEqual({ 'x-api-key': 'fixture-api-key-value' });
 
     const basic = await connection({
       slug: 'basic_one', authKind: 'basic',
       credentials: { username: 'someone', password: 'fixture-password-value' },
     });
-    expect(authHeaders(basic, openCustomApiCredentials(key, basic)))
+    expect(authHeaders(basic, await openCustomApiCredentials(db, key, basic)))
       .toEqual({ authorization: `Basic ${Buffer.from('someone:fixture-password-value').toString('base64')}` });
   });
 
@@ -479,7 +480,7 @@ describe('SSRF defences', () => {
     }) as unknown as typeof fetch;
 
     const res = await customApiFetch(
-      { connection: conn, request, secret: openCustomApiCredentials(key, conn) },
+      { connection: conn, request, secret: await openCustomApiCredentials(db, key, conn) },
       { resolve: publicResolve, fetchImpl },
     );
     expect(res.status).toBe(200);
@@ -500,7 +501,7 @@ describe('SSRF defences', () => {
       error: 'bad credential Bearer fixture-credential-value on GET /v1/customers',
     });
     const res = await customApiFetch(
-      { connection: conn, request, secret: openCustomApiCredentials(key, conn) },
+      { connection: conn, request, secret: await openCustomApiCredentials(db, key, conn) },
       {
         resolve: publicResolve,
         fetchImpl: (async () => new Response(hostile, { status: 401 })) as unknown as typeof fetch,
