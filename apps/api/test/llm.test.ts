@@ -14,8 +14,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { looksSealed } from '@josi-ce/core';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
+import { isVaultCredentialReference, MasterKey } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 
@@ -135,6 +135,7 @@ beforeAll(async () => {
   ids.alice = (await createUser(db, { email: 'alice@ce.test', username: 'alice', role: 'member', password: 'alice-password-123' })).id;
   ids.bob = (await createUser(db, { email: 'bob@ce.test', username: 'bob', role: 'member', password: 'bob-password-123' })).id;
 
+  await testVault(db, new MasterKey(Buffer.alloc(32, 7)));
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000',
     masterKeyCheck: { path: keyPath }, llmFetch, llmResolve,
@@ -189,7 +190,7 @@ describe('storing a provider', () => {
     expect(res.body.provider.apiKeySet).toBe(true);
 
     const [row] = await db.query<{ api_key_enc: string }>(`select api_key_enc from llm_providers where role = 'primary'`);
-    expect(looksSealed(row.api_key_enc)).toBe(true);
+    expect(isVaultCredentialReference(row.api_key_enc)).toBe(true);
     expect(row.api_key_enc).not.toContain(SECRET_KEY);
 
     // Not through the config endpoint, not through the audit log.

@@ -265,6 +265,8 @@ export function explainCategory(category: LlmErrorCategory): string {
 }
 
 export interface LlmProvider {
+  /** Exact persisted selection prepared by the registry; capability probes use it for compare-and-swap. */
+  configurationVersion?: string;
   kind: ProviderKind;
   model: string;
   /** True when this provider sends content off the server. */

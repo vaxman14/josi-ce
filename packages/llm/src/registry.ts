@@ -9,7 +9,8 @@
 //   * A fallback is used only when it was explicitly enabled AND the primary
 //     failed in a way a second attempt could fix.
 //   * Caps are checked before the call, not after.
-import { openCredentialPayload, openCredentialEnvelope, type Db, type MasterKey } from '@josi-ce/core';
+import { type Db, type MasterKey } from '@josi-ce/core';
+import { resolveModelCredentials } from './credentials.js';
 import { anthropicProvider } from './providers/anthropic.js';
 import { codexCliProvider, isSubscriptionProvider, type SpawnRunner } from './providers/codexCli.js';
 import { claudeCliProvider } from './providers/claudeCli.js';
@@ -34,6 +35,7 @@ export interface StoredProvider {
   model: string;
   base_url: string | null;
   api_key_enc: string | null;
+  vault_owner_user_id?: string | null;
   external_acknowledged: boolean;
   activated_at: string | null;
   /** Changes on every save/probe; guards against stale probe completion. */
@@ -87,7 +89,7 @@ export async function loadStoredProvider(
     `select role, provider, model, base_url, api_key_enc, external_acknowledged, activated_at,
             updated_at::text as updated_at,
             probed_at, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens,
-            subscription_command, provider_config
+            subscription_command, provider_config, vault_owner_user_id
      from llm_providers where role = $1`,
     [role],
   );
@@ -132,6 +134,13 @@ export async function buildProvider(
     );
   }
 
+  if (stored.api_key_enc && !opts.masterKey) throw new LlmError('the installation master key is unavailable, so the stored API key cannot be opened', { needsReconfiguration: true });
+  const { secrets, version } = await resolveModelCredentials(opts.db, opts.masterKey, stored);
+  return { ...buildProviderClient(opts, stored, secrets), configurationVersion: version };
+}
+
+function buildProviderClient(opts: RegistryOptions, stored: StoredProvider, secrets: Record<string, string>): LlmProvider {
+  const external = isExternalProvider(stored.provider);
   // The subscription path. Checked BEFORE the key is opened, because there is
   // no key: the credential lives in the operator's own Codex login and never
   // enters this process. `codexCliProvider` asserts the edition capability
@@ -167,24 +176,6 @@ export async function buildProvider(
     });
   }
 
-  // The sealed envelope holds EVERY secret this provider needs, not just an
-  // API key: Bedrock has a key pair, ERNIE has a key and a secret, Vertex has a
-  // whole service-account file. Older rows sealed a bare `{ apiKey }`, which is
-  // the same shape read the same way, so nothing has to be re-entered.
-  let secrets: Record<string, string> = {};
-  if (stored.api_key_enc) {
-    if (!opts.masterKey) {
-      throw new LlmError('the installation master key is unavailable, so the stored API key cannot be opened', {
-        needsReconfiguration: true,
-      });
-    }
-    const envelope=await openCredentialEnvelope<Record<string,string>>(opts.db,opts.masterKey,stored.api_key_enc);
-    if(envelope.vaultItemId){
-      const [owner]=await opts.db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);
-      if(!owner)throw new LlmError('the Master Vault has no administrator owner',{needsReconfiguration:true});
-      secrets=await openCredentialPayload<Record<string,string>>(opts.db,opts.masterKey,{ownerUserId:owner.id,service:'llm',slot:stored.role,stored:stored.api_key_enc});
-    }else secrets=envelope;
-  }
   const apiKey = secrets.apiKey ?? null;
   const config = stored.provider_config ?? {};
   const configString = (key: string): string => {
@@ -331,6 +322,7 @@ export function meteredProvider(
     kind: provider.kind,
     model: provider.model,
     external: provider.external,
+    configurationVersion: provider.configurationVersion,
     async chat(request: ChatRequest): Promise<ChatResponse> {
       const response = await provider.chat(request);
       await meterCall(db, stored, role, provider.external, response, chatOpts);

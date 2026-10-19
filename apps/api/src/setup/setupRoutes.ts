@@ -1,3 +1,4 @@
+import { saveModelConfiguration, ModelConfigurationError } from '@josi-ce/llm';
 // The first-run setup wizard.
 //
 // These routes are UNAUTHENTICATED, because they run before any account exists.
@@ -18,7 +19,7 @@ import { Router } from 'express';
 import {
   appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, initializeVault, json, loadMasterKey,
   updateWorkspace,
-  recordVerification, seal, openSealed, storeCredentialPayload, summarizeReview,
+  recordVerification, seal, openSealed, storeCredentialPayload, summarizeReview, VaultError, VaultLockedError,
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
 import { describeProvider, discoverModels } from '@josi-ce/llm';
@@ -261,9 +262,11 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
           });
         } else result = await applyStep(ctx, step as SetupStep, (req.body ?? {}) as Record<string, unknown>);
       } catch (err) {
-        if (err instanceof SetupError) {
+        if (err instanceof SetupError || err instanceof ModelConfigurationError) {
           return res.status(err.status).json({ error: err.message });
         }
+        if (err instanceof VaultLockedError) return res.status(423).json({ error: err.message });
+        if (err instanceof VaultError) return res.status(409).json({ error: err.message });
         throw err;
       }
 
@@ -468,29 +471,27 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         throw err;
       }
 
-      await recordVerification(db, {
-        item,
-        status: outcome.status,
-        category: outcome.category ?? null,
-        detail: outcome.detail,
-        target: outcome.target ?? null,
+      if (!db.transaction) throw new SetupError(503, 'Verification storage is unavailable.');
+      const recorded = await db.transaction(async tx => {
+        // A probe belongs to exactly the configuration it prepared. A concurrent
+        // save cannot gain activation from a previous model's passing result.
+        if (item === 'llm' && outcome.probe) {
+          const cap = outcome.probe.capabilities;
+          const changed = await tx.query(`update llm_providers set
+            probed_at=$1,cap_chat=$2,cap_structured_output=$3,cap_tool_calling=$4,cap_vision=$5,cap_context_tokens=$6,
+            activated_at=case when $2 then coalesce(activated_at,now()) else null end,probe_steps=$7
+            where role='primary' and updated_at::text=$8 returning role`,
+          [outcome.probe.probedAt, cap.chat, cap.structuredOutput, cap.toolCalling, cap.vision, cap.contextTokens,
+            json(outcome.probe.steps), outcome.configurationVersion ?? null]);
+          if (!changed.length) return false;
+        }
+        await recordVerification(tx, {
+          item, status: outcome.status, category: outcome.category ?? null,
+          detail: outcome.detail, target: outcome.target ?? null,
+        });
+        return true;
       });
-
-      // Onboarding runs the same full probe as Admin and records every observed
-      // capability. A basic reply alone must never masquerade as verification.
-      if (item === 'llm' && outcome.probe) {
-        const cap = outcome.probe.capabilities;
-        await db.query(
-          `update llm_providers set
-             probed_at = $1, cap_chat = $2, cap_structured_output = $3,
-             cap_tool_calling = $4, cap_vision = $5, cap_context_tokens = $6,
-             activated_at = case when $2 then coalesce(activated_at, now()) else null end,
-             probe_steps = $7
-           where role = 'primary'`,
-          [outcome.probe.probedAt, cap.chat, cap.structuredOutput, cap.toolCalling,
-            cap.vision, cap.contextTokens, json(outcome.probe.steps)],
-        );
-      }
+      if (!recorded) return res.status(409).json({ error: 'The model changed during the test. Test the current selection again.' });
       return res.json(outcome);
     }),
   );
@@ -877,45 +878,14 @@ async function applyStep(
         if (!offered.ok) throw new SetupError(400, offered.detail);
       }
 
-      // Sealed before it goes anywhere near the database, and only if there is
-      // something to seal. One envelope holds every secret field the provider
-      // takes — an AWS key pair and a session token seal together exactly as a
-      // lone API key does. `seal` unwraps each Secret itself; nothing here ever
-      // calls reveal() on the way to storage.
-      const [vaultOwner]=await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);
-      const sealedKey = supplied.length
-        ? await storeCredentialPayload(db,requireMasterKey(ctx),{ownerUserId:vaultOwner.id,kind:'api_key',service:'llm',slot:'primary',label:'Primary model credentials',payload:Object.fromEntries(supplied),actorUserId:vaultOwner.id})
-        : null;
-
-      // A passing probe belongs to the exact provider configuration that was
-      // tested. Invalidate first: if the following write ever fails, setup
-      // demands a harmless re-test instead of trusting a stale receipt.
-      await db.query(`delete from setup_verifications where item = 'llm'`);
-      await db.query(
-        `insert into llm_providers
-           (role, provider, model, base_url, api_key_enc, external_acknowledged, external_acknowledged_at,
-            provider_config)
-         values ('primary', $1, $2, $3, $4, $5, $6, $7)
-         on conflict (role) do update set
-           provider = excluded.provider, model = excluded.model, base_url = excluded.base_url,
-           api_key_enc = excluded.api_key_enc,
-           external_acknowledged = excluded.external_acknowledged,
-           external_acknowledged_at = excluded.external_acknowledged_at,
-           provider_config = excluded.provider_config`,
-        [
-          provider,
-          model,
-          // Stored for every provider the catalogue lets an operator point
-          // somewhere, and null for the ones whose endpoint is derived.
-          descriptor.baseUrlMode === 'none' ? null : (baseUrl || null),
-          sealedKey,
-          isExternal ? true : acknowledged,
-          isExternal ? new Date().toISOString() : null,
-          // Non-secret settings only. `readCredentials` splits them by the
-          // catalogue's own `secret` flag, so a credential cannot arrive here.
-          json(settings),
-        ],
-      );
+      const modelKey = supplied.length ? requireMasterKey(ctx) : null;
+      const [vaultOwner] = await db.query<{ id: string }>("select id from users where role='super_admin' order by created_at limit 1");
+      if (!vaultOwner) throw new SetupError(409, 'Complete owner setup before configuring a model.');
+      await saveModelConfiguration(db, modelKey, {
+        role: 'primary', provider: descriptor.kind, model, baseUrl: descriptor.baseUrlMode === 'none' ? null : (baseUrl || null),
+        acknowledged: isExternal || acknowledged, secrets: Object.fromEntries(supplied), settings,
+        actorUserId: vaultOwner.id, preserveMissingSecrets: false,
+      });
       return;
     }
 

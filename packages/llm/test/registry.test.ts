@@ -3,7 +3,7 @@
 // These run against a real migrated database because every one of them is a
 // claim about stored state, not about a function's return value.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { MasterKey, seal } from '@josi-ce/core';
 import { chat, buildProvider, capabilitiesOf, isLocalOnly, loadStoredProvider, LocalOnlyViolation } from '../src/registry.js';
 import { checkCaps, priceCall, recordUsage, usageSummary } from '../src/metering.js';
@@ -47,7 +47,7 @@ async function insertProvider(over: Record<string, unknown> = {}): Promise<void>
   );
 }
 
-beforeEach(async () => { db = await testDb(); });
+beforeEach(async () => { db = await testDb(); await testVault(db, key); });
 
 describe('Local-only mode', () => {
   it('is off by default', async () => {

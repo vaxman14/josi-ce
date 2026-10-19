@@ -11,8 +11,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { computeProfile } from '@josi-ce/core';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
+import { computeProfile, MasterKey } from '@josi-ce/core';
 import { loadStoredProvider, type SpawnRunner } from '@josi-ce/llm';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
@@ -99,6 +99,7 @@ beforeAll(async () => {
   await createUser(db, { email: 'admin@ce.test', username: 'admin', role: 'super_admin', password: PW.admin });
   await createUser(db, { email: 'alice@ce.test', username: 'alice', role: 'member', password: PW.alice });
 
+  await testVault(db, new MasterKey(Buffer.alloc(32, 19)));
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'https://josi.example', masterKeyCheck: { path: keyPath },
     codexRunner,

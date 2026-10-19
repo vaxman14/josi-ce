@@ -7,7 +7,7 @@
 // proving the guard fires inside a real turn, not just against a synthetic
 // receipt.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
 import { MasterKey, createThread, seal } from '@josi-ce/core';
 import {
@@ -23,6 +23,7 @@ const KEY = new MasterKey(Buffer.alloc(32, 7));
 beforeEach(async () => {
   db = await testDb();
   userId = (await createUser(db, { email: 'g2@ce.test', username: 'data-guard-owner', role: 'super_admin' })).id;
+  await testVault(db, KEY);
   threadId = (await createThread(db, { ownerUserId: userId })).id;
   await db.query(
     `insert into llm_providers

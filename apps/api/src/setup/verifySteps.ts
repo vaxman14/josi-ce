@@ -27,6 +27,7 @@ export interface VerifyOutcome {
   target?: string;
   /** Full observed capabilities, stored and shown by onboarding. */
   probe?: ProbeResult;
+  configurationVersion?: string;
 }
 
 const failed = (category: string, detail: string): VerifyOutcome => ({ status: 'failed', category, detail });
@@ -56,13 +57,13 @@ export async function verifyLlm(
     const detail = probe.fatalProviderCode ? `${base} (the provider said: ${probe.fatalProviderCode})`
       : probe.fatal ?? 'The model did not return a usable basic reply.';
     return {
-      status: 'failed', category, detail, target: stored.model, probe,
+      status: 'failed', category, detail, target: stored.model, probe, configurationVersion: provider.configurationVersion,
     };
   }
   const supported = probe.steps.filter((step) => step.passed).length;
   return {
     status: 'passed', detail: `${who} passed ${supported} of ${probe.steps.length} capability checks.`,
-    target: stored.model, probe,
+    target: stored.model, probe, configurationVersion: provider.configurationVersion,
   };
 }
 

@@ -14,7 +14,7 @@
 // control: the next route forgets it.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, asSecret, json, loadMasterKey, openCredentialPayload, storeCredentialPayload,
+  appendEvent, asSecret, json, loadMasterKey, VaultError, VaultLockedError,
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
@@ -22,7 +22,7 @@ import {
   isExternalProvider, isLocalOnly, isSubscriptionProvider, loadStoredProvider, meteredProvider,
   probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CLAUDE_COMMAND,
   DEFAULT_CODEX_COMMAND, DeviceLogin, codexLoginStatus, codexLogout,
-  PROVIDERS, credentialFields, describeProvider,
+  PROVIDERS, credentialFields, describeProvider, saveModelConfiguration, removeModelConfiguration, ModelConfigurationError,
 } from '@josi-ce/llm';
 import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
@@ -335,7 +335,9 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       try {
         return await fn(req, res);
       } catch (err: unknown) {
-        if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
+        if (err instanceof RouteError || err instanceof ModelConfigurationError) return res.status(err.status).json({ error: err.message });
+        if (err instanceof VaultLockedError) return res.status(423).json({ error: err.message });
+        if (err instanceof VaultError) return res.status(409).json({ error: err.message });
         if (err instanceof UnsafeEndpointError) return res.status(400).json({ error: err.message });
         throw err;
       }
@@ -545,117 +547,15 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         await validateEndpoint(baseUrl, { resolve: ctx.resolve });
       }
 
-      const existing = await loadStoredProvider(db, role);
-      // Carrying a stored secret forward is only ever right when the slot is
-      // still pointed at the SAME provider. An AWS secret access key is not a
-      // Cohere key, so switching provider means every credential is re-entered
-      // rather than a stale one being kept because a field was left blank.
-      const sameProvider = existing?.provider === provider;
-
-      const { secrets, settings, secretFields, configFields } = readCredentials(provider, body);
-      const supplied = Object.entries(secrets).filter(([, value]) => !value.isEmpty);
-
-      let sealedKey: string | null = null;
-      // Which secret fields the row will actually hold once this save lands.
-      // Tracked explicitly rather than inferred, because "required" has to be
-      // checked against the merged result: a field left blank on an update is
-      // present if it is already stored, and absent if it never was.
-      let held: Set<string>;
-
-      if (subscription) {
-        // Always null. Switching a slot from OpenAI to the subscription path
-        // must not silently carry the old key across; the database constraint
-        // would refuse the row, and an operator would get a constraint error
-        // instead of the right behaviour.
-        sealedKey = null;
-        held = new Set();
-      } else if (!supplied.length) {
-        // Nothing was typed. Keep the stored envelope when the slot still
-        // points at the same provider, and treat its contents as satisfying the
-        // requirements — they did when it was saved, and opening it here would
-        // decrypt a credential for no reason other than to count its keys.
-        const keep = sameProvider ? existing?.api_key_enc ?? null : null;
-        sealedKey = keep;
-        held = keep
-          ? new Set(secretFields.map((f) => f.key))
-          : new Set();
-      } else {
-        const masterKey = requireMasterKey(ctx);
-        // An update that fills in some fields and leaves others blank keeps the
-        // blank ones, so changing an Azure API version does not mean retyping
-        // the key. Only within the same provider, per the rule above.
-        const carried: Record<string, unknown> = sameProvider && existing?.api_key_enc
-          ? await openCredentialPayload<Record<string,unknown>>(db,masterKey,{ownerUserId:req.user!.id,service:'llm',slot:role,stored:existing.api_key_enc})
-          : {};
-        const merged = { ...carried, ...Object.fromEntries(supplied) };
-        sealedKey = await storeCredentialPayload(db,masterKey,{ownerUserId:req.user!.id,kind:'api_key',service:'llm',slot:role,label:`${role} model credentials`,payload:merged,actorUserId:req.user!.id});
-        held = new Set(Object.keys(merged));
-      }
-
-      if (!subscription) {
-        const missing = [
-          ...secretFields.filter((f) => f.required && !held.has(f.key)),
-          ...configFields.filter((f) => f.required && !settings[f.key]),
-        ];
-        if (missing.length) {
-          throw new RouteError(
-            400,
-            `this provider needs ${missing.map((f) => f.label.toLowerCase()).join(' and ')}`,
-          );
-        }
-      }
-
-      // Which binary to run. Bounded and recorded so the admin screen can show
-      // what will actually be executed rather than an assumption.
-      // Defaulted PER PROVIDER. The old default was always the Codex binary,
-      // so switching the slot to the Claude subscription silently recorded
-      // `codex` as the thing to run — the previous provider's CLI bleeding
-      // into the new row.
+      const { secrets, settings } = readCredentials(provider, body);
       const command = subscription
-        ? (str(body.subscriptionCommand, 200)
-          || (provider === 'anthropic_subscription' ? DEFAULT_CLAUDE_COMMAND : DEFAULT_CODEX_COMMAND))
+        ? (str(body.subscriptionCommand, 200) || (provider === 'anthropic_subscription' ? DEFAULT_CLAUDE_COMMAND : DEFAULT_CODEX_COMMAND))
         : null;
-
-      await db.query(
-        `insert into llm_providers
-           (role, provider, model, base_url, api_key_enc, external_acknowledged, external_acknowledged_at,
-            activated_at, probed_at, probe_steps,
-            cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens,
-            subscription_command, provider_config)
-         values ($1, $2, $3, $4, $5, $6, $7, null, null, '[]', null, null, null, null, null, $8, $9)
-         on conflict (role) do update set
-           provider = excluded.provider, model = excluded.model, base_url = excluded.base_url,
-           api_key_enc = excluded.api_key_enc,
-           external_acknowledged = excluded.external_acknowledged,
-           external_acknowledged_at = excluded.external_acknowledged_at,
-           activated_at = null, probed_at = null, probe_steps = '[]',
-           cap_chat = null, cap_structured_output = null, cap_tool_calling = null, cap_vision = null,
-           cap_context_tokens = null,
-           subscription_command = excluded.subscription_command,
-           provider_config = excluded.provider_config`,
-        [
-          role, provider, model,
-          // Stored for every provider the catalogue lets an operator point
-          // somewhere — a regional DashScope host, an Azure resource, a local
-          // Ollama — and null for the ones whose endpoint is derived.
-          descriptor.baseUrlMode === 'none' ? null : (baseUrl || null),
-          sealedKey,
-          external ? true : acknowledged,
-          external ? new Date().toISOString() : null,
-          command,
-          // Non-secret settings only. `readCredentials` splits them by the
-          // catalogue's own `secret` flag, so a credential cannot arrive here.
-          json(settings),
-        ],
-      );
-
-      await appendEvent(db, {
-        actorUserId: req.user!.id,
-        actor: 'super_admin',
-        kind: 'llm.configured',
-        // The provider and model are configuration. The key is not recorded in
-        // any form, not even as a hash.
-        payload: { role, provider, model, external },
+      let key: MasterKey | null = null;
+      try { if (ctx.masterKey !== false) key = loadMasterKey(ctx.masterKey ?? {}); } catch { /* Keyless models remain configurable. */ }
+      await saveModelConfiguration(db, key, {
+        role, provider: descriptor.kind, model, baseUrl: descriptor.baseUrlMode === 'none' ? null : (baseUrl || null),
+        acknowledged: external || acknowledged, subscriptionCommand: command, secrets, settings, actorUserId: req.user!.id,
       });
 
       return res.json({ provider: await providerDto(db, role), needsProbe: true });
@@ -665,10 +565,9 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
   r.delete(
     '/providers/fallback',
     handle(async (req, res) => {
-      await db.query(`delete from llm_providers where role = 'fallback'`);
-      await appendEvent(db, {
-        actorUserId: req.user!.id, actor: 'super_admin', kind: 'llm.fallback_removed',
-      });
+      let key: MasterKey | null = null;
+      try { if (ctx.masterKey !== false) key = loadMasterKey(ctx.masterKey ?? {}); } catch { /* Bound removal needs no decryption key. */ }
+      await removeModelConfiguration(db, 'fallback', req.user!.id, key);
       return res.status(204).end();
     }),
   );
@@ -689,6 +588,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       if (!stored.updated_at) throw new RouteError(409, 'the model configuration could not be verified');
 
       let result;
+      let preparedVersion: string | undefined;
       try {
         const provider = await buildProvider(
           {
@@ -700,14 +600,15 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
           },
           stored,
         );
+        preparedVersion = provider.configurationVersion;
         // Metered. Probing a hosted provider is four real requests on a real
         // invoice; leaving them out of the usage report would understate spend.
         result = await probeProvider(meteredProvider(db, stored, role, provider, { purpose: 'probe' }));
       } catch (err) {
         // A refusal (Local-only, missing acknowledgment, unusable key) is not a
         // failed probe — nothing was asked. Say which it was.
-        const message = err instanceof LlmError ? err.message : 'the probe could not run';
-        return res.status(409).json({ error: message });
+        const message = err instanceof LlmError || err instanceof VaultError ? err.message : 'the probe could not run';
+        return res.status(err instanceof VaultLockedError ? 423 : 409).json({ error: message });
       }
 
       const updated = await db.query<{ role: string }>(
@@ -726,7 +627,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
           role, result.probedAt, json(result.steps),
           result.capabilities.chat, result.capabilities.structuredOutput,
           result.capabilities.toolCalling, result.capabilities.vision, result.capabilities.contextTokens,
-          stored.updated_at,
+          preparedVersion ?? stored.updated_at,
         ],
       );
       if (!updated.length) {

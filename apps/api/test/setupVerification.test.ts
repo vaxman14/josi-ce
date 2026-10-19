@@ -44,10 +44,12 @@ async function call(path: string, opts: { method?: string; body?: unknown } = {}
 // with a specific category, or fail to be reached at all.
 
 let llmBehaviour: 'ok' | 'unauthorized' | 'quota' | 'empty' | 'unreachable' = 'ok';
+let beforeModelReply: (() => Promise<void>) | undefined;
 const llmFetch: typeof fetch = async (url, init) => {
   if (String(url).endsWith('/models')) {
     return new Response(JSON.stringify({ data: [{ id: 'gpt-4o-mini' }] }), { status: 200 });
   }
+  if (beforeModelReply) { const work = beforeModelReply; beforeModelReply = undefined; await work(); }
   if (llmBehaviour === 'unreachable') throw new Error('ECONNREFUSED');
   if (llmBehaviour === 'unauthorized') {
     return new Response(JSON.stringify({ error: { code: 'invalid_api_key' } }), { status: 401 });
@@ -118,6 +120,7 @@ async function wizardTo(stopBefore: string) {
 beforeEach(async () => {
   db = await testDb();
   llmBehaviour = 'ok';
+  beforeModelReply = undefined;
   connectorBehaviour = 'ok';
   mailFails = false;
   sent.length = 0;
@@ -136,6 +139,15 @@ afterEach(async () => {
 });
 
 describe('LB4.1 — the model step makes a real request', () => {
+  it('does not activate a replacement selection from a previous model’s passing probe', async () => {
+    await wizardTo('smtp');
+    beforeModelReply = async () => { await db.query("update llm_providers set model='replacement-model' where role='primary'"); };
+    const res = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
+    expect(res.status).toBe(409);
+    expect((await db.query("select activated_at from llm_providers where role='primary'"))[0].activated_at).toBeNull();
+    expect(await db.query("select item from setup_verifications where item='llm'")).toHaveLength(0);
+  });
+
   it('passes only when a model actually answers', async () => {
     await wizardTo('smtp');
     const res = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
@@ -242,6 +254,7 @@ describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
 
     // LB4.5's rerun control: the same endpoint, no credentials re-entered.
     llmBehaviour = 'ok';
+  beforeModelReply = undefined;
     const retried = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
     expect(retried.body.status).toBe('passed');
 
@@ -370,6 +383,7 @@ describe('LB6.4 — a step holding configuration can be corrected', () => {
 
     // A corrected key, submitted through the same step.
     llmBehaviour = 'ok';
+  beforeModelReply = undefined;
     await call('/api/setup/steps/llm', {
       method: 'POST',
       body: { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'a-working-key', externalAcknowledged: true },

@@ -14,7 +14,7 @@
 // out-of-process executions land in `actions` before the guard reads it —
 // asserted here by feeding executedToolCalls through the same seam.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
 import { MasterKey, createThread, seal } from '@josi-ce/core';
 import {
@@ -87,6 +87,7 @@ const KEY = new MasterKey(Buffer.alloc(32, 7));
 beforeEach(async () => {
   db = await testDb();
   userId = (await createUser(db, { email: 'g@ce.test', username: 'guard-owner', role: 'super_admin' })).id;
+  await testVault(db, KEY);
   threadId = (await createThread(db, { ownerUserId: userId })).id;
   await db.query(
     `insert into llm_providers

@@ -9,7 +9,7 @@
 // model's mood. Echoing the system lets the test say exactly what reached it,
 // which is the property under test.
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { testDb, type TestDb } from '../../core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { MasterKey, seal } from '@josi-ce/core';
 import { runAssistantTurn } from '../src/assistantAgent.js';
 import { addMemory, listMemories, saveProfile } from '@josi-ce/persona';
@@ -44,6 +44,7 @@ beforeAll(async () => {
     );
     ids[name] = u.id;
   }
+  await testVault(db, key);
   // Phase 4 refuses to activate a provider that was never probed, so the probe
   // columns are part of the fixture rather than an afterthought.
   //
