@@ -77,9 +77,11 @@ const connectorFetch: typeof fetch = async () =>
   );
 
 let mailFails = false;
+let beforeMailReply: (() => Promise<void>) | undefined;
 const sent: Array<{ to: string[] }> = [];
 const mailTransport = {
   async send(m: { to: string[] }) {
+    if (beforeMailReply) { const work = beforeMailReply; beforeMailReply = undefined; await work(); }
     if (mailFails) throw Object.assign(new Error('refused'), { category: 'auth' });
     sent.push({ to: m.to });
     return { messageId: 'x' };
@@ -123,6 +125,7 @@ beforeEach(async () => {
   beforeModelReply = undefined;
   connectorBehaviour = 'ok';
   mailFails = false;
+  beforeMailReply = undefined;
   sent.length = 0;
   jar = 'josi_csrf=test-token';
   await db.query(`update setup_state set csrf_seed = null where id = true`).catch(() => undefined);
@@ -254,7 +257,7 @@ describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
 
     // LB4.5's rerun control: the same endpoint, no credentials re-entered.
     llmBehaviour = 'ok';
-  beforeModelReply = undefined;
+    beforeModelReply = undefined;
     const retried = await call('/api/setup/verify/llm', { method: 'POST', body: {} });
     expect(retried.body.status).toBe('passed');
 
@@ -383,7 +386,7 @@ describe('LB6.4 — a step holding configuration can be corrected', () => {
 
     // A corrected key, submitted through the same step.
     llmBehaviour = 'ok';
-  beforeModelReply = undefined;
+    beforeModelReply = undefined;
     await call('/api/setup/steps/llm', {
       method: 'POST',
       body: { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'a-working-key', externalAcknowledged: true },
@@ -606,5 +609,21 @@ describe('LB3 over the wire — the model list comes from the account', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/does not offer/i);
     expect(await db.query(`select * from llm_providers`)).toHaveLength(0);
+  });
+});
+
+
+describe('SMTP verification belongs to its saved settings', () => {
+  it('does not mark replacement SMTP settings verified by a message from the previous server', async () => {
+    await wizardTo('smtp');
+    expect((await call('/api/setup/verify/llm', { method: 'POST', body: {} })).body.status).toBe('passed');
+    beforeMailReply = async () => { await db.query("update smtp_profiles set host='replacement.fixture.test' where kind='system'"); };
+    const result = await call('/api/setup/steps/smtp', { method: 'POST', body: {
+      system: { host: 'smtp.fixture.test', port: 587, security: 'starttls', username: 'fixture', password: 'synthetic-password', fromName: 'Security', fromAddress: 'security@fixture.test' },
+      communications: { copyFromSystem: true, fromName: 'Work', fromAddress: 'work@fixture.test' }, testTo: 'admin@fixture.test',
+    } });
+    expect(result.status).toBe(409);
+    expect((await db.query("select verified_at from smtp_profiles where kind='system'"))[0].verified_at).toBeNull();
+    expect(await db.query("select item from setup_verifications where item='smtp'")).toHaveLength(0);
   });
 });

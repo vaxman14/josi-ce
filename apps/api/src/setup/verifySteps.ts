@@ -156,7 +156,8 @@ export async function verifySmtp(
   let profile;
   try {
     profile = await loadProfile(opts.db, opts.masterKey, 'system');
-  } catch {
+  } catch (err) {
+    if (err instanceof VaultLockedError) return failed('vault_locked', 'Unlock the Vault before testing email credentials.');
     return failed('malformed_request', 'System mail has not been configured, so there is nothing to test.');
   }
 
@@ -181,13 +182,13 @@ export async function verifySmtp(
       detail:
         `A test message was sent to ${to}. Check that it arrived — a server accepting a message `
         + 'is not the same as delivering it.',
-      target: to,
+      target: to, configurationVersion: profile.configurationVersion,
     };
   } catch (err) {
     // `smtpTransport` already classified it and dropped the server's own words.
     // `classifySmtpError` is the fallback for anything thrown before that.
     const category = (err as { category?: string }).category ?? classifySmtpError(err);
-    return { ...failed(category, describeSmtp(category, profile.host)), target: to };
+    return { ...failed(category, describeSmtp(category, profile.host)), target: to, configurationVersion: profile.configurationVersion };
   }
 }
 

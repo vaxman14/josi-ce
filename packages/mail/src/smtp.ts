@@ -9,10 +9,11 @@
 // the message that caused it, so the server's own text never reaches a caller,
 // a response body, or the audit log — only a category an operator can act on.
 import { createTransport } from 'nodemailer';
-import { openCredentialPayload, type Db, type MasterKey } from '@josi-ce/core';
+export { NoProfileError, loadProfile } from './profiles.js';
 import { MailError, type SendErrorCategory, type SmtpTransport } from './send.js';
 
 export interface SmtpProfile {
+  configurationVersion?: string;
   kind: 'system' | 'communications';
   host: string;
   port: number;
@@ -21,51 +22,6 @@ export interface SmtpProfile {
   password: string | null;
   fromName: string;
   fromAddress: string;
-}
-
-export class NoProfileError extends Error {}
-
-/** Loads a profile, following copy-from-system for the credential.
- *
- * M34: the communications profile may borrow the system server while keeping
- * its own sender identity. The password then exists in exactly one row, which
- * is why this resolves rather than duplicating it. */
-export async function loadProfile(
-  db: Db,
-  key: MasterKey,
-  kind: 'system' | 'communications',
-): Promise<SmtpProfile> {
-  const [row] = await db.query<{
-    kind: string; copy_from_system: boolean; host: string | null; port: number | null;
-    security: string | null; username: string | null; password_enc: string | null;
-    from_name: string | null; from_address: string | null;
-  }>(`select * from smtp_profiles where kind = $1`, [kind]);
-  if (!row) throw new NoProfileError(`no ${kind} mail profile is configured`);
-
-  let server = row;
-  if (row.copy_from_system) {
-    const [system] = await db.query<typeof row>(`select * from smtp_profiles where kind = 'system'`);
-    if (!system) throw new NoProfileError('this profile borrows the system server, and none is configured');
-    server = { ...system, from_name: row.from_name, from_address: row.from_address } as typeof row;
-  }
-
-  if (!server.host || !server.port || !row.from_address) {
-    throw new NoProfileError(`the ${kind} mail profile is incomplete`);
-  }
-
-  const [owner]=server.password_enc?await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`):[];
-  return {
-    kind: kind,
-    host: server.host,
-    port: server.port,
-    security: (server.security ?? 'starttls') as SmtpProfile['security'],
-    username: server.username,
-    password: server.password_enc
-      ? (await openCredentialPayload<{password:string}>(db,key,{ownerUserId:owner?.id??'',service:'smtp',slot:server.kind,stored:server.password_enc})).password
-      : null,
-    fromName: row.from_name ?? 'Josi',
-    fromAddress: row.from_address,
-  };
 }
 
 /** Turns a server's refusal into something an operator can act on.

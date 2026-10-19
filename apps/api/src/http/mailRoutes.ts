@@ -1,3 +1,4 @@
+import { VaultError, VaultLockedError } from '@josi-ce/core';
 import { emailTemplateRoutes } from './emailTemplateRoutes.js';
 // Operational email over HTTP.
 //
@@ -57,6 +58,8 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
       return await fn(req, res);
     } catch (err: unknown) {
       if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
+      if (err instanceof VaultLockedError) return res.status(423).json({ error: err.message });
+      if (err instanceof VaultError) return res.status(409).json({ error: err.message });
       if (err instanceof NoProfileError) return res.status(409).json({ error: err.message });
       if (err instanceof SendRefused) {
         // 409 with the reason and the sentence: the caller has to be able to

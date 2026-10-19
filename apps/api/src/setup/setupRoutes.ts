@@ -1,4 +1,3 @@
-import { saveModelConfiguration, ModelConfigurationError } from '@josi-ce/llm';
 // The first-run setup wizard.
 //
 // These routes are UNAUTHENTICATED, because they run before any account exists.
@@ -19,10 +18,11 @@ import { Router } from 'express';
 import {
   appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, initializeVault, json, loadMasterKey,
   updateWorkspace,
-  recordVerification, seal, openSealed, storeCredentialPayload, summarizeReview, VaultError, VaultLockedError,
+  recordVerification, openSealed, summarizeReview, VaultError, VaultLockedError,
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
 } from '@josi-ce/core';
-import { describeProvider, discoverModels } from '@josi-ce/llm';
+import { saveSmtpProfiles, SmtpConfigurationError } from '@josi-ce/mail';
+import { describeProvider, discoverModels, saveModelConfiguration, ModelConfigurationError } from '@josi-ce/llm';
 import { reconcileWorkspaceMount } from '@josi-ce/storage';
 import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
 import { DeviceLogin, codexLoginStatus, codexLogout, claudeAuthStatus } from '@josi-ce/llm';
@@ -108,6 +108,30 @@ class SetupError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
   }
+}
+
+/** Record an observation only against the exact configuration that was tested. */
+async function persistVerification(db: Db, item: string, outcome: VerifyOutcome): Promise<boolean> {
+  if (!db.transaction) throw new SetupError(503, 'Verification storage is unavailable.');
+  return db.transaction(async tx => {
+    if (item === 'llm' && outcome.probe) {
+      const cap = outcome.probe.capabilities;
+      const changed = await tx.query(`update llm_providers set
+        probed_at=$1,cap_chat=$2,cap_structured_output=$3,cap_tool_calling=$4,cap_vision=$5,cap_context_tokens=$6,
+        activated_at=case when $2 then coalesce(activated_at,now()) else null end,probe_steps=$7
+        where role='primary' and updated_at::text=$8 returning role`,
+      [outcome.probe.probedAt, cap.chat, cap.structuredOutput, cap.toolCalling, cap.vision, cap.contextTokens,
+        json(outcome.probe.steps), outcome.configurationVersion ?? null]);
+      if (!changed.length) return false;
+    }
+    if (item === 'smtp' && outcome.configurationVersion) {
+      const changed = await tx.query(`update smtp_profiles set verified_at=case when $1 then now() else null end
+        where kind='system' and updated_at::text=$2 returning kind`, [outcome.status === 'passed', outcome.configurationVersion]);
+      if (!changed.length) return false;
+    }
+    await recordVerification(tx, { item, status: outcome.status, category: outcome.category ?? null, detail: outcome.detail, target: outcome.target ?? null });
+    return true;
+  });
 }
 
 const str = (v: unknown, max = 500): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
@@ -262,7 +286,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
           });
         } else result = await applyStep(ctx, step as SetupStep, (req.body ?? {}) as Record<string, unknown>);
       } catch (err) {
-        if (err instanceof SetupError || err instanceof ModelConfigurationError) {
+        if (err instanceof SetupError || err instanceof ModelConfigurationError || err instanceof SmtpConfigurationError) {
           return res.status(err.status).json({ error: err.message });
         }
         if (err instanceof VaultLockedError) return res.status(423).json({ error: err.message });
@@ -471,27 +495,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         throw err;
       }
 
-      if (!db.transaction) throw new SetupError(503, 'Verification storage is unavailable.');
-      const recorded = await db.transaction(async tx => {
-        // A probe belongs to exactly the configuration it prepared. A concurrent
-        // save cannot gain activation from a previous model's passing result.
-        if (item === 'llm' && outcome.probe) {
-          const cap = outcome.probe.capabilities;
-          const changed = await tx.query(`update llm_providers set
-            probed_at=$1,cap_chat=$2,cap_structured_output=$3,cap_tool_calling=$4,cap_vision=$5,cap_context_tokens=$6,
-            activated_at=case when $2 then coalesce(activated_at,now()) else null end,probe_steps=$7
-            where role='primary' and updated_at::text=$8 returning role`,
-          [outcome.probe.probedAt, cap.chat, cap.structuredOutput, cap.toolCalling, cap.vision, cap.contextTokens,
-            json(outcome.probe.steps), outcome.configurationVersion ?? null]);
-          if (!changed.length) return false;
-        }
-        await recordVerification(tx, {
-          item, status: outcome.status, category: outcome.category ?? null,
-          detail: outcome.detail, target: outcome.target ?? null,
-        });
-        return true;
-      });
-      if (!recorded) return res.status(409).json({ error: 'The model changed during the test. Test the current selection again.' });
+      if (!(await persistVerification(db, item, outcome))) return res.status(409).json({ error: 'The settings changed during the test. Test the current selection again.' });
       return res.json(outcome);
     }),
   );
@@ -948,77 +952,22 @@ async function applyStep(
         throw new SetupError(400, 'Google App Passwords must contain exactly 16 letters. Paste all four groups; spaces are removed automatically.');
       }
 
-      const key = sysPassword.isEmpty ? null : requireMasterKey(ctx);
-      const [vaultOwner]=await db.query<{id:string}>(`select id from users where role='super_admin' order by created_at limit 1`);
-      const sysPasswordEnc = key ? await storeCredentialPayload(db,key,{ownerUserId:vaultOwner.id,kind:'password',service:'smtp',slot:'system',label:'System SMTP password',payload:{password:sysPassword},actorUserId:vaultOwner.id}) : null;
-
-      await db.query(
-        `insert into smtp_profiles (kind, copy_from_system, host, port, security, username, password_enc, from_name, from_address)
-         values ('system', false, $1, $2, $3, $4, $5, $6, $7)
-         on conflict (kind) do update set
-           host = excluded.host, port = excluded.port, security = excluded.security,
-           username = excluded.username, password_enc = coalesce(excluded.password_enc, smtp_profiles.password_enc),
-           from_name = excluded.from_name, from_address = excluded.from_address`,
-        [sysHost, sysPort, sysSecurity, sysUser || null, sysPasswordEnc, sysFromName || null, sysFromAddress],
-      );
-
-      // The credentials are saved first and stay saved even when the send
-      // fails, so a retry does not mean typing an SMTP password again. Mail is
-      // optional, so a failure does not block completion — it is recorded, and
-      // the review screen shows it as "Configured but failed" rather than
-      // quietly as "Skipped".
-      const copy = bool(comms.copyFromSystem);
-      const commsFromName = str(comms.fromName, 120);
-      const commsFromAddress = str(comms.fromAddress, 320);
-      if (!commsFromAddress.includes('@')) {
-        throw new SetupError(400, 'a valid From address is required for the address Josi writes from');
-      }
-
-      if (copy) {
-        // Borrows the system server. Stores its OWN sender identity and NO
-        // credentials, so the password exists once in the database rather than
-        // twice — which is also why rotating it later is one change, not two.
-        await db.query(
-          `insert into smtp_profiles (kind, copy_from_system, host, port, security, username, password_enc, from_name, from_address)
-           values ('communications', true, null, null, null, null, null, $1, $2)
-           on conflict (kind) do update set
-             copy_from_system = true, host = null, port = null, security = null,
-             username = null, password_enc = null,
-             from_name = excluded.from_name, from_address = excluded.from_address`,
-          [commsFromName || null, commsFromAddress],
-        );
-      } else {
-        const cHost = str(comms.host, 253);
-        const cPort = Number(comms.port);
-        const cSecurity = str(comms.security, 16) || 'starttls';
-        const cUser = str(comms.username, 320);
-        const cPassword = asSecret(comms.password);
-        if (!cHost) throw new SetupError(400, 'a mail server is required, or choose to reuse the system one');
-        if (!Number.isInteger(cPort) || cPort < 1 || cPort > 65535) throw new SetupError(400, 'that is not a valid port');
-        const cKey = cPassword.isEmpty ? null : requireMasterKey(ctx);
-        await db.query(
-          `insert into smtp_profiles (kind, copy_from_system, host, port, security, username, password_enc, from_name, from_address)
-           values ('communications', false, $1, $2, $3, $4, $5, $6, $7)
-           on conflict (kind) do update set
-             copy_from_system = false, host = excluded.host, port = excluded.port,
-             security = excluded.security, username = excluded.username,
-             password_enc = excluded.password_enc, from_name = excluded.from_name,
-             from_address = excluded.from_address`,
-          [cHost, cPort, cSecurity, cUser || null, cKey ? await storeCredentialPayload(db,cKey,{ownerUserId:vaultOwner.id,kind:'password',service:'smtp',slot:'communications',label:'Communications SMTP password',payload:{password:cPassword},actorUserId:vaultOwner.id}) : null,
-           commsFromName || null, commsFromAddress],
-        );
-      }
+      const key = requireMasterKey(ctx);
+      const [vaultOwner] = await db.query<{ id: string }>("select id from users where role='super_admin' order by created_at limit 1");
+      if (!vaultOwner) throw new SetupError(409, 'Complete owner setup before configuring email.');
+      await saveSmtpProfiles(db, key, {
+        actorUserId: vaultOwner.id,
+        system: { host: sysHost, port: sysPort, security: sysSecurity, username: sysUser || null, password: sysPassword,
+          fromName: sysFromName || null, fromAddress: sysFromAddress, clearPassword: bool(system.clearPassword) },
+        communications: { copyFromSystem: bool(comms.copyFromSystem), host: str(comms.host, 253), port: Number(comms.port),
+          security: str(comms.security, 16) || 'starttls', username: str(comms.username, 320) || null, password: asSecret(comms.password),
+          fromName: str(comms.fromName, 120) || null, fromAddress: str(comms.fromAddress, 320), clearPassword: bool(comms.clearPassword) },
+      });
       // The message goes out now, with the credentials that were just stored.
       const outcome = await verifySmtp({
         db, masterKey: requireMasterKey(ctx), to: testTo, transport: ctx.mailTransport,
       });
-      await recordVerification(db, {
-        item: 'smtp',
-        status: outcome.status,
-        category: outcome.category ?? null,
-        detail: outcome.detail,
-        target: outcome.target ?? null,
-      });
+      if (!(await persistVerification(db, 'smtp', outcome))) throw new SetupError(409, 'The mail settings changed during the test. Test the current settings again.');
       return { verification: outcome };
     }
 

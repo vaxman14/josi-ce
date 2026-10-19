@@ -14,8 +14,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { MasterKey, seal } from '@josi-ce/core';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
+import { MasterKey, seal, setVaultLock } from '@josi-ce/core';
 import { ingestInbound, replyAddressFor, type SmtpTransport } from '@josi-ce/mail';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
@@ -100,6 +100,7 @@ beforeAll(async () => {
   ids.alice = (await createUser(db, { email: 'alice@ce.test', username: 'alice', role: 'member', password: PW.alice, displayName: 'Alice Smith' })).id;
   ids.bob = (await createUser(db, { email: 'bob@ce.test', username: 'bob', role: 'member', password: PW.bob })).id;
 
+  await testVault(db, key);
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000',
     masterKeyCheck: { path: keyPath }, mailTransport,
@@ -561,5 +562,18 @@ describe('private Email Templates API', () => {
     const preview=await call('/api/mail/templates/preview',{method:'POST',jar:cookies.alice,body:{template:{...template,body:'{{name}}'},recipient:'alex@example.test',merge_values:{name:'<script>bad</script>'}}});
     expect(preview.status).toBe(200);expect(preview.body.html).not.toContain('<script>');expect(preview.body.text).toContain('<script>bad</script>');
     expect((await call('/api/mail/templates/preview',{method:'POST',jar:cookies.alice,body:{template,recipient:'alex@example.test'}})).status).toBe(400);
+  });
+});
+
+
+describe('locked email credentials', () => {
+  it('reports a Vault lock without sending and resumes after unlock', async () => {
+    const t = await newThread();
+    await setVaultLock(db, { master: true, locked: true, actorUserId: ids.admin });
+    try {
+      const blocked = await call(`/api/mail/threads/${t.id}/send`, { method: 'POST', jar: cookies.alice, body: sendBody() });
+      expect(blocked.status).toBe(423); expect(sent).toHaveLength(0);
+    } finally { await setVaultLock(db, { master: true, locked: false, actorUserId: ids.admin }); }
+    expect((await call(`/api/mail/threads/${t.id}/send`, { method: 'POST', jar: cookies.alice, body: sendBody() })).status).toBe(200);
   });
 });
