@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MasterKey } from '@josi-ce/core';
+import { MasterKey, setVaultLock } from '@josi-ce/core';
+import { createHash } from 'node:crypto';
 import { saveClient } from '@josi-ce/connectors';
 import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
@@ -197,5 +198,38 @@ describe('native Google authentication', () => {
       body: JSON.stringify({ code: 'made-up' }),
     });
     expect(res.status).toBe(403);
+  });
+
+  it('returns a native error without consuming a callback when the Vault locks, then accepts a retry', async () => {
+    const started = await request('/api/auth/google/native/start?redirect_uri=josi%3A%2F%2Fauth%2Fcallback');
+    const state = new URL(started.headers.get('location')!).searchParams.get('state')!;
+    const callsBefore = providerCalls;
+    const [admin] = await db.query<{ id: string }>("select id from users where role='super_admin'");
+    await setVaultLock(db, { master: true, locked: true, actorUserId: admin.id });
+    try {
+      const blocked = await request(`/api/auth/google/callback?state=${encodeURIComponent(state)}&code=provider-code`);
+      const returned = new URL(blocked.headers.get('location')!);
+      expect(`${returned.protocol}//${returned.host}${returned.pathname}`).toBe('josi://auth/callback');
+      expect(returned.searchParams.get('error')).toBe('google_unavailable');
+      expect(providerCalls).toBe(callsBefore);
+      expect((await db.query('select used_at from auth_oauth_states where state_hash=$1', [createHash('sha256').update(state).digest('hex')]))[0].used_at).toBeNull();
+    } finally { await setVaultLock(db, { master: true, locked: false, actorUserId: admin.id }); }
+    const retried = await request(`/api/auth/google/callback?state=${encodeURIComponent(state)}&code=provider-code`);
+    expect(new URL(retried.headers.get('location')!).searchParams.get('code')).toBeTruthy();
+  });
+
+  it('cleans up a cancelled native login even while the Vault is locked', async () => {
+    const started = await request('/api/auth/google/native/start?redirect_uri=josi%3A%2F%2Fauth%2Fcallback');
+    const state = new URL(started.headers.get('location')!).searchParams.get('state')!;
+    const stateHash = createHash('sha256').update(state).digest('hex'), callsBefore = providerCalls;
+    const [admin] = await db.query<{ id: string }>("select id from users where role='super_admin'");
+    await setVaultLock(db, { master: true, locked: true, actorUserId: admin.id });
+    try {
+      const cancelled = await request(`/api/auth/google/callback?state=${encodeURIComponent(state)}&error=access_denied`);
+      expect(new URL(cancelled.headers.get('location')!).searchParams.get('error')).toBe('google_declined');
+      expect(providerCalls).toBe(callsBefore);
+      expect(await db.query("select id from vault_items where service='auth.google.pkce' and slot=$1", [stateHash])).toHaveLength(0);
+      expect((await db.query('select verifier from auth_oauth_states where state_hash=$1', [stateHash]))[0].verifier).toBe('');
+    } finally { await setVaultLock(db, { master: true, locked: false, actorUserId: admin.id }); }
   });
 });

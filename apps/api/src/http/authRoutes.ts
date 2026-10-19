@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import {
   SESSION_TTL_SECONDS, consumeAuthToken, createSession, issueAuthToken, login, peekAuthToken,
-  revokeSession, setPassword, verifyPassword,
+  revokeSession, setPassword, verifyPassword, startGoogleLogin, consumeGoogleLogin, GOOGLE_NATIVE_RETURN_URI,
 } from '@josi-ce/auth';
 import { appendEvent, loadMasterKey, openSealed, seal, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
@@ -37,7 +37,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return ctx.appUrl.replace(/\/$/, '');
   }
 
-  const NATIVE_GOOGLE_RETURN_URI = 'josi://auth/callback';
+  const NATIVE_GOOGLE_RETURN_URI = GOOGLE_NATIVE_RETURN_URI;
 
   function nativeCallback(returnUri: string, params: Record<string, string>): string {
     const url = new URL(returnUri);
@@ -64,17 +64,12 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         : res.redirect('/login?error=google_unavailable');
     }
     const redirectUri = `${await publicAppUrl()}/api/auth/google/callback`;
-    const state = randomBytes(32).toString('base64url');
-    const verifier = randomBytes(48).toString('base64url');
-    const challenge = createHash('sha256').update(verifier).digest('base64url');
-    await db.query(
-      `insert into auth_oauth_states (state_hash, verifier, return_path, native_return_uri, expires_at)
-       values ($1, $2, '/app', $3, now() + interval '10 minutes')`,
-      [createHash('sha256').update(state).digest('hex'), seal(key, { verifier }), returnUri],
-    );
+    let started;
+    try { started = await startGoogleLogin(db, key, returnUri); }
+    catch { return returnUri ? res.redirect(nativeCallback(returnUri, { error: 'google_unavailable' })) : res.redirect('/login?error=google_unavailable'); }
     return res.redirect(buildAuthUrl(
       { ...saved, redirectUri },
-      { state, scopes: 'openid email profile', codeChallenge: challenge },
+      { state: started.state, scopes: 'openid email profile', codeChallenge: started.challenge },
     ));
   }
 
@@ -300,21 +295,29 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     const providerError = typeof req.query.error === 'string' ? req.query.error : '';
     if (!state || ctx.masterKey === false) return res.redirect('/login?error=google_signin_failed');
-    const key = loadMasterKey(ctx.masterKey ?? {});
-    const rows = await db.query<{ verifier: string; native_return_uri: string | null }>(
-      `update auth_oauth_states set used_at = now()
-       where state_hash = $1 and used_at is null and expires_at > now()
-       returning verifier, native_return_uri`,
-      [createHash('sha256').update(state).digest('hex')],
-    );
-    if (!rows.length) return res.redirect('/login?error=google_signin_expired');
+    let key; let pending;
+    try {
+      key = loadMasterKey(ctx.masterKey ?? {});
+      pending = await consumeGoogleLogin(db, key, state, !providerError && !!code);
+    } catch {
+      // Preserve the native error return without opening a credential or
+      // trusting an arbitrary stored URI. The valid state remains unconsumed.
+      const [hint] = await db.query<{ native_return_uri: string | null }>(
+        'select native_return_uri from auth_oauth_states where state_hash=$1 and used_at is null and expires_at>now()',
+        [createHash('sha256').update(state).digest('hex')],
+      );
+      return hint?.native_return_uri === NATIVE_GOOGLE_RETURN_URI
+        ? res.redirect(nativeCallback(NATIVE_GOOGLE_RETURN_URI, { error: 'google_unavailable', state }))
+        : res.redirect('/login?error=google_unavailable');
+    }
+    if (!pending) return res.redirect('/login?error=google_signin_expired');
     if (providerError || !code) {
       const error = providerError === 'access_denied' ? 'google_declined' : 'google_signin_failed';
-      return rows[0].native_return_uri
-        ? res.redirect(nativeCallback(rows[0].native_return_uri, { error, state }))
+      return pending.nativeReturnUri
+        ? res.redirect(nativeCallback(pending.nativeReturnUri, { error, state }))
         : res.redirect(`/login?error=${error}`);
     }
-    const verifier = openSealed<{ verifier: string }>(key, rows[0].verifier).verifier;
+    const verifier = pending.verifier!;
     const saved = await loadClient(db, key, 'google');
     const redirectUri = `${await publicAppUrl()}/api/auth/google/callback`;
     const tokens = await exchangeCode(
@@ -333,11 +336,11 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       [identity.accountId, identity.email],
     );
     if (!user) {
-      return rows[0].native_return_uri
-        ? res.redirect(nativeCallback(rows[0].native_return_uri, { error: 'google_not_linked', state }))
+      return pending.nativeReturnUri
+        ? res.redirect(nativeCallback(pending.nativeReturnUri, { error: 'google_not_linked', state }))
         : res.redirect('/login?error=google_not_linked');
     }
-    if (rows[0].native_return_uri) {
+    if (pending.nativeReturnUri) {
       const nativeCode = randomBytes(32).toString('base64url');
       await db.query(
         `insert into auth_native_codes (code_hash, user_id, expires_at)
@@ -345,7 +348,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         [createHash('sha256').update(nativeCode).digest('hex'), user.id],
       );
       await appendEvent(db, { actorUserId: user.id, actor: 'user', kind: 'auth.google_native_code_issued', subjectType: 'user', subjectId: user.id });
-      return res.redirect(nativeCallback(rows[0].native_return_uri, { code: nativeCode, state }));
+      return res.redirect(nativeCallback(pending.nativeReturnUri, { code: nativeCode, state }));
     }
     const ttlSeconds = SESSION_TTL_SECONDS;
     const { token } = await createSession(db, {

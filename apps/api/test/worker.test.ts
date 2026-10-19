@@ -8,6 +8,7 @@ import { createUser } from '../../../packages/auth/src/users.js';
 import { MasterKey, addMessage, attachCollectingAction, authorizeActionByUserPolicy, createTask, createThread, enqueue, markActionsPresented, placeHold, prepareAction, requestApproval, resolveConversationalAction, setSlots, setUserApprovalLevel, transition } from '@josi-ce/core';
 import { createStateStore, saveClient, setCapability, setSyncMode, upsertConnection } from '@josi-ce/connectors';
 import { processQueue } from '../../worker/src/jobs.js';
+import { startGoogleLogin } from '@josi-ce/auth';
 
 let db: TestDb;
 let owner: string;
@@ -22,11 +23,16 @@ describe('the worker drains the queue', () => {
     const key = new MasterKey(Buffer.alloc(32, 54));
     await testVault(db, key);
     const { state } = await createStateStore(db, key).start({ userId: owner, provider: 'google', capabilities: [], scopes: '' });
+    await saveClient(db, key, { provider: 'google', clientId: 'fixture', clientSecret: 'fixture-secret', redirectUri: 'https://fixture.test/callback', actorUserId: owner });
+    await startGoogleLogin(db, key, null);
     await db.query("update oauth_states set expires_at=now()-interval '1 minute' where id=$1", [state]);
+    await db.query("update auth_oauth_states set expires_at=now()-interval '1 minute'");
     await db.query('update vault_state set locked=true');
     await processQueue(db, 'cleanup-fixture');
     expect(await db.query("select id from vault_items where service='oauth.pkce'")).toHaveLength(0);
     expect((await db.query('select verifier_enc from oauth_states where id=$1', [state]))[0].verifier_enc).toBeNull();
+    expect(await db.query("select id from vault_items where service='auth.google.pkce'")).toHaveLength(0);
+    expect((await db.query('select verifier from auth_oauth_states'))[0].verifier).toBe('');
   });
 
   it('claims, runs and completes a job', async () => {

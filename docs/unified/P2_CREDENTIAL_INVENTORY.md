@@ -10,7 +10,7 @@ Source audit updated 19 October 2026. This is a work ledger, not a claim that Va
 | Custom API | Vault item per connection; transactional import/rotation/deletion | P4 dispatch authority; full upgrade migration. |
 | OAuth application credentials | Vault item per provider, stable owner; transactional migration and consumer regressions passed | Full upgrade migration. |
 | Account-connection PKCE | Temporary Vault item per hashed state; transactional consumption, worker expiration cleanup and callback regressions passed | P12 upgrade/end-to-end acceptance. |
-| Google web/native Josi login PKCE | `auth_oauth_states.verifier` currently install-key ciphertext, despite its historical column name | Move temporary authority to Vault without weakening native return-URI, one-use and expiry checks. |
+| Google web/native Josi login PKCE | Owner-bound temporary Vault references; one-use, recovery, native-return, lock and expiration tests passed | P12 upgrade/end-to-end acceptance. |
 | MFA/TOTP | `users.totp_secret_enc`; reads in auth and parental authority routes | Vault migration across setup/enable/login/disable/reauthentication; preserve a usable recovery path when locked. Never silently bypass MFA to unlock the Vault. |
 | OAuth account tokens / Nextcloud | Strict Vault writes, transactional import/rotation/refresh/reconnect/deletion and recovery tested; Nextcloud slot remains stable | Full upgrade migration must flag previously misbound Nextcloud references for explicit repair/reconnect; P4 dispatch freshness beyond credential resolution. |
 | LLM API credentials | New references supported, older payloads still directly opened | Stable ownership, legacy migration, atomic configuration/rotation and removal. |

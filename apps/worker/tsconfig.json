@@ -4,6 +4,7 @@
   "include": ["src"],
   "references": [
     { "path": "../../packages/core" },
+    { "path": "../../packages/auth" },
     { "path": "../../packages/connectors" },
     { "path": "../../packages/channels" },
     { "path": "../../packages/mail" }

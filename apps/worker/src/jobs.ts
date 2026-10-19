@@ -35,6 +35,7 @@ import { effectiveTimeContext, formatCalendarRange, runAssistantTurn } from '@jo
 import { IMAGE_MEDIA_TYPES, readAttachment, type Scanner } from '@josi-ce/storage';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import { extname } from 'node:path';
+import { purgeGoogleLoginStates } from '@josi-ce/auth';
 
 /** What the worker needs beyond the database.
  *
@@ -508,6 +509,7 @@ export async function processQueue(
 ): Promise<JobOutcome> {
   ctx={...ctx,workerId};
   await createStateStore(db, ctx.masterKey ?? null).purge();
+  await purgeGoogleLoginStates(db);
   await tickSchedules(db);
   const jobs = await claimJobs(db, workerId, limit);
   let done = 0;
