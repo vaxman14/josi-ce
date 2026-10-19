@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
 import {
-  MasterKey, ReminderError, cancelReminder, createReminder, createThread,
+  MasterKey, initializeVault, ReminderError, cancelReminder, createReminder, createThread,
   listNativeReminderActions, listRemindersFor, reminderInstant, seal, updateReminder, upsertMobileDevice,
 } from '@josi-ce/core';
 import { executeAssistantTool } from '../../../packages/agent/src/execute.js';
@@ -25,6 +25,7 @@ const KEY = new MasterKey(Buffer.alloc(32, 41));
 beforeEach(async () => {
   db = await testDb();
   owner = (await createUser(db, { email: 'r@ce.test', username: 'reminder-owner', role: 'super_admin' })).id;
+  await initializeVault(db,KEY,owner);
   threadId = (await createThread(db, { ownerUserId: owner })).id;
 });
 

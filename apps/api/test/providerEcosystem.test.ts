@@ -17,7 +17,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { looksSealed } from '@josi-ce/core';
+import { isVaultCredentialReference, openCredentialPayload, loadMasterKey } from '@josi-ce/core';
 import { createApp } from '../src/app.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'josi-ce-provider-eco-'));
@@ -204,8 +204,11 @@ describe('the model step reads credentials by the catalogue', () => {
     expect(rows[0].provider).toBe('bedrock');
     // Derived endpoint: nothing stored, rather than a guess written down.
     expect(rows[0].base_url).toBeNull();
-    // The key pair is sealed, never in the clear, and never in provider_config.
-    expect(looksSealed(rows[0].api_key_enc!)).toBe(true);
+    // The provider row holds only a recoverable Vault reference, never the key pair.
+    expect(isVaultCredentialReference(rows[0].api_key_enc!)).toBe(true);
+    const [admin] = await db.query<{ id: string }>("select id from users where role='super_admin'");
+    expect(await openCredentialPayload(db, loadMasterKey({ path: keyPath }), { ownerUserId: admin.id, service: 'llm', slot: 'primary', stored: rows[0].api_key_enc! }))
+      .toMatchObject({ accessKeyId: 'not-a-real-access-key-id', secretAccessKey: 'not-a-real-secret-value-for-tests' });
     expect(rows[0].api_key_enc).not.toMatch(/not-a-real-access-key-id/);
 
     const config = typeof rows[0].provider_config === 'string'

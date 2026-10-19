@@ -55,13 +55,13 @@ describe('native workflow providers',()=>{
   });
 });
 
-import {initializeVault,openSealed} from '../../core/src/index.js';
+import {initializeVault,openCredentialEnvelope} from '../../core/src/index.js';
 import {disconnectWorkflowIntegration,validateWorkflowInput,registerN8nWebhook} from '../src/workflows.js';
 it('stores provider and callback credentials in the Vault and revokes both slots immediately',async()=>{
  await initializeVault(db,key,admin);
  const integration=await saveWorkflowIntegration(db,key,{provider:'n8n',name:'vault-backed',baseUrl:'https://n8n.example.test',token:'credential-fixture',actorUserId:admin,fetchImpl:credentialOk});
- expect(openSealed<any>(key,integration.credentials_enc).vaultItemId).toBeTruthy();
- expect(openSealed<any>(key,integration.callback_secret_enc).vaultItemId).toBeTruthy();
+ expect((await openCredentialEnvelope(db,key,integration.credentials_enc)).vaultItemId).toBeTruthy();
+ expect((await openCredentialEnvelope(db,key,integration.callback_secret_enc)).vaultItemId).toBeTruthy();
  expect((await db.query(`select id from vault_items where service='workflow.n8n'`))).toHaveLength(2);
  await disconnectWorkflowIntegration(db,integration.id);
  expect((await db.query(`select id from vault_items where service='workflow.n8n'`))).toHaveLength(0);

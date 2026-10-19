@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { getVaultSecret, loadMasterKey, looksSealed, openSealed } from '@josi-ce/core';
+import { getVaultSecret, loadMasterKey, isVaultCredentialReference, openCredentialEnvelope } from '@josi-ce/core';
 import { createApp } from '../src/app.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'josi-ce-setup-'));
@@ -597,13 +597,13 @@ describe('secrets', () => {
     await runWizard();
 
     const llm = await db.query<{ api_key_enc: string }>(`select api_key_enc from llm_providers`);
-    expect(looksSealed(llm[0].api_key_enc)).toBe(true);
+    expect(isVaultCredentialReference(llm[0].api_key_enc)).toBe(true);
     expect(llm[0].api_key_enc).not.toContain('fake-llm-key-DO-NOT-USE-0001');
 
     const smtp = await db.query<{ password_enc: string | null }>(
       `select password_enc from smtp_profiles where kind = 'system'`,
     );
-    expect(looksSealed(smtp[0].password_enc)).toBe(true);
+    expect(isVaultCredentialReference(smtp[0].password_enc)).toBe(true);
     expect(smtp[0].password_enc).not.toContain('system-smtp-password');
 
     // Nothing sensitive anywhere in the whole database.
@@ -757,7 +757,7 @@ describe('the two SMTP profiles', () => {
     const [profile] = await db.query<{ password_enc: string }>(
       `select password_enc from smtp_profiles where kind = 'system'`,
     );
-    expect(openSealed<{ vaultItemId:string }>(loadMasterKey({ path: keyPath }),profile.password_enc).vaultItemId).toBeTruthy();
+    expect((await openCredentialEnvelope(db,loadMasterKey({ path: keyPath }),profile.password_enc)).vaultItemId).toBeTruthy();
     const [owner]=await db.query<{id:string}>(`select id from users where role='super_admin'`);
     expect((await getVaultSecret(db,loadMasterKey({path:keyPath}),{ownerUserId:owner.id,service:'smtp',slot:'system'})).reveal()).toContain('abcdefghijklmnop');
 
@@ -818,7 +818,7 @@ describe('the two SMTP profiles', () => {
       `select kind, password_enc from smtp_profiles order by kind`,
     );
     const [comms, system] = [rows.find((r) => r.kind === 'communications')!, rows.find((r) => r.kind === 'system')!];
-    expect(looksSealed(comms.password_enc)).toBe(true);
+    expect(isVaultCredentialReference(comms.password_enc)).toBe(true);
     // Two different secrets produce two different ciphertexts.
     expect(comms.password_enc).not.toBe(system.password_enc);
   });

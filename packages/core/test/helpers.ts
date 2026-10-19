@@ -3,6 +3,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pgliteDb, type Db } from '../src/db.js';
+import { MasterKey } from '../src/masterKey.js';
+import { initializeVault } from '../src/vault.js';
 
 const MIGRATIONS = join(dirname(fileURLToPath(import.meta.url)), '../../db/migrations');
 
@@ -19,4 +21,12 @@ export async function testDb(): Promise<TestDb> {
     await pg.exec(readFileSync(join(MIGRATIONS, file), 'utf8'));
   }
   return { ...pgliteDb(pg), exec: async (sql: string) => void (await pg.exec(sql)) };
+}
+
+/** Synthetic initialized Vault for credential-consumer regression tests. */
+export async function testVault(db:Db,key:MasterKey):Promise<void>{
+  let [admin]=await db.query<{id:string}>(`select id from users where role='super_admin'`);
+  if(!admin)[admin]=await db.query<{id:string}>(`insert into users(email,username,role)
+    values('vault-fixture@example.test','vault-fixture-admin','super_admin') returning id`);
+  await initializeVault(db,key,admin.id);
 }

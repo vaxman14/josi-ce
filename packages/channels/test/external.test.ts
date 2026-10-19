@@ -2,26 +2,26 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { ensureWorkspace } from '../../core/src/workspace.js';
 import { createUser } from '../../auth/src/users.js';
-import { MasterKey, looksSealed, initializeVault, setVaultLock, seal, openSealed, VaultLockedError } from '@josi-ce/core';
+import { MasterKey, isVaultCredentialReference, initializeVault, setVaultLock, recoverVault, seal, openCredentialEnvelope, VaultLockedError } from '@josi-ce/core';
 import {
   consumeExternalLinkCode, describeExternalConfig, listExternalLinks, loadExternalConfig,
   mintExternalLinkCode, openExternalConfig, resolveExternalLink, revokeExternalLink,
   setExternalEnabled, setExternalProbe, storeExternalConfig,
 } from '../src/external.js';
 
-let db: TestDb; let alice: string; const key = new MasterKey(Buffer.alloc(32, 19));
+let db: TestDb; let alice: string; let recovery: string; const key = new MasterKey(Buffer.alloc(32, 19));
 
 beforeEach(async () => {
   db = await testDb(); await ensureWorkspace(db, {});
   alice = (await createUser(db, { email: 'alice@external.test', username: 'alice', role: 'super_admin' })).id;
-  await initializeVault(db, key, alice);
+  recovery = (await initializeVault(db, key, alice)).recoveryKey.reveal();
 });
 
 describe('external channel trust boundary', () => {
   it('seals configuration, exposes metadata only, and requires a good probe before enablement', async () => {
     await storeExternalConfig(db, { provider: 'slack', masterKey: key, actorUserId: alice, credentials: { signingSecret: 'sign', botToken: 'token' } });
     const row = await loadExternalConfig(db, 'slack');
-    expect(looksSealed(row.credentials_enc)).toBe(true);
+    expect(isVaultCredentialReference(row.credentials_enc)).toBe(true);
     expect(JSON.stringify(describeExternalConfig(row))).not.toContain('token');
     expect(await openExternalConfig(db, key, row)).toMatchObject({ signingSecret: 'sign', botToken: 'token' });
     await expect(setExternalEnabled(db, 'slack', true)).rejects.toThrow(/test/);
@@ -53,8 +53,8 @@ describe('external channel trust boundary', () => {
     expect(await openExternalConfig(db, key, old)).toEqual({ signingSecret: 'synthetic-signing-value', webhookSecret: 'synthetic-webhook-value' });
     const current = await loadExternalConfig(db, provider);
     expect(current.vault_owner_user_id).toBe(alice);
-    expect(openSealed(key, current.credentials_enc!)).toHaveProperty('vaultItemId');
-    expect(openSealed(key, current.webhook_secret_enc!)).toHaveProperty('vaultItemId');
+    expect(await openCredentialEnvelope(db, key, current.credentials_enc!)).toHaveProperty('vaultItemId');
+    expect(await openCredentialEnvelope(db, key, current.webhook_secret_enc!)).toHaveProperty('vaultItemId');
     expect(await db.query('select id from vault_items where service=$1', [`channel.${provider}`])).toHaveLength(2);
     await expect(openExternalConfig(db, key, old)).rejects.toThrow(/changed/);
     await setVaultLock(db, { master: true, locked: true, actorUserId: alice });
@@ -74,12 +74,24 @@ describe('external channel trust boundary', () => {
     expect(await db.query("select id from events where kind='vault.item_stored'")).toHaveLength(0);
   });
 
+  it('keeps the migrated credential pair usable after installation-key recovery', async () => {
+    await storeExternalConfig(db, { provider: 'slack', masterKey: key, actorUserId: alice, credentials: { signingSecret: 'synthetic-signing', botToken: 'synthetic-token' } });
+    const current = await loadExternalConfig(db, 'slack');
+    const pointer = await openCredentialEnvelope(db, key, current.credentials_enc!);
+    await db.query("update external_channel_configs set credentials_enc=$1 where provider='slack'", [seal(key, { vaultItemId: pointer.vaultItemId })]);
+    const expected = await openExternalConfig(db, key, await loadExternalConfig(db, 'slack'));
+    const migrated = await loadExternalConfig(db, 'slack');
+    const replacement = new MasterKey(Buffer.alloc(32, 42));
+    await recoverVault(db, replacement, recovery, alice);
+    expect(await openExternalConfig(db, replacement, migrated)).toEqual(expected);
+  });
+
   it('rejects a cross-provider reference instead of resolving another channel credential', async () => {
     for (const provider of ['slack', 'whatsapp'] as const) {
       await storeExternalConfig(db, { provider, masterKey: key, actorUserId: alice, credentials: { signingSecret: `synthetic-${provider}` } });
     }
     const other = await loadExternalConfig(db, 'whatsapp');
     await db.query("update external_channel_configs set credentials_enc=$1 where provider='slack'", [other.credentials_enc]);
-    await expect(openExternalConfig(db, key, await loadExternalConfig(db, 'slack'))).rejects.toThrow(/not found/);
+    await expect(openExternalConfig(db, key, await loadExternalConfig(db, 'slack'))).rejects.toThrow(/context/);
   });
 });

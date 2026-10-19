@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
-import { asSecret, initializeVault, MasterKey, openSealed, seal, setVaultLock, VaultLockedError } from '@josi-ce/core';
+import { asSecret, initializeVault, MasterKey, openCredentialEnvelope, seal, recoverVault, setVaultLock, VaultLockedError } from '@josi-ce/core';
 import { loadConfig, openToken, openWebhookSecret, removeBot, setBotToken } from '../src/telegram/config.js';
 
-let db: TestDb, admin: string;
+let db: TestDb, admin: string, recovery: string;
 const key = new MasterKey(Buffer.alloc(32, 35));
 const token = '12345:' + 'x'.repeat(35);
 const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ ok: true, result: { id: 77, is_bot: true, username: 'fixture_bot' } }), { status: 200 });
 beforeEach(async () => {
   db = await testDb();
   admin = (await createUser(db, { email: 'channel@example.test', username: 'channel-admin', role: 'super_admin' })).id;
-  await initializeVault(db, key, admin);
+  recovery = (await initializeVault(db, key, admin)).recoveryKey.reveal();
 });
 async function legacy() {
   await db.query('update telegram_config set bot_token_enc=$1,webhook_secret_enc=$2', [seal(key, { token }), seal(key, { secret: 'synthetic-webhook-value' })]);
@@ -25,8 +25,8 @@ describe('Telegram canonical Vault migration', () => {
     expect((await openWebhookSecret(db, key, old)).reveal()).toBe('synthetic-webhook-value');
     const current = await loadConfig(db);
     expect(current.vault_owner_user_id).toBe(admin);
-    expect(openSealed(key, current.bot_token_enc!)).toHaveProperty('vaultItemId');
-    expect(openSealed(key, current.webhook_secret_enc!)).toHaveProperty('vaultItemId');
+    expect(await openCredentialEnvelope(db, key, current.bot_token_enc!)).toHaveProperty('vaultItemId');
+    expect(await openCredentialEnvelope(db, key, current.webhook_secret_enc!)).toHaveProperty('vaultItemId');
     expect((await openToken(db, key, current)).reveal()).toBe(token);
     expect(await db.query("select id from vault_items where service='channel.telegram'")).toHaveLength(2);
     expect(JSON.stringify(await db.query('select * from events'))).not.toContain(token);
@@ -64,6 +64,20 @@ describe('Telegram canonical Vault migration', () => {
     expect(await removeBot(db, { masterKey: key, actorUserId: admin, fetchImpl })).toEqual({ webhookDeleted: false });
     expect((await loadConfig(db)).bot_token_enc).toBeNull();
     expect(await db.query("select id from vault_items where service='channel.telegram'")).toHaveLength(0);
+  });
+
+  it('upgrades an old install-key reference before recovery and keeps both channel credentials usable', async () => {
+    await setBotToken(db, { masterKey: key, token: asSecret(token), actorUserId: admin, fetchImpl });
+    const current = await loadConfig(db);
+    const pointer = await openCredentialEnvelope(db, key, current.bot_token_enc!);
+    await db.query('update telegram_config set bot_token_enc=$1', [seal(key, { vaultItemId: pointer.vaultItemId })]);
+    expect((await openToken(db, key, await loadConfig(db))).reveal()).toBe(token);
+    const migrated = await loadConfig(db);
+    const webhook = (await openWebhookSecret(db, key, migrated)).reveal();
+    const replacement = new MasterKey(Buffer.alloc(32, 41));
+    await recoverVault(db, replacement, recovery, admin);
+    expect((await openToken(db, replacement, migrated)).reveal()).toBe(token);
+    expect((await openWebhookSecret(db, replacement, migrated)).reveal()).toBe(webhook);
   });
 
   it('never writes a fallback credential before Vault initialization', async () => {

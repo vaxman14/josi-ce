@@ -116,14 +116,33 @@ export async function getVaultSecret(db:Db,masterKey:MasterKey,args:{ownerUserId
  * reference in the legacy column. Before an upgraded installation has been
  * explicitly initialized, the old ciphertext remains readable; it is never
  * silently imported. */
-export async function storeCredentialPayload(db:Db,installKey:MasterKey,args:{ownerUserId:string;kind:VaultKind;service:string;slot:string;label:string;payload:Record<string,unknown>;actorUserId?:string}):Promise<string>{const status=await vaultStatus(db);if(!status.initialized)return seal(installKey,args.payload);const item=await putVaultItem(db,installKey,{ownerUserId:args.ownerUserId,kind:args.kind,service:args.service,slot:args.slot,label:args.label,value:new Secret(JSON.stringify(unwrapSecrets(args.payload))),actorUserId:args.actorUserId});return seal(installKey,{vaultItemId:item.id});}
+export async function storeCredentialPayload(db:Db,installKey:MasterKey,args:{ownerUserId:string;kind:VaultKind;service:string;slot:string;label:string;payload:Record<string,unknown>;actorUserId?:string}):Promise<string>{const status=await vaultStatus(db);if(!status.initialized)return seal(installKey,args.payload);return storeVaultCredentialPayload(db,installKey,args);}
 /** New consumers require an initialized, unlocked Vault; no direct-key fallback.
  * Call inside the consumer transaction when replacing an existing reference. */
 export async function storeVaultCredentialPayload(db:Db,installKey:MasterKey,args:Parameters<typeof storeCredentialPayload>[2]):Promise<string>{
   const item=await putVaultItem(db,installKey,{ownerUserId:args.ownerUserId,kind:args.kind,service:args.service,slot:args.slot,label:args.label,value:new Secret(JSON.stringify(unwrapSecrets(args.payload))),actorUserId:args.actorUserId});
-  return seal(installKey,{vaultItemId:item.id});
+  return VAULT_REFERENCE_PREFIX+seal(await vaultMasterKey(db,installKey),{type:'credential_reference',vaultItemId:item.id,ownerUserId:args.ownerUserId,service:args.service,slot:args.slot});
 }
-export async function openCredentialPayload<T extends object>(db:Db,installKey:MasterKey,args:{ownerUserId:string;service:string;slot:string;stored:string}):Promise<T>{const pointer=openSealed<T&{vaultItemId?:string}>(installKey,args.stored);if(!Object.prototype.hasOwnProperty.call(pointer,'vaultItemId'))return pointer;if(typeof pointer.vaultItemId!=='string'||!pointer.vaultItemId)throw new VaultError('stored credential reference is invalid');const raw=await getVaultSecret(db,installKey,{ownerUserId:args.ownerUserId,service:args.service,slot:args.slot,itemId:pointer.vaultItemId});let parsed:unknown;try{parsed=JSON.parse(raw.reveal());}catch{throw new VaultError('stored credential payload is invalid');}if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new VaultError('stored credential payload is invalid');return parsed as T;}
+const VAULT_REFERENCE_PREFIX='vaultref.v1.';
+/** Format detection is not validation or authorization. References contain no
+ * credential and use the recoverable Vault key, not the replaceable install key. */
+export function isVaultCredentialReference(stored:unknown):stored is string{return typeof stored==='string'&&stored.startsWith(VAULT_REFERENCE_PREFIX);}
+export async function openCredentialEnvelope<T extends object=Record<string,unknown>>(db:Db,installKey:MasterKey,stored:string):Promise<T&{vaultItemId?:string}>{
+  const current=isVaultCredentialReference(stored);
+  const value=current?openSealed<Record<string,unknown>>(await vaultMasterKey(db,installKey),stored.slice(VAULT_REFERENCE_PREFIX.length)):openSealed<Record<string,unknown>>(installKey,stored);
+  if(!value||typeof value!=='object'||Array.isArray(value))throw new VaultError('stored credential payload is invalid');
+  if(current&&(value.type!=='credential_reference'||typeof value.vaultItemId!=='string'||!value.vaultItemId||typeof value.ownerUserId!=='string'||typeof value.service!=='string'||typeof value.slot!=='string'))throw new VaultError('stored credential reference is invalid');
+  return value as T&{vaultItemId?:string};
+}
+export async function openCredentialPayload<T extends object>(db:Db,installKey:MasterKey,args:{ownerUserId:string;service:string;slot:string;stored:string}):Promise<T>{
+  const pointer=await openCredentialEnvelope(db,installKey,args.stored);
+  if(!Object.prototype.hasOwnProperty.call(pointer,'vaultItemId'))return pointer as T;
+  if(typeof pointer.vaultItemId!=='string'||!pointer.vaultItemId)throw new VaultError('stored credential reference is invalid');
+  if(isVaultCredentialReference(args.stored)&&(pointer.ownerUserId!==args.ownerUserId||pointer.service!==args.service||pointer.slot!==args.slot))throw new VaultError('credential context did not match');
+  const raw=await getVaultSecret(db,installKey,{ownerUserId:args.ownerUserId,service:args.service,slot:args.slot,itemId:pointer.vaultItemId});
+  let parsed:unknown;try{parsed=JSON.parse(raw.reveal());}catch{throw new VaultError('stored credential payload is invalid');}
+  if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new VaultError('stored credential payload is invalid');return parsed as T;
+}
 export async function listVaultItems(db:Db,ownerUserId:string,masterKey?:MasterKey):Promise<VaultItemView[]>{
   const rows=await db.query<any>(`select id,owner_user_id,kind,service,slot,label,value_enc,last_four,metadata,status,created_at,updated_at,rotated_at from vault_items where owner_user_id=$1 order by service,label`,[ownerUserId]);
   if(masterKey&&rows.length){

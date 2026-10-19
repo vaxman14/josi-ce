@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { appendEvent, openSealed, openCredentialPayload, storeVaultCredentialPayload, VaultLockedError, type Db, type MasterKey } from '@josi-ce/core';
+import { appendEvent, openCredentialEnvelope, isVaultCredentialReference, openCredentialPayload, storeVaultCredentialPayload, VaultLockedError, type Db, type MasterKey } from '@josi-ce/core';
 import type { ExternalChannel } from './shared.js';
 
 export interface ExternalConfigRow {
@@ -61,17 +61,17 @@ export async function openExternalConfig(db: Db, masterKey: MasterKey | null, ro
     }
     const service = `channel.${current.provider}`;
     async function resolve(slot: 'credentials' | 'webhook', stored: string) {
-      const decoded = openSealed<Record<string, unknown>>(masterKey!, stored);
+      const decoded = await openCredentialEnvelope<Record<string, unknown>>(tx, masterKey!, stored);
       if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw new ExternalChannelError('Channel credential is invalid');
-      if (Object.prototype.hasOwnProperty.call(decoded, 'vaultItemId')) {
-        return { reference: stored, payload: await openCredentialPayload<Record<string, string>>(tx, masterKey!, { ownerUserId: owner!, service, slot, stored }) };
-      }
-      if (!Object.keys(decoded).length || !Object.values(decoded).every(value => typeof value === 'string' && value.length > 0)) {
+      const payload = Object.prototype.hasOwnProperty.call(decoded, 'vaultItemId')
+        ? await openCredentialPayload<Record<string, string>>(tx, masterKey!, { ownerUserId: owner!, service, slot, stored }) : decoded;
+      if (isVaultCredentialReference(stored)) return { reference: stored, payload: payload as Record<string,string> };
+      if (!Object.keys(payload).length || !Object.values(payload).every(value => typeof value === 'string' && value.length > 0)) {
         throw new ExternalChannelError('Channel credential is invalid');
       }
       const reference = await storeVaultCredentialPayload(tx, masterKey!, { ownerUserId: owner!, kind: 'api_key', service, slot,
-        label: `${current.provider} ${slot}`, payload: decoded });
-      return { reference, payload: decoded as Record<string, string> };
+        label: `${current.provider} ${slot}`, payload: payload });
+      return { reference, payload: payload as Record<string, string> };
     }
     const credentials = await resolve('credentials', current.credentials_enc!);
     const webhook = await resolve('webhook', current.webhook_secret_enc!);

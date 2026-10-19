@@ -5,7 +5,7 @@ import { testDb, type TestDb } from './helpers.js';
 import { MasterKey } from '../src/masterKey.js';
 import { asSecret, openSealed, seal } from '../src/sealing.js';
 import { deleteVaultItem, getVaultSecret, initializeVault, listVaultItems, openCredentialPayload,
-  putVaultItem, recoverVault, setVaultLock, storeCredentialPayload, vaultRecords,
+  openCredentialEnvelope, putVaultItem, recoverVault, setVaultLock, storeCredentialPayload, vaultRecords,
   VaultLockedError, VaultRecordConflictError } from '../src/vault.js';
 
 let db: TestDb, owner: string, member: string, recovery: string;
@@ -71,12 +71,14 @@ describe('protected Vault record storage', () => {
 
   it('recovers existing credentials and records with a replacement install key while invalidating authority', async () => {
     const records = vaultRecords(db, key), first = await records.write(draft());
+    const reference = await storeCredentialPayload(db, key, { ownerUserId: owner, kind: 'api_key', service: 'fixture', slot: 'reference', label: 'Fixture reference', payload: { token: 'synthetic-recovery-token' } });
     await putVaultItem(db, key, { ownerUserId: owner, kind: 'password', service: 'fixture', slot: 'main', label: 'Fixture', value: asSecret('recovery-fixture-value') });
     const replacement = new MasterKey(Buffer.alloc(32, 24));
     await recoverVault(db, replacement, recovery, owner);
     const restored = vaultRecords(db, replacement);
     expect((await restored.read({ actorUserId: owner, recordId: first.recordId })).value.reveal()).toBe(content);
     expect((await getVaultSecret(db, replacement, { ownerUserId: owner, service: 'fixture', slot: 'main' })).reveal()).toBe('recovery-fixture-value');
+    expect(await openCredentialPayload(db, replacement, { ownerUserId: owner, service: 'fixture', slot: 'reference', stored: reference })).toEqual({ token: 'synthetic-recovery-token' });
     const current = await restored.read({ actorUserId: owner, recordId: first.recordId });
     await expect(restored.read({ actorUserId: owner, recordId: first.recordId, expected: current.reference })).rejects.toThrow(/reconciliation/);
     await expect(restored.write(draft())).rejects.toThrow(/reconciliation/);
@@ -124,10 +126,10 @@ describe('credential reference identity', () => {
     const two = await storeCredentialPayload(db, key, { ...args, slot: 'two', payload: { token: 'synthetic-two' } });
     const load = (stored: string) => openCredentialPayload(db, key, { ownerUserId: owner, service: 'fixture', slot: 'one', stored });
     expect(await load(one)).toEqual({ token: 'synthetic-one' });
-    await expect(load(two)).rejects.toThrow(/not found/);
+    await expect(load(two)).rejects.toThrow(/context/);
     await expect(load(seal(key, { vaultItemId: '' }))).rejects.toThrow(/invalid/);
-    const pointer = openSealed<{ vaultItemId: string }>(key, one);
-    await deleteVaultItem(db, { ownerUserId: owner, actorUserId: owner, itemId: pointer.vaultItemId });
+    const pointer = await openCredentialEnvelope(db, key, one);
+    await deleteVaultItem(db, { ownerUserId: owner, actorUserId: owner, itemId: pointer.vaultItemId! });
     await storeCredentialPayload(db, key, args);
     await expect(load(one)).rejects.toThrow(/not found/);
   });

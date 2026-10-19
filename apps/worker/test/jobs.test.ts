@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calendarEventUrl, runJob } from '../src/jobs.js';
-import { testDb } from '../../../packages/core/test/helpers.js';
+import { testDb, testVault } from '../../../packages/core/test/helpers.js';
 import { createUser } from '../../../packages/auth/src/users.js';
 import { MasterKey, createThread, processPushBatch, seal, submitDurableTurn, upsertMobileDevice, type Job } from '@josi-ce/core';
 
@@ -20,7 +20,7 @@ describe('calendar write target', () => {
 
 describe('durable native end to end',()=>{
   it('continues send -> disconnect -> worker -> persist -> push with synthetic providers',async()=>{
-    const db=await testDb();const key=new MasterKey(Buffer.alloc(32,5));
+    const db=await testDb();const key=new MasterKey(Buffer.alloc(32,5));await testVault(db,key);
     const user=await createUser(db,{email:'mobile@worker.test',username:'mobile-worker',role:'member'});
     await db.query(`insert into sessions(user_id,token_hash,expires_at) values($1,'mobile-worker-session',now()+interval '1 day')`,[user.id]);
     const thread=await createThread(db,{ownerUserId:user.id});

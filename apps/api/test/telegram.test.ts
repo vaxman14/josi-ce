@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
-import { MasterKey, openSealed, seal, initializeVault, openCredentialPayload } from '@josi-ce/core';
+import { MasterKey, openCredentialEnvelope, seal, initializeVault, openCredentialPayload } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import express from 'express';
 import { createApp } from '../src/app.js';
@@ -322,7 +322,7 @@ describe('setting up the bot (L1.1)', () => {
       `select bot_token_enc from telegram_config where id = true`,
     );
     expect(row.bot_token_enc).not.toContain(TOKEN);
-    expect(openSealed<{ vaultItemId: string }>(KEY, row.bot_token_enc).vaultItemId).toBeTruthy();
+    expect((await openCredentialEnvelope(db, KEY, row.bot_token_enc)).vaultItemId).toBeTruthy();
     expect(await openCredentialPayload(db, KEY, { ownerUserId: ids.admin, service: 'channel.telegram', slot: 'bot', stored: row.bot_token_enc })).toEqual({ token: TOKEN });
 
     const view = await call('/api/admin/telegram', { jar: cookies.admin });

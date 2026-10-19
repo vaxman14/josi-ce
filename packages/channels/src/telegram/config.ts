@@ -15,7 +15,7 @@
 // generated separately, sealed separately, and only ever compared in constant
 // time.
 import {
-  Secret, appendEvent, asSecret, openSealed, openCredentialPayload, storeVaultCredentialPayload, deleteVaultSlot, VaultLockedError, type Db, type MasterKey,
+  Secret, appendEvent, asSecret, openCredentialEnvelope, isVaultCredentialReference, openCredentialPayload, storeVaultCredentialPayload, deleteVaultSlot, VaultLockedError, type Db, type MasterKey,
 } from '@josi-ce/core';
 import { randomBytes } from 'node:crypto';
 import { TelegramApiError, TelegramBotApi, type TelegramErrorCategory } from './api.js';
@@ -120,17 +120,17 @@ async function openTelegramPayload<T extends object>(db: Db, masterKey: MasterKe
       owner = admin.id;
     }
     const stored = current[column]!;
-    const decoded = openSealed<Record<string, unknown>>(masterKey, stored);
+    const decoded = await openCredentialEnvelope<Record<string, unknown>>(tx, masterKey, stored);
     if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw new TelegramConfigError('Telegram credential is invalid');
-    if (Object.prototype.hasOwnProperty.call(decoded, 'vaultItemId')) {
-      return openCredentialPayload<T>(tx, masterKey, { ownerUserId: owner, service: 'channel.telegram', slot, stored });
-    }
+    const payload = Object.prototype.hasOwnProperty.call(decoded, 'vaultItemId')
+      ? await openCredentialPayload<T>(tx, masterKey, { ownerUserId: owner, service: 'channel.telegram', slot, stored }) : decoded;
+    if (isVaultCredentialReference(stored)) return payload as T;
     const field = slot === 'bot' ? 'token' : 'secret';
-    if (typeof decoded[field] !== 'string' || !decoded[field]) throw new TelegramConfigError('Telegram credential is invalid');
+    if (typeof (payload as Record<string,unknown>)[field] !== 'string' || !(payload as Record<string,unknown>)[field]) throw new TelegramConfigError('Telegram credential is invalid');
     const reference = await storeVaultCredentialPayload(tx, masterKey, { ownerUserId: owner, kind: 'api_key',
-      service: 'channel.telegram', slot, label: slot === 'bot' ? 'Telegram bot' : 'Telegram webhook', payload: decoded });
+      service: 'channel.telegram', slot, label: slot === 'bot' ? 'Telegram bot' : 'Telegram webhook', payload: payload as Record<string,unknown> });
     await tx.query(`update telegram_config set ${column}=$1,vault_owner_user_id=$2 where id=true`, [reference, owner]);
-    return decoded as T;
+    return payload as T;
   });
 }
 
