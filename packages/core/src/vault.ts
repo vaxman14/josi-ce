@@ -112,11 +112,10 @@ export async function putVaultItem(db:Db,masterKey:MasterKey,args:{ownerUserId:s
 }
 
 export async function getVaultSecret(db:Db,masterKey:MasterKey,args:{ownerUserId:string;service:string;slot:string;itemId?:string}):Promise<Secret>{const key=await boxKey(db,masterKey,args.ownerUserId);const [row]=await db.query<{id:string;value_enc:string}>(`select id,value_enc from vault_items where owner_user_id=$1 and service=$2 and slot=$3 and status='active'`,[args.ownerUserId,args.service,args.slot]);if(!row||(args.itemId!==undefined&&row.id!==args.itemId))throw new VaultError('credential not found');const opened=openSealed<{value:string;ownerUserId:string;service:string;slot:string}>(key,row.value_enc);if(opened.ownerUserId!==args.ownerUserId||opened.service!==args.service||opened.slot!==args.slot)throw new VaultError('credential context did not match');return new Secret(opened.value);}
-/** Store new subsystem credentials in the Vault while leaving only an opaque
- * reference in the legacy column. Before an upgraded installation has been
- * explicitly initialized, the old ciphertext remains readable; it is never
- * silently imported. */
-export async function storeCredentialPayload(db:Db,installKey:MasterKey,args:{ownerUserId:string;kind:VaultKind;service:string;slot:string;label:string;payload:Record<string,unknown>;actorUserId?:string}):Promise<string>{const status=await vaultStatus(db);if(!status.initialized)return seal(installKey,args.payload);return storeVaultCredentialPayload(db,installKey,args);}
+/** Compatibility name for strict Vault storage. New writes never fall back to
+ * installation-key ciphertext. Existing ciphertext remains readable by the
+ * explicit migration/consumer paths, with their Vault and ownership checks. */
+export async function storeCredentialPayload(db:Db,installKey:MasterKey,args:{ownerUserId:string;kind:VaultKind;service:string;slot:string;label:string;payload:Record<string,unknown>;actorUserId?:string}):Promise<string>{return storeVaultCredentialPayload(db,installKey,args);}
 /** New consumers require an initialized, unlocked Vault; no direct-key fallback.
  * Call inside the consumer transaction when replacing an existing reference. */
 export async function storeVaultCredentialPayload(db:Db,installKey:MasterKey,args:Parameters<typeof storeCredentialPayload>[2]):Promise<string>{
@@ -124,6 +123,13 @@ export async function storeVaultCredentialPayload(db:Db,installKey:MasterKey,arg
   return VAULT_REFERENCE_PREFIX+seal(await vaultMasterKey(db,installKey),{type:'credential_reference',vaultItemId:item.id,ownerUserId:args.ownerUserId,service:args.service,slot:args.slot});
 }
 const VAULT_REFERENCE_PREFIX='vaultref.v1.';
+/** Internal upgrade helper: reissue a pointer to an already verified item
+ * without replacing its value, kind, label, metadata or rotation history.
+ * The caller holds the consumer transaction and Vault-state lock. */
+export async function referenceExistingVaultCredential(db:Db,installKey:MasterKey,args:{ownerUserId:string;service:string;slot:string;itemId:string}):Promise<string>{
+  await getVaultSecret(db,installKey,args);
+  return VAULT_REFERENCE_PREFIX+seal(await vaultMasterKey(db,installKey),{type:'credential_reference',vaultItemId:args.itemId,ownerUserId:args.ownerUserId,service:args.service,slot:args.slot});
+}
 /** Format detection is not validation or authorization. References contain no
  * credential and use the recoverable Vault key, not the replaceable install key. */
 export function isVaultCredentialReference(stored:unknown):stored is string{return typeof stored==='string'&&stored.startsWith(VAULT_REFERENCE_PREFIX);}

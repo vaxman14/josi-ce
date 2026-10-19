@@ -4,6 +4,7 @@ import {
   VaultError, VaultLockedError, appendEvent, asSecret, checkVaultItem, consumeAuthorityGrant,
   deleteVaultItem, grantVaultUiUnlock, initializeVault, listVaultItems, loadMasterKey,
   putVaultItem, recoverVault, rotateVaultBox, setVaultLock, vaultStatus, vaultUiUnlocked, type Db, type LoadOptions, type VaultKind,
+  inspectCredentialMigration, migrateStoredCredentials,
 } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
@@ -33,6 +34,11 @@ export function vaultRoutes(ctx:Ctx):Router{
 
 export function adminVaultRoutes(ctx:Ctx):Router{
   const r=Router();r.use(requireSuperAdmin);r.get('/',handle(async(_req,res)=>res.json({status:await vaultStatus(ctx.db)})));
+  r.get('/migration',handle(async(req,res)=>res.json({sources:await inspectCredentialMigration(ctx.db,req.user!.id)})));
+  r.post('/migration',handle(async(req,res)=>{
+    if(!(await passwordMatches(ctx.db,req.user!.id,typeof req.body?.password==='string'?req.body.password:'')))throw new RouteError(401,'That password did not match.');
+    return res.json(await migrateStoredCredentials(ctx.db,master(ctx),req.user!.id));
+  }));
   r.post('/initialize',handle(async(req,res)=>{if(!(await passwordMatches(ctx.db,req.user!.id,typeof req.body?.password==='string'?req.body.password:'')))throw new RouteError(401,'That password did not match.');const initialized=await initializeVault(ctx.db,master(ctx),req.user!.id);return res.status(201).json({recoveryKey:initialized.recoveryKey.reveal(),fingerprint:initialized.fingerprint,note:'Save this recovery key offline now. It will never be shown again.'});}));
   r.put('/lock',handle(async(req,res)=>{if(!(await passwordMatches(ctx.db,req.user!.id,typeof req.body?.password==='string'?req.body.password:'')))throw new RouteError(401,'That password did not match.');await setVaultLock(ctx.db,{master:true,locked:req.body?.locked!==false,actorUserId:req.user!.id});return res.json({ok:true,status:await vaultStatus(ctx.db)});}));
   r.post('/recover',handle(async(req,res)=>{if(!(await passwordMatches(ctx.db,req.user!.id,typeof req.body?.password==='string'?req.body.password:'')))throw new RouteError(401,'That password did not match.');await recoverVault(ctx.db,master(ctx),clean(req.body?.recoveryKey,200),req.user!.id);return res.json({ok:true,status:await vaultStatus(ctx.db)});}));
