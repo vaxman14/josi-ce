@@ -13,6 +13,7 @@ import Darwin
     @Published private(set) var localConsent: Wire = .null
     private var consentGeneration = 0
     private var consentDeadline: ContinuousClock.Instant = .now
+    private var consentLeaseUntil = 0
     private weak var model: JosiModel?
     private var api: JosiAPI?
     private var user: Wire = .null
@@ -73,6 +74,9 @@ import Darwin
             }, resolveApplication: { [weak self] candidate in
                 guard let self else { throw GuestLinkError.closed }
                 return try await self.applicationProjection(candidate)
+            }, consentProjection: { [weak self] in
+                guard let self else { throw GuestLinkError.closed }
+                return try self.automationConsentProjection()
             })
             try engine.show()
             progress = "Separate development desktop · Network and host sharing are disabled."
@@ -159,6 +163,7 @@ import Darwin
                            (try? guest?.consentBinding()) == .object(["guestBootId": c["guestBootId"], "guestChannelId": c["guestChannelId"]]),
                            state == "running" {
                             consentDeadline = leaseDeadline
+                            consentLeaseUntil = session["leaseUntilMs"].integer
                         } else { stopAutomationLocally() }
                     }
                     try guardian?.renew()
@@ -286,6 +291,7 @@ import Darwin
 
     private func stopAutomationLocally() {
         consentGeneration += 1; localConsent = .null; consentDeadline = .now
+        consentLeaseUntil = 0; guest?.revokeAutomation()
         // The dispatch bridge must consult this volatile generation and lease
         // immediately before input. A saved Vault receipt cannot restart it.
     }
@@ -298,7 +304,7 @@ import Darwin
     }
     func approveAutomation() async throws {
         try current()
-        guard state == "running", localConsent == .null, let model, let guest else { throw approvalUnavailable() }
+        guard state == "running", localConsent == .null, let model, let guest, guest.supportsExecution else { throw approvalUnavailable() }
         let binding = try guest.consentBinding(), generation = consentGeneration
         let result = try await NativeAutomationConsent.approve(model: model, workspace: workspace, session: session, guest: binding,
             current: {
@@ -314,6 +320,7 @@ import Darwin
                   result["leaseUntilMs"].integer - now <= 10_000,
                   result["leaseUntilMs"].integer <= session["expiresAtMs"].integer else { throw approvalUnavailable() }
             localConsent = result
+            consentLeaseUntil = min(session["leaseUntilMs"].integer, result["leaseUntilMs"].integer)
             consentDeadline = min(leaseDeadline, .now.advanced(by: .milliseconds(result["leaseUntilMs"].integer - now)))
         } catch {
             stopAutomationLocally()
@@ -323,5 +330,18 @@ import Darwin
             }
             throw error
         }
+    }
+    private func automationConsentProjection() throws -> Wire {
+        try current()
+        guard localConsent != .null else { return .null }
+        let now = Int(Date().timeIntervalSince1970 * 1000), binding = try guest?.consentBinding()
+        guard ContinuousClock.now < consentDeadline, consentLeaseUntil > now, state == "running",
+              binding == .object(["guestBootId": localConsent["guestBootId"], "guestChannelId": localConsent["guestChannelId"]])
+        else { stopAutomationLocally(); return .null }
+        return ["schemaVersion": .number(1), "identity": localConsent["identity"],
+                "guestBootId": localConsent["guestBootId"], "guestChannelId": localConsent["guestChannelId"],
+                "generation": .number(Double(consentGeneration)), "expiresAtMs": localConsent["expiresAtMs"],
+                "leaseUntilMs": .number(Double(consentLeaseUntil)),
+                "authority": ["consent": localConsent["reference"], "permissions": localConsent["permissions"], "cardinal": localConsent["cardinal"]]]
     }
 }

@@ -133,6 +133,7 @@ final class GuestDesktopEngine {
     private var expiryTask: Task<Void, Never>?
     private var seen = Set<UUID>()
     private var inputMonitor: Any?
+    private var localInputMonitor: Any?
     private var lastWall = Date()
     private var lastMonotonic = ContinuousClock.now
     private var commandDeadline: ContinuousClock.Instant?
@@ -151,6 +152,12 @@ final class GuestDesktopEngine {
             guard event.cgEvent?.getIntegerValueField(.eventSourceUserData) != self?.eventMarker else { return }
             MainActor.assumeIsolated { self?.takeOver() }
         }
+        localInputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+            if event.cgEvent?.getIntegerValueField(.eventSourceUserData) != self?.eventMarker {
+                MainActor.assumeIsolated { self?.takeOver() }
+            }
+            return event
+        }
     }
 
     /// Called only by protected local controls / authenticated lease teardown.
@@ -159,6 +166,7 @@ final class GuestDesktopEngine {
         guard !stopped else { return }
         stopped = true; generation += 1; clearSnapshot(); lastCapture = nil
         if let inputMonitor { NSEvent.removeMonitor(inputMonitor); self.inputMonitor = nil }
+        if let localInputMonitor { NSEvent.removeMonitor(localInputMonitor); self.localInputMonitor = nil }
         authority.stopped(reason: "local_control_or_session_ended")
     }
 
@@ -170,7 +178,7 @@ final class GuestDesktopEngine {
     }
     private func check(_ command: GuestDesktopCommand, epoch: Int) throws {
         let now = Date(), monotonic = ContinuousClock.now
-        guard !stopped, epoch == generation, inputMonitor != nil, AXIsProcessTrusted(),
+        guard !stopped, epoch == generation, inputMonitor != nil, localInputMonitor != nil, AXIsProcessTrusted(),
               now >= lastWall, monotonic >= lastMonotonic,
               commandDeadline.map({ monotonic < $0 }) ?? true,
               command.expiresAtMs > Int64(now.timeIntervalSince1970 * 1000),

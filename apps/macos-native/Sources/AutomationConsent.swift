@@ -111,3 +111,20 @@ extension ProtectedWire {
         }
     }
 }
+
+struct NativeAutomationConsentControls: View {
+    @EnvironmentObject var model: JosiModel
+    @ObservedObject var desktop: NativeWorkspaceController
+    @ObservedObject var guest: NativeGuestConnection
+    var body: some View {
+        if desktop.localConsent != .null {
+            Text("Desktop approval is active. Automated input is awaiting the command connection.")
+                .font(.caption).foregroundStyle(.secondary)
+        } else if guest.paired && guest.supportsExecution {
+            Button("Approve This Desktop for Automation…") { model.run { try await desktop.approveAutomation() } }
+                .disabled(model.busy || desktop.state != "running")
+        } else if guest.paired {
+            Text("Update Josi Companion from this app’s support disk before approving automation.").font(.caption)
+        }
+    }
+}

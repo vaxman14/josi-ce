@@ -3,19 +3,22 @@ import SwiftUI
 import Virtualization
 import Darwin
 
-/// Readiness/consent connection on this exact VZ device. It cannot dispatch
-/// input, export observations, resolve a secret or register an agent runtime.
+/// Paired connection on this exact VZ device. The single-command path needs
+/// protected local participation and an injected current server authorizer.
+/// It cannot export observation contents or register an agent runtime.
 @MainActor final class NativeGuestConnection: NSObject, ObservableObject, @preconcurrency VZVirtioSocketListenerDelegate {
     @Published private(set) var state = "Waiting for the companion inside the desktop."
     @Published private(set) var paired = false
     @Published private(set) var accessibility = false
     @Published private(set) var screenCapture = false
+    @Published private(set) var supportsExecution = false
     @Published private(set) var applicationCandidate: Wire = .null
     @Published private(set) var applicationReadiness = ""
     private let device: VZVirtioSocketDevice
     private let context: [String: String]
     private let current: @MainActor () throws -> Int
     private let resolveApplication: @MainActor (Wire) async throws -> Wire
+    private let consentProjection: @MainActor () throws -> Wire
     private let listener = VZVirtioSocketListener()
     private var connection: VZVirtioSocketConnection?
     private var wire: GuestLinkWire?
@@ -28,10 +31,16 @@ import Darwin
     private var applicationTask: Task<Void, Never>?
     private var applicationPin: Wire = .null
     private var pairedBinding: Wire = .null
+    private var sentConsent: Wire = .null
+    private var execution: GuestPendingExecution?
+    private var executionTimeout: Task<Void, Never>?
+    private var usedReservations = Set<String>()
 
     init(device: VZVirtioSocketDevice, context: [String: String], current: @escaping @MainActor () throws -> Int,
-         resolveApplication: @escaping @MainActor (Wire) async throws -> Wire) {
+         resolveApplication: @escaping @MainActor (Wire) async throws -> Wire,
+         consentProjection: @escaping @MainActor () throws -> Wire) {
         self.device = device; self.context = context; self.current = current; self.resolveApplication = resolveApplication
+        self.consentProjection = consentProjection
         super.init()
         listener.delegate = self
         device.setSocketListener(listener, forPort: GuestLinkWire.port)
@@ -109,15 +118,24 @@ import Darwin
                 let until = try current()
                 let pin = currentApplicationPin(until: until)
                 let encoded = pin == .null ? "" : String(decoding: try JSONEncoder().encode(pin), as: UTF8.self)
-                try await link.send(["kind": "pulse", "leaseUntilMs": String(until), "applicationPin": encoded])
+                let consent = try consentProjection()
+                let consentJSON = consent == .null ? "" : String(decoding: try JSONEncoder().encode(consent), as: UTF8.self)
+                var pulse = ["kind": "pulse", "leaseUntilMs": String(until), "applicationPin": encoded]
+                if supportsExecution { pulse["consent"] = consentJSON }
+                else if consent != .null { throw GuestLinkError.invalid }
+                try await link.send(pulse)
+                sentConsent = consent
                 let reply = try await link.receive()
                 _ = try current()
-                guard Set(reply.keys) == ["kind", "accessibility", "screenCapture", "executionEnabled", "applicationCandidate", "applicationReadiness"],
+                let statusKeys: Set<String> = ["kind", "accessibility", "screenCapture", "executionEnabled", "applicationCandidate", "applicationReadiness"]
+                guard (Set(reply.keys) == statusKeys || Set(reply.keys) == statusKeys.union(["executionProtocol"])),
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
+                      reply["executionProtocol"] == nil || reply["executionProtocol"] == "desktop-command.1",
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
                       ["yes", "no"].contains(reply["screenCapture"] ?? ""), let candidate = reply["applicationCandidate"],
                       candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
                 accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
+                supportsExecution = reply["executionProtocol"] == "desktop-command.1"
                 if candidate.isEmpty { applicationCandidate = .null }
                 else {
                     let value = try JSONDecoder().decode(Wire.self, from: Data(candidate.utf8))
@@ -148,13 +166,15 @@ import Darwin
                     }
                 }
                 refreshApplicationPin()
+                if let execution { try await runExecution(execution, link: link) }
                 try await Task.sleep(for: .seconds(2))
             }
         } catch {
             if !closed { state = "Companion disconnected or could not be verified. Reconnect inside the desktop." }
         }
-        cancelQuestion(); paired = false; pairedBinding = .null; accessibility = false; screenCapture = false; applicationCandidate = .null
+        cancelQuestion(); paired = false; pairedBinding = .null; accessibility = false; screenCapture = false; supportsExecution = false; applicationCandidate = .null
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
+        cancelExecution(); sentConsent = .null
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
     }
     private func currentApplicationPin(until: Int) -> Wire {
@@ -216,13 +236,128 @@ import Darwin
         guard !closed, paired, pairedBinding != .null else { throw GuestLinkError.closed }
         return pairedBinding
     }
+    /// Internal server-bridge entry only. No renderer, tool or arbitrary JSON
+    /// endpoint may supply the authorizer. There is deliberately no default.
+    func execute(_ packet: Wire, authorize: @escaping @MainActor (Wire) async throws -> Wire) async throws -> Wire {
+        _ = try current()
+        guard paired, supportsExecution, !closed, execution == nil, let link = wire,
+              ProtectedWire.exact(packet, ["reservationId", "command", "application"]),
+              ProtectedWire.uuid(packet["reservationId"]), usedReservations.count < 4096,
+              !usedReservations.contains(packet["reservationId"].text) else { throw GuestLinkError.unavailable }
+        let consent = try consentProjection()
+        guard consent != .null else { throw GuestLinkError.unavailable }
+        usedReservations.insert(packet["reservationId"].text)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let request = GuestPendingExecution(packet: packet, consent: consent, authorize: authorize, continuation: continuation)
+                execution = request
+                executionTimeout = Task { [weak self] in
+                    let now = Int(Date().timeIntervalSince1970 * 1000)
+                    try? await Task.sleep(for: .milliseconds(max(1, min(10_000, packet["command"]["expiresAtMs"].integer - now))))
+                    guard !Task.isCancelled, let self, self.execution === request else { return }
+                    self.cancelExecution(); link.interrupt()
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancelExecution(); link.interrupt() }
+        }
+    }
+    func revokeAutomation() {
+        if sentConsent != .null || execution != nil { wire?.interrupt() }
+        cancelExecution(); sentConsent = .null
+    }
+    private func cancelExecution() {
+        executionTimeout?.cancel(); executionTimeout = nil
+        let request = execution; execution = nil
+        request?.continuation.resume(throwing: GuestLinkError.closed)
+    }
+    private func requireExecution(_ request: GuestPendingExecution) throws {
+        let until = try current(), consent = try consentProjection(), c = request.packet["command"]
+        guard !closed, paired, execution === request, consent != .null, sentConsent != .null,
+              ["identity", "authority", "guestBootId", "guestChannelId", "generation", "expiresAtMs"]
+                .allSatisfy({ consent[$0] == request.consent[$0] && consent[$0] == sentConsent[$0] }),
+              c["workspaceId"] == identity["workspaceId"], c["generation"] == consent["generation"],
+              ProtectedWire.uuid(c["id"]), ProtectedWire.uuid(c["taskId"]), ProtectedWire.uuid(c["sessionId"]),
+              ProtectedWire.integer(c["expiresAtMs"]), c["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
+              c["expiresAtMs"].integer <= until, c["expiresAtMs"].integer <= consent["leaseUntilMs"].integer,
+              ["observe", "press", "focus", "click"].contains(c["operation"].text),
+              currentApplicationPin(until: until)["projection"]["application"] == request.packet["application"],
+              c["appId"] == request.packet["application"]["applicationId"],
+              c["installationRevision"] == request.packet["application"]["installationRevision"]
+        else { throw GuestLinkError.expired }
+    }
+    private func runExecution(_ request: GuestPendingExecution, link: GuestLinkWire) async throws {
+        try requireExecution(request)
+        let c = request.packet["command"], reservation = request.packet["reservationId"].text
+        let rawCommand = String(decoding: try JSONEncoder().encode(c), as: UTF8.self)
+        let rawApplication = String(decoding: try JSONEncoder().encode(request.packet["application"]), as: UTF8.self)
+        try await link.send(["kind": "execute", "reservationId": reservation, "command": rawCommand, "application": rawApplication,
+                             "consentDigest": request.consent["authority"]["consent"]["digest"].text])
+        var response = try await link.receive()
+        var authorized = false
+        if response["kind"] == "authorize" {
+            try requireExecution(request)
+            guard Set(response.keys) == ["kind", "commandId", "reservationId", "commandDigest", "target", "targetDigest", "consentDigest"],
+                  response["commandId"] == c["id"].text, response["reservationId"] == reservation,
+                  response["commandDigest"] == ProtectedWire.digest(Data(rawCommand.utf8)),
+                  response["consentDigest"] == request.consent["authority"]["consent"]["digest"].text,
+                  let targetJSON = response["target"], targetJSON.utf8.count <= 4096,
+                  response["targetDigest"] == ProtectedWire.digest(Data(targetJSON.utf8)) else { throw GuestLinkError.invalid }
+            let target = try JSONDecoder().decode(Wire.self, from: Data(targetJSON.utf8))
+            guard ProtectedWire.exact(target, ["processId", "launchedAt", "bundleId", "executablePath", "windowTitle", "bounds"]),
+                  ProtectedWire.integer(target["processId"], positive: true), target["windowTitle"] == .string(""),
+                  target["bundleId"] == request.packet["application"]["bundleId"],
+                  target["executablePath"].text.hasPrefix(request.packet["application"]["bundlePath"].text + "/")
+            else { throw GuestLinkError.invalid }
+            let query = Wire.object(response.mapValues(Wire.string))
+            let permit = try await request.authorize(query)
+            try requireExecution(request)
+            guard ProtectedWire.exact(permit, ["kind", "commandId", "reservationId", "commandDigest", "targetDigest", "consentDigest", "expiresAtMs"]),
+                  permit["kind"] == .string("permit"), ["commandId", "reservationId", "commandDigest", "targetDigest", "consentDigest"]
+                    .allSatisfy({ permit[$0] == query[$0] }),
+                  case .string(let rawUntil) = permit["expiresAtMs"], let until = Int(rawUntil), String(until) == rawUntil,
+                  until > Int(Date().timeIntervalSince1970 * 1000), until == c["expiresAtMs"].integer,
+                  case .object(let fields) = permit else { throw GuestLinkError.invalid }
+            try await link.send(fields.mapValues(\.text))
+            authorized = true
+            response = try await link.receive()
+        }
+        guard Set(response.keys) == ["kind", "commandId", "reservationId", "outcome", "verificationRequired", "observationId", "windowId"],
+              response["kind"] == "result", response["commandId"] == c["id"].text, response["reservationId"] == reservation,
+              response["verificationRequired"] == "yes", ["observed", "inputIssued", "denied", "uncertain"].contains(response["outcome"] ?? "")
+        else { throw GuestLinkError.invalid }
+        if ["observed", "inputIssued"].contains(response["outcome"] ?? ""), !authorized { throw GuestLinkError.invalid }
+        if response["outcome"] == "observed" {
+            guard c["operation"] == .string("observe"), response["observationId"] == c["resultObservationId"].text,
+                  ProtectedWire.uuid(.string(response["windowId"] ?? "")) else { throw GuestLinkError.invalid }
+        } else {
+            guard response["observationId"] == "", response["windowId"] == "",
+                  response["outcome"] != "inputIssued" || c["operation"] != .string("observe") else { throw GuestLinkError.invalid }
+        }
+        try requireExecution(request)
+        execution = nil; executionTimeout?.cancel(); executionTimeout = nil
+        request.continuation.resume(returning: .object(response.mapValues(Wire.string)))
+        if response["outcome"] == "uncertain" { revokeAutomation(); link.interrupt() }
+    }
     func close() {
         guard !closed else { return }
         closed = true; cancelQuestion(); wire?.interrupt(); connection?.close()
+        cancelExecution(); sentConsent = .null
         device.removeSocketListener(forPort: GuestLinkWire.port)
         task?.cancel(); task = nil; wire = nil; connection = nil
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
-        paired = false; pairedBinding = .null; applicationCandidate = .null; state = "Companion disconnected."
+        paired = false; pairedBinding = .null; supportsExecution = false; applicationCandidate = .null; state = "Companion disconnected."
+    }
+}
+
+@MainActor private final class GuestPendingExecution {
+    let packet: Wire
+    let consent: Wire
+    let authorize: @MainActor (Wire) async throws -> Wire
+    let continuation: CheckedContinuation<Wire, Error>
+    init(packet: Wire, consent: Wire, authorize: @escaping @MainActor (Wire) async throws -> Wire,
+         continuation: CheckedContinuation<Wire, Error>) {
+        self.packet = packet; self.consent = consent; self.authorize = authorize; self.continuation = continuation
     }
 }
 

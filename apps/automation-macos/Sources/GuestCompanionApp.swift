@@ -87,12 +87,13 @@ enum GuestEnvironment {
     private var expires = 0
     private var hostBoot = ""
     private var candidate = ""
+    private var execution: GuestExecutionAuthority?
 
     func start() {
         guard !working else { return }
         working = true; connected = false; message = "Connecting to this desktop’s Josi app…"
         let own = UUID(); runID = own
-        task = Task {
+        task = Task { [self] in
             do {
                 try GuestEnvironment.signedApplication()
                 let environment = try GuestEnvironment.identity(); hostBoot = environment.host
@@ -132,26 +133,47 @@ enum GuestEnvironment {
                 let accepted = try await link.receive(seconds: max(1, min(60, (end - Int(Date().timeIntervalSince1970 * 1000)) / 1000)))
                 guard accepted == ["kind": "accept", "code": comparison] else { throw GuestLinkError.invalid }
                 connected = true; comparison = ""
+                execution = GuestExecutionAuthority(link: link, host: host, guestBoot: environment.guest, channel: hello["channel"]!,
+                    current: { [weak self] in
+                        guard let self, self.runID == own else { throw GuestLinkError.closed }
+                        try self.current()
+                    }, stopped: { [weak self] in
+                        guard let self, self.runID == own else { return }
+                        self.stop()
+                        self.message = "Automation stopped. Reconnect and approve this desktop again to continue."
+                    })
                 message = "Companion connected. Computer and browser automation are not enabled."
                 while !Task.isCancelled {
                     let pulse = try await link.receive(seconds: 5)
-                    guard runID == own, Set(pulse.keys) == ["kind", "leaseUntilMs", "applicationPin"], pulse["kind"] == "pulse",
+                    if pulse["kind"] == "execute" {
+                        try current()
+                        guard runID == own, let execution else { throw GuestLinkError.closed }
+                        let result = try await execution.execute(pulse)
+                        try current()
+                        try await link.send(result)
+                        continue
+                    }
+                    guard runID == own, (Set(pulse.keys) == ["kind", "leaseUntilMs", "applicationPin"]
+                        || Set(pulse.keys) == ["kind", "leaseUntilMs", "applicationPin", "consent"]), pulse["kind"] == "pulse",
                           let raw = pulse["leaseUntilMs"], let until = Int(raw), String(until) == raw else { throw GuestLinkError.invalid }
                     let now = Int(Date().timeIntervalSince1970 * 1000)
                     guard until > now, until - now <= 10_000 else { throw GuestLinkError.expired }
                     expires = until; deadline = .now.advanced(by: .milliseconds(until - now))
+                    try current()
+                    try execution?.adopt(pulse["consent"] ?? "", leaseUntil: until)
                     try current()
                     let readiness = try GuestApplicationReadiness.inspect(pulse["applicationPin"] ?? "", selection: candidate,
                         identity: host, leaseUntil: until)
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
-                        "applicationCandidate": candidate, "applicationReadiness": readiness])
+                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.1"])
                 }
             } catch {
                 if runID == own { message = "Connection ended or could not be verified. Install the signed companion in this guest’s Applications folder, then connect from the Josi app." }
             }
             if runID == own {
+                let oldExecution = execution; execution = nil; oldExecution?.stop()
                 wire?.interrupt(); wire = nil; timeout?.cancel(); timeout = nil
                 connected = false; working = false; pairing = false; comparison = ""; task = nil
                 candidate = ""; selectedApplication = ""
@@ -170,6 +192,7 @@ enum GuestEnvironment {
     }
     func stop() {
         runID = UUID(); answer(false); wire?.interrupt(); wire = nil; task?.cancel(); task = nil; timeout?.cancel(); timeout = nil
+        let oldExecution = execution; execution = nil; oldExecution?.stop()
         working = false; connected = false; pairing = false; comparison = ""; message = "Companion disconnected."
         candidate = ""; selectedApplication = ""
     }

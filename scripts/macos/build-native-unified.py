@@ -216,6 +216,7 @@ def build(args):
         '-o', companion / 'Contents/MacOS/JosiCompanion',
         REPO / 'apps/automation-macos/Sources/GuestCompanionApp.swift',
         REPO / 'apps/automation-macos/Sources/GuestDesktopEngine.swift',
+        REPO / 'apps/automation-macos/Sources/GuestExecutionAuthority.swift',
         REPO / 'apps/automation-macos/Sources/GuestApplicationReadiness.swift',
         REPO / 'apps/automation-macos/Sources/GuestLinkWire.swift'])
     (companion / 'Contents/Info.plist').write_bytes(plistlib.dumps({
