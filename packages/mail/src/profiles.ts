@@ -12,6 +12,30 @@ export interface SmtpProfileInput {
   copyFromSystem?: boolean; host?: string | null; port?: number | null; security?: string | null;
   username?: string | null; password?: unknown; clearPassword?: boolean; fromName: string | null; fromAddress: string;
 }
+export type SmtpProfileVersions = { system: string | null; communications: string | null };
+function requireVersions(all: Row[], expected?: SmtpProfileVersions) {
+  if (expected === undefined) return; // Existing setup callers have their own step fence.
+  if (!expected || Object.keys(expected).sort().join(',') !== 'communications,system'
+    || (['system', 'communications'] as const).some(kind => expected[kind] !== (all.find(row => row.kind === kind)?.updated_at ?? null))) {
+    throw new SmtpConfigurationError(409, 'Email settings changed. Reload and review the current profiles before saving.');
+  }
+}
+/** Metadata only. In particular neither credentials nor encrypted pointers
+ * are returned to the settings client. Readable while the Vault is locked. */
+export async function listSmtpProfiles(db: Db) {
+  return transaction(db, async tx => {
+    const all = await rows(tx), versions: SmtpProfileVersions = {
+      system: all.find(row => row.kind === 'system')?.updated_at ?? null,
+      communications: all.find(row => row.kind === 'communications')?.updated_at ?? null,
+    };
+    return { versions, profiles: all.map(row => ({
+      kind: row.kind, copyFromSystem: row.copy_from_system, host: row.host, port: row.port, security: row.security,
+      username: row.username, passwordSet: !!row.password_enc, fromName: row.from_name, fromAddress: row.from_address,
+      configurationVersion: row.kind === 'system' ? row.updated_at
+        : `${row.updated_at}/${row.copy_from_system ? versions.system ?? '' : row.updated_at}`,
+    })) };
+  });
+}
 export class NoProfileError extends Error {}
 export class SmtpConfigurationError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -83,10 +107,11 @@ export async function loadProfile(db: Db, key: MasterKey, kind: Kind): Promise<S
 /** Both profiles and their Vault changes either commit together or stay as they
  * were. Actual test mail is sent afterward, outside the transaction. */
 export async function saveSmtpProfiles(db: Db, key: MasterKey | null, args: {
-  system: SmtpProfileInput; communications: SmtpProfileInput; actorUserId: string;
+  system: SmtpProfileInput; communications: SmtpProfileInput; actorUserId: string; expected?: SmtpProfileVersions;
 }): Promise<void> {
   await transaction(db, async tx => {
     const all = await rows(tx);
+    requireVersions(all, args.expected);
     for (const kind of ['system', 'communications'] as const) {
       const input = args[kind], old = all.find(row => row.kind === kind);
       const copy = kind === 'communications' && input.copyFromSystem === true;
@@ -131,9 +156,10 @@ export async function saveSmtpProfiles(db: Db, key: MasterKey | null, args: {
 
 /** Removing the system profile also removes a communications profile that
  * borrows it, while preserving any independently configured communications. */
-export async function removeSmtpProfile(db: Db, key: MasterKey | null, kind: Kind, actorUserId: string): Promise<void> {
+export async function removeSmtpProfile(db: Db, key: MasterKey | null, kind: Kind, actorUserId: string, expected?: SmtpProfileVersions): Promise<void> {
   await transaction(db, async tx => {
     const all = await rows(tx);
+    requireVersions(all, expected);
     for (const row of all.filter(row => row.kind === kind || (kind === 'system' && row.copy_from_system))) {
       const owner = await ownerFor(tx, row, key, actorUserId);
       await deleteVaultSlot(tx, { ownerUserId: owner, service: 'smtp', slot: row.kind, actorUserId });

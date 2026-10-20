@@ -1,5 +1,6 @@
 import { VaultError, VaultLockedError } from '@josi-ce/core';
 import { emailTemplateRoutes } from './emailTemplateRoutes.js';
+import { smtpSettingsRoutes } from './smtpSettingsRoutes.js';
 // Operational email over HTTP.
 //
 // The admin half of this file is the one to read carefully. M38 says an
@@ -356,6 +357,7 @@ export function adminMailRoutes(ctx: MailRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
   r.use(requireSuperAdmin);
+  r.use('/smtp', smtpSettingsRoutes(ctx));
 
   r.get(
     '/',

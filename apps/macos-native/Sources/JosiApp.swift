@@ -264,6 +264,7 @@ struct WorkspaceView: View {
                         nav("Messaging Apps", icon: "paperplane", section: "channels")
                         if model.isAdministrator { nav("Models", icon: "brain", section: "models") }
                         if model.isAdministrator { nav("People", icon: "person.2", section: "people") }
+                        if model.isAdministrator { nav("Email Delivery", icon: "envelope", section: "mail-settings") }
                         if model.isAdministrator { nav("Backups", icon: "externaldrive.badge.timemachine", section: "backups") }
                         nav("Server", icon: "externaldrive.connected.to.line.below", section: "server")
                     }
@@ -303,6 +304,7 @@ struct WorkspaceView: View {
             case "backups": if model.isAdministrator { NativeBackupsView() }
             case "models": if model.isAdministrator { NativeModelsView() }
             case "people": if model.isAdministrator { NativePeopleView() }
+            case "mail-settings": if model.isAdministrator { NativeMailSettingsView() }
             default: ChatView()
             }
         }
@@ -312,7 +314,7 @@ struct WorkspaceView: View {
             model.section = section
             if section == "automation" { model.run { try await model.loadAutomation() } }
             else if section == "server" { model.refreshLocal() }
-            else if ["vault", "backups", "models", "account", "channels", "memory", "people"].contains(section) { /* These views load their own scoped status. */ }
+            else if ["vault", "backups", "models", "account", "channels", "memory", "people", "mail-settings"].contains(section) { /* These views load their own scoped status. */ }
             else { model.run { try await model.reloadWorkspace() } }
         } label: { Label(title, systemImage: icon).foregroundStyle(model.section == section ? Color.accentColor : Color.primary) }
             .buttonStyle(.plain).disabled(model.busy)

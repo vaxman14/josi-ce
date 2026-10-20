@@ -179,3 +179,11 @@ All 17,624 extracted payload entries matched staged bytes/modes/links; extracted
 ### Model-destination permission setup — later source
 
 The native Automation permissions page now selects an activated configured model and an owned separate workspace for exact protected registration in the Vault. The grant editor can add `model.transmit` rules for these registered configurations, initially set to Ask, with the existing task, time, action and byte controls. Full details are in [P4 permissions](P4_PERMISSIONS.md). Source compilation passed; this addition is newer than `native.11`.
+
+### Native email administration — later source
+
+Email Delivery now configures the system and communications SMTP profiles after setup, without reopening the installation wizard. The administrator can retain, replace or explicitly clear a Vault password, borrow the system connection for communications, and remove a profile with its dependency scope shown. Both saved profile versions are compared inside the existing mail/Vault transaction before changes, so a stale form cannot overwrite a newer configuration.
+
+Saved metadata never includes a credential or encrypted credential reference. Test delivery is an explicit single fixed message to one entered address; saving/loading does not send mail. A failed or lost response is not automatically retried, and an accepted message is distinguished from confirmed inbox delivery. Recent operational delivery status uses the existing metadata-only administrator endpoint.
+
+The full Swift 6 app and root TypeScript build passed. No SMTP credential, profile, account, Vault record or email was changed or sent during implementation. Functional acceptance remains deferred; this source is newer than `native.11`.

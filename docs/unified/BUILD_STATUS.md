@@ -25,3 +25,5 @@ The first VM installation was cancelled at the free-space reserve. After the own
 Commercial macOS VM permission is a separate unresolved distribution constraint. The user is pursuing it. Continue development tests and independent implementation; do not silently switch to the personal desktop or drop Safari/native Mac requirements.
 
 Ruflo/tool-search discovery found no callable Ruflo tools in this session. This committed record and phase evidence provide continuity; no Ruflo operation or swarm is claimed.
+
+Subsequent P5 source adds native Email Delivery administration and post-setup SMTP routes, including transactional saved-version checks, Vault-only credentials, explicit test sending and metadata-only delivery status. Root TypeScript and Swift 6 compilation passed. No actual message or configuration change was performed; these additions and model-destination registration are not in the `native.11` artifact.
