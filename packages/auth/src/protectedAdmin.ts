@@ -6,9 +6,9 @@ import { verifyMfaFactorInTransaction } from './mfa.js';
 export class ProtectedAdminError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
-export type ProtectedAdminPurpose = 'cardinal.draft.save' | 'cardinal.draft.test' | 'cardinal.activate' | 'cardinal.retire';
+export type ProtectedAdminPurpose = 'cardinal.draft.save' | 'cardinal.draft.test' | 'cardinal.activate' | 'cardinal.retire' | 'automation.policy.replace';
 export interface ProtectedAdminBinding { purpose: ProtectedAdminPurpose; requestDigest: string }
-const purposes = new Set<ProtectedAdminPurpose>(['cardinal.draft.save', 'cardinal.draft.test', 'cardinal.activate', 'cardinal.retire']);
+const purposes = new Set<ProtectedAdminPurpose>(['cardinal.draft.save', 'cardinal.draft.test', 'cardinal.activate', 'cardinal.retire', 'automation.policy.replace']);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 interface AccountSecurity { password_hash: string | null; totp_secret_enc: string | null; mfa_enabled_at: string | null }
@@ -57,7 +57,7 @@ export async function reauthenticateProtectedAdmin(db: Db, key: MasterKey | null
   const bindingHash = mac('binding', { userId, sessionId, ...binding });
   const issued = await db.transaction(async tx => {
     const [vault] = await tx.query<{ initialized_at: string | null; locked: boolean; authority_epoch: string | number }>('select initialized_at,locked,authority_epoch from vault_state where id=true for share');
-    if (!vault?.initialized_at || vault.locked || !key) throw new VaultLockedError('Initialize and unlock the Vault before changing Cardinal Rules.');
+    if (!vault?.initialized_at || vault.locked || !key) throw new VaultLockedError('Initialize and unlock the Vault before changing protected rules or permissions.');
     // Upgrade to the account lock before MFA validation so recovery-code use
     // and an authenticator migration share this exact transaction.
     await tx.query('select id from users where id=$1 for update', [userId]);
@@ -85,7 +85,7 @@ export async function reauthenticateProtectedAdmin(db: Db, key: MasterKey | null
     async check(tx: Db, check: ProtectedAdminBinding & { actorUserId: string; consume: boolean }): Promise<void> {
       if (check.actorUserId !== userId || !validBinding(check) || check.purpose !== binding.purpose || check.requestDigest !== binding.requestDigest) throw refuse();
       const [vault] = await tx.query<{ initialized_at: string | null; locked: boolean; authority_epoch: string | number }>('select initialized_at,locked,authority_epoch from vault_state where id=true for share');
-      if (!vault?.initialized_at || vault.locked) throw new VaultLockedError('Initialize and unlock the Vault before changing Cardinal Rules.');
+      if (!vault?.initialized_at || vault.locked) throw new VaultLockedError('Initialize and unlock the Vault before changing protected rules or permissions.');
       const current = await currentAccount(tx, userId, sessionId);
       const [receipt] = await tx.query<{ id: string }>(`select id from protected_admin_reauth
         where token_hash=$1 and binding_hash=$2 and security_hash=$3 and user_id=$4 and session_id=$5
