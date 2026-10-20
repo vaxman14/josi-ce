@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useWorkGoals, type WorkGoalSnapshot } from '@/lib/workGoals';
+import { WorkOutcome } from './WorkOutcome';
 
 const labels: Record<string, string> = { accepted: 'Accepted', planning: 'Planning', working: 'In progress',
   waiting: 'Waiting', needs_instruction: 'Needs your input', paused: 'Paused', verifying: 'Checking the result',
@@ -51,6 +52,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     </ol>
     {compact && goal.steps.length > 5 ? <button className="mt-2 min-h-10 text-xs underline" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show less' : `Show all ${goal.totalSteps} steps`}</button> : null}
     <p className="mt-3 text-sm text-muted-foreground">{goal.activity}</p>
+    {goal.planNeedsReview && !ended ? <p className="mt-2 text-sm text-muted-foreground">The requested outcome changed. New actions wait for a plan reviewed against the current criteria.</p> : null}
     {!compact && goal.automaticWork && !ended ? <p className="mt-1 text-xs text-muted-foreground">
       {goal.automaticWork.segmentsSinceVerifiedProgress}/{goal.automaticWork.segmentLimit} automatic work segments since the last verified step.
       {goal.automaticWork.nextCheckAt && ['planning', 'working'].includes(goal.state) ? ' Next continuation is scheduled.' : ''}
@@ -60,6 +62,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     <p className="mt-2 text-xs text-muted-foreground">{stale ? 'No recent update · ' : ''}Last saved {new Date(goal.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</p>
     {!compact ? <details className="mt-3 text-sm"><summary className="cursor-pointer text-muted-foreground">Outcome and saved work</summary>
       <p className="mt-3 font-medium">Finished means</p><ul className="mt-1 list-disc space-y-1 pl-5">{goal.criteria.map((criterion, index) => <li key={index}>{criterion}</li>)}</ul>
+      {goal.outcomeRevision ? <WorkOutcome goal={goal} refresh={refresh} /> : null}
       {goal.ownerCheckpoint ? <div className="mt-3 rounded-lg border border-border p-3">
         <p className="font-medium">Your saved correction</p>
         <p className="mt-1 text-xs text-muted-foreground">Josi cannot replace this with its own notes. {goal.ownerCheckpointAt ? `Saved ${new Date(goal.ownerCheckpointAt).toLocaleString()}.` : ''}</p>
@@ -178,7 +181,7 @@ function WorkChannelProgress({ goalId }: { goalId: string }) {
     : 'The Telegram summary is waiting for its next update.';
   return <p className="mt-3 text-xs text-muted-foreground">{offline ? 'Channel status could not refresh. ' : ''}{message}</p>;
 }
-interface SavedPlan { plan_revision: number; goal_revision: number; steps: WorkGoalSnapshot['steps']; reason: string; created_at: string }
+interface SavedPlan { plan_revision: number; goal_revision: number; outcome_revision?: number; steps: WorkGoalSnapshot['steps']; reason: string; created_at: string }
 function WorkPlans({ goal }: { goal: WorkGoalSnapshot }) {
   const [open, setOpen] = useState(false), [plans, setPlans] = useState<SavedPlan[]>([]);
   const [before, setBefore] = useState<number | undefined>();
@@ -199,7 +202,7 @@ function WorkPlans({ goal }: { goal: WorkGoalSnapshot }) {
       {error ? <p role="alert" className="text-destructive">{error}</p> : null}
       {plans.map(plan => <details key={plan.plan_revision} className="rounded-lg border border-border p-3">
         <summary className="cursor-pointer">Version {plan.plan_revision} · {plan.reason}</summary>
-        <p className="mt-2 text-xs text-muted-foreground">{new Date(plan.created_at).toLocaleString()}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{new Date(plan.created_at).toLocaleString()}{plan.outcome_revision ? ` · Outcome version ${plan.outcome_revision}` : ''}</p>
         <ol className="mt-2 list-decimal space-y-2 pl-5">{plan.steps.map(step => <li key={step.id} className="break-words">
           {step.title}<span className="mt-1 block text-xs text-muted-foreground">{step.dependsOn?.length
             ? `After: ${step.dependsOn.map(id => plan.steps.find(value => value.id === id)?.title ?? 'Unavailable dependency').join(' · ')}`

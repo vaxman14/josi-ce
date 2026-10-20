@@ -34,6 +34,18 @@ An unsettled effect can now receive a bounded inspection segment. Existing read 
 
 The larger task manager displays dependencies, exact blockers, scheduled rechecks and paginated plan history, including why each version changed. Chat cards show the same step states. History is owner-scoped work data, not a second memory/rule authority.
 
+## Owner changes to the requested outcome
+
+Migration 0088 retains versions of the requested outcome and completion criteria, separately from plan versions. The task manager's **Change requested outcome** form requires an explicit explanation and a choice to continue or remain paused. The saved goal revision prevents a stale form overwriting newer work; the form retains the edit and requires a deliberate review before rebasing it. Existing records are labelled as retained history, not retroactively attributed to an explicit owner edit. Ended goals cannot be rewritten.
+
+Saving invalidates queued automatic segments and current work-memory projections, retains every original step, task, verified receipt and action-budget record, and records the change in the original conversation. It does not undo an operation already handed to an executor/provider. A new outcome version makes the old plan unreviewed. The continuation worker can schedule a planning segment even when all previous steps already have receipts; it cannot automatically confirm the new outcome from those receipts.
+
+`revise_goal_plan` must name the exact current outcome version and retain the original step/effect identities. Only that transaction binds the plan to the changed outcome. Until then, the shared in-process/subscription tool wrapper holds new mutations in the conversation (except plan revision and a question checkpoint); the native automation runtime also checks before consequential dispatch. Read-only inspection remains available where its existing adapter permits it. Legacy tools without an unambiguous goal binding are held conservatively for the conversation, rather than guessed to belong to different work.
+
+This is an explicit version binding, not proof that a model's proposed plan semantically covers every criterion. Existing dependency, receipt and owner outcome-confirmation checks remain. The plan cannot retire an obsolete original step yet; the UI explains that replacing the work entirely requires cancelling and starting a new goal. This checkpoint changes no direct human approval route, resumes no old provider effect, and adds no permission. Retirement of obsolete steps with their durable effect history still needs its own owner flow.
+
+Outcome history is owner scoped, private/no-store and paginated. Plan history shows which outcome version it addresses. Older clients can ignore the additional fields; the new editor is hidden when an older server does not advertise an outcome revision.
+
 ## Memory and visibility
 
 Current-work context is appended after personalization assembly, fixing the prior path that accidentally replaced it. Both provider modes now receive the original inbound message ID, so subscription tools can create/checkpoint the same owned work as direct model tools. Automatic segments do not repeatedly learn personal facts from the original request.
@@ -42,7 +54,7 @@ Background replies and questions are ordinary saved messages in the original cha
 
 ## Remaining integration and acceptance
 
-The current verifier still covers settled connected-action task receipts and final owner confirmation. Removing/replacing an obsolete step or changing outcome criteria needs a future explicit owner scope-change flow; the model cannot silently do either. More precise destination reconciliation/backoff, generic artifact/read-only outcome verification, configurable per-goal resource budgets, older-chat pagination, channel delivery and browser/desktop action adapters remain open. Background work currently requires a live owner session. Remote clients keep the existing endpoints and may ignore the additional work projection fields.
+The current verifier still covers settled connected-action task receipts and final owner confirmation. Removing/replacing an obsolete step needs a further explicit owner flow; the model cannot silently erase it. More precise destination reconciliation/backoff, generic artifact/read-only outcome verification, configurable per-goal resource budgets, older-chat pagination and production browser/desktop adapters remain open. Telegram checklist delivery is connected in the separate P11 checkpoint. Background work currently requires a live owner session. Remote clients keep the existing endpoints and may ignore the additional work projection fields.
 
 No live database migration, model call, provider action or automatic goal was run for this checkpoint. Type/build checks do not establish functional, concurrency, cancellation, crash-recovery, provider-idempotency or migration acceptance; those checks belong to the later integrated pass.
 

@@ -7,7 +7,7 @@ import { cardinalContentDigest } from './cardinalRules.js';
 import { isAutomationIdentity, type AutomationPermissionEffect } from './automationPermissions.js';
 import { vaultRecords, type VaultRecordReference } from './vault.js';
 import type { AutomationReservationProofPort, AutomationReservationView } from './automationReservations.js';
-import { requireWorkContinuation } from './workContinuation.js';
+import { requireWorkContinuation, requireReviewedWorkOutcome } from './workContinuation.js';
 import { requireCurrentWorkMemory } from './workMemoryContext.js';
 import { refuseMemorySecret } from './memorySafety.js';
 import { workDependenciesSatisfied, type WorkGoalStep } from './workPlan.js';
@@ -162,6 +162,7 @@ export class AutomationRuntime {
   private async current(context: AutomationExecutionContext, taskId: string, inspection = false) {
     if (![context.ownerUserId, context.threadId, context.turnId, context.leaseToken, taskId].every(uuid)) throw new AutomationRuntimeError('Automation requires the original owned task and a current durable turn.');
     await requireCurrentWorkMemory(this.db, context.ownerUserId, context.workMemoryVersion);
+    if (!inspection) await requireReviewedWorkOutcome(this.db, context.ownerUserId, context.threadId);
     const goalId = await requireWorkContinuation(this.db, { ownerUserId: context.ownerUserId, threadId: context.threadId,
       durableTurnId: context.turnId, durableLeaseToken: context.leaseToken });
     const [active] = await this.db.query(`select t.id from tasks t

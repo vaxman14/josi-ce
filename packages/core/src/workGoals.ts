@@ -25,6 +25,7 @@ interface GoalRow {
   control_generation: number; continuation_ready_at: string | null;
   continuation_segments: number; continuation_verified: number;
   plan_revision: number;
+  outcome_revision: number; planned_outcome_revision: number;
 }
 export interface WorkGoalSnapshot extends GoalProgress {
   threadId: string;
@@ -37,6 +38,8 @@ export interface WorkGoalSnapshot extends GoalProgress {
   createdAt: string;
   updatedAt: string;
   planRevision?: number;
+  outcomeRevision?: number;
+  planNeedsReview?: boolean;
   automaticWork?: { segmentsSinceVerifiedProgress: number; segmentLimit: number; nextCheckAt: string | null };
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -61,6 +64,7 @@ function snapshot(row: GoalRow): WorkGoalSnapshot {
     continuation: row.continuation, checkpoint: row.checkpoint, checkpointPinned: row.checkpoint_pinned,
     ownerCheckpoint: row.owner_checkpoint ?? null, ownerCheckpointAt: row.owner_checkpoint_at ?? null,
     createdAt: row.created_at, updatedAt: row.updated_at, planRevision: row.plan_revision,
+    outcomeRevision: row.outcome_revision, planNeedsReview: row.outcome_revision !== row.planned_outcome_revision,
     automaticWork: { segmentsSinceVerifiedProgress: row.continuation_segments, segmentLimit: WORK_SEGMENT_LIMIT,
       nextCheckAt: row.continuation_ready_at } };
 }
@@ -113,6 +117,9 @@ export async function createWorkGoal(db: Db, args: { ownerUserId: string; thread
     await event(tx, row, 'goal.accepted', row.activity);
     await tx.query(`insert into work_goal_plans(goal_id,owner_user_id,plan_revision,goal_revision,steps,reason)
       values($1,$2,1,$3,$4,'Initial saved plan')`, [row.id, row.owner_user_id, row.revision, json(steps)]);
+    await tx.query(`insert into work_goal_outcomes(goal_id,owner_user_id,outcome_revision,goal_revision,outcome,criteria,reason,source)
+      values($1,$2,1,$3,$4,$5,'Initial outcome recorded from the request','request_plan')`,
+      [row.id, row.owner_user_id, row.revision, outcome, json(criteria)]);
     return snapshot(row);
   });
 }
@@ -120,7 +127,7 @@ export async function createWorkGoal(db: Db, args: { ownerUserId: string; thread
 /** Revise ordering/dependencies or add necessary steps without erasing work,
  * changing the requested outcome or minting replacement effect identities. */
 export async function reviseWorkPlan(db: Db, args: { ownerUserId: string; goalId: string; revision: unknown;
-  steps: unknown; reason: unknown }): Promise<WorkGoalSnapshot> {
+  steps: unknown; reason: unknown; outcomeRevision?: unknown }): Promise<WorkGoalSnapshot> {
   const reason = text(args.reason, 500);
   if (!Array.isArray(args.steps) || !args.steps.length || args.steps.length > 40) throw new WorkGoalError('Use between 1 and 40 plan steps.');
   const input = args.steps.map(value => {
@@ -134,6 +141,10 @@ export async function reviseWorkPlan(db: Db, args: { ownerUserId: string; goalId
   return transaction(db, async tx => {
     const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
     if (row.state === 'paused' || row.state === 'verifying') throw new WorkGoalError('Resume this work with instructions before changing its plan.', 409);
+    const needsReview = row.outcome_revision !== row.planned_outcome_revision;
+    if ((needsReview || args.outcomeRevision !== undefined) && args.outcomeRevision !== row.outcome_revision) {
+      throw new WorkGoalError('Read the current outcome and bind the revised plan to its exact outcome revision.', 409);
+    }
     const names = new Set(input.map(step => step.id));
     if (names.size !== input.length || row.steps.some(step => !names.has(step.id))) throw new WorkGoalError('Keep every existing step and its original identity.');
     const effects = await tx.query<{ step_id: string }>('select step_id from work_goal_effects where goal_id=$1', [row.id]);
@@ -165,14 +176,21 @@ export async function reviseWorkPlan(db: Db, args: { ownerUserId: string; goalId
     row.steps = next; row.plan_revision += 1; row.activity = `Plan updated: ${reason}`;
     const selected = row.continuation?.kind === 'action' ? row.continuation.stepId : null;
     const ready = readyWorkSteps(next), following = ready.find(step => step.id === selected) ?? ready[0];
-    if (row.continuation?.kind === 'action' && following) row.continuation = { kind: 'action', stepId: following.id };
+    if (needsReview) {
+      row.state = following ? 'working' : next.every(step => step.state === 'verified') ? 'verifying' : 'needs_instruction';
+      row.continuation = following ? { kind: 'action', stepId: following.id }
+        : { kind: 'question', questionId: randomUUID(), text: row.state === 'verifying'
+          ? 'The plan was reviewed for your updated outcome. Do the existing results meet every current completion criterion?'
+          : 'The revised plan retains blocked work. Which blocker should Josi address before continuing?' };
+    } else if (row.continuation?.kind === 'action' && following) row.continuation = { kind: 'action', stepId: following.id };
     else if (row.continuation?.kind === 'action' && !following) {
       row.state = 'needs_instruction'; row.continuation = { kind: 'question', questionId: randomUUID(),
         text: 'Every remaining step is blocked or depends on unfinished work. Which blocker should Josi address first?' };
     }
+    await tx.query('update work_goals set planned_outcome_revision=outcome_revision where id=$1', [row.id]);
     const saved = await save(tx, row, 'plan.revised');
-    await tx.query(`insert into work_goal_plans(goal_id,owner_user_id,plan_revision,goal_revision,steps,reason)
-      values($1,$2,$3,$4,$5,$6)`, [row.id, row.owner_user_id, row.plan_revision, saved.revision, json(next), reason]);
+    await tx.query(`insert into work_goal_plans(goal_id,owner_user_id,plan_revision,goal_revision,steps,reason,outcome_revision)
+      values($1,$2,$3,$4,$5,$6,$7)`, [row.id, row.owner_user_id, row.plan_revision, saved.revision, json(next), reason, row.outcome_revision]);
     return saved;
   });
 }
@@ -180,10 +198,59 @@ export async function reviseWorkPlan(db: Db, args: { ownerUserId: string; goalId
 export async function workPlanHistory(db: Db, ownerUserId: string, goalId: string, before?: number) {
   await owned(db, ownerUserId, goalId);
   if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw new WorkGoalError('Invalid plan history cursor.');
-  return db.query<{ plan_revision: number; goal_revision: number; steps: WorkGoalStep[]; reason: string; created_at: string }>(
-    `select plan_revision,goal_revision,steps,reason,created_at from work_goal_plans
+  return db.query<{ plan_revision: number; goal_revision: number; outcome_revision: number; steps: WorkGoalStep[]; reason: string; created_at: string }>(
+    `select plan_revision,goal_revision,outcome_revision,steps,reason,created_at from work_goal_plans
       where goal_id=$1 and owner_user_id=$2 and ($3::integer is null or plan_revision<$3)
       order by plan_revision desc limit 20`, [goalId, ownerUserId, before ?? null]);
+}
+
+/** Explicit owner steering, never a model tool or an automation grant.
+ * Retain all original steps, receipts and budgets; invalidate old continuations
+ * and require a new exact-version plan before another assistant effect. */
+export async function changeWorkOutcome(db: Db, args: { ownerUserId: string; goalId: string; revision: unknown;
+  outcome: unknown; criteria: unknown; reason: unknown; continueWork: boolean }): Promise<WorkGoalSnapshot> {
+  const outcome = text(args.outcome, 500), criteria = strings(args.criteria), reason = text(args.reason);
+  if (!criteria.length || typeof args.continueWork !== 'boolean') throw new WorkGoalError('Record completion criteria and choose whether to continue.');
+  return transaction(db, async tx => {
+    const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
+    if (row.outcome === outcome && JSON.stringify(row.criteria) === JSON.stringify(criteria)) {
+      throw new WorkGoalError('The outcome and criteria are unchanged. Use Add instructions to steer the next action.');
+    }
+    const [thread] = await tx.query(`select id from threads where id=$1 and owner_user_id=$2 and status='open'`, [row.thread_id, args.ownerUserId]);
+    if (!thread) throw new WorkGoalError('Reopen this conversation before changing its outcome.', 409);
+    row.outcome = outcome; row.criteria = criteria; row.outcome_revision += 1;
+    row.state = args.continueWork ? 'planning' : 'paused';
+    row.continuation = args.continueWork ? { kind: 'question', questionId: randomUUID(),
+      text: 'Review the updated outcome and criteria, then save a revised plan before further actions.' } : { kind: 'user_paused' };
+    row.activity = args.continueWork ? 'Your outcome changed; Josi must update its plan' : 'Your outcome changed; work stays paused';
+    const correction: WorkCheckpoint = { decisions: row.owner_checkpoint?.decisions ?? [], facts: row.owner_checkpoint?.facts ?? [],
+      assumptions: row.owner_checkpoint?.assumptions ?? [], nextAction: reason };
+    await tx.query(`update work_goals set outcome=$2,criteria=$3,outcome_revision=$4,owner_checkpoint=$5,owner_checkpoint_at=now(),
+      control_generation=control_generation+1,continuation_segments=0,
+      continuation_ready_at=case when $6 then now() else null end where id=$1`,
+      [row.id, outcome, json(criteria), row.outcome_revision, json(correction), args.continueWork]);
+    await tx.query(`update users set work_memory_version=work_memory_version+1 where id=$1`, [args.ownerUserId]);
+    await tx.query(`update assistant_turns set status='failed',error_code='work_control_changed',error_retryable=false,completed_at=now()
+      where work_goal_id=$1 and status='queued'`, [row.id]);
+    const saved = await save(tx, row, 'outcome.changed');
+    await tx.query(`insert into work_goal_outcomes(goal_id,owner_user_id,outcome_revision,goal_revision,outcome,criteria,reason,source)
+      values($1,$2,$3,$4,$5,$6,$7,'owner_edit')`,
+      [row.id, row.owner_user_id, row.outcome_revision, saved.revision, outcome, json(criteria), reason]);
+    await addMessage(tx, { threadId: row.thread_id, direction: 'out',
+      body: `Your requested outcome is now: ${outcome}\nFinished means:\n${criteria.map(value => `• ${value}`).join('\n')}\n${row.activity}. Existing action receipts remain saved.`,
+      meta: { work_goal_id: row.id, work_goal_revision: saved.revision, progress_notice: true } });
+    return saved;
+  });
+}
+
+export async function workOutcomeHistory(db: Db, ownerUserId: string, goalId: string, before?: number) {
+  await owned(db, ownerUserId, goalId);
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw new WorkGoalError('Invalid outcome history cursor.');
+  return db.query<{ outcome_revision: number; goal_revision: number; outcome: string; criteria: string[];
+    reason: string; source: string; created_at: string }>(
+    `select outcome_revision,goal_revision,outcome,criteria,reason,source,created_at from work_goal_outcomes
+      where goal_id=$1 and owner_user_id=$2 and ($3::integer is null or outcome_revision<$3)
+      order by outcome_revision desc limit 20`, [goalId, ownerUserId, before ?? null]);
 }
 
 export async function workChannelProgress(db: Db, ownerUserId: string, goalId: string) {
@@ -281,6 +348,9 @@ export async function checkpointWorkGoal(db: Db, args: { ownerUserId: string; go
     if (row.state === 'paused') throw new WorkGoalError('The user paused this work. Only the user can resume it.', 409);
     const next = args.next as Record<string, unknown> | null;
     if (!next || typeof next !== 'object' || Array.isArray(next)) throw new WorkGoalError('Every unfinished goal needs a next step, wait or question.');
+    if (row.outcome_revision !== row.planned_outcome_revision && (next.kind !== 'question' || args.stepId !== undefined || args.taskId !== undefined)) {
+      throw new WorkGoalError('Update the plan for the current outcome before selecting or changing a work step.', 409);
+    }
     if (next.kind === 'action') {
       const stepId = id(next.stepId);
       const selected = row.steps.find(step => step.id === stepId && step.state !== 'verified');
@@ -329,6 +399,7 @@ export async function verifyWorkGoal(db: Db, args: { ownerUserId: string; goalId
   return transaction(db, async tx => {
     const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
     if (row.state === 'paused') throw new WorkGoalError('The user paused this work.', 409);
+    if (row.outcome_revision !== row.planned_outcome_revision) throw new WorkGoalError('Review the plan for the updated outcome before verification.', 409);
     for (const step of row.steps) {
       if (!step.taskId || step.state === 'verified') continue;
       // Verification comes from a settled executor outcome, never the model's
@@ -363,7 +434,7 @@ export async function controlWorkGoal(db: Db, args: { ownerUserId: string; goalI
     if (args.action === 'pause') { row.state = 'paused'; row.continuation = { kind: 'user_paused' }; row.activity = 'Paused by you'; }
     else if (args.action === 'cancel') { row.state = 'cancelled'; row.continuation = null; row.activity = 'Cancelled by you'; }
     else if (args.action === 'confirm') {
-      if (row.state !== 'verifying' || row.steps.some(step => step.state !== 'verified')) throw new WorkGoalError('Verify all recorded steps before confirming the outcome.', 409);
+      if (row.outcome_revision !== row.planned_outcome_revision || row.state !== 'verifying' || row.steps.some(step => step.state !== 'verified')) throw new WorkGoalError('Review the current plan and verify all recorded steps before confirming the outcome.', 409);
       row.state = 'completed'; row.continuation = null; row.activity = 'Outcome confirmed by you';
     } else if (args.action === 'resume') {
       const instruction = text(args.instruction);
@@ -383,6 +454,10 @@ export async function controlWorkGoal(db: Db, args: { ownerUserId: string; goalI
       row.state = step ? 'working' : 'verifying';
       row.continuation = step ? { kind: 'action', stepId: step.id } : { kind: 'question', questionId: randomUUID(), text: 'Confirm the completed outcome.' };
       row.activity = 'Your instructions were saved';
+      if (row.outcome_revision !== row.planned_outcome_revision) {
+        row.state = 'planning'; row.continuation = { kind: 'question', questionId: randomUUID(),
+          text: 'Review the updated outcome and criteria, then save a revised plan before further actions.' };
+      }
     } else throw new WorkGoalError('Unsupported work control.');
     // Fence the old automatic segment before recording owner steering. A
     // queued segment can be cancelled; already dispatched effects keep receipts.
@@ -430,22 +505,23 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
         } else if (['attempting', 'ready', 'held'].includes(task.state)) activeSteps.add(step.id);
       }
       const ready = readyWorkSteps(row.steps, activeSteps);
+      const needsPlan = row.outcome_revision !== row.planned_outcome_revision;
       const selected = row.continuation?.kind === 'action' ? row.continuation.stepId : null;
       const nextStep = ready.find(step => step.id === selected) ?? ready[0];
       const timed = row.steps.filter(step => step.state === 'blocked' && step.blockedUntil && Date.parse(step.blockedUntil) > Date.now())
         .sort((a, b) => Date.parse(a.blockedUntil!) - Date.parse(b.blockedUntil!))[0];
-      if (row.steps.every(step => step.state === 'verified')) {
+      if (!needsPlan && row.steps.every(step => step.state === 'verified')) {
         row.state = 'verifying'; row.activity = 'Steps verified; waiting for outcome confirmation';
         row.continuation = { kind: 'question', questionId: randomUUID(), text: 'The recorded steps have verified receipts. Does the result meet every completion criterion?' };
         updated = true;
-      } else if (!nextStep && !activeSteps.size && !timed && (failed || row.steps.some(step => step.state === 'blocked'))) {
+      } else if (!needsPlan && !nextStep && !activeSteps.size && !timed && (failed || row.steps.some(step => step.state === 'blocked'))) {
         const blocked = failed ?? row.steps.find(step => step.state === 'blocked')!;
         row.state = 'needs_instruction'; row.activity = 'The remaining work needs your instructions';
         row.continuation = { kind: 'question', questionId: randomUUID(),
           text: blocked.blockedReason ?? `What should change before Josi continues “${blocked.title}”?` };
         updated = true;
-      } else if (nextStep && options.continueReady && (row.continuation_due || updated && row.continuation_ready_at !== null)
-        && (row.continuation?.kind === 'action' || row.wake_due)) {
+      } else if ((nextStep || needsPlan) && options.continueReady && (row.continuation_due || updated && row.continuation_ready_at !== null)
+        && (needsPlan || row.continuation?.kind === 'action' || row.wake_due)) {
         const verified = row.steps.filter(step => step.state === 'verified').length;
         if (verified > row.continuation_verified) {
           row.continuation_segments = 0; row.continuation_verified = verified;
@@ -455,8 +531,11 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
         const [thread] = await tx.query(`select id from threads where id=$1 and owner_user_id=$2 and status='open'`, [row.thread_id, row.owner_user_id]);
         const [capacity] = await tx.query<{ active_count: number }>('select active_count from assistant_turn_capacity where owner_user_id=$1', [row.owner_user_id]);
         if (thread && row.continuation_segments < WORK_SEGMENT_LIMIT && (capacity?.active_count ?? 0) < 50) {
-          row.state = 'working'; row.continuation = { kind: 'action', stepId: nextStep.id };
-          row.activity = uncertain ? 'Inspecting an uncertain result before further actions'
+          row.state = needsPlan ? 'planning' : 'working';
+          row.continuation = needsPlan ? { kind: 'question', questionId: randomUUID(),
+            text: 'Review the updated outcome and criteria, then save a revised plan before further actions.' }
+            : { kind: 'action', stepId: nextStep!.id };
+          row.activity = needsPlan ? 'Updating the plan for your changed outcome' : uncertain ? 'Inspecting an uncertain result before further actions'
             : failed || activeSteps.size ? 'Continuing independent work' : 'Continuing the next step';
           const saved = await save(tx, row, 'continuation.queued');
           row.revision = saved.revision;
@@ -468,7 +547,7 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
           : (capacity?.active_count ?? 0) >= 50 ? 'The work queue is full. Finish or cancel queued work, then resume this goal.'
           : 'Sign in again, then resume this goal so Josi can continue.' };
         updated = true;
-      } else if (!nextStep && !activeSteps.size && timed) {
+      } else if (!needsPlan && !nextStep && !activeSteps.size && timed) {
         if (row.continuation?.kind !== 'wait' || row.continuation.wakeAt !== timed.blockedUntil) {
           row.state = 'waiting'; row.activity = 'Waiting for the next scheduled check';
           row.continuation = { kind: 'wait', reason: timed.blockedReason ?? 'A step is waiting for its scheduled check.', wakeAt: timed.blockedUntil! };
@@ -479,7 +558,8 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
         && (!options.continueReady || !row.continuation_ready_at)) {
         row.state = 'needs_instruction'; row.activity = row.wake_due ? 'The requested check is due' : 'Work needs a continuation instruction';
         row.continuation = { kind: 'question', questionId: randomUUID(), text: row.checkpoint.nextAction
-          ? `Continue with this next action: ${row.checkpoint.nextAction}` : `How should Josi continue “${row.steps.find(step => step.state !== 'verified')!.title}”?` };
+          ? `Continue with this next action: ${row.checkpoint.nextAction}` : needsPlan ? 'Resume with instructions so Josi can revise the plan for your updated outcome.'
+            : `How should Josi continue “${row.steps.find(step => step.state !== 'verified')!.title}”?` };
         updated = true;
       } else if (updated) {
         row.activity = failed ? 'A step is blocked; independent work remains' : 'A task result was verified';

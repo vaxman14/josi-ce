@@ -9,6 +9,14 @@ import { workDependenciesSatisfied, type WorkGoalStep } from './workPlan.js';
 export const WORK_SEGMENT_LIMIT = 12;
 export const WORK_SEGMENT_DELAY_SECONDS = 30;
 export class WorkContinuationError extends Error {}
+/** An unreviewed outcome has no current effect plan. With no unambiguous goal
+ * binding on many legacy tools, hold new effects in that conversation until
+ * its changed outcomes have been reviewed. Inspection remains available. */
+export async function requireReviewedWorkOutcome(db: Db, ownerUserId: string, threadId: string) {
+  const [pending] = await db.query(`select id from work_goals where owner_user_id=$1 and thread_id=$2
+    and state not in ('completed','cancelled') and outcome_revision<>planned_outcome_revision limit 1`, [ownerUserId, threadId]);
+  if (pending) throw new WorkContinuationError('The requested outcome changed. Read the current goal and revise its plan for that exact outcome revision before further actions.');
+}
 export interface WorkExecutionContext {
   ownerUserId: string;
   threadId: string;
@@ -80,6 +88,9 @@ export async function releaseWorkConversation(db: Db, ownerUserId: string, threa
 export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, name: string,
   input: Record<string, unknown>, execute: () => Promise<T>): Promise<T> {
   const automatic = await requireWorkContinuation(db, context);
+  if (context.mutating && !['checkpoint_goal', 'revise_goal_plan'].includes(name)) {
+    await requireReviewedWorkOutcome(db, context.ownerUserId, context.threadId);
+  }
   if (automatic && (BACKGROUND_DENIED.has(name) || name === 'workspace_code_status' && input.cancel === true)) {
     throw new WorkContinuationError('This change requires an explicit user instruction; automatic continuation cannot supply an approval.');
   }
@@ -94,6 +105,7 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
   if (!db.transaction) throw new WorkContinuationError('Durable work storage is unavailable.');
   const checksum = createHash('sha256').update(name + '\n' + canonical(input)).digest('hex');
   const reserved = await db.transaction(async tx => {
+    await requireReviewedWorkOutcome(tx, context.ownerUserId, context.threadId);
     // Resolve only this turn's original goal, or the server-bound continuation.
     const [goal] = await tx.query<Binding>(`select g.id as goal_id,g.owner_user_id,g.state,g.control_generation,g.steps,
       g.continuation->>'stepId' as step_id,t.work_control_generation

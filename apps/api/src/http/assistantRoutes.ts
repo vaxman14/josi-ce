@@ -26,7 +26,8 @@ import {
   checkChildAccess, encodeTurnCursor, listNativeReminderActions,
   json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
-  listWorkGoals, workGoalEvents, workPlanHistory, workChannelProgress, controlWorkGoal, editWorkMemory, WorkGoalError,
+  listWorkGoals, workGoalEvents, workPlanHistory, workChannelProgress, controlWorkGoal, editWorkMemory,
+  changeWorkOutcome, workOutcomeHistory, WorkGoalError,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
 import { runAssistantTurn, type RecallLookup } from '@josi-ce/agent';
@@ -583,6 +584,18 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     res.set('Cache-Control', 'private, no-store');
     return res.json({ plans: await workPlanHistory(db, req.user!.id, param(req, 'id'),
       req.query.before === undefined ? undefined : Number(req.query.before)) });
+  }));
+  r.get('/work-goals/:id/outcomes', handle(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({ outcomes: await workOutcomeHistory(db, req.user!.id, param(req, 'id'),
+      req.query.before === undefined ? undefined : Number(req.query.before)) });
+  }));
+  r.post('/work-goals/:id/outcome', handle(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (typeof req.body?.continueWork !== 'boolean') throw new RouteError(400, 'Choose whether to continue or keep this work paused.');
+    return res.json({ goal: await changeWorkOutcome(db, { ownerUserId: req.user!.id, goalId: param(req, 'id'),
+      revision: req.body?.revision, outcome: req.body?.outcome, criteria: req.body?.criteria,
+      reason: req.body?.reason, continueWork: req.body.continueWork }) });
   }));
   r.get('/work-goals/:id/channel-progress', handle(async (req, res) => {
     res.set('Cache-Control', 'private, no-store');

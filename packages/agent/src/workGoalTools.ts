@@ -14,11 +14,12 @@ export const WORK_GOAL_TOOLS: ToolSpec[] = [
   { def: { name: 'read_work_goal', description: 'Read one complete current work record by its exact goal ID, including the owner’s corrections, reported notes, receipts and current plan. Use when context says notes were omitted. Requires this conversation’s work or a checkpoint explicitly pinned by this owner for future conversations. Owner corrections cannot be overwritten by a model checkpoint; explain conflicting evidence and ask the owner to resolve it.',
     parameters: { type: 'object', properties: { goal_id: { type: 'string' } }, required: ['goal_id'], additionalProperties: false } }, actionClass: null },
   { def: { name: 'revise_goal_plan', description: 'Revise the current goal plan when the approach changes. Return the complete plan with every original step ID retained. New steps use a unique new:short-name ID; dependencies refer to original or new IDs. Empty dependencies explicitly mean independent work. Existing action/receipt steps cannot be renamed, repurposed or given different dependencies. Do not add a duplicate action or erase a blocker to obtain a fresh attempt. The requested outcome and completion criteria cannot be changed here.',
-    parameters: { type: 'object', properties: { ...identity, reason: { type: 'string' },
+    parameters: { type: 'object', properties: { ...identity, outcome_revision: { type: 'integer',
+      description: 'Exact outcomeRevision from the current goal. Required after the owner changes the outcome; review its criteria before binding the plan.' }, reason: { type: 'string' },
       steps: { type: 'array', minItems: 1, maxItems: 40, items: { type: 'object', properties: {
         id: { type: 'string' }, title: { type: 'string' }, dependsOn: { type: 'array', items: { type: 'string' }, maxItems: 39 },
       }, required: ['id', 'title', 'dependsOn'], additionalProperties: false } } },
-      required: ['goal_id', 'revision', 'reason', 'steps'], additionalProperties: false } }, actionClass: 'task_management' },
+      required: ['goal_id', 'revision', 'outcome_revision', 'reason', 'steps'], additionalProperties: false } }, actionClass: 'task_management' },
   { def: { name: 'propose_work_lesson', description: 'Propose a concise reusable lesson from an owned, verified goal whose outcome the user confirmed. Describe when it applies, what worked and its limits. It goes to the user’s Memory review inbox and changes no permission or Cardinal Rule. Never include credentials, source content or unverified assumptions. Do not propose the same lesson repeatedly.',
     parameters: { type: 'object', properties: { goal_id: { type: 'string' }, lesson: { type: 'string' } }, required: ['goal_id', 'lesson'], additionalProperties: false } }, actionClass: 'task_management' },
   { def: { name: 'checkpoint_goal', description: 'Save real progress while working: current activity, decisions, facts, assumptions and next action. Every unfinished goal must have a concrete next step, timed wait or precise question. Link an existing task from this conversation to its step; never recreate a consequential task to get a fresh attempt. After this reply, the server can continue a saved action or due wait within existing permissions and work limits. This does not verify a step or approve an action.',
@@ -44,7 +45,7 @@ export async function executeWorkGoalTool(db: Db, ctx: ToolExecutionContext, nam
   if (!goals.some(goal => goal.goalId === input.goal_id)) throw new Error('That work does not belong to this conversation.');
   if (name === 'propose_work_lesson') return suggestWorkLesson(db, { ownerUserId: ctx.userId, goalId: String(input.goal_id), content: String(input.lesson ?? '') });
   if (name === 'revise_goal_plan') return { goal: await reviseWorkPlan(db, { ownerUserId: ctx.userId,
-    goalId: String(input.goal_id), revision: input.revision, steps: input.steps, reason: input.reason }) };
+    goalId: String(input.goal_id), revision: input.revision, steps: input.steps, reason: input.reason, outcomeRevision: input.outcome_revision }) };
   if (name === 'checkpoint_goal') return { goal: await checkpointWorkGoal(db, { ownerUserId: ctx.userId,
     goalId: String(input.goal_id), revision: input.revision, activity: input.activity, checkpoint: input.checkpoint,
     next: input.next, stepId: input.step_id, taskId: input.task_id, blockedReason: input.blocked_reason }) };

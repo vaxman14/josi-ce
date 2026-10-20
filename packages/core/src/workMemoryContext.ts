@@ -22,6 +22,7 @@ export function formatWorkContext(goals: WorkGoalSnapshot[], limit = 48_000): st
   let used = 2;
   for (const goal of goals.slice(0, 12)) {
     const summary = { goalId: goal.goalId, revision: goal.revision, outcome: goal.title,
+      outcomeRevision: goal.outcomeRevision ?? 1, planNeedsReview: goal.planNeedsReview ?? false,
       state: goal.state, continuation: goal.continuation, updatedAt: goal.updatedAt,
       ownerCorrectionAt: goal.ownerCheckpointAt ?? null };
     const full = { ...summary, criteria: goal.criteria, steps: goal.steps,
@@ -41,5 +42,6 @@ export function formatWorkContext(goals: WorkGoalSnapshot[], limit = 48_000): st
     + '\nOwner corrections are the latest explicitly saved human version. Later reported checkpoints cannot replace them. '
     + 'If new evidence conflicts with a correction, describe the exact conflict and ask the owner to correct the saved notes; do not silently merge or decide it. '
     + 'A past next-action note does not undo verified progress. Continue from current receipts and the current plan. '
+    + 'When planNeedsReview is true, read the updated outcome and criteria, then call revise_goal_plan with that exact outcomeRevision before further effects. '
     + 'Use read_work_goal for any omitted or older record; do not mistake omission for absence or completion.';
 }
