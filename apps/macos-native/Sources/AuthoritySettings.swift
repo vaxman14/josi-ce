@@ -120,8 +120,9 @@ struct NativeAuthoritySettings: View {
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                     }
                 }
-                Text("Enrollment alone grants no browser or computer access. Native enrollment controls are not available in this checkpoint.")
+                Text("Enrollment alone grants no browser or computer access.")
                     .font(.caption).foregroundStyle(.secondary)
+                NativeDeviceEnrollmentView()
             }
         }
     }

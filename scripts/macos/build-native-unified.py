@@ -5,6 +5,7 @@ Socal Receptionist LLC identities. This command never installs or launches
 anything, touches server data, or submits a notarization.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -21,7 +22,9 @@ APP_ID = 'com.heyjosi.ce.unified'
 APP_IDENTITY = 'Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
 INSTALLER_IDENTITY = 'Developer ID Installer: Socal Receptionist LLC (LRH75YR6QW)'
 KEYCHAIN = '/Users/roman/Library/Keychains/login.keychain-db'
-VERSION = '0.7.0-native.2'
+VERSION = '0.7.0-native.3'
+PROTECTED_ID = 'com.heyjosi.ce.protected-key'
+SIGNING_CERTIFICATE_SHA1 = '0bdc050694b41330db6833e440a4a8e6f466abdb'
 
 
 def digest(path):
@@ -68,11 +71,44 @@ def package_contents(root):
     return entries
 
 
+def protected_entitlements(profile):
+    """Select only this helper's own Keychain group from an Apple profile."""
+    decoded = subprocess.run(['/usr/bin/security', 'cms', '-D', '-i', str(profile)],
+                             capture_output=True, check=True)
+    value = plistlib.loads(decoded.stdout)
+    identifier = 'LRH75YR6QW.' + PROTECTED_ID
+    entitlements = value.get('Entitlements', {})
+    def allows(pattern):
+        return isinstance(pattern, str) and (pattern == identifier
+            or pattern.endswith('*') and pattern.count('*') == 1 and identifier.startswith(pattern[:-1]))
+    expires = value.get('ExpirationDate')
+    certificates = [hashlib.sha1(cert).hexdigest() for cert in value.get('DeveloperCertificates', [])]
+    if (value.get('TeamIdentifier') != ['LRH75YR6QW']
+        or 'OSX' not in value.get('Platform', [])
+        or value.get('ProvisionsAllDevices') is not True
+        or not isinstance(expires, datetime.datetime)
+        or expires.replace(tzinfo=datetime.timezone.utc) <= datetime.datetime.now(datetime.timezone.utc)
+        or not allows(entitlements.get('com.apple.application-identifier'))
+        or entitlements.get('com.apple.developer.team-identifier') != 'LRH75YR6QW'
+        or not any(allows(group) for group in entitlements.get('keychain-access-groups', []))
+        or entitlements.get('get-task-allow') or entitlements.get('com.apple.security.get-task-allow')
+        or SIGNING_CERTIFICATE_SHA1 not in certificates):
+        raise ValueError('Use an unexpired Socal Developer ID profile for ' + PROTECTED_ID
+                         + ', authorizing its own Keychain group and the selected certificate')
+    # The signed profile is embedded; macOS validates Apple's authorization
+    # when launching the helper. Never substitute another team's entitlement.
+    return {'com.apple.application-identifier': identifier,
+            'com.apple.developer.team-identifier': 'LRH75YR6QW',
+            'keychain-access-groups': [identifier]}
+
+
 def build(args):
     if sys.platform != 'darwin' or os.uname().machine != 'arm64':
         raise ValueError('Apple Silicon macOS is required')
     if args.package and not args.sign:
         raise ValueError('An installer requires Socal signing; unsigned packages are not produced')
+    profile = args.protected_profile.resolve(strict=True) if args.protected_profile else None
+    key_entitlements = protected_entitlements(profile) if profile else None
     runtime_input = args.runtime.resolve(strict=True)
     output = args.output.expanduser().resolve()
     if output.exists() or output.is_symlink():
@@ -111,10 +147,11 @@ def build(args):
     info = {
         'CFBundleIdentifier': APP_ID, 'CFBundleName': 'Josi', 'CFBundleDisplayName': 'Josi',
         'CFBundleExecutable': 'Josi', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.7.0',
-        'CFBundleVersion': '20261020.2', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
+        'CFBundleVersion': '20261020.3', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
         'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
         'JosiNativeClientProtocol': 1, 'JosiProtectedHostProtocol': 1,
+        'JosiProtectedKeyProvisioned': bool(profile),
         'NSSystemAdministrationUsageDescription': 'Josi manages its local server when you request installation, updates or service changes.',
         'NSHumanReadableCopyright': 'Copyright SOCAL RECEPTIONIST LLC. AGPL-3.0-or-later; bundled notices apply.',
     }
@@ -150,9 +187,22 @@ def build(args):
     run('compile-protected-helpers', [sys.executable, '-B', REPO / 'scripts/macos/build-automation-components.py',
                                      '--protected-host-only', '--output', native_build])
     helpers = app / 'Contents/Helpers'; helpers.mkdir()
-    identities = {'JosiProtectedKeyHost': 'com.heyjosi.ce.protected-key', 'JosiDeviceConsentHost': 'com.heyjosi.ce.device-consent'}
-    for name in identities:
-        copy_file(native_build / name, helpers / name)
+    # Data-protection Keychain access requires a provisioned app-like bundle,
+    # including for a private command-line helper. The socket consent helper
+    # does not use that Keychain and retains its existing fixed executable path.
+    key_bundle = helpers / 'JosiProtectedKeyHost.app'
+    (key_bundle / 'Contents/MacOS').mkdir(parents=True)
+    copy_file(native_build / 'JosiProtectedKeyHost', key_bundle / 'Contents/MacOS/JosiProtectedKeyHost')
+    (key_bundle / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+        'CFBundleIdentifier': PROTECTED_ID, 'CFBundleName': 'Josi Protected Key Host',
+        'CFBundleExecutable': 'JosiProtectedKeyHost', 'CFBundlePackageType': 'APPL',
+        'CFBundleShortVersionString': '0.7.0', 'CFBundleVersion': info['CFBundleVersion'],
+        'LSMinimumSystemVersion': '14.2', 'LSUIElement': True,
+    }))
+    if profile:
+        copy_file(profile, key_bundle / 'Contents/embedded.provisionprofile')
+        (output / 'protected-key-entitlements.plist').write_bytes(plistlib.dumps(key_entitlements))
+    copy_file(native_build / 'JosiDeviceConsentHost', helpers / 'JosiDeviceConsentHost')
 
     uninstaller = output / 'payload/Applications/Uninstall Josi.app'
     ur = uninstaller / 'Contents/Resources'; ur.mkdir(parents=True)
@@ -167,7 +217,7 @@ def build(args):
               NSSystemAdministrationUsageDescription='Remove Josi services and apps using the removal option you choose.',
               NSAppBundlesUsageDescription='Remove the Josi apps you chose to uninstall.',
               NSAppDataUsageDescription='Remove Josi data only when you choose Complete removal.')
-    for key in ('JosiNativeClientProtocol', 'JosiProtectedHostProtocol', 'NSAppTransportSecurity'):
+    for key in ('JosiNativeClientProtocol', 'JosiProtectedHostProtocol', 'JosiProtectedKeyProvisioned', 'NSAppTransportSecurity'):
         up.pop(key, None)
     (uninstaller / 'Contents/Info.plist').write_bytes(plistlib.dumps(up))
     for name in ('Josi.png', 'Josi.icns', 'LICENSE', 'NOTICE'):
@@ -182,16 +232,19 @@ def build(args):
         copy_file(REPO / 'packaging/macos' / name, minimal / 'app/native' / name)
     tree(runtime / 'licenses', minimal / 'licenses')
 
-    def sign(name, path, identifier=None):
+    def sign(name, path, identifier=None, entitlements=None):
         command = ['/usr/bin/codesign', '--force', '--keychain', KEYCHAIN, '--sign', APP_IDENTITY,
                    '--options', 'runtime', '--timestamp']
         if identifier:
             command += ['--identifier', identifier]
+        if entitlements:
+            command += ['--entitlements', entitlements]
         run(name, command + [path], timeout=180)
 
     if args.sign:
-        for name, identifier in identities.items():
-            sign('sign-' + name, helpers / name, identifier)
+        sign('sign-JosiProtectedKeyHost', key_bundle, PROTECTED_ID,
+             output / 'protected-key-entitlements.plist' if profile else None)
+        sign('sign-JosiDeviceConsentHost', helpers / 'JosiDeviceConsentHost', 'com.heyjosi.ce.device-consent')
     run('runtime-inventory', [sys.executable, '-B', REPO / 'scripts/macos/inventory.py', runtime, '--hash-only'])
     run('uninstaller-inventory', [sys.executable, '-B', REPO / 'scripts/macos/inventory.py', minimal, '--hash-only'])
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
@@ -199,6 +252,7 @@ def build(args):
         'schemaVersion': 1, 'version': VERSION, 'sourceCommit': revision,
         'workingTreeModified': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=REPO).strip()),
         'client': 'SwiftUI/AppKit', 'electronIncluded': False, 'baselineRuntimeVersion': baseline_version,
+        'protectedKeyProvisioned': bool(profile),
         'signed': args.sign, 'signingIdentity': APP_IDENTITY if args.sign else None,
         'installed': False, 'functionalAcceptancePassed': False, 'notarized': False,
         'builtAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
@@ -223,7 +277,7 @@ def build(args):
         postinstall.write_text('#!/bin/sh\nset -eu\nexec "/Applications/Josi.app/Contents/Resources/runtime/python/bin/python3.11" -I -B "/Applications/Josi.app/Contents/Resources/runtime/app/native/unified-postinstall.py"\n')
         postinstall.chmod(0o755)
         run('build-component', ['/usr/bin/pkgbuild', '--root', output / 'payload', '--component-plist', components,
-                                '--identifier', APP_ID + '.pkg', '--version', '0.7.0.3', '--install-location', '/',
+                                '--identifier', APP_ID + '.pkg', '--version', '0.7.0.4', '--install-location', '/',
                                 '--scripts', scripts, output / 'application.pkg'])
         distribution = output / 'Distribution.xml'
         distribution.write_text('''<?xml version="1.0" encoding="utf-8"?>
@@ -234,7 +288,7 @@ def build(args):
  <allowed-os-versions><os-version min="14.2"/></allowed-os-versions>
  <choices-outline><line choice="josi"/></choices-outline>
  <choice id="josi" title="Josi" visible="false" start_selected="true" start_enabled="false"><pkg-ref id="com.heyjosi.ce.unified.pkg"/></choice>
- <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.3" onConclusion="none">application.pkg</pkg-ref>
+ <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.4" onConclusion="none">application.pkg</pkg-ref>
 </installer-gui-script>
 ''')
         package = output / 'Install Josi.pkg'
@@ -272,4 +326,6 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--sign', action='store_true')
     parser.add_argument('--package', action='store_true')
+    parser.add_argument('--protected-profile', type=Path,
+                        help='Apple-issued Socal Developer ID provisioning profile for the private biometric key helper')
     build(parser.parse_args())

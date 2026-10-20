@@ -4,7 +4,7 @@ import CryptoKit
 import LocalAuthentication
 import Darwin
 
-private func approvalUnavailable() -> JosiError {
+func approvalUnavailable() -> JosiError {
     JosiError(message: "This protected review is unavailable, cancelled or expired. Refresh settings and begin a new review.")
 }
 
@@ -113,11 +113,13 @@ enum ProtectedWire {
               integer(projection["issuedAtMs"]), integer(projection["expiresAtMs"]),
               projection["expiresAtMs"].integer > projection["issuedAtMs"].integer,
               projection["expiresAtMs"].integer - projection["issuedAtMs"].integer <= 60_000 else { throw approvalUnavailable() }
-        let material = projection["material"]
+        return try signingMaterial(projection["material"], identity: identity(challenge))
+    }
+    static func signingMaterial(_ material: Wire, identity: Wire) throws -> Wire {
         guard exact(material, ["schemaVersion", "identity", "wrappingPublicKey", "signingPublicKeySpki", "wrappedPrivateKey"]),
               material["schemaVersion"] == .number(1),
               exact(material["identity"], ["serverOrigin", "serverId", "userId", "deviceId"]),
-              material["identity"] == identity(challenge) else { throw approvalUnavailable() }
+              material["identity"] == identity else { throw approvalUnavailable() }
         for (key, minimum, maximum) in [("wrappingPublicKey", 65, 65), ("signingPublicKeySpki", 44, 44), ("wrappedPrivateKey", 33, 4096)] {
             let value = material[key].text
             guard value.count <= ((maximum + 2) / 3) * 4, let data = Data(base64Encoded: value),
@@ -156,13 +158,14 @@ enum ProtectedWire {
     private var expiry: Task<Void, Never>?
     init(identity: Wire) { self.identity = identity }
     func start() async throws {
-        guard NativeServer.canManage else { throw approvalUnavailable() }
-        let helper = "/Applications/Josi.app/Contents/Helpers/JosiProtectedKeyHost"
+        guard NativeProtectedApproval.provisioned else { throw approvalUnavailable() }
+        let bundle = "/Applications/Josi.app/Contents/Helpers/JosiProtectedKeyHost.app"
+        let helper = bundle + "/Contents/MacOS/JosiProtectedKeyHost"
         var info = stat()
         guard lstat(helper, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o022 == 0,
               URL(fileURLWithPath: helper).resolvingSymlinksInPath().path == helper else { throw approvalUnavailable() }
         let requirement = "=anchor apple generic and identifier \"com.heyjosi.ce.protected-key\" and certificate leaf[subject.OU] = \"LRH75YR6QW\""
-        guard try await NativeServer.process("/usr/bin/codesign", ["--verify", "--strict", "-R", requirement, helper]) == 0,
+        guard try await NativeServer.process("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R", requirement, bundle]) == 0,
               !Task.isCancelled else { throw approvalUnavailable() }
         process.executableURL = URL(fileURLWithPath: helper)
         process.environment = ["PATH": "/usr/bin:/bin"]
@@ -183,7 +186,9 @@ enum ProtectedWire {
         // this owned child supplies EOF without reusing its reader's descriptor.
     }
     func request(_ operation: String, fields: [String: Wire]) async throws -> Wire {
-        guard !closed, process.isRunning, !pending, ["proveHost", "authenticate", "sign"].contains(operation) else { throw approvalUnavailable() }
+        guard !closed, process.isRunning, !pending,
+              ["create", "proveHost", "authenticate", "sign", "authenticateEnrollment", "signEnrollment"].contains(operation)
+        else { throw approvalUnavailable() }
         pending = true; defer { pending = false }
         let id = UUID().uuidString.lowercased()
         var body = fields
@@ -306,12 +311,14 @@ struct ProtectedApprovalView: View {
                     Button("Approve This Exact Change") { review.approve() }.buttonStyle(.borderedProminent)
                 } else {
                     ProgressView().controlSize(.small)
-                    Text(review.phase == "saving" ? "Saving to the Vault…" : "Waiting for Mac authentication…")
+                    Text(review.phase == "saving" ? "Saving to the Vault…" : review.phase == "awaiting-server"
+                         ? "Waiting for approval on the server Mac…" : "Waiting for Mac authentication…")
                 }
             }
         }.padding(24)
     }
     private var title: String {
+        if review.challenge["enrollmentId"] != .null { return "Enroll this protected confirmation device" }
         switch review.challenge["purpose"].text {
         case "cardinal.activate": return "Make this Cardinal Rule permanent"
         case "cardinal.retire": return "Retire this Cardinal Rule"
@@ -322,8 +329,12 @@ struct ProtectedApprovalView: View {
 }
 
 @MainActor enum NativeProtectedApproval {
+    static var provisioned: Bool {
+        NativeServer.canManage && Bundle.main.object(forInfoDictionaryKey: "JosiProtectedKeyProvisioned") as? Bool == true
+            && FileManager.default.fileExists(atPath: "/Applications/Josi.app/Contents/Helpers/JosiProtectedKeyHost.app/Contents/embedded.provisionprofile")
+    }
     static var available: Bool {
-        guard NativeServer.canManage else { return false }
+        guard provisioned else { return false }
         let context = LAContext(); defer { context.invalidate() }
         return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
     }
@@ -424,7 +435,8 @@ struct NativeProtectedChange: View {
         VStack(alignment: .leading, spacing: 10) {
             Button(title) { open.toggle(); result = "" }.disabled(model.busy || !ready)
             if !ready {
-                Text("Protected changes require the installed signed app, Touch ID and an enrolled confirmation device for this server.")
+                Text(!NativeProtectedApproval.provisioned ? "Protected approval is unavailable in this build. Install a build with protected-device signing configured."
+                     : "Protected changes require Touch ID and an enrolled confirmation device for this server.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if open {

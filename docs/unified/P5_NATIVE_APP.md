@@ -16,7 +16,8 @@ The owner requested a native replacement after installing the unfinished Electro
 - The package includes the native **Uninstall Josi.app**, with keep-data and complete-removal choices. Its existing removal machinery now recognizes the unified app and installer receipt.
 - Installing the package over a recorded existing server invokes the normal recovery-copy/migration lifecycle. A new or remote-only install adds the app without automatically provisioning a local server.
 - Existing protected-key and server-consent helpers accept the signed native host identity. They retain their installed-path, signature, hardened-runtime and entitlement checks.
-- Native permanent-rule activation/retirement and device revocation now use the protected server challenge flow: fresh administrator verification, hardware host proof, complete native presentation, genuine biometric authentication through the existing key helper, current-Vault checks around signing, and one commit attempt. Closing/cancelling the review kills its owned helper; expiry uses wall and monotonic clocks. Lost commit responses require inspecting refreshed settings, never automatic replay. An already enrolled device is required; native enrollment remains open.
+- Native permanent-rule activation/retirement and device revocation now use the protected server challenge flow: fresh administrator verification, hardware host proof, complete native presentation, genuine biometric authentication through the existing key helper, current-Vault checks around signing, and one commit attempt. Closing/cancelling the review kills its owned helper; expiry uses wall and monotonic clocks. Lost commit responses require inspecting refreshed settings, never automatic replay. An already enrolled device is required.
+- Native device enrollment connects the existing begin/prepare/review/status/commit APIs. The target Mac creates its hardware wrapping key and signs possession after native review and biometrics. The server Mac separately approves through its installed, signed app and the protected local consent socket. A remote HTTP response cannot substitute for server-local consent. Enrollment grants no automation access; cancellation and uncertain commit responses require fresh review instead of replay.
 
 ## Packaging and observed behavior
 
@@ -35,7 +36,7 @@ The staged signed app actually launched through the computer-use tool and displa
 
 ## Remaining work
 
-Native device enrollment, permission editing, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and automation-desktop integration remain open. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design.
+Permission editing, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and automation-desktop integration remain open. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design. Device enrollment is assembled; actual biometric/local-and-remote acceptance and abandoned-key reconciliation remain open.
 
 The follow-up work/task and rule-editor sources compiled successfully with Swift 6. No authenticated functional flow or model review was run on the owner's server. The native package version advances to `0.7.0-native.2`; its installer version is `0.7.0.3`.
 
@@ -44,3 +45,13 @@ That signed installer is retained at `/Users/roman/Documents/Josi Mac Native/Jos
 The later protected-approval sources compile with Swift 6. A bounded, local compatibility check compared the actual native encoder with the CE protocol implementation: a hardware host challenge and three full protected presentations, including quotes, slashes, newline/tab and Unicode text, produced identical signed bytes. No hardware key was created/read, no biometric prompt was opened and no rule/device was changed. Real protected-flow acceptance remains open.
 
 Functional setup/login/chat, service operations, real upgrade/recovery and uninstallation acceptance remain unverified. Notarization and final release acceptance are outstanding. The owner asked to defer functional suites until features are built; the targeted launch and packaged-signature checks address the immediate broken-app report.
+
+## Protected helper provisioning
+
+The native key helper uses the macOS data-protection Keychain. Apple's [Keychain guidance](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains) and [restricted-entitlement signing guidance](https://developer.apple.com/documentation/xcode/signing-a-daemon-with-a-restricted-entitlement) require profile-authorized entitlements and an app-like bundle. The earlier bare signed helper was not sufficient evidence of usable key access.
+
+The builder now embeds `JosiProtectedKeyHost.app` with a Developer ID profile and only its own application identifier, team identifier and Keychain group. `--protected-profile` checks the Socal team, macOS platform, distribution eligibility, expiry, exact existing signing certificate, authorized group and absence of debugging entitlements before building. The main app records whether provisioning was included and disables protected flows when it was not. There is no fallback to another team, software wrapping keys or the file-based Keychain.
+
+On 20 October the owner explicitly approved registering this Mac with Socal Receptionist LLC. Xcode's exact-Mac build registered it and produced a development profile containing its identifier; the owner approved the system Keychain prompt. Archive/export then produced a Developer ID profile for `com.heyjosi.ce.protected-key`, team `LRH75YR6QW`, authorizing the selected existing Socal Developer ID certificate. The helper's signed entitlement uses only `LRH75YR6QW.com.heyjosi.ce.protected-key`, even though the profile permits the team's wildcard group. No certificate was revoked and no other team was selected.
+
+The enrollment and profile-gated Swift 6 sources compile. The local protocol comparison now covers seven native/CE signed messages and three consent decode/re-encode round trips, including Unicode and escaped text. No real enrollment, biometric signing, Vault mutation or installation was performed. The next package is `0.7.0-native.3` / installer `0.7.0.4`; artifact production is recorded separately when complete.
