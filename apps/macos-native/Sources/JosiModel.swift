@@ -23,6 +23,7 @@ import SwiftUI
     @Published var setupReview: Wire = .null
     @Published var hostChecks: [Wire] = []
     @Published var recovery: Wire = .null
+    @Published var vaultRecovery: Wire = .null
     @Published var mfaChallenge = ""
     @Published var automation: Wire = .null
     @Published var automationSettings: Wire = .null

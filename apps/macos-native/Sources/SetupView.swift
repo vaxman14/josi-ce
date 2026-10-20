@@ -200,14 +200,9 @@ struct SetupView: View {
                 if showRecovery { Text(model.recovery["key"].text).font(.system(.body, design: .monospaced)).textSelection(.enabled) }
                 Text("Fingerprint: \(model.recovery["fingerprint"].text)").foregroundStyle(.secondary)
                 Button("Save Recovery Key…") {
-                    let panel = NSSavePanel()
-                    panel.nameFieldStringValue = "Josi-Vault-Recovery.txt"
-                    guard panel.runModal() == .OK, let destination = panel.url else { return }
                     do {
-                        let text = "Josi Vault recovery key\n\n\(model.recovery["key"].text)\n\nFingerprint: \(model.recovery["fingerprint"].text)\n"
-                        try Data(text.utf8).write(to: destination, options: .atomic)
-                        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
-                        recoverySaved = true
+                        if try NativeRecoveryFile.save(key: model.recovery["key"].text,
+                            fingerprint: model.recovery["fingerprint"].text) { recoverySaved = true }
                     } catch { model.error = "The recovery key could not be saved. Choose another location." }
                 }
                 Toggle("I have saved my recovery key", isOn: $recoverySaved)

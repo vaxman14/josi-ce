@@ -5,6 +5,11 @@ import SwiftUI
     weak var model: JosiModel?
     func applicationDidFinishLaunching(_ notification: Notification) { NSApp.activate(ignoringOtherApps: true) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let model, model.vaultRecovery != .null || model.recovery != .null {
+            let alert = NSAlert(); alert.messageText = "Save your recovery key before quitting."
+            alert.informativeText = "Finish the recovery-key step in Josi so you keep access to your Vault."
+            alert.runModal(); return .terminateCancel
+        }
         if model?.busy == true {
             let alert = NSAlert(); alert.messageText = "Let the current operation finish."
             alert.informativeText = "Josi is applying your request. Server changes may still be running."
@@ -73,6 +78,8 @@ struct RootView: View {
                     Spacer()
                 }.padding(.horizontal, 16).padding(.vertical, 9).background(.bar)
             }
+        }.sheet(isPresented: Binding(get: { model.vaultRecovery != .null }, set: { _ in })) {
+            NativeVaultRecovery().environmentObject(model)
         }
     }
 }
@@ -236,6 +243,7 @@ struct WorkspaceView: View {
                         nav("Conversations", icon: "bubble.left.and.bubble.right", section: "chat")
                         nav("Task Manager", icon: "checklist", section: "tasks")
                         nav("Automation", icon: "macwindow", section: "automation")
+                        nav("Vault", icon: "lock.shield", section: "vault")
                         nav("Server", icon: "externaldrive.connected.to.line.below", section: "server")
                     }
                     Section("Recent conversations") {
@@ -262,6 +270,7 @@ struct WorkspaceView: View {
             case "tasks": TaskManagerView()
             case "server": ScrollView { ServerControls().padding(30) }
             case "automation": AutomationView()
+            case "vault": NativeVaultView()
             default: ChatView()
             }
         }
@@ -271,6 +280,7 @@ struct WorkspaceView: View {
             model.section = section
             if section == "automation" { model.run { try await model.loadAutomation() } }
             else if section == "server" { model.refreshLocal() }
+            else if section == "vault" { /* The Vault loads its own scoped status. */ }
             else { model.run { try await model.reloadWorkspace() } }
         } label: { Label(title, systemImage: icon).foregroundStyle(model.section == section ? Color.accentColor : Color.primary) }
             .buttonStyle(.plain).disabled(model.busy)
