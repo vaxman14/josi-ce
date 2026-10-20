@@ -26,6 +26,9 @@ export interface ObservationReference extends AutomationIdentity {
   capturedAt: string;
 }
 export type AutomationAction =
+  | { kind: 'browser.photo'; browserProfileId: string; tabId: string; elementId: string; sourceReservationId: string }
+  | { kind: 'browser.draft'; browserProfileId: string; tabId: string; elementId: string;
+      sourceReservationId: string; text: string }
   // Initial inspection resolves the current window/tab locally. It cannot
   // carry an input action or pretend that a prior observation already exists.
   | { kind: 'browser.inspect'; browserProfileId: string }

@@ -8,7 +8,7 @@ import Security
 enum GuestDesktopError: Error { case unavailable, stale, denied, busy, unsupported, uncertain }
 
 struct GuestDesktopCommand: Codable, Equatable {
-    enum Operation: String, Codable { case observe, project, capture, press, focus, click, text, key }
+    enum Operation: String, Codable { case observe, project, capture, press, focus, click, text, key, draft }
     let id: UUID
     let workspaceId: UUID
     let appId: UUID
@@ -37,6 +37,10 @@ struct GuestDesktopCommand: Codable, Equatable {
     let projection: Projection?
     struct Browser: Codable, Equatable { let profileId: UUID; let family: String; let origin: String }
     let browser: Browser?
+    struct Draft: Codable, Equatable { let sourceReservationId: UUID; let text: String }
+    let draft: Draft?
+    struct Photo: Codable, Equatable { let sourceReservationId: UUID; let elementId: UUID }
+    let photo: Photo?
 }
 
 struct GuestDesktopTarget: Codable, Equatable {

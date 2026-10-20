@@ -44,8 +44,9 @@ export async function prepareNativeModelProjection(db: Db, master: MasterKey, tr
   const expiresAtMs = Math.min(control.leaseUntilMs - 500, source.command.expiresAtMs + 10_000);
   if (expiresAtMs < Date.now() + 4000) throw new Error('The captured observation or desktop lease is too close to expiry.');
   let recipient: ReturnType<typeof nativeProjectionRecipient> | null = nativeProjectionRecipient();
+  const { photo: _photo, windowId: _window, ...sourceCommand } = source.command;
   const payload: NativeObservationPayload = { ...source, purpose: 'josi-native-projection',
-    command: { ...source.command, id: randomUUID(), operation: 'project', expiresAtMs,
+    command: { ...sourceCommand, id: randomUUID(), operation: 'project', expiresAtMs,
       observationId: capture.result.observationId, resultObservationId: randomUUID(), windowId: capture.result.windowId!,
       projection: { sourceReservationId: captureReservationId, recipientPublicKey: recipient.publicKey,
         configurationId: model.configurationId, configurationRevision: model.configurationRevision, modelReference: targets.reference } } };

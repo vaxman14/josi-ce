@@ -34,16 +34,43 @@
       if (request.sessionId !== session) { session = request.sessionId; stopped = false; observation = null; elements.clear(); }
       if (stopped) throw new Error('human_control');
       if (mutations.takeRecords().length) revision++;
-      if (request.kind === 'observe') {
+      let photo = null;
+      if (request.kind === 'photo') {
+        if (!observation || request.observationId !== observation.id || observation.revision !== revision
+          || observation.url !== location.href) throw new Error('observation_changed');
+        const image = elements.get(request.elementId)?.element;
+        if (!(image instanceof HTMLImageElement) || !image.isConnected || !visible(image)
+          || !image.complete || !image.naturalWidth || new URL(image.currentSrc).origin !== location.origin) throw new Error('photo_unavailable');
+        // Read already loaded pixels only. Drawing a cross-origin image fails
+        // closed; this is not a fetch proxy or a path to arbitrary local files.
+        const canvas = document.createElement('canvas');
+        const scale = Math.min(1, 768 / Math.max(image.naturalWidth, image.naturalHeight));
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const context = canvas.getContext('2d');
+        context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        let jpeg = '';
+        for (const quality of [0.8, 0.6, 0.4, 0.25]) {
+          jpeg = canvas.toDataURL('image/jpeg', quality).split(',')[1];
+          if (jpeg.length <= 32768) break;
+        }
+        if (!jpeg || jpeg.length > 32768) throw new Error('photo_budget');
+        photo = { mediaType: 'image/jpeg', base64: jpeg, width: canvas.width, height: canvas.height,
+          alt: String(image.alt || '').slice(0, 300), untrustedContent: true };
+      }
+      if (request.kind === 'observe' || request.kind === 'photo') {
         elements = new Map(); const nodes = [];
-        const candidates = document.querySelectorAll('a[href],button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]');
+        const candidates = document.querySelectorAll('img,a[href],button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]');
         for (const element of candidates) {
           if (nodes.length >= 300) break;
           if (!visible(element)) continue;
           const id = crypto.randomUUID(), rect = element.getBoundingClientRect();
           elements.set(id, { element, name: name(element), x: rect.x, y: rect.y, width: rect.width, height: rect.height });
-          nodes.push({ id, role: element.getAttribute('role') || element.tagName.toLowerCase(), name: name(element),
+          nodes.push({ id, role: element.getAttribute('role') || element.tagName.toLowerCase(),
+            name: element instanceof HTMLImageElement ? String(element.alt || name(element)).slice(0, 300) : name(element),
             inputType: element instanceof HTMLInputElement ? element.type : null, disabled: element.matches(':disabled,[aria-disabled="true"]'),
+            ...(element instanceof HTMLTextAreaElement ? { hasValue: element.value.length > 0 } : {}),
             bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } });
         }
         observation = { id: crypto.randomUUID(), revision, url: location.href };
@@ -54,6 +81,7 @@
           url: url.origin + url.pathname, text: (document.body?.innerText ?? '').slice(0, 20000), elements: nodes,
           partial: candidates.length > nodes.length, framesUnsupported: document.querySelectorAll('iframe,frame').length > 0,
           viewport: { width: innerWidth, height: innerHeight } };
+        if (photo) result.photo = photo;
         if (request.maxOutputBytes !== undefined) {
           if (!Number.isSafeInteger(request.maxOutputBytes) || request.maxOutputBytes < 1024 || request.maxOutputBytes > 65536) throw new Error('invalid_budget');
           const size = () => new TextEncoder().encode(JSON.stringify(result)).length;
@@ -79,6 +107,20 @@
       // Consume the observation before dispatch. Repeated messages cannot
       // repeat an uncertain click, even if DOM mutation has not yet occurred.
       observation = null; elements.clear();
+      if (request.kind === 'draft') {
+        // This narrow action never focuses, presses Enter, clicks or submits.
+        // Only a textarea is supported; site input/change handlers may autosave.
+        if (!(element instanceof HTMLTextAreaElement) || element.readOnly || element.value.length > 0
+          || typeof request.value !== 'string' || !request.value.trim()
+          || new TextEncoder().encode(request.value).length > 2048
+          || element.maxLength >= 0 && request.value.length > element.maxLength) throw new Error('unsupported_draft');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(element, request.value);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+        if (!element.isConnected || element.value !== request.value) throw new Error('draft_not_verified');
+        respond({ kind: 'draft_filled', matched: true, verificationRequired: true });
+        return false;
+      }
       if (request.kind === 'click') {
         if (element instanceof HTMLInputElement && element.type === 'file') throw new Error('file_transfer_requires_broker');
         element.click();

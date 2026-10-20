@@ -136,8 +136,8 @@ private struct GuestExecutionConsent: Codable, Equatable {
         let keys = Set((try JSONSerialization.jsonObject(with: Data(rawCommand.utf8)) as? [String: Any] ?? [:]).keys)
         let required: Set<String> = ["id", "workspaceId", "appId", "installationRevision", "taskId", "sessionId", "generation", "expiresAtMs", "operation"]
         guard required.isSubset(of: keys),
-              keys.isSubset(of: required.union(["observationId", "resultObservationId", "windowId", "maxOutputBytes", "elementId", "x", "y", "valueReference", "key", "projection", "browser"])),
-              [.observe, .project, .press, .focus, .click].contains(decoded.operation),
+              keys.isSubset(of: required.union(["observationId", "resultObservationId", "windowId", "maxOutputBytes", "elementId", "x", "y", "valueReference", "key", "projection", "browser", "draft", "photo"])),
+              [.observe, .project, .press, .focus, .click, .draft].contains(decoded.operation),
               decoded.workspaceId == c.identity.workspaceId, decoded.generation == c.generation,
               decoded.expiresAtMs <= c.leaseUntilMs, decoded.expiresAtMs > Int64(Date().timeIntervalSince1970 * 1000),
               decoded.appId == application.applicationId, decoded.installationRevision == application.installationRevision,
@@ -147,7 +147,7 @@ private struct GuestExecutionConsent: Codable, Equatable {
         try Self.exact(rawPin, ["workspaceId", "applicationId", "installationRevision", "bundlePath", "bundleId", "signingId", "teamId", "codeHash"])
         let browser = decoded.browser == nil ? nil : browserSession
         if decoded.browser != nil {
-            guard let browser, [.observe, .project].contains(decoded.operation),
+            guard let browser, [.observe, .project, .draft].contains(decoded.operation),
                   let raw = try JSONSerialization.jsonObject(with: Data(rawCommand.utf8)) as? [String: Any],
                   let scope = raw["browser"] as? [String: Any], Set(scope.keys) == ["profileId", "family", "origin"] else {
                 throw GuestDesktopError.denied
@@ -200,6 +200,12 @@ private struct GuestExecutionConsent: Codable, Equatable {
                 "windowId": windowId.uuidString.lowercased()]
         }
         if let browser {
+            if decoded.operation == .draft {
+                try await browser.draft(decoded) { [self] target in try await permit(decoded, targetJSON: target) }
+                try live()
+                return ["kind": "result", "commandId": decoded.id.uuidString.lowercased(), "reservationId": reservation,
+                    "outcome": "filled", "verificationRequired": "yes", "observationId": "", "windowId": ""]
+            }
             let captured = try await browser.observe(decoded) { [self] target in try await permit(decoded, targetJSON: target) }
             try live()
             return ["kind": "result", "commandId": decoded.id.uuidString.lowercased(), "reservationId": reservation,

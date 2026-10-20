@@ -40,6 +40,8 @@ export interface AutomationModelProjection {
 }
 export interface PreparedAutomationOperation {
   identity: AutomationIdentity; observationId: string; intentDigest: string;
+  /** A write consumes its observed source once, independently of the capture. */
+  effectIdentity?: string;
   effects: AutomationPermissionEffect[]; effectCoverage: 'verified';
   expected: { permissions: VaultRecordReference; cardinal: VaultRecordReference };
   expiresAtMs: number; payload: Secret; dispatchProof: unknown;
@@ -125,6 +127,15 @@ export function parseAutomationToolAction(value: unknown): AutomationAction {
         const url = new URL(action.url);
         if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error();
       } catch { throw new AutomationRuntimeError('Use an exact web destination without credentials.'); }
+    } else if (action.kind === 'browser.photo') {
+      keys.push('elementId', 'sourceReservationId');
+      if (!uuid(action.elementId) || !uuid(action.sourceReservationId)) throw new AutomationRuntimeError('Use an observed photo and its original capture.');
+    } else if (action.kind === 'browser.draft') {
+      keys.push('elementId', 'sourceReservationId', 'text');
+      if (!uuid(action.elementId) || !uuid(action.sourceReservationId)
+        || typeof action.text !== 'string' || !action.text.trim()
+        || Buffer.byteLength(action.text, 'utf8') > 2048 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(action.text)
+        || refuseMemorySecret(action.text)) throw new AutomationRuntimeError('Use an observed text area and a short, non-secret draft.');
     } else if (action.kind === 'browser.element') {
       keys.push('elementId', 'action');
       if (!uuid(action.elementId) || !['click', 'fill'].includes(action.action)) throw new AutomationRuntimeError('Use an observed browser element.');
@@ -271,7 +282,7 @@ export class AutomationRuntime {
     if (!exact(input, ['taskId', 'workspaceId', 'observationId', 'action'])
       || ![input.taskId, input.workspaceId, input.observationId].every(uuid)) throw new AutomationRuntimeError('Use an original task, discovered workspace and current observation.');
     const request = Object.freeze({ ...structuredClone(input), action: Object.freeze(parseAutomationToolAction(input.action)) });
-    const inspection = ['browser.observe', 'desktop.observe'].includes(request.action.kind);
+    const inspection = ['browser.observe', 'browser.photo', 'desktop.observe'].includes(request.action.kind);
     return this.perform(bound, request.taskId, request.workspaceId, inspection, automationIntentDigest(request),
       request.observationId, signal => this.ports.prepare(bound, request, signal));
   }
@@ -333,7 +344,8 @@ export class AutomationRuntime {
       if (controller.signal.aborted || !candidate || !isAutomationIdentity(candidate.identity)
         || candidate.identity.userId !== bound.ownerUserId || candidate.identity.workspaceId !== workspaceId
         || candidate.identity.serverId !== identity.serverId || candidate.identity.deviceId !== identity.deviceId
-        || !uuid(candidate.observationId) || observationId !== null && candidate.observationId !== observationId
+        || !uuid(candidate.observationId) || candidate.effectIdentity !== undefined && !uuid(candidate.effectIdentity)
+        || observationId !== null && candidate.observationId !== observationId
         || candidate.intentDigest !== intentDigest
         || candidate.effectCoverage !== 'verified' || !(candidate.payload instanceof Secret)) throw new AutomationRuntimeError('The actual target and complete action effects could not be verified.');
       const prepared: PreparedAutomationOperation = { ...structuredClone({ ...candidate, payload: undefined }),
@@ -342,7 +354,7 @@ export class AutomationRuntime {
         || prepared.expiresAtMs > Date.now() + 60_000) throw new AutomationRuntimeError('The prepared operation expired.');
       expiryTimer = setTimeout(() => controller.abort(), Math.max(1, prepared.expiresAtMs - Date.now()));
       const reserved = await this.reservations.reserve({ actorUserId: bound.ownerUserId, taskId,
-        turnId: bound.turnId, leaseToken: bound.leaseToken, effectIdentity: prepared.observationId, proposalId: randomUUID(),
+        turnId: bound.turnId, leaseToken: bound.leaseToken, effectIdentity: prepared.effectIdentity ?? prepared.observationId, proposalId: randomUUID(),
         identity: prepared.identity, effects: prepared.effects, effectCoverage: prepared.effectCoverage,
         expected: prepared.expected, expiresAtMs: prepared.expiresAtMs, payload: prepared.payload });
       reservation = reserved.reservation;

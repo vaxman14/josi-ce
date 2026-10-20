@@ -6,7 +6,7 @@ import { Secret } from './sealing.js';
 import { vaultRecords } from './vault.js';
 import { listAutomationPresence } from './automationPresence.js';
 import { cardinalContentDigest } from './cardinalRules.js';
-import { AutomationRuntime, AutomationRuntimeRefusal, type PreparedAutomationOperation } from './automationRuntime.js';
+import { AutomationRuntime, AutomationRuntimeRefusal, automationIntentDigest, type PreparedAutomationOperation } from './automationRuntime.js';
 import type { AutomationReservationProofPort } from './automationReservations.js';
 import { NativeTransportError, type NativeObservationPayload } from './nativeAutomationTransport.js';
 import { isBrowserApplication } from './nativeBrowserObservation.js';
@@ -30,7 +30,7 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
   };
   const reservations = records.automationReservations(proofs);
   return new AutomationRuntime(db, master, {
-    ...proofs, actionsAvailable: false,
+    ...proofs, actionsAvailable: true,
     prepareModelProjection: (context, captureId) => prepareNativeModelProjection(db, master, transport, reservations, context, captureId),
     inventory: async (owner, signal) => {
       const reports = await listAutomationPresence(db, owner);
@@ -52,7 +52,41 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
       if (!control.holder || signal.aborted) throw new NativeTransportError('Control acquisition ended.');
       return { identity: control.identity, taskId, controlSessionId: control.holder.controlSessionId, expiresAtMs: control.leaseUntilMs };
     },
-    prepare: async () => { throw new AutomationRuntimeRefusal('unclassified_effect'); },
+    prepare: async (context, request, signal): Promise<PreparedAutomationOperation> => {
+      const action = request.action;
+      if (action.kind !== 'browser.draft' && action.kind !== 'browser.photo') throw new AutomationRuntimeRefusal('unclassified_effect');
+      const source = await transport.result(context.ownerUserId, action.sourceReservationId);
+      const c = await transport.current(context.ownerUserId, request.workspaceId);
+      if (signal.aborted || !source || source.payload.command.operation !== 'observe'
+        || source.result?.outcome !== 'succeeded' || source.result.observationId !== request.observationId
+        || source.result.windowId !== action.tabId || source.payload.command.taskId !== request.taskId
+        || source.payload.command.workspaceId !== request.workspaceId
+        || !c.browser || c.browser.family !== 'chrome' || action.browserProfileId !== c.browser.profileId
+        || c.holder?.taskId !== request.taskId || c.holder.controlSessionId !== source.payload.command.sessionId
+        || !source.payload.command.browser) throw new AutomationRuntimeRefusal('target_changed');
+      const expiresAtMs = c.leaseUntilMs - 500;
+      if (expiresAtMs - Date.now() < 4000) throw new AutomationRuntimeRefusal('connection_refreshing');
+      const { photo: _photo, windowId: _window, ...sourceCommand } = source.payload.command;
+      const payload: NativeObservationPayload = { ...source.payload,
+        purpose: action.kind === 'browser.photo' ? 'josi-native-observation' : 'josi-native-draft',
+        command: { ...sourceCommand, id: randomUUID(), operation: action.kind === 'browser.photo' ? 'observe' : 'draft', expiresAtMs,
+          observationId: request.observationId, resultObservationId: randomUUID(), windowId: action.tabId,
+          ...(action.kind === 'browser.photo'
+            ? { maxOutputBytes: 65536, photo: { sourceReservationId: action.sourceReservationId, elementId: action.elementId } }
+            : { elementId: action.elementId, maxOutputBytes: Buffer.byteLength(action.text),
+              draft: { sourceReservationId: action.sourceReservationId, text: action.text } }) } };
+      // One input attempt for this capture, including after timeout/restart.
+      const h = cardinalContentDigest({ purpose: 'native-browser-input.1', taskId: request.taskId, observationId: request.observationId });
+      const effectIdentity = `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+      return { identity: c.identity, observationId: request.observationId,
+        effectIdentity: action.kind === 'browser.photo' ? payload.command.resultObservationId : effectIdentity,
+        intentDigest: automationIntentDigest(request), effectCoverage: 'verified',
+        effects: [{ action: action.kind === 'browser.photo' ? 'browser.observe' : 'browser.fill',
+          target: { kind: 'browser', browser: 'chrome', profileId: c.browser.profileId,
+          origin: payload.command.browser!.origin }, bytes: payload.command.maxOutputBytes }],
+        expected: { permissions: c.permissions, cardinal: c.cardinal }, expiresAtMs,
+        payload: new Secret(JSON.stringify(payload)), dispatchProof: { phase: 'prepared', commandId: payload.command.id } };
+    },
     prepareObservation: async (context, request, signal): Promise<PreparedAutomationOperation> => {
       if (signal.aborted) throw new AutomationRuntimeRefusal('device_offline');
       const c = await transport.current(context.ownerUserId, request.workspaceId);

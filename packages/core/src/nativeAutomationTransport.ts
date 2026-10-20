@@ -10,6 +10,7 @@ import type { AutomationDispatchContext } from './automationReservations.js';
 import { sameAutomationIdentity } from './automationTargets.js';
 import { browserDispatchTarget, exactBrowserOrigin, isBrowserApplication, type NativeBrowserPin } from './nativeBrowserObservation.js';
 import { NativeNetworkTransport } from './nativeNetworkTransport.js';
+import { refuseMemorySecret } from './memorySafety.js';
 
 export interface NativeApplicationPin {
   workspaceId: string; applicationId: string; installationRevision: number;
@@ -34,7 +35,7 @@ export interface NativeControlState {
 /** Only bounded initial/refreshed AX observation is classified here. Generic
  * clicks have unknown business effects and cannot be manufactured as reads. */
 export interface NativeObservationPayload {
-  purpose: 'josi-native-observation' | 'josi-native-projection'; schemaVersion: 1;
+  purpose: 'josi-native-observation' | 'josi-native-projection' | 'josi-native-draft'; schemaVersion: 1;
   storageSessionId: string; consent: VaultRecordReference; targetReference: VaultRecordReference;
   guestBootId: string; guestChannelId: string;
   application: NativeApplicationPin;
@@ -42,8 +43,11 @@ export interface NativeObservationPayload {
   command: {
     id: string; workspaceId: string; appId: string; installationRevision: number;
     taskId: string; sessionId: string; generation: number; expiresAtMs: number;
-    operation: 'observe' | 'project'; observationId: string | null; resultObservationId: string; maxOutputBytes: number;
+    operation: 'observe' | 'project' | 'draft'; observationId: string | null; resultObservationId: string; maxOutputBytes: number;
     windowId?: string;
+    elementId?: string;
+    draft?: { sourceReservationId: string; text: string };
+    photo?: { sourceReservationId: string; elementId: string };
     browser?: { profileId: string; family: NativeBrowserPin['family']; origin: string };
     projection?: { sourceReservationId: string; recipientPublicKey: string; configurationId: string;
       configurationRevision: 1; modelReference: VaultRecordReference };
@@ -236,23 +240,40 @@ export class NativeAutomationTransport {
     try {
       const p = JSON.parse(context.payload.reveal()) as NativeObservationPayload, command = p.command;
       if (!exact(p, ['purpose', 'schemaVersion', 'storageSessionId', 'consent', 'targetReference', 'guestBootId', 'guestChannelId', 'application', 'command', ...(p.browser ? ['browser'] : [])])
-        || !['josi-native-observation', 'josi-native-projection'].includes(p.purpose) || p.schemaVersion !== 1
+        || !['josi-native-observation', 'josi-native-projection', 'josi-native-draft'].includes(p.purpose) || p.schemaVersion !== 1
         || !exact(command, ['id', 'workspaceId', 'appId', 'installationRevision', 'taskId', 'sessionId', 'generation',
           'expiresAtMs', 'operation', 'observationId', 'resultObservationId', 'maxOutputBytes',
           ...(p.browser ? ['browser'] : []),
-          ...(p.purpose === 'josi-native-projection' ? ['windowId', 'projection'] : [])])
+          ...(p.purpose === 'josi-native-projection' ? ['windowId', 'projection'] : []),
+          ...(p.purpose === 'josi-native-draft' ? ['windowId', 'elementId', 'draft'] : []),
+          ...(command.photo ? ['photo', 'windowId'] : [])])
         || ![p.storageSessionId, p.guestBootId, p.guestChannelId, command.id, command.workspaceId, command.appId,
           command.taskId, command.sessionId, command.resultObservationId].every(uuid)
-        || command.observationId !== null && !uuid(command.observationId) || command.operation !== (p.purpose === 'josi-native-projection' ? 'project' : 'observe')
+        || command.observationId !== null && !uuid(command.observationId)
+        || command.operation !== (p.purpose === 'josi-native-projection' ? 'project' : p.purpose === 'josi-native-draft' ? 'draft' : 'observe')
         || command.taskId !== context.taskId || command.workspaceId !== context.identity.workspaceId
         || command.expiresAtMs !== context.expiresAtMs || !integer(command.generation)
-        || !integer(command.maxOutputBytes) || command.maxOutputBytes < 1024 || command.maxOutputBytes > 64 * 1024
+        || !integer(command.maxOutputBytes) || command.maxOutputBytes < (command.operation === 'draft' ? 1 : 1024)
+        || command.maxOutputBytes > 64 * 1024
         || context.effects.length !== 1 || context.effects[0].bytes !== command.maxOutputBytes) throw unavailable();
       const effect = context.effects[0], projection = command.projection;
+      if (command.photo && (command.operation !== 'observe' || !p.browser || p.browser.family !== 'chrome'
+        || !exact(command.photo, ['sourceReservationId', 'elementId'])
+        || ![command.photo.sourceReservationId, command.photo.elementId, command.windowId, command.observationId].every(uuid))) throw unavailable();
       if (p.browser && (!command.browser || !exact(command.browser, ['profileId', 'family', 'origin'])
         || command.browser.profileId !== p.browser.profileId || command.browser.family !== p.browser.family
         || !exactBrowserOrigin(command.browser.origin))) throw unavailable();
-      if (command.operation === 'observe') {
+      if (command.operation === 'draft') {
+        const draft = command.draft;
+        if (!p.browser || p.browser.family !== 'chrome' || !draft || !exact(draft, ['sourceReservationId', 'text'])
+          || ![command.windowId, command.elementId, command.observationId, draft.sourceReservationId].every(uuid)
+          || typeof draft.text !== 'string' || !draft.text.trim() || Buffer.byteLength(draft.text) > 2048
+          || refuseMemorySecret(draft.text) || command.maxOutputBytes !== Buffer.byteLength(draft.text)
+          || effect.action !== 'browser.fill' || effect.target.kind !== 'browser'
+          || !exact(effect.target, ['kind', 'browser', 'profileId', 'origin'])
+          || effect.target.browser !== 'chrome' || effect.target.profileId !== p.browser.profileId
+          || effect.target.origin !== command.browser!.origin) throw unavailable();
+      } else if (command.operation === 'observe') {
         if (p.browser) {
           if (effect.action !== 'browser.observe' || effect.target.kind !== 'browser'
             || !exact(effect.target, ['kind', 'browser', 'profileId', 'origin'])
@@ -295,6 +316,15 @@ export class NativeAutomationTransport {
         || source.storageSessionId !== p.storageSessionId || source.payload.command.taskId !== context.taskId
         || source.payload.command.sessionId !== p.command.sessionId || source.payload.command.generation !== p.command.generation
         || !sameRef(source.payload.consent, p.consent) || JSON.stringify(source.payload.application) !== JSON.stringify(p.application)) throw unavailable();
+    }
+    if (p.command.operation === 'draft' || p.command.photo) {
+      const source = await this.result(context.identity.userId, (p.command.draft ?? p.command.photo)!.sourceReservationId, c.tx);
+      if (!source || source.payload.command.operation !== 'observe' || source.result?.outcome !== 'succeeded'
+        || source.result.observationId !== p.command.observationId || source.result.windowId !== p.command.windowId
+        || source.storageSessionId !== p.storageSessionId || source.payload.command.taskId !== context.taskId
+        || source.payload.command.sessionId !== p.command.sessionId || source.payload.command.generation !== p.command.generation
+        || !sameRef(source.payload.consent, p.consent)
+        || JSON.stringify(source.payload.command.browser) !== JSON.stringify(p.command.browser)) throw unavailable();
     }
     return { p, control };
   }
@@ -404,7 +434,12 @@ export class NativeAutomationTransport {
         || receipt.commandId !== d.payload.command.id || !sameRef(d.payload.consent, control.consent)
         || Date.now() >= d.payload.command.expiresAtMs) throw unavailable();
       let result: NonNullable<NativeDelivery['result']>;
-      if (receipt.outcome === 'observed' || projected) {
+      if (receipt.outcome === 'filled') {
+        if (d.state !== 'permitted' || d.payload.command.operation !== 'draft'
+          || receipt.observationId !== '' || receipt.windowId !== '') throw unavailable();
+        result = { outcome: 'succeeded', evidenceId: randomUUID(), observationId: null, windowId: null };
+      } else if (receipt.outcome === 'observed' || projected) {
+        if (d.payload.command.operation === 'draft') throw unavailable();
         if (projected !== (d.payload.command.operation === 'project')) throw unavailable();
         if (projected) {
           if (!validNativeProjectionEnvelope(receipt.projection) || receipt.windowId !== d.payload.command.windowId) throw unavailable();

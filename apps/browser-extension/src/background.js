@@ -95,7 +95,7 @@ async function execute(command, epoch) {
     || !Number.isSafeInteger(command.expiresAt) || command.expiresAt <= Date.now()
     || command.expiresAt > workspace.expiresAt || seen.has(command.id) || seen.size >= 4096) throw new Error('invalid_command');
   seen.add(command.id);
-  if (!['tabs', 'inspect', 'observe', 'navigate', 'click', 'fill'].includes(command.kind)) throw new Error('unsupported_operation');
+  if (!['tabs', 'inspect', 'observe', 'navigate', 'click', 'fill', 'draft', 'photo'].includes(command.kind)) throw new Error('unsupported_operation');
   let tab;
   if (command.kind === 'inspect') {
     if (webUrl(command.origin)?.origin !== command.origin || !workspace.origins.includes(command.origin)
@@ -132,17 +132,22 @@ async function execute(command, epoch) {
   const input = { version: 1, channel: 'josi-page', sessionId: workspace.sessionId, kind: command.kind === 'inspect' ? 'observe' : command.kind,
     observationId: command.observationId, elementId: command.elementId, expectedUrl: tab.url,
     expiresAt: command.expiresAt };
-  if (command.kind === 'inspect') input.maxOutputBytes = command.maxOutputBytes;
+  if (command.kind === 'inspect' || command.kind === 'photo') input.maxOutputBytes = command.maxOutputBytes;
   if (command.kind === 'fill') {
     if (!uuid(command.valueReference) || authority.valueReference !== command.valueReference
       || typeof authority.value !== 'string' || authority.value.length > 16384) throw new Error('value_unavailable');
     input.value = authority.value; // Ephemeral projection; never persist/log/echo.
   }
+  if (command.kind === 'draft') {
+    if (config.family !== 'chrome' || typeof authority.draftText !== 'string'
+      || new TextEncoder().encode(authority.draftText).length > 2048) throw new Error('draft_unavailable');
+    input.value = authority.draftText;
+  }
   try {
     const result = await browserApi.tabs.sendMessage(tabId, input, { frameId: 0 });
     if (!result || !bounded(result) || result.kind === 'refused') throw new Error('invalid_page_response');
-    return command.kind === 'inspect' ? { ...result, tabId, windowId: tab.windowId } : result;
-  } finally { delete input.value; delete authority.value; }
+    return command.kind === 'inspect' || command.kind === 'photo' ? { ...result, tabId, windowId: tab.windowId } : result;
+  } finally { delete input.value; delete authority.value; delete authority.draftText; }
 }
 async function poll() {
   if (pending || !live()) return;

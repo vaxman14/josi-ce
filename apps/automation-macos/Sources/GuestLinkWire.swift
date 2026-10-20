@@ -13,8 +13,11 @@ enum GuestLinkError: Error { case unavailable, invalid, expired, closed }
 /// A self-asserted guest flag or successful key agreement is not that consent.
 final class GuestLinkWire: @unchecked Sendable {
     static let port: UInt32 = 40511
+    static let networkPort: UInt32 = 40512
     private let descriptor: Int32
     private let queue = DispatchQueue(label: "com.heyjosi.guest-link")
+    private let readQueue = DispatchQueue(label: "com.heyjosi.guest-network-read")
+    private let networkMode: Bool
     private let lock = NSLock()
     private var interrupted = false
     private let role: String
@@ -27,11 +30,13 @@ final class GuestLinkWire: @unchecked Sendable {
     private var receiving: UInt64 = 0
     private var lastWall = Date()
 
-    init(descriptor: Int32, host: Bool) throws {
+    /// The network key is a one-connection ephemeral secret delivered over
+    /// the already paired control channel, never an execution permission.
+    init(descriptor: Int32, host: Bool, network: (secret: Data, channel: String)? = nil) throws {
         guard descriptor >= 0 else { throw GuestLinkError.unavailable }
         let owned = dup(descriptor)
         guard owned >= 0 else { throw GuestLinkError.unavailable }
-        self.descriptor = owned; role = host ? "host" : "guest"
+        self.descriptor = owned; role = host ? "host" : "guest"; networkMode = network != nil
         guard fcntl(owned, F_SETFD, FD_CLOEXEC) == 0,
               fcntl(owned, F_SETFL, fcntl(owned, F_GETFL) | O_NONBLOCK) == 0 else {
             Darwin.close(owned); throw GuestLinkError.unavailable
@@ -42,6 +47,15 @@ final class GuestLinkWire: @unchecked Sendable {
         }
         let key = Curve25519.KeyAgreement.PrivateKey()
         agreement = key; publicKey = key.publicKey.rawRepresentation.base64EncodedString()
+        if let network {
+            guard network.secret.count == 32, UUID(uuidString: network.channel)?.uuidString.lowercased() == network.channel else {
+                Darwin.close(owned); throw GuestLinkError.invalid
+            }
+            channel = network.channel; agreement = nil
+            let direction = { (sender: String) in HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: network.secret),
+                salt: Data(network.channel.utf8), info: Data(("josi-guest-network.1/" + sender).utf8), outputByteCount: 32) }
+            sendKey = direction(role); receiveKey = direction(host ? "guest" : "host")
+        }
     }
     deinit { Darwin.close(descriptor) }
     func interrupt() {
@@ -50,16 +64,16 @@ final class GuestLinkWire: @unchecked Sendable {
         // Do not close/reuse this descriptor while a queued reader owns self.
     }
     private func current() throws {
-        lock.lock(); let closed = interrupted; lock.unlock()
-        guard !closed else { throw GuestLinkError.closed }
+        lock.lock(); defer { lock.unlock() }
+        guard !interrupted else { throw GuestLinkError.closed }
         let now = Date()
         guard now >= lastWall else { throw GuestLinkError.expired }
         lastWall = now
     }
-    private func perform<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    private func perform<T: Sendable>(reading: Bool = false, _ work: @escaping @Sendable () throws -> T) async throws -> T {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                queue.async {
+                (reading && networkMode ? readQueue : queue).async {
                     do { try self.current(); continuation.resume(returning: try work()) }
                     catch { self.interrupt(); continuation.resume(throwing: GuestLinkError.unavailable) }
                 }
@@ -98,20 +112,23 @@ final class GuestLinkWire: @unchecked Sendable {
             offset += count
         }
     }
-    static func encode(_ value: [String: String], envelope: Bool = false) throws -> Data {
+    static func encode(_ value: [String: String], envelope: Bool = false, network: Bool = false) throws -> Data {
         guard value.count <= 24, value.allSatisfy({ $0.key.utf8.count <= 64
-            && $0.value.utf8.count <= (envelope && $0.key == "box" ? 22 * 1024 : 4096) }) else { throw GuestLinkError.invalid }
+            && $0.value.utf8.count <= (network && $0.key == "box" && envelope ? 62 * 1024
+                : network && $0.key == "data" && !envelope ? 44 * 1024
+                : envelope && $0.key == "box" ? 22 * 1024 : 4096) }) else { throw GuestLinkError.invalid }
         let bytes = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
-        guard bytes.count <= (envelope ? 24 : 16) * 1024 else { throw GuestLinkError.invalid }
+        guard bytes.count <= (network ? (envelope ? 64 : 46) : (envelope ? 24 : 16)) * 1024 else { throw GuestLinkError.invalid }
         return bytes
     }
-    private static func decode(_ bytes: Data, envelope: Bool = false) throws -> [String: String] {
-        guard bytes.count <= (envelope ? 24 : 16) * 1024, let value = try JSONSerialization.jsonObject(with: bytes) as? [String: String],
-              try encode(value, envelope: envelope) == bytes else { throw GuestLinkError.invalid }
+    private static func decode(_ bytes: Data, envelope: Bool = false, network: Bool = false) throws -> [String: String] {
+        guard bytes.count <= (network ? (envelope ? 64 : 46) : (envelope ? 24 : 16)) * 1024,
+              let value = try JSONSerialization.jsonObject(with: bytes) as? [String: String],
+              try encode(value, envelope: envelope, network: network) == bytes else { throw GuestLinkError.invalid }
         return value
     }
     private func frame(_ bytes: Data) throws {
-        guard !bytes.isEmpty, bytes.count <= 24 * 1024 else { throw GuestLinkError.invalid }
+        guard !bytes.isEmpty, bytes.count <= (networkMode ? 64 : 24) * 1024 else { throw GuestLinkError.invalid }
         let size = UInt32(bytes.count)
         let header = Data([UInt8((size >> 24) & 255), UInt8((size >> 16) & 255), UInt8((size >> 8) & 255), UInt8(size & 255)])
         try write(header + bytes, deadline: .now.advanced(by: .seconds(5)))
@@ -120,7 +137,7 @@ final class GuestLinkWire: @unchecked Sendable {
         guard (1...60).contains(seconds) else { throw GuestLinkError.invalid }
         let deadline = ContinuousClock.now.advanced(by: .seconds(seconds))
         let size = try read(4, deadline: deadline).reduce(0) { ($0 << 8) | Int($1) }
-        guard (1...24 * 1024).contains(size) else { throw GuestLinkError.invalid }
+        guard (1...(networkMode ? 64 : 24) * 1024).contains(size) else { throw GuestLinkError.invalid }
         return try read(size, deadline: deadline)
     }
     func sendHello(_ hello: [String: String]) async throws {
@@ -166,24 +183,28 @@ final class GuestLinkWire: @unchecked Sendable {
         }
     }
     private func associated(sender: String, sequence: UInt64) -> Data {
-        Data("josi-guest-frame.1\n\(sender)\n\(channel)\n\(sequence)".utf8)
+        Data("\(networkMode ? "josi-guest-network-frame.1" : "josi-guest-frame.1")\n\(sender)\n\(channel)\n\(sequence)".utf8)
+    }
+    private var kinds: Set<String> {
+        networkMode ? ["network-hello", "network-ready", "network-open", "network-opened", "network-data", "network-close", "network-pulse"]
+            : ["accept", "pulse", "status", "stop", "execute", "authorize", "permit", "result", "projection"]
     }
     func send(_ value: [String: String]) async throws {
         try await perform {
-            guard let key = self.sendKey, self.sending < 4096,
-                  ["accept", "pulse", "status", "stop", "execute", "authorize", "permit", "result", "projection"].contains(value["kind"] ?? "") else { throw GuestLinkError.invalid }
+            guard let key = self.sendKey, self.sending < (self.networkMode ? 1_048_576 : 4096),
+                  self.kinds.contains(value["kind"] ?? "") else { throw GuestLinkError.invalid }
             self.sending += 1
-            let box = try AES.GCM.seal(Self.encode(value), using: key,
+            let box = try AES.GCM.seal(Self.encode(value, network: self.networkMode), using: key,
                 authenticating: self.associated(sender: self.role, sequence: self.sending))
             guard let combined = box.combined else { throw GuestLinkError.invalid }
             try self.frame(Self.encode(["version": "1", "channel": self.channel,
-                "sequence": String(self.sending), "box": combined.base64EncodedString()], envelope: true))
+                "sequence": String(self.sending), "box": combined.base64EncodedString()], envelope: true, network: self.networkMode))
         }
     }
     func receive(seconds: Int = 5) async throws -> [String: String] {
-        try await perform {
-            guard let key = self.receiveKey, self.receiving < 4096 else { throw GuestLinkError.invalid }
-            let packet = try Self.decode(self.frame(seconds: seconds), envelope: true)
+        try await perform(reading: true) {
+            guard let key = self.receiveKey, self.receiving < (self.networkMode ? 1_048_576 : 4096) else { throw GuestLinkError.invalid }
+            let packet = try Self.decode(self.frame(seconds: seconds), envelope: true, network: self.networkMode)
             guard Set(packet.keys) == ["version", "channel", "sequence", "box"], packet["version"] == "1",
                   packet["channel"] == self.channel, packet["sequence"] == String(self.receiving + 1),
                   let encoded = packet["box"], let combined = Data(base64Encoded: encoded),
@@ -191,8 +212,8 @@ final class GuestLinkWire: @unchecked Sendable {
             self.receiving += 1
             let plain = try AES.GCM.open(AES.GCM.SealedBox(combined: combined), using: key,
                 authenticating: self.associated(sender: self.role == "host" ? "guest" : "host", sequence: self.receiving))
-            let value = try Self.decode(plain)
-            guard ["accept", "pulse", "status", "stop", "execute", "authorize", "permit", "result", "projection"].contains(value["kind"] ?? "") else { throw GuestLinkError.invalid }
+            let value = try Self.decode(plain, network: self.networkMode)
+            guard self.kinds.contains(value["kind"] ?? "") else { throw GuestLinkError.invalid }
             return value
         }
     }

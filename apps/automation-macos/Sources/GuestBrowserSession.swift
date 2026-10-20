@@ -27,6 +27,8 @@ import Foundation
     private var captureDeadline: ContinuousClock.Instant = .now
     private var captureExpiry: Task<Void, Never>?
     private var usedCommands = Set<UUID>()
+    private var inputSource: (observation: String, tab: Int, window: Int)?
+    private var inputDeadline: ContinuousClock.Instant = .now
 
     init(_ target: GuestCanonicalBrowser, current: @escaping @MainActor () throws -> Void,
          status: @escaping @MainActor (Bool) -> Void, stopped: @escaping @MainActor () -> Void) throws {
@@ -104,7 +106,7 @@ import Foundation
         let pending = flight; flight = nil; pending?.timeout?.cancel()
         pending?.completion.resume(throwing: GuestDesktopError.uncertain)
         captureExpiry?.cancel(); captureExpiry = nil
-        capture = nil; lastCapture = nil; captureWindow = nil
+        capture = nil; lastCapture = nil; captureWindow = nil; inputSource = nil
         monitor?.cancel(); monitor = nil
         (connection.remoteObjectProxy as? GuestBrowserOwner)?.stop()
         connection.invalidate(); notify(false)
@@ -202,23 +204,33 @@ import Foundation
                   lastCapture.sessionId == command.sessionId, lastCapture.generation == command.generation,
                   lastCapture.browser == command.browser else { throw GuestDesktopError.stale }
         }
+        var photoSource: (observation: String, tab: Int, window: Int)?
+        if command.photo != nil {
+            guard browser.family == "chrome", let inputSource, command.windowId == captureWindow,
+                  command.observationId != nil, ContinuousClock.now < inputDeadline else { throw GuestDesktopError.stale }
+            photoSource = inputSource
+        }
         usedCommands.insert(command.id)
         captureExpiry?.cancel(); captureExpiry = nil; capture = nil; captureWindow = nil
-        let wire: [String: Any] = ["id": command.id.uuidString.lowercased(), "sessionId": sessionId,
+        var wire: [String: Any] = ["id": command.id.uuidString.lowercased(), "sessionId": sessionId,
             "profileId": canonical.profileId.uuidString.lowercased(), "kind": "inspect", "origin": browser.origin,
             "expiresAt": min(command.expiresAtMs, canonical.expiresAtMs), "maxOutputBytes": limit - 2048]
-        let result: Data = try await withCheckedThrowingContinuation { continuation in
-            let pending = BrowserInspectionFlight(original: command, wire: wire, authorize: authorize, completion: continuation)
-            flight = pending
-            pending.timeout = Task { [weak self, weak pending] in
-                let now = Int64(Date().timeIntervalSince1970 * 1000)
-                try? await Task.sleep(for: .milliseconds(max(1, min(command.expiresAtMs, self?.canonical.expiresAtMs ?? now) - now)))
-                guard !Task.isCancelled, let self, let pending, self.flight === pending else { return }
-                self.stop()
-            }
+        if let photo = command.photo, let photoSource {
+            wire["kind"] = "photo"; wire["tabId"] = photoSource.tab; wire["observationId"] = photoSource.observation
+            wire["elementId"] = photo.elementId.uuidString.lowercased(); wire["maxOutputBytes"] = limit - 26_000
         }
+        let result = try await dispatch(command, wire: wire, authorize: authorize)
         try current(command)
-        let page = try JSONSerialization.jsonObject(with: result)
+        guard var page = try JSONSerialization.jsonObject(with: result) as? [String: Any] else { throw GuestDesktopError.denied }
+        if command.photo != nil {
+            guard let photo = page["photo"] as? [String: Any], let encoded = photo["base64"] as? String else { throw GuestDesktopError.denied }
+            page["ocrText"] = try await GuestPhotoReader.recognize(encoded)
+            try current(command)
+        }
+        let metadata = page
+        guard let observation = metadata["observationId"] as? String,
+              let tab = metadata["tabId"] as? Int, let browserWindow = metadata["windowId"] as? Int else { throw GuestDesktopError.denied }
+        inputSource = (observation, tab, browserWindow); inputDeadline = .now.advanced(by: .seconds(120))
         let window = UUID()
         let snapshot: [String: Any] = ["id": resultId.uuidString.lowercased(), "workspaceId": command.workspaceId.uuidString.lowercased(),
             "taskId": command.taskId.uuidString.lowercased(), "sessionId": command.sessionId.uuidString.lowercased(),
@@ -236,6 +248,38 @@ import Foundation
             self.capture = nil; self.captureExpiry = nil
         }
         return (resultId, window)
+    }
+    private func dispatch(_ command: GuestDesktopCommand, wire: [String: Any],
+                          authorize: @escaping @MainActor (String) async throws -> Void) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            let pending = BrowserInspectionFlight(original: command, wire: wire, authorize: authorize, completion: continuation)
+            flight = pending
+            pending.timeout = Task { [weak self, weak pending] in
+                let now = Int64(Date().timeIntervalSince1970 * 1000)
+                try? await Task.sleep(for: .milliseconds(max(1, min(command.expiresAtMs, self?.canonical.expiresAtMs ?? now) - now)))
+                guard !Task.isCancelled, let self, let pending, self.flight === pending else { return }
+                self.stop()
+            }
+        }
+    }
+    func draft(_ command: GuestDesktopCommand, authorize: @escaping @MainActor (String) async throws -> Void) async throws {
+        try current(command)
+        guard command.operation == .draft, command.browser?.family == "chrome", let draft = command.draft,
+              !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, draft.text.utf8.count <= 2048,
+              command.maxOutputBytes == draft.text.utf8.count,
+              let lastCapture, let input = inputSource, ContinuousClock.now < inputDeadline, flight == nil,
+              command.observationId == lastCapture.resultObservationId, command.windowId == captureWindow,
+              command.browser == lastCapture.browser, command.taskId == lastCapture.taskId,
+              command.sessionId == lastCapture.sessionId, command.generation == lastCapture.generation,
+              let element = command.elementId, !usedCommands.contains(command.id), usedCommands.count < 4096
+        else { throw GuestDesktopError.stale }
+        usedCommands.insert(command.id); inputSource = nil
+        let wire: [String: Any] = ["id": command.id.uuidString.lowercased(), "sessionId": sessionId,
+            "profileId": canonical.profileId.uuidString.lowercased(), "kind": "draft", "tabId": input.tab,
+            "observationId": input.observation, "elementId": element.uuidString.lowercased(),
+            "expiresAt": min(command.expiresAtMs, canonical.expiresAtMs)]
+        _ = try await dispatch(command, wire: wire, authorize: authorize)
+        try current(command)
     }
     func project(_ command: GuestDesktopCommand, authorize: @MainActor (String) async throws -> Void) async throws -> Data {
         try current(command)
@@ -294,15 +338,29 @@ import Foundation
                 try current(pending.original)
                 guard flight === pending else { throw GuestDesktopError.stale }
                 pending.authorized = true; pending.actual = (tab, window)
-                output = ["commandId": pending.original.id.uuidString.lowercased(), "sessionId": sessionId, "allowed": true]
+                var permitted: [String: Any] = ["commandId": pending.original.id.uuidString.lowercased(), "sessionId": sessionId, "allowed": true]
+                if pending.original.operation == .draft { permitted["draftText"] = pending.original.draft?.text }
+                output = permitted
             } catch { stop(); throw error }
         case "browser.receipt":
             guard connected, request["sessionId"] as? String == sessionId, let pending = flight, pending.delivered,
                   payload["commandId"] as? String == pending.original.id.uuidString.lowercased() else { throw GuestDesktopError.denied }
+            if pending.original.operation == .draft {
+                guard pending.authorized, payload["outcome"] as? String == "observed_or_issued",
+                      Set(payload.keys) == ["commandId", "outcome", "result"],
+                      let result = payload["result"] as? [String: Any],
+                      Set(result.keys) == ["kind", "matched", "verificationRequired"],
+                      result["kind"] as? String == "draft_filled", result["matched"] as? Bool == true,
+                      result["verificationRequired"] as? Bool == true else { stop(); throw GuestDesktopError.uncertain }
+                try current(pending.original)
+                flight = nil; pending.timeout?.cancel(); pending.completion.resume(returning: Data())
+                output = ["recorded": true, "verificationRequired": true]
+                break
+            }
             guard pending.authorized, payload["outcome"] as? String == "observed_or_issued",
                   Set(payload.keys) == ["commandId", "outcome", "result"],
                   let result = payload["result"] as? [String: Any],
-                  Set(result.keys) == ["kind", "observationId", "revision", "title", "url", "text", "elements", "partial", "framesUnsupported", "viewport", "tabId", "windowId"],
+                  Set(result.keys) == Set(["kind", "observationId", "revision", "title", "url", "text", "elements", "partial", "framesUnsupported", "viewport", "tabId", "windowId"] + (pending.original.photo == nil ? [] : ["photo"])),
                   result["kind"] as? String == "observation",
                   let observation = result["observationId"] as? String, UUID(uuidString: observation) != nil,
                   let url = result["url"] as? String, Self.site(url) == pending.original.browser?.origin,
@@ -314,6 +372,13 @@ import Foundation
                       return UUID(uuidString: id) != nil
                   }), result["tabId"] as? Int == pending.actual?.0, result["windowId"] as? Int == pending.actual?.1
             else { stop(); throw GuestDesktopError.uncertain }
+            if pending.original.photo != nil {
+                guard let photo = result["photo"] as? [String: Any],
+                      Set(photo.keys) == ["mediaType", "base64", "width", "height", "alt", "untrustedContent"],
+                      photo["mediaType"] as? String == "image/jpeg", photo["untrustedContent"] as? Bool == true,
+                      let encoded = photo["base64"] as? String, encoded.utf8.count <= 32768,
+                      let alt = photo["alt"] as? String, alt.utf8.count <= 1200 else { stop(); throw GuestDesktopError.uncertain }
+            }
             try current(pending.original)
             let body = try JSONSerialization.data(withJSONObject: result)
             guard body.count <= (pending.original.maxOutputBytes ?? 0) - 2048 else { stop(); throw GuestDesktopError.uncertain }

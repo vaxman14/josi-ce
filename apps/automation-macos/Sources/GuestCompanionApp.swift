@@ -199,7 +199,7 @@ enum GuestEnvironment {
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
-                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.5",
+                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.6",
                         "browserCandidate": try preparedBrowser.map { String(decoding: try JSONEncoder().encode($0.candidate), as: UTF8.self) } ?? "",
                         "browserConnection": browserConnected ? "connected" : "waiting"])
                 }

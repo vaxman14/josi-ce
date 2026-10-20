@@ -32,9 +32,12 @@ export const AUTOMATION_CONTROL_TOOLS: ToolSpec[] = [
       browser_origin: { anyOf: [{ type: 'string', maxLength: 2048, description: 'Exact browser site origin, for example https://example.com. Required for browser; null for desktop.' }, { type: 'null' }] },
       surface: { type: 'string', enum: ['browser', 'desktop'] } }) }, actionClass: 'automation_control' },
   { def: { name: 'browser_control',
-    description: 'Request one bounded browser operation using a current native observation and opaque profile/tab/element references. Works only in a dedicated Josi workspace. Actual effects and current permissions are verified before dispatch. A lost or uncertain receipt is never permission to retry. Fill uses an authorized value reference, never a raw secret. An input receipt does not verify the user’s business outcome.',
+    description: 'Request one bounded browser operation using current native observation references. browser.photo reads an observed, already loaded same-site image in Chrome, runs local OCR, and supplies the image plus OCR to the next permitted vision-model request. Describe only visible details; do not invent brand, condition, size or authenticity. browser.draft writes a short non-secret description to an observed text area and verifies that field, without clicking or submitting. Use the native windowId as tabId and the original capture reservation as sourceReservationId. The site may autosave on input. Requires browser.observe or browser.fill permission respectively. A lost or uncertain receipt is never permission to retry. An input receipt does not verify the whole business outcome.',
     parameters: shape({ ...properties, action: { oneOf: [
       shape({ kind: literal('browser.observe'), ...browser }),
+      shape({ kind: literal('browser.photo'), ...browser, elementId: id, sourceReservationId: id }),
+      shape({ kind: literal('browser.draft'), ...browser, elementId: id, sourceReservationId: id,
+        text: { type: 'string', maxLength: 2048, description: 'Non-secret description for review. Never credentials or personal identifiers.' } }),
       shape({ kind: literal('browser.navigate'), ...browser, url: { type: 'string', maxLength: 8192 } }),
       shape({ kind: literal('browser.element'), ...browser, elementId: id, action: literal('click') }),
       shape({ kind: literal('browser.element'), ...browser, elementId: id, action: literal('fill'), valueReference: id }),

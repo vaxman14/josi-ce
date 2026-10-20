@@ -39,6 +39,7 @@ import Darwin
     private var supportsBrowserInspection = false
     private var supportsSafariInspection = false
     private var supportsFirefoxInspection = false
+    private var supportsChromeDraft = false
     private var pairedBinding: Wire = .null
     private var sentConsent: Wire = .null
     private var execution: GuestPendingExecution?
@@ -147,21 +148,22 @@ import Darwin
                     || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate"])
                     || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate", "browserConnection"])),
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
-                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5"].contains(reply["executionProtocol"] ?? ""),
+                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? ""),
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
                       ["yes", "no"].contains(reply["screenCapture"] ?? ""), let candidate = reply["applicationCandidate"],
                       candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
                 accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
-                supportsExecution = ["desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5"].contains(reply["executionProtocol"] ?? "")
-                supportsBrowserInspection = ["desktop-command.3", "desktop-command.4", "desktop-command.5"].contains(reply["executionProtocol"] ?? "")
-                supportsSafariInspection = ["desktop-command.4", "desktop-command.5"].contains(reply["executionProtocol"] ?? "")
-                supportsFirefoxInspection = reply["executionProtocol"] == "desktop-command.5"
+                supportsExecution = ["desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? "")
+                supportsBrowserInspection = ["desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? "")
+                supportsSafariInspection = ["desktop-command.4", "desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? "")
+                supportsFirefoxInspection = ["desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? "")
+                supportsChromeDraft = reply["executionProtocol"] == "desktop-command.6"
                 supportsBrowserProfiles = reply["browserCandidate"] != nil
                 guard reply["browserConnection"] == nil || ["connected", "waiting"].contains(reply["browserConnection"] ?? "")
                 else { throw GuestLinkError.invalid }
                 browserConnected = reply["browserConnection"] == "connected"
                 state = consent == .null ? "Companion connected. Inspection is not approved."
-                    : "Companion connected. Inspection is approved; input is unavailable."
+                    : supportsChromeDraft ? "Companion connected. Permitted Chrome drafts are available." : "Companion connected. Inspection is approved; input is unavailable."
                 if candidate.isEmpty { applicationCandidate = .null }
                 else {
                     let value = try JSONDecoder().decode(Wire.self, from: Data(candidate.utf8))
@@ -211,7 +213,7 @@ import Darwin
         browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
         supportsBrowserInspection = false
         supportsSafariInspection = false
-        supportsFirefoxInspection = false
+        supportsFirefoxInspection = false; supportsChromeDraft = false
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         cancelExecution(); sentConsent = .null
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
@@ -384,11 +386,12 @@ import Darwin
               ProtectedWire.uuid(c["id"]), ProtectedWire.uuid(c["taskId"]), ProtectedWire.uuid(c["sessionId"]),
               ProtectedWire.integer(c["expiresAtMs"]), c["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
               c["expiresAtMs"].integer <= until, c["expiresAtMs"].integer <= consent["leaseUntilMs"].integer,
-              ["observe", "project", "press", "focus", "click"].contains(c["operation"].text),
+              ["observe", "project", "press", "focus", "click", "draft"].contains(c["operation"].text),
               currentApplicationPin(until: until)["projection"]["application"] == request.packet["application"],
               c["appId"] == request.packet["application"]["applicationId"],
               c["installationRevision"] == request.packet["application"]["installationRevision"]
         else { throw GuestLinkError.expired }
+        if c["operation"] == .string("draft"), !supportsChromeDraft { throw GuestLinkError.unavailable }
         if c["browser"] != .null {
             let browser = currentBrowserPin(until: until)["projection"]["browser"]
             guard browserConnected, supportsBrowserInspection, browser != .null, c["browser"]["profileId"] == browser["profileId"],
@@ -462,9 +465,9 @@ import Darwin
         }
         guard Set(response.keys) == ["kind", "commandId", "reservationId", "outcome", "verificationRequired", "observationId", "windowId"],
               response["kind"] == "result", response["commandId"] == c["id"].text, response["reservationId"] == reservation,
-              response["verificationRequired"] == "yes", ["observed", "projected", "inputIssued", "denied", "uncertain"].contains(response["outcome"] ?? "")
+              response["verificationRequired"] == "yes", ["observed", "projected", "inputIssued", "filled", "denied", "uncertain"].contains(response["outcome"] ?? "")
         else { throw GuestLinkError.invalid }
-        if ["observed", "projected", "inputIssued"].contains(response["outcome"] ?? ""), !authorized { throw GuestLinkError.invalid }
+        if ["observed", "projected", "inputIssued", "filled"].contains(response["outcome"] ?? ""), !authorized { throw GuestLinkError.invalid }
         if response["outcome"] == "observed" {
             guard c["operation"] == .string("observe"), response["observationId"] == c["resultObservationId"].text,
                   ProtectedWire.uuid(.string(response["windowId"] ?? "")) else { throw GuestLinkError.invalid }
@@ -474,6 +477,7 @@ import Darwin
                   let box = Data(base64Encoded: encrypted), box.base64EncodedString() == encrypted,
                   ProtectedWire.digest(Data(encrypted.utf8)) == contentDigest else { throw GuestLinkError.invalid }
         } else {
+            if response["outcome"] == "filled", c["operation"] != .string("draft") { throw GuestLinkError.invalid }
             guard response["observationId"] == "", response["windowId"] == "",
                   response["outcome"] != "inputIssued" || c["operation"] != .string("observe") else { throw GuestLinkError.invalid }
         }
