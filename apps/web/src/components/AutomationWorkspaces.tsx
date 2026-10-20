@@ -45,7 +45,7 @@ export function AutomationWorkspaces() {
               ].filter(Boolean).join(' · ') || 'No control adapter is currently available.'}</p>
             </li>)}</ul>}
     {status?.controlAvailable === false ? <p className="mt-3 text-xs text-muted-foreground">{status.inspectionAvailable
-      ? 'App inspection is available with local approval. Input and model-visible screen content are not connected yet.'
+      ? 'App inspection needs local approval. Sharing a capture also needs permission for the current model. Input is not available yet.'
       : 'Connection status is available. Browser and computer control are not connected yet.'}</p> : null}
     {received ? <p className="mt-3 text-xs text-muted-foreground">Last checked {received.toLocaleTimeString()}. Each action still checks current access.</p> : null}
   </details>;

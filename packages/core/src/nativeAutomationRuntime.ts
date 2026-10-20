@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { prepareNativeModelProjection } from './nativeModelProjection.js';
 import type { Db } from './db.js';
 import type { MasterKey } from './masterKey.js';
 import { Secret } from './sealing.js';
@@ -20,6 +21,7 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
   const proofs: AutomationReservationProofPort = {
     verifyDispatch: async (tx, context, proof) => {
       if ((proof as { phase?: unknown })?.phase === 'prepared') return transport.verifyPrepared(tx, context, proof);
+      if ((proof as { phase?: unknown })?.phase === 'model-send') return transport.sendProjection(tx, context, proof);
       if ((proof as { phase?: unknown })?.phase === 'queue') return transport.enqueue(tx, context, proof);
       throw new NativeTransportError('Use the native API for the final guest permit.');
     },
@@ -28,6 +30,7 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
   const reservations = records.automationReservations(proofs);
   return new AutomationRuntime(db, master, {
     ...proofs, actionsAvailable: false,
+    prepareModelProjection: (context, captureId) => prepareNativeModelProjection(db, master, transport, reservations, context, captureId),
     inventory: async (owner, signal) => {
       const reports = await listAutomationPresence(db, owner);
       for (const report of reports) {

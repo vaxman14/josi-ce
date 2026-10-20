@@ -130,12 +130,12 @@ import Darwin
                 let statusKeys: Set<String> = ["kind", "accessibility", "screenCapture", "executionEnabled", "applicationCandidate", "applicationReadiness"]
                 guard (Set(reply.keys) == statusKeys || Set(reply.keys) == statusKeys.union(["executionProtocol"])),
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
-                      reply["executionProtocol"] == nil || reply["executionProtocol"] == "desktop-command.1",
+                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2"].contains(reply["executionProtocol"] ?? ""),
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
                       ["yes", "no"].contains(reply["screenCapture"] ?? ""), let candidate = reply["applicationCandidate"],
                       candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
                 accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
-                supportsExecution = reply["executionProtocol"] == "desktop-command.1"
+                supportsExecution = reply["executionProtocol"] == "desktop-command.2"
                 state = consent == .null ? "Companion connected. Inspection is not approved."
                     : "Companion connected. Inspection is approved; input is unavailable."
                 if candidate.isEmpty { applicationCandidate = .null }
@@ -292,7 +292,7 @@ import Darwin
               ProtectedWire.uuid(c["id"]), ProtectedWire.uuid(c["taskId"]), ProtectedWire.uuid(c["sessionId"]),
               ProtectedWire.integer(c["expiresAtMs"]), c["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
               c["expiresAtMs"].integer <= until, c["expiresAtMs"].integer <= consent["leaseUntilMs"].integer,
-              ["observe", "press", "focus", "click"].contains(c["operation"].text),
+              ["observe", "project", "press", "focus", "click"].contains(c["operation"].text),
               currentApplicationPin(until: until)["projection"]["application"] == request.packet["application"],
               c["appId"] == request.packet["application"]["applicationId"],
               c["installationRevision"] == request.packet["application"]["installationRevision"]
@@ -334,21 +334,47 @@ import Darwin
             authorized = true
             response = try await link.receive()
         }
+        var encrypted = "", recipient = "", contentDigest = "", chunkCount = 0, chunkIndex = 0
+        while response["kind"] == "projection" {
+            try requireExecution(request)
+            guard authorized, c["operation"] == .string("project"), chunkIndex < 29,
+                  Set(response.keys) == ["kind", "commandId", "reservationId", "index", "count", "publicKey", "digest", "data"],
+                  response["commandId"] == c["id"].text, response["reservationId"] == reservation,
+                  response["index"] == String(chunkIndex), let count = Int(response["count"] ?? ""), (1...29).contains(count),
+                  response["count"] == String(count), let piece = response["data"], !piece.isEmpty, piece.utf8.count <= 3072,
+                  let key = response["publicKey"], let raw = Data(base64Encoded: key), raw.count == 32,
+                  raw.base64EncodedString() == key, let digest = response["digest"],
+                  digest.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw GuestLinkError.invalid }
+            if chunkIndex == 0 { recipient = key; contentDigest = digest; chunkCount = count }
+            guard recipient == key, contentDigest == digest, chunkCount == count, chunkIndex < count,
+                  chunkIndex == count - 1 || piece.utf8.count == 3072 else { throw GuestLinkError.invalid }
+            encrypted += piece; chunkIndex += 1
+            guard encrypted.utf8.count <= 87_420 else { throw GuestLinkError.invalid }
+            response = try await link.receive()
+        }
         guard Set(response.keys) == ["kind", "commandId", "reservationId", "outcome", "verificationRequired", "observationId", "windowId"],
               response["kind"] == "result", response["commandId"] == c["id"].text, response["reservationId"] == reservation,
-              response["verificationRequired"] == "yes", ["observed", "inputIssued", "denied", "uncertain"].contains(response["outcome"] ?? "")
+              response["verificationRequired"] == "yes", ["observed", "projected", "inputIssued", "denied", "uncertain"].contains(response["outcome"] ?? "")
         else { throw GuestLinkError.invalid }
-        if ["observed", "inputIssued"].contains(response["outcome"] ?? ""), !authorized { throw GuestLinkError.invalid }
+        if ["observed", "projected", "inputIssued"].contains(response["outcome"] ?? ""), !authorized { throw GuestLinkError.invalid }
         if response["outcome"] == "observed" {
             guard c["operation"] == .string("observe"), response["observationId"] == c["resultObservationId"].text,
                   ProtectedWire.uuid(.string(response["windowId"] ?? "")) else { throw GuestLinkError.invalid }
+        } else if response["outcome"] == "projected" {
+            guard c["operation"] == .string("project"), chunkIndex > 0, chunkIndex == chunkCount,
+                  response["observationId"] == c["resultObservationId"].text, response["windowId"] == c["windowId"].text,
+                  let box = Data(base64Encoded: encrypted), box.base64EncodedString() == encrypted,
+                  ProtectedWire.digest(Data(encrypted.utf8)) == contentDigest else { throw GuestLinkError.invalid }
         } else {
             guard response["observationId"] == "", response["windowId"] == "",
                   response["outcome"] != "inputIssued" || c["operation"] != .string("observe") else { throw GuestLinkError.invalid }
         }
         try requireExecution(request)
         execution = nil; executionTimeout?.cancel(); executionTimeout = nil
-        request.continuation.resume(returning: .object(response.mapValues(Wire.string)))
+        guard response["outcome"] == "projected" || chunkIndex == 0 else { throw GuestLinkError.invalid }
+        var result = response.mapValues(Wire.string)
+        if response["outcome"] == "projected" { result["projection"] = .object(["publicKey": .string(recipient), "box": .string(encrypted)]) }
+        request.continuation.resume(returning: .object(result))
         if response["outcome"] == "uncertain" { revokeAutomation(); link.interrupt() }
     }
     func close() {

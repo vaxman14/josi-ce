@@ -30,6 +30,12 @@ export interface AutomationObservationRequest {
   taskId: string; workspaceId: string; controlSessionId: string; surface: 'browser' | 'desktop';
   previousObservationId: string | null;
 }
+export interface AutomationModelProjection {
+  expectedPrimary: { providerId: string; model: string; configurationVersion: string };
+  content(): Secret;
+  beforeDispatch(): Promise<void>;
+  finish(success: boolean): Promise<void>;
+}
 export interface PreparedAutomationOperation {
   identity: AutomationIdentity; observationId: string; intentDigest: string;
   effects: AutomationPermissionEffect[]; effectCoverage: 'verified';
@@ -41,6 +47,7 @@ export interface PreparedAutomationOperation {
 export interface AutomationRuntimePorts extends AutomationReservationProofPort {
   /** An inspection-only adapter must not advertise or accept input tools. */
   actionsAvailable?: boolean;
+  prepareModelProjection?(context: Readonly<AutomationExecutionContext>, captureReservationId: string): Promise<AutomationModelProjection>;
   inventory(ownerUserId: string, signal: AbortSignal): Promise<AutomationWorkspaceSummary[]>;
   /** Current local consent, task ownership and Vault authority are required.
    * Cannot resume a human takeover or manufacture new consent/grants. */
@@ -290,6 +297,22 @@ export class AutomationRuntime {
         }
         return candidate;
       });
+  }
+  /** Trusted orchestration only: never expose this handle as tool JSON. */
+  async projectObservation(context: AutomationExecutionContext, captureReservationId: string): Promise<AutomationModelProjection> {
+    if (!this.ports.prepareModelProjection || !uuid(captureReservationId)) throw new AutomationRuntimeError('Model projection is unavailable.');
+    const bound = Object.freeze(structuredClone(context));
+    const { reservation: receipt } = await this.receipt(bound.ownerUserId, bound.threadId, captureReservationId);
+    if (!receipt || receipt.state !== 'succeeded') throw new AutomationRuntimeError('The original capture has not succeeded.');
+    const [task] = await this.db.query<{ workspace_id: string }>('select workspace_id from automation_work_tasks where task_id=$1 and owner_user_id=$2',
+      [receipt.taskId, bound.ownerUserId]);
+    if (!task) throw new AutomationRuntimeError('The original capture task is unavailable.');
+    await this.current(bound, receipt.taskId, true, task.workspace_id);
+    const projection = await this.ports.prepareModelProjection(bound, captureReservationId);
+    return { ...projection, beforeDispatch: async () => {
+      await this.current(bound, receipt.taskId, true, task.workspace_id);
+      await projection.beforeDispatch();
+    } };
   }
   private async perform(bound: Readonly<AutomationExecutionContext>, taskId: string, workspaceId: string,
     inspection: boolean, intentDigest: string, observationId: string | null,

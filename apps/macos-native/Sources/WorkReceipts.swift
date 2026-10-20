@@ -206,7 +206,7 @@ struct NativeAutomationConnections: View {
                     }
                     if connections["controlAvailable"] == .bool(false) {
                         Text(connections["inspectionAvailable"].flag
-                             ? "App inspection is available with local approval. Input and model-visible screen content are not connected yet."
+                             ? "App inspection needs local approval. Sharing a capture also needs permission for the current model. Input is not available yet."
                              : "Connection status is available. Browser and computer control are not connected yet.")
                             .font(.caption).foregroundStyle(.secondary)
                     }

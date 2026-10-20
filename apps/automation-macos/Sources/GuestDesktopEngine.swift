@@ -8,7 +8,7 @@ import Security
 enum GuestDesktopError: Error { case unavailable, stale, denied, busy, unsupported, uncertain }
 
 struct GuestDesktopCommand: Codable, Equatable {
-    enum Operation: String, Codable { case observe, capture, press, focus, click, text, key }
+    enum Operation: String, Codable { case observe, project, capture, press, focus, click, text, key }
     let id: UUID
     let workspaceId: UUID
     let appId: UUID
@@ -29,6 +29,12 @@ struct GuestDesktopCommand: Codable, Equatable {
     let y: Double?
     let valueReference: UUID?
     let key: String?
+    struct Projection: Codable, Equatable {
+        struct Reference: Codable, Equatable { let recordId: UUID; let version: Int; let digest: String; let epoch: Int }
+        let sourceReservationId: UUID; let recipientPublicKey: String; let configurationId: UUID
+        let configurationRevision: Int; let modelReference: Reference
+    }
+    let projection: Projection?
 }
 
 struct GuestDesktopTarget: Codable, Equatable {
@@ -328,6 +334,31 @@ final class GuestDesktopEngine {
         guard target == observation.target, CFEqual(current, oldWindow),
               treeByteLimit > 0, try tree(current, maxEncodedBytes: treeByteLimit).fingerprint == savedFingerprint else { throw GuestDesktopError.stale }
         return (observation, current)
+    }
+
+    /// Export the existing snapshot only, never perform another AX read.
+    /// The exact model permission is checked by the server before this returns.
+    func project(_ command: GuestDesktopCommand) async throws -> Data {
+        guard !busy, command.operation == .project, !seen.contains(command.id), seen.count < 4096,
+              command.resultObservationId != nil, command.projection != nil,
+              let limit = command.maxOutputBytes, (1024...64 * 1024).contains(limit),
+              command.elementId == nil, command.x == nil, command.y == nil,
+              command.key == nil, command.valueReference == nil else { throw GuestDesktopError.denied }
+        busy = true; seen.insert(command.id)
+        commandDeadline = .now.advanced(by: .milliseconds(max(0, min(60_000, command.expiresAtMs - Int64(Date().timeIntervalSince1970 * 1000)))))
+        defer { busy = false; commandDeadline = nil }
+        let epoch = generation
+        try check(command, epoch: epoch)
+        try await authority.requireCurrentGuest(command)
+        let observation = try saved(command)
+        try await authority.authorize(command, target: observation.target)
+        try check(command, epoch: epoch)
+        _ = try saved(command)
+        // Use the capture's original encoding/ceiling; this is untrusted app
+        // content, not an instruction or a new observation of current state.
+        let data = try JSONEncoder().encode(observation)
+        guard data.count <= limit else { throw GuestDesktopError.denied }
+        return data
     }
 
     /// Structured observation and input. Capture has a separate entry point so

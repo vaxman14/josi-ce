@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { AutomationModelTarget } from './automationModelTargets.js';
+import { validNativeProjectionEnvelope, type NativeProjectionEnvelope } from './nativeProjectionEnvelope.js';
 import type { AutomationConsentChallenge, AutomationIdentity } from '@josi-ce/protocol';
 import type { Db } from './db.js';
 import type { MasterKey } from './masterKey.js';
@@ -28,14 +30,17 @@ export interface NativeControlState {
 /** Only bounded initial/refreshed AX observation is classified here. Generic
  * clicks have unknown business effects and cannot be manufactured as reads. */
 export interface NativeObservationPayload {
-  purpose: 'josi-native-observation'; schemaVersion: 1;
+  purpose: 'josi-native-observation' | 'josi-native-projection'; schemaVersion: 1;
   storageSessionId: string; consent: VaultRecordReference; targetReference: VaultRecordReference;
   guestBootId: string; guestChannelId: string;
   application: NativeApplicationPin;
   command: {
     id: string; workspaceId: string; appId: string; installationRevision: number;
     taskId: string; sessionId: string; generation: number; expiresAtMs: number;
-    operation: 'observe'; observationId: string | null; resultObservationId: string; maxOutputBytes: number;
+    operation: 'observe' | 'project'; observationId: string | null; resultObservationId: string; maxOutputBytes: number;
+    windowId?: string;
+    projection?: { sourceReservationId: string; recipientPublicKey: string; configurationId: string;
+      configurationRevision: 1; modelReference: VaultRecordReference };
   };
 }
 interface NativeDelivery {
@@ -43,12 +48,16 @@ interface NativeDelivery {
   state: 'queued' | 'offered' | 'permitted' | 'finished'; planMac: string;
   payload: NativeObservationPayload;
   permit: { commandDigest: string; targetDigest: string } | null;
+  projectedBy?: string;
+  projection?: NativeProjectionEnvelope | null;
+  transmission?: { state: 'sent' | 'finished'; outcome: 'succeeded' | 'no_effect' | 'uncertain'; evidenceId: string };
   result: { outcome: 'succeeded' | 'no_effect' | 'uncertain'; evidenceId: string;
     observationId: string | null; windowId: string | null } | null;
 }
 export interface NativeTransportContext {
   tx: Db; key: MasterKey; epoch: number;
   requireConsent(identity: AutomationIdentity, sessionId: string, reference: VaultRecordReference): Promise<AutomationConsentChallenge>;
+  model(identity: AutomationIdentity, id: string, revision: number): Promise<{ reference: VaultRecordReference; target: AutomationModelTarget }>;
   application(identity: AutomationIdentity, applicationId: string, revision: number): Promise<{
     application: NativeApplicationPin; reference: VaultRecordReference;
   }>;
@@ -196,20 +205,29 @@ export class NativeAutomationTransport {
     try {
       const p = JSON.parse(context.payload.reveal()) as NativeObservationPayload, command = p.command;
       if (!exact(p, ['purpose', 'schemaVersion', 'storageSessionId', 'consent', 'targetReference', 'guestBootId', 'guestChannelId', 'application', 'command'])
-        || p.purpose !== 'josi-native-observation' || p.schemaVersion !== 1
+        || !['josi-native-observation', 'josi-native-projection'].includes(p.purpose) || p.schemaVersion !== 1
         || !exact(command, ['id', 'workspaceId', 'appId', 'installationRevision', 'taskId', 'sessionId', 'generation',
-          'expiresAtMs', 'operation', 'observationId', 'resultObservationId', 'maxOutputBytes'])
+          'expiresAtMs', 'operation', 'observationId', 'resultObservationId', 'maxOutputBytes',
+          ...(p.purpose === 'josi-native-projection' ? ['windowId', 'projection'] : [])])
         || ![p.storageSessionId, p.guestBootId, p.guestChannelId, command.id, command.workspaceId, command.appId,
           command.taskId, command.sessionId, command.resultObservationId].every(uuid)
-        || command.observationId !== null && !uuid(command.observationId) || command.operation !== 'observe'
+        || command.observationId !== null && !uuid(command.observationId) || command.operation !== (p.purpose === 'josi-native-projection' ? 'project' : 'observe')
         || command.taskId !== context.taskId || command.workspaceId !== context.identity.workspaceId
         || command.expiresAtMs !== context.expiresAtMs || !integer(command.generation)
         || !integer(command.maxOutputBytes) || command.maxOutputBytes < 1024 || command.maxOutputBytes > 64 * 1024
-        || context.effects.length !== 1 || context.effects[0].action !== 'computer.observe'
-        || context.effects[0].bytes !== command.maxOutputBytes
-        || !exact(context.effects[0].target, ['kind', 'applicationId', 'installationRevision'])
-        || context.effects[0].target.kind !== 'application' || context.effects[0].target.applicationId !== command.appId
-        || context.effects[0].target.installationRevision !== command.installationRevision) throw unavailable();
+        || context.effects.length !== 1 || context.effects[0].bytes !== command.maxOutputBytes) throw unavailable();
+      const effect = context.effects[0], projection = command.projection;
+      if (command.operation === 'observe') {
+        if (effect.action !== 'computer.observe' || Object.keys(effect.target).sort().join(',') !== 'applicationId,installationRevision,kind'
+          || effect.target.kind !== 'application' || effect.target.applicationId !== command.appId
+          || effect.target.installationRevision !== command.installationRevision) throw unavailable();
+      } else if (!projection || !exact(projection, ['sourceReservationId', 'recipientPublicKey', 'configurationId', 'configurationRevision', 'modelReference'])
+        || ![projection.sourceReservationId, projection.configurationId, command.observationId, command.windowId].every(uuid)
+        || projection.configurationRevision !== 1 || typeof projection.recipientPublicKey !== 'string'
+        || !/^[A-Za-z0-9+/]{43}=$/.test(projection.recipientPublicKey)
+        || effect.action !== 'model.transmit' || Object.keys(effect.target).sort().join(',') !== 'configurationId,configurationRevision,kind'
+        || effect.target.kind !== 'model' || effect.target.configurationId !== projection.configurationId
+        || effect.target.configurationRevision !== projection.configurationRevision) throw unavailable();
       return p;
     } catch { throw unavailable(); }
   }
@@ -223,6 +241,17 @@ export class NativeAutomationTransport {
       || p.guestBootId !== control.guestBootId || p.guestChannelId !== control.guestChannelId
       || p.command.generation !== control.generation || p.command.expiresAtMs > control.leaseUntilMs
       || control.holder?.taskId !== p.command.taskId || control.holder.controlSessionId !== p.command.sessionId) throw unavailable();
+    if (p.command.operation === 'project') {
+      const projection = p.command.projection!;
+      const model = await c.model(context.identity, projection.configurationId, projection.configurationRevision);
+      const source = await this.result(context.identity.userId, projection.sourceReservationId, c.tx);
+      if (!sameRef(model.reference, projection.modelReference) || model.target.candidate.role !== 'primary'
+        || !source || source.payload.command.operation !== 'observe' || source.result?.outcome !== 'succeeded'
+        || source.result.observationId !== p.command.observationId || source.result.windowId !== p.command.windowId
+        || source.storageSessionId !== p.storageSessionId || source.payload.command.taskId !== context.taskId
+        || source.payload.command.sessionId !== p.command.sessionId || source.payload.command.generation !== p.command.generation
+        || !sameRef(source.payload.consent, p.consent) || JSON.stringify(source.payload.application) !== JSON.stringify(p.application)) throw unavailable();
+    }
     return { p, control };
   }
   verifyPrepared(tx: Db, context: AutomationDispatchContext, proof: unknown) {
@@ -241,6 +270,14 @@ export class NativeAutomationTransport {
       const pending = await c.tx.query(`select reservation_id from automation_native_deliveries
         where storage_session_id=$1 and state<>'finished' and expires_at>clock_timestamp() limit 1`, [p.storageSessionId]);
       if (pending.length) throw new NativeTransportError('This desktop already has an outstanding command.');
+      if (p.command.operation === 'project') {
+        const [sourceRow] = await c.tx.query<DeliveryRow>('select * from automation_native_deliveries where reservation_id=$1 and owner_user_id=$2 for update',
+          [p.command.projection!.sourceReservationId, context.identity.userId]);
+        if (!sourceRow) throw unavailable();
+        const source = openDelivery(c.key, sourceRow);
+        if (source.projectedBy) throw new NativeTransportError('This capture already has a projection attempt. It cannot be exported again.');
+        source.projectedBy = context.reservationId; await this.writeDelivery(c, source);
+      }
       const value: NativeDelivery = { purpose: 'josi-native-delivery', schemaVersion: 1, id: context.reservationId,
         ownerUserId: context.identity.userId, storageSessionId: control.storageSessionId, state: 'queued',
         planMac: context.planMac, payload: p, permit: null, result: null };
@@ -307,7 +344,8 @@ export class NativeAutomationTransport {
     }, tx);
   }
   report(actor: string, sessionId: string, receipt: unknown) {
-    if (!exact(receipt, ['kind', 'commandId', 'reservationId', 'outcome', 'verificationRequired', 'observationId', 'windowId'])
+    const projected = (receipt as { outcome?: unknown })?.outcome === 'projected';
+    if (!exact(receipt, ['kind', 'commandId', 'reservationId', 'outcome', 'verificationRequired', 'observationId', 'windowId', ...(projected ? ['projection'] : [])])
       || receipt.kind !== 'result' || receipt.verificationRequired !== 'yes' || !uuid(receipt.reservationId)) throw unavailable();
     return this.backend(actor, async c => {
       const control = await this.control(c, actor, sessionId);
@@ -320,7 +358,12 @@ export class NativeAutomationTransport {
         || receipt.commandId !== d.payload.command.id || !sameRef(d.payload.consent, control.consent)
         || Date.now() >= d.payload.command.expiresAtMs) throw unavailable();
       let result: NonNullable<NativeDelivery['result']>;
-      if (receipt.outcome === 'observed') {
+      if (receipt.outcome === 'observed' || projected) {
+        if (projected !== (d.payload.command.operation === 'project')) throw unavailable();
+        if (projected) {
+          if (!validNativeProjectionEnvelope(receipt.projection) || receipt.windowId !== d.payload.command.windowId) throw unavailable();
+          d.projection = receipt.projection;
+        }
         if (d.state !== 'permitted' || receipt.observationId !== d.payload.command.resultObservationId || !uuid(receipt.windowId)) throw unavailable();
         result = { outcome: 'succeeded', evidenceId: randomUUID(), observationId: receipt.observationId as string, windowId: receipt.windowId };
       } else {
@@ -342,13 +385,42 @@ export class NativeAutomationTransport {
       return value.state === 'finished' ? value : null;
     }, transaction);
   }
+  /** One final local fence immediately before the pinned provider request. */
+  sendProjection(tx: Db, context: AutomationDispatchContext, proof: unknown) {
+    if (!exact(proof, ['phase', 'reservationId']) || proof.phase !== 'model-send' || proof.reservationId !== context.reservationId) throw unavailable();
+    return this.backend(context.identity.userId, async c => {
+      const { p } = await this.bound(c, context);
+      const [row] = await c.tx.query<DeliveryRow>('select * from automation_native_deliveries where reservation_id=$1 and owner_user_id=$2 for update', [context.reservationId, context.identity.userId]);
+      if (!row) throw unavailable();
+      const d = openDelivery(c.key, row);
+      if (p.command.operation !== 'project' || d.state !== 'finished' || d.planMac !== context.planMac
+        || JSON.stringify(d.payload) !== JSON.stringify(p) || d.result?.outcome !== 'succeeded' || !d.projection || d.transmission) throw unavailable();
+      d.transmission = { state: 'sent', outcome: 'uncertain', evidenceId: randomUUID() };
+      d.projection = null; // No replay payload after the provider fence commits.
+      await this.writeDelivery(c, d);
+    }, tx);
+  }
+  finishProjection(actor: string, reservationId: string, outcome: 'succeeded' | 'no_effect' | 'uncertain') {
+    return this.backend(actor, async c => {
+      const [row] = await c.tx.query<DeliveryRow>('select * from automation_native_deliveries where reservation_id=$1 and owner_user_id=$2 for update', [reservationId, actor]);
+      if (!row) throw unavailable();
+      const d = openDelivery(c.key, row);
+      if (d.payload.command.operation !== 'project' || d.state !== 'finished'
+        || d.transmission?.state === 'finished' || (outcome === 'no_effect' ? !!d.transmission : d.transmission?.state !== 'sent')) throw unavailable();
+      d.transmission = { state: 'finished', outcome, evidenceId: randomUUID() }; d.projection = null;
+      await this.writeDelivery(c, d);
+      return d.transmission;
+    });
+  }
   verifyOutcome(tx: Db, context: { reservationId: string; planMac: string; identity: AutomationIdentity;
     outcome: 'succeeded' | 'no_effect' | 'uncertain'; evidenceIds: string[] }, proof: unknown) {
-    if (!exact(proof, ['phase', 'reservationId']) || proof.phase !== 'native-result' || proof.reservationId !== context.reservationId) throw unavailable();
+    if (!exact(proof, ['phase', 'reservationId']) || !['native-result', 'model-result'].includes(String(proof.phase)) || proof.reservationId !== context.reservationId) throw unavailable();
     return this.backend(context.identity.userId, async c => {
       const d = await this.result(context.identity.userId, context.reservationId, c.tx);
-      if (!d?.result || d.planMac !== context.planMac || d.result.outcome !== context.outcome
-        || context.evidenceIds.length !== 1 || context.evidenceIds[0] !== d.result.evidenceId) throw unavailable();
+      const result = d?.payload.command.operation === 'project' ? d.transmission?.state === 'finished' && proof.phase === 'model-result' ? d.transmission : null
+        : proof.phase === 'native-result' ? d?.result : null;
+      if (!d || !result || d.planMac !== context.planMac || result.outcome !== context.outcome
+        || context.evidenceIds.length !== 1 || context.evidenceIds[0] !== result.evidenceId) throw unavailable();
       const [row] = await c.tx.query<ControlRow>('select * from automation_native_controls where storage_session_id=$1 and owner_user_id=$2',
         [d.storageSessionId, context.identity.userId]);
       if (!row || !sameAutomationIdentity(openControl(c.key, row).identity, context.identity)) throw unavailable();

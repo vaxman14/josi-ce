@@ -170,7 +170,7 @@ enum GuestEnvironment {
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
-                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.1"])
+                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.2"])
                 }
             } catch {
                 if runID == own { message = "Connection ended or could not be verified. Install the signed companion in this guest’s Applications folder, then connect from the Josi app." }

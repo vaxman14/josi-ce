@@ -171,7 +171,7 @@ final class GuestLinkWire: @unchecked Sendable {
     func send(_ value: [String: String]) async throws {
         try await perform {
             guard let key = self.sendKey, self.sending < 4096,
-                  ["accept", "pulse", "status", "stop", "execute", "authorize", "permit", "result"].contains(value["kind"] ?? "") else { throw GuestLinkError.invalid }
+                  ["accept", "pulse", "status", "stop", "execute", "authorize", "permit", "result", "projection"].contains(value["kind"] ?? "") else { throw GuestLinkError.invalid }
             self.sending += 1
             let box = try AES.GCM.seal(Self.encode(value), using: key,
                 authenticating: self.associated(sender: self.role, sequence: self.sending))
@@ -192,7 +192,7 @@ final class GuestLinkWire: @unchecked Sendable {
             let plain = try AES.GCM.open(AES.GCM.SealedBox(combined: combined), using: key,
                 authenticating: self.associated(sender: self.role == "host" ? "guest" : "host", sequence: self.receiving))
             let value = try Self.decode(plain)
-            guard ["accept", "pulse", "status", "stop", "execute", "authorize", "permit", "result"].contains(value["kind"] ?? "") else { throw GuestLinkError.invalid }
+            guard ["accept", "pulse", "status", "stop", "execute", "authorize", "permit", "result", "projection"].contains(value["kind"] ?? "") else { throw GuestLinkError.invalid }
             return value
         }
     }

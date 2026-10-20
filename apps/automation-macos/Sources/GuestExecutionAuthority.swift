@@ -133,8 +133,8 @@ private struct GuestExecutionConsent: Codable, Equatable {
         let keys = Set((try JSONSerialization.jsonObject(with: Data(rawCommand.utf8)) as? [String: Any] ?? [:]).keys)
         let required: Set<String> = ["id", "workspaceId", "appId", "installationRevision", "taskId", "sessionId", "generation", "expiresAtMs", "operation"]
         guard required.isSubset(of: keys),
-              keys.isSubset(of: required.union(["observationId", "resultObservationId", "windowId", "maxOutputBytes", "elementId", "x", "y", "valueReference", "key"])),
-              [.observe, .press, .focus, .click].contains(decoded.operation),
+              keys.isSubset(of: required.union(["observationId", "resultObservationId", "windowId", "maxOutputBytes", "elementId", "x", "y", "valueReference", "key", "projection"])),
+              [.observe, .project, .press, .focus, .click].contains(decoded.operation),
               decoded.workspaceId == c.identity.workspaceId, decoded.generation == c.generation,
               decoded.expiresAtMs <= c.leaseUntilMs, decoded.expiresAtMs > Int64(Date().timeIntervalSince1970 * 1000),
               decoded.appId == application.applicationId, decoded.installationRevision == application.installationRevision,
@@ -151,6 +151,37 @@ private struct GuestExecutionConsent: Codable, Equatable {
         reservationIds.insert(reservation); commandIds.insert(decoded.id)
         packet = incoming; command = decoded; pin = application
         defer { packet = nil; command = nil; pin = nil }
+        if decoded.operation == .project {
+            guard let projection = decoded.projection, projection.configurationRevision == 1,
+                  projection.modelReference.version > 0, projection.modelReference.epoch == c.authority.consent.epoch,
+                  projection.modelReference.digest.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                  let recipient = Data(base64Encoded: projection.recipientPublicKey), recipient.count == 32,
+                  recipient.base64EncodedString() == projection.recipientPublicKey,
+                  let resultId = decoded.resultObservationId, let windowId = decoded.windowId else { throw GuestDesktopError.denied }
+            var plain = try await engine.project(decoded)
+            defer { plain.resetBytes(in: 0..<plain.count) }
+            try live()
+            let ephemeral = Curve25519.KeyAgreement.PrivateKey()
+            let secret = try ephemeral.sharedSecretFromKeyAgreement(with: Curve25519.KeyAgreement.PublicKey(rawRepresentation: recipient))
+            let binding = Data(("josi-native-projection.1\n" + reservation + "\n" + Self.digest(rawCommand)).utf8)
+            let key = secret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: binding,
+                sharedInfo: Data("josi-native-projection.1".utf8), outputByteCount: 32)
+            guard let box = try AES.GCM.seal(plain, using: key, authenticating: binding).combined else { throw GuestDesktopError.denied }
+            let encoded = box.base64EncodedString(), pieces = stride(from: 0, to: encoded.utf8.count, by: 3072).map { offset in
+                String(encoded.dropFirst(offset).prefix(3072))
+            }
+            guard pieces.count > 0, pieces.count <= 29 else { throw GuestDesktopError.denied }
+            let publicKey = ephemeral.publicKey.rawRepresentation.base64EncodedString(), digest = Self.digest(encoded)
+            for (index, piece) in pieces.enumerated() {
+                try live()
+                try await link.send(["kind": "projection", "commandId": decoded.id.uuidString.lowercased(),
+                    "reservationId": reservation, "index": String(index), "count": String(pieces.count),
+                    "publicKey": publicKey, "digest": digest, "data": piece])
+            }
+            return ["kind": "result", "commandId": decoded.id.uuidString.lowercased(), "reservationId": reservation,
+                "outcome": "projected", "verificationRequired": "yes", "observationId": resultId.uuidString.lowercased(),
+                "windowId": windowId.uuidString.lowercased()]
+        }
         let receipt = await engine.execute(decoded)
         // Content stays in guest memory. A separate bounded projection with
         // exact model-transmission authority must precede any future export.

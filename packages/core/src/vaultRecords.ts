@@ -349,6 +349,10 @@ export class VaultRecordStore {
             }
             return structuredClone(c);
           },
+          model: (identity, id, revision) => this.automationTargets({
+            verifyFreshAdministrator: async () => { throw new VaultRecordError('Use protected target administration.'); },
+            verifyProtectedHuman: async () => { throw new VaultRecordError('Use protected target administration.'); },
+          }).resolveModel(actor, identity, id, revision, tx),
           application: (identity, applicationId, revision) => this.automationTargets({
             verifyFreshAdministrator: async () => { throw new VaultRecordError('Use protected target administration.'); },
             verifyProtectedHuman: async () => { throw new VaultRecordError('Use protected target administration.'); },

@@ -356,6 +356,9 @@ export interface ChatOptions {
   /** Server-owned authorization immediately before dispatch. Never populated
    * from client JSON; no network or model work should occur inside this hook. */
   beforeDispatch?: () => Promise<void>;
+  /** An ephemeral automation capture may cross exactly one HTTP request.
+   * Check authority after endpoint resolution, immediately before fetch. */
+  oneShotTransmission?: boolean;
 }
 
 /** The one way anything in CE talks to a model.
@@ -390,7 +393,23 @@ export async function chat(
   requireExpected(primary);
 
   const runOne = async (stored: StoredProvider, role: 'primary' | 'fallback'): Promise<ChatOutcome> => {
-    const provider = await buildProvider(opts, stored);
+    const oneShot = chatOpts.oneShotTransmission === true;
+    if (oneShot && (!expected || !chatOpts.beforeDispatch
+      || !['openai-chat', 'anthropic-messages', 'gemini', 'cohere-v2', 'azure-openai', 'bedrock-converse', 'hunyuan'].includes(describeProvider(stored.provider)?.wire ?? ''))) {
+      throw new LlmError('This provider transport cannot enforce one-request automation transmission.', { needsReconfiguration: true });
+    }
+    let sent = false;
+    const provider = await buildProvider(oneShot ? { ...opts, fetchImpl: async (url, init) => {
+      if (sent || init?.method !== 'POST' || init.redirect !== 'manual' || typeof init.body !== 'string' || init.signal?.aborted) {
+        throw new LlmError('The bounded model request cannot be sent again.');
+      }
+      sent = true;
+      requireExpected(await loadStoredProvider(opts.db, 'primary'));
+      if (provider.external && await isLocalOnly(opts.db)) throw new LocalOnlyViolation('Local-only mode stops this transmission.');
+      await chatOpts.beforeDispatch!();
+      if (init.signal?.aborted) throw new LlmError('The model request expired before transmission.');
+      return (opts.fetchImpl ?? fetch)(url, init);
+    } } : opts, stored);
     if (expected) {
       requireExpected(await loadStoredProvider(opts.db, 'primary'));
       if (provider.configurationVersion !== expected.configurationVersion) {
@@ -398,7 +417,7 @@ export async function chat(
       }
       if (provider.external && await isLocalOnly(opts.db)) throw new LocalOnlyViolation('Local-only mode prevents this review.');
     }
-    await chatOpts.beforeDispatch?.();
+    if (!oneShot) await chatOpts.beforeDispatch?.();
     const response = await provider.chat(request);
     await meterCall(opts.db, stored, role, provider.external, response, chatOpts);
     return { response, usedRole: role, cap };
