@@ -168,7 +168,7 @@ final class ProtectedKeyProjection {
               (fields[4] as? String).flatMap(UUID.init(uuidString:)) == identity.serverId,
               (fields[5] as? String).flatMap(UUID.init(uuidString:)) == identity.userId,
               (fields[6] as? String).flatMap(UUID.init(uuidString:)) == identity.deviceId,
-              let purpose = fields[7] as? String, ["cardinal.activate", "cardinal.retire", "automation.policy.replace", "device.revoke"].contains(purpose),
+              let purpose = fields[7] as? String, ["cardinal.activate", "cardinal.retire", "automation.policy.replace", "automation.target.register", "device.revoke"].contains(purpose),
               let digest = fields[8] as? String, digest.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
               let reference = fields[9] as? [Any], reference.count == 4,
               let referenceId = reference[0] as? String, UUID(uuidString: referenceId) != nil,

@@ -73,7 +73,7 @@ export function automationSettingsRoutes(context: Context): Router {
     capabilities: { modelReview: true, nativeReview: protectedChanges.enabled, permanentChanges: protectedChanges.enabled,
       deviceEnrollment: await enrollments.available(), deviceRevocation: protectedChanges.enabled, execution: false },
   })));
-  r.get('/', handle(async (req, res) => {
+  r.get('/', nativeHandle(async (req, res) => {
     const key = master(), records = vaultRecords(db, key);
     // Separate reads can encounter an epoch change. Each result carries its
     // own reference; a mutation must reload/compare rather than combine them.
@@ -81,7 +81,8 @@ export function automationSettingsRoutes(context: Context): Router {
     const permissions = await records.automationPolicy(noMutation).read(req.user!.id);
     const drafts = await new CardinalDraftStore(db, key).list(req.user!.id);
     const devices = await records.protectedDevices(noDeviceMutation).inventory(req.user!.id);
-    return res.json({ rules, permissions, drafts, devices });
+    const targets = await records.automationTargets(noMutation).inventory(req.user!.id);
+    return res.json({ rules, permissions, drafts, devices, targets });
   }));
   r.post('/rules/validate', handle(async (req, res) => {
     const parsed = validateCardinalRule(req.body?.draft);

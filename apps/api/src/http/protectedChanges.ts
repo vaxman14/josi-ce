@@ -1,13 +1,14 @@
 import { reauthenticateProtectedAdmin, type ProtectedAdminProof } from '@josi-ce/auth';
 import { cardinalContentDigest, vaultRecords,
   type Db, type MasterKey, type VaultRecordReference, type CardinalActivationRequest, type CardinalRetirementRequest,
-  type AutomationPolicyReplacement, type ProtectedConfirmationCommand, type ProtectedConfirmationIdentity,
+  type AutomationTargetRegistration, type AutomationPolicyReplacement, type ProtectedConfirmationCommand, type ProtectedConfirmationIdentity,
   type ProtectedDeviceAuthority } from '@josi-ce/core';
 import { isProtectedControlOrigin, type ProtectedControlReceipt, type ProtectedHostReceipt } from '@josi-ce/protocol';
 
 type Change = { kind: 'cardinal.activate'; draft: VaultRecordReference; policy: VaultRecordReference | null }
   | { kind: 'cardinal.retire'; ruleId: string; policy: VaultRecordReference }
   | { kind: 'automation.policy.replace'; policy: AutomationPolicyReplacement['policy']; expected: VaultRecordReference | null }
+  | { kind: 'automation.target.register'; identity: AutomationTargetRegistration['identity']; candidate: AutomationTargetRegistration['candidate']; expected: VaultRecordReference | null }
   | { kind: 'device.revoke'; enrollmentId: string; expected: VaultRecordReference };
 type Records = ReturnType<typeof vaultRecords>;
 type Native = ReturnType<Records['protectedNativeControl']>;
@@ -34,6 +35,7 @@ function changeInput(value: unknown): Change {
   if (!(kind === 'cardinal.activate' && exact(value, ['kind', 'draft', 'policy'])
     || kind === 'cardinal.retire' && exact(value, ['kind', 'ruleId', 'policy'])
     || kind === 'device.revoke' && exact(value, ['kind', 'enrollmentId', 'expected'])
+    || kind === 'automation.target.register' && exact(value, ['kind', 'identity', 'candidate', 'expected'])
     || kind === 'automation.policy.replace' && exact(value, ['kind', 'policy', 'expected']))) {
     throw new ProtectedChangeError(400, 'Choose an exact protected change.');
   }
@@ -85,6 +87,7 @@ export class ProtectedChanges {
       actorUserId, draft: change.draft, policy: change.policy } satisfies CardinalActivationRequest);
     if (change.kind === 'cardinal.retire') return records.cardinalPolicy(noMutation).prepareRetirement({
       actorUserId, ruleId: change.ruleId, policy: change.policy } satisfies CardinalRetirementRequest);
+    if (change.kind === 'automation.target.register') return records.automationTargets(noMutation).prepareRegistration({ actorUserId, ...change });
     if (change.kind === 'device.revoke') {
       const value = await records.protectedDevices(this.deviceAuthority()).prepareRevocation({
         actorUserId, enrollmentId: change.enrollmentId, expected: change.expected });
@@ -103,6 +106,9 @@ export class ProtectedChanges {
     this.preparing.add(args.actor);
     try {
       const change = changeInput(args.change), key = this.master(), records = vaultRecords(this.db, key);
+      if (change.kind === 'automation.target.register' && change.identity?.deviceId !== args.deviceId) {
+        throw new ProtectedChangeError(409, 'Use the enrolled Mac that owns this workspace to register its apps.');
+      }
       const review = await this.review(records, args.actor, change);
       const proof = await reauthenticateProtectedAdmin(this.db, key, { ...review.command, userId: args.actor, sessionId: args.session,
         password: args.password, mfaCode: args.mfaCode });
@@ -186,6 +192,8 @@ export class ProtectedChanges {
           policy: await entry.records.cardinalPolicy(authority).activate({ actorUserId: actor, draft: change.draft, policy: change.policy }) };
         if (change.kind === 'cardinal.retire') return { kind: 'cardinal' as const,
           policy: await entry.records.cardinalPolicy(authority).retire({ actorUserId: actor, ruleId: change.ruleId, policy: change.policy }) };
+        if (change.kind === 'automation.target.register') return { kind: 'targets' as const,
+          policy: await entry.records.automationTargets(authority).register({ actorUserId: actor, ...change }) };
         if (change.kind === 'device.revoke') return { kind: 'devices' as const,
           policy: await entry.records.protectedDevices({ ...this.deviceAuthority(),
             verifyFreshAdministrator: (tx, actorUserId, command) => entry.proof.check(tx, { ...command, actorUserId, consume: true }),

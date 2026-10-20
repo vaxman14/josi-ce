@@ -95,7 +95,7 @@ enum ProtectedWire {
             fields += [ref, value["wrappingFingerprint"], value["issuedAtMs"], value["expiresAtMs"]]
         } else {
             let presentation = value["presentation"]
-            guard ["cardinal.activate", "cardinal.retire", "automation.policy.replace", "device.revoke"].contains(value["purpose"].text),
+            guard ["cardinal.activate", "cardinal.retire", "automation.policy.replace", "automation.target.register", "device.revoke"].contains(value["purpose"].text),
                   matches(value["requestDigest"], "^[a-f0-9]{64}$"), exact(presentation, ["wording", "meaning", "advisory"]),
                   text(presentation["wording"], max: 4000), text(presentation["meaning"], max: 64_000),
                   case .array(let advice) = presentation["advisory"], advice.count <= 20,
@@ -321,6 +321,7 @@ struct ProtectedApprovalView: View {
         if review.challenge["enrollmentId"] != .null { return "Enroll this protected confirmation device" }
         switch review.challenge["purpose"].text {
         case "workspace.storage": return review.challenge["operation"].text == "open" ? "Open the separate development desktop" : "Prepare separate workspace storage"
+        case "automation.target.register": return "Register an app for permission setup"
         case "cardinal.activate": return "Make this Cardinal Rule permanent"
         case "cardinal.retire": return "Retire this Cardinal Rule"
         case "device.revoke": return "Revoke this confirmation device"
@@ -339,9 +340,9 @@ struct ProtectedApprovalView: View {
         let context = LAContext(); defer { context.invalidate() }
         return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
     }
-    static func run(model: JosiModel, change: Wire, deviceId: String, password: String, mfa: String) async throws {
+    static func run(model: JosiModel, change: Wire, deviceId: String, password: String, mfa: String, checkSelection: @MainActor () throws -> Void = {}) async throws {
         guard available, model.isAdministrator, let api = model.api, let parent = NSApp.keyWindow,
-              ["cardinal.activate", "cardinal.retire", "automation.policy.replace", "device.revoke"].contains(change["kind"].text)
+              ["cardinal.activate", "cardinal.retire", "automation.policy.replace", "automation.target.register", "device.revoke"].contains(change["kind"].text)
         else { throw approvalUnavailable() }
         let user = model.user["id"].text
         var id: String?
@@ -349,7 +350,8 @@ struct ProtectedApprovalView: View {
         var key: NativeKeyPort?
         var review: NativeApprovalWindow?
         defer { key?.cancel(); review?.close() }
-        func connected() throws {
+        func connected(selection: Bool = true) throws {
+            if selection { try checkSelection() }
             guard model.api === api, model.user["id"].text == user, parent.isVisible else { throw approvalUnavailable() }
         }
         do {
@@ -399,8 +401,8 @@ struct ProtectedApprovalView: View {
                                  "challengeDigest": .string(ProtectedWire.digest(message)), "signature": .string(signature)]
             commitSent = true
             let result = try await api.request(base + "commit", method: "POST", body: ["receipt": receipt])
-            try connected()
-            guard result["applied"].flag, ["cardinal", "devices", "permissions"].contains(result["kind"].text) else { throw approvalUnavailable() }
+            try connected(selection: false)
+            guard result["applied"].flag, ["cardinal", "devices", "permissions", "targets"].contains(result["kind"].text) else { throw approvalUnavailable() }
         } catch {
             if !commitSent, let id, model.api === api {
                 _ = try? await api.request("/admin/automation/protected/\(id)/cancel", method: "POST", body: [:])
@@ -418,6 +420,8 @@ struct NativeProtectedChange: View {
     let title: String
     let change: Wire
     var onSaved: (@MainActor () -> Void)? = nil
+    var checkSelection: (@MainActor () throws -> Void)? = nil
+    var requiredDevice: String? = nil
     @State private var open = false
     @State private var device = ""
     @State private var password = ""
@@ -426,6 +430,7 @@ struct NativeProtectedChange: View {
     private var devices: [Wire] {
         model.automationSettings["devices"]["devices"].list.filter {
             $0["revokedAt"] == .null && $0["identity"]["serverOrigin"].text == model.api?.origin.absoluteString
+                && (requiredDevice == nil || $0["identity"]["deviceId"].text == requiredDevice)
         }
     }
     private var ready: Bool {
@@ -453,7 +458,7 @@ struct NativeProtectedChange: View {
                     password = ""; mfa = ""; result = ""
                     model.run {
                         do {
-                            try await NativeProtectedApproval.run(model: model, change: proposed, deviceId: selected, password: secret, mfa: code)
+                            try await NativeProtectedApproval.run(model: model, change: proposed, deviceId: selected, password: secret, mfa: code, checkSelection: checkSelection ?? {})
                             result = "Saved to the Vault."; open = false
                             try await model.loadAutomation()
                             onSaved?()

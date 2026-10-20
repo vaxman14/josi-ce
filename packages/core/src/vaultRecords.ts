@@ -12,9 +12,11 @@ import type { AutomationPermissionFacts } from './automationPermissions.js';
 import { AutomationReservationStore, type AutomationReservationProofPort } from './automationReservations.js';
 import { ProtectedConfirmationStore, type ProtectedConfirmationAuthority } from './protectedConfirmations.js';
 import { ProtectedDeviceStore, PROTECTED_DEVICES_RECORD_ID, type ProtectedDeviceAuthority } from './protectedDevices.js';
-import { WorkspaceStorageStore, WORKSPACE_STORAGE_RECORD_ID, type WorkspaceStorageAuthority } from './workspaceStorage.js';
+import { WorkspaceStorageStore, WORKSPACE_STORAGE_RECORD_ID, type WorkspaceStorageAuthority, workspaceStorageContains } from './workspaceStorage.js';
 
-export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices' | 'workspace_storage';
+import { AutomationTargetStore, AUTOMATION_TARGETS_RECORD_ID, readAutomationTargets, sameAutomationIdentity, type AutomationTargetAuthority } from './automationTargets.js';
+
+export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices' | 'workspace_storage' | 'automation_targets';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
 export interface VaultRecordValue { reference: VaultRecordReference; kind: VaultRecordKind; value: Secret }
 export interface VaultAutomationPreview {
@@ -166,10 +168,52 @@ export class VaultRecordStore {
       let written = false;
       return work({ tx, reconciliationRequired: state.authority_reconciliation_required,
         readPolicy: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
+        requireApplicationTargets: async policy => {
+          const rules = policy.rules.filter(r => r.scope.kind === 'application');
+          if (!rules.length) return [];
+          await this.requireOwnerAutomationVault(tx, policy.identity.userId);
+          const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_TARGETS_RECORD_ID]);
+          const targets = readAutomationTargets(head ? await this.open(tx, key, head, state) : null);
+          if (rules.some(rule => !['deny', 'ask'].includes(rule.mode.kind) && !targets.some(t => rule.scope.kind === 'application'
+            && t.applicationId === rule.scope.applicationId && t.installationRevision === rule.scope.installationRevision
+            && sameAutomationIdentity(t.identity, policy.identity)))) {
+            throw new VaultRecordError('Select a registered app installation in this exact workspace before granting access.');
+          }
+          return targets.filter(t => sameAutomationIdentity(t.identity, policy.identity) && rules.some(r => r.scope.kind === 'application'
+            && r.scope.applicationId === t.applicationId && r.scope.installationRevision === t.installationRevision)).map(t =>
+            `Registered application ${t.applicationId}, installation ${t.installationRevision}:\n${t.candidate.label}\nLocation: ${t.candidate.bundlePath}\nBundle: ${t.candidate.bundleId}\nSigning identity: ${t.candidate.signingId}\nTeam: ${t.candidate.teamId || '(none)'}\nCode hash: ${t.candidate.codeHash}`);
+
+        },
         writePolicy: async value => {
           if (!writing || written) throw new VaultRecordError('Only one protected policy change is permitted.');
           written = true;
           return this.persist(tx, key, actorUserId, 'automation_policy', value, previous, AUTOMATION_POLICY_RECORD_ID);
+        },
+      });
+    }), authority);
+  }
+
+  automationTargets(authority: AutomationTargetAuthority): AutomationTargetStore {
+    return new AutomationTargetStore((actor, writing, work) => this.transaction(async tx => {
+      const state = await this.state(tx, actor, writing), key = await this.key(tx);
+      await this.requireOwnerAutomationVault(tx, actor);
+      const [previous] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_TARGETS_RECORD_ID]);
+      if (previous && previous.kind !== 'automation_targets') throw new VaultRecordError('Application target context did not match.');
+      let written = false;
+      return work({ tx, reconciliationRequired: state.authority_reconciliation_required,
+        read: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
+        requireWorkspace: async identity => {
+          const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [WORKSPACE_STORAGE_RECORD_ID]);
+          if (!head || !workspaceStorageContains(await this.open(tx, key, head, state), identity)) {
+            throw new VaultRecordError('The selected app does not belong to a prepared workspace for this identity.');
+          }
+          const rows = await tx.query<{ installation_id: string }>('select installation_id from workspace limit 2 for share');
+          if (rows.length !== 1 || rows[0].installation_id !== identity.serverId) throw new VaultRecordError('This workspace belongs to another server.');
+        },
+        write: async value => {
+          if (!writing || written || state.authority_reconciliation_required) throw new VaultRecordError('Application registration authority is unavailable.');
+          written = true;
+          return this.persist(tx, key, actor, 'automation_targets', value, previous, AUTOMATION_TARGETS_RECORD_ID);
         },
       });
     }), authority);
@@ -369,6 +413,7 @@ export class VaultRecordStore {
       const [head] = await tx.query<Head>(`select id,kind,version,digest from vault_record_heads where id=$1`, [args.recordId]);
       if (!head) throw new VaultRecordError('Protected Vault record not found');
       if (head.kind === 'protected_devices') throw new VaultRecordError('Protected-device material requires the authenticated host projection path.');
+      if (head.kind === 'automation_targets') throw new VaultRecordError('Application targets require the owner-scoped inventory.');
       if (head.kind === 'workspace_storage') throw new VaultRecordError('Workspace credentials require the authenticated native storage path.');
       if (args.expected && (state.authority_reconciliation_required || !this.matches(args.expected, head, state))) {
         throw new VaultRecordConflictError('Protected Vault record changed or requires reconciliation');

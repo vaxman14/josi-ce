@@ -6,6 +6,7 @@ struct PermissionEditSnapshot: Identifiable {
     let reference: Wire
     let origin: String
     let administrator: String
+    var targets: Wire = .null
 }
 
 /// Only the selected settings change. Identities, targets and grant IDs retain
@@ -86,6 +87,8 @@ struct NativePermissionEditor: View {
     @State private var grants: [PermissionGrantDraft]
     @State private var validated: Wire = .null
     @State private var validationMessage = ""
+    @State private var target = ""
+    @State private var action = "computer.observe"
 
     init(snapshot: PermissionEditSnapshot) {
         self.snapshot = snapshot
@@ -98,8 +101,13 @@ struct NativePermissionEditor: View {
             && model.user["id"].text == snapshot.administrator
             && model.isAdministrator
             && model.automationSettings["permissions"]["reference"] == snapshot.reference
-            && model.automationSettings["permissions"]["enforcementCurrent"].flag
-            && !model.automationSettings["permissions"]["reconciliationRequired"].flag
+            && (snapshot.reference == .null || model.automationSettings["permissions"]["enforcementCurrent"].flag
+                && !model.automationSettings["permissions"]["reconciliationRequired"].flag)
+            && model.automationSettings["targets"]["reference"] == snapshot.targets["reference"]
+            && !model.automationSettings["targets"]["reconciliationRequired"].flag
+    }
+    private var applications: [Wire] {
+        snapshot.targets["applications"].list.filter { $0["identity"] == snapshot.policy["identity"] }
     }
     private var draft: Wire? {
         guard case .object(var policy) = snapshot.policy else { return nil }
@@ -136,6 +144,36 @@ struct NativePermissionEditor: View {
                     }
                     Text("Deny and Ask take precedence over matching grants. Limits count the original task, including retries; editing a grant retains its previous usage.")
                         .font(.caption).foregroundStyle(.secondary)
+                    if !applications.isEmpty {
+                        GroupBox("Add an app permission") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Picker("Registered app", selection: $target) {
+                                    Text("Choose an app").tag("")
+                                    ForEach(Array(applications.enumerated()), id: \.offset) { _, app in
+                                        Text(app["candidate"]["label"].text + " · " + String(app["applicationId"].text.prefix(8)))
+                                            .tag(app["applicationId"].text)
+                                    }
+                                }
+                                Picker("Action", selection: $action) {
+                                    Text("Observe app windows").tag("computer.observe")
+                                    Text("Interact with the app").tag("computer.interact")
+                                    Text("Launch the app").tag("application.launch")
+                                    Text("Close the app").tag("application.close")
+                                }
+                                Button("Add Rule") {
+                                    guard current, let app = applications.first(where: { $0["applicationId"].text == target }),
+                                          grants.filter({ !$0.removed }).count < 100 else { return }
+                                    let rule: Wire = ["id": .string(UUID().uuidString.lowercased()), "action": .string(action),
+                                        "scope": ["kind": "application", "applicationId": app["applicationId"],
+                                                  "installationRevision": app["installationRevision"]],
+                                        "mode": ["kind": "ask"], "limits": .null]
+                                    grants.append(PermissionGrantDraft(rule))
+                                }.disabled(!current || target.isEmpty || grants.filter({ !$0.removed }).count >= 100)
+                                Text("New rules start with Ask. Choose an allowance and explicit limits below. Saving permissions does not make an unfinished executor available.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }.padding(8)
+                        }
+                    }
                     ForEach($grants) { $grant in
                         grantEditor($grant)
                     }
@@ -177,6 +215,10 @@ struct NativePermissionEditor: View {
         let grant = binding.wrappedValue
         GroupBox(grant.original["action"].text.replacingOccurrences(of: ".", with: " · ")) {
             VStack(alignment: .leading, spacing: 12) {
+                if let app = applications.first(where: { $0["applicationId"] == grant.original["scope"]["applicationId"] }) {
+                    Text(app["candidate"]["label"].text).font(.headline)
+                    Text(app["candidate"]["bundlePath"].text).font(.caption).textSelection(.enabled)
+                }
                 Text(permissionScope(grant.original["scope"])).textSelection(.enabled)
                 Toggle("Remove this rule", isOn: binding.removed)
                 if grant.removed {

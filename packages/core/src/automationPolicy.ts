@@ -31,6 +31,7 @@ export interface AutomationPolicyAuthority {
 export interface AutomationPolicyTransaction {
   tx: Db; reconciliationRequired: boolean;
   readPolicy(): Promise<VaultRecordValue | null>;
+  requireApplicationTargets(policy: AutomationPermissionPolicy): Promise<string[]>;
   writePolicy(value: Secret): Promise<VaultRecordReference>;
 }
 export type AutomationPolicyBackend = <T>(actorUserId: string, writing: boolean, work: (tx: AutomationPolicyTransaction) => Promise<T>) => Promise<T>;
@@ -87,6 +88,7 @@ async function replacementContents(tx: AutomationPolicyTransaction, snapshot: Au
     throw new VaultRecordConflictError('Automation permissions changed. Review the current settings again.');
   }
   if (current && !current.enforcementCurrent) throw new VaultRecordError('Automation permissions require enforcement revalidation.');
+  const applicationTargets = await tx.requireApplicationTargets(parsed.policy);
   const [subject] = await tx.tx.query("select id from users where id=$1 and status='active' for share", [parsed.policy.identity.userId]);
   if (!subject) throw new VaultRecordError('The automation user is unavailable.');
   const policies = current ? [...current.document.policies] : [];
@@ -96,7 +98,7 @@ async function replacementContents(tx: AutomationPolicyTransaction, snapshot: Au
     throw new VaultRecordError('Use unique permission rule identities within the supported policy count.');
   }
   const previous = current?.document.policies.find(p => identityKey(p.identity) === identityKey(parsed.policy.identity)) ?? null;
-  return { policies, presentation: automationReplacementPresentation(previous, parsed.policy) };
+  return { policies, presentation: automationReplacementPresentation(previous, parsed.policy, applicationTargets) };
 }
 export class AutomationPolicyStore {
   constructor(private readonly backend: AutomationPolicyBackend, private readonly authority: AutomationPolicyAuthority) {}

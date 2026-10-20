@@ -6,9 +6,9 @@ import { verifyMfaFactorInTransaction } from './mfa.js';
 export class ProtectedAdminError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
-export type ProtectedAdminPurpose = 'cardinal.draft.save' | 'cardinal.draft.test' | 'cardinal.activate' | 'cardinal.retire' | 'automation.policy.replace' | 'device.enroll' | 'device.revoke';
+export type ProtectedAdminPurpose = 'cardinal.draft.save' | 'cardinal.draft.test' | 'cardinal.activate' | 'cardinal.retire' | 'automation.policy.replace' | 'automation.target.register' | 'device.enroll' | 'device.revoke';
 export interface ProtectedAdminBinding { purpose: ProtectedAdminPurpose; requestDigest: string }
-const purposes = new Set<ProtectedAdminPurpose>(['cardinal.draft.save', 'cardinal.draft.test', 'cardinal.activate', 'cardinal.retire', 'automation.policy.replace', 'device.enroll', 'device.revoke']);
+const purposes = new Set<ProtectedAdminPurpose>(['cardinal.draft.save', 'cardinal.draft.test', 'cardinal.activate', 'cardinal.retire', 'automation.policy.replace', 'automation.target.register', 'device.enroll', 'device.revoke']);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 interface AccountSecurity { password_hash: string | null; totp_secret_enc: string | null; mfa_enabled_at: string | null }

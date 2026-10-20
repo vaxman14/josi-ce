@@ -73,6 +73,27 @@ struct NativeAuthoritySettings: View {
                     .foregroundStyle(.secondary)
                 let policies = model.automationSettings["permissions"]["document"]["policies"].list
                 if policies.isEmpty { Text("No automation grants are active.") }
+                let targets = model.automationSettings["targets"]
+                let applications = targets["applications"].list
+                if applications.isEmpty {
+                    Text("Open a separate desktop and choose an app in Josi Companion to register it for permission setup.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                let workspaces = applications.enumerated().filter { index, app in
+                    !applications.prefix(index).contains(where: { $0["identity"] == app["identity"] })
+                }.map(\.element)
+                ForEach(Array(workspaces.enumerated()), id: \.offset) { _, app in
+                    if !policies.contains(where: { $0["identity"] == app["identity"] }) {
+                        Button("Configure Permissions for " + app["candidate"]["label"].text + "’s Workspace…") {
+                            guard let api = model.api else { return }
+                            let policy: Wire = ["schemaVersion": .number(1), "semanticsVersion": "automation-permissions.1",
+                                "identity": app["identity"], "enabled": .bool(false), "unmatched": "deny", "rules": .array([])]
+                            permissionEdit = PermissionEditSnapshot(policy: policy,
+                                reference: model.automationSettings["permissions"]["reference"],
+                                origin: api.origin.absoluteString, administrator: model.user["id"].text, targets: targets)
+                        }.disabled(model.busy || targets["reconciliationRequired"].flag)
+                    }
+                }
                 ForEach(Array(policies.enumerated()), id: \.offset) { _, policy in
                     GroupBox(policy["enabled"].flag ? "Enabled policy" : "Disabled policy") {
                         VStack(alignment: .leading, spacing: 10) {
@@ -105,7 +126,8 @@ struct NativeAuthoritySettings: View {
                                         throw JosiError(message: "This saved policy cannot be safely edited by this app. Revalidate its enforcement version first.")
                                     }
                                     permissionEdit = PermissionEditSnapshot(policy: policy, reference: reference,
-                                        origin: api.origin.absoluteString, administrator: administrator)
+                                        origin: api.origin.absoluteString, administrator: administrator,
+                                        targets: model.automationSettings["targets"])
                                 }
                             }.disabled(model.busy || !model.automationSettings["permissions"]["enforcementCurrent"].flag
                                        || model.automationSettings["permissions"]["reconciliationRequired"].flag)

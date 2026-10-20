@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { isProtectedControlOrigin, parseWorkspaceStorageChallenge, type WorkspaceStorageChallenge } from '@josi-ce/protocol';
+import { isProtectedControlOrigin, parseWorkspaceStorageChallenge, type WorkspaceStorageChallenge, type AutomationIdentity } from '@josi-ce/protocol';
 import type { Db } from './db.js';
 import { Secret } from './sealing.js';
 import { appendEvent } from './events.js';
@@ -51,6 +51,10 @@ function decode(record: VaultRecordValue | null): Entry[] {
 }
 function summary(e: Entry): WorkspaceStorageSummary {
   return { workspaceId: e.workspaceId, identity: { ...e.identity }, label: e.label, capacityGiB: e.capacityGiB, createdAt: e.createdAt };
+}
+export function workspaceStorageContains(record: VaultRecordValue | null, identity: AutomationIdentity): boolean {
+  return decode(record).some(e => e.workspaceId === identity.workspaceId && e.identity.userId === identity.userId
+    && e.identity.serverId === identity.serverId && e.identity.deviceId === identity.deviceId);
 }
 export class WorkspaceStorageStore {
   constructor(private readonly backend: Backend, private readonly authority: WorkspaceStorageAuthority) {}

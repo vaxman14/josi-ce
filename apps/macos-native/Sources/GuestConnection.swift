@@ -10,6 +10,7 @@ import Darwin
     @Published private(set) var paired = false
     @Published private(set) var accessibility = false
     @Published private(set) var screenCapture = false
+    @Published private(set) var applicationCandidate: Wire = .null
     private let device: VZVirtioSocketDevice
     private let context: [String: String]
     private let current: @MainActor () throws -> Int
@@ -102,29 +103,57 @@ import Darwin
                 try await link.send(["kind": "pulse", "leaseUntilMs": String(until)])
                 let reply = try await link.receive()
                 _ = try current()
-                guard Set(reply.keys) == ["kind", "accessibility", "screenCapture", "executionEnabled"],
+                guard Set(reply.keys) == ["kind", "accessibility", "screenCapture", "executionEnabled", "applicationCandidate"],
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
-                      ["yes", "no"].contains(reply["screenCapture"] ?? "") else { throw GuestLinkError.invalid }
+                      ["yes", "no"].contains(reply["screenCapture"] ?? ""), let candidate = reply["applicationCandidate"],
+                      candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
                 accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
+                if candidate.isEmpty { applicationCandidate = .null }
+                else {
+                    let value = try JSONDecoder().decode(Wire.self, from: Data(candidate.utf8))
+                    guard ProtectedWire.exact(value, ["schemaVersion", "candidateId", "guestBootId", "kind", "label", "bundlePath",
+                                                     "bundleId", "signingId", "teamId", "codeHash"]),
+                          value["schemaVersion"].text == "1", value["kind"].text == "application",
+                          ProtectedWire.uuid(value["candidateId"]), value["guestBootId"].text == guest["guestBoot"],
+                          ProtectedWire.text(value["label"], max: 96), ProtectedWire.text(value["bundlePath"], max: 768),
+                          ProtectedWire.text(value["bundleId"], max: 200), ProtectedWire.text(value["signingId"], max: 200),
+                          (value["teamId"] == .string("") || ProtectedWire.text(value["teamId"], max: 64)),
+                          ProtectedWire.matches(value["codeHash"], "^(?:[a-f0-9]{40}|[a-f0-9]{64})$")
+                    else { throw GuestLinkError.invalid }
+                    applicationCandidate = value
+                }
                 try await Task.sleep(for: .seconds(2))
             }
         } catch {
             if !closed { state = "Companion disconnected or could not be verified. Reconnect inside the desktop." }
         }
-        cancelQuestion(); paired = false; accessibility = false; screenCapture = false
+        cancelQuestion(); paired = false; accessibility = false; screenCapture = false; applicationCandidate = .null
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
+    }
+    func registration(expected: Wire) throws -> Wire {
+        _ = try current()
+        guard paired, !closed, applicationCandidate != .null else { throw GuestLinkError.closed }
+        let identity: Wire = .object(Dictionary(uniqueKeysWithValues: ["serverId", "userId", "deviceId", "workspaceId"].map {
+            ($0, .string(context[$0] ?? ""))
+        }))
+        return ["kind": "automation.target.register", "identity": identity,
+                "candidate": applicationCandidate, "expected": expected]
+    }
+    func requireSelection(_ change: Wire) throws {
+        guard try registration(expected: change["expected"]) == change else { throw GuestLinkError.invalid }
     }
     func close() {
         guard !closed else { return }
         closed = true; cancelQuestion(); wire?.interrupt(); connection?.close()
         device.removeSocketListener(forPort: GuestLinkWire.port)
         task?.cancel(); task = nil; wire = nil; connection = nil
-        paired = false; state = "Companion disconnected."
+        paired = false; applicationCandidate = .null; state = "Companion disconnected."
     }
 }
 
 struct NativeGuestConnectionView: View {
+    @EnvironmentObject var model: JosiModel
     @ObservedObject var connection: NativeGuestConnection
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -132,6 +161,24 @@ struct NativeGuestConnectionView: View {
             if connection.paired {
                 Text("Guest Accessibility: \(connection.accessibility ? "ready" : "not enabled") · Screen capture: \(connection.screenCapture ? "ready" : "not enabled")")
                     .font(.caption).foregroundStyle(.secondary)
+                let registered = model.automationSettings["targets"]
+                if let change = try? connection.registration(expected: registered["reference"]), registered != .null,
+                   !registered["reconciliationRequired"].flag {
+                    let candidate = change["candidate"]
+                    if registered["applications"].list.contains(where: { $0["applicationId"] == candidate["candidateId"] }) {
+                        Text(candidate["label"].text + " is registered. Configure its permissions in Automation Settings.").font(.caption)
+                    } else {
+                        Text("Selected guest app: " + candidate["label"].text).font(.headline)
+                        Text(candidate["bundlePath"].text).font(.caption).textSelection(.enabled)
+                        Text("Saving registers the app in the Vault and closes this development desktop. Reopen it after configuring permissions.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        NativeProtectedChange(title: "Register This App…", change: change,
+                            checkSelection: { try connection.requireSelection(change) },
+                            requiredDevice: change["identity"]["deviceId"].text)
+                    }
+                } else {
+                    Text("Choose an app in Josi Companion to configure its permissions here.").font(.caption)
+                }
             } else {
                 Text("Inside the desktop, copy Josi Companion from the Josi Support disk into Applications, then open it and choose Connect to Josi.")
                     .font(.caption).foregroundStyle(.secondary)

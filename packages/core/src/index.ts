@@ -64,3 +64,5 @@ export { readMacSecret } from './macosSecrets.js';
 export { inspectCredentialMigration, migrateStoredCredentials, type CredentialMigrationCount, type CredentialMigrationReport } from './credentialMigration.js';
 
 export { refuseMemorySecret } from './memorySafety.js';
+
+export { type AutomationTargetRegistration, type AutomationApplicationTarget, type ApplicationCandidate } from './automationTargets.js';

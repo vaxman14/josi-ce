@@ -20,7 +20,7 @@ function describe(rule: AutomationPermissionRule): string {
 /** Inputs have already passed the strict permission schema and current Vault
  * checks. Full before/after values are shown for every changed rule. Enabling
  * automation also lists every unchanged rule that becomes effective. */
-export function automationReplacementPresentation(previous: AutomationPermissionPolicy | null, next: AutomationPermissionPolicy): ProtectedControlPresentation {
+export function automationReplacementPresentation(previous: AutomationPermissionPolicy | null, next: AutomationPermissionPolicy, applicationTargets: string[] = []): ProtectedControlPresentation {
   const before = new Map(previous?.rules.map(rule => [rule.id, rule]) ?? []), after = new Map(next.rules.map(rule => [rule.id, rule]));
   const changes: string[] = [];
   let unchanged = 0;
@@ -39,6 +39,7 @@ export function automationReplacementPresentation(previous: AutomationPermission
       : 'Automation is disabled for this identity. Stored rules cannot grant execution while disabled.',
     `Rules after this change: ${next.rules.length}. Unchanged rules: ${unchanged}.`,
     changes.length ? changes.join('\n\n') : 'No rule scope, mode or limit changes.',
+    ...applicationTargets,
     'Deny takes precedence over Ask and allowances. Every overlapping allowance must satisfy its own limits. Reordering rules does not change precedence.',
     'Limits apply to the original task, including retries. Zero allows no use of that resource. Usage is counted by rule ID across saved attempts; retaining or reusing an ID does not reset it. A never-used rule ID starts its own budget.',
     'Cardinal Rules, current Vault authority, verified effects and independent device-owner consent still apply. These settings cannot authorize protected administration. Other identities are unchanged.'].join('\n\n');

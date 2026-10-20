@@ -3,6 +3,7 @@ import SwiftUI
 import Security
 @preconcurrency import ApplicationServices
 import Darwin
+import UniformTypeIdentifiers
 
 enum GuestEnvironment {
     static func sysctlText(_ name: String) throws -> String {
@@ -76,6 +77,7 @@ enum GuestEnvironment {
     @Published var pairing = false
     @Published var connected = false
     @Published var working = false
+    @Published var selectedApplication = ""
     private var task: Task<Void, Never>?
     private var timeout: Task<Void, Never>?
     private var wire: GuestLinkWire?
@@ -84,6 +86,7 @@ enum GuestEnvironment {
     private var deadline: ContinuousClock.Instant = .now
     private var expires = 0
     private var hostBoot = ""
+    private var candidate = ""
 
     func start() {
         guard !working else { return }
@@ -139,7 +142,8 @@ enum GuestEnvironment {
                     expires = until; deadline = .now.advanced(by: .milliseconds(until - now))
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
-                        "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no"])
+                        "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
+                        "applicationCandidate": candidate])
                 }
             } catch {
                 if runID == own { message = "Connection ended or could not be verified. Install the signed companion in this guest’s Applications folder, then connect from the Josi app." }
@@ -147,6 +151,7 @@ enum GuestEnvironment {
             if runID == own {
                 wire?.interrupt(); wire = nil; timeout?.cancel(); timeout = nil
                 connected = false; working = false; pairing = false; comparison = ""; task = nil
+                candidate = ""; selectedApplication = ""
             }
         }
     }
@@ -163,6 +168,7 @@ enum GuestEnvironment {
     func stop() {
         runID = UUID(); answer(false); wire?.interrupt(); wire = nil; task?.cancel(); task = nil; timeout?.cancel(); timeout = nil
         working = false; connected = false; pairing = false; comparison = ""; message = "Companion disconnected."
+        candidate = ""; selectedApplication = ""
     }
     func accessibility() {
         do {
@@ -173,6 +179,68 @@ enum GuestEnvironment {
     func screenCapture() {
         do { try current(); _ = CGRequestScreenCaptureAccess() }
         catch { stop() }
+    }
+    func selectApplication() {
+        let selectionSession = runID
+        Task {
+            do {
+                try current()
+                guard let window = NSApp.keyWindow else { throw GuestLinkError.unavailable }
+                let panel = NSOpenPanel()
+                panel.title = "Choose a guest app for Josi permissions"
+                panel.message = "Share this app’s name, location and signing identity with Josi so its administrator can configure permissions. Selecting it grants no access."
+                panel.allowedContentTypes = [.applicationBundle]
+                panel.canChooseDirectories = false; panel.canChooseFiles = true; panel.allowsMultipleSelection = false
+                panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+                let response = await withCheckedContinuation { continuation in
+                    panel.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+                }
+                guard response == .OK, let selected = panel.url, selectionSession == runID else { return }
+                try current()
+                let boot = try GuestEnvironment.identity().guest
+                let value = try await Self.inspectApplication(selected, boot: boot)
+                guard selectionSession == runID else { throw GuestLinkError.closed }
+                try current()
+                candidate = String(decoding: try GuestLinkWire.encode(value), as: UTF8.self)
+                selectedApplication = value["label"] ?? ""
+            } catch { message = "The selected app could not be shared through the current verified connection." }
+        }
+    }
+    private nonisolated static func inspectApplication(_ selected: URL, boot: String) async throws -> [String: String] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let url = selected.resolvingSymlinksInPath().standardizedFileURL
+                    guard url.isFileURL, url.pathExtension == "app", url.path.utf8.count <= 768,
+                          let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier,
+                          !["com.apple.systempreferences", "com.apple.systemsettings", "com.apple.securityagent", "com.apple.loginwindow", "com.apple.keychainaccess"].contains(identifier.lowercased()),
+                          !identifier.lowercased().hasPrefix("com.heyjosi."), !identifier.lowercased().hasPrefix("com.socalreceptionist.josi"),
+                          let executable = bundle.executableURL, executable.resolvingSymlinksInPath().path.hasPrefix(url.path + "/") else {
+                        throw GuestLinkError.invalid
+                    }
+                    var code: SecStaticCode?, requirement: SecRequirement?
+                    guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
+                          SecRequirementCreateWithString("anchor apple generic" as CFString, [], &requirement) == errSecSuccess, let requirement,
+                          SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSStrictValidate), requirement) == errSecSuccess else { throw GuestLinkError.invalid }
+                    var information: CFDictionary?
+                    guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+                          let info = information as? [String: Any], let signing = info[kSecCodeInfoIdentifier as String] as? String,
+                          let hash = info[kSecCodeInfoUnique as String] as? Data, [20, 32].contains(hash.count) else { throw GuestLinkError.invalid }
+                    let team = info[kSecCodeInfoTeamIdentifier as String] as? String ?? ""
+                    let label = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                        ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String ?? url.deletingPathExtension().lastPathComponent
+                    let value = ["schemaVersion": "1", "candidateId": UUID().uuidString.lowercased(), "guestBootId": boot,
+                                 "kind": "application", "label": label, "bundlePath": url.path, "bundleId": identifier,
+                                 "signingId": signing, "teamId": team, "codeHash": hash.map { String(format: "%02x", $0) }.joined()]
+                    for (name, limit) in [("label", 96), ("bundleId", 200), ("signingId", 200), ("teamId", 64), ("bundlePath", 768)] {
+                        guard let text = value[name], (name == "teamId" || !text.isEmpty), text.trimmingCharacters(in: .whitespacesAndNewlines) == text, text.utf8.count <= limit,
+                              text.range(of: "[\\x{0000}-\\x{001f}\\x{007f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]", options: .regularExpression) == nil else { throw GuestLinkError.invalid }
+                    }
+                    guard try GuestLinkWire.encode(value).count <= 2500 else { throw GuestLinkError.invalid }
+                    continuation.resume(returning: value)
+                } catch { continuation.resume(throwing: GuestLinkError.unavailable) }
+            }
+        }
     }
 }
 
@@ -197,6 +265,8 @@ enum GuestEnvironment {
                         Button("Enable Accessibility…") { model.accessibility() }
                         Button("Enable Screen Capture…") { model.screenCapture() }
                     }
+                    Button("Choose App for Permissions…") { model.selectApplication() }
+                    if !model.selectedApplication.isEmpty { Text("Shared for permission setup: " + model.selectedApplication).font(.caption) }
                 }
                 HStack {
                     Button("Connect to Josi") { model.start() }.disabled(model.working)

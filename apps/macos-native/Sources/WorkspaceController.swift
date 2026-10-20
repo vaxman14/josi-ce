@@ -4,7 +4,7 @@ import Virtualization
 import Darwin
 
 /// Owns a local development desktop, not an automation grant. There is no
-/// guest executor/channel yet; browser/computer tools remain unavailable.
+/// guest executor yet; browser/computer tools remain unavailable.
 @MainActor final class NativeWorkspaceController: ObservableObject, WorkspaceMachineAuthority {
     @Published private(set) var state = "closed"
     @Published private(set) var progress = ""
