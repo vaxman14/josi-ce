@@ -12,6 +12,7 @@
 import {
   addMessage, approvalHash, claimJobs, claimReadyTask, completeJob, consumeApproval, enqueue,
   expireApprovals, expireHolds, failJob, getTask, tickSchedules,
+  reconcileWorkGoals,
   claimDurableTurn, completeDurableTurn, durableTurnHasEffects, durableTurnHasIncompleteEffects, failDurableTurn, renewDurableTurnLease, renewJobLease, processPushBatch, processPushReceipts, deliverReminderPersisted, json,
   expirePreparedActionApprovals, settleActionForTask, transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
@@ -75,6 +76,10 @@ function durableHistoryContent(message: { direction: 'in' | 'out'; body: string;
  * done would hide it forever. */
 export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise<void> {
   switch (job.kind) {
+    case 'work-goals.reconcile': {
+      await reconcileWorkGoals(db);
+      return;
+    }
     case 'assistant.turn': {
       const turnId=String((job.payload as {turnId?:unknown}).turnId??'');
       if(!turnId)throw new Error('assistant.turn without a turnId');

@@ -26,6 +26,7 @@ import {
   checkChildAccess, encodeTurnCursor, listNativeReminderActions,
   json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
+  listWorkGoals, workGoalEvents, controlWorkGoal, WorkGoalError,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
 import { runAssistantTurn, type RecallLookup } from '@josi-ce/agent';
@@ -149,6 +150,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         if (err instanceof AttachmentError) return res.status(err.status).json({ error: err.message, code: err.code });
         if (err instanceof MobileError) {if(err.code==='turn_queue_full')res.set('Retry-After','30');return res.status(err.code==='idempotency_conflict'?409:err.code==='turn_queue_full'?429:400).json({error:err.message,code:err.code});}
         if (err instanceof RouteError) return res.status(err.status).json({ error: err.message, ...err.details });
+        if (err instanceof WorkGoalError) return res.status(err.status).json({ error: err.message });
         throw err;
       }
     });
@@ -545,6 +547,23 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   );
 
   // ------------------------------------------------------------ tasks
+  r.get('/work-goals', handle(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({ goals: await listWorkGoals(db, req.user!.id, {
+      threadId: typeof req.query.threadId === 'string' ? req.query.threadId : undefined,
+      includeEnded: req.query.all === '1',
+    }) });
+  }));
+  r.get('/work-goals/:id/events', handle(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({ events: await workGoalEvents(db, req.user!.id, param(req, 'id'), Number(req.query.after ?? 0)) });
+  }));
+  r.post('/work-goals/:id/control', handle(async (req, res) => {
+    const action = req.body?.action;
+    if (!['pause', 'resume', 'cancel', 'confirm'].includes(action)) throw new RouteError(400, 'Choose a work control.');
+    return res.json({ goal: await controlWorkGoal(db, { ownerUserId: req.user!.id, goalId: param(req, 'id'),
+      revision: req.body?.revision, action, instruction: req.body?.instruction }) });
+  }));
   r.get(
     '/tasks',
     handle(async (req, res) => {

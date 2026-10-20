@@ -1,0 +1,24 @@
+# Owned work and live progress — implementation checkpoint
+
+This is an integrated P9/P10/P11 checkpoint, not completed acceptance. The owner directed feature building before functional testing. TypeScript and the web production build are the current checks; no live data migration or model/provider action is performed.
+
+## Connected implementation
+
+- Migration `0081_work_goals.sql` adds owner-scoped goals and sequenced events, bound to a real inbound user message in its owned conversation. Replaying creation for the same message returns the original goal. Goal creation, checkpoints, controls and event revisions are transactional. A revision conflict requires a refresh.
+- A goal retains its requested outcome, explicit completion criteria, stable step IDs, linked task IDs, current activity and concrete next action/wait/question. Separate states distinguish a reply, a task attempt, verified steps and the entire outcome. A maximum of 100 unfinished goals per owner bounds this first projection.
+- The agent exposes `own_goal`, `list_work_goals`, `checkpoint_goal` and `verify_goal` through the existing shared tool executor; mutating tools use its existing durable-effect fence. Tools cannot resume a user-paused goal or directly mark it complete. The owner-only HTTP controls can pause, save new direction, cancel or confirm a verified outcome.
+- Each turn loads the conversation's current work into context automatically. Checkpoints separate decisions, reported facts, assumptions and the next action. They remain owner content with original-message/event provenance, not secrets, permissions or Cardinal Rules. This is the current-work portion of P10, not the finished learning/memory product.
+- A step's receipt is resolved against a task in the same owned conversation and a successful settled action. A model assertion, finished reply or failed/uncertain attempt cannot produce verification. Each linked task can verify only one step in the goal. Once all steps have those receipts, the outcome waits for explicit owner confirmation of its completion criteria.
+- An existing worker schedule reconciles goals every 30 seconds in bounded, locked batches. It observes existing tasks, records successes, and asks for instructions after a failed task, due check without active work, or stalled plan. It does not perform new external effects or retry them. Paused/ended goals are excluded. Revision/event/question-message changes share a transaction, preventing repeated notices on job retries. Rotation timestamps keep unchanged goals from starving later ones.
+- Chat and Tasks share `WorkProgressCard` and the same `/assistant/work-goals` projection. Cards show real verified counts, checklist, activity, questions, requested check times, last save/staleness, controls and a link to the task manager. Recent finished cards remain visible in chat. The larger view includes criteria and checkpoint details. Existing task/turn/reminder pages and endpoints remain; a finished turn is now labelled **Reply finished**.
+- Event reads accept an `after` sequence for replay. Current web delivery uses non-overlapping polling with visibility refresh and stale/offline feedback. Background questions are also persisted as ordinary conversation messages for existing clients.
+
+## Remaining implementation
+
+Automatic model continuation into new actions, cross-turn stable effect identity integration, controlled plan revisions/dependencies, artifact/browser/desktop outcome verifiers, budgets and bounded recovery, richer evidence viewing, server event streaming, mobile/Telegram delivery integration, and live watching/takeover remain open. A recorded wake can trigger observation/question reconciliation; it does not yet schedule another model turn. Saved owner direction is available on the next chat turn rather than executing immediately.
+
+Goal pause/cancel currently stops goal bookkeeping/continuation; already-dispatched legacy task effects can still finish. The UI says so. Binding those controls to P4/P7/P8 dispatch cancellation/reconciliation is required before presenting them as an automation emergency stop.
+
+The first verifier covers settled connected-action tasks. Other kinds of work remain unfinished and request an explicit next instruction until their verifiers are connected. No claim of general autonomous completion or validated end-to-end recovery is made. Reported facts are agent-saved context, not independently verified facts. Long-term lesson proposals, correction/pinning/forgetting, retention and Vault-reference enforcement remain P10 work. Broader pagination/history and resume acceptance remain P11 work.
+
+Functional/concurrency/recovery and UI acceptance are deferred to the integrated testing pass requested by the owner.

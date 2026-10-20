@@ -27,6 +27,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, ApiError, type Message, type Thread, type TurnResult } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { VoiceChat } from '@/components/VoiceChat';
+import { ChatWorkProgress } from '@/components/WorkProgress';
 
 /** "Today", "Yesterday", or the date — the label WhatsApp taught everyone. */
 function dayLabel(at: Date): string {
@@ -237,6 +238,7 @@ export function Talk() {
             </Fragment>
           );
         })}
+        {thread ? <ChatWorkProgress key={thread.id} threadId={thread.id} /> : null}
         {sending ? <p className="text-sm text-muted-foreground">Josi is working…</p> : null}
         <div ref={end} />
       </section>

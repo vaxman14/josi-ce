@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, type Reminder, type Task, type TaskActivity, type TaskRun, type TaskType } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
 import { plain } from '@/lib/plainLanguage';
+import { WorkGoalManager } from '@/components/WorkProgress';
 import { canCancelTask, runAction, tabForRun, tabForTask, taskAction, type TaskTab } from '@/lib/taskManager';
 
 const TABS: Array<{ key: TaskTab; label: string }> = [
@@ -199,6 +200,8 @@ export function Tasks() {
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
+      <WorkGoalManager />
+
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Task status summary">
         {TABS.map((item) => (
           <button
@@ -227,7 +230,7 @@ export function Tasks() {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="min-w-0 truncate font-medium">{run.thread_title ?? 'Conversation task'}</p>
                     <Badge tone={run.status === 'failed' ? 'danger' : run.status === 'completed' ? 'ok' : 'primary'}>
-                      {run.status === 'queued' ? 'Queued' : run.status === 'running' ? 'Working' : run.status === 'completed' ? 'Completed' : 'Failed'}
+                      {run.status === 'queued' ? 'Reply queued' : run.status === 'running' ? 'Reply in progress' : run.status === 'completed' ? 'Reply finished' : 'Reply failed'}
                     </Badge>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">{runAction(run)}</p>
