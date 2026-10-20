@@ -48,6 +48,8 @@ final class ProtectedKeyProjection {
     private let algorithm: SecKeyAlgorithm = .eciesEncryptionCofactorX963SHA256AESGCM
     private var generation = 0
     private var pending: Approval?
+    private var hostAuthentication: LAContext?
+    private var hostProofUsed = false
     private var consumed = Set<UUID>()
     private struct Approval {
         let id: UUID
@@ -104,7 +106,7 @@ final class ProtectedKeyProjection {
     /// A failure to store the returned material leaves an orphan wrapping root;
     /// the enrollment coordinator must reconcile it, never silently overwrite.
     func createForNewEnrollment() throws -> NativeVaultSigningMaterial {
-        guard pending == nil else { throw ProtectedKeyError.busy }
+        guard pending == nil, hostAuthentication == nil else { throw ProtectedKeyError.busy }
         let context = LAContext(); context.interactionNotAllowed = true
         defer { context.invalidate() }
         var existing: CFTypeRef?
@@ -199,7 +201,7 @@ final class ProtectedKeyProjection {
             reason: "Approve the exact Josi protected change you reviewed.")
     }
     private func authenticateBound(message: Data, material: NativeVaultSigningMaterial, request: Binding, reason: String) async throws {
-        guard pending == nil, valid(material), consumed.count < 4096 else { throw ProtectedKeyError.busy }
+        guard pending == nil, hostAuthentication == nil, valid(material), consumed.count < 4096 else { throw ProtectedKeyError.busy }
         guard !consumed.contains(request.id) else { throw ProtectedKeyError.invalid }
         let context = LAContext()
         context.localizedFallbackTitle = ""
@@ -286,7 +288,72 @@ final class ProtectedKeyProjection {
         catch { cancel(); throw error }
     }
 
+    /// Authenticate the enrolled hardware root before the server projects the
+    /// wrapped Ed25519 key. This operation neither unwraps that key nor signs
+    /// a rule change. Only the fixed host-authentication message is accepted.
+    func proveHost(message: Data) async throws -> Data {
+        guard pending == nil, hostAuthentication == nil, !hostProofUsed else { throw ProtectedKeyError.busy }
+        let prefix = Data("josi-protected-host-auth.1\n".utf8)
+        guard message.count <= 4096, message.starts(with: prefix),
+              let fields = try JSONSerialization.jsonObject(with: message.dropFirst(prefix.count)) as? [Any],
+              fields.count == 11 else { throw ProtectedKeyError.invalid }
+        func integer(_ value: Any) -> Int64? {
+            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue.isFinite, number.doubleValue >= 0, number.doubleValue <= 9_007_199_254_740_991,
+                  number.doubleValue.rounded() == number.doubleValue else { return nil }
+            return number.int64Value
+        }
+        func digest(_ value: Any) -> String? {
+            guard let value = value as? String, value.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { return nil }
+            return value
+        }
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        guard integer(fields[0]) == 1, let id = fields[1] as? String, UUID(uuidString: id) != nil,
+              let nonce = fields[2] as? String, nonce.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil,
+              fields[3] as? String == identity.serverOrigin,
+              (fields[4] as? String).flatMap(UUID.init(uuidString:)) == identity.serverId,
+              (fields[5] as? String).flatMap(UUID.init(uuidString:)) == identity.userId,
+              (fields[6] as? String).flatMap(UUID.init(uuidString:)) == identity.deviceId,
+              let reference = fields[7] as? [Any], reference.count == 4,
+              reference[0] as? String == "914a736a-94bf-46f2-a602-82ff4180c45d",
+              let version = integer(reference[1]), version > 0, digest(reference[2]) != nil,
+              let epoch = integer(reference[3]), epoch > 0, let expectedFingerprint = digest(fields[8]),
+              let issued = integer(fields[9]), let expires = integer(fields[10]),
+              issued <= now, expires > now, expires > issued, expires - issued <= 60_000 else { throw ProtectedKeyError.invalid }
+        let context = LAContext()
+        context.localizedFallbackTitle = ""
+        context.touchIDAuthenticationAllowableReuseDuration = 0
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else {
+            context.invalidate(); throw ProtectedKeyError.unavailable
+        }
+        hostProofUsed = true; hostAuthentication = context
+        let ownGeneration = generation
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(expires - now))
+        defer { context.invalidate(); hostAuthentication = nil }
+        func current() throws {
+            let wall = Int64(Date().timeIntervalSince1970 * 1000)
+            guard wall >= now, wall < expires, ContinuousClock.now < deadline,
+                  generation == ownGeneration, hostAuthentication === context, !Task.isCancelled else { throw ProtectedKeyError.expired }
+        }
+        guard try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
+            localizedReason: "Connect this enrolled Mac to \(identity.serverOrigin) for a protected Josi review. This does not approve a rule change.") else {
+            throw ProtectedKeyError.cancelled
+        }
+        try current()
+        context.interactionNotAllowed = true
+        let root = try loadRoot(context: context)
+        let fingerprint = try SHA256.hash(data: publicBytes(root)).map { String(format: "%02x", $0) }.joined()
+        let signingAlgorithm: SecKeyAlgorithm = .ecdsaSignatureMessageX962SHA256
+        guard fingerprint == expectedFingerprint, SecKeyIsAlgorithmSupported(root, .sign, signingAlgorithm) else { throw ProtectedKeyError.invalid }
+        var error: Unmanaged<CFError>?
+        guard let signature = SecKeyCreateSignature(root, signingAlgorithm, message as CFData, &error) as Data?,
+              signature.count >= 8, signature.count <= 72 else { throw ProtectedKeyError.unavailable }
+        try current()
+        return signature
+    }
+
     func cancel() {
         generation += 1; pending?.context.invalidate(); pending = nil
+        hostAuthentication?.invalidate(); hostAuthentication = nil
     }
 }

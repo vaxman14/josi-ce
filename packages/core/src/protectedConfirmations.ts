@@ -1,8 +1,9 @@
 // Short-lived encrypted projections of protected change requests. The Vault
 // remains canonical; these receipts do not enroll a key or grant device access.
-import { createHash, createHmac, createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
+import { createHash, createHmac, createPublicKey, ECDH, randomBytes, randomUUID, verify } from 'node:crypto';
 import { parseProtectedControlChallenge, protectedControlMessage, isProtectedControlOrigin,
   PROTECTED_CONTROL_PURPOSES, type ProtectedControlChallenge, type ProtectedControlPurpose, type ProtectedControlReceipt, type ProtectedControlPresentation } from '@josi-ce/protocol';
+import { parseProtectedHostChallenge, protectedHostMessage, type ProtectedHostChallenge } from '@josi-ce/protocol';
 import type { Db } from './db.js';
 import type { MasterKey } from './masterKey.js';
 import { openSealed, seal } from './sealing.js';
@@ -15,7 +16,7 @@ export interface ProtectedConfirmationAuthority {
   /** Trusted local verifier of current active enrollment/owner consent and the
    * canonical Vault public key. No supplied key, network wait or default trust.
    * The actual enrollment/key projection implementation remains a release gate. */
-  resolveDeviceKey(tx: Db, identity: ProtectedConfirmationIdentity): Promise<{ reference: VaultRecordReference; publicKeySpki: string }>;
+  resolveDeviceKey(tx: Db, identity: ProtectedConfirmationIdentity): Promise<{ reference: VaultRecordReference; publicKeySpki: string; wrappingPublicKey?: string }>;
   /** Existing fresh administrator proof; check without consuming at issue.
    * Permanent mutation consumes that independent proof in its own TX. */
   verifyFreshAdministrator(tx: Db, actorUserId: string, command: ProtectedConfirmationCommand): Promise<void>;
@@ -31,6 +32,7 @@ interface Row {
   id: string; owner_user_id: string; server_id: string; device_id: string;
   challenge_enc: string; challenge_mac: string; state_mac: string;
   state: 'pending' | 'consumed' | 'cancelled'; expires_at: string;
+  host_delivery_used: boolean; host_projection_used: boolean; host_state_mac: string | null;
 }
 interface Envelope { purpose: 'josi-protected-challenge'; schemaVersion: 1; challenge: ProtectedControlChallenge; publicKeySpki: string }
 const uuid = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
@@ -60,6 +62,19 @@ function stateMac(key: MasterKey, row: Pick<Row, 'id' | 'challenge_mac' | 'state
   return createHmac('sha256', key.reveal()).update('josi-protected-challenge-state.1\0')
     .update(JSON.stringify([row.id, row.challenge_mac, row.state])).digest('hex');
 }
+function hostStateMac(key: MasterKey, row: Pick<Row, 'id' | 'challenge_mac' | 'host_delivery_used' | 'host_projection_used'>): string {
+  return createHmac('sha256', key.reveal()).update('josi-protected-host-state.1\0')
+    .update(JSON.stringify([row.id, row.challenge_mac, row.host_delivery_used, row.host_projection_used])).digest('hex');
+}
+function wrappingKey(value: unknown) {
+  if (typeof value !== 'string' || value.length !== 88) throw new ProtectedConfirmationError('The enrolled hardware wrapping key is unavailable.');
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.length !== 65 || bytes[0] !== 4 || bytes.toString('base64') !== value
+    || !Buffer.from(ECDH.convertKey(bytes, 'prime256v1') as Buffer).equals(bytes)) throw new ProtectedConfirmationError('The enrolled hardware wrapping key is invalid.');
+  return { fingerprint: createHash('sha256').update(bytes).digest('hex'),
+    key: createPublicKey({ format: 'jwk', key: { kty: 'EC', crv: 'P-256',
+      x: bytes.subarray(1, 33).toString('base64url'), y: bytes.subarray(33).toString('base64url') } }) };
+}
 async function now(tx: Db): Promise<number> {
   const [{ now_ms }] = await tx.query<{ now_ms: string }>('select floor(extract(epoch from clock_timestamp())*1000)::text as now_ms');
   return Number(now_ms);
@@ -86,7 +101,7 @@ export class ProtectedConfirmationStore {
     if (!ref || !exact(ref, ['recordId', 'version', 'digest', 'epoch']) || !uuid(ref.recordId) || !digest(ref.digest)
       || !Number.isSafeInteger(ref.version) || ref.version < 1 || ref.epoch !== context.epoch) throw new ProtectedConfirmationError('Protected device authority changed.');
     try { publicKey(value.publicKeySpki); } catch { throw new ProtectedConfirmationError('Protected device key unavailable.'); }
-    return { reference: { ...ref }, publicKeySpki: value.publicKeySpki };
+    return { reference: { ...ref }, publicKeySpki: value.publicKeySpki, wrappingPublicKey: value.wrappingPublicKey };
   }
   /** Only the trusted server command builder supplies presentation. It must
    * derive meaning from the exact tested Vault definition, never model prose
@@ -112,9 +127,10 @@ export class ProtectedConfirmationStore {
       if (Number(count) >= 16) throw new ProtectedConfirmationError('Too many pending confirmations. Cancel one or wait for expiry.');
       const envelope: Envelope = { purpose: 'josi-protected-challenge', schemaVersion: 1, challenge, publicKeySpki: key.publicKeySpki };
       const mac = envelopeMac(context.key, envelope);
-      await context.tx.query(`insert into protected_control_challenges(id,owner_user_id,server_id,device_id,challenge_enc,challenge_mac,state_mac,expires_at)
-        values($1,$2,$3,$4,$5,$6,$7,to_timestamp($8::double precision/1000))`, [challenge.id, input.actorUserId, challenge.serverId, challenge.deviceId,
-        seal(context.key, envelope), mac, stateMac(context.key, { id: challenge.id, challenge_mac: mac, state: 'pending' }), challenge.expiresAtMs]);
+      await context.tx.query(`insert into protected_control_challenges(id,owner_user_id,server_id,device_id,challenge_enc,challenge_mac,state_mac,expires_at,host_state_mac)
+        values($1,$2,$3,$4,$5,$6,$7,to_timestamp($8::double precision/1000),$9)`, [challenge.id, input.actorUserId, challenge.serverId, challenge.deviceId,
+        seal(context.key, envelope), mac, stateMac(context.key, { id: challenge.id, challenge_mac: mac, state: 'pending' }), challenge.expiresAtMs,
+        hostStateMac(context.key, { id: challenge.id, challenge_mac: mac, host_delivery_used: false, host_projection_used: false })]);
       await appendEvent(context.tx, { actorUserId: input.actorUserId, actor: 'super_admin', kind: 'auth.protected_challenge_issued',
         subjectType: 'protected_confirmation', subjectId: challenge.id, payload: { deviceId: challenge.deviceId, epoch: context.epoch } });
       return { challengeId: challenge.id, expiresAtMs: challenge.expiresAtMs };
@@ -127,7 +143,76 @@ export class ProtectedConfirmationStore {
     if (row.state !== 'pending' || c.issuedAtMs > at || c.expiresAtMs <= at || c.keyReference.epoch !== context.epoch) throw new ProtectedConfirmationError('Protected confirmation expired, consumed or stale.');
     const current = await this.current(context, { serverOrigin: c.serverOrigin, serverId: c.serverId, userId: c.userId, deviceId: c.deviceId });
     if (!sameReference(current.reference, c.keyReference) || current.publicKeySpki !== envelope.publicKeySpki) throw new ProtectedConfirmationError('Protected device authority changed.');
-    return { row, envelope };
+    return { row, envelope, current };
+  }
+  private hostChallenge(context: ProtectedConfirmationTransaction, row: Row, c: ProtectedControlChallenge, publicWrappingKey: unknown) {
+    if (typeof row.host_delivery_used !== 'boolean' || typeof row.host_projection_used !== 'boolean'
+      || !row.host_state_mac || row.host_state_mac !== hostStateMac(context.key, row)) {
+      throw new ProtectedConfirmationError('The protected-host receipt state is unavailable or changed.');
+    }
+    const wrapping = wrappingKey(publicWrappingKey);
+    const challenge = parseProtectedHostChallenge({ schemaVersion: 1, id: c.id, nonce: c.nonce,
+      serverOrigin: c.serverOrigin, serverId: c.serverId, userId: c.userId, deviceId: c.deviceId, keyReference: c.keyReference,
+      wrappingFingerprint: wrapping.fingerprint, issuedAtMs: c.issuedAtMs, expiresAtMs: Math.min(c.expiresAtMs, c.issuedAtMs + 60_000) });
+    if (!challenge) throw new ProtectedConfirmationError('Protected-host authentication is unavailable.');
+    return { challenge, key: wrapping.key };
+  }
+  /** Public challenge only; the protected presentation and wrapped signing
+   * material remain behind proof of the already-enrolled hardware root. */
+  async prepareHostAuthentication(actorUserId: string, challengeId: string): Promise<ProtectedHostChallenge> {
+    if (!uuid(actorUserId) || !uuid(challengeId)) throw new ProtectedConfirmationError('Protected confirmation unavailable.');
+    return this.backend(actorUserId, false, async context => {
+      const { row, envelope, current } = await this.load(context, actorUserId, challengeId);
+      const { challenge } = this.hostChallenge(context, row, envelope.challenge, current.wrappingPublicKey);
+      if (challenge.expiresAtMs <= await now(context.tx) || row.host_delivery_used && row.host_projection_used) {
+        throw new ProtectedConfirmationError('Protected-host authentication expired or was already used.');
+      }
+      return challenge;
+    });
+  }
+  /** A narrow host proof grants one presentation delivery and one hardware-
+   * wrapped projection for this exact pending change. Neither claim approves
+   * the rule. Each is consumed in its caller's Vault transaction. */
+  private async consumeHostProof(tx: Db, actorUserId: string, identity: ProtectedConfirmationIdentity,
+    reference: VaultRecordReference, proof: unknown, use: 'delivery' | 'projection', expectedChallengeId?: string): Promise<void> {
+    const input = structuredClone(proof), boundIdentity = { ...identity }, boundReference = { ...reference };
+    if (!identityValid(boundIdentity) || boundIdentity.userId !== actorUserId
+      || !exact(input, ['schemaVersion', 'challengeId', 'challengeDigest', 'signature']) || input.schemaVersion !== 1
+      || !uuid(input.challengeId) || !digest(input.challengeDigest) || typeof input.signature !== 'string'
+      || !/^[A-Za-z0-9_-]{11,96}$/.test(input.signature) || expectedChallengeId && input.challengeId !== expectedChallengeId) {
+      throw new ProtectedConfirmationError('A current enrolled-device proof is required.');
+    }
+    await this.backend(actorUserId, false, async context => {
+      const { row, envelope, current } = await this.load(context, actorUserId, String(input.challengeId));
+      const c = envelope.challenge;
+      if (c.serverOrigin !== boundIdentity.serverOrigin || c.serverId !== boundIdentity.serverId
+        || c.userId !== boundIdentity.userId || c.deviceId !== boundIdentity.deviceId || !sameReference(c.keyReference, boundReference)
+        || (use === 'delivery' ? row.host_delivery_used : row.host_projection_used)) {
+        throw new ProtectedConfirmationError('The protected-host proof was used or belongs to another change.');
+      }
+      const { challenge, key } = this.hostChallenge(context, row, c, current.wrappingPublicKey);
+      const message = Buffer.from(protectedHostMessage(challenge)), signature = Buffer.from(String(input.signature), 'base64url');
+      if (signature.length < 8 || signature.length > 72 || signature.toString('base64url') !== input.signature
+        || createHash('sha256').update(message).digest('hex') !== input.challengeDigest
+        || !verify('sha256', message, key, signature) || challenge.expiresAtMs <= await now(context.tx)) {
+        throw new ProtectedConfirmationError('The enrolled-device proof is invalid or expired.');
+      }
+      row.host_delivery_used ||= use === 'delivery'; row.host_projection_used ||= use === 'projection';
+      await context.tx.query(`update protected_control_challenges set host_delivery_used=$2,host_projection_used=$3,host_state_mac=$4 where id=$1`,
+        [row.id, row.host_delivery_used, row.host_projection_used, hostStateMac(context.key, row)]);
+      await appendEvent(context.tx, { actorUserId, actor: 'super_admin', kind: `auth.protected_host_${use}`,
+        subjectType: 'protected_confirmation', subjectId: row.id, payload: { deviceId: row.device_id, epoch: context.epoch } });
+    }, tx);
+  }
+  /** Concrete adapters for the existing authority ports, not renderer booleans
+   * or an Ed25519 signing-key projection used to authorize itself. */
+  verifyHostDelivery(tx: Db, challenge: Readonly<ProtectedControlChallenge>, proof: unknown) {
+    return this.consumeHostProof(tx, challenge.userId, { serverOrigin: challenge.serverOrigin, serverId: challenge.serverId,
+      userId: challenge.userId, deviceId: challenge.deviceId }, challenge.keyReference, proof, 'delivery', challenge.id);
+  }
+  verifyHostProjection(tx: Db, actorUserId: string, device: { identity: ProtectedConfirmationIdentity },
+    reference: VaultRecordReference, proof: unknown) {
+    return this.consumeHostProof(tx, actorUserId, device.identity, reference, proof, 'projection');
   }
   /** Delivery is to an authenticated protected host, not ordinary chat content. */
   async deliver(args: { actorUserId: string; challengeId: string; proof: unknown }): Promise<ProtectedControlChallenge> {

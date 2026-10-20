@@ -25,3 +25,5 @@ Server settings now show the current administrator's **Protected devices** inven
 Validation is limited to compilation/type/build checks. No live Vault migration, Keychain creation, biometric prompt, device enrollment, projection, revocation or functional test was performed. Hardware behavior, concurrent enrollment/revocation, first-device trust, recovery, session loss and projection disposal remain part of the integrated acceptance pass.
 
 The complete root TypeScript build, web type check/production bundle and Swift 6 type check passed for this checkpoint.
+
+The later [protected-host authentication checkpoint](P4_HOST_AUTHENTICATION.md) connects P-256 hardware-root proofs for presentation delivery and wrapped-key projection after enrollment, avoiding use of the unprojected signing key to authorize itself. First-device consent, production transport and permanent-mutation assembly remain open.

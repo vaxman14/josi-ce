@@ -3,8 +3,9 @@
 const { spawn, execFile } = require('node:child_process');
 const { lstat, realpath } = require('node:fs/promises');
 const { promisify } = require('node:util');
-const { randomUUID } = require('node:crypto');
-const { isProtectedControlOrigin, parseProtectedControlChallenge, protectedControlMessage } = require('@josi-ce/protocol');
+const { randomUUID, createHash } = require('node:crypto');
+const { isProtectedControlOrigin, parseProtectedControlChallenge, protectedControlMessage,
+  parseProtectedHostChallenge, protectedHostMessage } = require('@josi-ce/protocol');
 const execute = promisify(execFile);
 const HELPER = '/Applications/Josi.app/Contents/Helpers/JosiProtectedKeyHost';
 const REQUIREMENT = '=anchor apple generic and identifier "com.heyjosi.ce.protected-key" and certificate leaf[subject.OU] = "LRH75YR6QW"';
@@ -134,6 +135,21 @@ function createNativeProtectedKeyBridge(identity) {
   }
   return Object.freeze({
     cancel,
+    async proveHost(challenge, signal) {
+      try {
+        if (approval) throw refused();
+        const parsed = parseProtectedHostChallenge(challenge);
+        if (!parsed || !sameIdentity(parsed, bound) || parsed.issuedAtMs > Date.now()) throw refused();
+        const lease = lifetime(parsed.expiresAtMs), message = Buffer.from(protectedHostMessage(parsed));
+        const result = await request('proveHost', { message: message.toString('base64') }, signal);
+        live(lease);
+        if (!exact(result, ['signature']) || typeof result.signature !== 'string' || !/^[A-Za-z0-9_-]{11,96}$/.test(result.signature)) throw refused();
+        const bytes = Buffer.from(result.signature, 'base64url');
+        if (bytes.length < 8 || bytes.length > 72 || bytes[0] !== 0x30 || bytes.toString('base64url') !== result.signature) throw refused();
+        return { schemaVersion: 1, challengeId: parsed.id,
+          challengeDigest: createHash('sha256').update(message).digest('hex'), signature: result.signature };
+      } catch { cancel(); throw refused(); }
+    },
     async createEnrollmentMaterial(signal) {
       try {
         const result = await request('create', {}, signal);

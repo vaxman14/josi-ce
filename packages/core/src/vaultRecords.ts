@@ -215,6 +215,22 @@ export class VaultRecordStore {
     }, authority);
   }
 
+  /** Concrete hardware-proof wiring for an already enrolled native device.
+   * Installation identity, fresh account checks and first-device consent are
+   * still supplied by the trusted application assembly, never request JSON. */
+  protectedNativeControl(deviceAuthority: Omit<ProtectedDeviceAuthority, 'verifyHostProjection'>,
+    confirmationAuthority: Pick<ProtectedConfirmationAuthority, 'verifyFreshAdministrator'>) {
+    let confirmations: ProtectedConfirmationStore;
+    const devices = this.protectedDevices({ ...deviceAuthority,
+      verifyHostProjection: (tx, actor, device, reference, proof) => confirmations.verifyHostProjection(tx, actor, device, reference, proof) });
+    confirmations = this.protectedConfirmations({
+      resolveDeviceKey: (tx, identity) => devices.resolveDeviceKey(tx, identity),
+      verifyFreshAdministrator: (tx, actor, command) => confirmationAuthority.verifyFreshAdministrator(tx, actor, command),
+      verifyDelivery: (tx, challenge, proof) => confirmations.verifyHostDelivery(tx, challenge, proof),
+    });
+    return Object.freeze({ devices, confirmations });
+  }
+
   /** Read both kinds of authority under the SAME Vault state lock/epoch.
    * Server-owned facts only; this is not a request-body authorization endpoint.
    * It cannot reserve usage or substitute for the final device dispatch gate. */

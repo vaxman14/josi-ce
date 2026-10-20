@@ -244,7 +244,8 @@ export class ProtectedDeviceStore {
     const input = structuredClone(identity);
     return this.backend(input.userId, false, async context => {
       const { device, reference } = await this.enrolled(context, input);
-      return { reference, publicKeySpki: Buffer.from(device.material.signingPublicKeySpki, 'base64').toString('base64url') };
+      return { reference, publicKeySpki: Buffer.from(device.material.signingPublicKeySpki, 'base64').toString('base64url'),
+        wrappingPublicKey: device.material.wrappingPublicKey };
     }, tx);
   }
   /** Only an authenticated protected-host adapter may receive this short-lived
