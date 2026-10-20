@@ -11,8 +11,9 @@ import { AutomationPolicyStore, AUTOMATION_POLICY_RECORD_ID, evaluateAutomationP
 import type { AutomationPermissionFacts } from './automationPermissions.js';
 import { AutomationReservationStore, type AutomationReservationProofPort } from './automationReservations.js';
 import { ProtectedConfirmationStore, type ProtectedConfirmationAuthority } from './protectedConfirmations.js';
+import { ProtectedDeviceStore, PROTECTED_DEVICES_RECORD_ID, type ProtectedDeviceAuthority } from './protectedDevices.js';
 
-export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy';
+export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
 export interface VaultRecordValue { reference: VaultRecordReference; kind: VaultRecordKind; value: Secret }
 export interface VaultAutomationPreview {
@@ -173,6 +174,32 @@ export class VaultRecordStore {
     }), authority);
   }
 
+  /** Canonical protected signing enrollments use the existing encrypted
+   * history. Generic draft writes and generic reads cannot export material.
+   * An existing TX is used only by protected-confirmation key resolution. */
+  protectedDevices(authority: ProtectedDeviceAuthority): ProtectedDeviceStore {
+    return new ProtectedDeviceStore((actorUserId, writing, work, existingTransaction) => {
+      const run = async (tx: Db) => {
+        const state = await this.state(tx, actorUserId, writing), key = await this.key(tx);
+        await this.requireOwnerAutomationVault(tx, actorUserId);
+        if (writing && state.authority_reconciliation_required) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
+        const [previous] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [PROTECTED_DEVICES_RECORD_ID]);
+        if (previous && previous.kind !== 'protected_devices') throw new VaultRecordError('Protected-device record context did not match.');
+        let written = false;
+        return work({ tx, epoch: Number(state.authority_epoch), reconciliationRequired: state.authority_reconciliation_required,
+          read: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
+          write: async value => {
+            if (!writing || written) throw new VaultRecordError('Only one protected enrollment change is permitted.');
+            written = true;
+            return this.persist(tx, key, actorUserId, 'protected_devices', value, previous, PROTECTED_DEVICES_RECORD_ID);
+          },
+        });
+      };
+      if (existingTransaction && writing) throw new VaultRecordError('Enrollment writes require their own guarded Vault transaction.');
+      return existingTransaction ? run(existingTransaction) : this.transaction(run);
+    }, authority);
+  }
+
   /** Encrypted short-lived protected presentations. The optional existing TX
    * is used only by the policy mutation's human-proof callback so consumption,
    * fresh administrator proof, audit and policy all commit or roll back together. */
@@ -304,6 +331,7 @@ export class VaultRecordStore {
       const key = await this.key(tx);
       const [head] = await tx.query<Head>(`select id,kind,version,digest from vault_record_heads where id=$1`, [args.recordId]);
       if (!head) throw new VaultRecordError('Protected Vault record not found');
+      if (head.kind === 'protected_devices') throw new VaultRecordError('Protected-device material requires the authenticated host projection path.');
       if (args.expected && (state.authority_reconciliation_required || !this.matches(args.expected, head, state))) {
         throw new VaultRecordConflictError('Protected Vault record changed or requires reconciliation');
       }

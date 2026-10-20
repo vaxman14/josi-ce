@@ -45,6 +45,8 @@ export function automationSettingsRoutes(context: Context): Router {
   };
   const unavailable = async () => { throw new SettingsError(503, 'Protected native confirmation is not connected.'); };
   const noMutation = { verifyFreshAdministrator: unavailable, verifyProtectedHuman: unavailable };
+  const noDeviceMutation = { requireServerIdentity: unavailable, verifyFreshAdministrator: unavailable,
+    verifyEnrollmentConsent: unavailable, verifyProtectedRevocation: unavailable, verifyHostProjection: unavailable };
   r.get('/catalog', handle(async (_req, res) => res.json({
     guidance: CARDINAL_RULE_GUIDANCE, actions: CARDINAL_ACTIONS, scopeKeys: CARDINAL_SCOPE_KEYS,
     restrictions: ['deny', 'maximum_task_duration'], unavailable: ['deny', 'pause'],
@@ -57,7 +59,8 @@ export function automationSettingsRoutes(context: Context): Router {
     const rules = await records.cardinalPolicy(noMutation).read(req.user!.id);
     const permissions = await records.automationPolicy(noMutation).read(req.user!.id);
     const drafts = await new CardinalDraftStore(db, key).list(req.user!.id);
-    return res.json({ rules, permissions, drafts });
+    const devices = await records.protectedDevices(noDeviceMutation).inventory(req.user!.id);
+    return res.json({ rules, permissions, drafts, devices });
   }));
   r.post('/rules/validate', handle(async (req, res) => {
     const parsed = validateCardinalRule(req.body?.draft);

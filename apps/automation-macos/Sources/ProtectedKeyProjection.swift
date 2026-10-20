@@ -10,6 +10,14 @@ struct ProtectedDeviceIdentity: Codable, Equatable {
     let serverId: UUID
     let userId: UUID
     let deviceId: UUID
+    private enum CodingKeys: String, CodingKey { case serverOrigin, serverId, userId, deviceId }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(serverOrigin, forKey: .serverOrigin)
+        try container.encode(serverId.uuidString.lowercased(), forKey: .serverId)
+        try container.encode(userId.uuidString.lowercased(), forKey: .userId)
+        try container.encode(deviceId.uuidString.lowercased(), forKey: .deviceId)
+    }
 }
 
 /// Canonical material belongs in the Vault. The signing key is additionally
@@ -187,8 +195,11 @@ final class ProtectedKeyProjection {
     /// must revalidate current Vault authority around this operation. This is
     /// real OS authentication, not a renderer boolean or an agent approval.
     func authenticate(message: Data, material: NativeVaultSigningMaterial) async throws {
+        try await authenticateBound(message: message, material: material, request: binding(message),
+            reason: "Approve the exact Josi protected change you reviewed.")
+    }
+    private func authenticateBound(message: Data, material: NativeVaultSigningMaterial, request: Binding, reason: String) async throws {
         guard pending == nil, valid(material), consumed.count < 4096 else { throw ProtectedKeyError.busy }
-        let request = try binding(message)
         guard !consumed.contains(request.id) else { throw ProtectedKeyError.invalid }
         let context = LAContext()
         context.localizedFallbackTitle = ""
@@ -205,7 +216,7 @@ final class ProtectedKeyProjection {
         pending = approval
         do {
             guard try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
-                localizedReason: "Approve the exact Josi protected change you reviewed.") else { throw ProtectedKeyError.cancelled }
+                localizedReason: reason) else { throw ProtectedKeyError.cancelled }
             try live(approval)
             guard generation == ownGeneration, pending?.id == request.id else { throw ProtectedKeyError.cancelled }
             context.interactionNotAllowed = true
@@ -220,12 +231,15 @@ final class ProtectedKeyProjection {
     /// Sign only the exact authenticated protected challenge once. The host
     /// receives a signature, never the unwrapped signing private key.
     func sign(message: Data, material: NativeVaultSigningMaterial) throws -> Data {
+        do { return try signBound(message: message, material: material, request: binding(message)) }
+        catch { cancel(); throw error }
+    }
+    private func signBound(message: Data, material: NativeVaultSigningMaterial, request: Binding) throws -> Data {
         guard let approval = pending else { throw ProtectedKeyError.unavailable }
         pending = nil
         defer { approval.context.invalidate() }
-        let request = try binding(message)
         try live(approval)
-        guard approval.authenticated, approval.id == request.id, approval.material == material,
+        guard approval.authenticated, approval.id == request.id, approval.expiresAtMs == request.expiresAtMs, approval.material == material,
               approval.messageDigest == Data(SHA256.hash(data: message)), valid(material) else { throw ProtectedKeyError.invalid }
         let root = try loadRoot(context: approval.context)
         guard try publicBytes(root) == material.wrappingPublicKey else { throw ProtectedKeyError.invalid }
@@ -242,6 +256,34 @@ final class ProtectedKeyProjection {
               Self.spkiPrefix + wrapped.publicKey == material.signingPublicKeySpki else { throw ProtectedKeyError.invalid }
         try live(approval)
         return try key.signature(for: message)
+    }
+
+    private func enrollmentMessage(_ commandDigest: String) throws -> Data {
+        guard commandDigest.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw ProtectedKeyError.invalid }
+        // Narrow possession proof, domain-separated from permanent changes.
+        // The exact command digest includes this material's digest, identity,
+        // enrollment ID, label and current Vault reference/epoch on the server.
+        return Data("josi-protected-device-enrollment.1\n".utf8)
+            + (try JSONSerialization.data(withJSONObject: ["device.enroll", commandDigest], options: [.withoutEscapingSlashes]))
+    }
+    private func enrollmentBinding(attemptId: UUID, expiresAtMs: Int64) throws -> Binding {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        guard expiresAtMs > now, expiresAtMs - now <= 120_000 else { throw ProtectedKeyError.expired }
+        return Binding(id: attemptId, expiresAtMs: expiresAtMs)
+    }
+    /// The trusted enrollment host must display the exact identity and key
+    /// fingerprints and verify the server-derived command before this call.
+    /// This proves possession, not remote hardware attestation. Server-side
+    /// first-device consent remains an independent mandatory boundary.
+    func authenticateEnrollment(commandDigest: String, material: NativeVaultSigningMaterial, attemptId: UUID, expiresAtMs: Int64) async throws {
+        try await authenticateBound(message: enrollmentMessage(commandDigest), material: material,
+            request: enrollmentBinding(attemptId: attemptId, expiresAtMs: expiresAtMs),
+            reason: "Enroll this Mac for the Josi administrator account you reviewed.")
+    }
+    func signEnrollment(commandDigest: String, material: NativeVaultSigningMaterial, attemptId: UUID, expiresAtMs: Int64) throws -> Data {
+        do { return try signBound(message: enrollmentMessage(commandDigest), material: material,
+            request: enrollmentBinding(attemptId: attemptId, expiresAtMs: expiresAtMs)) }
+        catch { cancel(); throw error }
     }
 
     func cancel() {

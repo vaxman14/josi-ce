@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { AutomationPolicyView, CardinalDraftView, CardinalPolicyView, CardinalRule, CardinalTestReport } from '@josi-ce/core';
+import type { AutomationPolicyView, CardinalDraftView, CardinalPolicyView, CardinalRule, CardinalTestReport, ProtectedDeviceInventory } from '@josi-ce/core';
 import type { PermissionScope } from '@josi-ce/protocol';
 import { api } from '@/lib/api';
 import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
 
 interface Catalog { guidance: string; actions: string[]; scopeKeys: string[] }
-interface Settings { rules: CardinalPolicyView | null; permissions: AutomationPolicyView | null; drafts: CardinalDraftView[] }
+interface Settings { rules: CardinalPolicyView | null; permissions: AutomationPolicyView | null; drafts: CardinalDraftView[]; devices?: ProtectedDeviceInventory }
 interface Check { report: CardinalTestReport; meaning: string | null }
 interface ReviewPreview {
   input: { wording: string; structuredMeaning: string; guidance: string };
@@ -38,11 +38,11 @@ function editable(value: unknown, catalog: Catalog): value is CardinalRule {
 export function AdminAutomation() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [error, setError] = useState(''), [tab, setTab] = useState<'rules' | 'permissions'>('rules');
+  const [error, setError] = useState(''), [tab, setTab] = useState<'rules' | 'permissions' | 'devices'>('rules');
   const [selected, setSelected] = useState<CardinalDraftView | null>(null), [editing, setEditing] = useState(false);
   async function load() {
     try { setSettings(await api.get<Settings>('/admin/automation')); setError(''); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'The Vault-backed settings could not be read.'); }
+    catch (cause) { setSettings(null); setError(cause instanceof Error ? cause.message : 'The Vault-backed settings could not be read.'); }
   }
   useEffect(() => {
     let alive = true;
@@ -64,6 +64,7 @@ export function AdminAutomation() {
     <div className="flex flex-wrap gap-2">
       <Button variant={tab === 'rules' ? 'primary' : 'secondary'} onClick={() => setTab('rules')}>Cardinal Rules</Button>
       <Button variant={tab === 'permissions' ? 'primary' : 'secondary'} onClick={() => setTab('permissions')}>Automation permissions</Button>
+      <Button variant={tab === 'devices' ? 'primary' : 'secondary'} onClick={() => setTab('devices')}>Protected devices</Button>
     </div>
     <Card><CardTitle>Automation is not enabled in this build</CardTitle>
       <p className="text-sm text-muted-foreground">You can prepare and check explicit rule drafts. Device pairing and protected native confirmation must be connected before model review, permanent changes or browser/computer control can be enabled.</p>
@@ -94,8 +95,28 @@ export function AdminAutomation() {
       </Card>
       {editing && catalog ? <RuleEditor key={selected ? `${selected.reference.recordId}:${selected.reference.version}` : 'new'} catalog={catalog} selected={selected}
         saved={async draft => { setSelected(draft); await load(); }} /> : null}
-    </> : <PermissionsView settings={settings} />}
+    </> : tab === 'permissions' ? <PermissionsView settings={settings} /> : <ProtectedDevicesView devices={settings?.devices} />}
   </div>;
+}
+
+function ProtectedDevicesView({ devices }: { devices?: ProtectedDeviceInventory }) {
+  return <Card><CardTitle>Your protected confirmation devices</CardTitle>
+    <p className="text-sm text-muted-foreground">These devices confirm permanent administrator changes. Enrollment alone gives no browser or computer access.</p>
+    {devices?.reconciliationRequired ? <ErrorNote>Vault recovery must be reconciled before a device can approve another change.</ErrorNote> : null}
+    {!devices ? <p className="mt-3 text-sm text-muted-foreground">The device inventory is unavailable.</p>
+      : !devices.devices.length ? <p className="mt-3 text-sm text-muted-foreground">You have no enrolled confirmation devices.</p>
+      : <ul className="mt-4 space-y-3">{devices.devices.map(device => <li key={device.enrollmentId} className="rounded-lg border border-border p-3">
+        <p className="font-medium">{device.label} <span className="ml-2 text-xs text-muted-foreground">{device.revokedAt ? 'Revoked' : 'Enrolled'}</span></p>
+        <p className="mt-1 break-all text-sm">{device.identity.serverOrigin}</p>
+        <p className="mt-1 text-xs text-muted-foreground">Enrolled {new Date(device.enrolledAt).toLocaleString()}</p>
+        <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer">Verify device identity</summary>
+          <p className="mt-2 break-all">Device: {device.identity.deviceId}</p>
+          <p className="mt-1 break-all">Signing key: {device.signingFingerprint}</p>
+          <p className="mt-1 break-all">Hardware wrapping key: {device.wrappingFingerprint}</p>
+        </details>
+      </li>)}</ul>}
+    <p className="mt-4 text-sm text-muted-foreground">Pairing and revocation controls will become available when the protected native connection is assembled.</p>
+  </Card>;
 }
 
 function RuleEditor({ catalog, selected, saved }: { catalog: Catalog; selected: CardinalDraftView | null; saved: (draft: CardinalDraftView) => Promise<void> }) {

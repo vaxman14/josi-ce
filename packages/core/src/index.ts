@@ -23,6 +23,9 @@ export { AUTOMATION_ENFORCEMENT_VERSION, automationPolicyChangeBinding,
 export type { VaultAutomationPreview } from './vaultRecords.js';
 export { ProtectedConfirmationError, type ProtectedConfirmationAuthority, type ProtectedConfirmationCommand,
   type ProtectedConfirmationIdentity } from './protectedConfirmations.js';
+export { protectedDeviceEnrollmentMessage, type ProtectedDeviceAuthority, type ProtectedDeviceCommand,
+  type ProtectedDeviceEnrollment, type ProtectedDeviceRevocation, type ProtectedDeviceInventory,
+  type ProtectedDeviceSummary, type NativeVaultSigningMaterial } from './protectedDevices.js';
 export { AutomationReservationError, type AutomationReservationRequest, type AutomationReservationView, type AutomationReservationState,
   type AutomationReservationProofPort } from './automationReservations.js';
 export * from './cardinalDrafts.js';
