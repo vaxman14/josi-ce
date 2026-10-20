@@ -2,12 +2,13 @@ import type { VaultAuthorityReference } from './automation.js';
 
 export const PROTECTED_CONTROL_PURPOSES = ['cardinal.activate', 'cardinal.retire', 'automation.policy.replace'] as const;
 export type ProtectedControlPurpose = typeof PROTECTED_CONTROL_PURPOSES[number];
+export interface ProtectedControlPresentation { wording: string; meaning: string; advisory: string[] }
 export interface ProtectedControlChallenge {
   schemaVersion: 1; id: string; nonce: string;
   serverOrigin: string; serverId: string; userId: string; deviceId: string;
   purpose: ProtectedControlPurpose; requestDigest: string; keyReference: VaultAuthorityReference;
   issuedAtMs: number; expiresAtMs: number;
-  presentation: { wording: string; meaning: string; advisory: string[] };
+  presentation: ProtectedControlPresentation;
 }
 export interface ProtectedControlReceipt {
   schemaVersion: 1; challengeId: string; challengeDigest: string; signature: string;
@@ -30,6 +31,14 @@ export function isProtectedControlOrigin(value: unknown): value is string {
       || u.protocol === 'http:' && ['127.0.0.1', '[::1]', 'localhost'].includes(u.hostname));
   } catch { return false; }
 }
+/** Bounded full presentation, including old/new maximum-size rule scopes and
+ * the complete stored advisory. No truncation is permitted for confirmation. */
+export function parseProtectedControlPresentation(value: unknown): ProtectedControlPresentation | null {
+  if (!object(value) || !keys(value, ['wording', 'meaning', 'advisory']) || !text(value.wording, 4000)
+    || !text(value.meaning, 64_000) || !Array.isArray(value.advisory) || value.advisory.length > 20
+    || value.advisory.some(v => !text(v, 2600))) return null;
+  return structuredClone(value) as unknown as ProtectedControlPresentation;
+}
 export function parseProtectedControlChallenge(value: unknown): ProtectedControlChallenge | null {
   if (!object(value) || !keys(value, ['schemaVersion', 'id', 'nonce', 'serverOrigin', 'serverId', 'userId', 'deviceId',
     'purpose', 'requestDigest', 'keyReference', 'issuedAtMs', 'expiresAtMs', 'presentation']) || value.schemaVersion !== 1
@@ -41,8 +50,7 @@ export function parseProtectedControlChallenge(value: unknown): ProtectedControl
   const key = value.keyReference, p = value.presentation;
   if (!object(key) || !keys(key, ['recordId', 'version', 'digest', 'epoch']) || !uuid(key.recordId) || !digest(key.digest)
     || !integer(key.version) || key.version < 1 || !integer(key.epoch) || key.epoch < 1
-    || !object(p) || !keys(p, ['wording', 'meaning', 'advisory']) || !text(p.wording, 4000) || !text(p.meaning, 16_000)
-    || !Array.isArray(p.advisory) || p.advisory.length > 20 || p.advisory.some(v => !text(v, 2000))) return null;
+    || !parseProtectedControlPresentation(p)) return null;
   return structuredClone(value) as unknown as ProtectedControlChallenge;
 }
 /** Canonical bytes bind the complete host presentation as well as the exact

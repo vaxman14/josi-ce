@@ -26,7 +26,8 @@ export { AutomationReservationError, type AutomationReservationRequest, type Aut
   type AutomationReservationProofPort } from './automationReservations.js';
 export * from './cardinalDrafts.js';
 export { CARDINAL_ENFORCEMENT_VERSION, cardinalActivationBinding, cardinalRetirementBinding,
-  type CardinalActiveRule, type CardinalPolicyDocument, type CardinalPolicyView, type CardinalPolicyCommand, type CardinalPolicyAuthority, type CardinalPolicyDecision } from './cardinalPolicy.js';
+  type CardinalActiveRule, type CardinalPolicyDocument, type CardinalPolicyView, type CardinalPolicyCommand, type CardinalPolicyAuthority, type CardinalPolicyDecision,
+  type CardinalProtectedReview, type CardinalActivationRequest, type CardinalRetirementRequest } from './cardinalPolicy.js';
 export * from './workspace.js';
 export * from './setupVerification.js';
 export * from './launchChecklist.js';

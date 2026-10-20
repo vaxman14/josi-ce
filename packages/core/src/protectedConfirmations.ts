@@ -2,7 +2,7 @@
 // remains canonical; these receipts do not enroll a key or grant device access.
 import { createHash, createHmac, createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
 import { parseProtectedControlChallenge, protectedControlMessage, isProtectedControlOrigin,
-  PROTECTED_CONTROL_PURPOSES, type ProtectedControlChallenge, type ProtectedControlPurpose, type ProtectedControlReceipt } from '@josi-ce/protocol';
+  PROTECTED_CONTROL_PURPOSES, type ProtectedControlChallenge, type ProtectedControlPurpose, type ProtectedControlReceipt, type ProtectedControlPresentation } from '@josi-ce/protocol';
 import type { Db } from './db.js';
 import type { MasterKey } from './masterKey.js';
 import { openSealed, seal } from './sealing.js';
@@ -146,14 +146,16 @@ export class ProtectedConfirmationStore {
    * consumed there. No network/dialog/private-key export occurs here. */
   verifier(receipt: ProtectedControlReceipt) {
     const snapshot = structuredClone(receipt);
-    return async (tx: Db, actorUserId: string, command: ProtectedConfirmationCommand): Promise<void> => {
+    return async (tx: Db, actorUserId: string, command: ProtectedConfirmationCommand, expectedPresentation?: ProtectedControlPresentation): Promise<void> => {
       if (!uuid(actorUserId) || !commandValid(command) || !exact(snapshot, ['schemaVersion', 'challengeId', 'challengeDigest', 'signature'])
         || snapshot.schemaVersion !== 1 || !uuid(snapshot.challengeId) || !digest(snapshot.challengeDigest)
         || typeof snapshot.signature !== 'string' || !/^[A-Za-z0-9_-]{86}$/.test(snapshot.signature)) throw new ProtectedConfirmationError('Protected confirmation proof required.');
       const binding = { ...command };
+      const expected = expectedPresentation ? structuredClone(expectedPresentation) : null;
       await this.backend(actorUserId, false, async context => {
         const { row, envelope } = await this.load(context, actorUserId, snapshot.challengeId), c = envelope.challenge;
         if (c.purpose !== binding.purpose || c.requestDigest !== binding.requestDigest) throw new ProtectedConfirmationError('Confirm this exact protected change again.');
+        if (expected && protectedControlMessage({ ...c, presentation: expected }) !== protectedControlMessage(c)) throw new ProtectedConfirmationError('The protected presentation changed. Review the actual enforced meaning again.');
         const message = Buffer.from(protectedControlMessage(c), 'utf8'), signature = Buffer.from(snapshot.signature, 'base64url');
         if (signature.length !== 64 || signature.toString('base64url') !== snapshot.signature
           || createHash('sha256').update(message).digest('hex') !== snapshot.challengeDigest

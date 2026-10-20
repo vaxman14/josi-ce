@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { parseProtectedControlPresentation, protectedControlMessage, type ProtectedControlPresentation } from '@josi-ce/protocol';
 import { createSession } from '../../auth/src/sessions.js';
 import { hashPassword } from '../../auth/src/passwords.js';
 import { reauthenticateProtectedAdmin, type ProtectedAdminProof } from '../../auth/src/protectedAdmin.js';
@@ -6,7 +8,7 @@ import { testDb, type TestDb } from './helpers.js';
 import { MasterKey } from '../src/masterKey.js';
 import { Secret } from '../src/sealing.js';
 import { CardinalDraftStore, cardinalReviewInput } from '../src/cardinalDrafts.js';
-import { cardinalContentDigest, type CardinalRule } from '../src/cardinalRules.js';
+import { cardinalContentDigest, explainCardinalRule, CARDINAL_SCOPE_KEYS, type CardinalRule } from '../src/cardinalRules.js';
 import { cardinalActivationBinding, cardinalRetirementBinding, CARDINAL_POLICY_RECORD_ID, evaluateCardinalPolicyRecord, type CardinalPolicyCommand } from '../src/cardinalPolicy.js';
 import { initializeVault, recoverVault, setVaultLock, vaultRecords, type VaultRecordReference } from '../src/vault.js';
 
@@ -204,5 +206,86 @@ describe('permanent Cardinal policy with injected protected-control verification
     const draft = await tested(), request = { actorUserId: owner, draft: draft.reference, policy: null };
     const active = await policy(await proof(cardinalActivationBinding(request)), acceptFixture).activate(request);
     expect(active.document.rules[0].tested.reviewer.model).toBe('');
+  });
+
+  it('prepares the exact tested meaning and full advisory without changing authority or approving anything', async () => {
+    const draft = await tested(), request = { actorUserId: owner, draft: draft.reference, policy: null };
+    const [{ authority_epoch: before }] = await db.query('select authority_epoch from vault_state');
+    const review = await policy().prepareActivation(request);
+    expect(review.command).toEqual(cardinalActivationBinding(request));
+    expect(review.presentation.wording).toBe(rule().wording);
+    expect(review.presentation.meaning).toContain(explainCardinalRule(rule()));
+    expect(review.presentation.advisory).toEqual([
+      'Model clarity assessment: needs_clarification. Advice only; administrator confirmation is required.',
+      'The administrator should review this scope.', 'Concern: Consider whether scripts need a separate restriction.',
+    ]);
+    expect(await policy().read(owner)).toBeNull();
+    expect((await db.query('select authority_epoch from vault_state'))[0].authority_epoch).toBe(before);
+    expect(await db.query('select id from protected_admin_reauth')).toEqual([]);
+    await expect(policy().prepareActivation({ ...request, actorUserId: member })).rejects.toThrow(/super admin/);
+    await db.query("update llm_providers set model='different' where role='primary'");
+    await expect(policy().prepareActivation(request)).rejects.toThrow(/model changed/);
+  });
+
+  it('shows the previous wording/enforcement on replacement and the removed restriction on retirement', async () => {
+    const { draft } = await activateFirst();
+    const original = await new CardinalDraftStore(db, key).read({ actorUserId: owner, recordId: draft.reference.recordId });
+    const replacement: CardinalRule = { ...rule(), wording: 'Stop this work after one minute.', restriction: { kind: 'maximum_task_duration', seconds: 60 } };
+    const next = await tested(replacement, original.reference), current = (await policy().read(owner))!;
+    const request = { actorUserId: owner, draft: next.reference, policy: current.reference };
+    const review = await policy().prepareActivation(request);
+    expect(review.presentation.meaning).toContain(`Previous wording:\n${rule().wording}`);
+    expect(review.presentation.meaning).toContain(`Previous enforcement:\n${explainCardinalRule(rule())}`);
+    expect(review.presentation.meaning).toContain(`New enforcement:\n${explainCardinalRule(replacement)}`);
+    const retired = await policy().prepareRetirement({ actorUserId: owner, ruleId: draft.reference.recordId, policy: current.reference });
+    expect(retired.presentation.meaning).toContain(`Remove this restriction:\n${explainCardinalRule(rule())}`);
+    expect(retired.presentation.meaning).toContain('will no longer restrict future actions');
+    expect(retired.presentation.wording).toBe(rule().wording);
+    expect((await policy().read(owner))!.document.rules[0].definition).toEqual(rule());
+  });
+
+  it('the complete maximum identity scope is displayed without truncation, and unsafe display controls are refused', async () => {
+    const definition = rule();
+    for (const field of CARDINAL_SCOPE_KEYS) definition.scope[field] = { ids: Array.from({ length: 100 }, (_, n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`) };
+    const draft = await tested(definition), request = { actorUserId: owner, draft: draft.reference, policy: null };
+    const review = await policy().prepareActivation(request);
+    expect(review.presentation.meaning.length).toBeGreaterThan(16000);
+    expect(review.presentation.meaning).toContain(explainCardinalRule(definition));
+    expect(parseProtectedControlPresentation(review.presentation)).toEqual(review.presentation);
+    const unsafe = await tested({ ...rule(), wording: 'Hidden direction \u202e' });
+    await expect(policy().prepareActivation({ ...request, draft: unsafe.reference })).rejects.toThrow(/safely displayed/);
+  });
+
+  it('a genuine signature over misleading wording cannot activate the correctly bound rule', async () => {
+    const draft = await tested(), request = { actorUserId: owner, draft: draft.reference, policy: null };
+    const review = await policy().prepareActivation(request), fresh = await proof(review.command), keys = generateKeyPairSync('ed25519');
+    const identity = { serverOrigin: 'https://josi.example', serverId: '00000000-0000-4000-8000-000000000001', userId: owner, deviceId: '00000000-0000-4000-8000-000000000002' };
+    // Synthetic key/host enrollment only; the real rule preparation and policy
+    // transaction are used, with fixture Ed25519 signing of their challenge.
+    const confirmations = vaultRecords(db, key).protectedConfirmations({
+      resolveDeviceKey: async tx => {
+        const [{ authority_epoch }] = await tx.query<{ authority_epoch: string }>('select authority_epoch from vault_state');
+        return { reference: { recordId: '00000000-0000-4000-8000-000000000003', version: 1, digest: 'a'.repeat(64), epoch: Number(authority_epoch) },
+          publicKeySpki: keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url') };
+      },
+      verifyFreshAdministrator: (tx, actorUserId, command) => fresh.check(tx, { actorUserId, ...command, consume: false }),
+      verifyDelivery: async () => undefined,
+    });
+    const humanProof = async (presentation: ProtectedControlPresentation) => {
+      const issued = await confirmations.issue({ actorUserId: owner, identity, command: review.command, presentation });
+      const challenge = await confirmations.deliver({ actorUserId: owner, challengeId: issued.challengeId, proof: 'fixture' });
+      const message = Buffer.from(protectedControlMessage(challenge));
+      return confirmations.verifier({ schemaVersion: 1, challengeId: challenge.id, challengeDigest: createHash('sha256').update(message).digest('hex'),
+        signature: sign(null, message, keys.privateKey).toString('base64url') });
+    };
+    const forged = await humanProof({ ...review.presentation, meaning: 'This rule grants unrestricted access.' });
+    const withHuman = (human: typeof forged) => vaultRecords(db, key).cardinalPolicy({
+      verifyFreshAdministrator: (tx, actorUserId, command) => fresh.check(tx, { actorUserId, ...command, consume: true }), verifyProtectedHuman: human,
+    });
+    await expect(withHuman(forged).activate(request)).rejects.toThrow(/presentation changed/);
+    expect(await policy().read(owner)).toBeNull();
+    expect((await db.query('select used_at from protected_admin_reauth'))[0].used_at).toBeNull();
+    const exact = await humanProof(review.presentation);
+    expect((await withHuman(exact).activate(request)).document.rules[0].definition).toEqual(rule());
   });
 });
