@@ -13,11 +13,17 @@ struct GuestDesktopCommand: Codable, Equatable {
     let workspaceId: UUID
     let appId: UUID
     let installationRevision: Int
+    let taskId: UUID
     let sessionId: UUID
     let generation: Int
     let expiresAtMs: Int64
     let operation: Operation
     let observationId: UUID?
+    /// The server reserves this fresh capture identity before any read.
+    let resultObservationId: UUID?
+    let windowId: UUID?
+    /// Exact reserved output ceiling; absent for input-only operations.
+    let maxOutputBytes: Int?
     let elementId: UUID?
     let x: Double?
     let y: Double?
@@ -62,8 +68,10 @@ struct GuestDesktopObservation: Codable {
     let workspaceId: UUID
     let appId: UUID
     let installationRevision: Int
+    let taskId: UUID
     let sessionId: UUID
     let generation: Int
+    let windowId: UUID
     let target: GuestDesktopTarget
     let elements: [GuestDesktopNode]
     let partial: Bool
@@ -92,7 +100,9 @@ protocol GuestDesktopAuthority: AnyObject {
     func pinnedApplication(_ command: GuestDesktopCommand) async throws -> GuestPinnedApplication
     /// Verify exact command + locally observed target, current policy, consent,
     /// budget and one-use reservation. Record durable dispatch before input.
-    /// Observation and capture require their own read/transmission permission.
+    /// Every command includes its actual read effects, including freshness
+    /// checks before input. Initial target metadata deliberately omits title.
+    /// Capture and model projection need their own bounded permissions.
     func authorize(_ command: GuestDesktopCommand, target: GuestDesktopTarget) async throws
     /// Ephemeral projection for this already-authorized exact text command.
     /// Must not persist, log or return the value to the agent.
@@ -113,6 +123,14 @@ final class GuestDesktopEngine {
     private var window: AXUIElement?
     private var elements: [UUID: AXUIElement] = [:]
     private var fingerprint: Data?
+    private struct CaptureBinding {
+        let id: UUID, taskId: UUID, workspaceId: UUID, appId: UUID, sessionId: UUID
+        let installationRevision: Int, generation: Int
+    }
+    private var lastCapture: CaptureBinding?
+    private var captureIds = Set<UUID>()
+    private var treeByteLimit = 0
+    private var expiryTask: Task<Void, Never>?
     private var seen = Set<UUID>()
     private var inputMonitor: Any?
     private var lastWall = Date()
@@ -139,13 +157,17 @@ final class GuestDesktopEngine {
     /// Resuming creates a new engine/session and requires a new observation.
     func takeOver() {
         guard !stopped else { return }
-        stopped = true; generation += 1; snapshot = nil; window = nil; elements.removeAll(); fingerprint = nil
+        stopped = true; generation += 1; clearSnapshot(); lastCapture = nil
         if let inputMonitor { NSEvent.removeMonitor(inputMonitor); self.inputMonitor = nil }
         authority.stopped(reason: "local_control_or_session_ended")
     }
 
     func dispose() { takeOver() }
 
+    private func clearSnapshot() {
+        expiryTask?.cancel(); expiryTask = nil
+        snapshot = nil; window = nil; elements.removeAll(); fingerprint = nil; treeByteLimit = 0
+    }
     private func check(_ command: GuestDesktopCommand, epoch: Int) throws {
         let now = Date(), monotonic = ContinuousClock.now
         guard !stopped, epoch == generation, inputMonitor != nil, AXIsProcessTrusted(),
@@ -162,7 +184,9 @@ final class GuestDesktopEngine {
         return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
     }
     private func text(_ element: AXUIElement, _ name: String, limit: Int = 300) -> String {
-        String((attribute(element, name) as? String ?? "").prefix(limit))
+        // A grapheme can contain arbitrarily many combining scalars. Bound
+        // scalars so a short-looking label cannot defeat the byte ceiling.
+        String(String.UnicodeScalarView((attribute(element, name) as? String ?? "").unicodeScalars.prefix(limit)))
     }
     private func rectangle(_ element: AXUIElement) -> CGRect? {
         guard let position = attribute(element, kAXPositionAttribute), CFGetTypeID(position) == AXValueGetTypeID(),
@@ -207,7 +231,7 @@ final class GuestDesktopEngine {
         else { throw GuestDesktopError.stale }
     }
 
-    private func frontWindow(_ pin: GuestPinnedApplication) throws -> (GuestDesktopTarget, AXUIElement) {
+    private func frontWindow(_ pin: GuestPinnedApplication, includeTitle: Bool = true) throws -> (GuestDesktopTarget, AXUIElement) {
         guard let app = NSWorkspace.shared.frontmostApplication, !app.isTerminated,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               let bundle = app.bundleIdentifier, !Self.blockedApps.contains(bundle.lowercased()),
@@ -223,7 +247,7 @@ final class GuestDesktopEngine {
         let current = unsafeDowncast(rawWindow, to: AXUIElement.self)
         guard let bounds = rectangle(current) else { throw GuestDesktopError.unavailable }
         return (GuestDesktopTarget(processId: app.processIdentifier, launchedAt: launched, bundleId: bundle,
-            executablePath: path, windowTitle: text(current, kAXTitleAttribute), bounds: bounds), current)
+            executablePath: path, windowTitle: includeTitle ? text(current, kAXTitleAttribute) : "", bounds: bounds), current)
     }
 
     private struct Tree {
@@ -232,10 +256,12 @@ final class GuestDesktopEngine {
         let fingerprint: Data
         let partial: Bool
     }
-    private func tree(_ root: AXUIElement) throws -> Tree {
+    private func tree(_ root: AXUIElement, maxEncodedBytes: Int) throws -> Tree {
         var queue: [(AXUIElement, Int)] = [(root, 0)], offset = 0, nodes: [GuestDesktopNode] = []
         var references: [UUID: AXUIElement] = [:], signatures: [[String: Any]] = []
         var partial = false
+        var encodedBytes = 2 // JSON array brackets; encoded IDs have fixed size.
+        let encoder = JSONEncoder()
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while offset < queue.count && nodes.count < 240 {
             if ContinuousClock.now >= deadline { partial = true; break }
@@ -253,7 +279,10 @@ final class GuestDesktopEngine {
             _ = AXUIElementCopyActionNames(element, &names)
             let actions = (names as? [String] ?? []).filter { $0 == kAXPressAction }.prefix(8)
             let id = UUID()
-            nodes.append(GuestDesktopNode(id: id, role: role, label: label, enabled: enabled, focused: focused, bounds: rect, actions: Array(actions)))
+            let node = GuestDesktopNode(id: id, role: role, label: label, enabled: enabled, focused: focused, bounds: rect, actions: Array(actions))
+            let size = try encoder.encode(node).count + (nodes.isEmpty ? 0 : 1)
+            guard encodedBytes + size <= maxEncodedBytes else { partial = true; break }
+            encodedBytes += size; nodes.append(node)
             references[id] = element
             signatures.append(["role": role, "subrole": subrole, "label": label, "enabled": enabled, "focused": focused,
                 "bounds": rect.map { [$0.origin.x, $0.origin.y, $0.width, $0.height] } ?? [],
@@ -273,15 +302,23 @@ final class GuestDesktopEngine {
         return Tree(nodes: nodes, references: references, fingerprint: Data(SHA256.hash(data: data)), partial: partial)
     }
 
-    private func fresh(_ command: GuestDesktopCommand, pin: GuestPinnedApplication) throws -> (GuestDesktopObservation, AXUIElement) {
-        guard let observation = snapshot, let oldWindow = window, let savedFingerprint = fingerprint,
+    /// Only saved identifiers here. A freshness reread is itself a content
+    /// read and must happen after the command's current read authority.
+    private func saved(_ command: GuestDesktopCommand) throws -> GuestDesktopObservation {
+        guard let observation = snapshot,
               command.observationId == observation.id, command.workspaceId == observation.workspaceId,
               command.appId == observation.appId, command.installationRevision == observation.installationRevision,
+              command.taskId == observation.taskId, command.windowId == observation.windowId,
               command.sessionId == observation.sessionId, command.generation == observation.generation,
               Date().timeIntervalSince(observation.capturedAt) < 15 else { throw GuestDesktopError.stale }
+        return observation
+    }
+    private func fresh(_ command: GuestDesktopCommand, pin: GuestPinnedApplication) throws -> (GuestDesktopObservation, AXUIElement) {
+        let observation = try saved(command)
+        guard let oldWindow = window, let savedFingerprint = fingerprint else { throw GuestDesktopError.stale }
         let (target, current) = try frontWindow(pin)
         guard target == observation.target, CFEqual(current, oldWindow),
-              try tree(current).fingerprint == savedFingerprint else { throw GuestDesktopError.stale }
+              treeByteLimit > 0, try tree(current, maxEncodedBytes: treeByteLimit).fingerprint == savedFingerprint else { throw GuestDesktopError.stale }
         return (observation, current)
     }
 
@@ -306,25 +343,59 @@ final class GuestDesktopEngine {
                   pin.installationRevision == command.installationRevision else { throw GuestDesktopError.denied }
             try check(command, epoch: epoch)
             if command.operation == .observe {
-                guard command.observationId == nil, command.elementId == nil, command.valueReference == nil,
+                guard let resultId = command.resultObservationId, !captureIds.contains(resultId), captureIds.count < 4096,
+                      let limit = command.maxOutputBytes, (1024...64 * 1024).contains(limit),
+                      command.windowId == nil, command.elementId == nil, command.valueReference == nil,
                       command.x == nil, command.y == nil, command.key == nil else { throw GuestDesktopError.unsupported }
-                let (target, current) = try frontWindow(pin)
-                try await authority.authorize(command, target: target)
+                if let previous = lastCapture {
+                    guard command.observationId == previous.id, command.taskId == previous.taskId,
+                          command.workspaceId == previous.workspaceId, command.appId == previous.appId,
+                          command.installationRevision == previous.installationRevision,
+                          command.sessionId == previous.sessionId, command.generation == previous.generation
+                    else { throw GuestDesktopError.stale }
+                } else if command.observationId != nil { throw GuestDesktopError.stale }
+                // A denied/failed capture ID cannot become a retry key.
+                captureIds.insert(resultId)
+                let (metadata, current) = try frontWindow(pin, includeTitle: false)
+                try await authority.authorize(command, target: metadata)
                 try check(command, epoch: epoch)
-                let (after, afterWindow) = try frontWindow(pin)
-                guard target == after, CFEqual(current, afterWindow) else { throw GuestDesktopError.stale }
-                let captured = try tree(current)
+                let (after, afterWindow) = try frontWindow(pin, includeTitle: false)
+                guard metadata == after, CFEqual(current, afterWindow) else { throw GuestDesktopError.stale }
+                let (target, titledWindow) = try frontWindow(pin)
+                guard CFEqual(current, titledWindow), target.processId == metadata.processId,
+                      target.launchedAt == metadata.launchedAt, target.bounds == metadata.bounds else { throw GuestDesktopError.stale }
+                let windowId = UUID(), capturedAt = Date()
+                let empty = GuestDesktopObservation(id: resultId, workspaceId: command.workspaceId,
+                    appId: command.appId, installationRevision: command.installationRevision, taskId: command.taskId,
+                    sessionId: command.sessionId, generation: command.generation, windowId: windowId,
+                    target: target, elements: [], partial: false, capturedAt: capturedAt, untrustedContent: true)
+                let encoder = JSONEncoder()
+                let available = limit - (try encoder.encode(empty).count) - 64
+                guard available >= 2 else { throw GuestDesktopError.unavailable }
+                clearSnapshot()
+                let captured = try tree(current, maxEncodedBytes: available)
                 try check(command, epoch: epoch)
                 guard try frontWindow(pin).0 == target else { throw GuestDesktopError.stale }
-                let observation = GuestDesktopObservation(id: UUID(), workspaceId: command.workspaceId,
-                    appId: command.appId, installationRevision: command.installationRevision, sessionId: command.sessionId,
-                    generation: command.generation, target: target, elements: captured.nodes, partial: captured.partial,
-                    capturedAt: Date(), untrustedContent: true)
-                snapshot = observation; window = current; elements = captured.references; fingerprint = captured.fingerprint
+                let observation = GuestDesktopObservation(id: resultId, workspaceId: command.workspaceId,
+                    appId: command.appId, installationRevision: command.installationRevision, taskId: command.taskId,
+                    sessionId: command.sessionId, generation: command.generation, windowId: windowId,
+                    target: target, elements: captured.nodes, partial: captured.partial,
+                    capturedAt: capturedAt, untrustedContent: true)
+                guard try encoder.encode(observation).count <= limit else { throw GuestDesktopError.unavailable }
+                snapshot = observation; window = current; elements = captured.references; fingerprint = captured.fingerprint; treeByteLimit = available
+                lastCapture = CaptureBinding(id: resultId, taskId: command.taskId, workspaceId: command.workspaceId,
+                    appId: command.appId, sessionId: command.sessionId, installationRevision: command.installationRevision,
+                    generation: command.generation)
+                expiryTask = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(max(0, 15 - Date().timeIntervalSince(capturedAt)))) }
+                    catch { return }
+                    guard let self, self.snapshot?.id == resultId else { return }
+                    self.clearSnapshot()
+                }
                 return GuestDesktopReceipt(commandId: command.id, outcome: .observed, verificationRequired: true, observation: observation)
             }
-            guard command.operation != .capture else { throw GuestDesktopError.unsupported }
-            let (observation, _) = try fresh(command, pin: pin)
+            guard command.operation != .capture, command.resultObservationId == nil, command.maxOutputBytes == nil else { throw GuestDesktopError.unsupported }
+            let observation = try saved(command)
             var projected: String?
             try await authority.authorize(command, target: observation.target)
             if command.operation == .text {
@@ -337,7 +408,7 @@ final class GuestDesktopEngine {
             let targetElement = command.elementId.flatMap { elements[$0] }
             // Consume the snapshot before the first native call. A timeout is
             // uncertain, and cannot make this observation reusable.
-            snapshot = nil; window = nil; elements.removeAll(); fingerprint = nil
+            clearSnapshot()
             switch command.operation {
             case .press, .focus:
                 guard command.x == nil, command.y == nil, command.key == nil, command.valueReference == nil,
@@ -407,6 +478,7 @@ final class GuestDesktopEngine {
     @available(macOS 14.2, *)
     func capture(_ command: GuestDesktopCommand) async throws -> Data {
         guard !busy, command.operation == .capture, !seen.contains(command.id), seen.count < 4096,
+              command.resultObservationId == nil, let limit = command.maxOutputBytes, (1...8 * 1024 * 1024).contains(limit),
               command.elementId == nil, command.valueReference == nil, command.x == nil, command.y == nil, command.key == nil,
               CGPreflightScreenCaptureAccess() else { throw GuestDesktopError.denied }
         busy = true; seen.insert(command.id)
@@ -420,7 +492,7 @@ final class GuestDesktopEngine {
         guard pin.workspaceId == command.workspaceId, pin.applicationId == command.appId,
               pin.installationRevision == command.installationRevision else { throw GuestDesktopError.denied }
         try check(command, epoch: epoch)
-        let (observation, _) = try fresh(command, pin: pin)
+        let observation = try saved(command)
         try await authority.authorize(command, target: observation.target)
         try check(command, epoch: epoch)
         _ = try fresh(command, pin: pin)
@@ -444,7 +516,7 @@ final class GuestDesktopEngine {
         try check(command, epoch: epoch)
         _ = try fresh(command, pin: pin)
         guard let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]),
-              data.count <= 8 * 1024 * 1024 else { throw GuestDesktopError.unavailable }
+              data.count <= limit else { throw GuestDesktopError.unavailable }
         return data
     }
 }

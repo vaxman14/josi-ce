@@ -113,3 +113,13 @@ Resolution happens separately from heartbeats. Expired projections, changed sele
 Encrypted framing now accounts for base64 expansion separately from the 16 KiB plaintext limit: ciphertext envelopes retain the 24 KiB frame limit, while individual plaintext fields retain their original 4 KiB limit. This permits the bounded metadata projection without relaxing plaintext schemas.
 
 The root TypeScript build and complete Swift 6 host and companion builds passed. No live app selection, signature inspection, VM connection or automation action was performed. This is an assembled readiness path, not a runtime acceptance result; production command authorization/dispatch, initial observations, effect verification and selective networking remain open.
+
+## Guest capture identity and bounded output — 20 October 2026
+
+The guest engine now accepts the capture identity allocated before the server's reservation, and binds observations to the original task, app revision, control session, generation and an opaque window ID. Refreshes must name the prior capture from that same binding; capture IDs cannot be reused. Input requires the matching observed window as well as the original observation. These fields are for the authenticated adapter, not permission supplied by a model.
+
+Structured observation output has an explicit reserved ceiling of at most 64 KiB. The accessibility tree stops at that encoded limit and reports partial content; labels are bounded by Unicode scalar count. Stored screen contents and element handles expire after fifteen seconds, while only the preceding capture's identifiers remain for a refresh. PNG output is bounded by its command's separately reserved ceiling, at most 8 MiB.
+
+Before initial read authorization the engine obtains app/window identity and geometry without reading the title. Window titles, tree content and input-freshness rereads now occur only after current command authorization. That authorization must include the read effects of input freshness checks. Output bounds describe the returned content, not an assertion that the OS accessibility service internally allocates only that amount.
+
+The guest companion compiled with optimized Swift 6. No guest process, screen capture or native input was run. This engine remains behind the unassembled execution-authority/channel adapter; the current companion still reports readiness only. The next signed candidate is `native.12`, bundle `20261020.12`, installer `0.7.0.13`, combining these changes with model-target permissions, Email Delivery and original automation-task attachment.
