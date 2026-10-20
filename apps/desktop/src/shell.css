@@ -20,5 +20,11 @@ details { border-top: 1px solid #303c48; margin-top: 22px; padding-top: 16px; } 
 .actions { display: flex; gap: 8px; } .actions button { text-align: center; padding: 10px 6px; font-size: 12px; }
 #status { min-height: 24px; color: #ffd4ab; font-size: 13px; line-height: 1.5; margin: 22px 0 12px; }
 .card p.note, .note, footer { color: #8494a5; font-size: 12px; line-height: 1.6; } footer { text-align: center; }
+.installation-progress { border-left: 3px solid #a6d6c1; padding: 1px 0 1px 14px; margin: 20px 0; }
+.installation-progress[data-outcome="failed"] { border-color: #ffd4ab; }
+.installation-progress p { margin: 6px 0; } .installation-progress details { margin-top: 12px; padding-top: 12px; }
+.installation-progress ol { list-style: none; margin: 12px 0 0; padding: 0; }
+.installation-progress li { display: grid; gap: 4px; margin: 10px 0; font-size: 12px; line-height: 1.5; color: #c7d5e2; }
+.installation-progress time { color: #8494a5; font-size: 11px; }
 [hidden] { display: none !important; }
 @media (max-width: 720px) { .choices { grid-template-columns: 1fr; } main { padding-top: 28px; } h1 { font-size: 27px; } header { align-items: flex-start; } }

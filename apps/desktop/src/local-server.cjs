@@ -1,4 +1,6 @@
 'use strict';
+const { randomUUID } = require('node:crypto');
+const { readInstallProgress } = require('./install-progress.cjs');
 const fs = require('node:fs/promises');
 const { constants } = require('node:fs');
 const path = require('node:path');
@@ -49,7 +51,7 @@ async function responseJson(response) {
 
 class LocalServer {
   constructor({ app, session }) {
-    this.app = app; this.session = session; this.pending = null; this.failure = '';
+    this.app = app; this.session = session; this.pending = null; this.failure = ''; this.installAttempt = null;
     this.health = session.fromPartition('local-health');
     this.health.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
     this.health.setPermissionCheckHandler(() => false);
@@ -80,6 +82,11 @@ class LocalServer {
     const result = { supported: process.platform === 'darwin', canManage: await this.packagedRuntime(),
       installed: false, phase: 'not-installed', origin: null, version: null, setupCompleted: null,
       operation: this.pending, error: this.failure, services: [] };
+    result.installationProgress = null;
+    if (this.installAttempt) {
+      try { result.installationProgress = await readInstallProgress(this.installAttempt); }
+      catch (error) { result.installationProgress = { available: false, waiting: error.code === 'ENOENT', entries: [], outcome: null, updatedAt: null }; }
+    }
     if (!result.supported) return result;
     try { Object.assign(result, await this.receipt()); }
     catch (error) { if (error.code !== 'ENOENT') { result.phase = 'needs-attention'; result.error = 'The installation record could not be read safely. Your data is retained.'; } return result; }
@@ -136,12 +143,14 @@ class LocalServer {
     if (this.pending) throw new Error('A server operation is already running.');
     if (!await this.packagedRuntime()) throw new Error('Install the unified Josi app in Applications to manage local services.');
     this.pending = operation; this.failure = '';
+    this.installAttempt = operation === 'install' ? randomUUID() : null;
     try {
       const runtime = `${APPLICATION}/Contents/Resources/runtime`;
       const helper = operation === 'install' ? 'pkg-driver.py' : 'maintenance.py';
       const command = 'set -eu; /usr/bin/codesign --verify --deep --strict -R ' + quote(REQUIREMENT) + ' ' + quote(APPLICATION)
         + '; /usr/bin/env -i PATH=/usr/bin:/bin ' + quote(`${runtime}/python/bin/python3.11`)
-        + ' -I -B ' + quote(`${runtime}/app/native/${helper}`) + ' ' + quote(operation);
+        + ' -I -B ' + quote(`${runtime}/app/native/${helper}`) + ' ' + quote(operation)
+        + (this.installAttempt ? ' ' + quote(this.installAttempt) : '');
       const script = 'do shell script "' + command.replaceAll('\\', '\\\\').replaceAll('"', '\\"') + '" with administrator privileges';
       // Do not kill a privileged transaction at an arbitrary UI timeout. Its
       // existing lifecycle has bounded steps and a durable recovery journal.

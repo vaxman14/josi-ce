@@ -41,11 +41,15 @@ def run_install(instance, uid, event):
     event({'result':'success','phase':'committed','transaction':transaction.name})
 
 def main():
-    if sys.argv[1:]!=['install'] or os.getuid()!=0:raise PermissionError('Run through the Josi installer package')
+    arguments=sys.argv[1:]
+    if not arguments or arguments[0]!='install' or len(arguments)>2 or os.getuid()!=0:raise PermissionError('Run through the Josi installer package')
+    attempt=arguments[1] if len(arguments)==2 else None
+    if attempt is not None and (str(uuid.UUID(attempt))!=attempt or uuid.UUID(attempt).version!=4):raise ValueError('Invalid installation attempt')
     uid=os.stat('/dev/console').st_uid
     if uid<501:raise PermissionError('Sign in to your Mac before installing Josi')
     runtime=Path(__file__).resolve().parents[2]
     unified=runtime==UNIFIED_APP/'Contents/Resources/runtime'
+    if attempt is not None and not unified:raise ValueError('Attempt-bound progress requires the unified app')
     app=UNIFIED_APP if unified else APP
     requirement=REQUIREMENT.replace('com.heyjosi.ce.server','com.heyjosi.ce.unified') if unified else REQUIREMENT
     if runtime!=app/'Contents/Resources/runtime':raise ValueError('Unexpected package location')
@@ -53,7 +57,7 @@ def main():
     LOGS.mkdir(mode=0o755,exist_ok=True)
     info=LOGS.stat()
     if info.st_uid!=0 or info.st_mode&0o022:raise PermissionError('Unprotected installer log folder')
-    path=LOGS/('Install-'+str(uuid.uuid4())+'.jsonl')
+    path=LOGS/('Install-'+(attempt or str(uuid.uuid4()))+'.jsonl')
     fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
     # Root keeps write authority; only the original interactive user receives
     # read access. Detailed component failures are not public to other users.

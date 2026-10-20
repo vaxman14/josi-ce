@@ -5,6 +5,39 @@ let local = null;
 let busy = false;
 let polling = false;
 let first = true;
+let progressKey = '';
+function renderInstallation() {
+  const progress = local.installationProgress;
+  $('#installation-progress').hidden = !progress;
+  if (!progress) { progressKey = ''; return; }
+  const running = local.operation === 'install';
+  const entries = progress.available ? progress.entries : [];
+  const latest = entries.at(-1);
+  const current = latest ? `${latest.service ? `${latest.service}: ` : ''}${latest.message}`
+    : running && progress.waiting ? 'Waiting for macOS authorization or setup to start.'
+    : running && progress.available ? 'Setup is preparing its first progress update.'
+    : running ? 'Setup is running; detailed progress is currently unavailable.'
+    : 'No installation progress is available for this attempt. Check the server status above.';
+  if ($('#installation-current').textContent !== current) $('#installation-current').textContent = current;
+  $('#installation-progress').dataset.outcome = progress.outcome || 'pending';
+  $('#installation-updated').textContent = progress.updatedAt ? `Last update ${new Date(progress.updatedAt).toLocaleTimeString()}` : '';
+  $('#installation-history').hidden = entries.length < 2;
+  const nextKey = JSON.stringify(entries);
+  if (nextKey !== progressKey) {
+    progressKey = nextKey;
+    $('#installation-entries').replaceChildren(...entries.map(entry => {
+      const item = document.createElement('li');
+      const time = document.createElement('time');
+      time.dateTime = entry.at; time.textContent = new Date(entry.at).toLocaleTimeString();
+      const label = document.createElement('span');
+      label.textContent = `${entry.service ? `${entry.service}: ` : ''}${entry.message}`;
+      item.append(time, label); return item;
+    }));
+  }
+  // The IPC remains pending for the privileged transaction. Once its own log
+  // starts, the earlier generic confirmation prompt is no longer current.
+  if (running && entries.length && status.textContent === 'Waiting for your confirmation…') status.textContent = '';
+}
 function render() {
   if (!local) return;
   const ready = local.phase === 'ready';
@@ -28,6 +61,7 @@ function render() {
   $('#remove-local').hidden = !local.installed || !local.canManage;
   $('#remove-local').disabled = busy || !!local.operation;
   $('#connect-remote').disabled = busy;
+  renderInstallation();
 }
 async function refresh() {
   if (polling) return;
@@ -72,4 +106,5 @@ $('#connect').addEventListener('submit', event => {
 });
 void refresh();
 const timer = setInterval(() => { if (!document.hidden) void refresh(); }, 4000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
 window.addEventListener('pagehide', () => clearInterval(timer), { once: true });

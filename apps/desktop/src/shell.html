@@ -7,6 +7,11 @@
 <div class="choices">
 <section class="card" aria-labelledby="local-title"><div class="card-heading"><h2 id="local-title">On this Mac</h2><span id="local-badge" class="badge">Checking</span></div>
 <p id="local-detail">Checking your local installation…</p>
+<section id="installation-progress" class="installation-progress" aria-label="Installation progress" hidden>
+<p id="installation-current" role="status" aria-live="polite"></p>
+<p id="installation-updated" class="note"></p>
+<details id="installation-history"><summary>Recent setup activity</summary><ol id="installation-entries"></ol></details>
+</section>
 <button id="open-local" disabled>Run on this Mac <span aria-hidden="true">→</span></button>
 <p id="local-version" class="note"></p>
 <details id="management"><summary>Server controls</summary><p class="note">The server keeps running when you close Josi. Other devices can keep using it.</p>

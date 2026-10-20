@@ -10,6 +10,7 @@ The owner directed build-first work with functional testing after feature implem
 - Local controls provide installation/update, start, stop, restart, journal-based repair and removal of the local server using the existing lifecycle and service identities. Removal retains data/recovery material and leaves the unified app available for remote connections. They are exposed only to the trusted local shell. A remote CE page has no new service-management IPC. Fixed signed application/helper paths and macOS administrator authorization protect privileged operations.
 - Stop disables the owned jobs as well as stopping them, so a reboot respects the stopped state. Start re-enables them. Interrupted service operations remain recorded and repair resumes the same operation. Existing account, Vault, database and service roots are retained.
 - Backups opens the existing authenticated server backup page. Copy diagnostics includes only selected application/version/readiness/service fields, never raw launchd output, credentials or chat content. Closing the client does not stop background services.
+- Local installation/update shows the current component and recent setup activity inside the app. The main process creates a random attempt identifier and the privileged installer creates that exact root-owned log with a read-only ACL for the interactive user. The app reads a bounded tail and projects only known phase/component labels; raw diagnostics, paths and credentials never reach this view. A completed installation record and current service readiness remain separate. There is no invented percentage or elapsed-time completion claim.
 - `scripts/macos/build-unified.py` assembles **Josi.app** from pinned local Electron and a supplied offline server runtime. It overlays current server packages, web build, migrations and native helpers, then refreshes the runtime inventory. APFS clones avoid duplicating the large engine/model payload. The optional unsigned package has one required choice, with no optional-client component. Local server provisioning happens from the app after choosing local hosting; remote-only use does not create another server.
 
 ## Build inputs and limits
@@ -26,7 +27,7 @@ The existing bootstrap file predates this checkpoint and is used only before the
 
 ## Still required
 
-Functional local setup/resume and remote-client acceptance, real privileged start/stop/reboot/repair/removal checks, complete app/session migration and retirement of old visible apps, final app/data-erasure uninstall choices, detailed installation progress, signed product packaging/notarization and end-to-end release acceptance remain outstanding. No P5 gate is marked complete from source or build success.
+Functional local setup/resume and remote-client acceptance, real privileged start/stop/reboot/repair/removal checks, complete app/session migration and retirement of old visible apps, final app/data-erasure uninstall choices, signed product packaging/notarization and end-to-end release acceptance remain outstanding. This app session retains its installation attempt; reopening the app currently uses installation/service status and journal repair rather than reconnecting to a previous progress log. No P5 gate is marked complete from source or build success.
 
 ## Build record
 
