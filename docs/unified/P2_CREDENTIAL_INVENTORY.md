@@ -21,7 +21,7 @@ Source audit updated 19 October 2026. This is a work ledger, not a claim that Va
 | Workflow credentials / callback secrets | Recoverable Vault pair, transactional save/import/delete, approval binding and stale discovery checks tested | Full upgrade migration; pending input rewrap/expiry; P4 final dispatch and P9 uncertain-effect recovery. |
 | Retired setup OAuth credentials | Archival Vault slots with stable owner; migration 0075, no active client overwrite | Unified upgrade integration and recovery acceptance. |
 | Desktop sessions | P1 uses memory-only connection sessions | P5 Vault-issued, revocable projections; no independent persistent credential store. |
-| Browser sign-ins | No production implementation | P6/P7 Vault-controlled encrypted workspace lifecycle, crash recovery, local reset and provider logout distinctions. |
+| Browser sign-ins | No production implementation; [real synthetic Vault-backed encrypted-image proof](P0_BASELINE.md#vault-controlled-disk-image-proof) passed | P6/P7 real profile/VM integration, consumer stop and verified unmount, crash recovery, local reset and provider logout distinctions. |
 | Legacy PC permissions and prepared actions | Installation-key-encrypted policies/requests, no production executor | P4 migration/revalidation into Vault authority; preserve user settings/history without silently activating old grants. |
 | Subscription CLI logins | Existing CLI-owned login directories; [source/documentation constraints](P2_CLI_RUNTIME.md) recorded | Implement serialized Vault-owned refresh/write-back and revocable private runtime projections with P4/P5. Claude macOS Keychain needs a verified supported route. No personal login import or implicit exception. |
 
