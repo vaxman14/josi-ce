@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import type { Continuation, GoalProgress } from '@josi-ce/protocol';
+import type { AutomationIdentity, Continuation, GoalProgress } from '@josi-ce/protocol';
 import { json, type Db } from './db.js';
 import { addMessage } from './conversations.js';
 import { refuseMemorySecret } from './memorySafety.js';
-import { queueWorkContinuation, WORK_SEGMENT_LIMIT } from './workContinuation.js';
+import { queueWorkContinuation, requireReviewedWorkOutcome, requireWorkContinuation, WORK_SEGMENT_LIMIT } from './workContinuation.js';
+import { requireCurrentWorkMemory } from './workMemoryContext.js';
+import { ISOLATED_AUTOMATION_TEMPLATE } from './tasks.js';
+import { appendEvent } from './events.js';
+import { isAutomationIdentity } from './automationPermissions.js';
 import { readyWorkSteps, workDependencies, workDependenciesSatisfied, workStepRequired, workStepUnfinished, type WorkGoalStep } from './workPlan.js';
 export type { WorkGoalStep } from './workPlan.js';
 
@@ -122,6 +126,74 @@ export async function createWorkGoal(db: Db, args: { ownerUserId: string; thread
       values($1,$2,1,$3,$4,$5,'Initial outcome recorded from the request','request_plan')`,
       [row.id, row.owner_user_id, row.revision, outcome, json(criteria)]);
     return snapshot(row);
+  });
+}
+
+/** A bookkeeping task for the selected step, not consent, an action approval
+ * or a successful outcome. The runtime supplies the discovered exact identity.
+ * Creation + step attachment commit together, retaining one task across turns. */
+export async function startAutomationWorkTask(db: Db, args: {
+  ownerUserId: string; threadId: string; durableTurnId: string; durableLeaseToken: string; workMemoryVersion: number;
+  goalId: string; revision: number; stepId: string; identity: AutomationIdentity;
+}) {
+  const goalId = id(args.goalId), stepId = id(args.stepId);
+  if (!isAutomationIdentity(args.identity) || args.identity.userId !== args.ownerUserId) {
+    throw new WorkGoalError('Choose this owner’s discovered separate desktop.');
+  }
+  id(args.durableTurnId); id(args.durableLeaseToken);
+  return transaction(db, async tx => {
+    // Match the existing owner/goal locking order used to create owned work.
+    await tx.query('select id from users where id=$1 for update', [args.ownerUserId]);
+    await requireCurrentWorkMemory(tx, args.ownerUserId, args.workMemoryVersion);
+    const row = await owned(tx, args.ownerUserId, goalId, true);
+    if (row.thread_id !== args.threadId || !['planning', 'working'].includes(row.state) || needsPlanReview(row)) {
+      throw new WorkGoalError('Resume and review this conversation’s current plan before starting automation.', 409);
+    }
+    await requireReviewedWorkOutcome(tx, args.ownerUserId, args.threadId);
+    const automatic = await requireWorkContinuation(tx, args);
+    if (automatic && automatic !== goalId) throw new WorkGoalError('Continue only the goal assigned to this work segment.', 409);
+    const [turn] = await tx.query(`select a.id from assistant_turns a
+      join sessions s on s.id=a.accepted_session_id and s.user_id=a.owner_user_id
+      join threads th on th.id=a.thread_id and th.owner_user_id=a.owner_user_id
+      where a.id=$1 and a.owner_user_id=$2 and a.thread_id=$3 and a.status='running'
+        and a.lease_token=$4 and a.lease_expires_at>clock_timestamp()
+        and s.revoked_at is null and s.expires_at>clock_timestamp() and th.status='open'`,
+      [args.durableTurnId, args.ownerUserId, args.threadId, args.durableLeaseToken]);
+    if (!turn) throw new WorkGoalError('The original work turn or sign-in is no longer current.', 409);
+    const step = row.steps.find(value => value.id === stepId);
+    if (!step || !['pending', 'working'].includes(step.state) || row.continuation?.kind !== 'action'
+      || row.continuation.stepId !== stepId || !workDependenciesSatisfied(row.steps, step)) {
+      throw new WorkGoalError('Select an unfinished step whose dependencies have been verified.', 409);
+    }
+    const [previous] = await tx.query<{ task_id: string; server_id: string; device_id: string; workspace_id: string; state: string }>(
+      `select b.*,t.state from automation_work_tasks b join tasks t on t.id=b.task_id
+        where b.goal_id=$1 and b.step_id=$2 and b.owner_user_id=$3`, [goalId, stepId, args.ownerUserId]);
+    if (previous) {
+      if (step.taskId !== previous.task_id || previous.server_id !== args.identity.serverId
+        || previous.device_id !== args.identity.deviceId || previous.workspace_id !== args.identity.workspaceId) {
+        throw new WorkGoalError('This step already belongs to its original automation task and desktop. Reconcile that work before changing the plan.', 409);
+      }
+      return { taskId: previous.task_id, state: previous.state, replayed: true, goal: snapshot(row), executionPermissionGranted: false };
+    }
+    current(row, args.revision);
+    if (step.taskId) throw new WorkGoalError('Keep this step’s existing task. Do not create a replacement attempt.', 409);
+    const [effect] = await tx.query('select 1 from work_goal_effects where goal_id=$1 and (step_id=$2 or state=$3) limit 1',
+      [goalId, stepId, 'started']);
+    if (effect) throw new WorkGoalError('Reconcile the existing action before attaching separate-desktop work.', 409);
+    const [template] = await tx.query('select key from task_templates where key=$1 and enabled', [ISOLATED_AUTOMATION_TEMPLATE]);
+    if (!template) throw new WorkGoalError('The separate-desktop work adapter is unavailable.', 503);
+    const taskId = randomUUID();
+    await tx.query(`insert into tasks(id,owner_user_id,thread_id,template_key,state,slots,urgency_ceiling)
+      values($1,$2,$3,$4,'ready',$5,'push')`, [taskId, args.ownerUserId, args.threadId, ISOLATED_AUTOMATION_TEMPLATE,
+        json({ goal_id: goalId, step_id: stepId, workspace_id: args.identity.workspaceId })]);
+    await tx.query(`insert into automation_work_tasks(task_id,goal_id,step_id,owner_user_id,server_id,device_id,workspace_id)
+      values($1,$2,$3,$4,$5,$6,$7)`, [taskId, goalId, stepId, args.ownerUserId, args.identity.serverId, args.identity.deviceId, args.identity.workspaceId]);
+    step.taskId = taskId; step.state = 'working'; row.state = 'working';
+    row.activity = 'Preparing separate-desktop work for the selected step';
+    await appendEvent(tx, { actorUserId: args.ownerUserId, actor: 'agent', kind: 'task.created', subjectType: 'task',
+      subjectId: taskId, payload: { template: ISOLATED_AUTOMATION_TEMPLATE, missing: [] } });
+    const goal = await save(tx, row, 'automation.task_attached');
+    return { taskId, state: 'ready', replayed: false, goal, executionPermissionGranted: false };
   });
 }
 
@@ -453,7 +525,10 @@ export async function checkpointWorkGoal(db: Db, args: { ownerUserId: string; go
       if (args.taskId !== undefined) {
         const taskId = id(args.taskId);
         if (step.taskId && step.taskId !== taskId) throw new WorkGoalError('Keep the original task receipt attached to this step.', 409);
-        const [task] = await tx.query(`select id from tasks where id=$1 and owner_user_id=$2 and thread_id=$3`, [taskId, args.ownerUserId, row.thread_id]);
+        const [task] = await tx.query(`select t.id from tasks t where t.id=$1 and t.owner_user_id=$2 and t.thread_id=$3
+          and (t.template_key<>$4 or exists(select 1 from automation_work_tasks b
+            where b.task_id=t.id and b.owner_user_id=t.owner_user_id and b.goal_id=$5 and b.step_id=$6))`,
+          [taskId, args.ownerUserId, row.thread_id, ISOLATED_AUTOMATION_TEMPLATE, row.id, step.id]);
         if (!task) throw new WorkGoalError('That task does not belong to this conversation.', 404);
         if (row.steps.some(value => value.id !== step.id && value.taskId === taskId)) throw new WorkGoalError('A task receipt can verify only its linked step.');
         step.taskId = taskId;

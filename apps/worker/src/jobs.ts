@@ -137,6 +137,9 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       // rather than a wake that quietly did nothing.
       const pending = await getTask(db, taskId);
       if (pending.state !== 'ready') return;
+      // These tasks are advanced only by the durable automation runtime.
+      // An old generic wake must never claim or confirm desktop work.
+      if (pending.template_key === 'isolated_automation') return;
       const [preparedAction]=await db.query<{approval_id:string|null;authorization_kind:'approval'|'user_policy';payload_hash:string|null}>(`select approval_id,authorization_kind,payload_hash from assistant_action_states where task_id=$1`,[pending.id]);
       // Legacy ready tasks still wait for a capability. A conversational action
       // was explicitly approved, so a withdrawn/unavailable provider must

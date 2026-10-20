@@ -19,6 +19,9 @@ export const AUTOMATION_RECEIPT_TOOL: ToolSpec = { def: {
   parameters: shape({ reservation_id: id }),
 }, actionClass: null };
 export const AUTOMATION_CONTROL_TOOLS: ToolSpec[] = [
+  { def: { name: 'start_automation_task',
+    description: 'Attach a separate-desktop work task to the selected unfinished step of this conversation’s current goal. Call after owning and reviewing the goal and discovering a ready workspace. The same step retains one original task across turns; do not create replacement steps or tasks to evade an uncertain result or limit. This records work only and grants no browser, computer or transmission permission. Use its returned taskId for connection and operations.',
+    parameters: shape({ goal_id: id, revision: { type: 'integer', minimum: 1 }, step_id: id, workspace_id: id }) }, actionClass: 'automation_control' },
   { def: { name: 'connect_automation_workspace',
     description: 'Request control of a discovered isolated workspace for an existing active task. Requires current device-owner consent, permission policy and durable turn. Cannot resume human takeover, widen access or authorize an action. The connection may be refused; report the exact next setup/permission instruction.',
     parameters: shape({ task_id: id, workspace_id: id }) }, actionClass: 'automation_control' },
@@ -55,7 +58,9 @@ export async function automationToolAvailability(runtime: AutomationRuntime | un
   try {
     const ready = (await runtime.inventory(ownerUserId)).filter(workspace => workspace.state === 'ready');
     if (!ready.length) return [];
-    return AUTOMATION_CONTROL_TOOLS.filter(tool => tool.def.name === 'connect_automation_workspace'
+    return AUTOMATION_CONTROL_TOOLS.filter(tool => tool.def.name === 'start_automation_task'
+        && ready.some(workspace => workspace.computerUse || workspace.browserFamilies.length)
+      || tool.def.name === 'connect_automation_workspace'
       || tool.def.name === 'observe_automation_workspace' && runtime.observationAvailable
         && ready.some(workspace => workspace.computerUse || workspace.browserFamilies.length)
       || tool.def.name === 'browser_control' && ready.some(workspace => workspace.browserFamilies.length)
@@ -75,6 +80,11 @@ export async function executeAutomationTool(ctx: ToolExecutionContext, name: str
   }
   const context: AutomationExecutionContext = { ownerUserId: ctx.userId, threadId: ctx.threadId,
     turnId: ctx.durableTurnId, leaseToken: ctx.durableLeaseToken, workMemoryVersion: ctx.workMemoryVersion };
+  if (name === 'start_automation_task') {
+    if (Object.keys(input).sort().join(',') !== 'goal_id,revision,step_id,workspace_id') throw new Error('Choose the exact goal, step, revision and workspace.');
+    return ctx.automationRuntime.startTask(context, { goalId: String(input.goal_id), revision: input.revision as number,
+      stepId: String(input.step_id), workspaceId: String(input.workspace_id) });
+  }
   if (name === 'connect_automation_workspace') {
     if (Object.keys(input).sort().join(',') !== 'task_id,workspace_id') throw new Error('Choose an exact task and workspace.');
     return ctx.automationRuntime.acquire(context, String(input.task_id), String(input.workspace_id));

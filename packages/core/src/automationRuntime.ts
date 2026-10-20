@@ -11,6 +11,8 @@ import { requireWorkContinuation, requireReviewedWorkOutcome } from './workConti
 import { requireCurrentWorkMemory } from './workMemoryContext.js';
 import { refuseMemorySecret } from './memorySafety.js';
 import { workDependenciesSatisfied, type WorkGoalStep } from './workPlan.js';
+import { startAutomationWorkTask } from './workGoals.js';
+import { ISOLATED_AUTOMATION_TEMPLATE } from './tasks.js';
 
 export interface AutomationWorkspaceSummary {
   identity: AutomationIdentity; label: string; isolated: true;
@@ -176,24 +178,43 @@ export class AutomationRuntime {
     if (!receipt || !task) throw new AutomationRuntimeError('The automation receipt is unavailable in this conversation.');
     return this.result(receipt, true);
   }
-  private async current(context: AutomationExecutionContext, taskId: string, inspection = false) {
+  async startTask(context: AutomationExecutionContext, input: { goalId: string; revision: number; stepId: string; workspaceId: string }) {
+    if (!exact(input, ['goalId', 'revision', 'stepId', 'workspaceId'])
+      || ![input.goalId, input.stepId, input.workspaceId].every(uuid)
+      || !Number.isSafeInteger(input.revision) || input.revision < 1) {
+      throw new AutomationRuntimeError('Choose the current goal, plan revision, selected step and discovered desktop.');
+    }
+    const bound = Object.freeze(structuredClone(context)), request = Object.freeze(structuredClone(input));
+    const workspace = (await this.inventory(bound.ownerUserId)).find(value => value.identity.workspaceId === request.workspaceId);
+    if (!workspace || workspace.state !== 'ready' || !workspace.computerUse && !workspace.browserFamilies.length) {
+      throw new AutomationRuntimeRefusal('device_offline');
+    }
+    return startAutomationWorkTask(this.db, { ownerUserId: bound.ownerUserId, threadId: bound.threadId,
+      durableTurnId: bound.turnId, durableLeaseToken: bound.leaseToken, workMemoryVersion: bound.workMemoryVersion,
+      goalId: request.goalId, revision: request.revision, stepId: request.stepId, identity: workspace.identity });
+  }
+  private async current(context: AutomationExecutionContext, taskId: string, inspection = false, workspaceId?: string) {
     if (![context.ownerUserId, context.threadId, context.turnId, context.leaseToken, taskId].every(uuid)) throw new AutomationRuntimeError('Automation requires the original owned task and a current durable turn.');
     await requireCurrentWorkMemory(this.db, context.ownerUserId, context.workMemoryVersion);
     if (!inspection) await requireReviewedWorkOutcome(this.db, context.ownerUserId, context.threadId);
     const goalId = await requireWorkContinuation(this.db, { ownerUserId: context.ownerUserId, threadId: context.threadId,
       durableTurnId: context.turnId, durableLeaseToken: context.leaseToken });
-    const [active] = await this.db.query(`select t.id from tasks t
+    const [active] = await this.db.query<{ server_id: string; device_id: string; workspace_id: string }>(`select b.server_id,b.device_id,b.workspace_id from tasks t
+      join automation_work_tasks b on b.task_id=t.id and b.owner_user_id=t.owner_user_id
+      join work_goals g on g.id=b.goal_id and g.owner_user_id=t.owner_user_id and g.thread_id=t.thread_id
       join assistant_turns a on a.id=$4 and a.owner_user_id=t.owner_user_id and a.thread_id=t.thread_id
       join sessions s on s.id=a.accepted_session_id and s.user_id=t.owner_user_id
       join threads th on th.id=t.thread_id and th.owner_user_id=t.owner_user_id
       where t.id=$1 and t.owner_user_id=$2 and t.thread_id=$3 and t.state in ('ready','attempting')
+        and t.template_key=$8 and b.workspace_id=$7
         and a.status='running' and a.lease_token=$5 and a.lease_expires_at>clock_timestamp()
         and s.revoked_at is null and s.expires_at>clock_timestamp() and th.status='open'
-        and ($6::uuid is null or exists(select 1 from work_goals g, jsonb_array_elements(g.steps) step
-          where g.id=$6 and g.owner_user_id=t.owner_user_id and g.thread_id=t.thread_id
-            and g.continuation->>'kind'='action' and step->>'id'=g.continuation->>'stepId'
-            and step->>'taskId'=t.id::text and step->>'state' in ('pending','working')))`,
-      [taskId, context.ownerUserId, context.threadId, context.turnId, context.leaseToken, goalId]);
+        and ($6::uuid is null or g.id=$6) and g.state in ('planning','working')
+        and g.outcome_revision=g.planned_outcome_revision and not g.plan_review_required
+        and g.continuation->>'kind'='action' and g.continuation->>'stepId'=b.step_id::text
+        and exists(select 1 from jsonb_array_elements(g.steps) step
+          where step->>'id'=b.step_id::text and step->>'taskId'=t.id::text and step->>'state' in ('pending','working'))`,
+      [taskId, context.ownerUserId, context.threadId, context.turnId, context.leaseToken, goalId, workspaceId ?? null, ISOLATED_AUTOMATION_TEMPLATE]);
     if (!active) throw new AutomationRuntimeError('The original task, turn, sign-in or control is no longer current.');
     const goals = await this.db.query<{ id: string; state: string; steps: WorkGoalStep[]; step_id: string | null }>(
       `select id,state,steps,continuation->>'stepId' as step_id from work_goals
@@ -209,17 +230,19 @@ export class AutomationRuntime {
         where g.owner_user_id=$1 and g.thread_id=$2 and e.state='started' limit 1`, [context.ownerUserId, context.threadId]);
       if (uncertain) throw new AutomationRuntimeError('Inspect and reconcile this conversation’s uncertain action before another automation effect.');
     }
+    return { userId: context.ownerUserId, serverId: active.server_id, deviceId: active.device_id, workspaceId: active.workspace_id };
   }
   async acquire(context: AutomationExecutionContext, taskId: string, workspaceId: string) {
     const bound = Object.freeze(structuredClone(context));
     if (!uuid(workspaceId)) throw new AutomationRuntimeError('Choose a discovered isolated workspace.');
-    await this.current(bound, taskId, true);
+    const identity = await this.current(bound, taskId, true, workspaceId);
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10_000);
     try {
       const result = await bounded(this.ports.acquire(bound, taskId, workspaceId, controller.signal), controller.signal);
-      await this.current(bound, taskId, true);
+      await this.current(bound, taskId, true, workspaceId);
       if (controller.signal.aborted || !exact(result, ['identity', 'taskId', 'controlSessionId', 'expiresAtMs'])
         || !isAutomationIdentity(result.identity) || result.identity.userId !== bound.ownerUserId
+        || result.identity.serverId !== identity.serverId || result.identity.deviceId !== identity.deviceId
         || result.identity.workspaceId !== workspaceId || result.taskId !== taskId || !uuid(result.controlSessionId)
         || !Number.isSafeInteger(result.expiresAtMs) || result.expiresAtMs <= Date.now()
         || result.expiresAtMs > Date.now() + 60_000) throw new AutomationRuntimeError('Workspace control was not confirmed.');
@@ -266,15 +289,16 @@ export class AutomationRuntime {
   private async perform(bound: Readonly<AutomationExecutionContext>, taskId: string, workspaceId: string,
     inspection: boolean, intentDigest: string, observationId: string | null,
     prepare: (signal: AbortSignal) => Promise<PreparedAutomationOperation>) {
-    await this.current(bound, taskId, inspection);
+    const identity = await this.current(bound, taskId, inspection, workspaceId);
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 60_000);
     let expiryTimer: ReturnType<typeof setTimeout> | undefined;
     let reservation: AutomationReservationView | null = null, dispatchMarked = false;
     try {
       const candidate = await bounded(prepare(controller.signal), controller.signal);
-      await this.current(bound, taskId, inspection);
+      await this.current(bound, taskId, inspection, workspaceId);
       if (controller.signal.aborted || !candidate || !isAutomationIdentity(candidate.identity)
         || candidate.identity.userId !== bound.ownerUserId || candidate.identity.workspaceId !== workspaceId
+        || candidate.identity.serverId !== identity.serverId || candidate.identity.deviceId !== identity.deviceId
         || !uuid(candidate.observationId) || observationId !== null && candidate.observationId !== observationId
         || candidate.intentDigest !== intentDigest
         || candidate.effectCoverage !== 'verified' || !(candidate.payload instanceof Secret)) throw new AutomationRuntimeError('The actual target and complete action effects could not be verified.');
@@ -291,12 +315,12 @@ export class AutomationRuntime {
       // A prior reservation is evidence to reconcile, never permission to
       // send again. Observation identities are consumed across continuations.
       if (!reserved.created) return this.result(reservation, true);
-      await this.current(bound, taskId, inspection);
+      await this.current(bound, taskId, inspection, workspaceId);
       if (controller.signal.aborted) throw new AutomationRuntimeError('Automation preparation expired.');
       reservation = await this.reservations.markDispatched({ actorUserId: bound.ownerUserId, id: reservation.id,
         turnId: bound.turnId, leaseToken: bound.leaseToken, proof: prepared.dispatchProof });
       dispatchMarked = true;
-      await this.current(bound, taskId, inspection);
+      await this.current(bound, taskId, inspection, workspaceId);
       if (controller.signal.aborted || Date.now() >= prepared.expiresAtMs) throw new AutomationRuntimeError('Automation dispatch expired.');
       const receipt = await bounded(this.ports.dispatch(reservation.id, Object.freeze(prepared), controller.signal), controller.signal);
       reservation = await this.reservations.settle({ actorUserId: bound.ownerUserId, id: reservation.id,

@@ -11,7 +11,7 @@ export interface DurableEffectContext {
 
 export const MUTATING_TOOLS=new Set([
   'own_goal','checkpoint_goal','verify_goal','propose_work_lesson','revise_goal_plan',
-  'connect_automation_workspace','observe_automation_workspace','browser_control','computer_control',
+  'start_automation_task','connect_automation_workspace','observe_automation_workspace','browser_control','computer_control',
   'create_task','update_task_slots','approve_task','cancel_task','schedule_reminder','update_reminder','cancel_reminder',
   'draft_email','draft_calendar_event','draft_contact_update','call_custom_api','run_native_workflow',
   'workspace_propose_change','workspace_propose_code',

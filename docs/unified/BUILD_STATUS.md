@@ -27,3 +27,5 @@ Commercial macOS VM permission is a separate unresolved distribution constraint.
 Ruflo/tool-search discovery found no callable Ruflo tools in this session. This committed record and phase evidence provide continuity; no Ruflo operation or swarm is claimed.
 
 Subsequent P5 source adds native Email Delivery administration and post-setup SMTP routes, including transactional saved-version checks, Vault-only credentials, explicit test sending and metadata-only delivery status. Root TypeScript and Swift 6 compilation passed. No actual message or configuration change was performed; these additions and model-destination registration are not in the `native.11` artifact.
+
+Subsequent P8/P9 source adds atomic original-task attachment for an active automation goal step and its exact discovered desktop. The runtime requires that binding; generic task creation, edits, advancement and the legacy worker cannot bypass it. The native task view shows saved automation operation history. TypeScript/Swift compilation passed; production device transport and outcome verification remain unassembled.

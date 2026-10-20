@@ -17,6 +17,7 @@
 import { json, type Db } from './db.js';
 import { appendEvent } from './events.js';
 
+export const ISOLATED_AUTOMATION_TEMPLATE = 'isolated_automation';
 export type TaskState =
   | 'drafting'
   | 'awaiting_approval'
@@ -135,7 +136,8 @@ export async function getTemplateContract(db: Db, templateKey: string): Promise<
 export async function listTemplates(db: Db): Promise<TemplateInfo[]> {
   const rows = await db.query<{
     key: string; name: string; contract: TemplateContract; requires_capability: string | null;
-  }>(`select key, name, contract, requires_capability from task_templates where enabled order by key`);
+  }>(`select key, name, contract, requires_capability from task_templates where enabled and key<>$1 order by key`,
+    [ISOLATED_AUTOMATION_TEMPLATE]);
   return rows.map((r) => ({
     key: r.key, name: r.name, contract: r.contract, requiresCapability: r.requires_capability,
   }));
@@ -160,6 +162,7 @@ export async function createTask(
     meta?: Record<string, unknown>;
   },
 ): Promise<Task> {
+  if (args.templateKey === ISOLATED_AUTOMATION_TEMPLATE) throw new TaskError('Start separate-desktop work from its current goal and selected plan step.');
   const template = await getTemplate(db, args.templateKey);
   const slots = args.slots ?? {};
   const rows = await db.query<Task>(
@@ -208,6 +211,9 @@ export async function transition(
   } = {},
 ): Promise<Task> {
   const task = await getTask(db, taskId);
+  if (task.template_key === ISOLATED_AUTOMATION_TEMPLATE && !['cancelled', 'closed'].includes(to)) {
+    throw new TaskError('Separate-desktop work can only advance through its current automation task and verified outcome.');
+  }
   if (!TRANSITIONS[task.state].includes(to)) {
     throw new TaskError(`illegal transition ${task.state} -> ${to} (task ${taskId})`);
   }
@@ -234,6 +240,9 @@ export async function setSlots(
   opts: { actor?: 'agent' | 'user' | 'system'; actorUserId?: string | null; removeKeys?: string[] } = {},
 ): Promise<Task> {
   const task = await getTask(db, taskId);
+  if (task.template_key === ISOLATED_AUTOMATION_TEMPLATE) {
+    throw new TaskError('Keep the original automation task binding. Use the goal controls to change instructions.');
+  }
   const merged = { ...task.slots };
   for (const key of opts.removeKeys ?? []) delete merged[key];
   Object.assign(merged, patch);

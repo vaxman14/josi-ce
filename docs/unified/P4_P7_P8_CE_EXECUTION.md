@@ -39,3 +39,13 @@ The runtime routes this through the same original-task checks, Vault budget rese
 The local device gate accepts a missing prior observation only for the two explicit inspection verbs. Pointer, element, navigation and other operations still require a matching local observation. Local consent, control generation, authenticated channel, exact command proof, expiry and replay checks still apply to inspection.
 
 This checkpoint returns only the journal receipt and opaque capture reference; it does not return text, labels, elements or screenshots. Authorized content projection to an exact current model configuration, including preventing fallback to an unapproved model, remains to be assembled. No claim of a model seeing the desktop is made. The bootstrap tool is absent unless the installed runtime supplies the inspection adapter; production transport remains unassembled. Full root TypeScript compilation passed; live capture and functional acceptance remain deferred.
+
+## Original automation task attachment — 20 October
+
+`start_automation_task` now attaches one dedicated task to the selected unfinished goal step and the runtime-discovered server/device/workspace. The work record and attachment commit in one transaction after current owner memory, original durable turn/sign-in, plan revision, goal control and dependency checks. Repeating a completed attachment returns the original task; a different workspace, existing action or prior task cannot obtain a replacement attempt. It grants no execution permission.
+
+Migration 0093 adds the internal task template and goal/step binding. The template is excluded from generic task creation. Slot edits and generic state advancement refuse this task type; cancellation/closing remain available, and the legacy worker cannot claim or confirm it. Checkpoint attachment cannot move it to another goal or step.
+
+The runtime now requires that original binding before acquisition, preparation and dispatch, including the exact server/device/workspace, current selected step and current plan. Email or other legacy task IDs cannot stand in for automation tasks. The native saved-task view displays existing automation audit events and an explicit refresh control, with operation success distinguished from business-outcome verification.
+
+The complete TypeScript build, Swift 6 app compilation, whitespace check and public-source secret scan (1,242 files) passed. No migration was applied to a live server, and no task or device operation was executed. Production transport, capture/model projection and factual business-outcome verification remain open. This source is later than `native.11`.
