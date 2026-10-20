@@ -90,6 +90,9 @@ struct NativePermissionEditor: View {
     @State private var target = ""
     @State private var action = "computer.observe"
     @State private var modelTarget = ""
+    @State private var browserTarget = ""
+    @State private var browserAction = "browser.observe"
+    @State private var browserOrigin = ""
 
     init(snapshot: PermissionEditSnapshot) {
         self.snapshot = snapshot
@@ -112,6 +115,17 @@ struct NativePermissionEditor: View {
     }
     private var modelTargets: [Wire] {
         snapshot.targets["models"].list.filter { $0["identity"] == snapshot.policy["identity"] }
+    }
+    private var browserTargets: [Wire] {
+        snapshot.targets["browsers"].list.filter { $0["identity"] == snapshot.policy["identity"] }
+    }
+    private var exactBrowserOrigin: Bool {
+        guard !browserOrigin.isEmpty, browserOrigin.utf8.count <= 2048,
+              browserOrigin.range(of: "[\\s\\\\*]", options: .regularExpression) == nil,
+              let parts = URLComponents(string: browserOrigin), ["https", "http"].contains(parts.scheme),
+              let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil,
+              parts.path.isEmpty, parts.query == nil, parts.fragment == nil else { return false }
+        return parts.string == browserOrigin
     }
     private var draft: Wire? {
         guard case .object(var policy) = snapshot.policy else { return nil }
@@ -174,6 +188,40 @@ struct NativePermissionEditor: View {
                                     grants.append(PermissionGrantDraft(rule))
                                 }.disabled(!current || target.isEmpty || grants.filter({ !$0.removed }).count >= 100)
                                 Text("New rules start with Ask. Choose an allowance and explicit limits below. Saving permissions does not make an unfinished executor available.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }.padding(8)
+                        }
+                    }
+                    if !browserTargets.isEmpty {
+                        GroupBox("Add a browser permission") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Picker("Registered browser profile", selection: $browserTarget) {
+                                    Text("Choose a profile").tag("")
+                                    ForEach(Array(browserTargets.enumerated()), id: \.offset) { _, profile in
+                                        Text(profile["candidate"]["family"].text.capitalized + " · " + profile["candidate"]["label"].text)
+                                            .tag(profile["profileId"].text)
+                                    }
+                                }
+                                TextField("Exact site, for example https://example.com", text: $browserOrigin).textFieldStyle(.roundedBorder)
+                                Picker("Operation", selection: $browserAction) {
+                                    Text("Observe").tag("browser.observe")
+                                    Text("Navigate").tag("browser.navigate")
+                                    Text("Fill").tag("browser.fill")
+                                    Text("Submit").tag("browser.submit")
+                                    Text("Download").tag("browser.download")
+                                    Text("Upload").tag("browser.upload")
+                                }
+                                Button("Add Browser Rule") {
+                                    guard current, exactBrowserOrigin,
+                                          let profile = browserTargets.first(where: { $0["profileId"].text == browserTarget }),
+                                          grants.filter({ !$0.removed }).count < 100 else { return }
+                                    let rule: Wire = ["id": .string(UUID().uuidString.lowercased()), "action": .string(browserAction),
+                                        "scope": ["kind": "browser", "browser": profile["candidate"]["family"],
+                                                  "profileId": profile["profileId"], "origin": .string(browserOrigin)],
+                                        "mode": ["kind": "ask"], "limits": .null]
+                                    grants.append(PermissionGrantDraft(rule))
+                                }.disabled(!current || browserTarget.isEmpty || !exactBrowserOrigin || grants.filter({ !$0.removed }).count >= 100)
+                                Text("Use an exact site origin without a path or wildcard. New rules start with Ask. Network access, content sharing and unsupported operations need their own checks.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }.padding(8)
                         }
@@ -251,6 +299,10 @@ struct NativePermissionEditor: View {
                 if let target = modelTargets.first(where: { $0["configurationId"] == grant.original["scope"]["configurationId"] }) {
                     Text(target["candidate"]["providerId"].text + " / " + target["candidate"]["model"].text).font(.headline)
                     Text("Saved configuration: " + target["candidate"]["configurationVersion"].text).font(.caption)
+                }
+                if let profile = browserTargets.first(where: { $0["profileId"] == grant.original["scope"]["profileId"] }) {
+                    Text(profile["candidate"]["family"].text.capitalized + " · " + profile["candidate"]["label"].text).font(.headline)
+                    Text("Extension version: " + profile["candidate"]["extensionVersion"].text).font(.caption)
                 }
                 Text(permissionScope(grant.original["scope"])).textSelection(.enabled)
                 Toggle("Remove this rule", isOn: binding.removed)

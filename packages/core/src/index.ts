@@ -73,3 +73,5 @@ export { refuseMemorySecret } from './memorySafety.js';
 
 export { type AutomationTargetRegistration, type AutomationApplicationTarget, type ApplicationCandidate } from './automationTargets.js';
 export { listAutomationModelCandidates, type AutomationModelCandidate, type AutomationModelTarget } from './automationModelTargets.js';
+
+export * from './automationBrowserTargets.js';

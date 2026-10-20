@@ -1,5 +1,6 @@
 // Canonical app identities, not execution authority. An adapter must recheck
 // the actual guest app/signature before resolving one of these targets.
+import { isAutomationBrowserCandidate, browserApplication, describeAutomationBrowser, type AutomationBrowserCandidate, type AutomationBrowserTarget } from './automationBrowserTargets.js';
 import { parseProtectedControlPresentation, type AutomationIdentity, type ProtectedControlPresentation } from '@josi-ce/protocol';
 import type { Db } from './db.js';
 import { cardinalContentDigest } from './cardinalRules.js';
@@ -19,7 +20,7 @@ export interface AutomationApplicationTarget {
   candidate: ApplicationCandidate; registeredAt: string;
 }
 export interface AutomationTargetRegistration {
-  actorUserId: string; identity: AutomationIdentity; candidate: ApplicationCandidate | AutomationModelCandidate; expected: VaultRecordReference | null;
+  actorUserId: string; identity: AutomationIdentity; candidate: ApplicationCandidate | AutomationModelCandidate | AutomationBrowserCandidate; expected: VaultRecordReference | null;
 }
 export interface AutomationTargetCommand { purpose: 'automation.target.register'; requestDigest: string }
 export interface AutomationTargetAuthority {
@@ -50,16 +51,18 @@ export function isApplicationCandidate(v: unknown): v is ApplicationCandidate {
 export function readAutomationTargets(record: VaultRecordValue | null): AutomationApplicationTarget[] {
   return readAutomationTargetDocument(record).applications;
 }
-export function readAutomationTargetDocument(record: VaultRecordValue | null): { applications: AutomationApplicationTarget[]; models: AutomationModelTarget[] } {
-  if (!record) return { applications: [], models: [] };
+export function readAutomationTargetDocument(record: VaultRecordValue | null): { applications: AutomationApplicationTarget[]; models: AutomationModelTarget[]; browsers: AutomationBrowserTarget[] } {
+  if (!record) return { applications: [], models: [], browsers: [] };
   try {
     const doc: unknown = JSON.parse(record.value.reveal());
     if (record.kind !== 'automation_targets' || record.reference.recordId !== AUTOMATION_TARGETS_RECORD_ID
       || !(exact(doc, ['schemaVersion', 'applications']) && doc.schemaVersion === 1
-        || exact(doc, ['schemaVersion', 'applications', 'models']) && doc.schemaVersion === 2)
+        || exact(doc, ['schemaVersion', 'applications', 'models']) && doc.schemaVersion === 2
+        || exact(doc, ['schemaVersion', 'applications', 'models', 'browsers']) && doc.schemaVersion === 3)
       || !Array.isArray(doc.applications) || doc.applications.length > 256) throw new Error();
     const entries = doc.applications as AutomationApplicationTarget[];
     const models = doc.schemaVersion === 1 ? [] : doc.models;
+    const browsers = doc.schemaVersion === 3 ? doc.browsers : [];
     if (!Array.isArray(models) || models.length + entries.length > 256 || !models.every(isAutomationModelTarget)) throw new Error();
     if (entries.some(e => !exact(e, ['applicationId', 'installationRevision', 'identity', 'candidate', 'registeredAt'])
       || !uuid(e.applicationId) || e.installationRevision !== 1 || !isAutomationIdentity(e.identity)
@@ -67,7 +70,15 @@ export function readAutomationTargetDocument(record: VaultRecordValue | null): {
       || typeof e.registeredAt !== 'string' || !Number.isFinite(Date.parse(e.registeredAt))
       || new Date(e.registeredAt).toISOString() !== e.registeredAt)
       || new Set([...entries.map(e => e.applicationId), ...models.map(e => e.configurationId)]).size !== entries.length + models.length) throw new Error();
-    return { applications: entries, models };
+    if (!Array.isArray(browsers) || entries.length + models.length + browsers.length > 256
+      || browsers.some((b: AutomationBrowserTarget) => !exact(b, ['profileId', 'profileRevision', 'identity', 'candidate', 'registeredAt'])
+        || !uuid(b.profileId) || b.profileRevision !== 1 || !isAutomationIdentity(b.identity)
+        || !isAutomationBrowserCandidate(b.candidate) || b.profileId !== b.candidate.candidateId || !browserApplication(b, entries)
+        || typeof b.registeredAt !== 'string' || !Number.isFinite(Date.parse(b.registeredAt))
+        || new Date(b.registeredAt).toISOString() !== b.registeredAt)
+      || new Set([...entries.map(e => e.applicationId), ...models.map(e => e.configurationId), ...browsers.map(b => b.profileId)]).size
+        !== entries.length + models.length + browsers.length) throw new Error();
+    return { applications: entries, models, browsers };
   } catch { throw new VaultRecordError('The automation target registry is invalid.'); }
 }
 export function sameAutomationIdentity(a: AutomationIdentity, b: AutomationIdentity): boolean {
@@ -80,18 +91,18 @@ function binding(args: AutomationTargetRegistration): AutomationTargetCommand {
 }
 async function prepare(context: Context, args: AutomationTargetRegistration) {
   if (context.reconciliationRequired || !isAutomationIdentity(args.identity)
-    || args.identity.userId !== args.actorUserId || !(isApplicationCandidate(args.candidate) || isAutomationModelCandidate(args.candidate))) {
-    throw new VaultRecordError('Choose an exact app or model target for your own enrolled workspace.');
+    || args.identity.userId !== args.actorUserId || !(isApplicationCandidate(args.candidate) || isAutomationModelCandidate(args.candidate) || isAutomationBrowserCandidate(args.candidate))) {
+    throw new VaultRecordError('Choose an exact app, browser profile or model target for your own enrolled workspace.');
   }
   await context.requireWorkspace(args.identity);
-  const record = await context.read(), document = readAutomationTargetDocument(record), entries = document.applications, models = document.models, ref = record?.reference ?? null;
+  const record = await context.read(), document = readAutomationTargetDocument(record), entries = document.applications, models = document.models, browsers = document.browsers, ref = record?.reference ?? null;
   if (!(ref === null && args.expected === null || ref && args.expected
     && exact(args.expected, ['recordId', 'version', 'digest', 'epoch'])
     && ref.recordId === args.expected.recordId && ref.version === args.expected.version
     && ref.digest === args.expected.digest && ref.epoch === args.expected.epoch)) {
     throw new VaultRecordConflictError('The target registry changed. Refresh and review the current selection.');
   }
-  if (entries.length + models.length >= 256 || [...entries.map(e => e.applicationId), ...models.map(e => e.configurationId)].includes(args.candidate.candidateId)) {
+  if (entries.length + models.length + browsers.length >= 256 || [...entries.map(e => e.applicationId), ...models.map(e => e.configurationId), ...browsers.map(e => e.profileId)].includes(args.candidate.candidateId)) {
     throw new VaultRecordError('This selection is already registered or the target registry is full.');
   }
   if (args.candidate.kind === 'model') {
@@ -114,7 +125,30 @@ async function prepare(context: Context, args: AutomationTargetRegistration) {
       ].join('\n\n'), advisory: [],
     });
     if (!presentation) throw new VaultRecordError('The exact model destination cannot be displayed safely.');
-    return { entries, models, presentation };
+    return { entries, models, browsers, presentation };
+  }
+  if (args.candidate.kind === 'browser') {
+    const candidate = args.candidate;
+    const target: AutomationBrowserTarget = { profileId: candidate.candidateId, profileRevision: 1,
+      identity: args.identity, candidate, registeredAt: new Date().toISOString() };
+    const application = browserApplication(target, entries);
+    if (!application) throw new VaultRecordError('Register this browser installation in this workspace before its exact managed profile.');
+    if (browsers.some(b => sameAutomationIdentity(b.identity, args.identity) && b.candidate.family === candidate.family
+      && b.candidate.nativeProfileId === candidate.nativeProfileId && b.candidate.applicationId === candidate.applicationId
+      && b.candidate.extensionId === candidate.extensionId && b.candidate.extensionDigest === candidate.extensionDigest)) {
+      throw new VaultRecordError('This exact browser profile and code are already registered.');
+    }
+    const presentation = parseProtectedControlPresentation({
+      wording: `Register ${candidate.label} as a separate browser workspace.`,
+      meaning: [`User: ${args.identity.userId}\nServer: ${args.identity.serverId}\nDevice: ${args.identity.deviceId}\nWorkspace: ${args.identity.workspaceId}`,
+        describeAutomationBrowser(target, application),
+        'This saves an immutable browser/profile/code registration in the Vault. Registration grants no site, navigation, observation, input, download, upload, credential, network or model-transmission permission.',
+        'Permissions name this registration and an exact site origin. A browser or extension update needs a new registration; old grants never move to new code or a different profile.',
+        'The runtime must verify the actual isolated guest, browser process, profile and extension contents. Reviewed metadata alone cannot attest a browser or enable an unfinished execution adapter.',
+      ].join('\n\n'), advisory: [],
+    });
+    if (!presentation) throw new VaultRecordError('This exact browser profile cannot be displayed safely.');
+    return { entries, models, browsers, presentation };
   }
   const candidate = args.candidate;
   if (entries.some(e => sameAutomationIdentity(e.identity, args.identity)
@@ -135,7 +169,7 @@ async function prepare(context: Context, args: AutomationTargetRegistration) {
     ].join('\n\n'), advisory: [],
   });
   if (!presentation) throw new VaultRecordError('The full application identity cannot be displayed safely.');
-  return { entries, models, presentation };
+  return { entries, models, browsers, presentation };
 }
 export class AutomationTargetStore {
   constructor(private readonly backend: Backend, private readonly authority: AutomationTargetAuthority) {}
@@ -167,6 +201,7 @@ export class AutomationTargetStore {
       return { reference: record?.reference ?? null,
         applications: document.applications.filter(e => e.identity.userId === actor),
         models: document.models.filter(e => e.identity.userId === actor),
+        browsers: document.browsers.filter(e => e.identity.userId === actor),
         reconciliationRequired: context.reconciliationRequired, executionEnabled: false as const };
     });
   }
@@ -189,6 +224,19 @@ export class AutomationTargetStore {
       return { reference: record.reference, target: structuredClone(target) };
     }, transaction);
   }
+  resolveBrowser(actor: string, identity: AutomationIdentity, profileId: string, family: AutomationBrowserCandidate['family'], transaction: Db) {
+    const scope = structuredClone(identity);
+    if (!isAutomationIdentity(scope) || scope.userId !== actor || !uuid(profileId)) throw new VaultRecordError('Choose a registered isolated browser profile.');
+    return this.backend(actor, false, async context => {
+      if (context.reconciliationRequired) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
+      await context.requireWorkspace(scope);
+      const record = await context.read(), document = readAutomationTargetDocument(record);
+      const target = document.browsers.find(b => b.profileId === profileId && b.candidate.family === family && sameAutomationIdentity(b.identity, scope));
+      const application = target ? browserApplication(target, document.applications) : null;
+      if (!record || !target || !application) throw new VaultRecordError('The exact browser profile and installation are not registered for this workspace.');
+      return { reference: record.reference, target: structuredClone(target), application: structuredClone(application) };
+    }, transaction);
+  }
   prepareRegistration(input: AutomationTargetRegistration) {
     const args = structuredClone(input);
     return this.backend(args.actorUserId, false, async context => ({
@@ -198,18 +246,22 @@ export class AutomationTargetStore {
   register(input: AutomationTargetRegistration) {
     const args = structuredClone(input), command = binding(args);
     return this.backend(args.actorUserId, true, async context => {
-      const { entries, models, presentation } = await prepare(context, args);
+      const { entries, models, browsers, presentation } = await prepare(context, args);
       await this.authority.verifyFreshAdministrator(context.tx, args.actorUserId, command);
       await this.authority.verifyProtectedHuman(context.tx, args.actorUserId, command, presentation);
       if (args.candidate.kind === 'model') {
         models.push({ configurationId: args.candidate.candidateId, configurationRevision: 1, identity: args.identity,
           candidate: args.candidate, registeredAt: new Date().toISOString() });
+      } else if (args.candidate.kind === 'browser') {
+        browsers.push({ profileId: args.candidate.candidateId, profileRevision: 1, identity: args.identity,
+          candidate: args.candidate, registeredAt: new Date().toISOString() });
       } else {
         entries.push({ applicationId: args.candidate.candidateId, installationRevision: 1, identity: args.identity,
           candidate: args.candidate, registeredAt: new Date().toISOString() });
       }
-      const reference = await context.write(new Secret(JSON.stringify(models.length
-        ? { schemaVersion: 2, applications: entries, models } : { schemaVersion: 1, applications: entries })));
+      const reference = await context.write(new Secret(JSON.stringify(browsers.length
+        ? { schemaVersion: 3, applications: entries, models, browsers } : models.length
+          ? { schemaVersion: 2, applications: entries, models } : { schemaVersion: 1, applications: entries })));
       return { reference };
     });
   }

@@ -15,6 +15,7 @@ import { ProtectedDeviceStore, PROTECTED_DEVICES_RECORD_ID, type ProtectedDevice
 import { WorkspaceStorageStore, WORKSPACE_STORAGE_RECORD_ID, type WorkspaceStorageAuthority, workspaceStorageContains } from './workspaceStorage.js';
 
 import { AutomationTargetStore, AUTOMATION_TARGETS_RECORD_ID, readAutomationTargetDocument, sameAutomationIdentity, type AutomationTargetAuthority } from './automationTargets.js';
+import { browserApplication, describeAutomationBrowser } from './automationBrowserTargets.js';
 import { describeAutomationModel, requireCurrentAutomationModel } from './automationModelTargets.js';
 import { AutomationConsentStore, readAutomationConsentRecord, type AutomationConsentAuthority } from './automationConsent.js';
 import { NativeAutomationTransport, type NativeTransportAuthority } from './nativeAutomationTransport.js';
@@ -177,7 +178,9 @@ export class VaultRecordStore {
       return work({ tx, reconciliationRequired: state.authority_reconciliation_required,
         readPolicy: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
         requireApplicationTargets: async policy => {
-          const rules = policy.rules.filter(r => r.scope.kind === 'application' || r.scope.kind === 'model');
+          const browserScope = (scope: typeof policy.rules[number]['scope']) => scope.kind === 'browser' ? scope
+            : scope.kind === 'credential' && scope.destination.kind === 'browser' ? scope.destination : null;
+          const rules = policy.rules.filter(r => r.scope.kind === 'application' || r.scope.kind === 'model' || browserScope(r.scope));
           if (!rules.length) return [];
           await this.requireOwnerAutomationVault(tx, policy.identity.userId);
           const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_TARGETS_RECORD_ID]);
@@ -195,10 +198,20 @@ export class VaultRecordStore {
             if (!target) throw new VaultRecordError('Register the exact model configuration for this workspace before granting transmission.');
             await requireCurrentAutomationModel(tx, target.candidate);
           }
+          const browsers = document.browsers.filter(b => sameAutomationIdentity(b.identity, policy.identity) && rules.some(rule => {
+            const scope = browserScope(rule.scope); return scope?.profileId === b.profileId && scope.browser === b.candidate.family;
+          }));
+          for (const rule of rules.filter(r => browserScope(r.scope) && !['deny', 'ask'].includes(r.mode.kind))) {
+            const scope = browserScope(rule.scope)!;
+            if (!browsers.some(b => b.profileId === scope.profileId && b.candidate.family === scope.browser && browserApplication(b, targets))) {
+              throw new VaultRecordError('Register the exact isolated browser profile and code in this workspace before granting access.');
+            }
+          }
           return [...targets.filter(t => sameAutomationIdentity(t.identity, policy.identity) && rules.some(r => r.scope.kind === 'application'
             && r.scope.applicationId === t.applicationId && r.scope.installationRevision === t.installationRevision)).map(t =>
             `Registered application ${t.applicationId}, installation ${t.installationRevision}:\n${t.candidate.label}\nLocation: ${t.candidate.bundlePath}\nBundle: ${t.candidate.bundleId}\nSigning identity: ${t.candidate.signingId}\nTeam: ${t.candidate.teamId || '(none)'}\nCode hash: ${t.candidate.codeHash}`),
-            ...models.map(describeAutomationModel)];
+            ...models.map(describeAutomationModel),
+            ...browsers.map(b => describeAutomationBrowser(b, browserApplication(b, targets)!))];
 
         },
         writePolicy: async value => {
@@ -439,6 +452,14 @@ export class VaultRecordStore {
         if (!target) return pause('stale_policy');
         try { await requireCurrentAutomationModel(tx, target.candidate); } catch { return pause('stale_policy'); }
       }
+    }
+    const browserEffects = input.effects.map(effect => effect.target.kind === 'browser' ? effect.target
+      : effect.target.kind === 'credential' && effect.target.destination.kind === 'browser' ? effect.target.destination : null).filter(scope => scope !== null);
+    if (ordinary.verdict === 'covered' && browserEffects.length) {
+      const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_TARGETS_RECORD_ID]);
+      const document = readAutomationTargetDocument(head ? await this.open(tx, key, head, state) : null);
+      if (browserEffects.some(scope => !document.browsers.some(b => b.profileId === scope.profileId && b.candidate.family === scope.browser
+        && sameAutomationIdentity(b.identity, input.identity) && browserApplication(b, document.applications)))) return pause('stale_policy');
     }
     const facts: CardinalActionFacts = { identities: { ...input.identity, taskId: input.task?.id },
       effects: [...new Set(input.effects.map(e => e.action))], effectCoverage: input.effectCoverage,
