@@ -8,6 +8,8 @@ const SERVICE = 'subscription_cli', SLOT = 'codex';
 const MAX_CACHE_BYTES = 64 * 1024;
 const MAX_LEASE_MS = 16 * 60_000;
 export class SubscriptionCredentialError extends Error {}
+/** Refused before any consumer starts. A bounded scheduler retry is safe. */
+export class SubscriptionCredentialBusyError extends SubscriptionCredentialError {}
 type State = 'ready' | 'leased' | 'reconnect_required' | 'signed_out';
 type Operation = 'login' | 'chat' | 'status';
 interface Document {
@@ -31,6 +33,7 @@ export interface SubscriptionCredentialStatus {
   itemId: string | null;
   revision: number;
   state: State | 'not_configured';
+  operation: Operation | null;
   /** Expiry is never permission to replay a possibly stale refresh token. */
   expiredLease: boolean;
 }
@@ -77,6 +80,23 @@ export function validateCodexAuthCache(value: Secret): Secret {
       && (typeof parsed.last_refresh !== 'string' || parsed.last_refresh.length > 64 || !Number.isFinite(Date.parse(parsed.last_refresh)))) throw failure();
   return new Secret(JSON.stringify(parsed));
 }
+/** Compatibility screening, not JWT authentication. The first-party CLI
+ * authenticates the credential. The bundled CLI can load cloud-managed
+ * storage requirements for workspace plans, so this initial consumer only
+ * accepts the known personal plans that do not load those requirements.
+ * Unknown plans refuse instead of silently weakening managed policy. */
+function requireUnmanagedCodexAccount(value: Secret): void {
+  try {
+    const cache = JSON.parse(value.reveal()) as { tokens: { id_token: string } };
+    const pieces = cache.tokens.id_token.split('.');
+    if (pieces.length !== 3 || !/^[a-zA-Z0-9_-]+$/.test(pieces[1])) throw new Error();
+    const claims: unknown = JSON.parse(Buffer.from(pieces[1], 'base64url').toString('utf8'));
+    if (!object(claims) || !object(claims['https://api.openai.com/auth'])
+      || !['free', 'plus', 'pro'].includes(String(claims['https://api.openai.com/auth'].chatgpt_plan_type))) throw new Error();
+  } catch {
+    throw new SubscriptionCredentialError('This subscription workspace is not supported by Vault-managed execution yet. Use a personal Free, Plus or Pro ChatGPT workspace, or an API provider.');
+  }
+}
 function decode(value: Secret): Document {
   let doc: unknown;
   try { doc = JSON.parse(value.reveal()); } catch { throw failure(); }
@@ -100,7 +120,21 @@ interface Current {
 }
 function status(current: Current): SubscriptionCredentialStatus {
   return { itemId: current.itemId, revision: current.doc?.revision ?? 0, state: current.doc?.state ?? 'not_configured',
+    operation: current.doc?.lease?.operation ?? null,
     expiredLease: current.doc?.state === 'leased' && current.doc.lease!.expiresAtMs <= current.now };
+}
+
+/** Resolve the installation's canonical owner without reading a filesystem
+ * cache. Only the first administrator-driven sign-in may nominate an owner. */
+export async function codexCredentialStoreForInstallation(
+  db: Db, key: MasterKey, initialOwnerUserId?: string,
+): Promise<CodexCredentialStore> {
+  const rows = await db.query<{ owner_user_id: string }>(
+    'select owner_user_id from vault_items where service=$1 and slot=$2', [SERVICE, SLOT]);
+  if (rows.length > 1) throw failure();
+  const owner = rows[0]?.owner_user_id ?? initialOwnerUserId;
+  if (!owner) throw new SubscriptionCredentialError('Sign in to ChatGPT through Josi’s model settings first.');
+  return new CodexCredentialStore(db, key, owner);
 }
 function expected(current: Current, value: { itemId: string | null; revision: number }) {
   if (!exact(value, ['itemId', 'revision']) || value.itemId !== current.itemId || value.revision !== (current.doc?.revision ?? 0)) {
@@ -174,6 +208,9 @@ export class CodexCredentialStore {
     if (!['login', 'chat', 'status'].includes(operation) || !integer(durationMs) || durationMs > MAX_LEASE_MS) throw failure();
     return this.transaction(async (tx, current) => {
       if (current.doc?.state === 'leased') {
+        if (current.doc.lease!.expiresAtMs > current.now) {
+          throw new SubscriptionCredentialBusyError('Another subscription run is using this login. Wait for it to finish.');
+        }
         throw new SubscriptionCredentialError('Another subscription run owns this login, or ended without a confirmed write-back. Do not reuse its earlier cache.');
       }
       if (operation === 'login') {
@@ -183,6 +220,7 @@ export class CodexCredentialStore {
           purpose: 'subscription.login', ownerUserId: this.ownerUserId, expected: administration.expected, leaseId: null,
         });
       } else if (current.doc?.state !== 'ready') throw failure();
+      if (operation !== 'login') requireUnmanagedCodexAccount(new Secret(current.doc!.auth!));
       const id = randomUUID(), expiresAtMs = current.now + durationMs;
       // A new sign-in never receives the prior account's refresh material.
       const auth = operation === 'login' ? null : current.doc!.auth;

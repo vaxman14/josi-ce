@@ -2,21 +2,17 @@
 //
 // WHAT THIS DOES, AND WHAT IT REFUSES TO DO
 //
-// It runs `codex exec` — OpenAI's own first-party CLI, in the non-interactive
-// mode OpenAI documents — as a subprocess, using whatever login the operator
-// already established by typing `codex login` in their own terminal.
+// It runs OpenAI's official `codex exec` CLI. The production registry injects
+// a Vault-managed runner, which serializes refreshes and supervises a private
+// temporary CLI home. Personal terminal sign-ins are not imported or used.
 //
 // It does NOT:
 //
 //   * implement "Sign in with ChatGPT". There is no OAuth client here, no
 //     redirect, no callback, no token.
-//   * read the CLI's own credential file, a keychain, a browser profile or a
-//     cookie jar. Nothing in this file opens a credential store — a
-//     repository-wide guard in `packages/llm/test/subscription.test.ts` fails
-//     the build on any reference to one, which is why the path is named in
-//     `docs/SUBSCRIPTION_AUTH.md` and not here. The subprocess finds its own
-//     login exactly as it would for a person at a prompt.
-//   * store, copy, forward, refresh or expire anything.
+//   * read a personal CLI home, keychain, browser profile or cookie jar.
+//     Credential projection/write-back belongs to codexVaultRuntime, using
+//     the one canonical Vault item. The vendor CLI still performs refresh.
 //   * make an HTTP request. CE speaks to no OpenAI endpoint on this path.
 //
 // The distinction matters and it is not pedantic. Scraping a session is
@@ -51,10 +47,9 @@
 //     offered through this seam.
 //   * It needs the binary present in the container or on the host, signed in,
 //     and it will not be either by default.
-import { spawn } from 'node:child_process';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { assertCapability, privateTemporaryDirectory } from '@josi-ce/core';
+import { assertCapability, privateTemporaryDirectory, SubscriptionCredentialError, SubscriptionCredentialBusyError } from '@josi-ce/core';
 import {
   MCP_SERVER_NAME, openHarnessSession, readExecutedCalls, resolveMcpServerPath,
   type HarnessSession,
@@ -91,7 +86,7 @@ export type SpawnRunner = (args: {
   input: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
-}) => Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }>;
+}) => Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; cancelled?: boolean }>;
 
 export interface CodexCliOptions {
   model: string;
@@ -193,37 +188,11 @@ export function codexArgs(model: string, harness?: HarnessSession | null, imageP
   ];
 }
 
-/** The default runner. The only place in CE that spawns a process. */
-const defaultRunner: SpawnRunner = ({ command, args, input, env, timeoutMs }) =>
-  new Promise((resolve, reject) => {
-    let child;
-    try {
-      child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
-    } catch (err) {
-      reject(err);
-      return;
-    }
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGKILL');
-    }, timeoutMs);
-
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    // Bounded, because a runaway child streaming forever is a memory
-    // exhaustion primitive exactly as a lying Content-Length is.
-    const LIMIT = 4 * 1024 * 1024;
-    child.stdout.on('data', (d: string) => { if (stdout.length < LIMIT) stdout += d; });
-    child.stderr.on('data', (d: string) => { if (stderr.length < LIMIT) stderr += d; });
-    child.on('error', (err) => { clearTimeout(timer); reject(err); });
-    child.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr, timedOut }); });
-
-    child.stdin.on('error', () => { /* the child may exit before we finish writing */ });
-    child.stdin.end(input);
-  });
+/** No implicit fallback to a legacy or personal CLI home. Registry callers
+ * provide the Vault supervisor; fixtures may inject their own inert runner. */
+const defaultRunner: SpawnRunner = async () => {
+  throw new LlmError('The Vault-managed subscription runner is unavailable. Reconnect through Josi’s model settings.', { needsReconfiguration: true });
+};
 
 /**
  * Flattens a chat request into one prompt.
@@ -391,6 +360,13 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
           timeoutMs,
         });
       } catch (err) {
+        if (err instanceof LlmError) throw err;
+        if (err instanceof SubscriptionCredentialBusyError) {
+          throw new LlmError(err.message, { retryable: true });
+        }
+        if (err instanceof SubscriptionCredentialError) {
+          throw new LlmError(err.message, { needsReconfiguration: true });
+        }
         const code = (err as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') {
           throw new LlmError(
@@ -417,8 +393,13 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
         if (imageDir) await rm(imageDir, { recursive: true, force: true });
       }
 
+      if (result.cancelled && !result.timedOut) {
+        throw new LlmError('The subscription run stopped because its current permission or login became unavailable. Review the original task before continuing.', { needsReconfiguration: true });
+      }
       if (result.timedOut) {
-        throw new LlmError('The Codex CLI did not answer in time.', { retryable: true });
+        throw new LlmError(harness
+          ? 'The subscription run timed out. Review the original task’s saved actions before continuing.'
+          : 'The Codex CLI did not answer in time.', { retryable: !harness });
       }
       if (result.code !== 0) {
         throw classifyExit(result.stderr, command);
@@ -459,8 +440,7 @@ export function classifyExit(stderr: string, command: string): LlmError {
   const text = stderr.toLowerCase();
   if (/not logged in|no credentials|please (run )?`?codex login|unauthenticated|401/.test(text)) {
     return new LlmError(
-      'The Codex CLI on this machine is not signed in. Run `codex login` as the account Josi '
-      + 'runs as, then test the model again.',
+      'The subscription login is unavailable. Sign in through Josi’s model settings, then test the model again.',
       { needsReconfiguration: true },
     );
   }
@@ -481,7 +461,7 @@ export function classifyExit(stderr: string, command: string): LlmError {
   if (/network|dns|getaddrinfo|econn|timed? ?out/.test(text)) {
     return new LlmError('The Codex CLI could not reach OpenAI.', { retryable: true });
   }
-  return new LlmError('The Codex CLI failed. Run it once by hand to see why.', {
+  return new LlmError('The Codex CLI failed. Check the subscription in Josi’s model settings.', {
     needsReconfiguration: true,
   });
 }

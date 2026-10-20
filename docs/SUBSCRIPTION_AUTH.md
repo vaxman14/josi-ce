@@ -5,6 +5,16 @@ instead of a metered API key. This document says exactly how, and on what
 basis — with sources and dates, so the reasoning can be re-checked rather than
 taken on trust.
 
+**20 October 2026 implementation update:** the newer unified-app source stores
+Codex's subscription login in Josi's Vault and runs the official CLI through an
+exclusive, supervised temporary projection. Setup, model settings and chat use
+that path; there is no personal-home fallback. Old Josi sign-in migration,
+exceptional recovery, managed-account compatibility and functional acceptance
+remain release gates. The delivered `native.12` installer predates this change.
+See [the current lifecycle and supported scope](unified/P2_CLI_RUNTIME.md).
+The older “never stores credentials” description below is superseded for Codex;
+the Claude-specific mechanism and outstanding review are separate.
+
 The Admin Model page tests each configured model before Josi uses it. Any
 failed capability appears under **Unavailable features**. **Image
 understanding** means the model was given a real test image and correctly
@@ -115,23 +125,21 @@ Josi  ──spawn──▶  codex exec --json --sandbox read-only --skip-git-rep
                     │                            table, and the prompt is
                     │                            somebody's conversation)
                     │
-                    └─ the CLI uses ITS OWN login and talks to OpenAI itself
+                    └─ the CLI uses its supervised Vault projection and talks
+                       to OpenAI itself; refreshed login returns to the Vault
 ```
 
 Josi never:
 
-- implements "Sign in with ChatGPT" — there is no OAuth client, redirect,
-  callback or token anywhere in the code
+- implements its own ChatGPT OAuth endpoint; sign-in and refresh remain
+  first-party CLI operations
 - reads `~/.codex/auth.json`, a keychain, a browser profile or a cookie jar
-- stores, copies, forwards, refreshes or expires any credential
 - makes an HTTP request to OpenAI on this path
 
-Those are not intentions. A test in `packages/llm/test/subscription.test.ts`
-walks **every source file in the repository** and fails the build on any
-reference to a credential store — the Codex credential file, the Claude Code
-one, the gh one, a Chrome profile, the macOS keychain, the Linux keyring,
-`keytar`, or a cookie database. It is why the path above appears in this
-document and not in the source.
+Josi now retains the official Codex auth cache in the canonical Vault and
+projects it only for a current exclusive claim. The source guard against
+personal credential/profile reads remains distinct from this Josi-owned
+runtime. Compilation is recorded separately from functional acceptance.
 
 ### The environment the child gets
 

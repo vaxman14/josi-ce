@@ -21,12 +21,13 @@ import {
   UnsafeEndpointError, buildProvider, capabilitiesOf, checkCaps, disabledFeatures, discoverModels,
   isExternalProvider, isLocalOnly, isSubscriptionProvider, loadStoredProvider, meteredProvider,
   probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CLAUDE_COMMAND,
-  DEFAULT_CODEX_COMMAND, DeviceLogin, codexLoginStatus, codexLogout,
+  DEFAULT_CODEX_COMMAND,
   PROVIDERS, credentialFields, describeProvider, saveModelConfiguration, removeModelConfiguration, ModelConfigurationError,
 } from '@josi-ce/llm';
 import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
 import { claudeSubscriptionRouter } from './claudeSubscriptionRoutes.js';
+import { codexSubscriptionRouter } from './codexSubscriptionRoutes.js';
 import { assertMetadataOnly, requireAuth, requireSuperAdmin } from './authz.js';
 
 export interface LlmRoutesCtx {
@@ -70,15 +71,6 @@ function asArray(value: unknown): unknown[] {
 const KNOWN_PROVIDERS = PROVIDERS
   .filter((p) => p.wire !== 'cli')
   .map((p) => p.kind as string);
-
-/** One administrator-driven Codex login at a time. This is a live child
- * process, so persisting it would create a database row that lies after a
- * restart. A restart during login only costs one fresh pairing code. */
-let adminCodexLogin: DeviceLogin | null = null;
-
-function codexEnv() {
-  return { codexHome: process.env.CODEX_HOME ?? null };
-}
 
 /** Providers that exist only on a build whose edition permits them.
  *
@@ -210,8 +202,8 @@ export function subscriptionOptions(): Array<{
       provider: 'openai_subscription',
       available: ceOnly,
       reason: ceOnly
-        ? 'Josi runs OpenAI\'s own Codex CLI on this machine, signed in as you. Josi never sees, '
-          + 'stores or forwards your login. It is per installation rather than per person, it '
+        ? 'Josi runs OpenAI\'s own Codex CLI with a subscription login saved in the Vault. '
+          + 'It is per installation rather than per person, it '
           + 'shares your own Codex usage limits, and it reports no token counts or cost. Tools '
           + 'work on this path once the model test confirms them.'
         // The honest sentence for a build that is not CE. It names the reason
@@ -412,43 +404,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
   // intentionally gone after installation. Administrators still need to sign
   // in, reconnect, inspect status and sign out from the Model page.
   if (hasCapability('subscription_auth')) {
-    r.get('/subscription/status', asyncRoute(async (_req, res) => {
-      return res.json({ cli: await codexLoginStatus(codexEnv()) });
-    }));
-
-    r.post('/subscription/login', asyncRoute(async (_req, res) => {
-      if (adminCodexLogin?.running) adminCodexLogin.cancel();
-      adminCodexLogin = new DeviceLogin(codexEnv());
-      return res.json(await adminCodexLogin.start());
-    }));
-
-    r.get('/subscription/login', asyncRoute(async (_req, res) => {
-      if (!adminCodexLogin) {
-        return res.json({ state: 'idle', challenge: null, expiresAt: null, message: null });
-      }
-      const snapshot = adminCodexLogin.status;
-      if (snapshot.state === 'signed_in') {
-        const status = await codexLoginStatus(codexEnv());
-        if (!status.signedIn) {
-          return res.json({
-            state: 'failed', challenge: null, expiresAt: null,
-            message: 'The sign-in reported success but Codex is still not signed in. Try again.',
-          });
-        }
-      }
-      return res.json(snapshot);
-    }));
-
-    r.post('/subscription/login/cancel', asyncRoute(async (_req, res) => {
-      adminCodexLogin?.cancel();
-      return res.json({ ok: true });
-    }));
-
-    r.post('/subscription/logout', asyncRoute(async (_req, res) => {
-      adminCodexLogin?.cancel();
-      adminCodexLogin = null;
-      return res.json(await codexLogout(codexEnv()));
-    }));
+    r.use('/subscription', codexSubscriptionRouter(ctx));
 
     // Claude, on its own prefix. Not a parameter on the routes above because
     // the flows genuinely differ: Anthropic's CLI blocks on stdin for a code

@@ -307,7 +307,10 @@ struct NativeSubscriptionControls: View {
                 Button("Check Status") { action("/status") }
                 Button("Cancel Sign-In") { action("/login/cancel", method: "POST", body: [:]) }
             }
-            if status != .null { Text(status["signedIn"].flag ? "Subscription signed in" : "Subscription not signed in").font(.headline) }
+            if status != .null { Text(status["signedIn"].flag ? "Subscription login available" : "Subscription not signed in").font(.headline) }
+            if !status["detail"].text.isEmpty {
+                Text(status["detail"].text).font(.caption).foregroundStyle(.secondary)
+            }
             if !login["challenge"]["userCode"].text.isEmpty {
                 Text("One-time code: " + login["challenge"]["userCode"].text).font(.headline).textSelection(.enabled)
             }
@@ -330,6 +333,15 @@ struct NativeSubscriptionControls: View {
                     alert.informativeText = "Josi will need a new provider sign-in before this subscription can answer tasks."
                     alert.addButton(withTitle: "Sign Out"); alert.addButton(withTitle: "Cancel")
                     if alert.runModal() == .alertFirstButtonReturn { action("/logout", method: "POST", body: [:]) }
+                }
+            }
+            if provider == "openai_subscription", status["credential"]["state"].text == "leased",
+               status["credential"]["expiredLease"].flag || login["state"].text == "failed" {
+                Button("Clear Interrupted Sign-In…") {
+                    let alert = NSAlert(); alert.messageText = "Clear the interrupted subscription sign-in?"
+                    alert.informativeText = "The server must confirm that this sign-in has stopped and its temporary files are removed. If it can, you can sign in again. This does not restart any task."
+                    alert.addButton(withTitle: "Clear Sign-In"); alert.addButton(withTitle: "Cancel")
+                    if alert.runModal() == .alertFirstButtonReturn { action("/reconcile", method: "POST", body: [:]) }
                 }
             }
         }.disabled(model.busy || !supported)
@@ -360,12 +372,19 @@ struct NativeSubscriptionControls: View {
         guard supported, let api = model.api else { return }
         if method != "GET" { generation += 1 }
         let user = model.user["id"], own = generation
+        let expected = status["credential"] == .null ? Wire.null : Wire.object([
+            "itemId": status["credential"]["itemId"], "revision": status["credential"]["revision"]
+        ])
         model.run {
             let path = route == "/status" && prefix == "/setup/subscription" && provider == "openai_subscription" ? base : base + route
-            let result = try await api.request(path, method: method, body: body)
+            var submitted = body
+            if provider == "openai_subscription", method == "POST", ["/login", "/logout", "/reconcile"].contains(route), expected != .null {
+                submitted = ["expected": expected]
+            }
+            let result = try await api.request(path, method: method, body: submitted)
             guard model.api === api, model.user["id"] == user, generation == own else { return }
             if route == "/status" { status = result["cli"] }
-            else if route == "/logout" || route == "/login/cancel" { login = .null; status = .null; code = "" }
+            else if route == "/logout" || route == "/login/cancel" || route == "/reconcile" { login = .null; status = .null; code = "" }
             else { login = result; status = .null }
         }
     }

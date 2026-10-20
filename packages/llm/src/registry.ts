@@ -9,10 +9,11 @@
 //   * A fallback is used only when it was explicitly enabled AND the primary
 //     failed in a way a second attempt could fix.
 //   * Caps are checked before the call, not after.
-import { type Db, type MasterKey } from '@josi-ce/core';
+import { codexCredentialStoreForInstallation, type Db, type MasterKey } from '@josi-ce/core';
 import { resolveModelCredentials } from './credentials.js';
 import { anthropicProvider } from './providers/anthropic.js';
 import { codexCliProvider, isSubscriptionProvider, type SpawnRunner } from './providers/codexCli.js';
+import { vaultCodexRunner } from './providers/codexVaultRuntime.js';
 import { claudeCliProvider } from './providers/claudeCli.js';
 import { openAiCompatibleProvider } from './providers/openaiCompatible.js';
 import { azureAiProvider } from './providers/azureAi.js';
@@ -141,11 +142,9 @@ export async function buildProvider(
 
 function buildProviderClient(opts: RegistryOptions, stored: StoredProvider, secrets: Record<string, string>): LlmProvider {
   const external = isExternalProvider(stored.provider);
-  // The subscription path. Checked BEFORE the key is opened, because there is
-  // no key: the credential lives in the operator's own Codex login and never
-  // enters this process. `codexCliProvider` asserts the edition capability
-  // again on its way in — this is the third of four layers, and it is the one
-  // that catches a row somebody inserted with psql on a hosted build.
+  // A subscription uses the vendor's official CLI rather than an API key.
+  // Codex receives a supervised projection of the canonical Vault login.
+  // The provider repeats the CE edition guard independently of its routes.
   if (isSubscriptionProvider(stored.provider)) {
     if (stored.api_key_enc) {
       // A database constraint refuses this shape too. Both, because a
@@ -172,7 +171,14 @@ function buildProviderClient(opts: RegistryOptions, stored: StoredProvider, secr
       model: stored.model,
       command: stored.subscription_command ?? null,
       timeoutMs: opts.timeoutMs,
-      runner: opts.codexRunner,
+      runner: opts.codexRunner ?? (async request => {
+        if (!opts.masterKey) throw new LlmError('Unlock the Vault before using the subscription login.', { needsReconfiguration: true });
+        const store = await codexCredentialStoreForInstallation(opts.db, opts.masterKey);
+        return vaultCodexRunner(store, async () => {
+          await resolveModelCredentials(opts.db, opts.masterKey, stored);
+          if (await isLocalOnly(opts.db)) throw new LocalOnlyViolation('Local-only mode stops subscription requests.');
+        })(request);
+      }),
     });
   }
 

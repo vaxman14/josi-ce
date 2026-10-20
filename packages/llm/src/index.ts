@@ -19,6 +19,8 @@ export * from './providers/ernie.js';
 export * from './providers/hunyuan.js';
 export * from './providers/codexCli.js';
 export * from './providers/codexLogin.js';
+export * from './providers/codexVaultLogin.js';
+export * from './providers/codexVaultRuntime.js';
 export * from './providers/claudeCli.js';
 export * from './providers/claudeLogin.js';
 export * from './credentials.js';

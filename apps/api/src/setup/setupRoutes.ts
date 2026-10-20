@@ -25,23 +25,13 @@ import { saveSmtpProfiles, SmtpConfigurationError } from '@josi-ce/mail';
 import { describeProvider, discoverModels, saveModelConfiguration, ModelConfigurationError } from '@josi-ce/llm';
 import { reconcileWorkspaceMount } from '@josi-ce/storage';
 import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
-import { DeviceLogin, codexLoginStatus, codexLogout, claudeAuthStatus } from '@josi-ce/llm';
+import { claudeAuthStatus } from '@josi-ce/llm';
 import { claudeSubscriptionRouter, claudeEnv } from '../http/claudeSubscriptionRoutes.js';
+import { codexSubscriptionRouter, codexSubscriptionStatus } from '../http/codexSubscriptionRoutes.js';
 import { hasCapability } from '@josi-ce/core';
 import {
   providerCatalog, readCredentials, revealForDiscovery, savableProviders, subscriptionOptions,
 } from '../http/llmRoutes.js';
-
-/** One login attempt at a time, for one installation.
- *
- * In memory rather than in the database because it IS a running child process:
- * a row describing a process that died with the container would be a row that
- * lies. A restart mid-login costs the operator one click. */
-let deviceLogin: DeviceLogin | null = null;
-
-function codexEnv() {
-  return { codexHome: process.env.CODEX_HOME ?? null };
-}
 
 /** The read-only capabilities each provider is asked for at connect time.
  *
@@ -392,7 +382,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         if (state.completed) return res.status(404).json({ error: 'not found' });
         return res.json({
           options: subscriptionOptions(),
-          cli: await codexLoginStatus(codexEnv()),
+          cli: await codexSubscriptionStatus(ctx),
           // Reported separately rather than folded into one "the CLI" field:
           // an installation can have either, both or neither signed in, and a
           // single flag could not say which.
@@ -401,67 +391,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
       }),
     );
 
-    /** Start the CLI's own device-code sign-in and return what it printed.
-     *
-     * The code is a pairing code, not a credential: it is meant to be read
-     * aloud, it grants nothing without somebody completing the flow with their
-     * own ChatGPT account, and it expires. Josi never sees what the CLI stores
-     * afterwards. */
-    r.post(
-      '/subscription/login',
-      asyncRoute(async (_req, res) => {
-        const state = await getSetupState(db);
-        if (state.completed) return res.status(404).json({ error: 'not found' });
-
-        // A second attempt supersedes the first rather than running two device
-        // flows against one CLI home.
-        if (deviceLogin?.running) deviceLogin.cancel();
-        deviceLogin = new DeviceLogin(codexEnv());
-        return res.json(await deviceLogin.start());
-      }),
-    );
-
-    r.get(
-      '/subscription/login',
-      asyncRoute(async (_req, res) => {
-        const state = await getSetupState(db);
-        if (state.completed) return res.status(404).json({ error: 'not found' });
-        if (!deviceLogin) {
-          return res.json({ state: 'idle', challenge: null, expiresAt: null, message: null });
-        }
-        // The CLI exiting zero is what "signed in" means, and it is confirmed
-        // against the CLI rather than inferred from an exit code alone.
-        const snapshot = deviceLogin.status;
-        if (snapshot.state === 'signed_in') {
-          const status = await codexLoginStatus(codexEnv());
-          if (!status.signedIn) {
-            return res.json({
-              state: 'failed', challenge: null, expiresAt: null,
-              message: 'The sign-in reported success but the CLI is still not signed in. Try again.',
-            });
-          }
-        }
-        return res.json(snapshot);
-      }),
-    );
-
-    r.post(
-      '/subscription/login/cancel',
-      asyncRoute(async (_req, res) => {
-        deviceLogin?.cancel();
-        return res.json({ ok: true });
-      }),
-    );
-
-    /** Undo it. The CLI owns the stored login; this asks it to delete it. */
-    r.post(
-      '/subscription/logout',
-      asyncRoute(async (_req, res) => {
-        const state = await getSetupState(db);
-        if (state.completed) return res.status(404).json({ error: 'not found' });
-        return res.json(await codexLogout(codexEnv()));
-      }),
-    );
+    r.use('/subscription', codexSubscriptionRouter(ctx, true));
 
     // Claude, on its own prefix, with the same disappear-after-setup rule the
     // routes above have — expressed as the router's own availability check so
@@ -774,9 +704,9 @@ async function applyStep(
       const subscriptionProvider = provider === 'openai_subscription' || provider === 'anthropic_subscription';
       if (!model && !subscriptionProvider) throw new SetupError(400, 'a model name is required');
 
-      // A subscription path carries no API key at all — the credential lives in
-      // the operator's own CLI login and never enters this process — so the
-      // "a key is required" rule below must not apply to it. It IS still
+      // Subscription authentication is separate from an API key. Codex's
+      // canonical login now lives in the Vault, so the API-key requirement
+      // below must not apply to it. It IS still
       // external: the bytes reach the vendor, by way of the vendor's own binary.
       const isSubscription = subscriptionProvider;
       if (isSubscription) {
@@ -793,7 +723,7 @@ async function applyStep(
         // prevent.
         const signedIn = provider === 'anthropic_subscription'
           ? await claudeAuthStatus(claudeEnv())
-          : await codexLoginStatus({ codexHome: process.env.CODEX_HOME ?? null });
+          : await codexSubscriptionStatus(ctx);
         if (!signedIn.signedIn) {
           throw new SetupError(400, `${signedIn.detail} Sign in first, then continue.`);
         }
