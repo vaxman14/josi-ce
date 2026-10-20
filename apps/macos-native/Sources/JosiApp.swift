@@ -257,6 +257,7 @@ struct WorkspaceView: View {
                         nav("Automation", icon: "macwindow", section: "automation")
                         nav("Vault", icon: "lock.shield", section: "vault")
                         nav("Your Settings", icon: "person.crop.circle", section: "account")
+                        nav("Messaging Apps", icon: "paperplane", section: "channels")
                         if model.isAdministrator { nav("Models", icon: "brain", section: "models") }
                         if model.isAdministrator { nav("Backups", icon: "externaldrive.badge.timemachine", section: "backups") }
                         nav("Server", icon: "externaldrive.connected.to.line.below", section: "server")
@@ -292,6 +293,7 @@ struct WorkspaceView: View {
             case "automation": AutomationView()
             case "vault": NativeVaultView()
             case "account": NativeAccountView()
+            case "channels": NativeChannelsView()
             case "backups": if model.isAdministrator { NativeBackupsView() }
             case "models": if model.isAdministrator { NativeModelsView() }
             default: ChatView()
@@ -303,7 +305,7 @@ struct WorkspaceView: View {
             model.section = section
             if section == "automation" { model.run { try await model.loadAutomation() } }
             else if section == "server" { model.refreshLocal() }
-            else if ["vault", "backups", "models", "account"].contains(section) { /* These views load their own scoped status. */ }
+            else if ["vault", "backups", "models", "account", "channels"].contains(section) { /* These views load their own scoped status. */ }
             else { model.run { try await model.reloadWorkspace() } }
         } label: { Label(title, systemImage: icon).foregroundStyle(model.section == section ? Color.accentColor : Color.primary) }
             .buttonStyle(.plain).disabled(model.busy)

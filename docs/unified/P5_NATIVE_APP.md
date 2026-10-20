@@ -36,7 +36,7 @@ The staged signed app actually launched through the computer-use tool and displa
 
 ## Remaining work
 
-New permission-target selection, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and production automation transport remain open. The development desktop's native storage/provisioning/lifecycle is now assembled in source; see [P6/P8 evidence](P6_P8_NATIVE_COMPONENTS.md) for its limits and remaining recovery work. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design. Device enrollment is assembled; actual biometric/local-and-remote acceptance and abandoned-key reconciliation remain open.
+Additional permission-target types, remaining administrator/settings parity, subscription credential migration and production automation transport remain open. The development desktop's native storage/provisioning/lifecycle is now assembled in source; see [P6/P8 evidence](P6_P8_NATIVE_COMPONENTS.md) for its limits and remaining recovery work. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design. Device enrollment is assembled; actual biometric/local-and-remote acceptance and abandoned-key reconciliation remain open.
 
 ## Native.5 installer — 20 October
 
@@ -139,3 +139,13 @@ Compact chat cards now follow the current part of longer plans and omit retired 
 An expanded delivery section follows the existing Telegram receipt projection every fifteen seconds while the app is active. It distinguishes pending, current, failed, uncertain and disconnected delivery without resending anything; failed status reads are labeled stale. The manager can open the existing local desktop viewer when that desktop is running or paused. This is the current local desktop, not a new remote stream or a claim that it belongs to a particular goal.
 
 The complete native app compiled with Swift 6. No live task, channel message, desktop action or authenticated API flow was executed. These detail changes are later than `native.9` and remain subject to the integrated functional pass.
+
+## Native messaging setup — subsequent source checkpoint
+
+Messaging Apps brings existing Telegram, WhatsApp and Slack account linking and administrator configuration into the native client. Telegram includes bot-token replacement/verification, incoming-delivery registration, enable/disable, attachment policy, metadata-only linked-account revocation, seven-day delivery health and explicit bot removal. WhatsApp/Slack include credential replacement, explicit provider verification, enable/disable and their fixed incoming-message paths. Each member can create a one-time code and disconnect their own links.
+
+New credentials and codes stay in transient view/request state and clear on navigation or account/server changes; the existing CE services retain canonical long-lived credentials in the Vault. Pending linking polls only while the app is active and expires against a monotonic deadline. Telegram opens only a locally constructed `https://t.me/<validated bot>?start=<exact code>` URL matching the returned link, and only on the owner's click. Other instructions are locally constructed plain text. No arbitrary returned URL or provider instruction is executed.
+
+Administrator changes reload and compare current metadata before submission; the original server role/ownership checks remain authoritative. These client checks are not a new atomic server revision protocol. Disconnect/removal controls display their scope before submission. Provider checks, token verification and webhook registration are explicit product actions, never page-load effects. No live token, code, connection, configuration, provider request or message was created while implementing this page. Functional acceptance remains deferred. The next package version is `native.10` / installer `0.7.0.11`, combining these pages with the expanded Task Manager.
+
+The assembled messaging pages compiled with Swift 6. Two subsequent small changes clear pending codes on explicit session revocation; their final compilation is part of packaging. Builder syntax, whitespace and the public-source secret scan (1,234 files) passed.
