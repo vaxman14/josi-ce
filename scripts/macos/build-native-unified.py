@@ -219,12 +219,12 @@ def build(args):
         # copytree may propagate directory Finder metadata. Strip only the
         # private copy's signing-incompatible metadata; never alter the source
         # or follow bundle symlinks to other files.
-        for path in [copied_chrome, *copied_chrome.rglob('*')]:
-            if path.is_symlink():
-                continue
-            for attribute in os.listxattr(path, follow_symlinks=False):
-                if attribute in ('com.apple.FinderInfo', 'com.apple.ResourceFork'):
-                    os.removexattr(path, attribute, follow_symlinks=False)
+        for attribute in ('com.apple.FinderInfo', 'com.apple.ResourceFork'):
+            # Apple's Python does not expose os.listxattr. -s acts on links
+            # themselves; absent attributes are harmless. The strict Google
+            # signature check below remains the mandatory success criterion.
+            subprocess.run(['/usr/bin/xattr', '-drs', attribute, str(copied_chrome)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         run('verify-support-chrome', ['/usr/bin/codesign', '--verify', '--deep', '--strict', '-R', requirement, copied_chrome])
         chrome_info = plistlib.loads((copied_chrome / 'Contents/Info.plist').read_bytes()).get('CFBundleShortVersionString')
         (support / 'Chrome test copy.txt').write_text(
