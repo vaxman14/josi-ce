@@ -119,8 +119,9 @@ export class CardinalDraftStore {
 
   async test(args: { actorUserId: string; expected: VaultRecordReference; reviewer: CardinalReviewer;
     reviewerIdentity: { providerId: string; model: string; configurationVersion: string };
-    /** Exact preview approved through the protected UI. This is not authority
-     * to activate anything, and must not be populated from an automation body. */
+    /** Exact preview requested by a freshly verified administrator. The route
+     * must bind input, saved version and provider to that verification and
+     * recheck before dispatch. This is never authority to activate anything. */
     approvedReviewInputDigest: string;
   }): Promise<CardinalDraftView> {
     const actorUserId = args.actorUserId, expected = { ...args.expected }, reviewer = args.reviewer;

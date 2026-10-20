@@ -8,9 +8,10 @@ interface Catalog { guidance: string; actions: string[]; scopeKeys: string[] }
 interface Settings { rules: CardinalPolicyView | null; permissions: AutomationPolicyView | null; drafts: CardinalDraftView[]; devices?: ProtectedDeviceInventory }
 interface Check { report: CardinalTestReport; meaning: string | null }
 interface ReviewPreview {
+  inputDigest: string;
   input: { wording: string; structuredMeaning: string; guidance: string };
-  reviewer: { providerId: string; model: string; external: boolean } | null;
-  canTransmit: false; reason: string;
+  reviewer: { providerId: string; model: string; configurationVersion: string; external: boolean } | null;
+  canTransmit: boolean; reason: string;
 }
 const scopeLabels: Record<string, string> = { userId: 'People', serverId: 'Servers', deviceId: 'Devices',
   workspaceId: 'Automation workspaces', taskId: 'Original tasks' };
@@ -67,7 +68,7 @@ export function AdminAutomation() {
       <Button variant={tab === 'devices' ? 'primary' : 'secondary'} onClick={() => setTab('devices')}>Protected devices</Button>
     </div>
     <Card><CardTitle>Automation is not enabled in this build</CardTitle>
-      <p className="text-sm text-muted-foreground">You can prepare and check explicit rule drafts. Device pairing and protected native confirmation must be connected before model review, permanent changes or browser/computer control can be enabled.</p>
+      <p className="text-sm text-muted-foreground">You can prepare rule drafts, test their meaning and request advice from your selected model. Permanent changes and browser/computer control still require protected device pairing.</p>
     </Card>
     {tab === 'rules' ? <>
       <Card><CardTitle>Every rule needs an exact meaning</CardTitle>
@@ -88,7 +89,7 @@ export function AdminAutomation() {
         <Button variant="secondary" disabled={!catalog} onClick={() => { setSelected(null); setEditing(true); }}>New rule</Button></div>
         <ul className="mt-3 space-y-2">{settings?.drafts.map(draft => <li key={draft.reference.recordId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3">
           <div><p className="text-sm font-medium">{typeof (draft.document.draft as CardinalRule)?.label === 'string' ? (draft.document.draft as CardinalRule).label : 'Rule draft'}</p>
-            <p className="text-xs text-muted-foreground">Version {draft.reference.version} · {draft.document.tested ? 'Saved review available' : 'Review pending'}</p></div>
+            <p className="text-xs text-muted-foreground">Version {draft.reference.version} · {draft.document.tested?.review.status === 'available' ? 'Saved model advice' : draft.document.tested ? 'Model review needs attention' : 'Review pending'}</p></div>
           <Button variant="secondary" onClick={() => choose(draft)}>Open draft</Button>
         </li>)}</ul>
         {!settings?.drafts.length ? <p className="mt-2 text-sm text-muted-foreground">Saved drafts remain inactive until permanent approval.</p> : null}
@@ -140,8 +141,9 @@ function RuleEditor({ catalog, selected, saved }: { catalog: Catalog; selected: 
     onUnavailable: unavailable };
   const serialized = canonical(draft);
   const unchanged = !!previous && serialized === canonical(previous);
+  const report = check?.report ?? (unchanged ? selected?.document.tested?.report : null);
   useEffect(() => { setCheck(null); setPreview(null); setError(''); }, [serialized]);
-  async function run(kind: 'check' | 'save' | 'preview') {
+  async function run(kind: 'check' | 'save' | 'preview' | 'test') {
     if (busy) return;
     setBusy(true); setError('');
     try {
@@ -153,11 +155,19 @@ function RuleEditor({ catalog, selected, saved }: { catalog: Catalog; selected: 
       }
       if (kind === 'preview' && selected && unchanged) setPreview(await api.post<ReviewPreview>(
         `/admin/automation/rules/${selected.reference.recordId}/review-preview`, { expected: selected.reference }));
+      if (kind === 'test' && selected && unchanged && preview?.canTransmit && preview.reviewer) {
+        const { providerId, model, configurationVersion } = preview.reviewer;
+        const result = await api.post<{ draft: CardinalDraftView }>(`/admin/automation/rules/${selected.reference.recordId}/test`, {
+          expected: selected.reference, approvedReviewInputDigest: preview.inputDigest,
+          reviewerIdentity: { providerId, model, configurationVersion }, password, mfaCode,
+        });
+        await saved(result.draft);
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'The draft could not be updated.'); }
     finally { setBusy(false); setPassword(''); setMfaCode(''); }
   }
   return <Card><CardTitle>{selected ? 'Edit rule draft' : 'New rule draft'}</CardTitle>
-    <div className="space-y-4">
+    <fieldset disabled={busy} className="space-y-4">
       <label className="block text-sm">Rule name<Input maxLength={120} value={label} onChange={event => setLabel(event.target.value)} /></label>
       <label className="block text-sm">Your wording<textarea rows={3} maxLength={4000} value={wording} onChange={event => setWording(event.target.value)} className={`${fieldClass} py-2`} /></label>
       <fieldset className="rounded-lg border border-border p-3"><legend className="px-1 text-sm font-medium">Actions covered</legend>
@@ -189,34 +199,45 @@ function RuleEditor({ catalog, selected, saved }: { catalog: Catalog; selected: 
       </select></label>
       <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => void run('check')}>Test validity</Button>
         <Button variant="secondary" disabled={busy || !selected || !unchanged} onClick={() => void run('preview')}>Preview model review</Button></div>
-      {check ? <div className="rounded-lg border border-border p-3 text-sm">
-        <p className="font-medium">{check.report.status === 'passed' ? 'Structured checks passed' : 'This rule needs changes'}</p>
-        <ul className="mt-2 list-disc pl-5">{check.report.issues.map((issue, index) => <li key={index}>{issue.message}</li>)}</ul>
-        {check.meaning ? <p className="mt-2 whitespace-pre-wrap">{check.meaning}</p> : null}
-        <p className="mt-2 text-xs text-muted-foreground">{check.report.cases.filter(item => item.passed).length}/{check.report.cases.length} simulations passed. Model advice and permanent approval are separate.</p>
+      {report ? <div className="rounded-lg border border-border p-3 text-sm">
+        <p className="font-medium">{report.status === 'passed' ? 'Structured checks passed' : 'This rule needs changes'}</p>
+        <ul className="mt-2 list-disc pl-5">{report.issues.map((issue, index) => <li key={index}>{issue.message}</li>)}</ul>
+        {check?.meaning ? <p className="mt-2 whitespace-pre-wrap">{check.meaning}</p> : null}
+        <p className="mt-2 text-xs text-muted-foreground">{report.cases.filter(item => item.passed).length}/{report.cases.length} simulations passed. Model advice and permanent approval are separate.</p>
       </div> : null}
       {selected?.document.tested?.review.status === 'available' ? <div className="rounded-lg border border-border p-3 text-sm">
-        <p className="font-medium">Saved model advice</p><p>{selected.document.tested.review.assessment.summary}</p>
+        <p className="font-medium">Saved model advice · {selected.document.tested.review.assessment.clarity === 'clear' ? 'Meaning appears clear' : 'Clarification suggested'}</p>
+        <p>{selected.document.tested.review.assessment.summary}</p>
         <ul className="mt-2 list-disc pl-5">{selected.document.tested.review.assessment.concerns.map((value, index) => <li key={index}>{value}</li>)}</ul>
+        {selected.document.tested.review.assessment.suggestions.length ? <>
+          <p className="mt-3 font-medium">Suggestions for your decision</p>
+          <ul className="mt-1 list-disc pl-5">{selected.document.tested.review.assessment.suggestions.map((value, index) => <li key={index}>{value}</li>)}</ul>
+        </> : null}
+        <p className="mt-2 text-xs text-muted-foreground">{selected.document.tested.reviewer.providerId} · {selected.document.tested.reviewer.model || 'Configured default model'}</p>
         <p className="mt-2 text-xs text-muted-foreground">This advice refers to the saved version. Editing requires another review.</p>
       </div> : null}
+      {selected?.document.tested && selected.document.tested.review.status !== 'available'
+        ? <ErrorNote>{selected.document.tested.review.message} Preview and explicitly request another review when ready.</ErrorNote> : null}
       {preview ? <div className="space-y-2 rounded-lg border border-border p-3 text-sm">
         <p className="font-medium">Exact content for the model</p>
-        <p>{preview.reviewer ? `${preview.reviewer.providerId} · ${preview.reviewer.model}${preview.reviewer.external ? ' · External provider' : ''}` : 'No activated model is available.'}</p>
+        <p>{preview.reviewer ? `${preview.reviewer.providerId} · ${preview.reviewer.model || 'Configured default model'}${preview.reviewer.external ? ' · External provider' : ''}` : 'No activated model is available.'}</p>
         <p className="whitespace-pre-wrap">{preview.input.wording}</p><p className="whitespace-pre-wrap">{preview.input.structuredMeaning}</p>
         <p className="whitespace-pre-wrap text-muted-foreground">{preview.input.guidance}</p>
         <p className="text-muted-foreground">{preview.reason} Nothing has been sent.</p>
       </div> : null}
       <div className="space-y-3 border-t border-border pt-4">
-        <p className="text-sm font-medium">Save an inactive draft to the Vault</p>
+        <p className="text-sm font-medium">Verify this administrator action</p>
         <label className="block text-sm">Administrator password<Input type="password" autoComplete="current-password" value={password} maxLength={4096} onChange={event => setPassword(event.target.value)} /></label>
         <label className="block text-sm">Authenticator code, if enabled<Input inputMode="numeric" autoComplete="one-time-code" value={mfaCode} maxLength={200} onChange={event => setMfaCode(event.target.value)} /></label>
         <div className="flex flex-wrap gap-2"><Button disabled={busy || !password} onClick={() => void run('save')}>{busy ? 'Working…' : 'Save draft'}</Button>
+          {preview ? <Button variant="secondary" disabled={busy || !password || !unchanged || !preview.canTransmit} onClick={() => void run('test')}>
+            {busy ? 'Working…' : 'Send preview and test rule'}
+          </Button> : null}
           <Button variant="secondary" disabled>Make permanent</Button></div>
-        <p className="text-xs text-muted-foreground">Permanent approval will use the protected native confirmation. Saving or checking this draft changes no active rule.</p>
+        <p className="text-xs text-muted-foreground">Sending the preview requests one model review and saves the advice to the Vault. The model cannot approve the rule. Permanent approval uses the protected native confirmation.</p>
       </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-    </div>
+    </fieldset>
   </Card>;
 }
 

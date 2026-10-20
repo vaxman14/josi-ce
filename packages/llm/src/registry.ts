@@ -344,6 +344,12 @@ export interface ChatOptions {
   /** Set false to skip cap enforcement for a system call that must not be
    * billed to anyone — the capability probe, for instance. */
   enforceCaps?: boolean;
+  /** A disclosure preview can authorize exactly one selected configuration.
+   * Never fall back to a different destination for such a request. */
+  expectedPrimary?: { providerId: string; model: string; configurationVersion: string };
+  /** Server-owned authorization immediately before dispatch. Never populated
+   * from client JSON; no network or model work should occur inside this hook. */
+  beforeDispatch?: () => Promise<void>;
 }
 
 /** The one way anything in CE talks to a model.
@@ -367,9 +373,26 @@ export async function chat(
       needsReconfiguration: true,
     });
   }
+  const expected = chatOpts.expectedPrimary ? { ...chatOpts.expectedPrimary } : null;
+  function requireExpected(stored: StoredProvider | null) {
+    if (expected && (!stored?.activated_at || !stored.probed_at || stored.cap_chat !== true
+      || stored.provider !== expected.providerId || stored.model !== expected.model
+      || stored.updated_at !== expected.configurationVersion)) {
+      throw new LlmError('The selected model changed. Review the current destination before sending.', { needsReconfiguration: true });
+    }
+  }
+  requireExpected(primary);
 
   const runOne = async (stored: StoredProvider, role: 'primary' | 'fallback'): Promise<ChatOutcome> => {
     const provider = await buildProvider(opts, stored);
+    if (expected) {
+      requireExpected(await loadStoredProvider(opts.db, 'primary'));
+      if (provider.configurationVersion !== expected.configurationVersion) {
+        throw new LlmError('The model credential version changed. Review the current destination before sending.', { needsReconfiguration: true });
+      }
+      if (provider.external && await isLocalOnly(opts.db)) throw new LocalOnlyViolation('Local-only mode prevents this review.');
+    }
+    await chatOpts.beforeDispatch?.();
     const response = await provider.chat(request);
     await meterCall(opts.db, stored, role, provider.external, response, chatOpts);
     return { response, usedRole: role, cap };
@@ -378,6 +401,7 @@ export async function chat(
   try {
     return await runOne(primary, 'primary');
   } catch (err) {
+    if (expected) throw err;
     const fallback = await loadStoredProvider(opts.db, 'fallback');
     const retryable = err instanceof LlmError && err.retryable;
 

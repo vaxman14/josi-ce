@@ -1,5 +1,22 @@
 import { isCardinalMeaningAssessment, type CardinalMeaningReview, type CardinalReviewInput } from '@josi-ce/core';
 import type { LlmProvider } from './types.js';
+import { chat, type RegistryOptions } from './registry.js';
+import { isExternalProvider, type ProviderKind } from './types.js';
+
+/** Production review path: current registry credentials, caps, accounting and
+ * exact destination consent. It offers neither Josi tools nor agent context. */
+export function reviewConfiguredCardinalMeaning(opts: RegistryOptions, args: {
+  input: CardinalReviewInput; userId: string;
+  reviewerIdentity: { providerId: ProviderKind; model: string; configurationVersion: string };
+  authorizeDispatch: () => Promise<void>;
+}): Promise<CardinalMeaningReview> {
+  const identity = { ...args.reviewerIdentity };
+  return reviewCardinalMeaning({
+    kind: identity.providerId, model: identity.model, external: isExternalProvider(identity.providerId),
+    chat: async request => (await chat(opts, request, { userId: args.userId, purpose: 'cardinal_meaning_review',
+      expectedPrimary: identity, beforeDispatch: args.authorizeDispatch })).response,
+  }, args.input);
+}
 
 /** Use the currently selected registry provider, whose credential, external-
  * transmission consent and local-only checks must already have passed. No
