@@ -16,7 +16,8 @@ output = args.output.resolve()
 output.mkdir(mode=0o700)  # No replacement of a retained candidate.
 source = root / "apps/automation-macos/Sources"
 entries = []
-for name, filename in (("JosiGuestDesktop", "GuestDesktopEngine.swift"), ("JosiWorkspaceMachine", "WorkspaceMachine.swift")):
+for name, filename in (("JosiGuestDesktop", "GuestDesktopEngine.swift"), ("JosiWorkspaceMachine", "WorkspaceMachine.swift"),
+                       ("JosiProtectedKey", "ProtectedKeyProjection.swift")):
     target = output / (name + ".dylib")
     subprocess.run([
         "xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-emit-library", "-emit-module",
