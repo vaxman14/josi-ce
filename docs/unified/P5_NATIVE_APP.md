@@ -109,3 +109,11 @@ Swift 6 compilation passed for the complete page, setup integration and polling/
 ### Native.7 artifact receipt
 
 Delivered `JosiDrive/Artifacts/josi-native-unified-20261020-7/Install Josi.pkg` (697,737,869 bytes), built from clean commit `a0391bf8b971eea12690cf8c716d5e7047bb2694`; app `0.7.0-native.7`, bundle `20261020.7`, package `0.7.0.8`. All 17,624 extracted file/link entries match staging; app/helper/companion/uninstaller/installer Socal signatures and extracted app signatures verified. Includes app target registration/grants, not the subsequent Models page. Exact source archive, retained runtime sources, checksum and protected profile accompany it. Not installed, launched, notarized or functionally accepted.
+
+## Native account settings — subsequent source checkpoint
+
+Your Settings now exposes existing email/calendar/contact/task approval preferences, honoring the server's effective administrator ceiling without replacing existing mandatory approvals. It explicitly separates those legacy preferences from the new browser/computer permissions. The page also connects authenticator setup, QR/manual key, six-digit verification, password-confirmed disable and existing session step-up to the original CE routes. The canonical authenticator secret remains in the Vault.
+
+Successful authenticator enablement moves the one-time recovery-code response into app-scoped transient state before refreshing anything. A native sheet requires explicit saved-code acknowledgment and offers a private file export through the existing 0600/atomic export helper. Normal quit, sign-out, server switching and local lifecycle changes cannot discard pending codes. Setup secrets/passwords/codes clear on leaving their view; the saved recovery sheet clears only when acknowledged. This is normal lifecycle protection, not a crash-recovery guarantee or another canonical secret store.
+
+Swift 6 compilation passed for the account page, recovery state and app integration. The final consolidation of the shared recovery-sheet presentation is included in the next packaging compile. No account/MFA/session/Vault setting was changed and no live recovery code was generated. The next package version is `native.8` (installer `0.7.0.9`) and combines this account work with the native Models page. Functional acceptance remains deferred.

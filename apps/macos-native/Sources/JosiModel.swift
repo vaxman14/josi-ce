@@ -24,6 +24,7 @@ import SwiftUI
     @Published var hostChecks: [Wire] = []
     @Published var recovery: Wire = .null
     @Published var vaultRecovery: Wire = .null
+    @Published var mfaRecovery: Wire = .null
     @Published var mfaChallenge = ""
     @Published var automation: Wire = .null
     @Published var automationSettings: Wire = .null
@@ -53,6 +54,7 @@ import SwiftUI
         catch { self.error = error.localizedDescription }
     }
     func connect(_ address: String, local: Bool = false) async throws {
+        guard mfaRecovery == .null else { throw JosiError(message: "Save your sign-in recovery codes before changing servers.") }
         if desktop.requiresClosure { try await desktop.close() }
         let next = try JosiAPI(address: address)
         api?.close(); api = next
@@ -97,6 +99,7 @@ import SwiftUI
     }
     func disconnect() {
         guard !busy else { return }
+        guard mfaRecovery == .null else { error = "Save your sign-in recovery codes before disconnecting."; return }
         guard !desktop.requiresClosure else { error = "Close the separate desktop before disconnecting."; return }
         api?.close(); api = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; setup = .null
@@ -105,6 +108,7 @@ import SwiftUI
         screen = .connect; error = ""; activity = ""
     }
     func signOut() async throws {
+        guard mfaRecovery == .null else { throw JosiError(message: "Save your sign-in recovery codes before signing out.") }
         if desktop.requiresClosure { try await desktop.close() }
         if let api { _ = try await api.request("/auth/logout", method: "POST", body: [:]) }
         // run() keeps busy set until this completes; disconnect's UI guard
@@ -116,6 +120,7 @@ import SwiftUI
         automationSettings = .null; automationCatalog = .null; automation = .null; screen = .connect
     }
     func operate(_ operation: String) async throws {
+        guard mfaRecovery == .null else { throw JosiError(message: "Save your sign-in recovery codes before changing the server.") }
         if desktop.requiresClosure { try await desktop.close() }
         let attempt = UUID(); installAttempt = operation == "install" ? attempt : nil
         activity = "Waiting for macOS authorization…"

@@ -5,9 +5,9 @@ import SwiftUI
     weak var model: JosiModel?
     func applicationDidFinishLaunching(_ notification: Notification) { NSApp.activate(ignoringOtherApps: true) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if let model, model.vaultRecovery != .null || model.recovery != .null {
-            let alert = NSAlert(); alert.messageText = "Save your recovery key before quitting."
-            alert.informativeText = "Finish the recovery-key step in Josi so you keep access to your Vault."
+        if let model, model.vaultRecovery != .null || model.recovery != .null || model.mfaRecovery != .null {
+            let alert = NSAlert(); alert.messageText = "Save your recovery information before quitting."
+            alert.informativeText = "Finish the recovery step in Josi so you keep access to your account and Vault."
             alert.runModal(); return .terminateCancel
         }
         if model?.busy == true {
@@ -89,8 +89,9 @@ struct RootView: View {
                     Spacer()
                 }.padding(.horizontal, 16).padding(.vertical, 9).background(.bar)
             }
-        }.sheet(isPresented: Binding(get: { model.vaultRecovery != .null }, set: { _ in })) {
-            NativeVaultRecovery().environmentObject(model)
+        }.sheet(isPresented: Binding(get: { model.vaultRecovery != .null || model.mfaRecovery != .null }, set: { _ in })) {
+            if model.mfaRecovery != .null { NativeMfaRecovery().environmentObject(model) }
+            else { NativeVaultRecovery().environmentObject(model) }
         }
     }
 }
@@ -255,6 +256,7 @@ struct WorkspaceView: View {
                         nav("Task Manager", icon: "checklist", section: "tasks")
                         nav("Automation", icon: "macwindow", section: "automation")
                         nav("Vault", icon: "lock.shield", section: "vault")
+                        nav("Your Settings", icon: "person.crop.circle", section: "account")
                         if model.isAdministrator { nav("Models", icon: "brain", section: "models") }
                         if model.isAdministrator { nav("Backups", icon: "externaldrive.badge.timemachine", section: "backups") }
                         nav("Server", icon: "externaldrive.connected.to.line.below", section: "server")
@@ -289,6 +291,7 @@ struct WorkspaceView: View {
             }
             case "automation": AutomationView()
             case "vault": NativeVaultView()
+            case "account": NativeAccountView()
             case "backups": if model.isAdministrator { NativeBackupsView() }
             case "models": if model.isAdministrator { NativeModelsView() }
             default: ChatView()
@@ -300,7 +303,7 @@ struct WorkspaceView: View {
             model.section = section
             if section == "automation" { model.run { try await model.loadAutomation() } }
             else if section == "server" { model.refreshLocal() }
-            else if ["vault", "backups", "models"].contains(section) { /* These views load their own scoped status. */ }
+            else if ["vault", "backups", "models", "account"].contains(section) { /* These views load their own scoped status. */ }
             else { model.run { try await model.reloadWorkspace() } }
         } label: { Label(title, systemImage: icon).foregroundStyle(model.section == section ? Color.accentColor : Color.primary) }
             .buttonStyle(.plain).disabled(model.busy)
