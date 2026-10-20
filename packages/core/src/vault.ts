@@ -4,9 +4,9 @@ import { json } from './db.js';
 import { appendEvent } from './events.js';
 import { MasterKey } from './masterKey.js';
 import { Secret, openSealed, seal, unwrapSecrets } from './sealing.js';
-import { VaultRecordStore } from './vaultRecords.js';
+import { VaultRecordStore, type VaultRecordAccessCheck } from './vaultRecords.js';
 export { VaultRecordError, VaultRecordConflictError } from './vaultRecords.js';
-export type { VaultRecordKind, VaultRecordReference, VaultRecordValue } from './vaultRecords.js';
+export type { VaultRecordKind, VaultRecordReference, VaultRecordValue, VaultRecordAccessCheck } from './vaultRecords.js';
 
 export class VaultError extends Error {}
 export class VaultLockedError extends VaultError {}
@@ -90,8 +90,8 @@ async function vaultMasterKey(db:Db,installKey:MasterKey):Promise<MasterKey>{awa
 
 /** Protected record storage shares this vault's existing root, never a second
  * key or a plaintext settings copy. Activation is a separate P3 operation. */
-export function vaultRecords(db:Db,installKey:MasterKey):VaultRecordStore {
-  return new VaultRecordStore(db,tx=>vaultMasterKey(tx,installKey));
+export function vaultRecords(db:Db,installKey:MasterKey,access?:VaultRecordAccessCheck):VaultRecordStore {
+  return new VaultRecordStore(db,tx=>vaultMasterKey(tx,installKey),access);
 }
 
 async function boxKey(db:Db,masterKey:MasterKey,ownerUserId:string,create=false):Promise<MasterKey>{

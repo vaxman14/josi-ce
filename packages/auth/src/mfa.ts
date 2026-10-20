@@ -106,6 +106,12 @@ export async function verifyMfaFactor(db: Db, key: MasterKey | null, userId: str
   return transaction(db, async tx => checkFactor(tx, key, await account(tx, userId), code));
 }
 
+/** Internal auth-package composition only. Caller holds a transaction and the
+ * Vault-state lock; factor consumption must commit with the protected receipt. */
+export async function verifyMfaFactorInTransaction(tx: Db, key: MasterKey | null, userId: string, code: string): Promise<boolean> {
+  return checkFactor(tx, key, await account(tx, userId), code);
+}
+
 /** Challenge consumption, recovery-code consumption and session issuance are
  * one commit, so replay or failed session insertion cannot split them apart. */
 export async function completeMfaLogin(db: Db, key: MasterKey | null, args: {

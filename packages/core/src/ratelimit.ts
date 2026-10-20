@@ -22,6 +22,8 @@ export interface Limit {
 /** The buckets, named once so a route cannot invent one and quietly get its own
  * unlimited allowance. */
 export const LIMITS = {
+  /** Fresh proof for one exact protected administrative change. */
+  protected_admin_reauth: { bucket: 'protected_admin_reauth', max: 10, windowSeconds: 300 },
   /** Builds a bundle: reads config, counts rows, compresses. */
   diagnostics: { bucket: 'diagnostics', max: 5, windowSeconds: 3600 },
   /** Runs pg_dump against the whole database. */

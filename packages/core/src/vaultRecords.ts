@@ -9,6 +9,9 @@ import { openSealed, seal, Secret } from './sealing.js';
 export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
 export interface VaultRecordValue { reference: VaultRecordReference; kind: VaultRecordKind; value: Secret }
+/** Optional server-owned authorization, never a callback supplied over HTTP.
+ * Runs inside the record transaction after the state and live actor locks. */
+export type VaultRecordAccessCheck = (tx: Db, actorUserId: string, writing: boolean) => Promise<void>;
 export class VaultRecordError extends Error {}
 export class VaultRecordConflictError extends VaultRecordError {}
 const kinds = new Set<VaultRecordKind>(['cardinal_draft', 'cardinal_review', 'cardinal_test']);
@@ -25,7 +28,7 @@ interface Envelope {
  * A transaction holds the vault-state lock until a read/write commits. This
  * establishes an ordering with lock/recovery; it is not a dispatch lease. */
 export class VaultRecordStore {
-  constructor(private readonly db: Db, private readonly key: (tx: Db) => Promise<MasterKey>) {}
+  constructor(private readonly db: Db, private readonly key: (tx: Db) => Promise<MasterKey>, private readonly access?: VaultRecordAccessCheck) {}
 
   private transaction<T>(work: (tx: Db) => Promise<T>): Promise<T> {
     if (!this.db.transaction) throw new VaultRecordError('Protected Vault records require database transactions');
@@ -41,6 +44,7 @@ export class VaultRecordStore {
     const [actor] = await tx.query(`select id from users where id=$1 and role='super_admin' and status='active' for share`, [actorUserId]);
     if (!actor) throw new VaultRecordError('Active super admin required');
     if (!state || !Number.isSafeInteger(Number(state.authority_epoch))) throw new VaultRecordError('Vault authority unavailable');
+    await this.access?.(tx, actorUserId, writing);
     return state;
   }
 

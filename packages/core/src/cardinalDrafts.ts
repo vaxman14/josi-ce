@@ -26,6 +26,16 @@ export interface CardinalDraftDocument {
     reviewer: { providerId: string; model: string; configurationVersion: string } };
 }
 export interface CardinalDraftView { reference: VaultRecordReference; document: CardinalDraftDocument }
+export interface CardinalDraftCommand { purpose: 'cardinal.draft.read' | 'cardinal.draft.save' | 'cardinal.draft.test'; requestDigest: string }
+export type CardinalDraftAccessCheck = (tx: Db, actorUserId: string, writing: boolean, command: CardinalDraftCommand) => Promise<void>;
+export function cardinalDraftSaveBinding(draft: unknown, expected?: VaultRecordReference): CardinalDraftCommand & { purpose: 'cardinal.draft.save' } {
+  return { purpose: 'cardinal.draft.save', requestDigest: cardinalContentDigest({ draft, expected: expected ?? null }) };
+}
+export function cardinalDraftTestBinding(args: { expected: VaultRecordReference; approvedReviewInputDigest: string;
+  reviewerIdentity: { providerId: string; model: string; configurationVersion: string } }): CardinalDraftCommand & { purpose: 'cardinal.draft.test' } {
+  return { purpose: 'cardinal.draft.test', requestDigest: cardinalContentDigest({ expected: args.expected,
+    approvedReviewInputDigest: args.approvedReviewInputDigest, reviewerIdentity: args.reviewerIdentity }) };
+}
 
 function encoded(value: unknown): string {
   let raw: string | undefined;
@@ -70,13 +80,21 @@ export function isCardinalMeaningAssessment(value: unknown): value is CardinalMe
 }
 
 export class CardinalDraftStore {
-  private readonly records;
-  constructor(db: Db, key: MasterKey) { this.records = vaultRecords(db, key); }
+  constructor(private readonly db: Db, private readonly key: MasterKey, private readonly access?: CardinalDraftAccessCheck) {}
 
-  async read(args: { actorUserId: string; recordId: string; expected?: VaultRecordReference }): Promise<CardinalDraftView> {
-    const value = await this.records.read(args);
+  private records(command: CardinalDraftCommand) {
+    return vaultRecords(this.db, this.key, (tx, actor, writing) => this.access?.(tx, actor, writing, command) ?? Promise.resolve());
+  }
+
+  private async readRecord(records: ReturnType<typeof vaultRecords>, args: { actorUserId: string; recordId: string; expected?: VaultRecordReference }): Promise<CardinalDraftView> {
+    const value = await records.read(args);
     if (value.kind !== 'cardinal_draft') throw new VaultRecordError('Cardinal Rule draft not found.');
     return { reference: value.reference, document: documentFrom(value.value) };
+  }
+
+  async read(args: { actorUserId: string; recordId: string; expected?: VaultRecordReference }): Promise<CardinalDraftView> {
+    const snapshot = structuredClone(args);
+    return this.readRecord(this.records({ purpose: 'cardinal.draft.read', requestDigest: cardinalContentDigest(snapshot) }), snapshot);
   }
 
   async save(args: { actorUserId: string; draft: unknown; expected?: VaultRecordReference }): Promise<CardinalDraftView> {
@@ -84,9 +102,10 @@ export class CardinalDraftStore {
     // unfinished JSON drafts can be saved, but can never pass deterministic tests.
     const draft: unknown = JSON.parse(encoded(args.draft));
     const actorUserId = args.actorUserId, expected = args.expected ? { ...args.expected } : undefined;
-    if (expected) await this.read({ actorUserId, recordId: expected.recordId, expected });
+    const records = this.records(cardinalDraftSaveBinding(draft, expected));
+    if (expected) await this.readRecord(records, { actorUserId, recordId: expected.recordId, expected });
     const document: CardinalDraftDocument = { schemaVersion: 1, draft, tested: null };
-    const reference = await this.records.write({ actorUserId, kind: 'cardinal_draft',
+    const reference = await records.write({ actorUserId, kind: 'cardinal_draft',
       value: new Secret(encoded(document)), expected });
     return { reference, document };
   }
@@ -102,7 +121,8 @@ export class CardinalDraftStore {
     if (![identity.providerId, identity.model, identity.configurationVersion].every(v => typeof v === 'string' && v.length > 0 && v.length <= 300)) {
       throw new VaultRecordError('The selected review model is unavailable.');
     }
-    const { document } = await this.read({ actorUserId, recordId: expected.recordId, expected });
+    const records = this.records(cardinalDraftTestBinding({ expected, approvedReviewInputDigest: approvedDigest, reviewerIdentity: identity }));
+    const { document } = await this.readRecord(records, { actorUserId, recordId: expected.recordId, expected });
     const report = testCardinalRule(document.draft);
     const parsed = validateCardinalRule(document.draft);
     let review: CardinalMeaningReview = { status: 'unavailable', message: 'Complete the supported structured rule before requesting a meaning review.' };
@@ -127,7 +147,7 @@ export class CardinalDraftStore {
     } } };
     // Live role, lock, epoch, recovery and exact version are checked again after
     // the external call. A late review cannot attach to a newer draft.
-    const reference = await this.records.write({ actorUserId, kind: 'cardinal_draft', expected,
+    const reference = await records.write({ actorUserId, kind: 'cardinal_draft', expected,
       value: new Secret(encoded(next)) });
     return { reference, document: next };
   }
