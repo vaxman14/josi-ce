@@ -9,6 +9,7 @@ import { CardinalPolicyStore, CARDINAL_POLICY_RECORD_ID, evaluateCardinalPolicyR
 import type { CardinalActionFacts } from './cardinalRules.js';
 import { AutomationPolicyStore, AUTOMATION_POLICY_RECORD_ID, evaluateAutomationPolicyRecord, type AutomationPolicyAuthority, type AutomationPolicyDecision } from './automationPolicy.js';
 import type { AutomationPermissionFacts } from './automationPermissions.js';
+import { AutomationReservationStore, type AutomationReservationProofPort } from './automationReservations.js';
 
 export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
@@ -180,24 +181,45 @@ export class VaultRecordStore {
         const key = await this.key(tx);
         if (!state || !Number.isSafeInteger(Number(state.authority_epoch))) return pause('vault_unavailable');
         if (state.authority_reconciliation_required) return pause('requires_reconciliation');
-        const [permissions] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_POLICY_RECORD_ID]);
-        const [cardinal] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [CARDINAL_POLICY_RECORD_ID]);
-        if (!permissions || !cardinal) return pause('policy_missing');
-        if (permissions.kind !== 'automation_policy' || cardinal.kind !== 'cardinal_policy') return pause('vault_unavailable');
-        if (snapshot.expected && (!this.matches(snapshot.expected.permissions, permissions, state)
-          || !this.matches(snapshot.expected.cardinal, cardinal, state))) return pause('stale_policy');
-        const ordinary = evaluateAutomationPolicyRecord(await this.open(tx, key, permissions, state), snapshot.facts);
-        const facts: CardinalActionFacts = { identities: { ...snapshot.facts.identity, taskId: snapshot.facts.task?.id },
-          effects: [...new Set(snapshot.facts.effects.map(e => e.action))], effectCoverage: snapshot.facts.effectCoverage,
-          taskElapsedMs: snapshot.facts.nowMs - snapshot.facts.task.startedAtMs };
-        const restrictive = evaluateCardinalPolicyRecord(await this.open(tx, key, cardinal, state), facts);
-        const verdict = ordinary.verdict === 'deny' || restrictive.verdict === 'deny' ? 'deny'
-          : ordinary.verdict === 'pause' || restrictive.verdict === 'pause' ? 'pause' : ordinary.verdict;
-        // A Cardinal refusal cannot leak a spendable-looking charge plan.
-        if (verdict !== 'covered' && ordinary.evaluation) ordinary.evaluation.charges = [];
-        return { verdict, code: 'evaluated', permissions: ordinary, cardinal: restrictive, executionEnabled: false };
+        return this.automationPreview(tx, key, state, snapshot.facts, snapshot.expected);
       });
     } catch { return pause('vault_unavailable'); }
+  }
+
+  private async automationPreview(tx: Db, key: MasterKey, state: State, input: AutomationPermissionFacts,
+    expected?: { permissions: VaultRecordReference; cardinal: VaultRecordReference }): Promise<VaultAutomationPreview> {
+    const pause = (code: VaultAutomationPreview['code']): VaultAutomationPreview => ({ verdict: 'pause', code, permissions: null, cardinal: null, executionEnabled: false });
+    const [permissions] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_POLICY_RECORD_ID]);
+    const [cardinal] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [CARDINAL_POLICY_RECORD_ID]);
+    if (!permissions || !cardinal) return pause('policy_missing');
+    if (permissions.kind !== 'automation_policy' || cardinal.kind !== 'cardinal_policy') return pause('vault_unavailable');
+    if (expected && (!this.matches(expected.permissions, permissions, state) || !this.matches(expected.cardinal, cardinal, state))) return pause('stale_policy');
+    const ordinary = evaluateAutomationPolicyRecord(await this.open(tx, key, permissions, state), input);
+    const facts: CardinalActionFacts = { identities: { ...input.identity, taskId: input.task?.id },
+      effects: [...new Set(input.effects.map(e => e.action))], effectCoverage: input.effectCoverage,
+      taskElapsedMs: input.nowMs - input.task.startedAtMs };
+    const restrictive = evaluateCardinalPolicyRecord(await this.open(tx, key, cardinal, state), facts);
+    const verdict = ordinary.verdict === 'deny' || restrictive.verdict === 'deny' ? 'deny'
+      : ordinary.verdict === 'pause' || restrictive.verdict === 'pause' ? 'pause' : ordinary.verdict;
+    if (verdict !== 'covered' && ordinary.evaluation) ordinary.evaluation.charges = [];
+    return { verdict, code: 'evaluated', permissions: ordinary, cardinal: restrictive, executionEnabled: false };
+  }
+
+  /** Reservations extend durable turn effects atomically with policy analysis.
+   * No production device verifier/transport is installed by this factory. */
+  automationReservations(proofs: AutomationReservationProofPort): AutomationReservationStore {
+    return new AutomationReservationStore((actorUserId, requiresAuthority, work) => this.transaction(async tx => {
+      const [state] = await tx.query<State>('select authority_epoch,authority_reconciliation_required from vault_state where id=true for share');
+      const [actor] = await tx.query("select id from users where id=$1 and status='active' for share", [actorUserId]);
+      if (!actor) throw new VaultRecordError('The action owner is unavailable.');
+      const key = await this.key(tx);
+      if (!state || !Number.isSafeInteger(Number(state.authority_epoch))) throw new VaultRecordError('Vault authority unavailable.');
+      if (requiresAuthority && state.authority_reconciliation_required) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
+      return work({ tx, key, preview: (facts, expected) => {
+        if (facts.identity.userId !== actorUserId || state.authority_reconciliation_required) throw new VaultRecordError('Action authority unavailable.');
+        return this.automationPreview(tx, key, state, facts, expected);
+      } });
+    }), proofs);
   }
 
   /** Restrictive engine check, not admin inspection and never a grant. The

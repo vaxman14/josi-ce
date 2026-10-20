@@ -20,6 +20,8 @@ export * from './automationPermissions.js';
 export { AUTOMATION_ENFORCEMENT_VERSION, automationPolicyChangeBinding,
   type AutomationPolicyDocument, type AutomationPolicyView, type AutomationPolicyCommand, type AutomationPolicyAuthority, type AutomationPolicyDecision } from './automationPolicy.js';
 export type { VaultAutomationPreview } from './vaultRecords.js';
+export { AutomationReservationError, type AutomationReservationRequest, type AutomationReservationView, type AutomationReservationState,
+  type AutomationReservationProofPort } from './automationReservations.js';
 export * from './cardinalDrafts.js';
 export { CARDINAL_ENFORCEMENT_VERSION, cardinalActivationBinding, cardinalRetirementBinding,
   type CardinalActiveRule, type CardinalPolicyDocument, type CardinalPolicyView, type CardinalPolicyCommand, type CardinalPolicyAuthority, type CardinalPolicyDecision } from './cardinalPolicy.js';
