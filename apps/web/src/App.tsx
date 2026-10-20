@@ -44,6 +44,7 @@ import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
 import { AdminVoiceBox } from '@/pages/admin/VoiceBox';
 import { AdminChannels } from '@/pages/admin/Channels';
 import { AdminVault } from '@/pages/admin/Vault';
+import { AdminAutomation } from '@/pages/admin/Automation';
 import { AdminNetwork } from '@/pages/admin/Network';
 import { api } from '@/lib/api';
 
@@ -181,6 +182,7 @@ export function App() {
         <Route path="telegram" element={<AdminTelegram />} />
         <Route path="backups" element={<AdminBackups />} />
         <Route path="vault" element={<AdminVault />} />
+        <Route path="automation" element={<AdminAutomation />} />
         <Route path="network" element={<AdminNetwork />} />
         <Route path="developer-services" element={<Navigate to="/admin/integrations" replace />} />
         <Route path="integrations" element={<AdminDeveloperServices />} />

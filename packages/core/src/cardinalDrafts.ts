@@ -97,6 +97,13 @@ export class CardinalDraftStore {
     return this.readRecord(this.records({ purpose: 'cardinal.draft.read', requestDigest: cardinalContentDigest(snapshot) }), snapshot);
   }
 
+  async list(actorUserId: string): Promise<CardinalDraftView[]> {
+    const records = this.records({ purpose: 'cardinal.draft.read', requestDigest: cardinalContentDigest({ actorUserId, listing: true }) });
+    return (await records.listDrafts(actorUserId)).map(record => ({
+      reference: record.reference, document: documentFrom(record.value),
+    }));
+  }
+
   async save(args: { actorUserId: string; draft: unknown; expected?: VaultRecordReference }): Promise<CardinalDraftView> {
     // Round-trip to sever caller aliases before any async work. Invalid or
     // unfinished JSON drafts can be saved, but can never pass deterministic tests.

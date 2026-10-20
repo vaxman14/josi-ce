@@ -310,4 +310,17 @@ export class VaultRecordStore {
       return this.open(tx, key, head, state);
     });
   }
+
+  /** Bounded administrator display from canonical encrypted records. No
+   * plaintext label/index mirror is created for the settings UI. */
+  async listDrafts(actorUserId: string): Promise<VaultRecordValue[]> {
+    return this.transaction(async tx => {
+      const state = await this.state(tx, actorUserId, false), key = await this.key(tx);
+      const heads = await tx.query<Head>(`select id,kind,version,digest from vault_record_heads
+        where kind='cardinal_draft' order by updated_at desc,id desc limit 100`);
+      const records: VaultRecordValue[] = [];
+      for (const head of heads) records.push(await this.open(tx, key, head, state));
+      return records;
+    });
+  }
 }

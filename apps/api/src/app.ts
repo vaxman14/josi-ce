@@ -39,6 +39,7 @@ import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
 import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
+import { automationSettingsRoutes } from './http/automationSettingsRoutes.js';
 import { nasController } from './http/nasController.js';
 import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
@@ -261,6 +262,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
   }));
   api.use('/admin/vault', adminVaultRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  api.use('/admin/automation', automationSettingsRoutes({ db, masterKey: cfg.masterKeyCheck }));
   api.use('/admin/custom-apis', adminCustomApiRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,
     resolve: cfg.outboundResolve,
