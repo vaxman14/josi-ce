@@ -280,6 +280,24 @@ export class WorkspaceStorage {
     this.session(actor, session, id);
     return this.nativeTransport(actor, session).report(actor, id, receipt);
   }
+  async permitNativeNetwork(actor: string, session: string, id: string, query: unknown) {
+    this.session(actor, session, id);
+    if (!exact(query, ['kind', 'reservationId', 'request', 'phase', 'destination', 'address', 'direction', 'maximumBytes'])
+      || !uuid(query.reservationId)) throw new ProtectedChangeError(400, 'Use the exact reserved network operation.');
+    const transport = this.nativeTransport(actor, session).networking();
+    const records = this.records(actor, session).automationReservations({
+      verifyDispatch: async (tx, context, proof) => {
+        if (proof !== query) throw new ProtectedChangeError(403, 'Use the native network permit route.');
+        await transport.permit(tx, context, id, query);
+        this.session(actor, session, id);
+      },
+      verifyOutcome: denied,
+    });
+    const result = await records.confirmNativeDispatch(actor, query.reservationId, query);
+    this.session(actor, session, id);
+    return { kind: 'network-permit', reservationId: query.reservationId, phase: query.phase,
+      request: query.request, expiresAtMs: result.expiresAtMs };
+  }
   async prepareConsent(actor: string, session: string, id: string, input: unknown) {
     const s = this.session(actor, session, id);
     if (!exact(input, ['guestBootId', 'guestChannelId']) || !uuid(input.guestBootId) || !uuid(input.guestChannelId)) {

@@ -276,7 +276,7 @@ actor NativeNetworkConnector {
     }
 }
 
-private final class NetworkChannelResult<T: Sendable>: @unchecked Sendable {
+final class NetworkChannelResult<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, Error>?
     private var result: Result<T, Error>?

@@ -7,6 +7,7 @@ enum NativeNetworkClass: String, Sendable { case `public`, `private`, loopback }
 struct NativeNetworkRequest: Sendable, Equatable {
     let id: UUID, workspaceId: UUID, taskId: UUID
     let origin: String
+    let networkClass: NativeNetworkClass
     let maximumBytes: Int
     let expiresAtMs: Int64
 }
@@ -56,7 +57,8 @@ actor NativeNetworkResolver {
                                               milliseconds: min(3000, request.expiresAtMs - Int64(Date().timeIntervalSince1970 * 1000)))
         try current()
         let classes = try addresses.map(Self.classify)
-        guard let locality = classes.first, classes.allSatisfy({ $0 == locality }) else { throw NativeNetworkError.denied }
+        guard let locality = classes.first, locality == request.networkClass,
+              classes.allSatisfy({ $0 == locality }) else { throw NativeNetworkError.denied }
         let result = NativeNetworkDestination(request: request, hostname: endpoint.host, port: endpoint.port,
                                                addresses: addresses, networkClass: locality)
         try await authority.afterLookup(result)

@@ -46,6 +46,7 @@ export * from './automationPresence.js';
 export { type AutomationConsentAuthority } from './automationConsent.js';
 export { NativeTransportError, type NativeControlRenewal, type NativeControlState,
   type NativeObservationPayload, type NativeApplicationPin, type NativeTransportAuthority } from './nativeAutomationTransport.js';
+export { NativeNetworkTransportError, type NativeNetworkPayload, type NativeNetworkRequest } from './nativeNetworkTransport.js';
 export { createNativeInspectionRuntime } from './nativeAutomationRuntime.js';
 export * from './subscriptionCredentials.js';
 export { type WorkspaceStorageAuthority, type WorkspaceStorageSummary } from './workspaceStorage.js';

@@ -9,6 +9,7 @@ import type { VaultRecordReference } from './vaultRecords.js';
 import type { AutomationDispatchContext } from './automationReservations.js';
 import { sameAutomationIdentity } from './automationTargets.js';
 import { browserDispatchTarget, exactBrowserOrigin, isBrowserApplication, type NativeBrowserPin } from './nativeBrowserObservation.js';
+import { NativeNetworkTransport } from './nativeNetworkTransport.js';
 
 export interface NativeApplicationPin {
   workspaceId: string; applicationId: string; installationRevision: number;
@@ -112,6 +113,18 @@ function openDelivery(key: MasterKey, row: DeliveryRow): NativeDelivery {
 }
 export class NativeAutomationTransport {
   constructor(private backend: NativeTransportBackend, private authority: NativeTransportAuthority) {}
+  networking(): NativeNetworkTransport {
+    return new NativeNetworkTransport(this.backend, (tx, actor, workspace) => this.backend(actor, async c => {
+      const value = await this.current(actor, workspace, c.tx);
+      await this.authority.requireNativeConnection(c.tx, renewal(value));
+      const application = await c.application(value.identity, value.application.applicationId, value.application.installationRevision);
+      if (!value.browser || !sameRef(application.reference, value.targetReference)
+        || JSON.stringify(application.application) !== JSON.stringify(value.application)) throw unavailable();
+      const browser = await c.browser(value.identity, value.browser.profileId, value.browser.family, value.application.applicationId);
+      if (!sameRef(browser.reference, value.targetReference) || JSON.stringify(browser.browser) !== JSON.stringify(value.browser)) throw unavailable();
+      return value;
+    }, tx));
+  }
   private async writeControl(c: NativeTransportContext, value: NativeControlState) {
     await c.tx.query(`insert into automation_native_controls(storage_session_id,owner_user_id,workspace_id,value_enc)
       values($1,$2,$3,$4) on conflict(storage_session_id) do update set value_enc=excluded.value_enc,updated_at=clock_timestamp()`,
