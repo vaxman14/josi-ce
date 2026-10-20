@@ -14,6 +14,7 @@ import Darwin
     @Published private(set) var supportsExecution = false
     @Published private(set) var applicationCandidate: Wire = .null
     @Published private(set) var applicationReadiness = ""
+    @Published private(set) var browserCandidate: Wire = .null
     private let device: VZVirtioSocketDevice
     private let context: [String: String]
     private let current: @MainActor () throws -> Int
@@ -128,7 +129,8 @@ import Darwin
                 let reply = try await link.receive()
                 _ = try current()
                 let statusKeys: Set<String> = ["kind", "accessibility", "screenCapture", "executionEnabled", "applicationCandidate", "applicationReadiness"]
-                guard (Set(reply.keys) == statusKeys || Set(reply.keys) == statusKeys.union(["executionProtocol"])),
+                guard (Set(reply.keys) == statusKeys || Set(reply.keys) == statusKeys.union(["executionProtocol"])
+                    || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate"])),
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
                       reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2"].contains(reply["executionProtocol"] ?? ""),
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
@@ -152,6 +154,12 @@ import Darwin
                     else { throw GuestLinkError.invalid }
                     applicationCandidate = value
                 }
+                if let raw = reply["browserCandidate"], !raw.isEmpty {
+                    guard raw.utf8.count <= 3000 else { throw GuestLinkError.invalid }
+                    let value = try JSONDecoder().decode(Wire.self, from: Data(raw.utf8))
+                    guard NativeBrowserTargetWire.candidate(value, guestBoot: boot, workspace: identity["workspaceId"].text) else { throw GuestLinkError.invalid }
+                    browserCandidate = value
+                } else { browserCandidate = .null }
                 applicationReadiness = ""
                 guard let rawReadiness = reply["applicationReadiness"], rawReadiness.utf8.count <= 512 else { throw GuestLinkError.invalid }
                 if !rawReadiness.isEmpty {
@@ -175,6 +183,7 @@ import Darwin
             if !closed { state = "Companion disconnected or could not be verified. Reconnect inside the desktop." }
         }
         cancelQuestion(); paired = false; pairedBinding = .null; accessibility = false; screenCapture = false; supportsExecution = false; applicationCandidate = .null
+        browserCandidate = .null
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         cancelExecution(); sentConsent = .null
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
@@ -232,6 +241,20 @@ import Darwin
     }
     func requireSelection(_ change: Wire) throws {
         guard try registration(expected: change["expected"]) == change else { throw GuestLinkError.invalid }
+    }
+    func browserRegistration(registry: Wire) throws -> Wire {
+        _ = try current()
+        guard paired, !closed, browserCandidate != .null, !registry["reconciliationRequired"].flag,
+              browserCandidate["guestBootId"] == pairedBinding["guestBootId"],
+              Self.matchingApplications(applicationCandidate, identity: identity, registry: registry).contains(where: {
+                  $0["applicationId"] == browserCandidate["applicationId"]
+                      && $0["installationRevision"] == browserCandidate["installationRevision"]
+              }) else { throw GuestLinkError.invalid }
+        return ["kind": "automation.target.register", "identity": identity,
+                "candidate": browserCandidate, "expected": registry["reference"]]
+    }
+    func requireBrowserSelection(_ change: Wire, registry: Wire) throws {
+        guard try browserRegistration(registry: registry) == change else { throw GuestLinkError.invalid }
     }
     func consentBinding() throws -> Wire {
         _ = try current()
@@ -384,7 +407,7 @@ import Darwin
         device.removeSocketListener(forPort: GuestLinkWire.port)
         task?.cancel(); task = nil; wire = nil; connection = nil
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
-        paired = false; pairedBinding = .null; supportsExecution = false; applicationCandidate = .null; state = "Companion disconnected."
+        paired = false; pairedBinding = .null; supportsExecution = false; applicationCandidate = .null; browserCandidate = .null; state = "Companion disconnected."
     }
 }
 
@@ -427,6 +450,7 @@ struct NativeGuestConnectionView: View {
                 } else {
                     Text("Choose an app in Josi Companion to configure its permissions here.").font(.caption)
                 }
+                NativeBrowserRegistrationView(connection: connection)
             } else {
                 Text("Inside the desktop, copy Josi Companion from the Josi Support disk into Applications, then open it and choose Connect to Josi.")
                     .font(.caption).foregroundStyle(.secondary)

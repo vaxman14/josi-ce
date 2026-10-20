@@ -76,6 +76,7 @@ def build(output, node):
     (output / "Safari.entitlements").write_bytes(plistlib.dumps(entitlements))
     (output / "com.heyjosi.ce.guestbrowser.plist").write_bytes(plistlib.dumps({
         "Label": "com.heyjosi.ce.guestbrowser",
+        "BundleProgram": "Contents/Helpers/JosiBrowserBroker",
         "ProgramArguments": [HELPERS + "/JosiBrowserBroker"],
         "MachServices": {"com.heyjosi.ce.guestbrowser": True, "com.heyjosi.ce.guestbrowser.control": True},
         "ProcessType": "Interactive", "LimitLoadToSessionType": "Aqua",

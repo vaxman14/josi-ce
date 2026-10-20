@@ -218,7 +218,23 @@ def build(args):
         REPO / 'apps/automation-macos/Sources/GuestDesktopEngine.swift',
         REPO / 'apps/automation-macos/Sources/GuestExecutionAuthority.swift',
         REPO / 'apps/automation-macos/Sources/GuestApplicationReadiness.swift',
+        REPO / 'apps/automation-macos/Sources/GuestBrowserProfiles.swift',
         REPO / 'apps/automation-macos/Sources/GuestLinkWire.swift'])
+    browser_build = output / 'guest-browser-components'
+    run('build-guest-browser-components', [sys.executable, '-B', REPO / 'scripts/macos/build-guest-browser-components.py',
+        '--output', browser_build, '--node', runtime / 'node/bin/node'], timeout=600)
+    guest_resources = companion / 'Contents/Resources'
+    tree(browser_build / 'BrowserExtensions', guest_resources / 'BrowserExtensions')
+    copy_file(browser_build / 'BrowserExtensions/BrowserDistribution.json', guest_resources / 'BrowserDistribution.json')
+    tree(browser_build / 'NativeMessagingHosts', guest_resources / 'NativeMessagingHosts')
+    guest_helpers = companion / 'Contents/Helpers'; guest_helpers.mkdir()
+    for name in ('JosiBrowserHost', 'JosiBrowserBroker'):
+        copy_file(browser_build / name, guest_helpers / name)
+    (companion / 'Contents/PlugIns').mkdir()
+    safari_extension = companion / 'Contents/PlugIns/Josi Workspace.appex'
+    tree(browser_build / 'Josi Workspace.appex', safari_extension)
+    guest_agents = companion / 'Contents/Library/LaunchAgents'; guest_agents.mkdir(parents=True)
+    copy_file(browser_build / 'com.heyjosi.ce.guestbrowser.plist', guest_agents / 'com.heyjosi.ce.guestbrowser.plist')
     (companion / 'Contents/Info.plist').write_bytes(plistlib.dumps({
         'CFBundleIdentifier': 'com.heyjosi.ce.guestcompanion', 'CFBundleName': 'Josi Companion',
         'CFBundleDisplayName': 'Josi Companion', 'CFBundleExecutable': 'JosiCompanion',
@@ -279,6 +295,10 @@ def build(args):
         sign('sign-JosiProtectedKeyHost', key_bundle, PROTECTED_ID,
              output / 'protected-key-entitlements.plist' if profile else None)
         sign('sign-JosiDeviceConsentHost', helpers / 'JosiDeviceConsentHost', 'com.heyjosi.ce.device-consent')
+        sign('sign-guest-browser-host', guest_helpers / 'JosiBrowserHost', 'com.heyjosi.ce.guestbrowser-host')
+        sign('sign-guest-browser-broker', guest_helpers / 'JosiBrowserBroker', 'com.heyjosi.ce.guestbrowser-broker')
+        sign('sign-guest-safari-extension', safari_extension, 'com.heyjosi.ce.guestcompanion.workspace-safari',
+             browser_build / 'Safari.entitlements')
         sign('sign-guest-companion', companion, 'com.heyjosi.ce.guestcompanion')
         run('verify-guest-companion', ['/usr/bin/codesign', '--verify', '--deep', '--strict', companion])
     run('create-guest-support-image', ['/usr/bin/hdiutil', 'makehybrid', '-hfs',

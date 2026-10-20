@@ -75,6 +75,7 @@ struct NativeAuthoritySettings: View {
                 if policies.isEmpty { Text("No automation grants are active.") }
                 let targets = model.automationSettings["targets"]
                 NativeModelTargetsView()
+                NativeRegisteredBrowsersView()
                 let applications = targets["applications"].list
                 if applications.isEmpty {
                     Text("Open a separate desktop and choose an app in Josi Companion to register it for permission setup.")

@@ -24,8 +24,8 @@ import Foundation
         guard let result = value as? [String: Any], Set(result.keys) == Set(keys) else { throw GuestLinkError.invalid }
         return result
     }
-    static func inspect(_ payload: String, selection: String, identity: [String: String], leaseUntil: Int) throws -> String {
-        guard !payload.isEmpty, !selection.isEmpty else { return "" }
+    private static func validated(_ payload: String, selection: String, identity: [String: String], leaseUntil: Int) throws -> Request? {
+        guard !payload.isEmpty, !selection.isEmpty else { return nil }
         guard payload.utf8.count <= 4096, let candidate = try JSONSerialization.jsonObject(with: Data(selection.utf8)) as? [String: String]
         else { throw GuestLinkError.invalid }
         let data = Data(payload.utf8)
@@ -38,9 +38,9 @@ import Foundation
                                                         "bundlePath", "bundleId", "signingId", "teamId", "codeHash"])
         let request = try JSONDecoder().decode(Request.self, from: data), p = request.projection, pin = p.application
         // A selection can change while the previous pulse is in flight.
-        guard request.candidateId.uuidString.lowercased() == candidate["candidateId"] else { return "" }
+        guard request.candidateId.uuidString.lowercased() == candidate["candidateId"] else { return nil }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        guard p.expiresAtMs > now else { return "" }
+        guard p.expiresAtMs > now else { return nil }
         guard p.schemaVersion == 1, !p.executionEnabled, p.expiresAtMs <= leaseUntil, p.expiresAtMs - now <= 10_000,
               p.identity.serverId.uuidString.lowercased() == identity["serverId"],
               p.identity.userId.uuidString.lowercased() == identity["userId"],
@@ -57,6 +57,14 @@ import Foundation
               !pin.bundleId.lowercased().hasPrefix("com.heyjosi."),
               !pin.bundleId.lowercased().hasPrefix("com.socalreceptionist.josi")
         else { throw GuestLinkError.invalid }
+        return request
+    }
+    static func selectedPin(_ payload: String, selection: String, identity: [String: String], leaseUntil: Int) throws -> GuestPinnedApplication? {
+        try validated(payload, selection: selection, identity: identity, leaseUntil: leaseUntil)?.projection.application
+    }
+    static func inspect(_ payload: String, selection: String, identity: [String: String], leaseUntil: Int) throws -> String {
+        guard let request = try validated(payload, selection: selection, identity: identity, leaseUntil: leaseUntil) else { return "" }
+        let p = request.projection, pin = p.application
         let apps = NSRunningApplication.runningApplications(withBundleIdentifier: pin.bundleId)
         let state: String
         if apps.isEmpty { state = "not_running" }

@@ -78,6 +78,9 @@ enum GuestEnvironment {
     @Published var connected = false
     @Published var working = false
     @Published var selectedApplication = ""
+    @Published var canPrepareBrowser = false
+    @Published var browserProfile = ""
+    @Published var browserMessage = ""
     private var task: Task<Void, Never>?
     private var timeout: Task<Void, Never>?
     private var wire: GuestLinkWire?
@@ -88,6 +91,9 @@ enum GuestEnvironment {
     private var hostBoot = ""
     private var candidate = ""
     private var execution: GuestExecutionAuthority?
+    private var browserPin: GuestPinnedApplication?
+    private var browserPinUntil = 0
+    private var preparedBrowser: GuestBrowserProfiles.Prepared?
 
     func start() {
         guard !working else { return }
@@ -167,10 +173,20 @@ enum GuestEnvironment {
                         : "Companion connected. Inspection is not approved."
                     let readiness = try GuestApplicationReadiness.inspect(pulse["applicationPin"] ?? "", selection: candidate,
                         identity: host, leaseUntil: until)
+                    browserPin = try GuestApplicationReadiness.selectedPin(pulse["applicationPin"] ?? "", selection: candidate,
+                        identity: host, leaseUntil: until)
+                    if let data = pulse["applicationPin"]?.data(using: .utf8),
+                       let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let projection = raw["projection"] as? [String: Any],
+                       let end = projection["expiresAtMs"] as? Int { browserPinUntil = min(end, until) }
+                    else { browserPinUntil = 0 }
+                    canPrepareBrowser = browserPin.map { GuestBrowserProfiles.families[$0.bundleId] != nil } ?? false
+                    if let preparedBrowser, let browserPin, browserPin != preparedBrowser.application { clearBrowserProfile() }
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
-                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.2"])
+                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.2",
+                        "browserCandidate": try preparedBrowser.map { String(decoding: try JSONEncoder().encode($0.candidate), as: UTF8.self) } ?? ""])
                 }
             } catch {
                 if runID == own { message = "Connection ended or could not be verified. Install the signed companion in this guest’s Applications folder, then connect from the Josi app." }
@@ -180,6 +196,7 @@ enum GuestEnvironment {
                 wire?.interrupt(); wire = nil; timeout?.cancel(); timeout = nil
                 connected = false; working = false; pairing = false; comparison = ""; task = nil
                 candidate = ""; selectedApplication = ""
+                browserPin = nil; browserPinUntil = 0; canPrepareBrowser = false; clearBrowserProfile()
             }
         }
     }
@@ -198,6 +215,62 @@ enum GuestEnvironment {
         let oldExecution = execution; execution = nil; oldExecution?.stop()
         working = false; connected = false; pairing = false; comparison = ""; message = "Companion disconnected."
         candidate = ""; selectedApplication = ""
+        browserPin = nil; browserPinUntil = 0; canPrepareBrowser = false; clearBrowserProfile()
+    }
+    private func clearBrowserProfile() { preparedBrowser = nil; browserProfile = ""; browserMessage = "" }
+    func prepareBrowser() {
+        do {
+            try current()
+            guard NSApp.isActive, let pin = browserPin, browserPinUntil > Int(Date().timeIntervalSince1970 * 1000) else { throw GuestLinkError.expired }
+            let prepared = try GuestBrowserProfiles.prepare(pin)
+            try current()
+            guard browserPin == pin, browserPinUntil > Int(Date().timeIntervalSince1970 * 1000) else { throw GuestLinkError.expired }
+            preparedBrowser = prepared; browserProfile = prepared.candidate.label
+            browserMessage = "This profile is ready for registration in Josi on your Mac. Registration grants no automation access."
+        } catch { clearBrowserProfile(); browserMessage = "Register the selected browser in Josi first, then prepare its separate profile." }
+    }
+    func openPreparedBrowser() {
+        let own = runID
+        Task {
+            do {
+                try current()
+                guard NSApp.isActive, let prepared = preparedBrowser, browserPin == prepared.application,
+                      browserPinUntil > Int(Date().timeIntervalSince1970 * 1000) else { throw GuestLinkError.expired }
+                try await GuestBrowserProfiles.open(prepared)
+                guard runID == own else { return }
+                try current()
+                browserMessage = prepared.candidate.family == "firefox"
+                    ? "In Firefox, choose Load Temporary Add-on and select manifest.json from the extension folder. Development installs last until Firefox closes."
+                    : "In the browser, turn on Developer mode and choose Load unpacked, then select the extension folder."
+            } catch {
+                if runID == own { browserMessage = "Close the selected browser’s other windows and processes, refresh its registration if it changed, then try again." }
+            }
+        }
+    }
+    func revealBrowserExtension() {
+        do {
+            try current()
+            guard NSApp.isActive, let prepared = preparedBrowser else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([prepared.extensionFolder])
+        } catch { stop() }
+    }
+    func enableBrowserBridge() {
+        do {
+            try current()
+            guard NSApp.isActive, let prepared = preparedBrowser else { throw GuestLinkError.unavailable }
+            browserMessage = try GuestBrowserProfiles.enableBridge(prepared)
+                ? "The guest browser connection service is enabled. Server automation permissions and a current local approval are still required."
+                : "Allow Josi Companion in this guest’s Login Items settings, then enable the connection again."
+        } catch { browserMessage = "The guest browser connection could not be installed. Keep the signed Josi Companion in Applications and check its Login Items permission." }
+    }
+    func disableBrowserBridge() {
+        Task {
+            do {
+                guard NSApp.isActive else { return }
+                try await GuestBrowserProfiles.disableBridge()
+                browserMessage = "The guest browser connection service is disabled."
+            } catch { browserMessage = "The guest browser connection service could not be disabled. Check Login Items settings." }
+        }
     }
     func accessibility() {
         do {
@@ -232,6 +305,7 @@ enum GuestEnvironment {
                 try current()
                 candidate = String(decoding: try GuestLinkWire.encode(value), as: UTF8.self)
                 selectedApplication = value["label"] ?? ""
+                browserPin = nil; browserPinUntil = 0; canPrepareBrowser = false; clearBrowserProfile()
             } catch { message = "The selected app could not be shared through the current verified connection." }
         }
     }
@@ -296,6 +370,24 @@ enum GuestEnvironment {
                     }
                     Button("Choose App for Permissions…") { model.selectApplication() }
                     if !model.selectedApplication.isEmpty { Text("Shared for permission setup: " + model.selectedApplication).font(.caption) }
+                    if model.canPrepareBrowser {
+                        Divider()
+                        Text("Separate browser profile").font(.headline)
+                        Button("Prepare Browser Profile") { model.prepareBrowser() }
+                        if !model.browserProfile.isEmpty {
+                            Text(model.browserProfile).font(.caption)
+                            HStack {
+                                Button("Open Profile for Extension Setup") { model.openPreparedBrowser() }
+                                Button("Show Extension Folder") { model.revealBrowserExtension() }
+                            }
+                            HStack {
+                                Button("Enable Browser Connection") { model.enableBrowserBridge() }
+                                Button("Disable Connection") { model.disableBrowserBridge() }
+                                Button("Login Items…") { GuestBrowserProfiles.bridgeSettings() }
+                            }
+                        }
+                    }
+                    if !model.browserMessage.isEmpty { Text(model.browserMessage).font(.caption).foregroundStyle(.secondary) }
                 }
                 HStack {
                     Button("Connect to Josi") { model.start() }.disabled(model.working)
