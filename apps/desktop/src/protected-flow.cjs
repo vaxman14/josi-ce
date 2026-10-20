@@ -53,7 +53,7 @@ function createNativeProtectedFlow({ app, BrowserWindow, ipcMain, session, syste
     } finally { chunks.forEach(value => value.fill(0)); reader.releaseLock(); }
   }
   return Object.freeze({
-    available, cancel,
+    available, cancel, busy: () => !!flight,
     dispose() { disposed = true; cancel(); surface.dispose(); },
     async run(challengeId) {
       if (flight) return { status: 'unavailable', message: 'Another protected review is already open.' };

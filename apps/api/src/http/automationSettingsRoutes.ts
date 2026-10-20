@@ -12,6 +12,7 @@ import { loadStoredProvider, isExternalProvider, isLocalOnly, reviewConfiguredCa
 import { asyncRoute, param } from './async.js';
 import { requireSuperAdmin } from './authz.js';
 import { ProtectedChanges, ProtectedChangeError } from './protectedChanges.js';
+import { DeviceEnrollments } from './deviceEnrollments.js';
 
 interface Context { db: Db; masterKey?: LoadOptions | false; fetchImpl?: typeof fetch;
   resolve?: (hostname: string) => Promise<string[]>; codexRunner?: SpawnRunner; appUrl?: string }
@@ -36,8 +37,8 @@ function reference(value: unknown): VaultRecordReference {
   return { ...ref };
 }
 
-/** Administrator-owned drafts, model advice and the enrolled native review
- * flow. No model tool, first-device enrollment or execution grant bypass. */
+/** Administrator-owned drafts, model advice, native enrollment and protected
+ * review. No model tool or execution grant bypass. */
 export function automationSettingsRoutes(context: Context): Router {
   const r = Router(), db = context.db;
   r.use(requireSuperAdmin);
@@ -51,6 +52,7 @@ export function automationSettingsRoutes(context: Context): Router {
   const noDeviceMutation = { requireServerIdentity: unavailable, verifyFreshAdministrator: unavailable,
     verifyEnrollmentConsent: unavailable, verifyProtectedRevocation: unavailable, verifyHostProjection: unavailable };
   const protectedChanges = new ProtectedChanges(db, master, context.appUrl ?? '');
+  const enrollments = new DeviceEnrollments(db, master, context.appUrl ?? '');
   // Protected request failures must not reach the general DB-error logger:
   // a database error may include full rule/permission or projection contents.
   const nativeHandle = (fn: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
@@ -66,7 +68,8 @@ export function automationSettingsRoutes(context: Context): Router {
   r.get('/catalog', handle(async (_req, res) => res.json({
     guidance: CARDINAL_RULE_GUIDANCE, actions: CARDINAL_ACTIONS, scopeKeys: CARDINAL_SCOPE_KEYS,
     restrictions: ['deny', 'maximum_task_duration'], unavailable: ['deny', 'pause'],
-    capabilities: { modelReview: true, nativeReview: protectedChanges.enabled, permanentChanges: protectedChanges.enabled, deviceEnrollment: false, execution: false },
+    capabilities: { modelReview: true, nativeReview: protectedChanges.enabled, permanentChanges: protectedChanges.enabled,
+      deviceEnrollment: await enrollments.available(), execution: false },
   })));
   r.get('/', handle(async (req, res) => {
     const key = master(), records = vaultRecords(db, key);
@@ -172,6 +175,29 @@ export function automationSettingsRoutes(context: Context): Router {
     const parsed = validateAutomationPermissionPolicy(req.body?.policy);
     return res.json({ validation: parsed, permanent: false, executionEnabled: false });
   }));
+  r.get('/devices/enroll/pending', nativeHandle(async (req, res) => res.json({
+    requests: await enrollments.list(req.user!.id, req.user!.session_id),
+  })));
+  r.post('/devices/enroll/begin', nativeHandle(async (req, res) => res.status(201).json(
+    await enrollments.begin(req.user!.id, req.user!.session_id, req.body?.label),
+  )));
+  r.post('/devices/enroll/:id/prepare', nativeHandle(async (req, res) => res.json(await enrollments.prepare({
+    actor: req.user!.id, session: req.user!.session_id, id: param(req, 'id'), material: req.body?.material,
+    password: typeof req.body?.password === 'string' ? req.body.password : '',
+    mfaCode: typeof req.body?.mfaCode === 'string' ? req.body.mfaCode : undefined,
+  }))));
+  r.get('/devices/enroll/:id/status', nativeHandle(async (req, res) => res.json(
+    await enrollments.status(req.user!.id, req.user!.session_id, param(req, 'id')),
+  )));
+  r.get('/devices/enroll/:id/review', nativeHandle(async (req, res) => res.json(
+    await enrollments.review(req.user!.id, req.user!.session_id, param(req, 'id')),
+  )));
+  r.post('/devices/enroll/:id/commit', nativeHandle(async (req, res) => res.json(
+    await enrollments.commit(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.possessionSignature),
+  )));
+  r.post('/devices/enroll/:id/cancel', nativeHandle(async (req, res) => res.json(
+    enrollments.cancel(req.user!.id, req.user!.session_id, param(req, 'id')),
+  )));
   r.post('/protected/prepare', nativeHandle(async (req, res) => res.status(201).json(await protectedChanges.prepare({
     actor: req.user!.id, session: req.user!.session_id, deviceId: req.body?.deviceId, change: req.body?.change,
     password: typeof req.body?.password === 'string' ? req.body.password : '',

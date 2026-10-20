@@ -2,20 +2,27 @@
 const { randomUUID } = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { parseProtectedControlChallenge, protectedControlMessage } = require('@josi-ce/protocol');
+const { parseProtectedControlChallenge, protectedControlMessage, parseDeviceConsentChallenge, deviceConsentMessage } = require('@josi-ce/protocol');
 const { requireTrustedFrame } = require('./connection-policy.cjs');
 
-const channels = Object.freeze({ state: 'josi:protected-state', decide: 'josi:protected-decide', changed: 'josi:protected-state-changed' });
 const titles = Object.freeze({ 'cardinal.activate': 'Make this Cardinal Rule permanent',
-  'cardinal.retire': 'Retire this Cardinal Rule', 'automation.policy.replace': 'Change automation permissions' });
+  'cardinal.retire': 'Retire this Cardinal Rule', 'automation.policy.replace': 'Change automation permissions',
+  'device.enroll': 'Enroll this protected confirmation device' });
 
 /** Main-process ports for createProtectedConfirmationBroker. No renderer can
  * open a challenge, authenticate, access a key or sign. This is presentation
  * and local presence only; enrollment and the server's verification are separate. */
 function createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session, systemPreferences, parentWindow,
   authenticateNative = null,
+  mode = 'protected',
   platform = process.platform, clock = () => ({ wallMs: Date.now(), monotonicMs: performance.now() }) }) {
+  if (!['protected', 'enrollment'].includes(mode)) throw new Error('Invalid protected review mode.');
   if (authenticateNative !== null && typeof authenticateNative !== 'function') throw new Error('Invalid native authentication port.');
+  const prefix = mode === 'enrollment' ? 'josi:device-consent' : 'josi:protected';
+  const channels = { state: `${prefix}-state`, decide: `${prefix}-decide`, changed: `${prefix}-state-changed` };
+  const parse = mode === 'enrollment' ? parseDeviceConsentChallenge : parseProtectedControlChallenge;
+  const message = mode === 'enrollment' ? deviceConsentMessage : protectedControlMessage;
+  const title = value => titles[mode === 'enrollment' ? 'device.enroll' : value.purpose];
   const pageUrl = pathToFileURL(path.join(__dirname, 'protected-control.html')).href;
   const resourceUrls = new Set(['protected-control.html', 'protected-control.css', 'protected-control.js']
     .map(name => pathToFileURL(path.join(__dirname, name)).href));
@@ -34,7 +41,8 @@ function createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session, s
   }
   function state(entry) {
     const c = entry.challenge;
-    return { challengeId: c.id, title: titles[c.purpose], serverOrigin: c.serverOrigin, userId: c.userId, deviceId: c.deviceId,
+    return { challengeId: c.id, title: title(c), serverOrigin: c.serverOrigin, userId: c.userId, deviceId: c.deviceId,
+      deviceLabel: mode === 'enrollment' ? 'Device being enrolled' : 'Confirmation device',
       wording: c.presentation.wording, meaning: c.presentation.meaning, advisory: [...c.presentation.advisory],
       expiresAtMs: c.expiresAtMs, authenticationAvailable: available(), phase: entry.phase };
   }
@@ -75,7 +83,7 @@ function createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session, s
   return Object.freeze({
     present(value, signal, cancel) {
       if (disposed || active || authenticating || !signal || signal.aborted || typeof cancel !== 'function') return Promise.resolve(false);
-      const challenge = parseProtectedControlChallenge(value), start = clock(), parent = parentWindow();
+      const challenge = parse(value), start = clock(), parent = parentWindow();
       if (!challenge || !parent || parent.isDestroyed() || !Number.isSafeInteger(start.wallMs)
         || !Number.isFinite(start.monotonicMs) || start.monotonicMs < 0 || challenge.issuedAtMs > start.wallMs
         || challenge.expiresAtMs <= start.wallMs) return Promise.resolve(false);
@@ -87,12 +95,12 @@ function createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session, s
       const window = new BrowserWindow({ title: 'Josi — Protected confirmation', parent, modal: true,
         width: 760, height: 820, minWidth: 620, minHeight: 540, show: false, backgroundColor: '#10131a',
         fullscreenable: false, minimizable: false, autoHideMenuBar: true,
-        webPreferences: { preload: path.join(__dirname, 'protected-control-preload.cjs'), partition,
+        webPreferences: { preload: path.join(__dirname, mode === 'enrollment' ? 'device-consent-preload.cjs' : 'protected-control-preload.cjs'), partition,
           contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true,
           devTools: false, webviewTag: false, navigateOnDragDrop: false } });
       window.setMenu(null);
       return new Promise(resolve => {
-        const entry = { challenge, message: protectedControlMessage(challenge), signal, cancel, window, parent, session: isolated,
+        const entry = { challenge, message: message(challenge), signal, cancel, window, parent, session: isolated,
           phase: 'review', previous: start, deadline: start.monotonicMs + challenge.expiresAtMs - start.wallMs,
           resolve, rejectAuthentication: null, timer: null, abort: null };
         active = entry;
@@ -121,7 +129,7 @@ function createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session, s
     async authenticate(value, signal) {
       const entry = active;
       if (!entry || !live(entry) || signal !== entry.signal || entry.phase !== 'reviewed' || authenticating
-        || protectedControlMessage(value) !== entry.message || !entry.window.isFocused() || !available()) {
+        || message(value) !== entry.message || !entry.window.isFocused() || !available()) {
         if (entry) close(entry);
         throw new Error('Protected local authentication is unavailable.');
       }
@@ -135,7 +143,7 @@ function createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session, s
         // unwrapping/signing. A native port avoids a second, unrelated prompt.
         return authenticateNative
           ? authenticateNative(entry.challenge, entry.signal)
-          : systemPreferences.promptTouchID(titles[entry.challenge.purpose]);
+          : systemPreferences.promptTouchID(title(entry.challenge));
       }).finally(() => { authenticating = false; });
       try {
         const result = await Promise.race([prompt, cancelled]);
@@ -145,6 +153,11 @@ function createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session, s
         close(entry);
         throw new Error('Protected local authentication failed.');
       } finally { entry.rejectAuthentication = null; }
+    },
+    waitingForServer() {
+      const entry = active;
+      if (mode !== 'enrollment' || !entry || !live(entry) || entry.phase !== 'authenticated') return;
+      entry.phase = 'awaiting-server'; update(entry);
     },
     cancel() { if (active) close(active); },
     dispose() {

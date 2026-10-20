@@ -169,7 +169,8 @@ export class ProtectedDeviceStore {
     const command = enrollmentBinding(args, material);
     const presentation: ProtectedControlPresentation = { wording: `Enroll ${args.label} for protected administrator confirmations.`,
       meaning: `Server: ${material.identity.serverOrigin}\nServer ID: ${material.identity.serverId}\nAdministrator: ${material.identity.userId}\nDevice: ${material.identity.deviceId}\nSigning key SHA-256: ${fingerprints.signingFingerprint}\nHardware wrapping key SHA-256: ${fingerprints.wrappingFingerprint}\nThis enrolls a protected confirmation key. It does not grant browser, desktop, file, network or task access.`,
-      advisory: ['The Vault remains canonical. Local owner consent and fresh administrator verification are both required.'] };
+      advisory: ['The Vault remains canonical. Local owner consent and fresh administrator verification are both required.',
+        'Approve this request in the installed Josi app on the server Mac. For a remote target Mac, compare the complete device identity and both key fingerprints with its enrollment window before approving.'] };
     return { ...value, command, presentation };
   }
   async prepareEnrollment(args: ProtectedDeviceEnrollment) {

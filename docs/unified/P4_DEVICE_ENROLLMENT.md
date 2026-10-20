@@ -1,6 +1,6 @@
 # Canonical protected-device enrollment
 
-19 October 2026. Vault/native component and settings-inventory checkpoint. The first-device ceremony, authenticated host transport and production assembly remain unavailable.
+19 October 2026. Vault/native component and settings-inventory checkpoint. The subsequent [first-device consent assembly](P4_FIRST_DEVICE_CONSENT.md) connects the macOS enrollment ceremony and settings flow in source; signed installation and integrated acceptance remain open.
 
 Migration 0084 adds a protected-device record kind to the existing encrypted Vault record/history mechanism. It creates no separate credential store. One canonical registry retains at most 32 enrollment records, including revoked entries. Its contents, labels, identities and hardware-wrapped signing material are encrypted; ordinary audit/index rows retain only the existing opaque record/version/epoch metadata.
 
@@ -20,7 +20,7 @@ The protected-confirmation journal can resolve the enrolled public key inside it
 
 The Swift adapter now also authenticates and signs the narrow enrollment possession command. It uses the same one-pending-request, one-use authentication context, expiry, monotonic deadline, material binding and Secure Enclave unwrap as protected changes. Invalid signing attempts invalidate the pending context. The enclosing host must show the exact enrollment identity/fingerprints before requesting biometrics and independently establish first-device consent. No generic message signer or new renderer IPC is exposed.
 
-Server settings now show the current administrator's **Protected devices** inventory: label, server, enrollment/revocation state and expandable public-key fingerprints. Neither private material nor a projection is returned to this page. Enrollment/revocation controls and the capability flags remain unavailable until real native transport, first-device consent and proof adapters are connected. No device was actually enrolled by this checkpoint.
+Server settings show the current administrator's **Protected devices** inventory: label, server, enrollment/revocation state and expandable public-key fingerprints. Neither private material nor a projection is returned to this page. The later first-device assembly adds conditional enrollment/pending-review controls. Revocation controls and recovery remain open. No device was actually enrolled by these build checkpoints.
 
 Validation is limited to compilation/type/build checks. No live Vault migration, Keychain creation, biometric prompt, device enrollment, projection, revocation or functional test was performed. Hardware behavior, concurrent enrollment/revocation, first-device trust, recovery, session loss and projection disposal remain part of the integrated acceptance pass.
 

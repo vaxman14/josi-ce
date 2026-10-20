@@ -9,6 +9,11 @@ contextBridge.exposeInMainWorld('josiDesktop', {
     available: () => ipcRenderer.invoke('josi:protected-available'),
     review: (challengeId) => ipcRenderer.invoke('josi:protected-review', { challengeId }),
   },
+  deviceEnrollment: {
+    available: () => ipcRenderer.invoke('josi:device-enrollment-available'),
+    enroll: input => ipcRenderer.invoke('josi:device-enroll', input),
+    review: attemptId => ipcRenderer.invoke('josi:device-enrollment-review', { attemptId }),
+  },
   notify: (title, body, route) => ipcRenderer.invoke('josi:desktop-notify', { title, body, route }),
   confirmApproval: (summary) => ipcRenderer.invoke('josi:confirm-approval', { summary }),
   localWorkspace: {

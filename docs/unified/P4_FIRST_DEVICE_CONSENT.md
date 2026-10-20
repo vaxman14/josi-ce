@@ -1,6 +1,6 @@
 # First-device local consent
 
-Implementation checkpoint, 19 October 2026. Native helper and server transport compile; enrollment coordination and app review are still being connected. No installed service, Keychain, Vault or device enrollment was changed.
+Implementation checkpoint, 19 October 2026. Native helper, server coordination, app review and settings enrollment controls are connected in source. No installed service, Keychain, Vault or device enrollment was changed.
 
 First trust requires an independent approval in the installed Josi app on the server Mac. A target Mac may be local or remote; the server-side review must display the exact target identity and key fingerprints. This is a bootstrap route for the macOS server release, not a claim of hardware attestation or a completed Windows/Linux enrollment route. Existing remote clients keep their normal connections.
 
@@ -12,8 +12,20 @@ The attempt binds the complete presentation, server/account/device/enrollment id
 
 The control directory stores only ephemeral socket nodes. No key, canonical rule or consent secret is stored there. Canonical enrollment remains in the Vault and still requires fresh administrator verification, exact current authority and new-key possession. Enrollment grants no automation access.
 
+## Enrollment assembly
+
+The super-admin routes prepare a bounded, two-minute attempt and assign its new device/enrollment identities. Native main creates hardware-wrapped signing material, submits it directly to the authenticated server and keeps it out of renderer IPC. The server's canonical device store validates that material and produces the exact enrollment command/presentation; fresh password/MFA verification is bound to that command.
+
+The server starts its consent helper only after that verification. A request ID, public identity and fingerprints are not permission to enroll. The complete wrapped material and fresh-account capability remain transient until the guarded Vault commit; no temporary secret file or alternate rule store is created. A restart, timeout or failed attempt loses this transient work.
+
+For a local target, the installed app opens the matching server-local socket and reviews the same full presentation before its biometric enrollment-possession signature and local approval. For a remote target, the target app shows its enrollment window and waits. The same administrator signs in to the installed Josi app on the server Mac, opens **Pending device enrollments**, compares the target identity/fingerprints and confirms with Touch ID. The server-side review rechecks the current account, original fresh proof and Vault before sending local consent. The target then commits its key-possession signature; neither app receives the other's session or private signing key.
+
+The final guarded Vault transaction checks the current installation, epoch, registry, active super-admin credentials, exact command/presentation, one-use local consent and new-key possession. It saves the enrollment, audit and fresh-account receipt consumption together. Commit attempts are not replayed: a lost response is reported as uncertain and requires a current device-list inspection. Any failed attempt needs a new explicitly reviewed device identity; an existing wrapping root is never silently replaced. Cleanup of unused wrapping roots and recovery after all trusted devices are lost remain release work.
+
+The settings page exposes **Enroll this Mac**, pending requests and a server-Mac review action only when the server has the native helper/control directory and the client has the new bridge. The helper's code signature is verified again before every actual launch. Older clients retain their normal functionality. Ordinary browser pages cannot publish local consent, request a general signature or receive wrapped key projections. Existing protected rule controls can select the canonical enrolled device afterward.
+
 The component builder includes both helpers, and the unified builder copies them into the application. The lifecycle source provisions the service-owned control directory during fresh installation or upgrade. The consent helper needs Developer ID identity `com.heyjosi.ce.device-consent`, team `LRH75YR6QW`, hardened runtime and final bundle signing. The component artifacts built here are unsigned and were not executed.
 
-Build checks: Swift 6 optimized helper compilation for macOS 14.2/arm64 and the root TypeScript project build passed. Functional, signing, native peer, OS-presence, cancellation, simultaneous request, restart and remote enrollment acceptance remain deferred under the owner's build-first direction.
+Build checks: Swift 6 optimized helper compilation for macOS 14.2/arm64, root TypeScript build, desktop JavaScript syntax and web TypeScript/production bundle checks passed. Functional, signing, native peer, OS-presence, cancellation, simultaneous request, restart and remote enrollment acceptance remain deferred under the owner's build-first direction. This is not a signed or installed product acceptance result.
 
 Platform references: Apple's [code guest lookup](https://developer.apple.com/documentation/security/seccodecopyguestwithattributes(_:_:_:_:)) and [audit-token guest attribute](https://developer.apple.com/documentation/security/ksecguestattributeaudit); `SOL_LOCAL` / `LOCAL_PEERTOKEN` are declared in the installed macOS SDK's `sys/un.h`. No claimed PID is accepted by the consent listener.

@@ -4,7 +4,7 @@ let current = null, pending = false;
 function render(state) {
   current = state;
   for (const [id, value] of Object.entries({ title: state.title, server: state.serverOrigin, wording: state.wording,
-    meaning: state.meaning, admin: state.userId, device: state.deviceId })) byId(id).textContent = value;
+    meaning: state.meaning, admin: state.userId, device: state.deviceId, 'device-label': state.deviceLabel })) byId(id).textContent = value;
   byId('advisory').replaceChildren(...state.advisory.map(text => { const li = document.createElement('li'); li.textContent = text; return li; }));
   byId('advice-section').hidden = state.advisory.length === 0;
   const reviewing = state.phase === 'review' && state.authenticationAvailable;
@@ -13,6 +13,7 @@ function render(state) {
   byId('status').textContent = !state.authenticationAvailable ? 'Touch ID is unavailable on this Mac. This change cannot be confirmed here yet.'
     : state.phase === 'authenticating' ? 'Use the macOS Touch ID prompt to confirm. You can still cancel this change.'
     : state.phase === 'authenticated' ? 'Identity verified. Finishing this confirmation…'
+    : state.phase === 'awaiting-server' ? 'Waiting for approval on the server Mac. In Josi on that Mac, open Settings → Automation → Pending device enrollments with the same administrator account.'
     : state.phase === 'reviewed' ? 'Checking that this change is still current…'
     : 'Nothing is changed until your identity and this exact request are verified.';
 }

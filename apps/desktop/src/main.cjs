@@ -14,6 +14,7 @@ const { pathToFileURL } = require('node:url');
 const { assertAllowedJosiCeUrl, sameOrigin, internalRoute, requireTrustedFrame } = require('./connection-policy.cjs');
 const { LocalWorkspaceBroker } = require('./local-workspace.cjs');
 const { createNativeProtectedFlow } = require('./protected-flow.cjs');
+const { createDeviceEnrollmentFlow } = require('./device-enrollment.cjs');
 const { LocalServer } = require('./local-server.cjs');
 const { negotiateCapabilities } = require('@josi-ce/protocol');
 
@@ -34,16 +35,20 @@ let statusRequest = null;
 // A CE page may request review of an ID it freshly prepared on this server.
 // The main process obtains all authoritative content/proofs itself; no page
 // supplies a presentation, private material, signature or approval boolean.
-const protectedConfirmation = createNativeProtectedFlow({ app, BrowserWindow, ipcMain, session,
-  systemPreferences, parentWindow: () => window, connection: () => {
+function protectedConnection() {
     const generation = connectionGeneration, ownerWindow = window, origin = expectedOrigin, activeSession = currentSession;
     return { origin, session: activeSession, isCurrent: () => generation === connectionGeneration
       && !!ownerWindow && !ownerWindow.isDestroyed() && !!origin && sameOrigin(ownerWindow.webContents.getURL(), origin)
       && currentSession === activeSession };
-  } });
+}
+const protectedConfirmation = createNativeProtectedFlow({ app, BrowserWindow, ipcMain, session,
+  systemPreferences, parentWindow: () => window, connection: protectedConnection });
+const deviceEnrollment = createDeviceEnrollmentFlow({ app, BrowserWindow, ipcMain, session, dialog,
+  systemPreferences, parentWindow: () => window, connection: protectedConnection });
 
 function discardConnection(clearSession = true) {
   protectedConfirmation.cancel();
+  deviceEnrollment.cancel();
   workspace = null;
   if (clearSession && currentSession) {
     const previous = currentSession;
@@ -63,7 +68,7 @@ function replaceWindow(preload, partition, isolated) {
   });
   window = next;
   next.once('ready-to-show', () => { if (!next.isDestroyed()) next.show(); });
-  next.on('closed', () => { if (window === next) { protectedConfirmation.cancel(); window = null; } });
+  next.on('closed', () => { if (window === next) { protectedConfirmation.cancel(); deviceEnrollment.cancel(); window = null; } });
   if (previous) previous.destroy();
   return next;
 }
@@ -207,8 +212,20 @@ ipcMain.handle('josi:protected-available', event => { requireCe(event); return p
 ipcMain.handle('josi:protected-review', (event, input) => {
   requireCe(event);
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).join(',') !== 'challengeId'
-    || !window.isFocused()) throw new Error('Start the protected review from the current Josi window.');
+    || !window.isFocused() || deviceEnrollment.busy()) throw new Error('Start the protected review from the current Josi window after its current device enrollment ends.');
   return protectedConfirmation.run(input.challengeId);
+});
+ipcMain.handle('josi:device-enrollment-available', event => { requireCe(event); return deviceEnrollment.available(); });
+ipcMain.handle('josi:device-enroll', (event, input) => {
+  requireCe(event);
+  if (!window.isFocused() || protectedConfirmation.busy()) throw new Error('Finish the current protected review first.');
+  return deviceEnrollment.enroll(input);
+});
+ipcMain.handle('josi:device-enrollment-review', (event, input) => {
+  requireCe(event);
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).join(',') !== 'attemptId'
+    || !window.isFocused() || protectedConfirmation.busy()) throw new Error('Start this device review from the current Josi window.');
+  return deviceEnrollment.review(input.attemptId);
 });
 ipcMain.handle('josi:capabilities', async event => {
   requireCe(event);
@@ -280,4 +297,4 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('second-instance', () => { if (window && !window.isDestroyed()) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } else if (app.isReady()) showShell(); });
-app.on('before-quit', () => protectedConfirmation.dispose());
+app.on('before-quit', () => { protectedConfirmation.dispose(); deviceEnrollment.dispose(); });
