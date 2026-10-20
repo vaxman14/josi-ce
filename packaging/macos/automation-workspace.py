@@ -41,7 +41,7 @@ def private_directory(path, create=False):
     return info
 
 
-def parent_directories(home, create):
+def parent_directories(home, create, allow_missing=False):
     # An environment variable or request cannot redirect the managed root.
     target = home / 'Library/Application Support/Josi/Automation'
     for path in reversed((target, *target.parents)):
@@ -49,6 +49,8 @@ def parent_directories(home, create):
             continue
         if not path.exists() and create and (path == home or home in path.parents):
             path.mkdir(mode=0o700)
+        if allow_missing and not path.exists() and not path.is_symlink():
+            return target
         info = path.lstat()
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.getuid())
                 or stat.S_IMODE(info.st_mode) & 0o022 or path.resolve() != path):
@@ -191,6 +193,7 @@ class WorkspaceImage:
         if state in {'creating', 'attaching', 'detaching'}:
             state = 'needs_repair'
         return {'schemaVersion': 1, 'workspaceId': self.identifier,
+                'capacityGiB': record['capacityGiB'] if record else None,
                 'imageCreated': bool(record and record['imageCreated']),
                 'mounted': mounted is not None, 'volumeDevice': mounted.st_dev if mounted else None,
                 'state': state}
@@ -288,6 +291,16 @@ def main():
         identifier = value.get('workspaceId')
         if not isinstance(identifier, str) or str(uuid.UUID(identifier)) != identifier:
             raise Refusal('invalid_request')
+        if operation == 'status':
+            if os.getuid() == 0 or os.getuid() != os.geteuid():
+                raise Refusal('gui_owner_required')
+            home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+            target = parent_directories(home, False, allow_missing=True) / identifier
+            if not target.exists() and not target.is_symlink():
+                print(json.dumps({'ok': True, 'storage': {'schemaVersion': 1, 'workspaceId': identifier,
+                    'capacityGiB': None, 'imageCreated': False, 'mounted': False, 'volumeDevice': None,
+                    'state': 'uninitialized'}}, separators=(',', ':')))
+                return
         image = WorkspaceImage(identifier, create=operation == 'create')
         if operation == 'create':
             result = image.create(value['capacityGiB'], value['imagePassword'])

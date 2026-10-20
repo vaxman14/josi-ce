@@ -6,3 +6,4 @@ export * from './permissions.js';
 export * from './protectedControl.js';
 export * from './protectedHost.js';
 export * from './deviceConsent.js';
+export * from './workspaceStorage.js';

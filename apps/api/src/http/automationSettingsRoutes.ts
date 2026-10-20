@@ -13,6 +13,7 @@ import { asyncRoute, param } from './async.js';
 import { requireSuperAdmin } from './authz.js';
 import { ProtectedChanges, ProtectedChangeError } from './protectedChanges.js';
 import { DeviceEnrollments } from './deviceEnrollments.js';
+import { WorkspaceStorage } from './workspaceStorage.js';
 
 interface Context { db: Db; masterKey?: LoadOptions | false; fetchImpl?: typeof fetch;
   resolve?: (hostname: string) => Promise<string[]>; codexRunner?: SpawnRunner; appUrl?: string }
@@ -53,6 +54,7 @@ export function automationSettingsRoutes(context: Context): Router {
     verifyEnrollmentConsent: unavailable, verifyProtectedRevocation: unavailable, verifyHostProjection: unavailable };
   const protectedChanges = new ProtectedChanges(db, master, context.appUrl ?? '');
   const enrollments = new DeviceEnrollments(db, master, context.appUrl ?? '');
+  const storage = new WorkspaceStorage(db, master, context.appUrl ?? '');
   // Protected request failures must not reach the general DB-error logger:
   // a database error may include full rule/permission or projection contents.
   const nativeHandle = (fn: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
@@ -175,6 +177,16 @@ export function automationSettingsRoutes(context: Context): Router {
     const parsed = validateAutomationPermissionPolicy(req.body?.policy);
     return res.json({ validation: parsed, permanent: false, executionEnabled: false });
   }));
+  r.get('/storage', nativeHandle(async (req, res) => res.json(await storage.inventory(req.user!.id, req.user!.session_id))));
+  r.post('/storage/prepare', nativeHandle(async (req, res) => res.status(201).json(
+    await storage.prepare(req.user!.id, req.user!.session_id, req.body),
+  )));
+  r.post('/storage/:id/provision', nativeHandle(async (req, res) => res.json(
+    await storage.provision(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.proof),
+  )));
+  r.post('/storage/:id/cancel', nativeHandle(async (req, res) => res.json(
+    storage.cancel(req.user!.id, req.user!.session_id, param(req, 'id')),
+  )));
   r.get('/devices/enroll/pending', nativeHandle(async (req, res) => res.json({
     requests: await enrollments.list(req.user!.id, req.user!.session_id),
   })));

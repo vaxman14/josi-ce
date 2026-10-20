@@ -469,6 +469,7 @@ struct AutomationView: View {
                     if model.automation["workspaces"].list.isEmpty { Text("No automation desktop is connected to your account.") }
                 } else { Text("Automation control is not connected on this server yet. Your other Josi work can continue.").foregroundStyle(.secondary) }
                 if model.isAdministrator {
+                    NativeWorkspaceStorageView()
                     NativeAuthoritySettings()
                 }
                 Button("Refresh") { model.run { try await model.loadAutomation() } }.disabled(model.busy)

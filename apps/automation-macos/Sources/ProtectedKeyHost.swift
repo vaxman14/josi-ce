@@ -71,7 +71,7 @@ struct ProtectedKeyHost {
         switch operation {
         case "hello", "create", "cancel": additional = []
         case "authenticate", "sign": additional = ["message", "material"]
-        case "proveHost": additional = ["message"]
+        case "proveHost", "proveWorkspaceStorage": additional = ["message"]
         case "authenticateEnrollment", "signEnrollment": additional = ["commandDigest", "material", "attemptId", "expiresAtMs"]
         default: throw HostFailure.invalid
         }
@@ -144,6 +144,8 @@ struct ProtectedKeyHost {
                     result = ["authenticated": true]
                 case "proveHost":
                     result = ["signature": urlBase64(try await projection.proveHost(message: message(input.message)))]
+                case "proveWorkspaceStorage":
+                    result = ["signature": urlBase64(try await projection.proveWorkspaceStorage(message: message(input.message)))]
                 case "sign":
                     guard let material = input.material else { throw HostFailure.invalid }
                     result = ["signature": urlBase64(try projection.sign(message: message(input.message), material: material))]

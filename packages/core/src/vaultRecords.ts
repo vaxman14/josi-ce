@@ -12,8 +12,9 @@ import type { AutomationPermissionFacts } from './automationPermissions.js';
 import { AutomationReservationStore, type AutomationReservationProofPort } from './automationReservations.js';
 import { ProtectedConfirmationStore, type ProtectedConfirmationAuthority } from './protectedConfirmations.js';
 import { ProtectedDeviceStore, PROTECTED_DEVICES_RECORD_ID, type ProtectedDeviceAuthority } from './protectedDevices.js';
+import { WorkspaceStorageStore, WORKSPACE_STORAGE_RECORD_ID, type WorkspaceStorageAuthority } from './workspaceStorage.js';
 
-export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices';
+export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices' | 'workspace_storage';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
 export interface VaultRecordValue { reference: VaultRecordReference; kind: VaultRecordKind; value: Secret }
 export interface VaultAutomationPreview {
@@ -200,6 +201,26 @@ export class VaultRecordStore {
     }, authority);
   }
 
+  /** Workspace image credentials remain canonical encrypted Vault material.
+   * Generic reads/writes cannot export or replace this registry. */
+  workspaceStorage(authority: WorkspaceStorageAuthority): WorkspaceStorageStore {
+    return new WorkspaceStorageStore((actor, writing, work) => this.transaction(async tx => {
+      const state = await this.state(tx, actor, writing), key = await this.key(tx);
+      await this.requireOwnerAutomationVault(tx, actor);
+      const [previous] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [WORKSPACE_STORAGE_RECORD_ID]);
+      if (previous && previous.kind !== 'workspace_storage') throw new VaultRecordError('Workspace storage context did not match.');
+      let written = false;
+      return work({ tx, epoch: Number(state.authority_epoch), reconciliationRequired: state.authority_reconciliation_required,
+        read: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
+        write: async value => {
+          if (!writing || written || state.authority_reconciliation_required) throw new VaultRecordError('Workspace storage authority is unavailable.');
+          written = true;
+          return this.persist(tx, key, actor, 'workspace_storage', value, previous, WORKSPACE_STORAGE_RECORD_ID);
+        },
+      });
+    }), authority);
+  }
+
   /** Encrypted short-lived protected presentations. The optional existing TX
    * is used only by the policy mutation's human-proof callback so consumption,
    * fresh administrator proof, audit and policy all commit or roll back together. */
@@ -348,6 +369,7 @@ export class VaultRecordStore {
       const [head] = await tx.query<Head>(`select id,kind,version,digest from vault_record_heads where id=$1`, [args.recordId]);
       if (!head) throw new VaultRecordError('Protected Vault record not found');
       if (head.kind === 'protected_devices') throw new VaultRecordError('Protected-device material requires the authenticated host projection path.');
+      if (head.kind === 'workspace_storage') throw new VaultRecordError('Workspace credentials require the authenticated native storage path.');
       if (args.expected && (state.authority_reconciliation_required || !this.matches(args.expected, head, state))) {
         throw new VaultRecordConflictError('Protected Vault record changed or requires reconciliation');
       }

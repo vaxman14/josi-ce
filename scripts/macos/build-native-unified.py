@@ -179,7 +179,7 @@ def build(args):
     (runtime / 'app/packages/db/migrate.mjs').write_bytes((REPO / 'packages/db/migrate.mjs').read_bytes())
     native = runtime / 'app/native'; native.mkdir(exist_ok=True)
     for name in ('lifecycle.py', 'maintenance.py', 'workspace_access.py', 'pkg-driver.py', 'unified-postinstall.py',
-                 'Runtime.mjs', 'SubscriptionEnvironment.mjs', 'PythonRuntime.py'):
+                 'Runtime.mjs', 'SubscriptionEnvironment.mjs', 'PythonRuntime.py', 'automation-workspace.py'):
         (native / name).write_bytes((REPO / 'packaging/macos' / name).read_bytes())
     meta = json.loads((runtime / 'app/package.json').read_text()); meta['version'] = VERSION
     (runtime / 'app/package.json').write_text(json.dumps(meta, indent=2) + '\n')
