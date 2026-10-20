@@ -56,8 +56,12 @@ class LocalServer {
   }
   async packagedRuntime() {
     if (process.platform !== 'darwin' || !this.app.isPackaged
-      || path.resolve(this.app.getAppPath()) !== `${APPLICATION}/Contents/Resources/app`) return false;
-    try { return (await fs.stat(`${APPLICATION}/Contents/Resources/runtime/python/bin/python3.11`)).isFile(); }
+      || path.resolve(this.app.getAppPath()) !== `${APPLICATION}/Contents/Resources/app.asar`) return false;
+    try {
+      const archive = await fs.lstat(`${APPLICATION}/Contents/Resources/app.asar`);
+      if (!archive.isFile() || archive.isSymbolicLink() || archive.mode & 0o022) return false;
+      return (await fs.stat(`${APPLICATION}/Contents/Resources/runtime/python/bin/python3.11`)).isFile();
+    }
     catch { return false; }
   }
   async receipt() {

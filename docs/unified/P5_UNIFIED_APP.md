@@ -20,6 +20,8 @@ The builder only writes a fresh output folder and never installs or signs it. A 
 
 Desktop code sealing and protected helper packaging are described in the [P4/P5 native-host checkpoint](P4_P5_PROTECTED_HOST.md). The candidate contains no unpacked fallback app directory; protected signing still requires final trusted signing and app/server enrollment assembly.
 
+Local-server management now recognizes that sealed `app.asar` path. The earlier unpacked-path check would have disabled local install/start/repair controls in the new package. The archive must be a regular, non-symlink file without group/world write permission. The existing full app signature check and OS administrator confirmation still run before privileged operations. Source tracing confirms the unified installer helper skips the legacy server companion and does not offer or install a second client.
+
 The existing bootstrap file predates this checkpoint and is used only before the Vault/account setup is complete; this is not an additional secret authority. Its final lifecycle/revocation and production loopback service-identity verification remain part of the P2/P5 acceptance work.
 
 ## Still required
