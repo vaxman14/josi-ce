@@ -14,6 +14,7 @@ interface OpenSession {
   workspaceId: string; deadline: number; expires: number; leaseUntil: number; leaseDeadline: number; previousWall: number;
   label: string; consent: VaultRecordReference | null; consentGeneration: number;
   nativeGeneration: number | null; applicationSelection: { applicationId: string; installationRevision: number } | null;
+  browserSelection?: { profileId: string; family: 'chrome' | 'brave' | 'firefox' | 'safari' };
 }
 interface PendingConsent {
   owner: OpenSession; challenge: AutomationConsentChallenge; generation: number;
@@ -244,7 +245,8 @@ export class WorkspaceStorage {
         || ref.recordId !== c.consent.recordId || ref.version !== c.consent.version
         || ref.digest !== c.consent.digest || ref.epoch !== c.consent.epoch
         || s.applicationSelection?.applicationId !== c.applicationId
-        || s.applicationSelection.installationRevision !== c.installationRevision) {
+        || s.applicationSelection.installationRevision !== c.installationRevision
+        || c.browser && (c.browser.profileId !== s.browserSelection?.profileId || c.browser.family !== s.browserSelection.family)) {
         throw new ProtectedChangeError(409, 'This native automation connection changed.');
       }
     } });
@@ -369,6 +371,7 @@ export class WorkspaceStorage {
         return target;
       });
       this.openedLive(s);
+      if (s.applicationSelection?.applicationId !== input.applicationId) s.browserSelection = undefined;
       s.applicationSelection = { applicationId: input.applicationId as string, installationRevision: Number(input.installationRevision) };
       return { schemaVersion: 1, sessionId: s.id, identity, ...result, expiresAtMs: s.leaseUntil, executionEnabled: false };
     } catch (error) { this.opened.delete(id); throw error; }
@@ -402,6 +405,7 @@ export class WorkspaceStorage {
       });
       this.openedLive(s);
       // A leased canonical metadata projection, never an action permit.
+      s.browserSelection = { profileId: result.browser.profileId, family: result.browser.candidate.family };
       return { schemaVersion: 1, sessionId: s.id, identity, ...result, expiresAtMs: s.leaseUntil, executionEnabled: false };
     } catch (error) { this.opened.delete(id); throw error; }
   }
@@ -435,17 +439,24 @@ export class WorkspaceStorage {
       }
       let nativeControl = false;
       if (controlInput !== undefined && controlInput !== null) {
-        if (!consent || !s.consent || !exact(controlInput, ['generation', 'guestBootId', 'guestChannelId', 'applicationId', 'installationRevision'])
+        if (!consent || !s.consent || !(exact(controlInput, ['generation', 'guestBootId', 'guestChannelId', 'applicationId', 'installationRevision'])
+            || exact(controlInput, ['generation', 'guestBootId', 'guestChannelId', 'applicationId', 'installationRevision', 'browser']))
           || !Number.isSafeInteger(controlInput.generation) || Number(controlInput.generation) < 0
           || controlInput.guestBootId !== consent.guestBootId || controlInput.guestChannelId !== consent.guestChannelId
           || !uuid(controlInput.applicationId) || !Number.isSafeInteger(controlInput.installationRevision)
           || Number(controlInput.installationRevision) < 1 || s.nativeGeneration !== null && s.nativeGeneration !== controlInput.generation) {
           throw new ProtectedChangeError(409, 'This local automation connection needs a new approval.');
         }
+        const browser = controlInput.browser;
+        if (browser !== undefined && (!exact(browser, ['profileId', 'family']) || !uuid(browser.profileId)
+          || browser.profileId !== s.browserSelection?.profileId || browser.family !== s.browserSelection.family)) {
+          throw new ProtectedChangeError(409, 'The registered browser connection changed.');
+        }
         s.nativeGeneration = Number(controlInput.generation);
         await this.nativeTransport(actor, session).renew(actor, { identity: this.consentIdentity(s), storageSessionId: id,
           authSessionId: session, consent: s.consent, generation: s.nativeGeneration, leaseUntilMs: s.leaseUntil,
-          applicationId: controlInput.applicationId, installationRevision: Number(controlInput.installationRevision) });
+          applicationId: controlInput.applicationId, installationRevision: Number(controlInput.installationRevision),
+          ...(browser ? { browser: structuredClone(s.browserSelection!) } : {}) });
         nativeControl = true;
       }
       this.openedLive(s);

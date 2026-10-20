@@ -1,3 +1,4 @@
+import { exactBrowserOrigin } from './nativeBrowserObservation.js';
 import { randomUUID } from 'node:crypto';
 import type { AutomationAction, AutomationIdentity } from '@josi-ce/protocol';
 import type { Db } from './db.js';
@@ -29,6 +30,7 @@ export interface AutomationRequest {
 export interface AutomationObservationRequest {
   taskId: string; workspaceId: string; controlSessionId: string; surface: 'browser' | 'desktop';
   previousObservationId: string | null;
+  browserOrigin?: string;
 }
 export interface AutomationModelProjection {
   expectedPrimary: { providerId: string; model: string; configurationVersion: string };
@@ -277,10 +279,14 @@ export class AutomationRuntime {
    * references. It returns a receipt and opaque ID ONLY. Reading these pixels
    * or labels into a model remains a separate model.transmit projection. */
   async observe(context: AutomationExecutionContext, input: AutomationObservationRequest) {
-    if (!this.observationAvailable || !exact(input, ['taskId', 'workspaceId', 'controlSessionId', 'surface', 'previousObservationId'])
+    if (!this.observationAvailable || !exact(input, ['taskId', 'workspaceId', 'controlSessionId', 'surface', 'previousObservationId',
+      ...(input.browserOrigin !== undefined ? ['browserOrigin'] : [])])
       || ![input.taskId, input.workspaceId, input.controlSessionId].every(uuid)
       || input.previousObservationId !== null && !uuid(input.previousObservationId)
-      || !['browser', 'desktop'].includes(input.surface)) throw new AutomationRuntimeError('Choose a connected isolated workspace and its current control session.');
+      || !['browser', 'desktop'].includes(input.surface)
+      || (input.surface === 'browser' ? !exactBrowserOrigin(input.browserOrigin) : input.browserOrigin !== undefined)) {
+      throw new AutomationRuntimeError('Choose a connected isolated workspace and current control session. Browser inspection also needs an exact site origin.');
+    }
     const bound = Object.freeze(structuredClone(context)), request = Object.freeze(structuredClone(input));
     return this.perform(bound, request.taskId, request.workspaceId, true, cardinalContentDigest(request), null,
       async signal => {

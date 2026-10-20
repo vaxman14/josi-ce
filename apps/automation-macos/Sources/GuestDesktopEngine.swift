@@ -35,6 +35,8 @@ struct GuestDesktopCommand: Codable, Equatable {
         let configurationRevision: Int; let modelReference: Reference
     }
     let projection: Projection?
+    struct Browser: Codable, Equatable { let profileId: UUID; let family: String; let origin: String }
+    let browser: Browser?
 }
 
 struct GuestDesktopTarget: Codable, Equatable {

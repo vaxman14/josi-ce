@@ -22,7 +22,7 @@ APP_ID = 'com.heyjosi.ce.unified'
 APP_IDENTITY = 'Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
 INSTALLER_IDENTITY = 'Developer ID Installer: Socal Receptionist LLC (LRH75YR6QW)'
 KEYCHAIN = '/Users/roman/Library/Keychains/login.keychain-db'
-VERSION = '0.7.0-native.13'
+VERSION = '0.7.0-native.14'
 PROTECTED_ID = 'com.heyjosi.ce.protected-key'
 SIGNING_CERTIFICATE_SHA1 = '0bdc050694b41330db6833e440a4a8e6f466abdb'
 
@@ -150,7 +150,7 @@ def build(args):
     info = {
         'CFBundleIdentifier': APP_ID, 'CFBundleName': 'Josi', 'CFBundleDisplayName': 'Josi',
         'CFBundleExecutable': 'Josi', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.7.0',
-        'CFBundleVersion': '20261020.13', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
+        'CFBundleVersion': '20261020.14', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
         'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
         'JosiNativeClientProtocol': 1, 'JosiProtectedHostProtocol': 1,
@@ -249,13 +249,18 @@ def build(args):
     for name in ('Josi.icns', 'LICENSE', 'NOTICE'):
         copy_file(resources / name, companion / 'Contents/Resources' / name)
     (support / 'Read Me.txt').write_text(
-        'Josi development desktop support\\n\\n'
+        'Josi development desktop support\n\n'
         'Inside the separate desktop, copy Josi Companion.app to Applications and open it. '
-        'Choose Connect to Josi and compare the code in both native windows.\\n'
+        'Choose Connect to Josi and compare the code in both native windows.\n'
         'Locally approved app inspection and capture sharing require current server permissions. '
-        'Use the matching host and companion from this installer. Browser control and general input remain unavailable. '
-        'Do not install this companion on your personal desktop. It requires the isolated guest environment.\\n'
-        'This disk is read-only and contains no credentials or host files.\\n')
+        'Use the matching host and companion from this installer (desktop-command.3). '
+        'For Chrome or Brave, register the browser app, prepare its separate profile, register that profile, '
+        'then enable the connection and load the packaged extension through the browser’s extension setup page. '
+        'Inspection of the active tab needs an exact site grant; model sharing needs a separate transmission grant. '
+        'Browser input, Firefox/Safari inspection and general computer input remain unavailable. '
+        'Permitted network access and functional acceptance remain unfinished. '
+        'Do not install this companion on your personal desktop. It requires the isolated guest environment.\n'
+        'This disk is read-only and contains no credentials or host files.\n')
 
     uninstaller = output / 'payload/Applications/Uninstall Josi.app'
     ur = uninstaller / 'Contents/Resources'; ur.mkdir(parents=True)
@@ -338,7 +343,7 @@ def build(args):
         postinstall.write_text('#!/bin/sh\nset -eu\nexec "/Applications/Josi.app/Contents/Resources/runtime/python/bin/python3.11" -I -B "/Applications/Josi.app/Contents/Resources/runtime/app/native/unified-postinstall.py"\n')
         postinstall.chmod(0o755)
         run('build-component', ['/usr/bin/pkgbuild', '--root', output / 'payload', '--component-plist', components,
-                                '--identifier', APP_ID + '.pkg', '--version', '0.7.0.14', '--install-location', '/',
+                                '--identifier', APP_ID + '.pkg', '--version', '0.7.0.15', '--install-location', '/',
                                 '--scripts', scripts, output / 'application.pkg'])
         distribution = output / 'Distribution.xml'
         distribution.write_text('''<?xml version="1.0" encoding="utf-8"?>
@@ -349,7 +354,7 @@ def build(args):
  <allowed-os-versions><os-version min="14.2"/></allowed-os-versions>
  <choices-outline><line choice="josi"/></choices-outline>
  <choice id="josi" title="Josi" visible="false" start_selected="true" start_enabled="false"><pkg-ref id="com.heyjosi.ce.unified.pkg"/></choice>
- <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.14" onConclusion="none">application.pkg</pkg-ref>
+ <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.15" onConclusion="none">application.pkg</pkg-ref>
 </installer-gui-script>
 ''')
         package = output / 'Install Josi.pkg'

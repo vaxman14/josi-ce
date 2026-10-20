@@ -194,7 +194,7 @@ enum GuestEnvironment {
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
-                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.2",
+                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.3",
                         "browserCandidate": try preparedBrowser.map { String(decoding: try JSONEncoder().encode($0.candidate), as: UTF8.self) } ?? "",
                         "browserConnection": browserConnected ? "connected" : "waiting"])
                 }
@@ -254,6 +254,7 @@ enum GuestEnvironment {
                 })
             }
             try await browserSession?.renew(canonicalBrowser)
+            execution?.browserConnection(browserSession)
         } catch {
             if runID == own {
                 browserSession?.stop(); browserSession = nil; browserConnected = false
@@ -422,7 +423,7 @@ enum GuestEnvironment {
                             Text(model.browserRegistrationReady ? "Current Vault registration verified." : "Waiting for this profile’s Vault registration.")
                                 .font(.caption).foregroundStyle(.secondary)
                             if model.browserConnected {
-                                Text("Extension connected. Page access and input are not enabled.").font(.caption)
+                                Text("Extension connected. Inspection needs site and model permissions; input is unavailable.").font(.caption)
                             }
                             HStack {
                                 Button("Open Profile for Extension Setup") { model.openPreparedBrowser() }

@@ -8,6 +8,7 @@ import { seal, openSealed } from './sealing.js';
 import type { VaultRecordReference } from './vaultRecords.js';
 import type { AutomationDispatchContext } from './automationReservations.js';
 import { sameAutomationIdentity } from './automationTargets.js';
+import { browserDispatchTarget, exactBrowserOrigin, isBrowserApplication, type NativeBrowserPin } from './nativeBrowserObservation.js';
 
 export interface NativeApplicationPin {
   workspaceId: string; applicationId: string; installationRevision: number;
@@ -17,6 +18,7 @@ export interface NativeControlRenewal {
   identity: AutomationIdentity; storageSessionId: string; authSessionId: string;
   consent: VaultRecordReference; generation: number; leaseUntilMs: number;
   applicationId: string; installationRevision: number;
+  browser?: { profileId: string; family: NativeBrowserPin['family'] };
 }
 export interface NativeControlState {
   purpose: 'josi-native-control'; schemaVersion: 1;
@@ -24,6 +26,7 @@ export interface NativeControlState {
   consent: VaultRecordReference; permissions: VaultRecordReference; cardinal: VaultRecordReference;
   guestBootId: string; guestChannelId: string; generation: number;
   application: NativeApplicationPin; targetReference: VaultRecordReference;
+  browser?: NativeBrowserPin;
   issuedAtMs: number; leaseUntilMs: number; expiresAtMs: number;
   holder: { taskId: string; controlSessionId: string } | null; stopped: boolean;
 }
@@ -34,11 +37,13 @@ export interface NativeObservationPayload {
   storageSessionId: string; consent: VaultRecordReference; targetReference: VaultRecordReference;
   guestBootId: string; guestChannelId: string;
   application: NativeApplicationPin;
+  browser?: NativeBrowserPin;
   command: {
     id: string; workspaceId: string; appId: string; installationRevision: number;
     taskId: string; sessionId: string; generation: number; expiresAtMs: number;
     operation: 'observe' | 'project'; observationId: string | null; resultObservationId: string; maxOutputBytes: number;
     windowId?: string;
+    browser?: { profileId: string; family: NativeBrowserPin['family']; origin: string };
     projection?: { sourceReservationId: string; recipientPublicKey: string; configurationId: string;
       configurationRevision: 1; modelReference: VaultRecordReference };
   };
@@ -61,6 +66,9 @@ export interface NativeTransportContext {
   application(identity: AutomationIdentity, applicationId: string, revision: number): Promise<{
     application: NativeApplicationPin; reference: VaultRecordReference;
   }>;
+  browser(identity: AutomationIdentity, profileId: string, family: NativeBrowserPin['family'], applicationId: string): Promise<{
+    browser: NativeBrowserPin; reference: VaultRecordReference;
+  }>;
 }
 export type NativeTransportBackend = <T>(actor: string, work: (context: NativeTransportContext) => Promise<T>, transaction?: Db) => Promise<T>;
 export interface NativeTransportAuthority {
@@ -80,7 +88,8 @@ const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 function renewal(c: NativeControlState): NativeControlRenewal {
   return { identity: c.identity, storageSessionId: c.storageSessionId, authSessionId: c.authSessionId, consent: c.consent,
     generation: c.generation, leaseUntilMs: c.leaseUntilMs, applicationId: c.application.applicationId,
-    installationRevision: c.application.installationRevision };
+    installationRevision: c.application.installationRevision,
+    ...(c.browser ? { browser: { profileId: c.browser.profileId, family: c.browser.family } } : {}) };
 }
 interface ControlRow { storage_session_id: string; owner_user_id: string; workspace_id: string; value_enc: string }
 interface DeliveryRow { reservation_id: string; owner_user_id: string; storage_session_id: string; state: NativeDelivery['state']; expires_at: string; value_enc: string }
@@ -135,6 +144,12 @@ export class NativeAutomationTransport {
       await this.authority.requireNativeConnection(c.tx, request);
       const consent = await c.requireConsent(request.identity, request.storageSessionId, request.consent);
       const target = await c.application(request.identity, request.applicationId, request.installationRevision);
+      const browser = request.browser
+        ? await c.browser(request.identity, request.browser.profileId, request.browser.family, request.applicationId) : null;
+      if (browser && !sameRef(browser.reference, target.reference)
+        || isBrowserApplication(target.application.bundleId) && !browser) throw unavailable();
+      if (browser && (!['chrome', 'brave'].includes(browser.browser.family)
+        || browser.browser.distribution !== 'unpacked-development')) throw unavailable();
       const now = Date.now();
       if (request.leaseUntilMs <= now || request.leaseUntilMs > now + 10_000 || request.leaseUntilMs > consent.consentUntilMs) throw unavailable();
       const [row] = await c.tx.query<ControlRow>('select * from automation_native_controls where storage_session_id=$1 for update', [request.storageSessionId]);
@@ -151,6 +166,7 @@ export class NativeAutomationTransport {
         consent: request.consent, permissions: consent.permissions, cardinal: consent.cardinal,
         guestBootId: consent.guestBootId, guestChannelId: consent.guestChannelId, generation: request.generation,
         application: target.application, targetReference: target.reference, issuedAtMs: now, leaseUntilMs: request.leaseUntilMs,
+        ...(browser ? { browser: browser.browser } : {}),
         expiresAtMs: consent.consentUntilMs, holder: continuing ? previous!.holder : null, stopped: false };
       await this.writeControl(c, next);
       return next;
@@ -204,10 +220,11 @@ export class NativeAutomationTransport {
   private payload(context: AutomationDispatchContext): NativeObservationPayload {
     try {
       const p = JSON.parse(context.payload.reveal()) as NativeObservationPayload, command = p.command;
-      if (!exact(p, ['purpose', 'schemaVersion', 'storageSessionId', 'consent', 'targetReference', 'guestBootId', 'guestChannelId', 'application', 'command'])
+      if (!exact(p, ['purpose', 'schemaVersion', 'storageSessionId', 'consent', 'targetReference', 'guestBootId', 'guestChannelId', 'application', 'command', ...(p.browser ? ['browser'] : [])])
         || !['josi-native-observation', 'josi-native-projection'].includes(p.purpose) || p.schemaVersion !== 1
         || !exact(command, ['id', 'workspaceId', 'appId', 'installationRevision', 'taskId', 'sessionId', 'generation',
           'expiresAtMs', 'operation', 'observationId', 'resultObservationId', 'maxOutputBytes',
+          ...(p.browser ? ['browser'] : []),
           ...(p.purpose === 'josi-native-projection' ? ['windowId', 'projection'] : [])])
         || ![p.storageSessionId, p.guestBootId, p.guestChannelId, command.id, command.workspaceId, command.appId,
           command.taskId, command.sessionId, command.resultObservationId].every(uuid)
@@ -217,8 +234,16 @@ export class NativeAutomationTransport {
         || !integer(command.maxOutputBytes) || command.maxOutputBytes < 1024 || command.maxOutputBytes > 64 * 1024
         || context.effects.length !== 1 || context.effects[0].bytes !== command.maxOutputBytes) throw unavailable();
       const effect = context.effects[0], projection = command.projection;
+      if (p.browser && (!command.browser || !exact(command.browser, ['profileId', 'family', 'origin'])
+        || command.browser.profileId !== p.browser.profileId || command.browser.family !== p.browser.family
+        || !exactBrowserOrigin(command.browser.origin))) throw unavailable();
       if (command.operation === 'observe') {
-        if (effect.action !== 'computer.observe' || Object.keys(effect.target).sort().join(',') !== 'applicationId,installationRevision,kind'
+        if (p.browser) {
+          if (effect.action !== 'browser.observe' || effect.target.kind !== 'browser'
+            || !exact(effect.target, ['kind', 'browser', 'profileId', 'origin'])
+            || effect.target.browser !== p.browser.family || effect.target.profileId !== p.browser.profileId
+            || effect.target.origin !== command.browser!.origin) throw unavailable();
+        } else if (isBrowserApplication(p.application.bundleId) || effect.action !== 'computer.observe' || Object.keys(effect.target).sort().join(',') !== 'applicationId,installationRevision,kind'
           || effect.target.kind !== 'application' || effect.target.applicationId !== command.appId
           || effect.target.installationRevision !== command.installationRevision) throw unavailable();
       } else if (!projection || !exact(projection, ['sourceReservationId', 'recipientPublicKey', 'configurationId', 'configurationRevision', 'modelReference'])
@@ -234,6 +259,10 @@ export class NativeAutomationTransport {
   private async bound(c: NativeTransportContext, context: AutomationDispatchContext) {
     const p = this.payload(context), control = await this.control(c, context.identity.userId, p.storageSessionId);
     const target = await c.application(context.identity, p.command.appId, p.command.installationRevision);
+    const browser = p.browser ? await c.browser(context.identity, p.browser.profileId, p.browser.family, p.command.appId) : null;
+    if (JSON.stringify(p.browser ?? null) !== JSON.stringify(control.browser ?? null)
+      || browser && (!sameRef(browser.reference, p.targetReference) || JSON.stringify(browser.browser) !== JSON.stringify(p.browser))
+      || !browser && isBrowserApplication(p.application.bundleId)) throw unavailable();
     if (!sameAutomationIdentity(context.identity, control.identity) || !sameRef(p.consent, control.consent)
       || !sameRef(context.expected.permissions, control.permissions) || !sameRef(context.expected.cardinal, control.cardinal)
       || !sameRef(p.targetReference, target.reference) || JSON.stringify(p.application) !== JSON.stringify(target.application)
@@ -330,7 +359,9 @@ export class NativeAutomationTransport {
       // decoding and comparing them with the structured command.
       let target: unknown;
       try { target = JSON.parse(query.target); } catch { throw unavailable(); }
-      if (!exact(target, ['processId', 'launchedAt', 'bundleId', 'executablePath', 'windowTitle', 'bounds'])
+      if (p.browser) {
+        if (!browserDispatchTarget(target, p.browser, p.application.codeHash, p.command.browser!.origin)) throw unavailable();
+      } else if (!exact(target, ['processId', 'launchedAt', 'bundleId', 'executablePath', 'windowTitle', 'bounds'])
         || !integer(target.processId) || target.processId < 1 || target.processId > 0x7fffffff
         || typeof target.launchedAt !== 'number' || !Number.isFinite(target.launchedAt) || target.launchedAt < 0 || target.launchedAt > Date.now()
         || target.bundleId !== p.application.bundleId || target.windowTitle !== ''

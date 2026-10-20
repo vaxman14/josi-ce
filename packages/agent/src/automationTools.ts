@@ -29,6 +29,7 @@ export const AUTOMATION_CONTROL_TOOLS: ToolSpec[] = [
     description: 'Capture an initial or refreshed observation of the locally selected permitted application or browser in a connected isolated workspace. Use null for previous_observation_id on its first capture; a refresh names the preceding observation returned for this control session. Requires current control and read permission. Returns a saved capture receipt and opaque observation reference. The next request may receive a separate, short-lived capture only when the exact current model has transmission permission. Only that separately supplied content supports claims about what was visible; the receipt alone does not. Capture never grants input permission or proves a business outcome.',
     parameters: shape({ task_id: id, workspace_id: id, control_session_id: id,
       previous_observation_id: { anyOf: [id, { type: 'null' }] },
+      browser_origin: { anyOf: [{ type: 'string', maxLength: 2048, description: 'Exact browser site origin, for example https://example.com. Required for browser; null for desktop.' }, { type: 'null' }] },
       surface: { type: 'string', enum: ['browser', 'desktop'] } }) }, actionClass: 'automation_control' },
   { def: { name: 'browser_control',
     description: 'Request one bounded browser operation using a current native observation and opaque profile/tab/element references. Works only in a dedicated Josi workspace. Actual effects and current permissions are verified before dispatch. A lost or uncertain receipt is never permission to retry. Fill uses an authorized value reference, never a raw secret. An input receipt does not verify the user’s business outcome.',
@@ -92,12 +93,14 @@ export async function executeAutomationTool(ctx: ToolExecutionContext, name: str
     return ctx.automationRuntime.acquire(context, String(input.task_id), String(input.workspace_id));
   }
   if (name === 'observe_automation_workspace') {
-    if (Object.keys(input).sort().join(',') !== 'control_session_id,previous_observation_id,surface,task_id,workspace_id'
+    if (!['control_session_id,previous_observation_id,surface,task_id,workspace_id',
+      'browser_origin,control_session_id,previous_observation_id,surface,task_id,workspace_id'].includes(Object.keys(input).sort().join(','))
       || input.previous_observation_id !== null && typeof input.previous_observation_id !== 'string'
       || !['browser', 'desktop'].includes(String(input.surface))) throw new Error('Choose the current control session and exact observation surface.');
     const result = await ctx.automationRuntime.observe(context, { taskId: String(input.task_id), workspaceId: String(input.workspace_id),
       controlSessionId: String(input.control_session_id), surface: input.surface as 'browser' | 'desktop',
-      previousObservationId: input.previous_observation_id as string | null });
+      previousObservationId: input.previous_observation_id as string | null,
+      ...(input.browser_origin !== undefined && input.browser_origin !== null ? { browserOrigin: input.browser_origin as string } : {}) });
     return { ...result, observationId: result.status === 'succeeded' ? result.reservation.effectIdentity : null,
       contentProjected: false };
   }

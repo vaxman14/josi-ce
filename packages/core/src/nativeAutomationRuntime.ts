@@ -9,6 +9,7 @@ import { cardinalContentDigest } from './cardinalRules.js';
 import { AutomationRuntime, AutomationRuntimeRefusal, type PreparedAutomationOperation } from './automationRuntime.js';
 import type { AutomationReservationProofPort } from './automationReservations.js';
 import { NativeTransportError, type NativeObservationPayload } from './nativeAutomationTransport.js';
+import { isBrowserApplication } from './nativeBrowserObservation.js';
 
 /** Shared by API and worker. The database carries Vault-authenticated bounded
  * delivery records; only the live native API boundary can issue a permit.
@@ -38,7 +39,8 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
         try {
           const current = await transport.current(owner, report.identity.workspaceId);
           if (report.state !== 'offline' && current.leaseUntilMs > Date.now()) {
-            report.state = 'ready'; report.computerUse = true;
+            report.state = 'ready'; report.computerUse = !current.browser;
+            report.browserFamilies = current.browser ? [current.browser.family] : [];
           }
         } catch { /* Presence alone cannot advertise inspection. */ }
       }
@@ -52,8 +54,11 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
     },
     prepare: async () => { throw new AutomationRuntimeRefusal('unclassified_effect'); },
     prepareObservation: async (context, request, signal): Promise<PreparedAutomationOperation> => {
-      if (request.surface !== 'desktop' || signal.aborted) throw new AutomationRuntimeRefusal('device_offline');
+      if (signal.aborted) throw new AutomationRuntimeRefusal('device_offline');
       const c = await transport.current(context.ownerUserId, request.workspaceId);
+      if (request.surface === 'browser' ? !c.browser || !request.browserOrigin : c.browser || isBrowserApplication(c.application.bundleId)) {
+        throw new AutomationRuntimeRefusal('unclassified_effect');
+      }
       const expiresAtMs = c.leaseUntilMs - 500;
       if (signal.aborted || c.holder?.taskId !== request.taskId || c.holder.controlSessionId !== request.controlSessionId) {
         throw new AutomationRuntimeRefusal('local_consent_required');
@@ -63,13 +68,17 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
       const payload: NativeObservationPayload = { purpose: 'josi-native-observation', schemaVersion: 1,
         storageSessionId: c.storageSessionId, consent: c.consent, targetReference: c.targetReference,
         guestBootId: c.guestBootId, guestChannelId: c.guestChannelId, application: c.application,
+        ...(c.browser ? { browser: c.browser } : {}),
         command: { id: randomUUID(), workspaceId: c.identity.workspaceId, appId: c.application.applicationId,
           installationRevision: c.application.installationRevision, taskId: request.taskId, sessionId: request.controlSessionId,
           generation: c.generation, expiresAtMs, operation: 'observe', observationId: request.previousObservationId,
+          ...(c.browser ? { browser: { profileId: c.browser.profileId, family: c.browser.family, origin: request.browserOrigin! } } : {}),
           resultObservationId: observationId, maxOutputBytes: 64 * 1024 } };
       return { identity: c.identity, observationId, intentDigest: cardinalContentDigest(request), effects: [
-        { action: 'computer.observe', target: { kind: 'application', applicationId: c.application.applicationId,
-          installationRevision: c.application.installationRevision }, bytes: payload.command.maxOutputBytes },
+        c.browser ? { action: 'browser.observe', target: { kind: 'browser', browser: c.browser.family,
+          profileId: c.browser.profileId, origin: request.browserOrigin! }, bytes: payload.command.maxOutputBytes }
+          : { action: 'computer.observe', target: { kind: 'application', applicationId: c.application.applicationId,
+            installationRevision: c.application.installationRevision }, bytes: payload.command.maxOutputBytes },
       ], effectCoverage: 'verified', expected: { permissions: c.permissions, cardinal: c.cardinal }, expiresAtMs,
       payload: new Secret(JSON.stringify(payload)), dispatchProof: { phase: 'prepared', commandId: payload.command.id } };
     },

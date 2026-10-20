@@ -84,8 +84,15 @@ async function execute(command, epoch) {
     || !Number.isSafeInteger(command.expiresAt) || command.expiresAt <= Date.now()
     || command.expiresAt > workspace.expiresAt || seen.has(command.id) || seen.size >= 4096) throw new Error('invalid_command');
   seen.add(command.id);
-  if (!['tabs', 'observe', 'navigate', 'click', 'fill'].includes(command.kind)) throw new Error('unsupported_operation');
-  const tab = command.kind === 'tabs' ? null : await currentTab(command.tabId);
+  if (!['tabs', 'inspect', 'observe', 'navigate', 'click', 'fill'].includes(command.kind)) throw new Error('unsupported_operation');
+  let tab;
+  if (command.kind === 'inspect') {
+    if (webUrl(command.origin)?.origin !== command.origin || !workspace.origins.includes(command.origin)
+      || !Number.isSafeInteger(command.maxOutputBytes) || command.maxOutputBytes < 1024 || command.maxOutputBytes > 65536) throw new Error('invalid_inspection');
+    const active = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
+    if (active.length !== 1 || active[0].incognito || webUrl(active[0].url)?.origin !== command.origin) throw new Error('active_site_changed');
+    tab = await currentTab(active[0].id);
+  } else tab = command.kind === 'tabs' ? null : await currentTab(command.tabId);
   const url = command.kind === 'navigate' ? webUrl(command.url) : null;
   if (command.kind === 'navigate' && (!url || !workspace.origins.includes(url.origin))) throw new Error('origin_not_granted');
   // Exact command plus locally obtained tab identity goes back through the
@@ -101,27 +108,29 @@ async function execute(command, epoch) {
       .slice(0, 128).map(item => ({ tabId: item.id, windowId: item.windowId, title: String(item.title ?? '').slice(0, 200),
         url: item.url === 'about:blank' ? item.url : webUrl(item.url).origin + webUrl(item.url).pathname })) };
   }
-  const fresh = await currentTab(command.tabId);
+  const tabId = tab.id;
+  const fresh = await currentTab(tabId);
   if (fresh.url !== tab.url || fresh.windowId !== tab.windowId || !live() || epoch !== generation) throw new Error('target_changed');
   if (command.kind === 'navigate') {
     await browserApi.tabs.update(command.tabId, { url: url.href });
     return { kind: 'navigation_issued', verificationRequired: true };
   }
   if (tab.url === 'about:blank') throw new Error('page_not_ready');
-  if (command.kind === 'observe') await browserApi.scripting.executeScript({ target: { tabId: command.tabId, frameIds: [0] }, files: ['page-agent.js'] });
+  if (command.kind === 'observe' || command.kind === 'inspect') await browserApi.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['page-agent.js'] });
   if (!live() || epoch !== generation || Date.now() >= command.expiresAt) throw new Error('authority_changed');
-  const input = { version: 1, channel: 'josi-page', sessionId: workspace.sessionId, kind: command.kind,
+  const input = { version: 1, channel: 'josi-page', sessionId: workspace.sessionId, kind: command.kind === 'inspect' ? 'observe' : command.kind,
     observationId: command.observationId, elementId: command.elementId, expectedUrl: tab.url,
     expiresAt: command.expiresAt };
+  if (command.kind === 'inspect') input.maxOutputBytes = command.maxOutputBytes;
   if (command.kind === 'fill') {
     if (!uuid(command.valueReference) || authority.valueReference !== command.valueReference
       || typeof authority.value !== 'string' || authority.value.length > 16384) throw new Error('value_unavailable');
     input.value = authority.value; // Ephemeral projection; never persist/log/echo.
   }
   try {
-    const result = await browserApi.tabs.sendMessage(command.tabId, input, { frameId: 0 });
+    const result = await browserApi.tabs.sendMessage(tabId, input, { frameId: 0 });
     if (!result || !bounded(result) || result.kind === 'refused') throw new Error('invalid_page_response');
-    return result;
+    return command.kind === 'inspect' ? { ...result, tabId, windowId: tab.windowId } : result;
   } finally { delete input.value; delete authority.value; }
 }
 async function poll() {

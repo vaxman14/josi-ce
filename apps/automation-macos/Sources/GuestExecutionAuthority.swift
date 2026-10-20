@@ -36,6 +36,7 @@ private struct GuestExecutionConsent: Codable, Equatable {
     private var reservationIds = Set<String>()
     private var commandIds = Set<UUID>()
     private var watchdog: Task<Void, Never>?
+    private weak var browserSession: GuestBrowserSession?
 
     init(link: GuestLinkWire, host: [String: String], guestBoot: String, channel: String,
          current: @escaping @MainActor () throws -> Void, stopped: @escaping @MainActor () -> Void) {
@@ -111,11 +112,13 @@ private struct GuestExecutionConsent: Codable, Equatable {
         }
     }
     var approved: Bool { !ended && consent != nil }
+    func browserConnection(_ session: GuestBrowserSession?) { browserSession = session }
     func stop() {
         guard !ended else { return }
         ended = true; consent = nil; packet = nil; command = nil; pin = nil
         watchdog?.cancel(); watchdog = nil
         let current = engine; engine = nil; current?.dispose()
+        browserSession?.stop(); browserSession = nil
         onStop()
     }
     func stopped(reason: String) { stop() }
@@ -133,7 +136,7 @@ private struct GuestExecutionConsent: Codable, Equatable {
         let keys = Set((try JSONSerialization.jsonObject(with: Data(rawCommand.utf8)) as? [String: Any] ?? [:]).keys)
         let required: Set<String> = ["id", "workspaceId", "appId", "installationRevision", "taskId", "sessionId", "generation", "expiresAtMs", "operation"]
         guard required.isSubset(of: keys),
-              keys.isSubset(of: required.union(["observationId", "resultObservationId", "windowId", "maxOutputBytes", "elementId", "x", "y", "valueReference", "key", "projection"])),
+              keys.isSubset(of: required.union(["observationId", "resultObservationId", "windowId", "maxOutputBytes", "elementId", "x", "y", "valueReference", "key", "projection", "browser"])),
               [.observe, .project, .press, .focus, .click].contains(decoded.operation),
               decoded.workspaceId == c.identity.workspaceId, decoded.generation == c.generation,
               decoded.expiresAtMs <= c.leaseUntilMs, decoded.expiresAtMs > Int64(Date().timeIntervalSince1970 * 1000),
@@ -142,6 +145,17 @@ private struct GuestExecutionConsent: Codable, Equatable {
               incoming["consentDigest"] == c.authority.consent.digest, !commandIds.contains(decoded.id),
               commandIds.count < 4096 else { throw GuestDesktopError.denied }
         try Self.exact(rawPin, ["workspaceId", "applicationId", "installationRevision", "bundlePath", "bundleId", "signingId", "teamId", "codeHash"])
+        let browser = decoded.browser == nil ? nil : browserSession
+        if decoded.browser != nil {
+            guard let browser, [.observe, .project].contains(decoded.operation),
+                  let raw = try JSONSerialization.jsonObject(with: Data(rawCommand.utf8)) as? [String: Any],
+                  let scope = raw["browser"] as? [String: Any], Set(scope.keys) == ["profileId", "family", "origin"] else {
+                throw GuestDesktopError.denied
+            }
+            try browser.requireEpoch(c.authority.consent.epoch)
+        } else if ["com.google.Chrome", "com.brave.Browser", "org.mozilla.firefox", "com.apple.Safari"].contains(application.bundleId) {
+            throw GuestDesktopError.denied
+        }
         if let bound = taskBinding {
             guard bound.task == decoded.taskId, bound.session == decoded.sessionId else { throw GuestDesktopError.denied }
         } else {
@@ -158,7 +172,10 @@ private struct GuestExecutionConsent: Codable, Equatable {
                   let recipient = Data(base64Encoded: projection.recipientPublicKey), recipient.count == 32,
                   recipient.base64EncodedString() == projection.recipientPublicKey,
                   let resultId = decoded.resultObservationId, let windowId = decoded.windowId else { throw GuestDesktopError.denied }
-            var plain = try await engine.project(decoded)
+            var plain: Data
+            if let browser {
+                plain = try await browser.project(decoded) { [self] target in try await permit(decoded, targetJSON: target) }
+            } else { plain = try await engine.project(decoded) }
             defer { plain.resetBytes(in: 0..<plain.count) }
             try live()
             let ephemeral = Curve25519.KeyAgreement.PrivateKey()
@@ -182,6 +199,13 @@ private struct GuestExecutionConsent: Codable, Equatable {
                 "outcome": "projected", "verificationRequired": "yes", "observationId": resultId.uuidString.lowercased(),
                 "windowId": windowId.uuidString.lowercased()]
         }
+        if let browser {
+            let captured = try await browser.observe(decoded) { [self] target in try await permit(decoded, targetJSON: target) }
+            try live()
+            return ["kind": "result", "commandId": decoded.id.uuidString.lowercased(), "reservationId": reservation,
+                "outcome": "observed", "verificationRequired": "yes", "observationId": captured.0.uuidString.lowercased(),
+                "windowId": captured.1.uuidString.lowercased()]
+        }
         let receipt = await engine.execute(decoded)
         // Content stays in guest memory. A separate bounded projection with
         // exact model-transmission authority must precede any future export.
@@ -203,9 +227,6 @@ private struct GuestExecutionConsent: Codable, Equatable {
     }
     func authorize(_ value: GuestDesktopCommand, target: GuestDesktopTarget) async throws {
         try await requireCurrentGuest(value)
-        guard let packet, let consent, let rawCommand = packet["command"], let reservation = packet["reservationId"] else {
-            throw GuestDesktopError.denied
-        }
         // No labels, window title, screenshot or element content in the
         // authorization request. These fields identify the running target.
         let metadata = GuestDesktopTarget(processId: target.processId, launchedAt: target.launchedAt, bundleId: target.bundleId,
@@ -213,6 +234,13 @@ private struct GuestExecutionConsent: Codable, Equatable {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         encoder.dateEncodingStrategy = .millisecondsSince1970
         let targetJSON = String(decoding: try encoder.encode(metadata), as: UTF8.self)
+        try await permit(value, targetJSON: targetJSON)
+    }
+    private func permit(_ value: GuestDesktopCommand, targetJSON: String) async throws {
+        try await requireCurrentGuest(value)
+        guard let packet, let consent, let rawCommand = packet["command"], let reservation = packet["reservationId"] else {
+            throw GuestDesktopError.denied
+        }
         guard targetJSON.utf8.count <= 4096 else { throw GuestDesktopError.denied }
         let request = ["kind": "authorize", "commandId": value.id.uuidString.lowercased(), "reservationId": reservation,
                        "commandDigest": Self.digest(rawCommand), "target": targetJSON, "targetDigest": Self.digest(targetJSON),

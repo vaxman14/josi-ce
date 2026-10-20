@@ -45,7 +45,7 @@ struct NativeBrowserRegistrationView: View {
             if registry["browsers"].list.contains(where: { NativeBrowserTargetWire.matches(candidate, $0, identity: connection.identity) }) {
                 Text("This browser profile is registered. Choose its sites, operations and limits in Automation Settings.")
                     .font(.caption)
-                Text(connection.browserConnected ? "Extension connected. Browser actions are not enabled yet."
+                Text(connection.browserConnected ? "Extension connected. Inspection needs site and model permissions; input is unavailable."
                      : "Enable the browser connection in the guest, then open the Josi extension and choose Connect.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {

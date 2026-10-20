@@ -180,9 +180,11 @@ import Darwin
                     var body: Wire = ["presence": presence]
                     if localConsent != .null, let selection = try? guest?.controlSelection(), selection != .null,
                        case .object(var fields) = body {
-                        fields["control"] = ["generation": .number(Double(consentGeneration)),
+                        var control: [String: Wire] = ["generation": .number(Double(consentGeneration)),
                             "guestBootId": localConsent["guestBootId"], "guestChannelId": localConsent["guestChannelId"],
                             "applicationId": selection["applicationId"], "installationRevision": selection["installationRevision"]]
+                        if selection["browser"] != .null { control["browser"] = selection["browser"] }
+                        fields["control"] = .object(control)
                         body = .object(fields)
                     }
                     let next = try await api.request("/admin/automation/storage/sessions/\(id)/renew", method: "POST",

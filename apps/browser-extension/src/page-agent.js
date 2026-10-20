@@ -50,10 +50,24 @@
         const url = new URL(location.href);
         // No input values, cookies, storage, passwords or arbitrary JavaScript
         // evaluation. Text remains untrusted page data for the host to filter.
-        respond({ kind: 'observation', observationId: observation.id, revision, title: document.title.slice(0, 300),
+        const result = { kind: 'observation', observationId: observation.id, revision, title: document.title.slice(0, 300),
           url: url.origin + url.pathname, text: (document.body?.innerText ?? '').slice(0, 20000), elements: nodes,
           partial: candidates.length > nodes.length, framesUnsupported: document.querySelectorAll('iframe,frame').length > 0,
-          viewport: { width: innerWidth, height: innerHeight } });
+          viewport: { width: innerWidth, height: innerHeight } };
+        if (request.maxOutputBytes !== undefined) {
+          if (!Number.isSafeInteger(request.maxOutputBytes) || request.maxOutputBytes < 1024 || request.maxOutputBytes > 65536) throw new Error('invalid_budget');
+          const size = () => new TextEncoder().encode(JSON.stringify(result)).length;
+          // Leave room for native tab identifiers. Trimming is explicit in the
+          // result and never expands the server-reserved output ceiling.
+          while (size() > request.maxOutputBytes - 128 && result.elements.length) {
+            elements.delete(result.elements.pop().id); result.partial = true;
+          }
+          while (size() > request.maxOutputBytes - 128 && result.text.length) {
+            result.text = result.text.slice(0, Math.floor(result.text.length * 0.75)); result.partial = true;
+          }
+          if (size() > request.maxOutputBytes - 128) throw new Error('output_budget');
+        }
+        respond(result);
         return false;
       }
       if (!observation || request.observationId !== observation.id || observation.revision !== revision

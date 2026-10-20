@@ -36,6 +36,7 @@ import Darwin
     private var browserPin: Wire = .null
     private var browserTask: Task<Void, Never>?
     private var supportsBrowserProfiles = false
+    private var supportsBrowserInspection = false
     private var pairedBinding: Wire = .null
     private var sentConsent: Wire = .null
     private var execution: GuestPendingExecution?
@@ -144,12 +145,13 @@ import Darwin
                     || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate"])
                     || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate", "browserConnection"])),
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
-                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2"].contains(reply["executionProtocol"] ?? ""),
+                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2", "desktop-command.3"].contains(reply["executionProtocol"] ?? ""),
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
                       ["yes", "no"].contains(reply["screenCapture"] ?? ""), let candidate = reply["applicationCandidate"],
                       candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
                 accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
-                supportsExecution = reply["executionProtocol"] == "desktop-command.2"
+                supportsExecution = ["desktop-command.2", "desktop-command.3"].contains(reply["executionProtocol"] ?? "")
+                supportsBrowserInspection = reply["executionProtocol"] == "desktop-command.3"
                 supportsBrowserProfiles = reply["browserCandidate"] != nil
                 guard reply["browserConnection"] == nil || ["connected", "waiting"].contains(reply["browserConnection"] ?? "")
                 else { throw GuestLinkError.invalid }
@@ -203,6 +205,7 @@ import Darwin
         browserCandidate = .null
         browserConnected = false
         browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
+        supportsBrowserInspection = false
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         cancelExecution(); sentConsent = .null
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
@@ -317,8 +320,15 @@ import Darwin
         guard !closed, paired, supportsExecution, accessibility, applicationReadiness == "running",
               pin != .null, pin["candidateId"] == applicationCandidate["candidateId"]
         else { throw GuestLinkError.unavailable }
-        return ["applicationId": pin["projection"]["application"]["applicationId"],
-                "installationRevision": pin["projection"]["application"]["installationRevision"]]
+        let app = pin["projection"]["application"]
+        var result: [String: Wire] = ["applicationId": app["applicationId"], "installationRevision": app["installationRevision"]]
+        if ["com.google.Chrome", "com.brave.Browser", "org.mozilla.firefox", "com.apple.Safari"].contains(app["bundleId"].text) {
+            let browser = currentBrowserPin(until: until)["projection"]["browser"]
+            guard browserConnected, supportsBrowserInspection, browser != .null, browser["candidate"]["applicationId"] == app["applicationId"],
+                  ["chrome", "brave"].contains(browser["candidate"]["family"].text) else { throw GuestLinkError.unavailable }
+            result["browser"] = ["profileId": browser["profileId"], "family": browser["candidate"]["family"]]
+        }
+        return .object(result)
     }
     /// Internal server-bridge entry only. No renderer, tool or arbitrary JSON
     /// endpoint may supply the authorizer. There is deliberately no default.
@@ -371,6 +381,11 @@ import Darwin
               c["appId"] == request.packet["application"]["applicationId"],
               c["installationRevision"] == request.packet["application"]["installationRevision"]
         else { throw GuestLinkError.expired }
+        if c["browser"] != .null {
+            let browser = currentBrowserPin(until: until)["projection"]["browser"]
+            guard browserConnected, supportsBrowserInspection, browser != .null, c["browser"]["profileId"] == browser["profileId"],
+                  c["browser"]["family"] == browser["candidate"]["family"] else { throw GuestLinkError.expired }
+        }
     }
     private func runExecution(_ request: GuestPendingExecution, link: GuestLinkWire) async throws {
         try requireExecution(request)
@@ -390,11 +405,22 @@ import Darwin
                   let targetJSON = response["target"], targetJSON.utf8.count <= 4096,
                   response["targetDigest"] == ProtectedWire.digest(Data(targetJSON.utf8)) else { throw GuestLinkError.invalid }
             let target = try JSONDecoder().decode(Wire.self, from: Data(targetJSON.utf8))
-            guard ProtectedWire.exact(target, ["processId", "launchedAt", "bundleId", "executablePath", "windowTitle", "bounds"]),
+            if c["browser"] != .null {
+                let browser = currentBrowserPin(until: try current())["projection"]["browser"]
+                guard ProtectedWire.exact(target, ["kind", "profileId", "nativeProfileId", "family", "extensionId", "extensionDigest",
+                    "processId", "launchedAtMs", "codeHash", "origin"]),
+                      target["kind"] == .string("browser"), target["profileId"] == browser["profileId"],
+                      ["nativeProfileId", "family", "extensionId", "extensionDigest"].allSatisfy({ target[$0] == browser["candidate"][$0] }),
+                      target["codeHash"] == request.packet["application"]["codeHash"], target["origin"] == c["browser"]["origin"],
+                      ProtectedWire.integer(target["processId"], positive: true), ProtectedWire.integer(target["launchedAtMs"], positive: true)
+                else { throw GuestLinkError.invalid }
+            } else {
+                guard ProtectedWire.exact(target, ["processId", "launchedAt", "bundleId", "executablePath", "windowTitle", "bounds"]),
                   ProtectedWire.integer(target["processId"], positive: true), target["windowTitle"] == .string(""),
                   target["bundleId"] == request.packet["application"]["bundleId"],
                   target["executablePath"].text.hasPrefix(request.packet["application"]["bundlePath"].text + "/")
-            else { throw GuestLinkError.invalid }
+                else { throw GuestLinkError.invalid }
+            }
             let query = Wire.object(response.mapValues(Wire.string))
             let permit = try await request.authorize(query)
             try requireExecution(request)
@@ -461,6 +487,7 @@ import Darwin
         paired = false; pairedBinding = .null; supportsExecution = false; applicationCandidate = .null; browserCandidate = .null; state = "Companion disconnected."
         browserConnected = false
         browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
+        supportsBrowserInspection = false
     }
 }
 

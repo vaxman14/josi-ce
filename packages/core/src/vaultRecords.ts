@@ -16,6 +16,7 @@ import { WorkspaceStorageStore, WORKSPACE_STORAGE_RECORD_ID, type WorkspaceStora
 
 import { AutomationTargetStore, AUTOMATION_TARGETS_RECORD_ID, readAutomationTargetDocument, sameAutomationIdentity, type AutomationTargetAuthority } from './automationTargets.js';
 import { browserApplication, describeAutomationBrowser } from './automationBrowserTargets.js';
+import { nativeBrowserPin } from './nativeBrowserObservation.js';
 import { describeAutomationModel, requireCurrentAutomationModel } from './automationModelTargets.js';
 import { AutomationConsentStore, readAutomationConsentRecord, type AutomationConsentAuthority } from './automationConsent.js';
 import { NativeAutomationTransport, type NativeTransportAuthority } from './nativeAutomationTransport.js';
@@ -370,6 +371,14 @@ export class VaultRecordStore {
             verifyFreshAdministrator: async () => { throw new VaultRecordError('Use protected target administration.'); },
             verifyProtectedHuman: async () => { throw new VaultRecordError('Use protected target administration.'); },
           }).resolve(actor, identity, applicationId, revision, tx),
+          browser: async (identity, profileId, family, applicationId) => {
+            const resolved = await this.automationTargets({
+              verifyFreshAdministrator: async () => { throw new VaultRecordError('Use protected target administration.'); },
+              verifyProtectedHuman: async () => { throw new VaultRecordError('Use protected target administration.'); },
+            }).resolveBrowser(actor, identity, profileId, family, tx);
+            if (resolved.application.applicationId !== applicationId) throw new VaultRecordError('The browser installation changed.');
+            return { browser: nativeBrowserPin(resolved.target), reference: resolved.reference };
+          },
         });
       };
       return transaction ? run(transaction) : this.transaction(run);

@@ -125,6 +125,43 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
         let app = try await NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: pin.bundlePath), configuration: config)
         try GuestDesktopEngine.verifyApplication(app, pin: pin)
     }
+    static func requireInstalledExtension(_ prepared: Prepared) throws {
+        try GuestEnvironment.signedApplication()
+        let c = prepared.candidate
+        guard ["chrome", "brave"].contains(c.family), let profile = c.profilePath,
+              c.distribution == "unpacked-development" else { throw GuestDesktopError.unsupported }
+        let (entry, folder) = try extensionResources(c.family)
+        guard entry.digest == c.extensionDigest, entry.extensionId == c.extensionId,
+              entry.version == c.extensionVersion, folder == prepared.extensionFolder else { throw GuestLinkError.invalid }
+        let actual = try self.profile(workspace: prepared.application.workspaceId.uuidString.lowercased(), family: c.family)
+        guard actual.0 == c.nativeProfileId, actual.1 == profile else { throw GuestLinkError.invalid }
+        var found = false
+        for name in ["Preferences", "Secure Preferences"] {
+            let file = URL(fileURLWithPath: profile).appendingPathComponent("Default/" + name)
+            var info = stat()
+            if lstat(file.path, &info) != 0 {
+                if errno == ENOENT { continue }
+                throw GuestLinkError.invalid
+            }
+            guard info.st_uid == geteuid(), info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1 else { throw GuestLinkError.invalid }
+            var bytes = try readFile(file, maximum: 16 * 1024 * 1024)
+            defer { bytes.resetBytes(in: 0..<bytes.count) }
+            guard let preferences = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { throw GuestLinkError.invalid }
+            guard let extensions = preferences["extensions"] as? [String: Any],
+                  let settings = extensions["settings"] as? [String: Any],
+                  let installed = settings[c.extensionId] as? [String: Any] else { continue }
+            // Chromium stores unpacked paths as absolute locations. Reject a
+            // copied development ID loaded from any other directory.
+            guard installed["path"] as? String == folder.path,
+                  let location = installed["location"] as? NSNumber, CFGetTypeID(location) != CFBooleanGetTypeID(),
+                  location.intValue == 4, location.doubleValue == 4 else { throw GuestLinkError.invalid }
+            if let reasons = installed["disable_reasons"] {
+                guard let reasons = reasons as? [Any], reasons.isEmpty else { throw GuestLinkError.invalid }
+            }
+            found = true
+        }
+        guard found else { throw GuestLinkError.unavailable }
+    }
     private static func verifyApplication(_ pin: GuestPinnedApplication) throws {
         let url = URL(fileURLWithPath: pin.bundlePath)
         guard pin.codeHash.range(of: "^(?:[a-f0-9]{40}|[a-f0-9]{64})$", options: .regularExpression) != nil,
