@@ -1,0 +1,85 @@
+'use strict';
+(() => {
+  // A versioned marker in the extension's isolated world, never a DOM attribute
+  // or a window.postMessage bridge a website could invoke.
+  if (globalThis.__josiPageAgentV1) return;
+  globalThis.__josiPageAgentV1 = true;
+  const api = globalThis.browser ?? globalThis.chrome;
+  let session = null, stopped = false, observation = null, revision = 0;
+  let elements = new Map();
+  const mutations = new MutationObserver(() => { revision++; });
+  mutations.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  addEventListener('scroll', () => { revision++; }, true);
+  addEventListener('resize', () => { revision++; }, true);
+  addEventListener('input', () => { revision++; }, true);
+  addEventListener('change', () => { revision++; }, true);
+  const visible = element => {
+    const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+      && !element.closest('[hidden],[inert],[aria-hidden="true"]');
+  };
+  const name = element => String(element.getAttribute('aria-label') || element.labels?.[0]?.textContent
+    || element.getAttribute('title') || element.innerText || element.getAttribute('placeholder') || '').trim().slice(0, 300);
+  function stopForHuman(event) {
+    if (!event.isTrusted || !session) return;
+    stopped = true;
+    void api.runtime.sendMessage({ kind: 'local_input', sessionId: session }).catch(() => {});
+  }
+  addEventListener('pointerdown', stopForHuman, true);
+  addEventListener('keydown', stopForHuman, true);
+  api.runtime.onMessage.addListener((request, sender, respond) => {
+    if (sender.id !== api.runtime.id || sender.tab || request?.channel !== 'josi-page' || request.version !== 1) return false;
+    try {
+      if (request.expectedUrl !== location.href || !Number.isSafeInteger(request.expiresAt) || Date.now() >= request.expiresAt) throw new Error('stale_target');
+      if (request.sessionId !== session) { session = request.sessionId; stopped = false; observation = null; elements.clear(); }
+      if (stopped) throw new Error('human_control');
+      if (mutations.takeRecords().length) revision++;
+      if (request.kind === 'observe') {
+        elements = new Map(); const nodes = [];
+        const candidates = document.querySelectorAll('a[href],button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]');
+        for (const element of candidates) {
+          if (nodes.length >= 300) break;
+          if (!visible(element)) continue;
+          const id = crypto.randomUUID(), rect = element.getBoundingClientRect();
+          elements.set(id, { element, name: name(element), x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+          nodes.push({ id, role: element.getAttribute('role') || element.tagName.toLowerCase(), name: name(element),
+            inputType: element instanceof HTMLInputElement ? element.type : null, disabled: element.matches(':disabled,[aria-disabled="true"]'),
+            bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } });
+        }
+        observation = { id: crypto.randomUUID(), revision, url: location.href };
+        const url = new URL(location.href);
+        // No input values, cookies, storage, passwords or arbitrary JavaScript
+        // evaluation. Text remains untrusted page data for the host to filter.
+        respond({ kind: 'observation', observationId: observation.id, revision, title: document.title.slice(0, 300),
+          url: url.origin + url.pathname, text: (document.body?.innerText ?? '').slice(0, 20000), elements: nodes,
+          partial: candidates.length > nodes.length, framesUnsupported: document.querySelectorAll('iframe,frame').length > 0,
+          viewport: { width: innerWidth, height: innerHeight } });
+        return false;
+      }
+      if (!observation || request.observationId !== observation.id || observation.revision !== revision
+        || observation.url !== location.href) throw new Error('observation_changed');
+      const target = elements.get(request.elementId), element = target?.element;
+      if (!element?.isConnected || !visible(element) || element.matches(':disabled,[aria-disabled="true"]')) throw new Error('element_changed');
+      const rect = element.getBoundingClientRect();
+      if (name(element) !== target.name || ['x', 'y', 'width', 'height'].some(key => rect[key] !== target[key])) throw new Error('element_changed');
+      // Consume the observation before dispatch. Repeated messages cannot
+      // repeat an uncertain click, even if DOM mutation has not yet occurred.
+      observation = null; elements.clear();
+      if (request.kind === 'click') {
+        if (element instanceof HTMLInputElement && element.type === 'file') throw new Error('file_transfer_requires_broker');
+        element.click();
+      } else if (request.kind === 'fill') {
+        if (typeof request.value !== 'string' || request.value.length > 16384
+          || !(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+          || (element instanceof HTMLInputElement && !['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(element.type))
+          || element.readOnly) throw new Error('unsupported_field');
+        const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, request.value);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      } else throw new Error('unsupported_operation');
+      respond({ kind: 'input_issued', verificationRequired: true });
+    } catch { respond({ kind: 'refused', code: 'fresh_observation_or_permission_required' }); }
+    return false;
+  });
+})();
