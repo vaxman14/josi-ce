@@ -17,10 +17,13 @@ for (const family of ['chrome', 'brave', 'firefox', 'safari']) {
     ...(['chrome', 'brave'].includes(family) ? { key: identity.chromiumPublicKey } : {}),
     manifest_version: 3, name: 'Josi Workspace', version: '0.7.0',
     description: 'Browser control inside your separate Josi automation workspace.',
-    permissions: ['nativeMessaging', 'tabs', 'scripting'], host_permissions: ['https://*/*', 'http://*/*'],
+    permissions: ['nativeMessaging', 'tabs', 'scripting', 'declarativeNetRequest'], host_permissions: ['https://*/*', 'http://*/*'],
+    // The verified guest connection enables this before polling for work.
+    // A package mistakenly loaded into a personal profile changes no rules.
+    declarative_net_request: { rule_resources: [{ id: 'josi_network_boundary', enabled: false, path: 'network-rules.json' }] },
     action: { default_popup: 'popup.html', default_title: 'Josi workspace' },
     background: ['chrome', 'brave'].includes(family) ? { service_worker: 'background.js' }
-      : { scripts: ['config.js', 'native-channel.js', 'background.js'], persistent: false },
+      : { scripts: ['config.js', 'native-channel.js', 'network-guard.js', 'background.js'], persistent: false },
     content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'; base-uri 'none'" },
     ...(family === 'firefox' ? { browser_specific_settings: { gecko: { id: identity.firefoxId, strict_min_version: '128.0',
       data_collection_permissions: { required: ['websiteContent', 'websiteActivity', 'browsingActivity'] } } } } : {}),

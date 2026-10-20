@@ -1,5 +1,5 @@
 'use strict';
-if (typeof importScripts === 'function') importScripts('config.js', 'native-channel.js');
+if (typeof importScripts === 'function') importScripts('config.js', 'native-channel.js', 'network-guard.js');
 const browserApi = globalThis.browser ?? globalThis.chrome;
 const config = globalThis.JOSI_BROWSER_CONFIG;
 let nativeChannel = null;
@@ -68,7 +68,13 @@ async function connect() {
       stop('Profile identified. Confirm it in Josi Companion, then register it in Josi. No page access is enabled.');
       return;
     }
-    workspace = acceptSession(reply); seen.clear(); lastClock = Date.now();
+    const verified = acceptSession(reply);
+    // Apply restrictions only after the native helper confirms the isolated
+    // guest/profile. An accidental install in a personal browser must not
+    // rewrite that browser's request rules.
+    await globalThis.requireJosiNetworkBoundary(browserApi);
+    if (epoch !== generation) return;
+    workspace = verified; seen.clear(); lastClock = Date.now();
     status = workspace.origins.length ? 'Connected to an isolated Josi workspace.'
       : 'Connected. Waiting for a permitted task; page access is not enabled.';
     await browserApi.action.setBadgeText({ text: 'J' });
