@@ -5,6 +5,9 @@
       "path": "packages/protocol"
     },
     {
+      "path": "packages/automation"
+    },
+    {
       "path": "packages/core"
     },
     {
