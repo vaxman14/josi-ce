@@ -38,7 +38,19 @@ enum ProtectedAppTrust {
         let plist = try Data(contentsOf: contents.appendingPathComponent("Info.plist"))
         guard let info = try PropertyListSerialization.propertyList(from: plist, format: nil) as? [String: Any],
               info["CFBundleIdentifier"] as? String == "com.heyjosi.ce.unified",
-              info["JosiProtectedHostProtocol"] as? Int == 1,
+              info["JosiProtectedHostProtocol"] as? Int == 1 else { throw ProtectedAppTrustError.unavailable }
+        // The SwiftUI/AppKit client contains compiled application code.
+        // verify() still requires the exact installed path, Socal signature,
+        // sealed resources, hardened runtime and restricted entitlements.
+        if info["JosiNativeClientProtocol"] as? Int == 1 {
+            guard info["CFBundleExecutable"] as? String == "Josi",
+                  !FileManager.default.fileExists(atPath: contents.appendingPathComponent("Resources/app.asar").path),
+                  !FileManager.default.fileExists(atPath: contents.appendingPathComponent("Resources/app").path),
+                  !FileManager.default.fileExists(atPath: contents.appendingPathComponent("Frameworks/Electron Framework.framework").path)
+            else { throw ProtectedAppTrustError.unavailable }
+            return
+        }
+        guard
               let integrity = info["ElectronAsarIntegrity"] as? [String: [String: String]],
               integrity["Resources/app.asar"]?["algorithm"] == "SHA256",
               let hash = integrity["Resources/app.asar"]?["hash"], hash.count == 64,

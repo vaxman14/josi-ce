@@ -6,6 +6,8 @@ Josi will ship as one macOS app that includes the server and the user interface,
 
 This plan consolidates the product decisions for the next build. It does not mark any new capability as shipped. It supersedes older requirements for an optional, separately installed macOS client and an external-browser setup walkthrough in the new unified release. Historical implementation and acceptance records remain evidence of their original versions. Existing release security, data-preservation, signing, and physical acceptance requirements remain applicable.
 
+**20 October update:** The owner rejected the Electron implementation and authorized a native Mac replacement. The macOS interface now uses SwiftUI/AppKit, including connection, setup, chat and task controls. Reuse the CE server APIs and lifecycle, not the Electron renderer. Sign the app, approval helpers, uninstaller and installer with this Mac's **Socal Receptionist LLC (LRH75YR6QW)** identities. Verify the packaged signatures and actual launch before handing over another installer. Native feature parity and the remaining automation work are still required.
+
 ## Accepted scope
 
 | ID | Requirement |
@@ -36,7 +38,7 @@ The source baseline reviewed for planning is `a59529e` on `macos/native-distribu
 | Area | Foundation to reuse | Work still required |
 |---|---|---|
 | macOS packaging | `packaging/macos`, `scripts/macos`, isolated services, journals, backup/recovery, readiness | Replace the separate server-management and optional client product flow; preserve lifecycle guarantees. |
-| Client | Available desktop 0.6.5 source uses Electron and already displays CE in an app window | Verify source/version/provenance; bring the maintained CE client into the build; remove other backend paths; add startup/recovery and automation surfaces. |
+| Client | Existing CE APIs and desktop behavior provide the protocol and migration reference | Build the Mac interface in `apps/macos-native` with SwiftUI/AppKit; preserve remote CE support and port the remaining settings, approvals and automation controls. |
 | Setup | `apps/web/src/pages/Setup.tsx`, API setup state, one-use bootstrap handoff | Run the walkthrough in the app with a protected bootstrap exchange and recovery when the backend is unavailable. |
 | Vault | `packages/core/src/vault.ts`, `masterKey.ts`, `apps/api/src/http/vaultRoutes.ts` | Add versioned rule records, current-rule authorization, and an inventory/migration of every secret consumer. Existing sealed data is not automatically proof of vault-only authority. |
 | Permissions | `packages/core/src/pcControl.ts`, `apps/api/src/http/pcControlRoutes.ts`, `apps/web/src/pages/admin/PcControl.tsx` | Current routes are Windows-host/super-admin scoped, scopes include Windows paths, and the response reports no executor. Generalize identities and implement real local enforcement. |
@@ -48,7 +50,7 @@ The source baseline reviewed for planning is `a59529e` on `macos/native-distribu
 
 The unified app contains the CE interface, a startup/recovery shell, service management, and the local automation controller. Server services keep their restricted identities and independent lifecycle. Closing the interface leaves hosting services running; stopping the server is an explicit action. Chat remains usable while an automation desktop is stopped or being prepared.
 
-The shared client belongs in the maintained source/build graph, with its source origin, licenses, and packaging pinned. Prefer an `apps/desktop` workspace after verifying the existing client's provenance. Keep privileged installation/maintenance in a narrow native helper; rendering a server page must not grant that page unrestricted native authority.
+The native Mac client belongs in `apps/macos-native`, with its source, licenses and packaging in the maintained build graph. The earlier `apps/desktop` implementation remains a protocol reference and historical checkpoint. Keep privileged installation/maintenance in narrow native helpers. Server responses are data and cannot grant native authority.
 
 ```mermaid
 flowchart TD

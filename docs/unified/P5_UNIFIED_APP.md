@@ -1,5 +1,7 @@
 # P5 unified app — implementation checkpoint
 
+**Historical Electron checkpoint, superseded on 20 October 2026.** The owner requested a native Mac interface after the installed candidate would not open. Current work and signed native evidence are in [P5_NATIVE_APP.md](P5_NATIVE_APP.md). Do not use the unsigned Electron installer below as the current replacement.
+
 The owner directed build-first work with functional testing after feature implementation. This checkpoint records implementation, not a completed P5 gate. No installation, live server mutation, signing, notarization or release publication is performed.
 
 ## Implemented

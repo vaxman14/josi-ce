@@ -24,8 +24,8 @@ from lifecycle import Lifecycle,PRODUCT,ACCOUNTS,ROLES,LABEL,durable,plain,diagn
 import workspace_access
 
 ENV={'PATH':'/usr/bin:/bin:/usr/sbin:/sbin'}
-APP_IDS={'Josi Server.app':'com.heyjosi.ce.server','Josi CE.app':'com.romanvaxman.josi.desktop','Uninstall Josi.app':'com.heyjosi.ce.uninstaller'}
-RECEIPTS=('com.heyjosi.ce.server.pkg','com.heyjosi.ce.desktop.pkg')
+APP_IDS={'Josi.app':'com.heyjosi.ce.unified','Josi Server.app':'com.heyjosi.ce.server','Josi CE.app':'com.romanvaxman.josi.desktop','Uninstall Josi.app':'com.heyjosi.ce.uninstaller'}
+RECEIPTS=('com.heyjosi.ce.unified.pkg','com.heyjosi.ce.server.pkg','com.heyjosi.ce.desktop.pkg')
 APPLE_SUPPORT_PATHS={'/usr/sbin/distnoted','/usr/libexec/containermanagerd'}
 
 class AccountRemovalPermissionError(PermissionError):pass
@@ -85,7 +85,7 @@ def remove(path):
     finally:os.close(fd)
 
 def profile_paths(home):
-    base=home/'Library';names=('josi-desktop','Josi CE','com.heyjosi.ce.server','com.romanvaxman.josi.desktop')
+    base=home/'Library';names=('josi-desktop','Josi CE','com.heyjosi.ce.unified','com.heyjosi.ce.server','com.romanvaxman.josi.desktop')
     paths=[base/section/name for section in ('Application Support','Caches','HTTPStorages','WebKit','Logs') for name in names]
     paths += [base/'Preferences'/(name+'.plist') for name in ('com.heyjosi.ce.server','com.romanvaxman.josi.desktop')]
     paths += [base/'Saved Application State'/(name+'.savedState') for name in ('com.heyjosi.ce.server','com.romanvaxman.josi.desktop')]

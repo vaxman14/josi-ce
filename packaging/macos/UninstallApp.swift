@@ -44,7 +44,7 @@ import Darwin
     }
     @objc func updateChoice() {
         detail.stringValue = choice.indexOfSelectedItem == 0
-            ? "Removes Josi Server, the desktop client and automatic startup. Your chats, attachments, settings and recovery copies remain for reinstalling. Folder access added by Josi is disconnected."
+            ? "Removes Josi, previous server/client apps and automatic startup. Your chats, attachments, settings and recovery copies remain for reinstalling. Folder access added by Josi is disconnected."
             : "Permanently removes Josi apps, chats, attachments, settings, saved Josi sign-ins, recovery copies, background services and local caches. Connected workspace files are kept."
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { !busy }
@@ -72,12 +72,12 @@ import Darwin
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         busy = true;button.isEnabled = false;choice.isEnabled = false;spinner.startAnimation(nil);operation = UUID().uuidString
         progress.stringValue = "Closing Josi windows…"
-        for identifier in ["com.heyjosi.ce.server","com.romanvaxman.josi.desktop"] {
+        for identifier in ["com.heyjosi.ce.unified","com.heyjosi.ce.server","com.romanvaxman.josi.desktop"] {
             for app in NSRunningApplication.runningApplications(withBundleIdentifier:identifier) { app.terminate() }
         }
         DispatchQueue.main.asyncAfter(deadline:.now()+2) {
             guard self.busy else { return }
-            for identifier in ["com.heyjosi.ce.server","com.romanvaxman.josi.desktop"] {
+            for identifier in ["com.heyjosi.ce.unified","com.heyjosi.ce.server","com.romanvaxman.josi.desktop"] {
                 for app in NSRunningApplication.runningApplications(withBundleIdentifier:identifier) { app.forceTerminate() }
             }
         }
