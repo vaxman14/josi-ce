@@ -16,7 +16,7 @@ This is an integrated P9/P10/P11 checkpoint, not completed acceptance. The owner
 
 ## Remaining implementation
 
-Automatic model continuation, original-step effect identity and owner steering are now connected in the [continuation checkpoint](P9_CONTINUATION.md). Controlled plan revisions/dependencies, artifact/browser/desktop outcome verifiers, configurable budgets and broader recovery, richer evidence viewing, mobile/Telegram delivery integration, and live watching/takeover remain open.
+Automatic continuation, original-step effect identity, owner steering, retained plan revisions/dependencies and independent-step progress are connected in the [continuation checkpoint](P9_CONTINUATION.md). The [Telegram checkpoint](P11_TELEGRAM_PROGRESS.md) connects original-message goal ownership and one updating checklist in the originating chat. Artifact/browser/desktop outcome verifiers, configurable budgets and broader recovery, richer evidence viewing, broader channel/mobile notifications, and live watching/takeover remain open.
 
 Goal pause/cancel currently stops goal bookkeeping/continuation; already-dispatched legacy task effects can still finish. The UI says so. Binding those controls to P4/P7/P8 dispatch cancellation/reconciliation is required before presenting them as an automation emergency stop.
 

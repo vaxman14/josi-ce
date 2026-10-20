@@ -21,7 +21,7 @@ export const TELEGRAM_API_ORIGIN = 'https://api.telegram.org';
 
 export type TelegramErrorCategory =
   | 'unauthorized' | 'blocked_by_user' | 'chat_not_found' | 'rate_limited'
-  | 'network' | 'too_large' | 'malformed' | 'unknown';
+  | 'network' | 'too_large' | 'malformed' | 'not_modified' | 'unknown';
 
 export class TelegramApiError extends Error {
   constructor(
@@ -106,17 +106,17 @@ export class TelegramBotApi {
     } catch (err) {
       // Includes the abort. Never carries the cause through: a fetch error
       // message contains the URL, and the URL contains the token.
-      throw new TelegramApiError('network', 'Telegram could not be reached.');
-    } finally {
       clearTimeout(timer);
+      throw new TelegramApiError('network', 'Telegram could not be reached.');
     }
 
     let payload: TelegramEnvelope;
     try {
       payload = (await res.json()) as TelegramEnvelope;
     } catch {
+      if (controller.signal.aborted) throw new TelegramApiError('network', 'Telegram did not finish its response in time.');
       throw new TelegramApiError('malformed', 'Telegram sent a response Josi could not read.');
-    }
+    } finally { clearTimeout(timer); }
 
     if (res.ok && payload?.ok === true) return payload.result as T;
     // The ENVELOPE's error_code wins over the HTTP status.
@@ -152,6 +152,15 @@ export class TelegramBotApi {
       // A link preview is an outbound request made by Telegram's servers on
       // behalf of the content of somebody's private conversation. Off.
       link_preview_options: { is_disabled: args.disableWebPagePreview !== false },
+    });
+  }
+
+  /** Edit one known bot message. Callers retain its authenticated destination
+   * and receipt; an arbitrary renderer-supplied message ID is not accepted. */
+  async editMessageText(args: { chatId: number; messageId: number; text: string }): Promise<{ message_id: number }> {
+    return this.#call<{ message_id: number }>('editMessageText', {
+      chat_id: args.chatId, message_id: args.messageId, text: args.text,
+      link_preview_options: { is_disabled: true },
     });
   }
 
@@ -282,6 +291,9 @@ export function categorise(status: number, payload: TelegramEnvelope | null): Te
     return new TelegramApiError('unauthorized', 'Telegram rejected the bot token.');
   }
   if (status === 400) {
+    if (description.includes('message is not modified')) {
+      return new TelegramApiError('not_modified', 'The Telegram message already has this content.');
+    }
     if (description.includes('chat not found')) {
       return new TelegramApiError('chat_not_found', 'That Telegram chat no longer exists.');
     }

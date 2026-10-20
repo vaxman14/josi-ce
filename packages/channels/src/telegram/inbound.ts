@@ -18,7 +18,7 @@
 // whoever sent it, and it is used for exactly two things — a display handle and
 // an audit note — neither of which is a permission.
 import {
-  LIMITS, addMessage, appendEvent, consume, createThread, listMessages, markActionsPresented, recordExchange,
+  LIMITS, addMessage, appendEvent, consume, createThread, listMessages, markActionsPresented, json,
   type Db,
 } from '@josi-ce/core';
 import { timingSafeEqual } from 'node:crypto';
@@ -36,7 +36,7 @@ export interface InboundDeps {
   /** Runs one assistant turn for a user. Injected so this module does not
    * depend on the agent package, and so a routing test needs no model. */
   runTurn: (args: {
-    userId: string; threadId: string; inbound: string;
+    userId: string; threadId: string; inbound: string; inboundMessageId: string;
   }) => Promise<{ reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }>;
     retry?: object; mediaRequest?: object; mediaResult?: object }>;
   /** M41's disclosure, read from the mail policy so the wording an operator
@@ -45,6 +45,7 @@ export interface InboundDeps {
   attachments: { enabled: boolean; maxBytes: number };
   /** The bot's own username, for the linking instructions. */
   botUsername: string | null;
+  botId?: string | null;
 }
 
 export type InboundOutcome =
@@ -274,14 +275,17 @@ export async function handleUpdate(
   // ---- the turn ----------------------------------------------------------
   const threadId = await threadFor(db, link);
   await db.query(`update telegram_links set last_inbound_at = now() where id = $1`, [link.id]);
+  // Persist the real request before model work, so owned goals and their
+  // original-step receipts have the same identity as web/native turns.
+  const inbound = await addMessage(db, { threadId, direction: 'in', body: text, channel: 'telegram',
+    meta: { telegram_link_id: link.id, telegram_bot_id: deps.botId ?? null } });
 
   let result: { reply: string; refusal?: { message: string }; actions?: Array<{ tool: string; result: unknown }>;
     retry?: unknown; mediaRequest?: object; mediaResult?: object };
   try {
-    result = await deps.runTurn({ userId: link.user_id, threadId, inbound: text });
+    result = await deps.runTurn({ userId: link.user_id, threadId, inbound: text, inboundMessageId: inbound.id });
   } catch (err) {
     console.error('telegram turn failed', (err as Error).message);
-    await addMessage(db, { threadId, direction: 'in', body: text, channel: 'telegram' });
     await deps.send({
       chatId, kind: 'refusal',
       text: 'Something went wrong on the Josi side. Nothing was lost — try again in a moment.',
@@ -292,7 +296,6 @@ export async function handleUpdate(
   if (result.refusal) {
     // Recorded so the conversation is not missing what the person said, and
     // relayed verbatim. A refusal is never dressed up as an answer.
-    await addMessage(db, { threadId, direction: 'in', body: text, channel: 'telegram' });
     await deps.send({ chatId, kind: 'refusal', text: result.refusal.message });
     return finish('refused');
   }
@@ -302,21 +305,18 @@ export async function handleUpdate(
   if(actionState?.domain==='email'||actionState?.domain==='calendar')outboundMeta.action_status_domain=actionState.domain;
   if(result.retry)outboundMeta.retry=result.retry;
   if(result.mediaResult)outboundMeta.media_result=result.mediaResult;
-  const exchange = await recordExchange(db, {
-    ownerUserId: link.user_id,
-    threadId,
-    channel: 'telegram',
-    inbound: text,
-    reply: result.reply,
-    inboundMeta: result.mediaRequest ? { media_request: result.mediaRequest } : undefined,
-    outboundMeta: Object.keys(outboundMeta).length ? outboundMeta : undefined,
-  });
+  if (result.mediaRequest) await db.query('update messages set meta=meta||$2 where id=$1',
+    [inbound.id, json({ media_request: result.mediaRequest })]);
+  const outbound = await addMessage(db, { threadId, direction: 'out', body: result.reply, channel: 'telegram',
+    meta: Object.keys(outboundMeta).length ? outboundMeta : undefined });
+  await appendEvent(db, { actorUserId: link.user_id, actor: 'user', kind: 'thread.exchange',
+    subjectType: 'thread', subjectId: threadId, payload: { channel: 'telegram', inboundChars: text.length, replyChars: result.reply.length } });
   const presentedTaskIds = (result.actions ?? []).map((action) => action.result)
     .filter((value): value is { state: string; task_id: string } => !!value && typeof value === 'object'
       && ['collecting', 'prepared'].includes(String((value as { state?: unknown }).state))
       && typeof (value as { task_id?: unknown }).task_id === 'string')
     .map((value) => value.task_id);
-  await markActionsPresented(db, { ownerUserId: link.user_id, threadId, taskIds: presentedTaskIds, messageId: exchange.outbound.id });
+  await markActionsPresented(db, { ownerUserId: link.user_id, threadId, taskIds: presentedTaskIds, messageId: outbound.id });
 
   for (const chunk of prepareOutbound({ body: result.reply, disclosure: deps.disclosure })) {
     await deps.send({ chatId, text: chunk, kind: 'reply' });
@@ -336,7 +336,7 @@ export async function handleUpdate(
 export async function threadFor(db: Db, link: LinkRow): Promise<string> {
   if (link.thread_id) {
     const [existing] = await db.query<{ id: string }>(
-      `select id from threads where id = $1`, [link.thread_id],
+      `select id from threads where id = $1 and owner_user_id=$2 and status='open'`, [link.thread_id, link.user_id],
     );
     if (existing) return existing.id;
   }
@@ -346,8 +346,9 @@ export async function threadFor(db: Db, link: LinkRow): Promise<string> {
 }
 
 /** Recent turns, so a Telegram conversation has the same memory a web one does. */
-export async function historyFor(db: Db, threadId: string, limit = 40) {
-  return (await listMessages(db, { threadId, limit })).map((m) => ({
+export async function historyFor(db: Db, threadId: string, limit = 40, excludeMessageId?: string) {
+  return (await listMessages(db, { threadId, limit: Math.min(500, limit + (excludeMessageId ? 1 : 0)), recent: true }))
+    .filter(m => m.id !== excludeMessageId).slice(-limit).map((m) => ({
     role: m.direction === 'in' ? ('user' as const) : ('assistant' as const),
     content: m.body,
   }));

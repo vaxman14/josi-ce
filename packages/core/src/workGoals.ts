@@ -182,6 +182,20 @@ export async function workPlanHistory(db: Db, ownerUserId: string, goalId: strin
       order by plan_revision desc limit 20`, [goalId, ownerUserId, before ?? null]);
 }
 
+export async function workChannelProgress(db: Db, ownerUserId: string, goalId: string) {
+  const goal = await owned(db, ownerUserId, goalId);
+  const [row] = await db.query<{ state: string; last_sent_revision: number; updated_at: string; error_code: string | null;
+    connected: boolean }>(`select p.state,p.last_sent_revision,p.updated_at,p.error_code,
+      (l.status='active' and l.user_id=p.owner_user_id and l.thread_id=$3 and l.chat_id=p.chat_id
+        and t.status='open' and t.owner_user_id=p.owner_user_id and c.enabled and c.bot_id::text=p.bot_id) as connected
+      from telegram_work_progress p left join telegram_links l on l.id=p.link_id
+      left join threads t on t.id=$3
+      left join telegram_config c on c.id=true where p.goal_id=$1 and p.owner_user_id=$2`,
+      [goalId, ownerUserId, goal.thread_id]);
+  return row ? { channel: 'telegram' as const, state: row.connected ? row.state : 'disabled',
+    revision: row.last_sent_revision, currentRevision: goal.revision, updatedAt: row.updated_at, errorCode: row.error_code } : null;
+}
+
 export async function listWorkGoals(db: Db, ownerUserId: string, options: { threadId?: string; includeEnded?: boolean; endedOnly?: boolean } = {}): Promise<WorkGoalSnapshot[]> {
   const rows = await db.query<GoalRow>(`select * from work_goals where owner_user_id=$1
     ${options.threadId ? 'and thread_id=$2' : ''} ${options.endedOnly ? "and state in ('completed','cancelled')" : options.includeEnded ? '' : "and state not in ('completed','cancelled')"}

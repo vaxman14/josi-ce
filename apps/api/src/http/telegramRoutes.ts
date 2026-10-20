@@ -383,6 +383,7 @@ export function mountTelegramWebhook(app: Express, ctx: TelegramRoutesCtx): void
             db,
             disclosure: policy.disclosure.replace('{user}', 'you'),
             botUsername: config.bot_username,
+            botId: config.bot_id,
             attachments: {
               enabled: config.attachments_enabled,
               maxBytes: Number(config.max_attachment_bytes),
@@ -401,8 +402,9 @@ export function mountTelegramWebhook(app: Express, ctx: TelegramRoutesCtx): void
                 },
                 userId: args.userId,
                 threadId: args.threadId,
-                history: await historyFor(db, args.threadId),
+                history: await historyFor(db, args.threadId, 40, args.inboundMessageId),
                 inbound: args.inbound,
+                inboundMessageId: args.inboundMessageId,
                 connectorFetch: ctx.connectorFetch,
                 channel: 'telegram',
                 // The step-up scope is the THREAD, not a session — there is no

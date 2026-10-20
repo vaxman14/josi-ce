@@ -12,6 +12,7 @@ export * from './telegram/format.js';
 export * from './telegram/inbound.js';
 export * from './telegram/linking.js';
 export * from './telegram/outbound.js';
+export * from './telegram/workProgress.js';
 export * from './external.js';
 export * from './shared.js';
 export * from './whatsapp.js';

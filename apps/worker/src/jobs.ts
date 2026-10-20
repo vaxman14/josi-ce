@@ -29,7 +29,7 @@ import {
 // same choice packages/agent/src/dataTools.ts makes for the same reason.
 type WriteProvider = 'google' | 'microsoft';
 import {
-  TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk,
+  TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk, deliverTelegramWorkProgress,
 } from '@josi-ce/channels';
 import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
 import { effectiveTimeContext, formatCalendarRange, runAssistantTurn } from '@josi-ce/agent';
@@ -76,6 +76,10 @@ function durableHistoryContent(message: { direction: 'in' | 'out'; body: string;
  * done would hide it forever. */
 export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise<void> {
   switch (job.kind) {
+    case 'work-progress.telegram': {
+      if (ctx.masterKey) await deliverTelegramWorkProgress(db, { key: ctx.masterKey, fetchImpl: ctx.telegramFetch });
+      return;
+    }
     case 'work-goals.reconcile': {
       await reconcileWorkGoals(db, { continueReady: true });
       return;

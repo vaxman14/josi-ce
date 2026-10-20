@@ -66,6 +66,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     </details> : null}
     {!compact ? <WorkActivity goal={goal} /> : null}
     {!compact ? <WorkPlans goal={goal} /> : null}
+    {!compact ? <WorkChannelProgress goalId={goal.goalId} /> : null}
     <div className="mt-3 flex flex-wrap gap-2 text-xs">
       {compact ? <Link to={`/app/tasks#goal-${goal.goalId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Open task manager ↗</Link> : null}
       {!compact ? <Link to={`/app/talk?thread=${goal.threadId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Continue in chat ↗</Link> : null}
@@ -128,6 +129,32 @@ function WorkMemoryEditor({ goal, refresh }: { goal: WorkGoalSnapshot; refresh: 
 }
 
 interface ActivityEvent { id: string; sequence: number; kind: string; summary: string; created_at: string }
+function WorkChannelProgress({ goalId }: { goalId: string }) {
+  const [progress, setProgress] = useState<{ channel: string; state: string; revision: number; currentRevision: number } | null>(null);
+  const [offline, setOffline] = useState(false);
+  useEffect(() => {
+    let alive = true, pending = false;
+    async function load() {
+      if (!alive || pending || document.hidden) return;
+      pending = true;
+      try {
+        const value = await api.get<{ progress: typeof progress }>(`/assistant/work-goals/${goalId}/channel-progress`);
+        if (alive) { setProgress(value.progress); setOffline(false); }
+      } catch { if (alive) setOffline(true); }
+      finally { pending = false; }
+    }
+    void load();
+    const timer = window.setInterval(() => void load(), 15_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [goalId]);
+  if (!progress) return null;
+  const message = progress.state === 'uncertain' ? 'Delivery could not be confirmed. Josi will not send a duplicate automatically; follow current work here.'
+    : progress.state === 'failed' ? 'The Telegram summary could not be updated. Follow current work here.'
+    : progress.state === 'disabled' ? 'The original Telegram connection is no longer active.'
+    : progress.state === 'sent' && progress.revision >= progress.currentRevision ? 'The Telegram summary is up to date.'
+    : 'The Telegram summary is waiting for its next update.';
+  return <p className="mt-3 text-xs text-muted-foreground">{offline ? 'Channel status could not refresh. ' : ''}{message}</p>;
+}
 interface SavedPlan { plan_revision: number; goal_revision: number; steps: WorkGoalSnapshot['steps']; reason: string; created_at: string }
 function WorkPlans({ goal }: { goal: WorkGoalSnapshot }) {
   const [open, setOpen] = useState(false), [plans, setPlans] = useState<SavedPlan[]>([]);
