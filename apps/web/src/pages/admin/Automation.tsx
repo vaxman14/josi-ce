@@ -6,7 +6,7 @@ import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
 import { NativeProtectedChange } from '@/components/NativeProtectedChange';
 import { DeviceEnrollment } from '@/components/DeviceEnrollment';
 
-interface Catalog { guidance: string; actions: string[]; scopeKeys: string[]; capabilities?: { permanentChanges?: boolean; deviceEnrollment?: boolean } }
+interface Catalog { guidance: string; actions: string[]; scopeKeys: string[]; capabilities?: { permanentChanges?: boolean; deviceEnrollment?: boolean; deviceRevocation?: boolean } }
 interface Settings { rules: CardinalPolicyView | null; permissions: AutomationPolicyView | null; drafts: CardinalDraftView[]; devices?: ProtectedDeviceInventory }
 interface Check { report: CardinalTestReport; meaning: string | null }
 interface ReviewPreview {
@@ -108,11 +108,13 @@ export function AdminAutomation() {
       {editing && catalog ? <RuleEditor key={selected ? `${selected.reference.recordId}:${selected.reference.version}` : 'new'} catalog={catalog} selected={selected}
         settings={settings} refreshed={load} saved={async draft => { setSelected(draft); await load(); }} /> : null}
     </> : tab === 'permissions' ? <PermissionsView settings={settings} /> : <ProtectedDevicesView devices={settings?.devices}
-      enabled={catalog?.capabilities?.deviceEnrollment === true} refreshed={load} />}
+      enabled={catalog?.capabilities?.deviceEnrollment === true} revocationEnabled={catalog?.capabilities?.deviceRevocation === true} refreshed={load} />}
   </div>;
 }
 
-function ProtectedDevicesView({ devices, enabled, refreshed }: { devices?: ProtectedDeviceInventory; enabled: boolean; refreshed(): Promise<void> }) {
+function ProtectedDevicesView({ devices, enabled, revocationEnabled, refreshed }: {
+  devices?: ProtectedDeviceInventory; enabled: boolean; revocationEnabled: boolean; refreshed(): Promise<void>;
+}) {
   return <Card><CardTitle>Your protected confirmation devices</CardTitle>
     <p className="text-sm text-muted-foreground">These devices confirm permanent administrator changes. Enrollment alone gives no browser or computer access.</p>
     {devices?.reconciliationRequired ? <ErrorNote>Vault recovery must be reconciled before a device can approve another change.</ErrorNote> : null}
@@ -127,9 +129,12 @@ function ProtectedDevicesView({ devices, enabled, refreshed }: { devices?: Prote
           <p className="mt-1 break-all">Signing key: {device.signingFingerprint}</p>
           <p className="mt-1 break-all">Hardware wrapping key: {device.wrappingFingerprint}</p>
         </details>
+        {!device.revokedAt && devices.reference ? <NativeProtectedChange title="Revoke this device"
+          change={{ kind: 'device.revoke', enrollmentId: device.enrollmentId, expected: devices.reference }}
+          devices={devices} enabled={revocationEnabled} refreshed={refreshed} /> : null}
       </li>)}</ul>}
     <DeviceEnrollment enabled={enabled} vaultReady={!!devices && !devices.reconciliationRequired} refreshed={refreshed} />
-    <p className="mt-4 text-xs text-muted-foreground">Protected device revocation and lost-device recovery are still being connected.</p>
+    <p className="mt-4 text-xs text-muted-foreground">Revocation stops protected confirmations from that key. It does not sign out websites or erase this Mac’s local hardware key.</p>
   </Card>;
 }
 

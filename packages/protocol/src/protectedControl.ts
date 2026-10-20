@@ -1,6 +1,6 @@
 import type { VaultAuthorityReference } from './automation.js';
 
-export const PROTECTED_CONTROL_PURPOSES = ['cardinal.activate', 'cardinal.retire', 'automation.policy.replace'] as const;
+export const PROTECTED_CONTROL_PURPOSES = ['cardinal.activate', 'cardinal.retire', 'automation.policy.replace', 'device.revoke'] as const;
 export type ProtectedControlPurpose = typeof PROTECTED_CONTROL_PURPOSES[number];
 export interface ProtectedControlPresentation { wording: string; meaning: string; advisory: string[] }
 export interface ProtectedControlChallenge {

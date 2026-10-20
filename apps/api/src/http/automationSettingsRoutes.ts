@@ -69,7 +69,7 @@ export function automationSettingsRoutes(context: Context): Router {
     guidance: CARDINAL_RULE_GUIDANCE, actions: CARDINAL_ACTIONS, scopeKeys: CARDINAL_SCOPE_KEYS,
     restrictions: ['deny', 'maximum_task_duration'], unavailable: ['deny', 'pause'],
     capabilities: { modelReview: true, nativeReview: protectedChanges.enabled, permanentChanges: protectedChanges.enabled,
-      deviceEnrollment: await enrollments.available(), execution: false },
+      deviceEnrollment: await enrollments.available(), deviceRevocation: protectedChanges.enabled, execution: false },
   })));
   r.get('/', handle(async (req, res) => {
     const key = master(), records = vaultRecords(db, key);

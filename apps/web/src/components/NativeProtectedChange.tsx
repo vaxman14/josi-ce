@@ -4,7 +4,8 @@ import { api } from '@/lib/api';
 import { Button, ErrorNote, Input } from './ui';
 
 type RuleChange = { kind: 'cardinal.activate'; draft: VaultRecordReference; policy: VaultRecordReference | null }
-  | { kind: 'cardinal.retire'; ruleId: string; policy: VaultRecordReference };
+  | { kind: 'cardinal.retire'; ruleId: string; policy: VaultRecordReference }
+  | { kind: 'device.revoke'; enrollmentId: string; expected: VaultRecordReference };
 interface NativeBridge {
   platform: string;
   protectedChanges?: {

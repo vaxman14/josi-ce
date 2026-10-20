@@ -7,6 +7,7 @@ const { requireTrustedFrame } = require('./connection-policy.cjs');
 
 const titles = Object.freeze({ 'cardinal.activate': 'Make this Cardinal Rule permanent',
   'cardinal.retire': 'Retire this Cardinal Rule', 'automation.policy.replace': 'Change automation permissions',
+  'device.revoke': 'Revoke this protected confirmation device',
   'device.enroll': 'Enroll this protected confirmation device' });
 
 /** Main-process ports for createProtectedConfirmationBroker. No renderer can

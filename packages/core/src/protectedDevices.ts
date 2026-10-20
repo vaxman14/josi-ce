@@ -209,7 +209,9 @@ export class ProtectedDeviceStore {
     const command: ProtectedDeviceCommand = { purpose: 'device.revoke', requestDigest: cardinalContentDigest(args) };
     const presentation: ProtectedControlPresentation = { wording: `Revoke protected confirmations on ${device.label}.`,
       meaning: `Server: ${device.material.identity.serverOrigin}\nAdministrator: ${args.actorUserId}\nDevice: ${device.material.identity.deviceId}\nThis key will no longer verify protected changes. Existing challenges become stale. Vault history remains. This does not log out website accounts or erase the Mac's hardware wrapping root.`,
-      advisory: ['A revoked enrollment cannot be silently reactivated. Recovery requires an explicitly approved new enrollment.'] };
+      advisory: ['A revoked enrollment cannot be silently reactivated. Recovery requires an explicitly approved new enrollment.',
+        ...(value.document.devices.filter(d => d.material.identity.userId === args.actorUserId && !d.revokedAt).length === 1
+          ? ['This is your last active confirmation device. After revocation, enroll a new device with approval in Josi on the server Mac before making another protected change.'] : [])] };
     return { ...value, device, command, presentation };
   }
   async prepareRevocation(args: ProtectedDeviceRevocation) {

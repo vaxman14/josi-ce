@@ -122,7 +122,7 @@ function createNativeProtectedFlow({ app, BrowserWindow, ipcMain, session, syste
           return { status: 'cancelled', message: 'No protected change was submitted. Start a new review when ready.' };
         }
         const committed = await entry.request('commit', 'POST', { receipt: confirmation.receipt });
-        if (committed?.applied !== true || !['cardinal', 'permissions'].includes(committed.kind)) throw refused();
+        if (committed?.applied !== true || !['cardinal', 'permissions', 'devices'].includes(committed.kind)) throw refused();
         return { status: 'applied', message: 'The protected change was saved to the Vault.' };
       } catch {
         if (!commitSent && source.isCurrent() && !controller.signal.aborted) {
