@@ -199,7 +199,7 @@ enum GuestEnvironment {
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
-                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.4",
+                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.5",
                         "browserCandidate": try preparedBrowser.map { String(decoding: try JSONEncoder().encode($0.candidate), as: UTF8.self) } ?? "",
                         "browserConnection": browserConnected ? "connected" : "waiting"])
                 }
@@ -339,7 +339,7 @@ enum GuestEnvironment {
                 guard runID == own else { return }
                 try current()
                 browserMessage = prepared.candidate.family == "firefox"
-                    ? "In Firefox, choose Load Temporary Add-on and select manifest.json from the extension folder. Development installs last until Firefox closes."
+                    ? "In Firefox’s add-on manager, use Install Add-on From File with the Mozilla-signed Josi extension. Temporary add-ons cannot enable inspection. The signed extension must match this Companion’s packaged code."
                     : "In the browser, turn on Developer mode and choose Load unpacked, then select the extension folder."
             } catch {
                 if runID == own { browserMessage = "Close the selected browser’s other windows and processes, refresh its registration if it changed, then try again." }

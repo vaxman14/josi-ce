@@ -10,6 +10,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import zipfile
 
 REPO = Path(__file__).resolve().parents[2]
 SOURCES = REPO / "apps/automation-macos/Sources"
@@ -35,6 +36,23 @@ def build(output, node):
 
     resources = output / "BrowserExtensions"
     run("extension-resources", [node, REPO / "scripts/unified/build-browser-extensions.mjs", resources])
+    # Signing submission only. Never enable unsigned extensions, contact AMO,
+    # use a signing credential or install anything as part of a build.
+    submission = output / "Firefox-signing-submission.zip"
+    with zipfile.ZipFile(submission, "x", compression=zipfile.ZIP_DEFLATED) as archive:
+        for file in sorted((resources / "firefox").rglob("*")):
+            if file.is_symlink():
+                raise ValueError("Unsupported extension resource")
+            if file.is_file():
+                archive.write(file, file.relative_to(resources / "firefox").as_posix())
+    (output / "Firefox-signing.txt").write_text(
+        "Firefox-signing-submission.zip is unsigned. Submit it to Mozilla for "
+        "unlisted/self-distributed signing, then install the returned signed XPI "
+        "through Firefox's add-on manager inside the Josi guest profile. "
+        "Josi checks Firefox's active signed installation and every packaged code file. "
+        "Rebuild/sign a matching version after extension code changes. "
+        "No Mozilla signing or browser installation was performed by this builder.\n"
+    )
     for executable, source in [("JosiBrowserHost", "GuestBrowserHost.swift"), ("JosiBrowserBroker", "GuestBrowserBroker.swift")]:
         run("compile-" + executable, ["xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-O",
             "-target", "arm64-apple-macos14.2", "-module-cache-path", output / "module-cache",

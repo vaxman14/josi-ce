@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Compression
 import Darwin
 import Security
 import ServiceManagement
@@ -11,7 +12,7 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
     let installationRevision = 1
     let nativeProfileId: String, profilePath: String?
     let extensionId: String, extensionVersion: String, extensionDigest: String
-    let distribution = "unpacked-development"
+    let distribution: String
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, kind, candidateId, guestBootId, label, family, applicationId, installationRevision
         case nativeProfileId, profilePath, extensionId, extensionVersion, extensionDigest, distribution
@@ -116,7 +117,8 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
         let value = GuestBrowserProfileCandidate(candidateId: UUID().uuidString.lowercased(), guestBootId: boot.guest,
             label: family.capitalized + " · Josi workspace", family: family,
             applicationId: pin.applicationId.uuidString.lowercased(), nativeProfileId: nativeId, profilePath: path,
-            extensionId: entry.extensionId, extensionVersion: entry.version, extensionDigest: entry.digest)
+            extensionId: entry.extensionId, extensionVersion: entry.version, extensionDigest: entry.digest,
+            distribution: family == "firefox" ? "store-signed" : "unpacked-development")
         guard try JSONEncoder().encode(value).count <= 3000 else { throw GuestLinkError.invalid }
         return Prepared(candidate: value, application: pin, extensionFolder: folder)
     }
@@ -141,7 +143,7 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
         let value = GuestBrowserProfileCandidate(candidateId: UUID().uuidString.lowercased(), guestBootId: boot.guest,
             label: "Safari · Josi workspace", family: "safari", applicationId: pin.applicationId.uuidString.lowercased(),
             nativeProfileId: profile, profilePath: nil, extensionId: entry.extensionId,
-            extensionVersion: entry.version, extensionDigest: entry.digest)
+            extensionVersion: entry.version, extensionDigest: entry.digest, distribution: "unpacked-development")
         return Prepared(candidate: value, application: pin, extensionFolder: folder)
     }
     static func open(_ prepared: Prepared) async throws {
@@ -161,7 +163,7 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
         }
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
-        config.arguments = c.family == "firefox" ? ["--no-remote", "--profile", path, "about:debugging#/runtime/this-firefox"]
+        config.arguments = c.family == "firefox" ? ["--no-remote", "--profile", path, "about:addons"]
             : ["--user-data-dir=" + path, "--profile-directory=Default", "--no-first-run", "--no-default-browser-check",
                c.family == "brave" ? "brave://extensions" : "chrome://extensions"]
         let app = try await NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: pin.bundlePath), configuration: config)
@@ -170,6 +172,10 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
     static func requireInstalledExtension(_ prepared: Prepared) throws {
         try GuestEnvironment.signedApplication()
         let c = prepared.candidate
+        if c.family == "firefox" {
+            try requireFirefoxInstallation(prepared)
+            return
+        }
         if c.family == "safari" {
             guard c.profilePath == nil, c.distribution == "unpacked-development" else { throw GuestDesktopError.denied }
             let current = try prepareSafari(prepared.application, profile: c.nativeProfileId)
@@ -211,6 +217,47 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
             found = true
         }
         guard found else { throw GuestLinkError.unavailable }
+    }
+    private static func requireFirefoxInstallation(_ prepared: Prepared) throws {
+        let c = prepared.candidate
+        guard c.distribution == "store-signed", let path = c.profilePath else { throw GuestDesktopError.denied }
+        let actual = try profile(workspace: prepared.application.workspaceId.uuidString.lowercased(), family: "firefox")
+        let (entry, folder) = try extensionResources("firefox")
+        guard actual.0 == c.nativeProfileId, actual.1 == path, entry.digest == c.extensionDigest,
+              entry.extensionId == c.extensionId, entry.version == c.extensionVersion, folder == prepared.extensionFolder
+        else { throw GuestDesktopError.stale }
+        let root = URL(fileURLWithPath: path, isDirectory: true)
+        var bytes = try readFile(root.appendingPathComponent("extensions.json"), maximum: 16 * 1024 * 1024)
+        defer { bytes.resetBytes(in: 0..<bytes.count) }
+        guard let database = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              let addons = database["addons"] as? [[String: Any]], addons.count <= 1024 else { throw GuestLinkError.invalid }
+        let matches = addons.filter { $0["id"] as? String == c.extensionId }
+        let archive = root.appendingPathComponent("extensions/" + c.extensionId + ".xpi")
+        guard matches.count == 1 else { throw GuestDesktopError.denied }
+        let installed = matches[0]
+        guard installed["location"] as? String == "app-profile", installed["path"] as? String == archive.path,
+              installed["version"] as? String == c.extensionVersion, installed["type"] as? String == "extension",
+              installed["active"] as? Bool == true, installed["visible"] as? Bool == true,
+              ["userDisabled", "appDisabled", "softDisabled", "pendingUninstall"].allSatisfy({ installed[$0] as? Bool == false }),
+              installed["embedderDisabled"] == nil || installed["embedderDisabled"] as? Bool == false,
+              let signed = installed["signedState"] as? NSNumber, CFGetTypeID(signed) != CFBooleanGetTypeID(),
+              signed.doubleValue == 2 else { throw GuestDesktopError.denied }
+        var info = stat()
+        guard lstat(archive.path, &info) == 0, info.st_uid == geteuid(), info.st_mode & S_IFMT == S_IFREG,
+              info.st_nlink == 1 else { throw GuestLinkError.invalid }
+        let content = try GuestExtensionArchive.files(readFile(archive, maximum: 2 * 1024 * 1024))
+        let signing: Set<String> = ["META-INF/manifest.mf", "META-INF/mozilla.sf", "META-INF/mozilla.rsa",
+                                    "META-INF/cose.manifest", "META-INF/cose.sig"]
+        let expected = Set(entry.files.map(\.path))
+        guard expected.isSubset(of: Set(content.keys)),
+              Set(content.keys).subtracting(expected).isSubset(of: signing),
+              content["META-INF/mozilla.rsa"] != nil || content["META-INF/cose.sig"] != nil else { throw GuestLinkError.invalid }
+        for item in entry.files {
+            guard let body = content[item.path], body.count == item.size,
+                  SHA256.hash(data: body).map({ String(format: "%02x", $0) }).joined() == item.sha256 else { throw GuestDesktopError.stale }
+        }
+        // Firefox owns signature validation; this checks its active signed
+        // installation record AND exact packaged code. No preference is edited.
     }
     private static func verifyApplication(_ pin: GuestPinnedApplication) throws {
         let url = URL(fileURLWithPath: pin.bundlePath)
@@ -334,5 +381,95 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
             throw GuestLinkError.invalid
         }
         return fd
+    }
+}
+
+/// Read a small XPI in memory without extraction, subprocesses or executing
+/// archive contents. Zip64, encryption, links, duplicates and oversized data
+/// are unsupported. Mozilla validates its signature; this binds loaded code
+/// to the signed Companion's catalog rather than trusting an extension ID.
+private enum GuestExtensionArchive {
+    static func files(_ data: Data) throws -> [String: Data] {
+        guard (22...2_097_152).contains(data.count) else { throw GuestLinkError.invalid }
+        let b = [UInt8](data)
+        func number(_ offset: Int, _ count: Int) throws -> Int {
+            guard offset >= 0, count <= 4, offset + count <= b.count else { throw GuestLinkError.invalid }
+            return (0..<count).reduce(0) { $0 | Int(b[offset + $1]) << (8 * $1) }
+        }
+        var end: Int?
+        for at in stride(from: b.count - 22, through: max(0, b.count - 65_557), by: -1) {
+            if try number(at, 4) == 0x06054b50, try at + 22 + number(at + 20, 2) == b.count { end = at; break }
+        }
+        guard let end, try number(end + 4, 2) == 0, try number(end + 6, 2) == 0 else { throw GuestLinkError.invalid }
+        let count = try number(end + 10, 2), size = try number(end + 12, 4), start = try number(end + 16, 4)
+        guard (1...80).contains(count), try number(end + 8, 2) == count, start + size == end else { throw GuestLinkError.invalid }
+        var offset = start, total = 0, result: [String: Data] = [:], names = Set<String>(), ranges: [Range<Int>] = []
+        for _ in 0..<count {
+            guard try number(offset, 4) == 0x02014b50 else { throw GuestLinkError.invalid }
+            let flags = try number(offset + 8, 2), method = try number(offset + 10, 2), crc = try number(offset + 16, 4)
+            let packed = try number(offset + 20, 4), unpacked = try number(offset + 24, 4)
+            let nameSize = try number(offset + 28, 2), extra = try number(offset + 30, 2), comment = try number(offset + 32, 2)
+            let attributes = try number(offset + 38, 4), local = try number(offset + 42, 4)
+            let next = offset + 46 + nameSize + extra + comment
+            guard flags & ~0x0808 == 0, [0, 8].contains(method), method == 0 || packed > 0,
+                  packed <= 1_048_576, unpacked <= 1_048_576,
+                  (1...256).contains(nameSize), next <= end, try number(offset + 34, 2) == 0,
+                  [0, 0o100000, 0o040000].contains((attributes >> 16) & 0o170000)
+            else { throw GuestLinkError.invalid }
+            func extras(_ first: Int, _ length: Int) throws {
+                let limit = first + length
+                guard first >= 0, limit <= b.count else { throw GuestLinkError.invalid }
+                var at = first
+                while at < limit {
+                    guard at + 4 <= limit else { throw GuestLinkError.invalid }
+                    let kind = try number(at, 2), size = try number(at + 2, 2)
+                    // Only timestamp/Unix-owner extras: no alternate names,
+                    // offsets, lengths or compression interpretation.
+                    guard [0x5455, 0x7875, 0x000a].contains(kind), at + 4 + size <= limit else { throw GuestLinkError.invalid }
+                    at += 4 + size
+                }
+            }
+            try extras(offset + 46 + nameSize, extra)
+            let rawName = Array(b[(offset + 46)..<(offset + 46 + nameSize)])
+            guard rawName.allSatisfy({ $0 >= 32 && $0 < 127 && $0 != 92 }),
+                  let name = String(bytes: rawName, encoding: .utf8), !name.hasPrefix("/"), !names.contains(name),
+                  name.split(separator: "/").allSatisfy({ $0 != "." && $0 != ".." }), !name.contains("//")
+            else { throw GuestLinkError.invalid }
+            names.insert(name)
+            guard try number(local, 4) == 0x04034b50, try number(local + 6, 2) == flags, try number(local + 8, 2) == method,
+                  try number(local + 26, 2) == nameSize else { throw GuestLinkError.invalid }
+            let bodyStart = try local + 30 + nameSize + number(local + 28, 2), bodyEnd = bodyStart + packed
+            guard local < start, bodyEnd <= start, bodyStart >= local + 30 + nameSize,
+                  Array(b[(local + 30)..<(local + 30 + nameSize)]) == rawName,
+                  !ranges.contains(where: { $0.overlaps(local..<bodyEnd) }) else { throw GuestLinkError.invalid }
+            try extras(local + 30 + nameSize, number(local + 28, 2))
+            if flags & 8 == 0 {
+                guard try number(local + 14, 4) == crc, try number(local + 18, 4) == packed,
+                      try number(local + 22, 4) == unpacked else { throw GuestLinkError.invalid }
+            }
+            ranges.append(local..<bodyEnd); total += unpacked
+            guard total <= 4_194_304 else { throw GuestLinkError.invalid }
+            var output = Data(count: unpacked + 1)
+            let input = Data(b[bodyStart..<bodyEnd])
+            if method == 0 {
+                guard packed == unpacked else { throw GuestLinkError.invalid }
+                output = input
+            } else {
+                let decoded = output.withUnsafeMutableBytes { target in
+                    input.withUnsafeBytes { source in
+                        compression_decode_buffer(target.bindMemory(to: UInt8.self).baseAddress!, unpacked + 1,
+                            source.bindMemory(to: UInt8.self).baseAddress!, packed, nil, COMPRESSION_ZLIB)
+                    }
+                }
+                guard decoded == unpacked else { throw GuestLinkError.invalid }
+                output.count = unpacked
+            }
+            if name.hasSuffix("/") {
+                guard name == "META-INF/", unpacked == 0 else { throw GuestLinkError.invalid }
+            } else { result[name] = output }
+            offset = next
+        }
+        guard offset == end else { throw GuestLinkError.invalid }
+        return result
     }
 }

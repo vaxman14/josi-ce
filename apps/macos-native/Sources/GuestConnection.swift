@@ -38,6 +38,7 @@ import Darwin
     private var supportsBrowserProfiles = false
     private var supportsBrowserInspection = false
     private var supportsSafariInspection = false
+    private var supportsFirefoxInspection = false
     private var pairedBinding: Wire = .null
     private var sentConsent: Wire = .null
     private var execution: GuestPendingExecution?
@@ -146,14 +147,15 @@ import Darwin
                     || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate"])
                     || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate", "browserConnection"])),
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
-                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2", "desktop-command.3", "desktop-command.4"].contains(reply["executionProtocol"] ?? ""),
+                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5"].contains(reply["executionProtocol"] ?? ""),
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
                       ["yes", "no"].contains(reply["screenCapture"] ?? ""), let candidate = reply["applicationCandidate"],
                       candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
                 accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
-                supportsExecution = ["desktop-command.2", "desktop-command.3", "desktop-command.4"].contains(reply["executionProtocol"] ?? "")
-                supportsBrowserInspection = ["desktop-command.3", "desktop-command.4"].contains(reply["executionProtocol"] ?? "")
-                supportsSafariInspection = reply["executionProtocol"] == "desktop-command.4"
+                supportsExecution = ["desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5"].contains(reply["executionProtocol"] ?? "")
+                supportsBrowserInspection = ["desktop-command.3", "desktop-command.4", "desktop-command.5"].contains(reply["executionProtocol"] ?? "")
+                supportsSafariInspection = ["desktop-command.4", "desktop-command.5"].contains(reply["executionProtocol"] ?? "")
+                supportsFirefoxInspection = reply["executionProtocol"] == "desktop-command.5"
                 supportsBrowserProfiles = reply["browserCandidate"] != nil
                 guard reply["browserConnection"] == nil || ["connected", "waiting"].contains(reply["browserConnection"] ?? "")
                 else { throw GuestLinkError.invalid }
@@ -209,6 +211,7 @@ import Darwin
         browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
         supportsBrowserInspection = false
         supportsSafariInspection = false
+        supportsFirefoxInspection = false
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         cancelExecution(); sentConsent = .null
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
@@ -328,8 +331,9 @@ import Darwin
         if ["com.google.Chrome", "com.brave.Browser", "org.mozilla.firefox", "com.apple.Safari"].contains(app["bundleId"].text) {
             let browser = currentBrowserPin(until: until)["projection"]["browser"]
             guard browserConnected, supportsBrowserInspection, browser != .null, browser["candidate"]["applicationId"] == app["applicationId"],
-                  ["chrome", "brave", "safari"].contains(browser["candidate"]["family"].text),
-                  browser["candidate"]["family"] != .string("safari") || supportsSafariInspection else { throw GuestLinkError.unavailable }
+                  ["chrome", "brave", "safari", "firefox"].contains(browser["candidate"]["family"].text),
+                  browser["candidate"]["family"] != .string("safari") || supportsSafariInspection,
+                  browser["candidate"]["family"] != .string("firefox") || supportsFirefoxInspection else { throw GuestLinkError.unavailable }
             result["browser"] = ["profileId": browser["profileId"], "family": browser["candidate"]["family"]]
         }
         return .object(result)
@@ -493,6 +497,7 @@ import Darwin
         browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
         supportsBrowserInspection = false
         supportsSafariInspection = false
+        supportsFirefoxInspection = false
     }
 }
 
