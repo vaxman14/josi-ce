@@ -10,7 +10,6 @@ struct SetupView: View {
     @State private var recoverySaved = false
     @State private var showRecovery = false
     @State private var discovered: [Wire] = []
-    @State private var subscription: Wire = .null
     var step: String { model.setup["nextStep"].text }
     var providerEntry: Wire { model.setup["providerCatalog"].list.first { $0["kind"].text == provider } ?? .null }
     var body: some View {
@@ -55,7 +54,7 @@ struct SetupView: View {
         }.textFieldStyle(.roundedBorder).disabled(model.busy)
             .onChange(of: step) { _, _ in clearFields() }
             .onChange(of: provider) { _, _ in
-                values = [:]; discovered = []; subscription = .null; externalAcknowledged = false
+                values = [:]; discovered = []; externalAcknowledged = false
                 if !providerEntry["defaultBaseUrl"].text.isEmpty { values["baseUrl"] = providerEntry["defaultBaseUrl"].text }
             }
     }
@@ -142,23 +141,8 @@ struct SetupView: View {
                 field(entry["label"].text, entry["key"].text, secret: entry["secret"].flag)
             }
             if providerEntry["baseUrlMode"].text != "none" && !provider.isEmpty { field("Endpoint", "baseUrl") }
-            if provider == "openai_subscription" {
-                HStack {
-                    Button("Sign In with ChatGPT…") { subscriptionAction("POST") }
-                    Button("Check Sign-In") { subscriptionAction("GET") }
-                }
-                if !subscription["challenge"]["userCode"].text.isEmpty {
-                    Text("One-time code: \(subscription["challenge"]["userCode"].text)").font(.headline).textSelection(.enabled)
-                    Button("Open Sign-In Page") {
-                        guard let url = URL(string: subscription["challenge"]["verificationUrl"].text),
-                              url.scheme == "https", url.user == nil, url.password == nil else { return }
-                        let alert = NSAlert(); alert.messageText = "Open provider sign-in?"
-                        alert.informativeText = url.host ?? ""; alert.addButton(withTitle: "Open"); alert.addButton(withTitle: "Cancel")
-                        if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(url) }
-                    }
-                }
-                if !subscription["state"].text.isEmpty { Text(subscription["state"].text.replacingOccurrences(of: "_", with: " ")).foregroundStyle(.secondary) }
-                Text(subscription["message"].text).font(.caption)
+            if ["openai_subscription", "anthropic_subscription"].contains(provider) {
+                NativeSubscriptionControls(provider: provider, prefix: "/setup/subscription").id(provider)
             }
             if !provider.isEmpty {
                 Button("Find Available Models") {
@@ -237,12 +221,5 @@ struct SetupView: View {
         for field in providerEntry["fields"].list { fields[field["key"].text] = value(field["key"].text) }
         return .object(fields)
     }
-    private func subscriptionAction(_ method: String) {
-        model.run {
-            guard let api = model.api else { return }
-            let result = try await api.request("/setup/subscription/login", method: method, body: method == "POST" ? [:] : nil)
-            guard model.api === api else { return }; subscription = result
-        }
-    }
-    private func clearFields() { values = [:]; enabled = false; externalAcknowledged = false; discovered = []; subscription = .null }
+    private func clearFields() { values = [:]; enabled = false; externalAcknowledged = false; discovered = [] }
 }
