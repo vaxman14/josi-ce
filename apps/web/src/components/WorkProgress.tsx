@@ -3,11 +3,12 @@ import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useWorkGoals, type WorkGoalSnapshot } from '@/lib/workGoals';
 import { WorkOutcome } from './WorkOutcome';
+import { RetireWorkStep } from './RetireWorkStep';
 
 const labels: Record<string, string> = { accepted: 'Accepted', planning: 'Planning', working: 'In progress',
   waiting: 'Waiting', needs_instruction: 'Needs your input', paused: 'Paused', verifying: 'Checking the result',
   completed: 'Completed', cancelled: 'Cancelled' };
-const stepLabels = { pending: 'Pending', working: 'In progress', blocked: 'Waiting', verified: 'Verified' };
+const stepLabels = { pending: 'Pending', working: 'In progress', blocked: 'Waiting', verified: 'Verified', skipped: 'Retired by you' };
 
 export function WorkProgressCard({ goal, compact = false, refresh }: {
   goal: WorkGoalSnapshot; compact?: boolean; refresh: () => Promise<void>;
@@ -18,7 +19,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
   const [editing, setEditing] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const ended = goal.state === 'completed' || goal.state === 'cancelled';
-  const steps = compact && !showAll ? goal.steps.slice(0, 5) : goal.steps;
+  const steps = compact && !showAll ? goal.steps.filter(step => step.state !== 'skipped').slice(0, 5) : goal.steps;
   const stale = !ended && Date.now() - Date.parse(goal.updatedAt) > 120_000;
   async function control(action: 'pause' | 'resume' | 'cancel' | 'confirm') {
     if (busy) return;
@@ -37,22 +38,24 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
       <span className={`rounded-full px-2.5 py-1 text-xs ${goal.state === 'completed' ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground'}`}>{labels[goal.state]}</span>
     </div>
     <h3 className="mt-2 break-words font-semibold">{goal.title}</h3>
+    {goal.retiredSteps ? <p className="mt-1 text-xs text-muted-foreground">{goal.retiredSteps} retired {goal.retiredSteps === 1 ? 'step' : 'steps'} retained in history; excluded from required work.</p> : null}
     <ol className="mt-3 space-y-2">
       {steps.map(step => <li key={step.id} className="flex items-start gap-2">
-        <span aria-hidden className={step.state === 'verified' ? 'text-primary' : 'text-muted-foreground'}>{step.state === 'verified' ? '✓' : step.state === 'working' ? '◉' : '○'}</span>
+        <span aria-hidden className={step.state === 'verified' ? 'text-primary' : 'text-muted-foreground'}>{step.state === 'verified' ? '✓' : step.state === 'skipped' ? '—' : step.state === 'working' ? '◉' : '○'}</span>
         <span className="min-w-0 break-words">{step.title}<span className="ml-2 text-xs text-muted-foreground">{stepLabels[step.state]}</span>
           {step.state === 'blocked' && step.blockedReason ? <span className="mt-1 block text-xs text-muted-foreground">{step.blockedReason}
             {step.blockedUntil ? ` Check again ${new Date(step.blockedUntil).toLocaleString()}.` : ''}
           </span> : null}
+          {step.retirement ? <span className="mt-1 block text-xs text-muted-foreground">Retired {new Date(step.retirement.at).toLocaleString()}: {step.retirement.reason}</span> : null}
           {!compact && step.dependsOn?.length ? <span className="mt-1 block text-xs text-muted-foreground">
             After: {step.dependsOn.map(id => goal.steps.find(value => value.id === id)?.title ?? 'Unavailable dependency').join(' · ')}
           </span> : null}
         </span>
       </li>)}
     </ol>
-    {compact && goal.steps.length > 5 ? <button className="mt-2 min-h-10 text-xs underline" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show less' : `Show all ${goal.totalSteps} steps`}</button> : null}
+    {compact && (goal.steps.length > steps.length || showAll) ? <button className="mt-2 min-h-10 text-xs underline" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show less' : `Show all ${goal.steps.length} saved steps`}</button> : null}
     <p className="mt-3 text-sm text-muted-foreground">{goal.activity}</p>
-    {goal.planNeedsReview && !ended ? <p className="mt-2 text-sm text-muted-foreground">The requested outcome changed. New actions wait for a plan reviewed against the current criteria.</p> : null}
+    {goal.planNeedsReview && !ended ? <p className="mt-2 text-sm text-muted-foreground">Your outcome or required work changed. New actions wait for a plan reviewed against the current criteria.</p> : null}
     {!compact && goal.automaticWork && !ended ? <p className="mt-1 text-xs text-muted-foreground">
       {goal.automaticWork.segmentsSinceVerifiedProgress}/{goal.automaticWork.segmentLimit} automatic work segments since the last verified step.
       {goal.automaticWork.nextCheckAt && ['planning', 'working'].includes(goal.state) ? ' Next continuation is scheduled.' : ''}
@@ -75,6 +78,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     </details> : null}
     {!compact ? <WorkActivity goal={goal} /> : null}
     {!compact ? <WorkPlans goal={goal} /> : null}
+    {!compact ? <RetireWorkStep goal={goal} refresh={refresh} /> : null}
     {!compact ? <WorkChannelProgress goalId={goal.goalId} /> : null}
     <div className="mt-3 flex flex-wrap gap-2 text-xs">
       {compact ? <Link to={`/app/tasks#goal-${goal.goalId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Open task manager ↗</Link> : null}
@@ -204,9 +208,11 @@ function WorkPlans({ goal }: { goal: WorkGoalSnapshot }) {
         <summary className="cursor-pointer">Version {plan.plan_revision} · {plan.reason}</summary>
         <p className="mt-2 text-xs text-muted-foreground">{new Date(plan.created_at).toLocaleString()}{plan.outcome_revision ? ` · Outcome version ${plan.outcome_revision}` : ''}</p>
         <ol className="mt-2 list-decimal space-y-2 pl-5">{plan.steps.map(step => <li key={step.id} className="break-words">
+          {step.state === 'skipped' ? <span className="mr-2 text-xs text-muted-foreground">Retired by owner</span> : null}
           {step.title}<span className="mt-1 block text-xs text-muted-foreground">{step.dependsOn?.length
             ? `After: ${step.dependsOn.map(id => plan.steps.find(value => value.id === id)?.title ?? 'Unavailable dependency').join(' · ')}`
             : 'Independent step'}</span>
+          {step.retirement ? <span className="mt-1 block text-xs text-muted-foreground">Reason: {step.retirement.reason}</span> : null}
         </li>)}</ol>
       </details>)}
       {busy ? <p className="text-xs text-muted-foreground">Loading plans…</p> : null}

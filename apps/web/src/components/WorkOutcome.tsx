@@ -41,7 +41,7 @@ export function WorkOutcome({ goal, refresh }: { goal: WorkGoalSnapshot; refresh
         </label>
         <label className="block text-sm">Finished means
           <textarea value={criteria} onChange={event => setCriteria(event.target.value)} required maxLength={24000} rows={4} className="mt-1 w-full rounded-md border border-border bg-background p-2 text-base" />
-          <span className="mt-1 block text-xs text-muted-foreground">One criterion per line, up to 12. Original steps remain required; replacing the work entirely requires cancelling it and starting a new goal.</span>
+          <span className="mt-1 block text-xs text-muted-foreground">One criterion per line, up to 12. Retire individual obsolete steps using the task manager’s separate control. Cancel the goal if the entire request is no longer needed.</span>
         </label>
         <label className="block text-sm">What changed, and what should Josi do next?
           <textarea value={reason} onChange={event => setReason(event.target.value)} required maxLength={2000} rows={3} className="mt-1 w-full rounded-md border border-border bg-background p-2 text-base" />

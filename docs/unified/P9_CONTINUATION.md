@@ -46,6 +46,18 @@ This is an explicit version binding, not proof that a model's proposed plan sema
 
 Outcome history is owner scoped, private/no-store and paginated. Plan history shows which outcome version it addresses. Older clients can ignore the additional fields; the new editor is hidden when an older server does not advertise an outcome revision.
 
+## Owner retirement of obsolete work
+
+Migration 0090 adds an explicit pending-plan-review flag. **Retire obsolete step** is an owner-only task-manager action; it is not a model tool. It requires a current goal revision, an exact unfinished step, a reason and an explicit continue-or-pause choice. At least one required step must remain. Verified work and ended goals cannot be rewritten.
+
+Retirement retains the original step ID, title, dependencies, task/effect links and receipts, adds owner/time/reason/version metadata, and saves a plan-history version and a notice in the original chat. Its wire state is `skipped`, displayed as **Retired by you**. Required-step totals exclude it, verified totals do not increase, and chat/Telegram explicitly distinguish retirement from success. Budget/continuation counters are not reset by retirement.
+
+A started goal effect blocks retirement. A step with an action receipt must have its original linked task, and that task must be irreversibly closed with no queued/running wake, unfinished attempt, active prepared action or unresolved automation reservation. A dependent step with an existing action/receipt prevents retirement of its prerequisite. Retirement is not a task-cancellation mechanism or a resolution of uncertain effects.
+
+Saving invalidates stale continuation and memory authority, then holds new effects until `revise_goal_plan` reviews the current outcome and retained retirement reasons. Retired steps cannot be selected, verified, resumed or changed by model checkpoints or plan edits. They never satisfy dependencies. The replan must explicitly remove obsolete dependencies from unfinished unbound work or add replacement requirements while preserving action/receipt history.
+
+The full task manager includes retirement controls and reasons; compact chat cards prioritize required work and can expand the retained history. Older servers hide the new control, and existing remote clients keep their normal endpoints. Functional, concurrent-change and migration acceptance remain deferred; no user task or live database was changed by this implementation.
+
 ## Memory and visibility
 
 Current-work context is appended after personalization assembly, fixing the prior path that accidentally replaced it. Both provider modes now receive the original inbound message ID, so subscription tools can create/checkpoint the same owned work as direct model tools. Automatic segments do not repeatedly learn personal facts from the original request.
@@ -54,7 +66,7 @@ Background replies and questions are ordinary saved messages in the original cha
 
 ## Remaining integration and acceptance
 
-The current verifier still covers settled connected-action task receipts and final owner confirmation. Removing/replacing an obsolete step needs a further explicit owner flow; the model cannot silently erase it. More precise destination reconciliation/backoff, generic artifact/read-only outcome verification, configurable per-goal resource budgets, older-chat pagination and production browser/desktop adapters remain open. Telegram checklist delivery is connected in the separate P11 checkpoint. Background work currently requires a live owner session. Remote clients keep the existing endpoints and may ignore the additional work projection fields.
+The current verifier still covers settled connected-action task receipts and final owner confirmation. Explicit owner retirement is implemented; automatic retirement and erasure are unavailable. More precise destination reconciliation/backoff, generic artifact/read-only outcome verification, configurable per-goal resource budgets, older-chat pagination and production browser/desktop adapters remain open. Telegram checklist delivery is connected in the separate P11 checkpoint. Background work currently requires a live owner session. Remote clients keep the existing endpoints and may ignore the additional work projection fields.
 
 No live database migration, model call, provider action or automatic goal was run for this checkpoint. Type/build checks do not establish functional, concurrency, cancellation, crash-recovery, provider-idempotency or migration acceptance; those checks belong to the later integrated pass.
 

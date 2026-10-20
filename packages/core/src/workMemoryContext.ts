@@ -42,6 +42,7 @@ export function formatWorkContext(goals: WorkGoalSnapshot[], limit = 48_000): st
     + '\nOwner corrections are the latest explicitly saved human version. Later reported checkpoints cannot replace them. '
     + 'If new evidence conflicts with a correction, describe the exact conflict and ask the owner to correct the saved notes; do not silently merge or decide it. '
     + 'A past next-action note does not undo verified progress. Continue from current receipts and the current plan. '
-    + 'When planNeedsReview is true, read the updated outcome and criteria, then call revise_goal_plan with that exact outcomeRevision before further effects. '
+    + 'A skipped step is explicitly retired by its owner, not completed or verified. Keep its identity and retirement history; never resume it or treat it as evidence. '
+    + 'When planNeedsReview is true, read the current outcome, criteria and owner retirement reasons, then call revise_goal_plan with that exact outcomeRevision before further effects. Remove obsolete dependencies explicitly; a retired step never satisfies them. '
     + 'Use read_work_goal for any omitted or older record; do not mistake omission for absence or completion.';
 }

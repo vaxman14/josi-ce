@@ -27,7 +27,7 @@ import {
   json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
   listWorkGoals, workGoalEvents, workPlanHistory, workChannelProgress, controlWorkGoal, editWorkMemory,
-  changeWorkOutcome, workOutcomeHistory, WorkGoalError,
+  changeWorkOutcome, workOutcomeHistory, retireWorkStep, WorkGoalError,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
 import { runAssistantTurn, type RecallLookup } from '@josi-ce/agent';
@@ -596,6 +596,11 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     return res.json({ goal: await changeWorkOutcome(db, { ownerUserId: req.user!.id, goalId: param(req, 'id'),
       revision: req.body?.revision, outcome: req.body?.outcome, criteria: req.body?.criteria,
       reason: req.body?.reason, continueWork: req.body.continueWork }) });
+  }));
+  r.post('/work-goals/:id/retire-step', handle(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({ goal: await retireWorkStep(db, { ownerUserId: req.user!.id, goalId: param(req, 'id'),
+      revision: req.body?.revision, stepId: req.body?.stepId, reason: req.body?.reason, continueWork: req.body?.continueWork }) });
   }));
   r.get('/work-goals/:id/channel-progress', handle(async (req, res) => {
     res.set('Cache-Control', 'private, no-store');

@@ -21,11 +21,13 @@ function short(value: string, limit: number): string {
 /** Deliberately bounded summary, with truncation visible and full details in
  * Josi. No checkpoint facts, private tool receipts, screenshots or Vault data. */
 export function telegramWorkSummary(goal: Pick<Progress, 'steps' | 'state' | 'outcome' | 'activity' | 'continuation'>): string {
-  const lines = [`${goal.steps.filter(step => step.state === 'verified').length}/${goal.steps.length} steps verified`,
+  const required = goal.steps.filter(step => step.state !== 'skipped'), retired = goal.steps.length - required.length;
+  const lines = [`${goal.steps.filter(step => step.state === 'verified').length}/${required.length} steps verified`,
     `${labels[goal.state] ?? 'Unfinished'} · ${short(goal.outcome, 180)}`, ''];
-  const shown = goal.steps.slice(0, 10);
+  if (retired) lines.push(`${retired} retired by you; history remains in Josi`, '');
+  const shown = required.slice(0, 10);
   for (const step of shown) lines.push(`${step.state === 'verified' ? '[✓]' : '[ ]'} ${short(step.title, 100)}${step.state === 'working' ? ' (in progress)' : step.state === 'blocked' ? ' (waiting)' : ''}`);
-  if (goal.steps.length > shown.length) lines.push(`… ${goal.steps.length - shown.length} more steps in Josi`);
+  if (required.length > shown.length) lines.push(`… ${required.length - shown.length} more required steps in Josi`);
   lines.push('', short(goal.activity, 220));
   if (goal.continuation?.kind === 'question') lines.push('', short(goal.continuation.text, 500));
   else if (goal.continuation?.kind === 'wait') lines.push('', short(goal.continuation.reason, 220), `Next check: ${goal.continuation.wakeAt}`);

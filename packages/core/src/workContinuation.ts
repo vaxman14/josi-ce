@@ -14,8 +14,8 @@ export class WorkContinuationError extends Error {}
  * its changed outcomes have been reviewed. Inspection remains available. */
 export async function requireReviewedWorkOutcome(db: Db, ownerUserId: string, threadId: string) {
   const [pending] = await db.query(`select id from work_goals where owner_user_id=$1 and thread_id=$2
-    and state not in ('completed','cancelled') and outcome_revision<>planned_outcome_revision limit 1`, [ownerUserId, threadId]);
-  if (pending) throw new WorkContinuationError('The requested outcome changed. Read the current goal and revise its plan for that exact outcome revision before further actions.');
+    and state not in ('completed','cancelled') and (outcome_revision<>planned_outcome_revision or plan_review_required) limit 1`, [ownerUserId, threadId]);
+  if (pending) throw new WorkContinuationError('The owner changed the outcome or retired work. Read the current goal and revise its complete plan for that exact outcome revision before further actions.');
 }
 export interface WorkExecutionContext {
   ownerUserId: string;
@@ -119,7 +119,7 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
       throw new WorkContinuationError('Choose an unfinished, active step before dispatching another action.');
     }
     const unfinished = goal.steps.find(step => step.id === goal.step_id);
-    if (!unfinished || unfinished.state === 'verified' || unfinished.state === 'blocked'
+    if (!unfinished || unfinished.state === 'verified' || unfinished.state === 'blocked' || unfinished.state === 'skipped'
       || !workDependenciesSatisfied(goal.steps, unfinished)) throw new WorkContinuationError('Choose an unfinished, unblocked step with verified dependencies before another action.');
     await requireWorkContinuation(tx, context);
     const [prior] = await tx.query<{ tool_name: string; input_digest: string; state: string; receipt: T }>(

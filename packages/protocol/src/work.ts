@@ -42,7 +42,7 @@ export interface WorkAttempt {
   endedAt: string | null;
   evidence: EvidenceReference[];
 }
-export type WorkEventKind = 'goal.accepted' | 'plan.changed' | 'step.started' | 'step.verified'
+export type WorkEventKind = 'goal.accepted' | 'plan.changed' | 'step.started' | 'step.verified' | 'step.retired'
   | 'attempt.failed' | 'effect.uncertain' | 'goal.waiting' | 'instruction.requested'
   | 'goal.paused' | 'goal.resumed' | 'goal.completed' | 'goal.cancelled' | 'memory.checkpoint';
 export interface WorkEvent extends WorkOwner {
@@ -66,5 +66,6 @@ export interface GoalProgress {
   activity: string;
   verifiedSteps: number;
   totalSteps: number;
+  retiredSteps?: number;
   continuation: Continuation | null;
 }
