@@ -37,6 +37,7 @@ private struct GuestExecutionConsent: Codable, Equatable {
     private var commandIds = Set<UUID>()
     private var watchdog: Task<Void, Never>?
     private weak var browserSession: GuestBrowserSession?
+    private var proxy: GuestBrowserProxy?
 
     init(link: GuestLinkWire, host: [String: String], guestBoot: String, channel: String,
          current: @escaping @MainActor () throws -> Void, stopped: @escaping @MainActor () -> Void) {
@@ -119,6 +120,7 @@ private struct GuestExecutionConsent: Codable, Equatable {
         watchdog?.cancel(); watchdog = nil
         let current = engine; engine = nil; current?.dispose()
         browserSession?.stop(); browserSession = nil
+        proxy?.stop(); proxy = nil
         onStop()
     }
     func stopped(reason: String) { stop() }
@@ -126,7 +128,8 @@ private struct GuestExecutionConsent: Codable, Equatable {
     func execute(_ incoming: [String: String]) async throws -> [String: String] {
         try live()
         guard packet == nil, let c = consent, let engine,
-              Set(incoming.keys) == ["kind", "reservationId", "command", "application", "consentDigest"],
+              (Set(incoming.keys) == ["kind", "reservationId", "command", "application", "consentDigest"]
+                || Set(incoming.keys) == ["kind", "reservationId", "command", "application", "consentDigest", "networkSecret", "networkChannel"]),
               incoming["kind"] == "execute", let reservation = incoming["reservationId"],
               UUID(uuidString: reservation)?.uuidString.lowercased() == reservation,
               !reservationIds.contains(reservation), reservationIds.count < 4096,
@@ -136,8 +139,8 @@ private struct GuestExecutionConsent: Codable, Equatable {
         let keys = Set((try JSONSerialization.jsonObject(with: Data(rawCommand.utf8)) as? [String: Any] ?? [:]).keys)
         let required: Set<String> = ["id", "workspaceId", "appId", "installationRevision", "taskId", "sessionId", "generation", "expiresAtMs", "operation"]
         guard required.isSubset(of: keys),
-              keys.isSubset(of: required.union(["observationId", "resultObservationId", "windowId", "maxOutputBytes", "elementId", "x", "y", "valueReference", "key", "projection", "browser", "draft", "photo"])),
-              [.observe, .project, .press, .focus, .click, .draft].contains(decoded.operation),
+              keys.isSubset(of: required.union(["observationId", "resultObservationId", "windowId", "maxOutputBytes", "elementId", "x", "y", "valueReference", "key", "projection", "browser", "draft", "photo", "network", "url"])),
+              [.observe, .project, .press, .focus, .click, .draft, .navigate].contains(decoded.operation),
               decoded.workspaceId == c.identity.workspaceId, decoded.generation == c.generation,
               decoded.expiresAtMs <= c.leaseUntilMs, decoded.expiresAtMs > Int64(Date().timeIntervalSince1970 * 1000),
               decoded.appId == application.applicationId, decoded.installationRevision == application.installationRevision,
@@ -147,7 +150,7 @@ private struct GuestExecutionConsent: Codable, Equatable {
         try Self.exact(rawPin, ["workspaceId", "applicationId", "installationRevision", "bundlePath", "bundleId", "signingId", "teamId", "codeHash"])
         let browser = decoded.browser == nil ? nil : browserSession
         if decoded.browser != nil {
-            guard let browser, [.observe, .project, .draft].contains(decoded.operation),
+            guard let browser, [.observe, .project, .draft, .navigate].contains(decoded.operation),
                   let raw = try JSONSerialization.jsonObject(with: Data(rawCommand.utf8)) as? [String: Any],
                   let scope = raw["browser"] as? [String: Any], Set(scope.keys) == ["profileId", "family", "origin"] else {
                 throw GuestDesktopError.denied
@@ -159,12 +162,29 @@ private struct GuestExecutionConsent: Codable, Equatable {
         if let bound = taskBinding {
             guard bound.task == decoded.taskId, bound.session == decoded.sessionId else { throw GuestDesktopError.denied }
         } else {
-            guard decoded.operation == .observe, decoded.observationId == nil else { throw GuestDesktopError.denied }
+            guard [.observe, .navigate].contains(decoded.operation), decoded.observationId == nil else { throw GuestDesktopError.denied }
             taskBinding = (decoded.taskId, decoded.sessionId)
         }
         reservationIds.insert(reservation); commandIds.insert(decoded.id)
         packet = incoming; command = decoded; pin = application
-        defer { packet = nil; command = nil; pin = nil }
+        defer { proxy?.stop(); proxy = nil; packet = nil; command = nil; pin = nil }
+        if let network = decoded.network {
+            guard (decoded.operation == .navigate || decoded.operation == .observe && decoded.photo != nil),
+                  decoded.browser?.family == "chrome",
+                  network.id == decoded.id, network.workspaceId == decoded.workspaceId, network.taskId == decoded.taskId,
+                  network.origin == decoded.browser?.origin, network.networkClass == "public",
+                  network.expiresAtMs == decoded.expiresAtMs, (1...16_777_216).contains(network.maximumBytes),
+                  let encoded = incoming["networkSecret"], let secret = Data(base64Encoded: encoded), secret.count == 32,
+                  secret.base64EncodedString() == encoded, let scope = incoming["networkChannel"],
+                  UUID(uuidString: scope)?.uuidString.lowercased() == scope else { throw GuestDesktopError.denied }
+            proxy = try await GuestBrowserProxy.start(secret: secret, channel: scope, origin: network.origin) { [weak self] in
+                guard let self, self.command == decoded else { throw GuestDesktopError.denied }
+                try self.live()
+                guard Int64(Date().timeIntervalSince1970 * 1000) < decoded.expiresAtMs else { throw GuestDesktopError.denied }
+            }
+        } else if incoming["networkSecret"] != nil || incoming["networkChannel"] != nil || decoded.operation == .navigate {
+            throw GuestDesktopError.denied
+        }
         if decoded.operation == .project {
             guard let projection = decoded.projection, projection.configurationRevision == 1,
                   projection.modelReference.version > 0, projection.modelReference.epoch == c.authority.consent.epoch,
@@ -206,7 +226,7 @@ private struct GuestExecutionConsent: Codable, Equatable {
                 return ["kind": "result", "commandId": decoded.id.uuidString.lowercased(), "reservationId": reservation,
                     "outcome": "filled", "verificationRequired": "yes", "observationId": "", "windowId": ""]
             }
-            let captured = try await browser.observe(decoded) { [self] target in try await permit(decoded, targetJSON: target) }
+            let captured = try await browser.observe(decoded, proxy: proxy) { [self] target in try await permit(decoded, targetJSON: target) }
             try live()
             return ["kind": "result", "commandId": decoded.id.uuidString.lowercased(), "reservationId": reservation,
                 "outcome": "observed", "verificationRequired": "yes", "observationId": captured.0.uuidString.lowercased(),

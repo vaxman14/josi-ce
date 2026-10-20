@@ -40,6 +40,7 @@ import Darwin
     private var supportsSafariInspection = false
     private var supportsFirefoxInspection = false
     private var supportsChromeDraft = false
+    private var supportsChromeNetwork = false
     private var pairedBinding: Wire = .null
     private var sentConsent: Wire = .null
     private var execution: GuestPendingExecution?
@@ -127,6 +128,10 @@ import Darwin
             pairedBinding = ["guestBootId": .string(boot), "guestChannelId": .string(guest["channel"]!)]
             paired = true; state = "Companion connected. Automation is not enabled."
             while !Task.isCancelled && !closed {
+                // Send renewed target leases before a queued page load. A
+                // stale browser pin must not shorten its usable window to 1s.
+                refreshApplicationPin(); refreshBrowserPin()
+                await applicationTask?.value; await browserTask?.value
                 let until = try current()
                 let pin = currentApplicationPin(until: until)
                 let encoded = pin == .null ? "" : String(decoding: try JSONEncoder().encode(pin), as: UTF8.self)
@@ -148,16 +153,17 @@ import Darwin
                     || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate"])
                     || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate", "browserConnection"])),
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
-                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? ""),
+                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? ""),
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
                       ["yes", "no"].contains(reply["screenCapture"] ?? ""), let candidate = reply["applicationCandidate"],
                       candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
                 accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
-                supportsExecution = ["desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? "")
-                supportsBrowserInspection = ["desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? "")
-                supportsSafariInspection = ["desktop-command.4", "desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? "")
-                supportsFirefoxInspection = ["desktop-command.5", "desktop-command.6"].contains(reply["executionProtocol"] ?? "")
-                supportsChromeDraft = reply["executionProtocol"] == "desktop-command.6"
+                supportsExecution = ["desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
+                supportsBrowserInspection = ["desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
+                supportsSafariInspection = ["desktop-command.4", "desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
+                supportsFirefoxInspection = ["desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
+                supportsChromeDraft = ["desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
+                supportsChromeNetwork = reply["executionProtocol"] == "desktop-command.7"
                 supportsBrowserProfiles = reply["browserCandidate"] != nil
                 guard reply["browserConnection"] == nil || ["connected", "waiting"].contains(reply["browserConnection"] ?? "")
                 else { throw GuestLinkError.invalid }
@@ -213,7 +219,7 @@ import Darwin
         browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
         supportsBrowserInspection = false
         supportsSafariInspection = false
-        supportsFirefoxInspection = false; supportsChromeDraft = false
+        supportsFirefoxInspection = false; supportsChromeDraft = false; supportsChromeNetwork = false
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         cancelExecution(); sentConsent = .null
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
@@ -228,7 +234,7 @@ import Darwin
     private func refreshApplicationPin() {
         guard !closed, paired, applicationTask == nil, applicationCandidate != .null else { return }
         if applicationPin["candidateId"] == applicationCandidate["candidateId"],
-           applicationPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) + 4000 { return }
+           applicationPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) + 9000 { return }
         let selected = applicationCandidate
         applicationTask = Task {
             defer { if !Task.isCancelled { applicationTask = nil } }
@@ -263,7 +269,7 @@ import Darwin
               applicationPin["projection"]["application"]["applicationId"] == browserCandidate["applicationId"],
               applicationPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) else { return }
         if browserPin["candidateId"] == browserCandidate["candidateId"],
-           browserPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) + 4000 { return }
+           browserPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) + 9000 { return }
         let selected = browserCandidate
         browserTask = Task {
             defer { if !Task.isCancelled { browserTask = nil } }
@@ -342,7 +348,8 @@ import Darwin
     }
     /// Internal server-bridge entry only. No renderer, tool or arbitrary JSON
     /// endpoint may supply the authorizer. There is deliberately no default.
-    func execute(_ packet: Wire, authorize: @escaping @MainActor (Wire) async throws -> Wire) async throws -> Wire {
+    func execute(_ packet: Wire, network: NativeBrowserNetworkRelay? = nil,
+                 authorize: @escaping @MainActor (Wire) async throws -> Wire) async throws -> Wire {
         _ = try current()
         guard paired, supportsExecution, !closed, execution == nil, let link = wire,
               ProtectedWire.exact(packet, ["reservationId", "command", "commandJSON", "application"]),
@@ -355,7 +362,7 @@ import Darwin
         usedReservations.insert(packet["reservationId"].text)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let request = GuestPendingExecution(packet: packet, consent: consent, authorize: authorize, continuation: continuation)
+                let request = GuestPendingExecution(packet: packet, consent: consent, network: network, authorize: authorize, continuation: continuation)
                 execution = request
                 executionTimeout = Task { [weak self] in
                     let now = Int(Date().timeIntervalSince1970 * 1000)
@@ -375,6 +382,7 @@ import Darwin
     private func cancelExecution() {
         executionTimeout?.cancel(); executionTimeout = nil
         let request = execution; execution = nil
+        request?.network?.stop()
         request?.continuation.resume(throwing: GuestLinkError.closed)
     }
     private func requireExecution(_ request: GuestPendingExecution) throws {
@@ -386,12 +394,13 @@ import Darwin
               ProtectedWire.uuid(c["id"]), ProtectedWire.uuid(c["taskId"]), ProtectedWire.uuid(c["sessionId"]),
               ProtectedWire.integer(c["expiresAtMs"]), c["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
               c["expiresAtMs"].integer <= until, c["expiresAtMs"].integer <= consent["leaseUntilMs"].integer,
-              ["observe", "project", "press", "focus", "click", "draft"].contains(c["operation"].text),
+              ["observe", "project", "press", "focus", "click", "draft", "navigate"].contains(c["operation"].text),
               currentApplicationPin(until: until)["projection"]["application"] == request.packet["application"],
               c["appId"] == request.packet["application"]["applicationId"],
               c["installationRevision"] == request.packet["application"]["installationRevision"]
         else { throw GuestLinkError.expired }
         if c["operation"] == .string("draft"), !supportsChromeDraft { throw GuestLinkError.unavailable }
+        if c["network"] != .null, !supportsChromeNetwork { throw GuestLinkError.unavailable }
         if c["browser"] != .null {
             let browser = currentBrowserPin(until: until)["projection"]["browser"]
             guard browserConnected, supportsBrowserInspection, browser != .null, c["browser"]["profileId"] == browser["profileId"],
@@ -403,8 +412,10 @@ import Darwin
         let c = request.packet["command"], reservation = request.packet["reservationId"].text
         let rawCommand = request.packet["commandJSON"].text
         let rawApplication = String(decoding: try JSONEncoder().encode(request.packet["application"]), as: UTF8.self)
-        try await link.send(["kind": "execute", "reservationId": reservation, "command": rawCommand, "application": rawApplication,
-                             "consentDigest": request.consent["authority"]["consent"]["digest"].text])
+        var outgoing = ["kind": "execute", "reservationId": reservation, "command": rawCommand, "application": rawApplication,
+                        "consentDigest": request.consent["authority"]["consent"]["digest"].text]
+        if let network = request.network { outgoing["networkSecret"] = network.encodedSecret; outgoing["networkChannel"] = network.channel }
+        try await link.send(outgoing)
         var response = try await link.receive()
         var authorized = false
         if response["kind"] == "authorize" {
@@ -469,7 +480,7 @@ import Darwin
         else { throw GuestLinkError.invalid }
         if ["observed", "projected", "inputIssued", "filled"].contains(response["outcome"] ?? ""), !authorized { throw GuestLinkError.invalid }
         if response["outcome"] == "observed" {
-            guard c["operation"] == .string("observe"), response["observationId"] == c["resultObservationId"].text,
+            guard ["observe", "navigate"].contains(c["operation"].text), response["observationId"] == c["resultObservationId"].text,
                   ProtectedWire.uuid(.string(response["windowId"] ?? "")) else { throw GuestLinkError.invalid }
         } else if response["outcome"] == "projected" {
             guard c["operation"] == .string("project"), chunkIndex > 0, chunkIndex == chunkCount,
@@ -483,6 +494,7 @@ import Darwin
         }
         try requireExecution(request)
         execution = nil; executionTimeout?.cancel(); executionTimeout = nil
+        request.network?.stop()
         guard response["outcome"] == "projected" || chunkIndex == 0 else { throw GuestLinkError.invalid }
         var result = response.mapValues(Wire.string)
         if response["outcome"] == "projected" { result["projection"] = .object(["publicKey": .string(recipient), "box": .string(encrypted)]) }
@@ -508,11 +520,12 @@ import Darwin
 @MainActor private final class GuestPendingExecution {
     let packet: Wire
     let consent: Wire
+    let network: NativeBrowserNetworkRelay?
     let authorize: @MainActor (Wire) async throws -> Wire
     let continuation: CheckedContinuation<Wire, Error>
-    init(packet: Wire, consent: Wire, authorize: @escaping @MainActor (Wire) async throws -> Wire,
+    init(packet: Wire, consent: Wire, network: NativeBrowserNetworkRelay?, authorize: @escaping @MainActor (Wire) async throws -> Wire,
          continuation: CheckedContinuation<Wire, Error>) {
-        self.packet = packet; self.consent = consent; self.authorize = authorize; self.continuation = continuation
+        self.packet = packet; self.consent = consent; self.network = network; self.authorize = authorize; self.continuation = continuation
     }
 }
 

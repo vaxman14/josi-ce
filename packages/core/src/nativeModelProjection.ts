@@ -16,7 +16,7 @@ export async function prepareNativeModelProjection(db: Db, master: MasterKey, tr
   reservations: AutomationReservationStore, context: Readonly<AutomationExecutionContext>,
   captureReservationId: string): Promise<AutomationModelProjection> {
   const actor = context.ownerUserId, capture = await transport.result(actor, captureReservationId);
-  if (!capture || capture.payload.command.operation !== 'observe' || capture.result?.outcome !== 'succeeded') {
+  if (!capture || !['observe', 'navigate'].includes(capture.payload.command.operation) || capture.result?.outcome !== 'succeeded') {
     throw new Error('The original captured observation is unavailable.');
   }
   const source = capture.payload, control = await transport.current(actor, source.command.workspaceId);
@@ -44,7 +44,7 @@ export async function prepareNativeModelProjection(db: Db, master: MasterKey, tr
   const expiresAtMs = Math.min(control.leaseUntilMs - 500, source.command.expiresAtMs + 10_000);
   if (expiresAtMs < Date.now() + 4000) throw new Error('The captured observation or desktop lease is too close to expiry.');
   let recipient: ReturnType<typeof nativeProjectionRecipient> | null = nativeProjectionRecipient();
-  const { photo: _photo, windowId: _window, ...sourceCommand } = source.command;
+  const { photo: _photo, windowId: _window, url: _url, network: _network, ...sourceCommand } = source.command;
   const payload: NativeObservationPayload = { ...source, purpose: 'josi-native-projection',
     command: { ...sourceCommand, id: randomUUID(), operation: 'project', expiresAtMs,
       observationId: capture.result.observationId, resultObservationId: randomUUID(), windowId: capture.result.windowId!,

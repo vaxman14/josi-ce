@@ -194,9 +194,10 @@ import Foundation
             "origin": browser.origin]
         return String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
     }
-    func observe(_ command: GuestDesktopCommand, authorize: @escaping @MainActor (String) async throws -> Void) async throws -> (UUID, UUID) {
+    func observe(_ command: GuestDesktopCommand, proxy: GuestBrowserProxy? = nil,
+                 authorize: @escaping @MainActor (String) async throws -> Void) async throws -> (UUID, UUID) {
         try current(command)
-        guard command.operation == .observe, let browser = command.browser, let resultId = command.resultObservationId,
+        guard [.observe, .navigate].contains(command.operation), let browser = command.browser, let resultId = command.resultObservationId,
               let limit = command.maxOutputBytes, (4096...65536).contains(limit), flight == nil,
               !usedCommands.contains(command.id), usedCommands.count < 4096 else { throw GuestDesktopError.denied }
         if let preceding = command.observationId {
@@ -219,7 +220,12 @@ import Foundation
             wire["kind"] = "photo"; wire["tabId"] = photoSource.tab; wire["observationId"] = photoSource.observation
             wire["elementId"] = photo.elementId.uuidString.lowercased(); wire["maxOutputBytes"] = limit - 26_000
         }
-        let result = try await dispatch(command, wire: wire, authorize: authorize)
+        if command.operation == .navigate {
+            guard browser.family == "chrome", proxy != nil, let url = command.url, Self.site(url) == browser.origin,
+                  URLComponents(string: url)?.scheme == "https" else { throw GuestDesktopError.denied }
+            wire["kind"] = "openPage"; wire["url"] = url
+        }
+        let result = try await dispatch(command, wire: wire, proxyPassword: proxy?.password, authorize: authorize)
         try current(command)
         guard var page = try JSONSerialization.jsonObject(with: result) as? [String: Any] else { throw GuestDesktopError.denied }
         if command.photo != nil {
@@ -249,10 +255,10 @@ import Foundation
         }
         return (resultId, window)
     }
-    private func dispatch(_ command: GuestDesktopCommand, wire: [String: Any],
+    private func dispatch(_ command: GuestDesktopCommand, wire: [String: Any], proxyPassword: String? = nil,
                           authorize: @escaping @MainActor (String) async throws -> Void) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
-            let pending = BrowserInspectionFlight(original: command, wire: wire, authorize: authorize, completion: continuation)
+            let pending = BrowserInspectionFlight(original: command, wire: wire, proxyPassword: proxyPassword, authorize: authorize, completion: continuation)
             flight = pending
             pending.timeout = Task { [weak self, weak pending] in
                 let now = Int64(Date().timeIntervalSince1970 * 1000)
@@ -327,11 +333,17 @@ import Foundation
             guard connected, request["sessionId"] as? String == sessionId,
                   let pending = flight, pending.delivered, !pending.authorized, !pending.authorizing,
                   Set(payload.keys) == ["command", "actual"], let command = payload["command"] as? [String: Any],
-                  NSDictionary(dictionary: command).isEqual(to: pending.wire),
-                  let actual = payload["actual"] as? [String: Any], Set(actual.keys) == ["tabId", "windowId", "url"],
-                  let tab = actual["tabId"] as? Int, tab >= 0, let window = actual["windowId"] as? Int, window >= 0,
-                  let url = actual["url"] as? String, url.utf8.count <= 8192,
-                  Self.site(url) == pending.original.browser?.origin else { throw GuestDesktopError.denied }
+                  NSDictionary(dictionary: command).isEqual(to: pending.wire) else { throw GuestDesktopError.denied }
+            var tab = -1, window = -1
+            if pending.original.operation == .navigate {
+                guard payload["actual"] is NSNull, pending.proxyPassword != nil else { throw GuestDesktopError.denied }
+            } else {
+                guard let actual = payload["actual"] as? [String: Any], Set(actual.keys) == ["tabId", "windowId", "url"],
+                      let actualTab = actual["tabId"] as? Int, actualTab >= 0, let actualWindow = actual["windowId"] as? Int, actualWindow >= 0,
+                      let url = actual["url"] as? String, url.utf8.count <= 8192,
+                      Self.site(url) == pending.original.browser?.origin else { throw GuestDesktopError.denied }
+                tab = actualTab; window = actualWindow
+            }
             pending.authorizing = true
             do {
                 try await pending.authorize(target(pending.original))
@@ -340,6 +352,10 @@ import Foundation
                 pending.authorized = true; pending.actual = (tab, window)
                 var permitted: [String: Any] = ["commandId": pending.original.id.uuidString.lowercased(), "sessionId": sessionId, "allowed": true]
                 if pending.original.operation == .draft { permitted["draftText"] = pending.original.draft?.text }
+                if let password = pending.proxyPassword, let origin = pending.original.browser?.origin {
+                    permitted["proxy"] = ["host": "127.0.0.1", "port": Int(GuestBrowserProxy.port), "username": "josi",
+                        "password": password, "origin": origin, "expiresAt": pending.wire["expiresAt"]!]
+                }
                 output = permitted
             } catch { stop(); throw error }
         case "browser.receipt":
@@ -370,7 +386,9 @@ import Foundation
                   elements.allSatisfy({ element in
                       guard let id = element["id"] as? String else { return false }
                       return UUID(uuidString: id) != nil
-                  }), result["tabId"] as? Int == pending.actual?.0, result["windowId"] as? Int == pending.actual?.1
+                  }), let resultTab = result["tabId"] as? Int, let resultWindow = result["windowId"] as? Int,
+                  resultTab >= 0, resultWindow >= 0,
+                  pending.original.operation == .navigate || (resultTab == pending.actual?.0 && resultWindow == pending.actual?.1)
             else { stop(); throw GuestDesktopError.uncertain }
             if pending.original.photo != nil {
                 guard let photo = result["photo"] as? [String: Any],
@@ -514,14 +532,16 @@ private final class BrowserSessionCallback: NSObject, GuestBrowserOwnerCallback,
 }
 @MainActor private final class BrowserInspectionFlight {
     let original: GuestDesktopCommand, wire: [String: Any]
+    let proxyPassword: String?
     let authorize: @MainActor (String) async throws -> Void
     let completion: CheckedContinuation<Data, Error>
     var delivered = false, authorizing = false, authorized = false
     var actual: (Int, Int)?
     var timeout: Task<Void, Never>?
-    init(original: GuestDesktopCommand, wire: [String: Any], authorize: @escaping @MainActor (String) async throws -> Void,
+    init(original: GuestDesktopCommand, wire: [String: Any], proxyPassword: String?,
+         authorize: @escaping @MainActor (String) async throws -> Void,
          completion: CheckedContinuation<Data, Error>) {
-        self.original = original; self.wire = wire; self.authorize = authorize; self.completion = completion
+        self.original = original; self.wire = wire; self.proxyPassword = proxyPassword; self.authorize = authorize; self.completion = completion
     }
 }
 private final class BrowserSessionResponse: @unchecked Sendable {

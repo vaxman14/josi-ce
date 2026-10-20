@@ -29,18 +29,34 @@
   addEventListener('keydown', stopForHuman, true);
   api.runtime.onMessage.addListener((request, sender, respond) => {
     if (sender.id !== api.runtime.id || sender.tab || request?.channel !== 'josi-page' || request.version !== 1) return false;
+    void (async () => {
     try {
       if (request.expectedUrl !== location.href || !Number.isSafeInteger(request.expiresAt) || Date.now() >= request.expiresAt) throw new Error('stale_target');
       if (request.sessionId !== session) { session = request.sessionId; stopped = false; observation = null; elements.clear(); }
       if (stopped) throw new Error('human_control');
       if (mutations.takeRecords().length) revision++;
-      let photo = null;
+      let photo = null, photoCenter = null;
       if (request.kind === 'photo') {
         if (!observation || request.observationId !== observation.id || observation.revision !== revision
           || observation.url !== location.href) throw new Error('observation_changed');
         const image = elements.get(request.elementId)?.element;
-        if (!(image instanceof HTMLImageElement) || !image.isConnected || !visible(image)
-          || !image.complete || !image.naturalWidth || new URL(image.currentSrc).origin !== location.origin) throw new Error('photo_unavailable');
+        if (!(image instanceof HTMLImageElement) || !image.isConnected || !visible(image)) throw new Error('photo_unavailable');
+        const expectedSource = image.currentSrc || image.src;
+        if (new URL(expectedSource).origin !== location.origin) throw new Error('photo_unavailable');
+        image.scrollIntoView({ block: 'center', behavior: 'instant' });
+        if (!image.complete || !image.naturalWidth) {
+          image.loading = 'eager';
+          let timer;
+          try { await Promise.race([image.decode(), new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('photo_load_timeout')), Math.max(1, Math.min(3000, request.expiresAt - Date.now() - 1500)));
+          })]); } finally { clearTimeout(timer); }
+        }
+        if (stopped || session !== request.sessionId || Date.now() >= request.expiresAt || location.href !== request.expectedUrl
+          || !image.isConnected || !image.complete || !image.naturalWidth || image.currentSrc !== expectedSource) throw new Error('photo_changed');
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (stopped || session !== request.sessionId || Date.now() >= request.expiresAt || location.href !== request.expectedUrl) throw new Error('photo_changed');
+        if (mutations.takeRecords().length) revision++;
+        const photoBounds = image.getBoundingClientRect(); photoCenter = photoBounds.y + photoBounds.height / 2;
         // Read already loaded pixels only. Drawing a cross-origin image fails
         // closed; this is not a fetch proxy or a path to arbitrary local files.
         const canvas = document.createElement('canvas');
@@ -62,7 +78,9 @@
       if (request.kind === 'observe' || request.kind === 'photo') {
         elements = new Map(); const nodes = [];
         const candidates = document.querySelectorAll('img,a[href],button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]');
-        for (const element of candidates) {
+        const ordered = [...candidates];
+        if (photoCenter !== null) ordered.sort((a, b) => Math.abs(a.getBoundingClientRect().y - photoCenter) - Math.abs(b.getBoundingClientRect().y - photoCenter));
+        for (const element of ordered) {
           if (nodes.length >= 300) break;
           if (!visible(element)) continue;
           const id = crypto.randomUUID(), rect = element.getBoundingClientRect();
@@ -95,8 +113,7 @@
           }
           if (size() > request.maxOutputBytes - 128) throw new Error('output_budget');
         }
-        respond(result);
-        return false;
+        return result;
       }
       if (!observation || request.observationId !== observation.id || observation.revision !== revision
         || observation.url !== location.href) throw new Error('observation_changed');
@@ -118,8 +135,7 @@
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
         if (!element.isConnected || element.value !== request.value) throw new Error('draft_not_verified');
-        respond({ kind: 'draft_filled', matched: true, verificationRequired: true });
-        return false;
+        return { kind: 'draft_filled', matched: true, verificationRequired: true };
       }
       if (request.kind === 'click') {
         if (element instanceof HTMLInputElement && element.type === 'file') throw new Error('file_transfer_requires_broker');
@@ -134,8 +150,9 @@
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
       } else throw new Error('unsupported_operation');
-      respond({ kind: 'input_issued', verificationRequired: true });
-    } catch { respond({ kind: 'refused', code: 'fresh_observation_or_permission_required' }); }
-    return false;
+      return { kind: 'input_issued', verificationRequired: true };
+    } catch { return { kind: 'refused', code: 'fresh_observation_or_permission_required' }; }
+    })().then(respond);
+    return true;
   });
 })();

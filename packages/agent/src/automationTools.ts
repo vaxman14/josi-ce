@@ -19,6 +19,10 @@ export const AUTOMATION_RECEIPT_TOOL: ToolSpec = { def: {
   parameters: shape({ reservation_id: id }),
 }, actionClass: null };
 export const AUTOMATION_CONTROL_TOOLS: ToolSpec[] = [
+  { def: { name: 'open_automation_browser',
+    description: 'Open an exact HTTPS page in the connected separate Chrome workspace and capture it. Requires current browser navigation, observation and public-network permissions for that exact site. Does not submit, publish or upload. Only the resulting capture, separately sent to the permitted model, shows what actually loaded. Use the existing task and control session; never retry an uncertain navigation.',
+    parameters: shape({ task_id: id, workspace_id: id, control_session_id: id, url: { type: 'string', maxLength: 2048 } }) },
+    actionClass: 'automation_control' },
   { def: { name: 'start_automation_task',
     description: 'Attach a separate-desktop work task to the selected unfinished step of this conversation’s current goal. Call after owning and reviewing the goal and discovering a ready workspace. The same step retains one original task across turns; do not create replacement steps or tasks to evade an uncertain result or limit. This records work only and grants no browser, computer or transmission permission. Use its returned taskId for connection and operations.',
     parameters: shape({ goal_id: id, revision: { type: 'integer', minimum: 1 }, step_id: id, workspace_id: id }) }, actionClass: 'automation_control' },
@@ -67,10 +71,12 @@ export async function automationToolAvailability(runtime: AutomationRuntime | un
     return AUTOMATION_CONTROL_TOOLS.filter(tool => tool.def.name === 'start_automation_task'
         && ready.some(workspace => workspace.computerUse || workspace.browserFamilies.length)
       || tool.def.name === 'connect_automation_workspace'
+      || tool.def.name === 'open_automation_browser' && runtime.actionAvailable
+        && ready.some(workspace => workspace.browserFamilies.includes('chrome'))
       || tool.def.name === 'observe_automation_workspace' && runtime.observationAvailable
         && ready.some(workspace => workspace.computerUse || workspace.browserFamilies.length)
-      || tool.def.name === 'browser_control' && runtime.actionAvailable && ready.some(workspace => workspace.browserFamilies.length)
-      || tool.def.name === 'computer_control' && runtime.actionAvailable && ready.some(workspace => workspace.computerUse));
+      || tool.def.name === 'browser_control' && ready.some(workspace => workspace.browserFamilies.some(family => runtime.browserActionAvailable(family)))
+      || tool.def.name === 'computer_control' && runtime.computerActionAvailable && ready.some(workspace => workspace.computerUse));
   } catch { return []; }
 }
 export async function executeAutomationTool(ctx: ToolExecutionContext, name: string, input: Record<string, unknown>, db?: Db) {
@@ -86,6 +92,11 @@ export async function executeAutomationTool(ctx: ToolExecutionContext, name: str
   }
   const context: AutomationExecutionContext = { ownerUserId: ctx.userId, threadId: ctx.threadId,
     turnId: ctx.durableTurnId, leaseToken: ctx.durableLeaseToken, workMemoryVersion: ctx.workMemoryVersion };
+  if (name === 'open_automation_browser') {
+    if (Object.keys(input).sort().join(',') !== 'control_session_id,task_id,url,workspace_id') throw new Error('Choose the current task, control session and exact page.');
+    return ctx.automationRuntime.openBrowser(context, { taskId: String(input.task_id), workspaceId: String(input.workspace_id),
+      controlSessionId: String(input.control_session_id), url: String(input.url) });
+  }
   if (name === 'start_automation_task') {
     if (Object.keys(input).sort().join(',') !== 'goal_id,revision,step_id,workspace_id') throw new Error('Choose the exact goal, step, revision and workspace.');
     return ctx.automationRuntime.startTask(context, { goalId: String(input.goal_id), revision: input.revision as number,

@@ -788,7 +788,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         // The tool's own message, not a stack trace, and never a provider body.
         result = { ok: false, error: 'failed', message: (err as Error).message };
       }
-      if ((call.name === 'observe_automation_workspace'
+      if ((call.name === 'observe_automation_workspace' || call.name === 'open_automation_browser'
         || call.name === 'browser_control' && (call.input.action as { kind?: string } | undefined)?.kind === 'browser.photo')
         && result && typeof result === 'object') {
         const capture = result as { status?: unknown; replayed?: unknown; reservation?: { id?: unknown } };

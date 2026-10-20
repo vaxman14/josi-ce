@@ -18,8 +18,7 @@ import Foundation
     func bind(_ request: NativeNetworkRequest, reservationId: UUID) throws {
         try live(request)
         bindings = bindings.filter { $0.value.request.expiresAtMs > Int64(Date().timeIntervalSince1970 * 1000) }
-        guard bindings.count < 16, seen.count < 4096, !seen.contains(request.id),
-              !bindings.values.contains(where: { $0.reservationId == reservationId }) else { throw NativeNetworkError.denied }
+        guard bindings.count < 16, seen.count < 4096, !seen.contains(request.id) else { throw NativeNetworkError.denied }
         seen.insert(request.id)
         bindings[request.id] = (request, reservationId)
     }

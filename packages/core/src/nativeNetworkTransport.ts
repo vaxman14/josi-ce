@@ -31,9 +31,10 @@ interface Query {
   direction: 'upload' | 'download' | null; maximumBytes: number | null;
 }
 interface NetworkState {
-  purpose: 'josi-native-network-state'; schemaVersion: 1; reservationId: string; requestId: string;
+  purpose: 'josi-native-network-state'; schemaVersion: 2; reservationId: string; requestId: string;
   ownerUserId: string; storageSessionId: string; planMac: string; expiresAtMs: number;
-  state: 'lookup' | 'resolved' | 'connected'; destination: Destination | null;
+  chargedBytes: number;
+  flows: Record<string, { state: 'lookup' | 'resolved' | 'connected'; destination: Destination | null }>;
 }
 interface Row {
   reservation_id: string; request_id: string; owner_user_id: string; storage_session_id: string;
@@ -54,11 +55,13 @@ const denied = () => new NativeNetworkTransportError();
 
 export class NativeNetworkTransport {
   constructor(private backend: NativeTransportBackend,
-    private current: (tx: Db, owner: string, workspace: string) => Promise<NativeControlState>) {}
+    private current: (tx: Db, owner: string, workspace: string) => Promise<NativeControlState>,
+    private browserParent?: (tx: Db, context: AutomationDispatchContext) => Promise<NativeNetworkPayload>) {}
 
-  private payload(context: AutomationDispatchContext): NativeNetworkPayload {
+  private payload(context: AutomationDispatchContext, parent?: NativeNetworkPayload): NativeNetworkPayload {
     try {
-      const p = JSON.parse(context.payload.reveal()) as NativeNetworkPayload, r = p.request;
+      const p = parent ?? JSON.parse(context.payload.reveal()) as NativeNetworkPayload, r = p.request;
+      const effects = parent ? context.effects.filter(e => e.action === 'network.connect') : context.effects;
       if (!exact(p, ['purpose', 'schemaVersion', 'storageSessionId', 'consent', 'targetReference', 'guestBootId',
         'guestChannelId', 'controlSessionId', 'generation', 'application', 'browser', 'request'])
         || p.purpose !== 'josi-native-network' || p.schemaVersion !== 1
@@ -68,8 +71,8 @@ export class NativeNetworkTransport {
         || !['public', 'private', 'loopback'].includes(r.networkClass) || !integer(r.maximumBytes)
         || r.maximumBytes < 1 || r.maximumBytes > 16_777_216 || !integer(r.expiresAtMs)
         || r.taskId !== context.taskId || r.workspaceId !== context.identity.workspaceId
-        || r.expiresAtMs !== context.expiresAtMs || context.effects.length !== 1) throw denied();
-      const effect = context.effects[0];
+        || r.expiresAtMs !== context.expiresAtMs || effects.length !== 1) throw denied();
+      const effect = effects[0];
       if (effect.action !== 'network.connect' || effect.bytes !== r.maximumBytes
         || effect.target.kind !== 'network' || Object.keys(effect.target).sort().join(',') !== 'kind,networkClass,origin'
         || effect.target.origin !== r.origin || effect.target.networkClass !== r.networkClass) throw denied();
@@ -77,7 +80,9 @@ export class NativeNetworkTransport {
     } catch { throw denied(); }
   }
   private async bound(tx: Db, context: AutomationDispatchContext) {
-    const p = this.payload(context), c = await this.current(tx, context.identity.userId, p.request.workspaceId);
+    const raw = JSON.parse(context.payload.reveal());
+    const parent = raw.purpose === 'josi-native-network' ? undefined : await this.browserParent?.(tx, context);
+    const p = this.payload(context, parent), c = await this.current(tx, context.identity.userId, p.request.workspaceId);
     if (!sameAutomationIdentity(context.identity, c.identity) || p.storageSessionId !== c.storageSessionId
       || !sameRef(p.consent, c.consent) || !sameRef(p.targetReference, c.targetReference)
       || !sameRef(context.expected.permissions, c.permissions) || !sameRef(context.expected.cardinal, c.cardinal)
@@ -106,30 +111,41 @@ export class NativeNetworkTransport {
     const q = structuredClone(input) as unknown as Query;
     return this.backend(context.identity.userId, async c => {
       const p = await this.bound(c.tx, context);
-      if (sessionId !== p.storageSessionId || !equal(q.request, p.request)) throw denied();
+      if (sessionId !== p.storageSessionId || !uuid(q.request?.id)
+        || !equal({ ...q.request, id: p.request.id }, p.request)) throw denied();
       const [row] = await c.tx.query<Row>(`select * from automation_native_networks
         where reservation_id=$1 and owner_user_id=$2 for update`, [context.reservationId, context.identity.userId]);
-      if (q.phase === 'lookup') {
-        if (row || q.destination !== null || q.address !== null || q.direction !== null || q.maximumBytes !== null) throw denied();
-        const value: NetworkState = { purpose: 'josi-native-network-state', schemaVersion: 1,
-          reservationId: context.reservationId, requestId: p.request.id, ownerUserId: context.identity.userId,
-          storageSessionId: sessionId, planMac: context.planMac, expiresAtMs: context.expiresAtMs, state: 'lookup', destination: null };
-        await c.tx.query(`insert into automation_native_networks
-          (reservation_id,request_id,owner_user_id,storage_session_id,expires_at,value_enc)
-          values($1,$2,$3,$4,to_timestamp($5::double precision/1000),$6)`,
-        [value.reservationId, value.requestId, value.ownerUserId, sessionId, value.expiresAtMs, seal(c.key, value)]);
-        return;
-      }
-      if (!row) throw denied();
       let saved: NetworkState;
-      try { saved = openSealed<NetworkState>(c.key, row.value_enc); } catch { throw denied(); }
-      if (saved.purpose !== 'josi-native-network-state' || saved.schemaVersion !== 1
+      if (!row) {
+        if (q.phase !== 'lookup') throw denied();
+        saved = { purpose: 'josi-native-network-state', schemaVersion: 2,
+          reservationId: context.reservationId, requestId: p.request.id, ownerUserId: context.identity.userId,
+          storageSessionId: sessionId, planMac: context.planMac, expiresAtMs: context.expiresAtMs, chargedBytes: 0, flows: {} };
+      } else {
+        try { saved = openSealed<NetworkState>(c.key, row.value_enc); } catch { throw denied(); }
+        if (saved.purpose !== 'josi-native-network-state' || saved.schemaVersion !== 2
         || saved.reservationId !== row.reservation_id || saved.reservationId !== context.reservationId
         || saved.requestId !== row.request_id || saved.requestId !== p.request.id
         || saved.ownerUserId !== row.owner_user_id || saved.ownerUserId !== context.identity.userId
         || saved.storageSessionId !== row.storage_session_id || saved.storageSessionId !== sessionId
         || saved.planMac !== context.planMac || saved.expiresAtMs !== context.expiresAtMs
-        || saved.expiresAtMs !== new Date(row.expires_at).getTime()) throw denied();
+          || saved.expiresAtMs !== new Date(row.expires_at).getTime()) throw denied();
+      }
+      if (!integer(saved.chargedBytes) || saved.chargedBytes > p.request.maximumBytes
+        || !saved.flows || Object.keys(saved.flows).length > 8) throw denied();
+      const persist = () => c.tx.query(`insert into automation_native_networks
+        (reservation_id,request_id,owner_user_id,storage_session_id,expires_at,value_enc)
+        values($1,$2,$3,$4,to_timestamp($5::double precision/1000),$6)
+        on conflict(reservation_id) do update set value_enc=excluded.value_enc`,
+      [saved.reservationId, saved.requestId, saved.ownerUserId, sessionId, saved.expiresAtMs, seal(c.key, saved)]);
+      if (q.phase === 'lookup') {
+        if (Object.hasOwn(saved.flows, q.request.id) || Object.keys(saved.flows).length >= 8
+          || q.destination !== null || q.address !== null || q.direction !== null || q.maximumBytes !== null) throw denied();
+        saved.flows[q.request.id] = { state: 'lookup', destination: null };
+        await persist(); return;
+      }
+      const flow = saved.flows[q.request.id];
+      if (!flow) throw denied();
       const d = q.destination, url = new URL(p.request.origin);
       const hostname = url.hostname.replace(/^\[|\]$/g, '');
       if (!exact(d, ['hostname', 'port', 'addresses', 'networkClass']) || d.hostname !== hostname
@@ -140,25 +156,28 @@ export class NativeNetworkTransport {
       // Locality is classified by the signed native resolver; this endpoint
       // pins its report, and never opens or resolves an address on the server.
       if (q.phase === 'resolved') {
-        if (saved.state !== 'lookup' || q.address !== null || q.direction !== null || q.maximumBytes !== null) throw denied();
-        saved.destination = d; saved.state = 'resolved';
+        if (flow.state !== 'lookup' || q.address !== null || q.direction !== null || q.maximumBytes !== null) throw denied();
+        flow.destination = d; flow.state = 'resolved';
       } else {
-        if (!equal(saved.destination, d) || q.address !== d.addresses[0]) throw denied();
+        if (!equal(flow.destination, d) || q.address !== d.addresses[0]) throw denied();
         if (q.phase === 'connect') {
-          if (saved.state !== 'resolved' || q.direction !== null || q.maximumBytes !== null) throw denied();
-          saved.state = 'connected';
+          if (flow.state !== 'resolved' || q.direction !== null || q.maximumBytes !== null) throw denied();
+          flow.state = 'connected';
         } else {
-          if (saved.state !== 'connected') throw denied();
+          if (flow.state !== 'connected') throw denied();
           if (q.phase === 'current') {
             if (q.direction !== null || q.maximumBytes !== null) throw denied();
-          } else if (!['upload', 'download'].includes(String(q.direction)) || !integer(q.maximumBytes)
-            || q.maximumBytes < 1 || q.maximumBytes > Math.min(32_768, p.request.maximumBytes)) throw denied();
+          } else {
+            if (!['upload', 'download'].includes(String(q.direction)) || !integer(q.maximumBytes)
+              || q.maximumBytes < 1 || q.maximumBytes > Math.min(32_768, p.request.maximumBytes)
+              || saved.chargedBytes + q.maximumBytes > p.request.maximumBytes) throw denied();
+            // Reserve before transfer, across all sockets. Short reads and
+            // interrupted writes never refund this original task's ceiling.
+            saved.chargedBytes += q.maximumBytes;
+          }
         }
       }
-      if (q.phase === 'resolved' || q.phase === 'connect') {
-        await c.tx.query('update automation_native_networks set value_enc=$2 where reservation_id=$1',
-          [context.reservationId, seal(c.key, saved)]);
-      }
+      if (q.phase !== 'current') await persist();
     }, tx);
   }
 }

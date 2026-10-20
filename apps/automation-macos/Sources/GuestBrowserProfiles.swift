@@ -166,6 +166,10 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
         config.arguments = c.family == "firefox" ? ["--no-remote", "--profile", path, "about:addons"]
             : ["--user-data-dir=" + path, "--profile-directory=Default", "--no-first-run", "--no-default-browser-check",
                c.family == "brave" ? "brave://extensions" : "chrome://extensions"]
+        if c.family == "chrome" {
+            config.arguments.insert(contentsOf: ["--proxy-server=http://127.0.0.1:40513",
+                "--proxy-bypass-list=<-loopback>", "--disable-quic"], at: 0)
+        }
         let app = try await NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: pin.bundlePath), configuration: config)
         try GuestDesktopEngine.verifyApplication(app, pin: pin)
     }

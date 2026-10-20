@@ -22,7 +22,7 @@ APP_ID = 'com.heyjosi.ce.unified'
 APP_IDENTITY = 'Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
 INSTALLER_IDENTITY = 'Developer ID Installer: Socal Receptionist LLC (LRH75YR6QW)'
 KEYCHAIN = '/Users/roman/Library/Keychains/login.keychain-db'
-VERSION = '0.7.0-native.15'
+VERSION = '0.7.0-native.16'
 PROTECTED_ID = 'com.heyjosi.ce.protected-key'
 SIGNING_CERTIFICATE_SHA1 = '0bdc050694b41330db6833e440a4a8e6f466abdb'
 
@@ -150,7 +150,7 @@ def build(args):
     info = {
         'CFBundleIdentifier': APP_ID, 'CFBundleName': 'Josi', 'CFBundleDisplayName': 'Josi',
         'CFBundleExecutable': 'Josi', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.7.0',
-        'CFBundleVersion': '20261020.15', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
+        'CFBundleVersion': '20261020.16', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
         'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
         'JosiNativeClientProtocol': 1, 'JosiProtectedHostProtocol': 1,
@@ -208,6 +208,29 @@ def build(args):
         (output / 'protected-key-entitlements.plist').write_bytes(plistlib.dumps(key_entitlements))
     copy_file(native_build / 'JosiDeviceConsentHost', helpers / 'JosiDeviceConsentHost')
     support = output / 'guest-support'; support.mkdir()
+    chrome_info = None
+    if args.chrome_app:
+        chrome = args.chrome_app.resolve(strict=True)
+        if chrome.name != 'Google Chrome.app' or not chrome.is_dir() or args.chrome_app.is_symlink():
+            raise ValueError('Choose the installed Google Chrome.app, never its profile or user-data folder')
+        requirement = '=anchor apple generic and identifier "com.google.Chrome" and certificate leaf[subject.OU] = "EQHXZ8M8AV"'
+        copied_chrome = support / 'Google Chrome.app'
+        tree(chrome, copied_chrome)
+        # copytree may propagate directory Finder metadata. Strip only the
+        # private copy's signing-incompatible metadata; never alter the source
+        # or follow bundle symlinks to other files.
+        for path in [copied_chrome, *copied_chrome.rglob('*')]:
+            if path.is_symlink():
+                continue
+            for attribute in os.listxattr(path, follow_symlinks=False):
+                if attribute in ('com.apple.FinderInfo', 'com.apple.ResourceFork'):
+                    os.removexattr(path, attribute, follow_symlinks=False)
+        run('verify-support-chrome', ['/usr/bin/codesign', '--verify', '--deep', '--strict', '-R', requirement, copied_chrome])
+        chrome_info = plistlib.loads((copied_chrome / 'Contents/Info.plist').read_bytes()).get('CFBundleShortVersionString')
+        (support / 'Chrome test copy.txt').write_text(
+            'Google Chrome ' + str(chrome_info) + '\n'
+            'Unmodified Google-signed application supplied from this Mac for its separate test desktop. '
+            'No personal browser profile or login data is included. Chrome retains its own license and notices.\n')
     companion = support / 'Josi Companion.app'
     (companion / 'Contents/MacOS').mkdir(parents=True)
     (companion / 'Contents/Resources').mkdir()
@@ -223,6 +246,8 @@ def build(args):
         REPO / 'apps/automation-macos/Sources/GuestBrowserIPC.swift',
         REPO / 'apps/automation-macos/Sources/GuestBrowserSession.swift',
         REPO / 'apps/automation-macos/Sources/GuestPhotoReader.swift',
+        REPO / 'apps/automation-macos/Sources/GuestBrowserProxy.swift',
+        REPO / 'apps/automation-macos/Sources/GuestChromeInstall.swift',
         REPO / 'apps/automation-macos/Sources/GuestLinkWire.swift'])
     browser_build = output / 'guest-browser-components'
     run('build-guest-browser-components', [sys.executable, '-B', REPO / 'scripts/macos/build-guest-browser-components.py',
@@ -254,12 +279,14 @@ def build(args):
         'Inside the separate desktop, copy Josi Companion.app to Applications and open it. '
         'Choose Connect to Josi and compare the code in both native windows.\n'
         'Locally approved app inspection and capture sharing require current server permissions. '
-        'Use the matching host and companion from this installer (desktop-command.3). '
-        'For Chrome or Brave, register the browser app, prepare its separate profile, register that profile, '
+        'Use the matching host and companion from this installer (desktop-command.7). '
+        'This test build targets Chrome. If supplied, use Install Chrome in This Desktop to copy the Google-signed app from this disk. '
+        'Register the browser app, prepare its separate profile, register that profile, '
         'then enable the connection and load the packaged extension through the browser’s extension setup page. '
         'Inspection of the active tab needs an exact site grant; model sharing needs a separate transmission grant. '
-        'Browser input, Firefox/Safari inspection and general computer input remain unavailable. '
-        'Permitted network access and functional acceptance remain unfinished. '
+        'Grant exact-site Navigate, Observe, Fill and public Network permissions, plus transmission to your registered vision model. '
+        'Chrome can load a permitted HTTPS page, read a photo with OCR, and fill an empty description box for review. '
+        'General clicks, submitting and publishing are not part of this test. '
         'Do not install this companion on your personal desktop. It requires the isolated guest environment.\n'
         'This disk is read-only and contains no credentials or host files.\n')
 
@@ -320,6 +347,7 @@ def build(args):
         'workingTreeModified': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=REPO).strip()),
         'client': 'SwiftUI/AppKit', 'electronIncluded': False, 'baselineRuntimeVersion': baseline_version,
         'protectedKeyProvisioned': bool(profile),
+        'testChromeVersion': chrome_info,
         'signed': args.sign, 'signingIdentity': APP_IDENTITY if args.sign else None,
         'installed': False, 'functionalAcceptancePassed': False, 'notarized': False,
         'builtAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
@@ -344,7 +372,7 @@ def build(args):
         postinstall.write_text('#!/bin/sh\nset -eu\nexec "/Applications/Josi.app/Contents/Resources/runtime/python/bin/python3.11" -I -B "/Applications/Josi.app/Contents/Resources/runtime/app/native/unified-postinstall.py"\n')
         postinstall.chmod(0o755)
         run('build-component', ['/usr/bin/pkgbuild', '--root', output / 'payload', '--component-plist', components,
-                                '--identifier', APP_ID + '.pkg', '--version', '0.7.0.16', '--install-location', '/',
+                                '--identifier', APP_ID + '.pkg', '--version', '0.7.0.17', '--install-location', '/',
                                 '--scripts', scripts, output / 'application.pkg'])
         distribution = output / 'Distribution.xml'
         distribution.write_text('''<?xml version="1.0" encoding="utf-8"?>
@@ -355,7 +383,7 @@ def build(args):
  <allowed-os-versions><os-version min="14.2"/></allowed-os-versions>
  <choices-outline><line choice="josi"/></choices-outline>
  <choice id="josi" title="Josi" visible="false" start_selected="true" start_enabled="false"><pkg-ref id="com.heyjosi.ce.unified.pkg"/></choice>
- <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.16" onConclusion="none">application.pkg</pkg-ref>
+ <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.17" onConclusion="none">application.pkg</pkg-ref>
 </installer-gui-script>
 ''')
         package = output / 'Install Josi.pkg'
@@ -393,6 +421,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--sign', action='store_true')
     parser.add_argument('--package', action='store_true')
+    parser.add_argument('--chrome-app', type=Path, help='Optional owner-supplied Google-signed Chrome application for this local test desktop; no profile is copied')
     parser.add_argument('--protected-profile', type=Path,
                         help='Apple-issued Socal Developer ID provisioning profile for the private biometric key helper')
     build(parser.parse_args())

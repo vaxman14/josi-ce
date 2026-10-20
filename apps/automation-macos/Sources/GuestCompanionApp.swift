@@ -43,7 +43,7 @@ enum GuestEnvironment {
             if (entitlements[name] as? NSNumber)?.boolValue == true { throw GuestLinkError.unavailable }
         }
     }
-    static func connect() async throws -> Int32 {
+    static func connect(port: UInt32 = GuestLinkWire.port) async throws -> Int32 {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let fd = socket(AF_VSOCK, SOCK_STREAM, 0)
@@ -51,7 +51,7 @@ enum GuestEnvironment {
                     guard fd >= 0, fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == 0 else { throw GuestLinkError.unavailable }
                     var address = sockaddr_vm()
                     address.svm_len = UInt8(MemoryLayout<sockaddr_vm>.size); address.svm_family = sa_family_t(AF_VSOCK)
-                    address.svm_cid = 2; address.svm_port = GuestLinkWire.port
+                    address.svm_cid = 2; address.svm_port = port
                     let result = withUnsafePointer(to: &address) { pointer in
                         pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_vm>.size)) }
                     }
@@ -85,6 +85,8 @@ enum GuestEnvironment {
     @Published var browserConnected = false
     @Published var safariBrowser = false
     @Published var safariProfileToConfirm = ""
+    @Published var chromeInstallAvailable = GuestChromeInstall.available
+    @Published var installingChrome = false
     private var task: Task<Void, Never>?
     private var timeout: Task<Void, Never>?
     private var wire: GuestLinkWire?
@@ -199,7 +201,7 @@ enum GuestEnvironment {
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
-                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.6",
+                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.7",
                         "browserCandidate": try preparedBrowser.map { String(decoding: try JSONEncoder().encode($0.candidate), as: UTF8.self) } ?? "",
                         "browserConnection": browserConnected ? "connected" : "waiting"])
                 }
@@ -279,6 +281,17 @@ enum GuestEnvironment {
                     browserMessage = "Safari profile setup expired or disconnected. Choose Identify Safari Profile to try again."
                 }
             }
+        }
+    }
+    func installChrome() {
+        guard connected, NSApp.isActive, chromeInstallAvailable, !installingChrome else { return }
+        installingChrome = true
+        Task {
+            defer { installingChrome = false; chromeInstallAvailable = GuestChromeInstall.available }
+            do {
+                try await GuestChromeInstall.install()
+                browserMessage = "Chrome is installed. Choose it with Choose App for Permissions, then prepare its separate profile."
+            } catch { browserMessage = "Chrome could not be copied from the signed test support disk. An existing Chrome app was not replaced." }
         }
     }
     func prepareBrowser() {
@@ -468,6 +481,11 @@ enum GuestEnvironment {
                     HStack {
                         Button("Enable Accessibility…") { model.accessibility() }
                         Button("Enable Screen Capture…") { model.screenCapture() }
+                    }
+                    if model.chromeInstallAvailable {
+                        Button(model.installingChrome ? "Installing Chrome…" : "Install Chrome in This Desktop") {
+                            model.installChrome()
+                        }.disabled(model.installingChrome)
                     }
                     Button("Choose App for Permissions…") { model.selectApplication() }
                     if !model.selectedApplication.isEmpty { Text("Shared for permission setup: " + model.selectedApplication).font(.caption) }

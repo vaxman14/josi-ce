@@ -17,7 +17,8 @@ for (const family of ['chrome', 'brave', 'firefox', 'safari']) {
     ...(['chrome', 'brave'].includes(family) ? { key: identity.chromiumPublicKey } : {}),
     manifest_version: 3, name: 'Josi Workspace', version: '0.7.0',
     description: 'Browser control inside your separate Josi automation workspace.',
-    permissions: ['nativeMessaging', 'tabs', 'scripting', 'declarativeNetRequest'], host_permissions: ['https://*/*', 'http://*/*'],
+    permissions: ['nativeMessaging', 'tabs', 'scripting', 'declarativeNetRequest',
+      ...(family === 'chrome' ? ['webRequest', 'webRequestAuthProvider'] : [])], host_permissions: ['https://*/*', 'http://*/*'],
     // The verified guest connection enables this before polling for work.
     // A package mistakenly loaded into a personal profile changes no rules.
     declarative_net_request: { rule_resources: [{ id: 'josi_network_boundary', enabled: false, path: 'network-rules.json' }] },

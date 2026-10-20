@@ -25,6 +25,7 @@ function stop(message = 'Paused. Resume control in Josi.', disconnect = true) {
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
   void browserApi.action.setBadgeText({ text: '' });
+  void globalThis.endJosiPageNetwork(browserApi).catch(() => {});
 }
 async function native(operation, payload = {}, sessionId = workspace?.sessionId) {
   const requestId = crypto.randomUUID();
@@ -95,7 +96,7 @@ async function execute(command, epoch) {
     || !Number.isSafeInteger(command.expiresAt) || command.expiresAt <= Date.now()
     || command.expiresAt > workspace.expiresAt || seen.has(command.id) || seen.size >= 4096) throw new Error('invalid_command');
   seen.add(command.id);
-  if (!['tabs', 'inspect', 'observe', 'navigate', 'click', 'fill', 'draft', 'photo'].includes(command.kind)) throw new Error('unsupported_operation');
+  if (!['tabs', 'inspect', 'observe', 'navigate', 'click', 'fill', 'draft', 'photo', 'openPage'].includes(command.kind)) throw new Error('unsupported_operation');
   let tab;
   if (command.kind === 'inspect') {
     if (webUrl(command.origin)?.origin !== command.origin || !workspace.origins.includes(command.origin)
@@ -103,7 +104,7 @@ async function execute(command, epoch) {
     const active = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
     if (active.length !== 1 || active[0].incognito || webUrl(active[0].url)?.origin !== command.origin) throw new Error('active_site_changed');
     tab = await currentTab(active[0].id);
-  } else tab = command.kind === 'tabs' ? null : await currentTab(command.tabId);
+  } else tab = ['tabs', 'openPage'].includes(command.kind) ? null : await currentTab(command.tabId);
   const url = command.kind === 'navigate' ? webUrl(command.url) : null;
   if (command.kind === 'navigate' && (!url || !workspace.origins.includes(url.origin))) throw new Error('origin_not_granted');
   // Exact command plus locally obtained tab identity goes back through the
@@ -112,6 +113,30 @@ async function execute(command, epoch) {
   const authority = await native('browser.authorize', { command, actual: tab ? { tabId: tab.id, windowId: tab.windowId, url: tab.url } : null });
   if (!live() || epoch !== generation || Date.now() >= command.expiresAt || authority?.commandId !== command.id
     || authority?.sessionId !== workspace.sessionId || authority?.allowed !== true) throw new Error('authority_changed');
+  if (command.kind === 'openPage') {
+    const destination = webUrl(command.url);
+    if (config.family !== 'chrome' || !destination || destination.protocol !== 'https:'
+      || destination.origin !== command.origin || !workspace.origins.includes(destination.origin)
+      || authority.proxy?.origin !== destination.origin || authority.proxy.expiresAt !== command.expiresAt) throw new Error('invalid_page');
+    await globalThis.beginJosiPageNetwork(browserApi, authority.proxy);
+    try {
+      const opened = await browserApi.tabs.create({ url: destination.href, active: true });
+      let loaded;
+      while (live() && epoch === generation && Date.now() < command.expiresAt - 1000) {
+        const current = await browserApi.tabs.get(opened.id);
+        if (current.incognito || webUrl(current.url)?.origin !== destination.origin) throw new Error('navigation_changed');
+        if (current.status === 'complete') { loaded = current; break; }
+        await new Promise(resolve => setTimeout(resolve, 75));
+      }
+      if (!loaded || !live() || epoch !== generation) throw new Error('page_not_ready');
+      await browserApi.scripting.executeScript({ target: { tabId: loaded.id, frameIds: [0] }, files: ['page-agent.js'] });
+      const result = await browserApi.tabs.sendMessage(loaded.id, { version: 1, channel: 'josi-page',
+        sessionId: workspace.sessionId, kind: 'observe', expectedUrl: loaded.url,
+        expiresAt: command.expiresAt, maxOutputBytes: command.maxOutputBytes }, { frameId: 0 });
+      if (result?.kind !== 'observation' || !bounded(result)) throw new Error('observation_unavailable');
+      return { ...result, tabId: loaded.id, windowId: loaded.windowId };
+    } finally { delete authority.proxy; await globalThis.endJosiPageNetwork(browserApi); }
+  }
   if (command.kind === 'tabs') {
     const tabs = await browserApi.tabs.query({});
     if (!live() || epoch !== generation) throw new Error('authority_changed');
@@ -144,10 +169,17 @@ async function execute(command, epoch) {
     input.value = authority.draftText;
   }
   try {
+    if (command.kind === 'photo') {
+      if (authority.proxy?.origin !== webUrl(tab.url)?.origin || authority.proxy.expiresAt !== command.expiresAt) throw new Error('photo_network_unavailable');
+      await globalThis.beginJosiPageNetwork(browserApi, authority.proxy);
+    }
     const result = await browserApi.tabs.sendMessage(tabId, input, { frameId: 0 });
     if (!result || !bounded(result) || result.kind === 'refused') throw new Error('invalid_page_response');
     return command.kind === 'inspect' || command.kind === 'photo' ? { ...result, tabId, windowId: tab.windowId } : result;
-  } finally { delete input.value; delete authority.value; delete authority.draftText; }
+  } finally {
+    delete input.value; delete authority.value; delete authority.draftText; delete authority.proxy;
+    if (command.kind === 'photo') await globalThis.endJosiPageNetwork(browserApi);
+  }
 }
 async function poll() {
   if (pending || !live()) return;

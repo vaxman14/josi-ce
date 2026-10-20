@@ -84,7 +84,7 @@ import Darwin
                 return try self.automationConsentProjection()
             })
             try engine.show()
-            progress = "Separate development desktop · Network and host sharing are disabled."
+            progress = "Separate development desktop · Web access requires a permitted Chrome task."
             self.restore = nil
         } catch {
             lost = true; projection = .null; projectionLease = nil
@@ -243,7 +243,18 @@ import Darwin
                     guard generation == consentGeneration, localConsent != .null, self.guest === guest else { throw GuestLinkError.closed }
                     let packet = response["command"]
                     if packet == .null { continue }
-                    let result = try await guest.execute(packet, authorize: { query in
+                    var network: NativeBrowserNetworkRelay?
+                    if packet["command"]["network"] != .null {
+                        guard let machine = self.machine, let sessionID = UUID(uuidString: id) else { throw GuestLinkError.closed }
+                        network = try NativeBrowserNetworkRelay(device: machine.socketDevice(), api: api, storageSession: sessionID, packet: packet,
+                            current: { [weak self, weak guest] in
+                                guard let self, let guest, self.guest === guest, guest.paired,
+                                      self.api === api, generation == self.consentGeneration, self.localConsent != .null else { throw GuestLinkError.closed }
+                                try self.current()
+                            })
+                    }
+                    defer { network?.stop() }
+                    let result = try await guest.execute(packet, network: network, authorize: { query in
                         try self.current()
                         guard self.api === api, generation == self.consentGeneration,
                               self.localConsent != .null, self.guest === guest else { throw GuestLinkError.closed }

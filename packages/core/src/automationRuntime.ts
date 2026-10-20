@@ -32,6 +32,9 @@ export interface AutomationObservationRequest {
   previousObservationId: string | null;
   browserOrigin?: string;
 }
+export interface AutomationBrowserOpenRequest {
+  taskId: string; workspaceId: string; controlSessionId: string; url: string;
+}
 export interface AutomationModelProjection {
   expectedPrimary: { providerId: string; model: string; configurationVersion: string };
   content(): Secret;
@@ -51,6 +54,10 @@ export interface PreparedAutomationOperation {
 export interface AutomationRuntimePorts extends AutomationReservationProofPort {
   /** An inspection-only adapter must not advertise or accept input tools. */
   actionsAvailable?: boolean;
+  computerActionsAvailable?: boolean;
+  actionBrowserFamilies?: AutomationWorkspaceSummary['browserFamilies'];
+  prepareBrowserOpen?(context: Readonly<AutomationExecutionContext>, request: Readonly<AutomationBrowserOpenRequest>,
+    signal: AbortSignal): Promise<PreparedAutomationOperation>;
   prepareModelProjection?(context: Readonly<AutomationExecutionContext>, captureReservationId: string): Promise<AutomationModelProjection>;
   inventory(ownerUserId: string, signal: AbortSignal): Promise<AutomationWorkspaceSummary[]>;
   /** Current local consent, task ownership and Vault authority are required.
@@ -175,6 +182,10 @@ export class AutomationRuntime {
   }
   get observationAvailable(): boolean { return typeof this.ports.prepareObservation === 'function'; }
   get actionAvailable(): boolean { return this.ports.actionsAvailable !== false; }
+  get computerActionAvailable(): boolean { return this.actionAvailable && this.ports.computerActionsAvailable !== false; }
+  browserActionAvailable(family: AutomationWorkspaceSummary['browserFamilies'][number]): boolean {
+    return this.actionAvailable && (!this.ports.actionBrowserFamilies || this.ports.actionBrowserFamilies.includes(family));
+  }
   async inventory(ownerUserId: string): Promise<AutomationWorkspaceSummary[]> {
     const [owner] = await this.db.query(`select id from users where id=$1 and status='active'`, [ownerUserId]);
     if (!owner) throw new AutomationRuntimeError('The automation owner is unavailable.');
@@ -275,6 +286,20 @@ export class AutomationRuntime {
       if (error instanceof AutomationRuntimeRefusal) throw error;
       throw new AutomationRuntimeError('Current workspace control could not be established. Check the isolated device connection and its local consent.');
     } finally { clearTimeout(timer); controller.abort(); }
+  }
+  async openBrowser(context: AutomationExecutionContext, input: AutomationBrowserOpenRequest) {
+    if (!this.ports.prepareBrowserOpen || !exact(input, ['taskId', 'workspaceId', 'controlSessionId', 'url'])
+      || ![input.taskId, input.workspaceId, input.controlSessionId].every(uuid)
+      || typeof input.url !== 'string' || input.url.length > 2048 || /[\u0000-\u0020\u007f]/u.test(input.url)
+      || refuseMemorySecret(input.url)) throw new AutomationRuntimeError('Choose this task’s exact HTTPS page.');
+    let url: URL;
+    try { url = new URL(input.url); } catch { throw new AutomationRuntimeError('Choose a valid HTTPS page.'); }
+    if (url.protocol !== 'https:' || url.username || url.password || !exactBrowserOrigin(url.origin)) {
+      throw new AutomationRuntimeError('Choose an HTTPS destination without credentials.');
+    }
+    const bound = Object.freeze(structuredClone(context)), request = Object.freeze(structuredClone(input));
+    return this.perform(bound, request.taskId, request.workspaceId, false, cardinalContentDigest(request),
+      null, signal => this.ports.prepareBrowserOpen!(bound, request, signal));
   }
   async execute(context: AutomationExecutionContext, input: AutomationRequest) {
     if (!this.actionAvailable) throw new AutomationRuntimeRefusal('unclassified_effect');
