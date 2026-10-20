@@ -87,10 +87,11 @@ def prepare(args):
     meta = json.loads((REPO / 'apps/desktop/package.json').read_text())
     meta.update(name='josi', productName='Josi', version=VERSION)
     (source / 'package.json').write_text(json.dumps(meta, indent=2) + '\n')
-    protocol = source / 'node_modules/@josi-ce/protocol'
-    protocol.mkdir(parents=True)
-    shutil.copyfile(REPO / 'packages/protocol/package.json', protocol / 'package.json')
-    copy_tree(REPO / 'packages/protocol/dist', protocol / 'dist')
+    for name in ('protocol', 'automation'):
+        package = source / ('node_modules/@josi-ce/' + name)
+        package.mkdir(parents=True)
+        shutil.copyfile(REPO / ('packages/' + name + '/package.json'), package / 'package.json')
+        copy_tree(REPO / ('packages/' + name + '/dist'), package / 'dist')
     for name in ('LICENSE', 'NOTICE'):
         if (REPO / name).is_file():
             shutil.copyfile(REPO / name, resources / name)

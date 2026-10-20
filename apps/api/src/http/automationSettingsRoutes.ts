@@ -66,7 +66,7 @@ export function automationSettingsRoutes(context: Context): Router {
   r.get('/catalog', handle(async (_req, res) => res.json({
     guidance: CARDINAL_RULE_GUIDANCE, actions: CARDINAL_ACTIONS, scopeKeys: CARDINAL_SCOPE_KEYS,
     restrictions: ['deny', 'maximum_task_duration'], unavailable: ['deny', 'pause'],
-    capabilities: { modelReview: true, nativeReview: protectedChanges.enabled, permanentChanges: false, deviceEnrollment: false, execution: false },
+    capabilities: { modelReview: true, nativeReview: protectedChanges.enabled, permanentChanges: protectedChanges.enabled, deviceEnrollment: false, execution: false },
   })));
   r.get('/', handle(async (req, res) => {
     const key = master(), records = vaultRecords(db, key);
@@ -189,9 +189,10 @@ export function automationSettingsRoutes(context: Context): Router {
   r.post('/protected/:id/projection', nativeHandle(async (req, res) => res.json({
     projection: await protectedChanges.projection(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.proof),
   })));
-  r.post('/protected/:id/commit', nativeHandle(async (req, res) => res.json(
-    await protectedChanges.commit(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.receipt),
-  )));
+  r.post('/protected/:id/commit', nativeHandle(async (req, res) => {
+    const result = await protectedChanges.commit(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.receipt);
+    return res.json({ applied: true, kind: result.kind, reference: result.policy.reference });
+  }));
   r.post('/protected/:id/cancel', nativeHandle(async (req, res) => {
     await protectedChanges.cancel(req.user!.id, req.user!.session_id, param(req, 'id')); return res.json({ cancelled: true });
   }));

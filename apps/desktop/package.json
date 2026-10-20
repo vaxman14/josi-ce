@@ -8,6 +8,6 @@
   "scripts": {
     "check": "node --check src/main.cjs && node --test test/*.test.cjs"
   },
-  "dependencies": { "@josi-ce/protocol": "0.1.0" },
+  "dependencies": { "@josi-ce/protocol": "0.1.0", "@josi-ce/automation": "0.1.0" },
   "josiRuntime": { "electron": "43.2.0", "sourceLock": "../../packaging/macos/desktop-sources.lock.json" }
 }

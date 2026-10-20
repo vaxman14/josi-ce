@@ -5,6 +5,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('josiDesktop', {
   platform: process.platform,
   capabilities: () => ipcRenderer.invoke('josi:capabilities'),
+  protectedChanges: {
+    available: () => ipcRenderer.invoke('josi:protected-available'),
+    review: (challengeId) => ipcRenderer.invoke('josi:protected-review', { challengeId }),
+  },
   notify: (title, body, route) => ipcRenderer.invoke('josi:desktop-notify', { title, body, route }),
   confirmApproval: (summary) => ipcRenderer.invoke('josi:confirm-approval', { summary }),
   localWorkspace: {

@@ -34,4 +34,4 @@ Advisory integration acceptance remains deferred: exact-content/provider substit
 
 The advisory integration passed the root TypeScript build, web type check, web production bundle and public-source secret scan. Functional suites remain deferred.
 
-The later [native-change coordination checkpoint](P3_P4_NATIVE_CHANGE_COORDINATION.md) connects proof-gated server review/commit endpoints for already enrolled devices. The native client coordinator and first-device trust remain open, so the ordinary permanent-change button is still disabled. This supersedes the earlier statement that no HTTP activation/retirement/replacement path exists; it does not enable those actions through an ordinary web approval.
+The later [native-change coordination checkpoint](P3_P4_NATIVE_CHANGE_COORDINATION.md) connects proof-gated server review/commit, the native client coordinator and activation/retirement controls for already enrolled devices. First-device trust remains open. This supersedes the earlier statements about absent mutation routes and the disabled permanent-change button; it does not enable those actions through an ordinary web approval.

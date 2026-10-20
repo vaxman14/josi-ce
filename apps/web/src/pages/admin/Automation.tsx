@@ -3,8 +3,9 @@ import type { AutomationPolicyView, CardinalDraftView, CardinalPolicyView, Cardi
 import type { PermissionScope } from '@josi-ce/protocol';
 import { api } from '@/lib/api';
 import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { NativeProtectedChange } from '@/components/NativeProtectedChange';
 
-interface Catalog { guidance: string; actions: string[]; scopeKeys: string[] }
+interface Catalog { guidance: string; actions: string[]; scopeKeys: string[]; capabilities?: { permanentChanges?: boolean } }
 interface Settings { rules: CardinalPolicyView | null; permissions: AutomationPolicyView | null; drafts: CardinalDraftView[]; devices?: ProtectedDeviceInventory }
 interface Check { report: CardinalTestReport; meaning: string | null }
 interface ReviewPreview {
@@ -42,7 +43,14 @@ export function AdminAutomation() {
   const [error, setError] = useState(''), [tab, setTab] = useState<'rules' | 'permissions' | 'devices'>('rules');
   const [selected, setSelected] = useState<CardinalDraftView | null>(null), [editing, setEditing] = useState(false);
   async function load() {
-    try { setSettings(await api.get<Settings>('/admin/automation')); setError(''); }
+    try {
+      const value = await api.get<Settings>('/admin/automation');
+      setSettings(value); setError('');
+      // Refresh an unchanged draft's current Vault epoch after another
+      // protected change. Never replace a newer definition or an unsaved edit.
+      setSelected(current => current ? value.drafts.find(draft => draft.reference.recordId === current.reference.recordId
+        && draft.reference.version === current.reference.version && draft.reference.digest === current.reference.digest) ?? current : null);
+    }
     catch (cause) { setSettings(null); setError(cause instanceof Error ? cause.message : 'The Vault-backed settings could not be read.'); }
   }
   useEffect(() => {
@@ -68,7 +76,7 @@ export function AdminAutomation() {
       <Button variant={tab === 'devices' ? 'primary' : 'secondary'} onClick={() => setTab('devices')}>Protected devices</Button>
     </div>
     <Card><CardTitle>Automation is not enabled in this build</CardTitle>
-      <p className="text-sm text-muted-foreground">You can prepare rule drafts, test their meaning and request advice from your selected model. Permanent changes and browser/computer control still require protected device pairing.</p>
+      <p className="text-sm text-muted-foreground">You can prepare rule drafts, test their meaning and request advice from your selected model. Enrolled devices can review permanent rule changes in the Josi Mac app. Browser and computer control require their separate workspace connection and permissions.</p>
     </Card>
     {tab === 'rules' ? <>
       <Card><CardTitle>Every rule needs an exact meaning</CardTitle>
@@ -82,6 +90,8 @@ export function AdminAutomation() {
         <div className="space-y-3">{settings?.rules?.document.rules.map(entry => <div key={entry.ruleId} className="rounded-lg border border-border p-3">
           <p className="font-medium">{entry.definition.label}</p><p className="mt-1 whitespace-pre-wrap text-sm">{entry.definition.wording}</p>
           <p className="mt-2 text-xs text-muted-foreground">{entry.definition.restriction.kind === 'deny' ? 'Block matching actions' : `Stop matching actions at ${entry.definition.restriction.seconds} seconds of the original task`}. Missing facts: {entry.definition.onUnavailable}.</p>
+          <NativeProtectedChange title="Retire this rule" change={{ kind: 'cardinal.retire', ruleId: entry.ruleId, policy: settings.rules!.reference }}
+            devices={settings.devices} enabled={catalog?.capabilities?.permanentChanges === true} refreshed={load} />
         </div>)}</div>
         {settings && !settings.rules?.document.rules.length ? <p className="text-sm text-muted-foreground">No permanent Cardinal Rules have been activated.</p> : null}
       </Card>
@@ -95,7 +105,7 @@ export function AdminAutomation() {
         {!settings?.drafts.length ? <p className="mt-2 text-sm text-muted-foreground">Saved drafts remain inactive until permanent approval.</p> : null}
       </Card>
       {editing && catalog ? <RuleEditor key={selected ? `${selected.reference.recordId}:${selected.reference.version}` : 'new'} catalog={catalog} selected={selected}
-        saved={async draft => { setSelected(draft); await load(); }} /> : null}
+        settings={settings} refreshed={load} saved={async draft => { setSelected(draft); await load(); }} /> : null}
     </> : tab === 'permissions' ? <PermissionsView settings={settings} /> : <ProtectedDevicesView devices={settings?.devices} />}
   </div>;
 }
@@ -120,7 +130,8 @@ function ProtectedDevicesView({ devices }: { devices?: ProtectedDeviceInventory 
   </Card>;
 }
 
-function RuleEditor({ catalog, selected, saved }: { catalog: Catalog; selected: CardinalDraftView | null; saved: (draft: CardinalDraftView) => Promise<void> }) {
+function RuleEditor({ catalog, selected, saved, settings, refreshed }: { catalog: Catalog; selected: CardinalDraftView | null;
+  saved: (draft: CardinalDraftView) => Promise<void>; settings: Settings | null; refreshed(): Promise<void> }) {
   const previous = selected?.document.draft as CardinalRule | undefined;
   const [label, setLabel] = useState(previous?.label ?? ''), [wording, setWording] = useState(previous?.wording ?? '');
   const [allActions, setAllActions] = useState(previous?.actions === '*');
@@ -233,11 +244,15 @@ function RuleEditor({ catalog, selected, saved }: { catalog: Catalog; selected: 
           {preview ? <Button variant="secondary" disabled={busy || !password || !unchanged || !preview.canTransmit} onClick={() => void run('test')}>
             {busy ? 'Working…' : 'Send preview and test rule'}
           </Button> : null}
-          <Button variant="secondary" disabled>Make permanent</Button></div>
+        </div>
         <p className="text-xs text-muted-foreground">Sending the preview requests one model review and saves the advice to the Vault. The model cannot approve the rule. Permanent approval uses the protected native confirmation.</p>
       </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
     </fieldset>
+    {selected && unchanged && selected.document.tested?.report.status === 'passed' && selected.document.tested.review.status === 'available' && settings
+      ? <NativeProtectedChange title="Make permanent" change={{ kind: 'cardinal.activate', draft: selected.reference, policy: settings.rules?.reference ?? null }}
+          devices={settings.devices} enabled={catalog.capabilities?.permanentChanges === true} refreshed={refreshed} />
+      : <p className="mt-3 text-xs text-muted-foreground">Save and test the current draft before requesting permanent approval.</p>}
   </Card>;
 }
 

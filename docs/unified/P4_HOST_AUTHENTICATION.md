@@ -28,3 +28,5 @@ Build checks passed: the complete root TypeScript build, main-process JavaScript
 ## Platform references
 
 Apple documents Secure Enclave P-256 key use for signing and ECIES operations in [Protecting keys with the Secure Enclave](https://developer.apple.com/documentation/security/protecting-keys-with-the-secure-enclave). The implementation checks algorithm support and uses [SecKeyCreateSignature](https://developer.apple.com/documentation/security/seckeycreatesignature(_:_:_:_:)) with [ECDSA message SHA-256](https://developer.apple.com/documentation/security/seckeyalgorithm/ecdsasignaturemessagex962sha256). These API references do not substitute for the deferred hardware acceptance run.
+
+The subsequent [native-change coordination checkpoint](P3_P4_NATIVE_CHANGE_COORDINATION.md) adds the proof-gated server endpoints and native request flow. Its narrow review-ID IPC does not expose a general signer or change the first-enrollment requirement described above.

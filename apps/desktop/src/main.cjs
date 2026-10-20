@@ -13,7 +13,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { assertAllowedJosiCeUrl, sameOrigin, internalRoute, requireTrustedFrame } = require('./connection-policy.cjs');
 const { LocalWorkspaceBroker } = require('./local-workspace.cjs');
-const { createProtectedConfirmationSurface } = require('./protected-control.cjs');
+const { createNativeProtectedFlow } = require('./protected-flow.cjs');
 const { LocalServer } = require('./local-server.cjs');
 const { negotiateCapabilities } = require('@josi-ce/protocol');
 
@@ -31,11 +31,16 @@ let currentSession = null;
 let currentSessionOrigin = null;
 let localServer = null;
 let statusRequest = null;
-// Main-process-only ports. No remote renderer/guest IPC can open a protected
-// challenge. Enrollment and the authenticated server challenge source must be
-// installed before the broker can use these ports to produce any receipt.
-const protectedConfirmation = createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session,
-  systemPreferences, parentWindow: () => window });
+// A CE page may request review of an ID it freshly prepared on this server.
+// The main process obtains all authoritative content/proofs itself; no page
+// supplies a presentation, private material, signature or approval boolean.
+const protectedConfirmation = createNativeProtectedFlow({ app, BrowserWindow, ipcMain, session,
+  systemPreferences, parentWindow: () => window, connection: () => {
+    const generation = connectionGeneration, ownerWindow = window, origin = expectedOrigin, activeSession = currentSession;
+    return { origin, session: activeSession, isCurrent: () => generation === connectionGeneration
+      && !!ownerWindow && !ownerWindow.isDestroyed() && !!origin && sameOrigin(ownerWindow.webContents.getURL(), origin)
+      && currentSession === activeSession };
+  } });
 
 function discardConnection(clearSession = true) {
   protectedConfirmation.cancel();
@@ -58,7 +63,7 @@ function replaceWindow(preload, partition, isolated) {
   });
   window = next;
   next.once('ready-to-show', () => { if (!next.isDestroyed()) next.show(); });
-  next.on('closed', () => { if (window === next) window = null; });
+  next.on('closed', () => { if (window === next) { protectedConfirmation.cancel(); window = null; } });
   if (previous) previous.destroy();
   return next;
 }
@@ -198,6 +203,13 @@ ipcMain.handle('josi:shell-diagnostics', async event => {
   return { copied: true };
 });
 ipcMain.handle('josi:workspace-state', event => { requireCe(event); return workspace.publicState(); });
+ipcMain.handle('josi:protected-available', event => { requireCe(event); return protectedConfirmation.available(); });
+ipcMain.handle('josi:protected-review', (event, input) => {
+  requireCe(event);
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).join(',') !== 'challengeId'
+    || !window.isFocused()) throw new Error('Start the protected review from the current Josi window.');
+  return protectedConfirmation.run(input.challengeId);
+});
 ipcMain.handle('josi:capabilities', async event => {
   requireCe(event);
   const generation = connectionGeneration;
