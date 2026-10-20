@@ -503,7 +503,7 @@ export function personaRoutes(ctx: PersonaRoutesCtx): Router {
       const memory = await updateMemory(db, {
         id: param(req, 'id'),
         ownerUserId: req.user!.id,
-        content: typeof req.body?.content === 'string' ? str(req.body.content, 2000) : undefined,
+        content: typeof req.body?.content === 'string' ? req.body.content : undefined,
         pinned: typeof req.body?.pinned === 'boolean' ? req.body.pinned : undefined,
       });
       return res.json({ memory });
@@ -533,7 +533,7 @@ export function personaRoutes(ctx: PersonaRoutesCtx): Router {
     '/suggestions',
     handle(async (req, res) => res.json({
       suggestions: await db.query(
-        `select id, content, source_kind, confidence, created_at
+        `select id, content, source_kind, confidence, created_at,work_goal_id,work_goal_revision
          from memory_suggestions where owner_user_id = $1 and state = 'pending'
          order by created_at desc limit 100`,
         [req.user!.id],
@@ -548,6 +548,7 @@ export function personaRoutes(ctx: PersonaRoutesCtx): Router {
         id: param(req, 'id'),
         ownerUserId: req.user!.id,
         accept: req.body?.accept === true,
+        correctedContent: typeof req.body?.content === 'string' ? req.body.content : undefined,
       }),
     )),
   );

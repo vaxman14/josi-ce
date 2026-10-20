@@ -18,7 +18,7 @@
 //      and "it can still tell you what was in it" are both true, which is the
 //      worst possible combination.
 import { createHash } from 'node:crypto';
-import { appendEvent, type Db } from '@josi-ce/core';
+import { appendEvent, refuseMemorySecret as refuseSecret, type Db } from '@josi-ce/core';
 
 export type SourceKind = 'manual' | 'conversation' | 'document' | 'email' | 'contact' | 'calendar';
 
@@ -34,6 +34,8 @@ export interface Memory {
   confidence: number;
   pinned: boolean;
   confirmed_at: string | null;
+  work_goal_id?: string | null;
+  work_goal_revision?: number | null;
   created_at: string;
 }
 
@@ -47,26 +49,7 @@ export interface Memory {
  * A refusal here is not a judgement about the person — it is that a durable
  * store of facts is the worst place for a credential, because it is designed to
  * be recalled and repeated. */
-const FORBIDDEN: Array<{ name: string; re: RegExp }> = [
-  { name: 'a password', re: /\b(pass(word|wd)|passphrase)\s*[:=]\s*\S+/i },
-  // The same thing said in a sentence. "I always use the password hunter2" has
-  // no delimiter, and the pattern above missed it entirely — found by the
-  // live-turn test, where a person says such a thing in conversation rather
-  // than pasting a config line.
-  { name: 'a password', re: /\b(pass(word|wd)|passphrase|api key|secret key|access key)\b[\s:=]+\S{6,}/i },
-  { name: 'an API key', re: /\b(sk|pk|api[_-]?key|token)[-_:=]\s*[A-Za-z0-9_-]{16,}/i },
-  { name: 'a bearer token', re: /\bBearer\s+[A-Za-z0-9._~+/-]{16,}/i },
-  { name: 'a card number', re: /\b(?:\d[ -]?){13,19}\b/ },
-  { name: 'a private key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
-  { name: 'a sealed credential', re: /\bv1\.[A-Za-z0-9+/=]{8,}\./ },
-];
-
-export function refuseSecret(content: string): string | null {
-  for (const { name, re } of FORBIDDEN) {
-    if (re.test(content)) return name;
-  }
-  return null;
-}
+export { refuseMemorySecret as refuseSecret } from '@josi-ce/core';
 
 /** Stable owner-scoped duplicate key shared with migration imports. */
 export function memoryFingerprint(content: string): string {
@@ -218,6 +201,7 @@ export async function updateMemory(
   args: { id: string; ownerUserId: string; content?: string; pinned?: boolean },
 ): Promise<Memory> {
   if (args.content !== undefined) {
+    if (!args.content.trim() || args.content.length > 2000) throw new MemoryError('Write a memory of 1–2,000 characters.');
     const secret = refuseSecret(args.content);
     if (secret) throw new MemoryError(`that looks like ${secret}, so it was not saved.`);
   }
@@ -227,6 +211,8 @@ export async function updateMemory(
       `update memories set
          content = coalesce($3, content),
          pinned = coalesce($4, pinned),
+         confirmed_at = case when $3 is null then confirmed_at else now() end,
+         provenance = case when $3 is null then provenance else 'You corrected this memory' end,
          content_fingerprint = case when $3 is null then content_fingerprint else $5 end
        where id = $1 and owner_user_id = $2
        returning *`,
@@ -261,18 +247,21 @@ export async function confirmMemory(
 export async function deleteMemory(
   db: Db, args: { id: string; ownerUserId: string },
 ): Promise<void> {
-  const [row] = await db.query<{ id: string; source_kind: string }>(
-    `delete from memories where id = $1 and owner_user_id = $2 returning id, source_kind`,
-    [args.id, args.ownerUserId],
-  );
-  if (!row) throw new MemoryError('not found');
-  await appendEvent(db, {
+  if (!db.transaction) throw new MemoryError('Durable memory deletion is unavailable.');
+  await db.transaction(async tx => {
+    const [row] = await tx.query<{ id: string; source_kind: string; work_goal_id: string | null }>(
+      `delete from memories where id=$1 and owner_user_id=$2 returning id,source_kind,work_goal_id`, [args.id, args.ownerUserId]);
+    if (!row) throw new MemoryError('not found');
+    if (row.work_goal_id) await tx.query(`update memory_suggestions set content='[forgotten]',state='rejected',decided_at=now()
+      where owner_user_id=$1 and work_goal_id=$2`, [args.ownerUserId, row.work_goal_id]);
+    await appendEvent(tx, {
     actorUserId: args.ownerUserId,
     actor: 'user',
     kind: 'memory.deleted',
     subjectType: 'memory',
     subjectId: row.id,
     payload: { sourceKind: row.source_kind },
+    });
   });
 }
 
@@ -370,26 +359,29 @@ export async function suggestMemory(
 
 export async function decideSuggestion(
   db: Db,
-  args: { id: string; ownerUserId: string; accept: boolean },
+  args: { id: string; ownerUserId: string; accept: boolean; correctedContent?: string },
 ): Promise<{ memory: Memory | null }> {
-  const [row] = await db.query<{
-    content: string; source_kind: SourceKind; source_id: string | null; confidence: number;
-  }>(
-    `update memory_suggestions set state = $3, decided_at = now()
-     where id = $1 and owner_user_id = $2 and state = 'pending'
-     returning content, source_kind, source_id, confidence`,
-    [args.id, args.ownerUserId, args.accept ? 'accepted' : 'rejected'],
-  );
-  if (!row) throw new MemoryError('not found');
-  if (!args.accept) return { memory: null };
-
-  const memory = await addMemory(db, {
-    ownerUserId: args.ownerUserId,
-    content: row.content,
-    sourceKind: row.source_kind,
-    sourceId: row.source_id,
-    provenance: `You approved this, learned from a ${row.source_kind}`,
-    confidence: row.confidence,
+  if (!db.transaction) throw new MemoryError('Durable memory review is unavailable.');
+  return db.transaction(async tx => {
+    const [row] = await tx.query<{
+      content: string; source_kind: SourceKind; source_id: string | null; confidence: number;
+      work_goal_id: string | null; work_goal_revision: number | null;
+    }>(`select * from memory_suggestions where id=$1 and owner_user_id=$2 and state='pending' for update`, [args.id, args.ownerUserId]);
+    if (!row) throw new MemoryError('not found');
+    let memory: Memory | null = null;
+    if (args.accept) {
+      if (row.work_goal_id) {
+        const [source] = await tx.query(`select id from work_goals where id=$1 and owner_user_id=$2 and state='completed' for share`, [row.work_goal_id, args.ownerUserId]);
+        if (!source) throw new MemoryError('The completed work behind this lesson is no longer available.');
+      }
+      memory = await addMemory(tx, { ownerUserId: args.ownerUserId, content: args.correctedContent ?? row.content,
+        sourceKind: row.source_kind, sourceId: row.source_id,
+        provenance: row.work_goal_id ? 'You approved this lesson from completed work' : `You approved this, learned from a ${row.source_kind}`,
+        confidence: row.confidence });
+      if (row.work_goal_id) [memory] = await tx.query<Memory>(`update memories set work_goal_id=$2,work_goal_revision=$3 where id=$1 returning *`, [memory.id, row.work_goal_id, row.work_goal_revision]);
+    }
+    await tx.query(`update memory_suggestions set state=$3,decided_at=now(),content=$4 where id=$1 and owner_user_id=$2`,
+      [args.id, args.ownerUserId, args.accept ? 'accepted' : 'rejected', args.accept ? memory!.content : row.work_goal_id ? '[discarded]' : row.content]);
+    return { memory };
   });
-  return { memory };
 }

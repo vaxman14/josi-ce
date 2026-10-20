@@ -31,3 +31,4 @@ export * from './migration/types.js';
 export * from './migration/scan.js';
 export * from './migration/store.js';
 export { unpackUploads } from './migration/zip.js';
+export { suggestWorkLesson } from './workLessons.js';

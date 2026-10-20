@@ -19,6 +19,6 @@ Automatic model continuation into new actions, cross-turn stable effect identity
 
 Goal pause/cancel currently stops goal bookkeeping/continuation; already-dispatched legacy task effects can still finish. The UI says so. Binding those controls to P4/P7/P8 dispatch cancellation/reconciliation is required before presenting them as an automation emergency stop.
 
-The first verifier covers settled connected-action tasks. Other kinds of work remain unfinished and request an explicit next instruction until their verifiers are connected. No claim of general autonomous completion or validated end-to-end recovery is made. Reported facts are agent-saved context, not independently verified facts. Long-term lesson proposals, correction/pinning/forgetting, retention and Vault-reference enforcement remain P10 work. Broader pagination/history and resume acceptance remain P11 work.
+The first verifier covers settled connected-action tasks. Other kinds of work remain unfinished and request an explicit next instruction until their verifiers are connected. No claim of general autonomous completion or validated end-to-end recovery is made. Reported facts are agent-saved context, not independently verified facts. Lesson proposals and owner correction/pinning/forgetting are now integrated in the [P10 checkpoint](P10_WORK_MEMORY.md); full retention and Vault-reference acceptance remain open. Broader pagination/history and resume acceptance remain P11 work.
 
 Functional/concurrency/recovery and UI acceptance are deferred to the integrated testing pass requested by the owner.

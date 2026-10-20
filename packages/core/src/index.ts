@@ -55,3 +55,5 @@ export { apiListenHost } from './nativeNetwork.js';
 export { readWindowsSecret } from './windowsSecrets.js';
 export { readMacSecret } from './macosSecrets.js';
 export { inspectCredentialMigration, migrateStoredCredentials, type CredentialMigrationCount, type CredentialMigrationReport } from './credentialMigration.js';
+
+export { refuseMemorySecret } from './memorySafety.js';

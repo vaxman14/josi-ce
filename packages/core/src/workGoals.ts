@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Continuation, GoalProgress } from '@josi-ce/protocol';
 import { json, type Db } from './db.js';
 import { addMessage } from './conversations.js';
+import { refuseMemorySecret } from './memorySafety.js';
 
 export class WorkGoalError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -23,13 +24,14 @@ interface GoalRow {
   id: string; owner_user_id: string; thread_id: string; source_message_id: string;
   revision: number; state: GoalProgress['state']; outcome: string; criteria: string[];
   steps: WorkGoalStep[]; continuation: Continuation | null; activity: string;
-  checkpoint: WorkCheckpoint; created_at: string; updated_at: string;
+  checkpoint: WorkCheckpoint; checkpoint_pinned: boolean; created_at: string; updated_at: string;
 }
 export interface WorkGoalSnapshot extends GoalProgress {
   threadId: string;
   criteria: string[];
   steps: WorkGoalStep[];
   checkpoint: WorkCheckpoint;
+  checkpointPinned: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,6 +42,7 @@ function id(value: unknown): string {
 }
 function text(value: unknown, max = 2000): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value)) throw new WorkGoalError('Use a clear, bounded description.');
+  if (refuseMemorySecret(value)) throw new WorkGoalError('Keep credentials in the Vault, not in saved work.');
   return value.trim();
 }
 function strings(value: unknown, maxItems = 12): string[] {
@@ -50,7 +53,8 @@ function snapshot(row: GoalRow): WorkGoalSnapshot {
   return { goalId: row.id, threadId: row.thread_id, revision: row.revision, afterSequence: row.revision,
     state: row.state, title: row.outcome, activity: row.activity, criteria: row.criteria, steps: row.steps,
     verifiedSteps: row.steps.filter(step => step.state === 'verified').length, totalSteps: row.steps.length,
-    continuation: row.continuation, checkpoint: row.checkpoint, createdAt: row.created_at, updatedAt: row.updated_at };
+    continuation: row.continuation, checkpoint: row.checkpoint, checkpointPinned: row.checkpoint_pinned,
+    createdAt: row.created_at, updatedAt: row.updated_at };
 }
 async function owned(db: Db, owner: string, goalId: string, lock = false): Promise<GoalRow> {
   const [row] = await db.query<GoalRow>(`select * from work_goals where id=$1 and owner_user_id=$2${lock ? ' for update' : ''}`, [id(goalId), owner]);
@@ -67,8 +71,8 @@ function transaction<T>(db: Db, work: (tx: Db) => Promise<T>): Promise<T> {
 }
 async function save(db: Db, row: GoalRow, kind: string): Promise<WorkGoalSnapshot> {
   const [saved] = await db.query<GoalRow>(`update work_goals set revision=revision+1,state=$3,steps=$4,continuation=$5,
-    activity=$6,checkpoint=$7,updated_at=now() where id=$1 and owner_user_id=$2 returning *`,
-  [row.id, row.owner_user_id, row.state, json(row.steps), row.continuation ? json(row.continuation) : null, row.activity, json(row.checkpoint)]);
+    activity=$6,checkpoint=$7,checkpoint_pinned=$8,updated_at=now() where id=$1 and owner_user_id=$2 returning *`,
+  [row.id, row.owner_user_id, row.state, json(row.steps), row.continuation ? json(row.continuation) : null, row.activity, json(row.checkpoint), row.checkpoint_pinned]);
   await event(db, saved, kind, saved.activity);
   return snapshot(saved);
 }
@@ -112,6 +116,35 @@ export async function workGoalEvents(db: Db, ownerUserId: string, goalId: string
   if (!Number.isSafeInteger(after) || after < 0) throw new WorkGoalError('Invalid progress cursor.');
   return db.query<{ id: string; sequence: number; kind: string; summary: string; created_at: string }>(
     `select id,sequence,kind,summary,created_at from work_goal_events where goal_id=$1 and owner_user_id=$2 and sequence>$3 order by sequence limit 200`, [goalId, ownerUserId, after]);
+}
+
+export async function pinnedWorkGoals(db: Db, ownerUserId: string): Promise<WorkGoalSnapshot[]> {
+  return (await db.query<GoalRow>(`select * from work_goals where owner_user_id=$1 and checkpoint_pinned
+    order by updated_at desc,id desc limit 8`, [ownerUserId])).map(snapshot);
+}
+
+/** Owner-only correction, pinning and forgetting; deliberately not a model
+ * tool. Corrections never resume a paused goal or grant execution authority. */
+export async function editWorkMemory(db: Db, args: { ownerUserId: string; goalId: string; revision: unknown;
+  action: 'correct' | 'pin' | 'unpin' | 'forget'; checkpoint?: unknown }): Promise<WorkGoalSnapshot> {
+  return transaction(db, async tx => {
+    const row = await owned(tx, args.ownerUserId, args.goalId, true);
+    if (!Number.isSafeInteger(args.revision) || args.revision !== row.revision) throw new WorkGoalError('Saved work changed. Refresh before editing.', 409);
+    if (args.action === 'pin') {
+      await tx.query(`select id from users where id=$1 for update`, [args.ownerUserId]);
+      const [count] = await tx.query<{ count: number }>(`select count(*)::integer as count from work_goals where owner_user_id=$1 and checkpoint_pinned`, [args.ownerUserId]);
+      if (!row.checkpoint_pinned && count.count >= 8) throw new WorkGoalError('Unpin a saved checkpoint before pinning another.', 409);
+      row.checkpoint_pinned = true;
+    } else if (args.action === 'unpin') row.checkpoint_pinned = false;
+    else if (args.action === 'forget') {
+      row.checkpoint = { decisions: [], facts: [], assumptions: [], nextAction: '' }; row.checkpoint_pinned = false;
+    } else if (args.action === 'correct') {
+      const value = args.checkpoint as Record<string, unknown> | null;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new WorkGoalError('Enter the corrected work notes.');
+      row.checkpoint = { decisions: strings(value.decisions), facts: strings(value.facts), assumptions: strings(value.assumptions), nextAction: text(value.nextAction) };
+    } else throw new WorkGoalError('Choose a memory action.');
+    return save(tx, row, `memory.${args.action}`);
+  });
 }
 
 export async function checkpointWorkGoal(db: Db, args: { ownerUserId: string; goalId: string; revision: unknown;

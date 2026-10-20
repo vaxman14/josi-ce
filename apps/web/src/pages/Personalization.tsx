@@ -6,6 +6,7 @@
 // called out explicitly — not refused, because it is their file, but named, so
 // they know it changed nothing.
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote } from '@/components/ui';
 
@@ -34,7 +35,9 @@ interface Memory {
   confidence: number;
   pinned: boolean;
   confirmed_at: string | null;
+  work_goal_id?: string | null;
 }
+interface MemorySuggestion { id: string; content: string; work_goal_id?: string | null }
 
 const TABS: Array<{ key: Layer; label: string; blurb: string }> = [
   { key: 'soul', label: 'Soul', blurb: 'Who your assistant is to you.' },
@@ -54,6 +57,9 @@ export function Personalization() {
   const [notice, setNotice] = useState('');
   const [memories, setMemories] = useState<Memory[]>([]);
   const [newMemory, setNewMemory] = useState('');
+  const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
+  const [memoryEdit, setMemoryEdit] = useState<{ id: string; content: string } | null>(null);
+  const [memoryBusy, setMemoryBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [versions, setVersions] = useState<Version[]>([]);
@@ -100,9 +106,13 @@ export function Personalization() {
 
   async function reloadMemories() {
     try {
-      const r = await api.get<{ memories: Memory[] }>('/persona/memories');
+      const [r, pending] = await Promise.all([
+        api.get<{ memories: Memory[] }>('/persona/memories'),
+        api.get<{ suggestions: MemorySuggestion[] }>('/persona/suggestions'),
+      ]);
       setMemories(r.memories);
-    } catch { /* an empty list is a fine starting point */ }
+      setSuggestions(pending.suggestions);
+    } catch { setError('Saved memory could not refresh.'); }
   }
 
   async function save() {
@@ -143,6 +153,21 @@ export function Personalization() {
   async function togglePin(m: Memory) {
     await api.put(`/persona/memories/${m.id}`, { pinned: !m.pinned }).catch(() => undefined);
     await reloadMemories();
+  }
+
+  async function saveMemoryEdit() {
+    if (!memoryEdit || memoryBusy) return;
+    setMemoryBusy(true); setError('');
+    try { await api.put(`/persona/memories/${memoryEdit.id}`, { content: memoryEdit.content }); setMemoryEdit(null); await reloadMemories(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'The memory could not be corrected.'); }
+    finally { setMemoryBusy(false); }
+  }
+  async function decideMemory(suggestion: MemorySuggestion, accept: boolean) {
+    if (memoryBusy) return;
+    setMemoryBusy(true); setError('');
+    try { await api.post(`/persona/suggestions/${suggestion.id}/decide`, { accept, content: suggestion.content }); await reloadMemories(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'The suggestion could not be reviewed.'); }
+    finally { setMemoryBusy(false); }
   }
 
   async function runPreview() {
@@ -389,7 +414,7 @@ export function Personalization() {
 
       <CollapsibleCard title="Memory" summary={`${memories.length} saved ${memories.length === 1 ? 'item' : 'items'}`}>
         <p className="text-sm text-muted-foreground">
-          Things Josi keeps about you. Deleting one deletes it — it is not hidden.
+          Things Josi keeps about you and lessons you approve. Memories cannot change permissions or Cardinal Rules. Deleting one removes the saved memory; its original conversation and task remain.
         </p>
 
         <div className="mt-3 flex gap-2">
@@ -405,7 +430,7 @@ export function Personalization() {
 
         <ul className="mt-4 space-y-2">
           {memories.map((m) => (
-            <li key={m.id} className="flex items-start justify-between gap-3 rounded-md border p-3">
+            <li key={m.id} className="flex flex-wrap items-start justify-between gap-3 rounded-md border p-3">
               <div className="min-w-0">
                 <p className="text-sm">{m.content}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -413,8 +438,11 @@ export function Personalization() {
                   {m.confidence < 1 && ` · confidence ${Math.round(m.confidence * 100)}%`}
                   {m.confirmed_at ? ' · confirmed' : ''}
                 </p>
+                {m.work_goal_id ? <Link to={`/app/tasks#goal-${m.work_goal_id}`} className="inline-flex min-h-10 items-center text-xs underline">View source work</Link> : null}
+                {memoryEdit?.id === m.id ? <div className="mt-2 space-y-2"><textarea aria-label="Correct memory" className="w-full rounded-md border bg-background p-2 text-base" rows={3} maxLength={2000} value={memoryEdit.content} onChange={event => setMemoryEdit({ id: m.id, content: event.target.value })} /><Button disabled={memoryBusy || !memoryEdit.content.trim()} onClick={() => void saveMemoryEdit()}>Save correction</Button></div> : null}
               </div>
               <div className="flex shrink-0 gap-2">
+                <Button variant="secondary" className="min-h-11" onClick={() => setMemoryEdit({ id: m.id, content: m.content })}>Correct</Button>
                 <Button variant="secondary" className="min-h-11" onClick={() => void togglePin(m)}>
                   {m.pinned ? 'Unpin' : 'Pin'}
                 </Button>
@@ -428,6 +456,14 @@ export function Personalization() {
             <li className="text-sm text-muted-foreground">Nothing yet.</li>
           )}
         </ul>
+        {suggestions.length ? <div className="mt-5 space-y-3"><h3 className="font-medium">Review proposed memories</h3><p className="text-sm text-muted-foreground">Edit anything that needs correcting before keeping it.</p>
+          {suggestions.map(suggestion => <div key={suggestion.id} className="space-y-2 rounded-md border p-3">
+            <p className="text-xs text-muted-foreground">{suggestion.work_goal_id ? 'Proposed lesson from completed work' : 'Proposed memory'}</p>
+            <textarea aria-label="Proposed memory" rows={3} maxLength={2000} value={suggestion.content} onChange={event => setSuggestions(current => current.map(value => value.id === suggestion.id ? { ...value, content: event.target.value } : value))} className="w-full rounded-md border bg-background p-2 text-base" />
+            {suggestion.work_goal_id ? <Link to={`/app/tasks#goal-${suggestion.work_goal_id}`} className="inline-flex min-h-10 items-center text-xs underline">View source work</Link> : null}
+            <div className="flex gap-2"><Button disabled={memoryBusy || !suggestion.content.trim()} onClick={() => void decideMemory(suggestion, true)}>Keep this memory</Button><Button disabled={memoryBusy} variant="secondary" onClick={() => void decideMemory(suggestion, false)}>Discard</Button></div>
+          </div>)}
+        </div> : null}
       </CollapsibleCard>
     </div>
   );

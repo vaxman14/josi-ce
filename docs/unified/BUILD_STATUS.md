@@ -12,7 +12,7 @@ Updated 19 October 2026. The owner authorized implementation, continued work, an
 | P5 unified app | In progress; local/remote shell, embedded setup, lifecycle controls and one-app builder implemented | [P5 implementation](P5_UNIFIED_APP.md). Functional and installation acceptance deferred under the owner's build-first direction. |
 | P6–P8 | Pending | Follow [build plan](../UNIFIED_JOSI_BUILD_PLAN.md); no automation execution before its gates pass. |
 | P9 goal ownership | In progress; durable goals, checkpoints, receipt reconciliation and owner controls integrated | [Work implementation](P9_WORK_PROGRESS.md). Automatic model continuation and broader outcome verification remain open. |
-| P10 work memory | In progress; current-work checkpoints and automatic conversation recall integrated | [Work implementation](P9_WORK_PROGRESS.md). Correction/pinning/forgetting and learned lessons remain open. |
+| P10 work memory | In progress; checkpoints, recall, owner corrections/pins/clearing and lesson review integrated | [Memory implementation](P10_WORK_MEMORY.md). Retention/recovery, conflict resolution and acceptance remain open. |
 | P11 live progress | In progress; shared chat card and expanded Tasks view integrated | [Work implementation](P9_WORK_PROGRESS.md). Polling, saved notices and event replay are implemented; watching, broader channel delivery and acceptance remain open. |
 | P12 migration/release acceptance | Pending | Full functional/acceptance testing follows feature implementation under the owner's build-first direction. |
 

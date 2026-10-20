@@ -51,6 +51,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
       <p className="mt-3 font-medium">Finished means</p><ul className="mt-1 list-disc space-y-1 pl-5">{goal.criteria.map((criterion, index) => <li key={index}>{criterion}</li>)}</ul>
       {(['decisions', 'facts', 'assumptions'] as const).map(kind => goal.checkpoint[kind]?.length ? <div key={kind} className="mt-3"><p className="font-medium capitalize">{kind}</p><ul className="mt-1 list-disc space-y-1 pl-5">{goal.checkpoint[kind].map((value, index) => <li key={index}>{value}</li>)}</ul></div> : null)}
       {goal.checkpoint.nextAction ? <p className="mt-3"><strong>Next: </strong>{goal.checkpoint.nextAction}</p> : null}
+      <WorkMemoryEditor goal={goal} refresh={refresh} />
     </details> : null}
     <div className="mt-3 flex flex-wrap gap-2 text-xs">
       {compact ? <Link to={`/app/tasks#goal-${goal.goalId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Open task manager ↗</Link> : null}
@@ -67,6 +68,49 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     </form> : null}
     {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
   </article>;
+}
+
+function WorkMemoryEditor({ goal, refresh }: { goal: WorkGoalSnapshot; refresh: () => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [notes, setNotes] = useState({ decisions: '', facts: '', assumptions: '', nextAction: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState('');
+  function edit() {
+    setNotes({ decisions: (goal.checkpoint.decisions ?? []).join('\n'), facts: (goal.checkpoint.facts ?? []).join('\n'),
+      assumptions: (goal.checkpoint.assumptions ?? []).join('\n'), nextAction: goal.checkpoint.nextAction ?? '' });
+    setEditing(true); setSaved('');
+  }
+  async function change(action: 'correct' | 'pin' | 'unpin' | 'forget') {
+    if (busy) return;
+    if (action === 'forget' && !window.confirm('Clear these saved work notes? The task, evidence and original conversation remain.')) return;
+    setBusy(true); setError(''); setSaved('');
+    try {
+      const lines = (value: string) => value.split('\n').map(line => line.trim()).filter(Boolean);
+      await api.post(`/assistant/work-goals/${goal.goalId}/memory`, { revision: goal.revision, action,
+        ...(action === 'correct' ? { checkpoint: { decisions: lines(notes.decisions), facts: lines(notes.facts), assumptions: lines(notes.assumptions), nextAction: notes.nextAction } } : {}) });
+      setEditing(false); setSaved(action === 'forget' ? 'Saved notes cleared.' : 'Saved. Future work will use this version.');
+      await refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Saved work could not be changed.'); }
+    finally { setBusy(false); }
+  }
+  return <div className="mt-4 border-t border-border pt-3">
+    <p className="text-xs text-muted-foreground">Saved work notes are context. They cannot change permissions or Cardinal Rules.</p>
+    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+      <button disabled={busy} className="min-h-10 rounded-md border border-border px-3" onClick={edit}>Correct notes</button>
+      <button disabled={busy} className="min-h-10 rounded-md border border-border px-3" onClick={() => void change(goal.checkpointPinned ? 'unpin' : 'pin')}>{goal.checkpointPinned ? 'Unpin from memory' : 'Pin for future work'}</button>
+      <button disabled={busy} className="min-h-10 rounded-md border border-border px-3" onClick={() => void change('forget')}>Clear saved notes</button>
+    </div>
+    {editing ? <form className="mt-3 space-y-3" onSubmit={event => { event.preventDefault(); void change('correct'); }}>
+      {(['decisions', 'facts', 'assumptions', 'nextAction'] as const).map(key => <label key={key} className="block text-sm">{key === 'nextAction' ? 'Next action' : key === 'facts' ? 'Reported facts' : key === 'decisions' ? 'Decisions' : 'Assumptions'}
+        <textarea rows={key === 'nextAction' ? 2 : 3} maxLength={key === 'nextAction' ? 2000 : 24000} required={key === 'nextAction'} value={notes[key]} onChange={event => setNotes(current => ({ ...current, [key]: event.target.value }))} className="mt-1 w-full rounded-md border border-border bg-background p-2 text-base" />
+      </label>)}
+      <p className="text-xs text-muted-foreground">One item per line, up to 12 in each list. Put secrets in the Vault.</p>
+      <button disabled={busy} className="min-h-10 rounded-md bg-primary px-4 text-primary-foreground">Save correction</button>
+    </form> : null}
+    {error ? <p role="alert" className="mt-2 text-sm text-destructive">{error}</p> : null}
+    {saved ? <p role="status" className="mt-2 text-xs text-muted-foreground">{saved}</p> : null}
+  </div>;
 }
 
 export function ChatWorkProgress({ threadId }: { threadId: string }) {
