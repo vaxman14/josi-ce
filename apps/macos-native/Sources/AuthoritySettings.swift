@@ -8,6 +8,7 @@ struct NativeAuthoritySettings: View {
     @State private var tab = "rules"
     @State private var editing = false
     @State private var selected: Wire = .null
+    @State private var permissionEdit: PermissionEditSnapshot?
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Automation Settings").font(.title2.bold())
@@ -91,11 +92,26 @@ struct NativeAuthoritySettings: View {
                                          : "Task duration limit: \(rule["limits"]["maxTaskDurationMs"].integer / 1000) seconds").font(.caption)
                                 }
                             }
+                            Button("Edit Permissions…") {
+                                guard let api = model.api else { return }
+                                let reference = model.automationSettings["permissions"]["reference"]
+                                let administrator = model.user["id"].text
+                                model.run {
+                                    let checked = try await api.request("/admin/automation/permissions/validate",
+                                        method: "POST", body: ["policy": policy])
+                                    guard model.api === api, model.user["id"].text == administrator,
+                                          model.automationSettings["permissions"]["reference"] == reference else { return }
+                                    guard checked["validation"]["valid"].flag, checked["validation"]["policy"] == policy else {
+                                        throw JosiError(message: "This saved policy cannot be safely edited by this app. Revalidate its enforcement version first.")
+                                    }
+                                    permissionEdit = PermissionEditSnapshot(policy: policy, reference: reference,
+                                        origin: api.origin.absoluteString, administrator: administrator)
+                                }
+                            }.disabled(model.busy || !model.automationSettings["permissions"]["enforcementCurrent"].flag
+                                       || model.automationSettings["permissions"]["reconciliationRequired"].flag)
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                     }
                 }
-                Text("Native permission changes and protected confirmation are not available in this checkpoint. Existing restrictions remain in force.")
-                    .font(.caption).foregroundStyle(.secondary)
             } else {
                 let devices = model.automationSettings["devices"]
                 if devices["reconciliationRequired"].flag { Text("Vault recovery must be reconciled before devices can approve changes.").foregroundStyle(.orange) }
@@ -124,6 +140,8 @@ struct NativeAuthoritySettings: View {
                     .font(.caption).foregroundStyle(.secondary)
                 NativeDeviceEnrollmentView()
             }
+        }.sheet(item: $permissionEdit) { snapshot in
+            NativePermissionEditor(snapshot: snapshot).environmentObject(model)
         }
     }
     @ViewBuilder private func authorityWarning(_ value: Wire) -> some View {
@@ -131,7 +149,10 @@ struct NativeAuthoritySettings: View {
             Text("This policy needs recovery reconciliation or revalidation before it can authorize work.").foregroundStyle(.orange)
         }
     }
-    private func limit(_ value: Wire) -> String { value == .null ? "unlimited" : String(value.integer) }
+    private func limit(_ value: Wire) -> String {
+        if case .number(let number) = value { return String(format: "%.0f", number) }
+        return value == .null ? "unlimited" : "unavailable"
+    }
 }
 
 private func editableRule(_ rule: Wire, catalog: Wire) -> Bool {
@@ -167,15 +188,17 @@ private func permissionMode(_ mode: Wire) -> String {
     default: return "Unknown permission mode — refresh current settings."
     }
 }
-private func permissionScope(_ scope: Wire) -> String {
+func permissionScope(_ scope: Wire) -> String {
     switch scope["kind"].text {
     case "browser": return scope["browser"].text + ": " + scope["origin"].text + " · Profile " + scope["profileId"].text
     case "network": return scope["origin"].text + " · " + scope["networkClass"].text + " network"
-    case "file": return "Folder " + scope["rootId"].text + ": /" + scope["segments"].list.map(\.text).joined(separator: "/") + (scope["descendants"].flag ? " and descendants" : "")
-    case "application": return "Application " + scope["applicationId"].text + " · Installation " + scope["installationRevision"].text
-    case "runtime": return "Runtime " + scope["runtimeId"].text + " · Sandbox " + scope["sandboxId"].text
-    case "credential": return "Vault item " + scope["itemId"].text + " → " + permissionScope(scope["destination"])
-    case "model": return "Model configuration " + scope["configurationId"].text
+    case "file": return "Folder " + scope["rootId"].text + " · Revision " + String(scope["rootRevision"].integer) + ": /" + scope["segments"].list.map(\.text).joined(separator: "/") + (scope["descendants"].flag ? " and descendants" : "")
+    case "application": return "Application " + scope["applicationId"].text + " · Installation " + String(scope["installationRevision"].integer)
+    case "runtime": return "Runtime " + scope["runtimeId"].text + " · Revision " + String(scope["runtimeRevision"].integer)
+        + " · Sandbox " + scope["sandboxId"].text + " · Revision " + String(scope["sandboxRevision"].integer)
+    case "credential": return "Vault item " + scope["itemId"].text + " · Version " + String(scope["itemVersion"].integer)
+        + " → " + permissionScope(scope["destination"])
+    case "model": return "Model configuration " + scope["configurationId"].text + " · Revision " + String(scope["configurationRevision"].integer)
     case "workspace": return "This automation workspace"
     default: return "Unsupported scope. It has not been changed."
     }

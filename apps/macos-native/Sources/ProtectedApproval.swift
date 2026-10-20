@@ -416,6 +416,7 @@ struct NativeProtectedChange: View {
     @EnvironmentObject var model: JosiModel
     let title: String
     let change: Wire
+    var onSaved: (@MainActor () -> Void)? = nil
     @State private var open = false
     @State private var device = ""
     @State private var password = ""
@@ -454,6 +455,7 @@ struct NativeProtectedChange: View {
                             try await NativeProtectedApproval.run(model: model, change: proposed, deviceId: selected, password: secret, mfa: code)
                             result = "Saved to the Vault."; open = false
                             try await model.loadAutomation()
+                            onSaved?()
                         } catch {
                             try? await model.loadAutomation()
                             throw error

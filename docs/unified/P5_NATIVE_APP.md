@@ -36,7 +36,7 @@ The staged signed app actually launched through the computer-use tool and displa
 
 ## Remaining work
 
-Permission editing, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and automation-desktop integration remain open. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design. Device enrollment is assembled; actual biometric/local-and-remote acceptance and abandoned-key reconciliation remain open.
+New permission-target selection, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and automation-desktop integration remain open. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design. Device enrollment is assembled; actual biometric/local-and-remote acceptance and abandoned-key reconciliation remain open.
 
 The follow-up work/task and rule-editor sources compiled successfully with Swift 6. No authenticated functional flow or model review was run on the owner's server. The native package version advances to `0.7.0-native.2`; its installer version is `0.7.0.3`.
 
@@ -55,3 +55,13 @@ The builder now embeds `JosiProtectedKeyHost.app` with a Developer ID profile an
 On 20 October the owner explicitly approved registering this Mac with Socal Receptionist LLC. Xcode's exact-Mac build registered it and produced a development profile containing its identifier; the owner approved the system Keychain prompt. Archive/export then produced a Developer ID profile for `com.heyjosi.ce.protected-key`, team `LRH75YR6QW`, authorizing the selected existing Socal Developer ID certificate. The helper's signed entitlement uses only `LRH75YR6QW.com.heyjosi.ce.protected-key`, even though the profile permits the team's wildcard group. No certificate was revoked and no other team was selected.
 
 The enrollment and profile-gated Swift 6 sources compile. The local protocol comparison now covers seven native/CE signed messages and three consent decode/re-encode round trips, including Unicode and escaped text. No real enrollment, biometric signing, Vault mutation or installation was performed. The next package is `0.7.0-native.3` / installer `0.7.0.4`; artifact production is recorded separately when complete.
+
+That package is now retained at `/Users/roman/Documents/Josi Mac Native/JosiDrive/Artifacts/josi-native-unified-20261020-3/Install Josi.pkg`. It contains clean source revision `d709887ead6dc7da13151de8337d518be8b446e3`, the provisioned helper, native enrollment and protected approval. All 17,607 extracted file/link entries match staging and both extracted app signatures passed. Its folder includes hashes, current source, runtime dependency source and the Apple-issued profile needed to reproduce helper signing. This package is not installed, functionally accepted or notarized.
+
+## Existing permission editing
+
+The subsequent native editor opens a server-validated saved policy and retains its original Vault reference. It supports policy enable/disable, unmatched-action behavior, deny/ask/task/until/standing modes, independent explicit unlimited or whole-number limits, and rule removal/restoration before saving. Identity, exact scopes/revisions and stable grant IDs are preserved; changing limits does not reset prior consumption. Untouched expiry text is preserved exactly. Unsupported policy shapes cannot be silently rewritten.
+
+Changes must pass the server validator again before native protected confirmation becomes available. Any field change invalidates that check. A changed connection, administrator or Vault reference blocks saving; the server repeats authority and version checks inside its existing transaction. The final protected review shows the complete before/after meaning. Removing a denial is explicitly identified as a possible widening.
+
+The editor currently changes **existing** grants. Creating new policies and selecting new browser profiles, applications, folders, runtimes or credential destinations still depends on the production workspace/target catalog. It does not fabricate selectable targets from arbitrary IDs. Swift 6 compilation and the pre-commit public-data scan passed. This source is later than the `native.3` installer and remains subject to functional acceptance.
