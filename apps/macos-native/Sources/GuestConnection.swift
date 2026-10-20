@@ -15,10 +15,12 @@ import Darwin
     @Published private(set) var applicationCandidate: Wire = .null
     @Published private(set) var applicationReadiness = ""
     @Published private(set) var browserCandidate: Wire = .null
+    @Published private(set) var browserConnected = false
     private let device: VZVirtioSocketDevice
     private let context: [String: String]
     private let current: @MainActor () throws -> Int
     private let resolveApplication: @MainActor (Wire) async throws -> Wire
+    private let resolveBrowser: @MainActor (Wire) async throws -> Wire
     private let consentProjection: @MainActor () throws -> Wire
     private let listener = VZVirtioSocketListener()
     private var connection: VZVirtioSocketConnection?
@@ -31,6 +33,9 @@ import Darwin
     private var attempts = 0
     private var applicationTask: Task<Void, Never>?
     private var applicationPin: Wire = .null
+    private var browserPin: Wire = .null
+    private var browserTask: Task<Void, Never>?
+    private var supportsBrowserProfiles = false
     private var pairedBinding: Wire = .null
     private var sentConsent: Wire = .null
     private var execution: GuestPendingExecution?
@@ -39,9 +44,11 @@ import Darwin
 
     init(device: VZVirtioSocketDevice, context: [String: String], current: @escaping @MainActor () throws -> Int,
          resolveApplication: @escaping @MainActor (Wire) async throws -> Wire,
+         resolveBrowser: @escaping @MainActor (Wire) async throws -> Wire,
          consentProjection: @escaping @MainActor () throws -> Wire) {
         self.device = device; self.context = context; self.current = current; self.resolveApplication = resolveApplication
         self.consentProjection = consentProjection
+        self.resolveBrowser = resolveBrowser
         super.init()
         listener.delegate = self
         device.setSocketListener(listener, forPort: GuestLinkWire.port)
@@ -122,6 +129,10 @@ import Darwin
                 let consent = try consentProjection()
                 let consentJSON = consent == .null ? "" : String(decoding: try JSONEncoder().encode(consent), as: UTF8.self)
                 var pulse = ["kind": "pulse", "leaseUntilMs": String(until), "applicationPin": encoded]
+                if supportsBrowserProfiles {
+                    let browser = currentBrowserPin(until: until)
+                    pulse["browserPin"] = browser == .null ? "" : String(decoding: try JSONEncoder().encode(browser), as: UTF8.self)
+                }
                 if supportsExecution { pulse["consent"] = consentJSON }
                 else if consent != .null { throw GuestLinkError.invalid }
                 try await link.send(pulse)
@@ -130,7 +141,8 @@ import Darwin
                 _ = try current()
                 let statusKeys: Set<String> = ["kind", "accessibility", "screenCapture", "executionEnabled", "applicationCandidate", "applicationReadiness"]
                 guard (Set(reply.keys) == statusKeys || Set(reply.keys) == statusKeys.union(["executionProtocol"])
-                    || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate"])),
+                    || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate"])
+                    || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate", "browserConnection"])),
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
                       reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2"].contains(reply["executionProtocol"] ?? ""),
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
@@ -138,6 +150,10 @@ import Darwin
                       candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
                 accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
                 supportsExecution = reply["executionProtocol"] == "desktop-command.2"
+                supportsBrowserProfiles = reply["browserCandidate"] != nil
+                guard reply["browserConnection"] == nil || ["connected", "waiting"].contains(reply["browserConnection"] ?? "")
+                else { throw GuestLinkError.invalid }
+                browserConnected = reply["browserConnection"] == "connected"
                 state = consent == .null ? "Companion connected. Inspection is not approved."
                     : "Companion connected. Inspection is approved; input is unavailable."
                 if candidate.isEmpty { applicationCandidate = .null }
@@ -176,6 +192,7 @@ import Darwin
                     }
                 }
                 refreshApplicationPin()
+                refreshBrowserPin()
                 if let execution { try await runExecution(execution, link: link) }
                 try await Task.sleep(for: .seconds(2))
             }
@@ -184,6 +201,8 @@ import Darwin
         }
         cancelQuestion(); paired = false; pairedBinding = .null; accessibility = false; screenCapture = false; supportsExecution = false; applicationCandidate = .null
         browserCandidate = .null
+        browserConnected = false
+        browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         cancelExecution(); sentConsent = .null
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
@@ -217,6 +236,38 @@ import Darwin
             } catch {
                 if !Task.isCancelled { applicationPin = .null; applicationReadiness = "" }
             }
+        }
+    }
+    private func currentBrowserPin(until: Int) -> Wire {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        guard browserCandidate != .null, browserPin["candidateId"] == browserCandidate["candidateId"],
+              browserPin["projection"]["expiresAtMs"].integer > now,
+              browserPin["projection"]["expiresAtMs"].integer <= until,
+              currentApplicationPin(until: until)["projection"]["application"]["applicationId"] == browserCandidate["applicationId"]
+        else { return .null }
+        return browserPin
+    }
+    private func refreshBrowserPin() {
+        guard !closed, paired, supportsBrowserProfiles, browserTask == nil, browserCandidate != .null,
+              applicationPin["projection"]["application"]["applicationId"] == browserCandidate["applicationId"],
+              applicationPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) else { return }
+        if browserPin["candidateId"] == browserCandidate["candidateId"],
+           browserPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) + 4000 { return }
+        let selected = browserCandidate
+        browserTask = Task {
+            defer { if !Task.isCancelled { browserTask = nil } }
+            do {
+                _ = try current()
+                let projection = try await resolveBrowser(selected)
+                guard !Task.isCancelled, !closed, paired, browserCandidate == selected else { return }
+                let until = try current()
+                guard projection != .null else { browserPin = .null; return }
+                guard projection["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
+                      projection["expiresAtMs"].integer <= until else { throw GuestLinkError.expired }
+                let pin: Wire = ["candidateId": selected["candidateId"], "projection": projection]
+                guard try JSONEncoder().encode(pin).count <= 4096 else { throw GuestLinkError.invalid }
+                browserPin = pin
+            } catch { if !Task.isCancelled { browserPin = .null } }
         }
     }
     var identity: Wire {
@@ -408,6 +459,8 @@ import Darwin
         task?.cancel(); task = nil; wire = nil; connection = nil
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         paired = false; pairedBinding = .null; supportsExecution = false; applicationCandidate = .null; browserCandidate = .null; state = "Companion disconnected."
+        browserConnected = false
+        browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
     }
 }
 

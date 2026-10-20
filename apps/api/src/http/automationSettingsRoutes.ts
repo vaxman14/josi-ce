@@ -198,6 +198,9 @@ export function automationSettingsRoutes(context: Context): Router {
   r.post('/storage/sessions/:id/application', nativeHandle(async (req, res) => res.json(
     await storage.application(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));
+  r.post('/storage/sessions/:id/browser', nativeHandle(async (req, res) => res.json(
+    await storage.browser(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
+  )));
   r.post('/storage/sessions/:id/consent/prepare', nativeHandle(async (req, res) => res.status(201).json(
     await storage.prepareConsent(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));

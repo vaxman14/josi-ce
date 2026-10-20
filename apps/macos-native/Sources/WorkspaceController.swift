@@ -76,6 +76,9 @@ import Darwin
             }, resolveApplication: { [weak self] candidate in
                 guard let self else { throw GuestLinkError.closed }
                 return try await self.applicationProjection(candidate)
+            }, resolveBrowser: { [weak self] candidate in
+                guard let self else { throw GuestLinkError.closed }
+                return try await self.browserProjection(candidate)
             }, consentProjection: { [weak self] in
                 guard let self else { throw GuestLinkError.closed }
                 return try self.automationConsentProjection()
@@ -121,6 +124,28 @@ import Darwin
               pin["installationRevision"] == selected["installationRevision"],
               ["bundlePath", "bundleId", "signingId", "teamId", "codeHash"].allSatisfy({ pin[$0] == candidate[$0] })
         else { throw GuestLinkError.invalid }
+        return value
+    }
+    private func browserProjection(_ candidate: Wire) async throws -> Wire {
+        try current()
+        guard let model, let api else { throw GuestLinkError.closed }
+        let identity: Wire = ["serverId": workspace["identity"]["serverId"], "userId": user,
+                              "deviceId": workspace["identity"]["deviceId"], "workspaceId": workspace["workspaceId"]]
+        let registry = model.automationSettings["targets"]
+        guard !registry["reconciliationRequired"].flag else { throw GuestLinkError.unavailable }
+        let matches = registry["browsers"].list.filter { NativeBrowserTargetWire.matches(candidate, $0, identity: identity) }
+        guard matches.count == 1 else { return .null }
+        let selected = matches[0], id = try api.uuid(session["sessionId"].text)
+        let value = try await api.request("/admin/automation/storage/sessions/\(id)/browser", method: "POST",
+            body: ["profileId": selected["profileId"], "family": candidate["family"]])
+        try current()
+        guard ProtectedWire.exact(value, ["schemaVersion", "sessionId", "identity", "reference", "browser", "expiresAtMs", "executionEnabled"]),
+              value["schemaVersion"] == .number(1), value["sessionId"] == session["sessionId"], value["identity"] == identity,
+              value["executionEnabled"] == .bool(false), ProtectedWire.reference(value["reference"]),
+              value["reference"]["recordId"].text == "32eae367-3509-4241-9829-81c28b7b4088",
+              ProtectedWire.integer(value["expiresAtMs"]), value["expiresAtMs"].integer <= session["leaseUntilMs"].integer,
+              value["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
+              value["browser"] == selected else { throw GuestLinkError.invalid }
         return value
     }
     private func adoptLease(_ value: Wire) throws {

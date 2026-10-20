@@ -373,6 +373,38 @@ export class WorkspaceStorage {
       return { schemaVersion: 1, sessionId: s.id, identity, ...result, expiresAtMs: s.leaseUntil, executionEnabled: false };
     } catch (error) { this.opened.delete(id); throw error; }
   }
+  async browser(actor: string, session: string, id: string, input: unknown) {
+    if (!exact(input, ['profileId', 'family']) || !uuid(input.profileId)
+      || !['chrome', 'brave', 'firefox', 'safari'].includes(String(input.family))) {
+      throw new ProtectedChangeError(400, 'Choose the registered isolated browser profile.');
+    }
+    const s = this.opened.get(id);
+    if (!uuid(id) || !s || s.actor !== actor || s.session !== session || !this.db.transaction) {
+      throw new ProtectedChangeError(409, 'The desktop connection is unavailable.');
+    }
+    try {
+      this.openedLive(s);
+      const records = this.records(actor, session);
+      const identity = { userId: actor, serverId: s.identity.serverId, deviceId: s.identity.deviceId, workspaceId: s.workspaceId };
+      const result = await this.db.transaction(async tx => {
+        const current = await this.devices(records).resolveDeviceKey(tx, s.identity), a = current.reference, b = s.reference;
+        if (a.recordId !== b.recordId || a.version !== b.version || a.digest !== b.digest || a.epoch !== b.epoch) {
+          throw new ProtectedChangeError(409, 'Vault authority changed. Reopen the desktop before resolving a browser.');
+        }
+        const resolved = await records.automationTargets({ verifyFreshAdministrator: denied, verifyProtectedHuman: denied })
+          .resolveBrowser(actor, identity, input.profileId as string, input.family as 'chrome' | 'brave' | 'firefox' | 'safari', tx);
+        if (resolved.reference.epoch !== a.epoch || resolved.application.applicationId !== s.applicationSelection?.applicationId
+          || resolved.application.installationRevision !== s.applicationSelection.installationRevision) {
+          throw new ProtectedChangeError(409, 'Select this browser’s registered application first.');
+        }
+        this.openedLive(s);
+        return { reference: resolved.reference, browser: resolved.target };
+      });
+      this.openedLive(s);
+      // A leased canonical metadata projection, never an action permit.
+      return { schemaVersion: 1, sessionId: s.id, identity, ...result, expiresAtMs: s.leaseUntil, executionEnabled: false };
+    } catch (error) { this.opened.delete(id); throw error; }
+  }
   async renew(actor: string, session: string, id: string, presence?: unknown, controlInput?: unknown) {
     const report = parseAutomationPresence(presence);
     const s = this.opened.get(id);

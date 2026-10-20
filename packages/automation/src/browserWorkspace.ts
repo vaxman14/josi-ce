@@ -57,7 +57,7 @@ function validSession(s: BrowserWorkspaceSession): boolean {
   return exact(s, ['sessionId', 'workspaceId', 'profileId', 'family', 'isolatedWorkspace', 'origins', 'expiresAt'])
     && [s.sessionId, s.workspaceId, s.profileId].every(uuid) && ['chrome', 'brave', 'firefox', 'safari'].includes(s.family)
     && s.isolatedWorkspace === true && integer(s.expiresAt) && s.expiresAt > Date.now() && s.expiresAt <= Date.now() + 60_000
-    && Array.isArray(s.origins) && s.origins.length > 0 && s.origins.length <= 128
+    && Array.isArray(s.origins) && s.origins.length <= 128
     && s.origins.every(origin => webUrl(origin)?.origin === origin) && new Set(s.origins).size === s.origins.length;
 }
 function parseRequest(value: unknown): Request | null {
@@ -67,7 +67,7 @@ function parseRequest(value: unknown): Request | null {
     && ['browser.hello', 'browser.poll', 'browser.authorize', 'browser.receipt', 'browser.stop'].includes(r.operation) ? r : null;
 }
 function validCommand(c: BrowserWorkspaceCommand, s: BrowserWorkspaceSession): boolean {
-  if (!object(c) || !uuid(c.id) || c.sessionId !== s.sessionId || c.profileId !== s.profileId
+  if (!s.origins.length || !object(c) || !uuid(c.id) || c.sessionId !== s.sessionId || c.profileId !== s.profileId
     || !integer(c.expiresAt) || c.expiresAt <= Date.now() || c.expiresAt > s.expiresAt) return false;
   const keys = ['id', 'sessionId', 'profileId', 'expiresAt', 'kind'];
   if (c.kind === 'tabs') return exact(c, keys);

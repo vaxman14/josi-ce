@@ -219,6 +219,9 @@ def build(args):
         REPO / 'apps/automation-macos/Sources/GuestExecutionAuthority.swift',
         REPO / 'apps/automation-macos/Sources/GuestApplicationReadiness.swift',
         REPO / 'apps/automation-macos/Sources/GuestBrowserProfiles.swift',
+        REPO / 'apps/automation-macos/Sources/GuestBrowserProjection.swift',
+        REPO / 'apps/automation-macos/Sources/GuestBrowserIPC.swift',
+        REPO / 'apps/automation-macos/Sources/GuestBrowserSession.swift',
         REPO / 'apps/automation-macos/Sources/GuestLinkWire.swift'])
     browser_build = output / 'guest-browser-components'
     run('build-guest-browser-components', [sys.executable, '-B', REPO / 'scripts/macos/build-guest-browser-components.py',

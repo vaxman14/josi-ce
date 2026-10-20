@@ -24,6 +24,7 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
         let extensionFolder: URL
     }
     private static var bridgeService: SMAppService { .agent(plistName: "com.heyjosi.ce.guestbrowser.plist") }
+    static var bridgeEnabled: Bool { bridgeService.status == .enabled }
     static func enableBridge(_ prepared: Prepared) throws -> Bool {
         try GuestEnvironment.signedApplication()
         guard try GuestEnvironment.identity().guest == prepared.candidate.guestBootId,

@@ -2,7 +2,8 @@ import Foundation
 import Darwin
 
 /// Volatile guest relay. Only the signed Companion can install a short-lived
-/// scope and answer authorization requests. Browser peers cannot call its
+/// routing scope and answer requests. The scope permits connection only;
+/// the owner and server must separately authorize each browser operation. Browser peers cannot call its
 /// owner interface or construct an execution permit locally.
 @main enum JosiGuestBrowserBroker {
     static func main() {
@@ -25,7 +26,7 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
     private var deadline: UInt64 = 0, lastWall: Int64 = 0
     private var peers: [ObjectIdentifier: NSXPCConnection] = [:]
     private var peerScopes: [ObjectIdentifier: (digest: String, persistent: Bool, busy: Bool)] = [:]
-    private var requests = Set<String>(), retiredConsents = Set<String>()
+    private var requests = Set<String>(), retiredConnections = Set<String>()
     private var outstanding = false
     func start() {
         ownerListener.setConnectionCodeSigningRequirement(GuestBrowserBoundary.requirement("com.heyjosi.ce.guestcompanion"))
@@ -63,7 +64,7 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
                         // Safari completes one request per handler lifetime.
                         // Its normal completed-handler exit is not takeover.
                         // Lost in-flight replies and persistent host loss stop.
-                        if let scope, scope.digest == self.authority?["consentDigest"] as? String,
+                        if let scope, scope.digest == self.authority?["connectionId"] as? String,
                            scope.busy || scope.persistent { self.clear() }
                     }
                 }
@@ -73,7 +74,7 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
         }
     }
     private func clear() {
-        if let digest = authority?["consentDigest"] as? String { retiredConsents.insert(digest) }
+        if let digest = authority?["connectionId"] as? String { retiredConnections.insert(digest) }
         authority = nil; deadline = 0; outstanding = false
         // Keep request IDs for this owner connection: stop is not replay reset.
     }
@@ -89,12 +90,12 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
             do {
                 guard self.owner.map(ObjectIdentifier.init) == key, data.count <= 8192,
                       let next = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      Set(next.keys) == ["workspaceId", "profileId", "family", "guestBootId", "hostBootId", "consentDigest", "generation", "leaseUntilMs"],
+                      Set(next.keys) == ["workspaceId", "profileId", "family", "guestBootId", "hostBootId", "connectionId", "generation", "leaseUntilMs"],
                       ["workspaceId", "profileId", "guestBootId", "hostBootId"].allSatisfy({ key in
                           guard let id = next[key] as? String else { return false }
                           return UUID(uuidString: id)?.uuidString.lowercased() == id
                       }), let family = next["family"] as? String, ["chrome", "brave", "firefox", "safari"].contains(family),
-                      let digest = next["consentDigest"] as? String, digest.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                      let digest = next["connectionId"] as? String, UUID(uuidString: digest)?.uuidString.lowercased() == digest,
                       let generation = next["generation"] as? NSNumber, CFGetTypeID(generation) != CFBooleanGetTypeID(),
                       generation.doubleValue == Double(generation.int64Value), generation.int64Value >= 0,
                       let rawUntil = next["leaseUntilMs"] as? NSNumber, CFGetTypeID(rawUntil) != CFBooleanGetTypeID(),
@@ -106,7 +107,7 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
                     guard self.live(), NSDictionary(dictionary: previous.filter { $0.key != "leaseUntilMs" })
                         .isEqual(to: next.filter { $0.key != "leaseUntilMs" }) else { throw GuestBrowserError.invalid }
                 }
-                guard !self.retiredConsents.contains(digest), self.retiredConsents.count < 4096 else { throw GuestBrowserError.unavailable }
+                guard !self.retiredConnections.contains(digest), self.retiredConnections.count < 4096 else { throw GuestBrowserError.unavailable }
                 self.authority = next; self.lastWall = now
                 self.deadline = DispatchTime.now().uptimeNanoseconds + UInt64(until - now) * 1_000_000
                 reply(true)
@@ -133,7 +134,7 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
                 self.requests.insert(id)
                 self.outstanding = true
                 let gate = BrokerReply(reply), expires = self.deadline, ownerKey = ObjectIdentifier(owner)
-                let digest = authority["consentDigest"] as? String
+                let digest = authority["connectionId"] as? String
                 guard let digest, source["kind"] as? String == (source["family"] as? String == "safari" ? "safari-profile" : "browser-process")
                 else { throw GuestBrowserError.invalid }
                 self.peerScopes[key] = (digest, source["family"] as? String != "safari", true)
@@ -153,7 +154,7 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
                             scope.busy = false; self.peerScopes[key] = scope
                         }
                         guard error == nil, self.owner.map(ObjectIdentifier.init) == ownerKey, self.live(), self.deadline >= expires,
-                              self.authority?["consentDigest"] as? String == digest,
+                              self.authority?["connectionId"] as? String == digest,
                               let response, response.count <= GuestBrowserBoundary.maximumBytes,
                               let value = try? JSONSerialization.jsonObject(with: response) as? [String: Any],
                               value["requestId"] as? String == id else { self.clear(); gate.finish(nil); return }

@@ -81,6 +81,8 @@ enum GuestEnvironment {
     @Published var canPrepareBrowser = false
     @Published var browserProfile = ""
     @Published var browserMessage = ""
+    @Published var browserRegistrationReady = false
+    @Published var browserConnected = false
     private var task: Task<Void, Never>?
     private var timeout: Task<Void, Never>?
     private var wire: GuestLinkWire?
@@ -94,6 +96,8 @@ enum GuestEnvironment {
     private var browserPin: GuestPinnedApplication?
     private var browserPinUntil = 0
     private var preparedBrowser: GuestBrowserProfiles.Prepared?
+    private var canonicalBrowser: GuestCanonicalBrowser?
+    private var browserSession: GuestBrowserSession?
 
     func start() {
         guard !working else { return }
@@ -159,8 +163,9 @@ enum GuestEnvironment {
                         try await link.send(result)
                         continue
                     }
-                    guard runID == own, (Set(pulse.keys) == ["kind", "leaseUntilMs", "applicationPin"]
-                        || Set(pulse.keys) == ["kind", "leaseUntilMs", "applicationPin", "consent"]), pulse["kind"] == "pulse",
+                    let pulseKeys = Set(pulse.keys), requiredPulse: Set<String> = ["kind", "leaseUntilMs", "applicationPin"]
+                    guard runID == own, requiredPulse.isSubset(of: pulseKeys),
+                          pulseKeys.isSubset(of: requiredPulse.union(["consent", "browserPin"])), pulse["kind"] == "pulse",
                           let raw = pulse["leaseUntilMs"], let until = Int(raw), String(until) == raw else { throw GuestLinkError.invalid }
                     let now = Int(Date().timeIntervalSince1970 * 1000)
                     guard until > now, until - now <= 10_000 else { throw GuestLinkError.expired }
@@ -182,11 +187,16 @@ enum GuestEnvironment {
                     else { browserPinUntil = 0 }
                     canPrepareBrowser = browserPin.map { GuestBrowserProfiles.families[$0.bundleId] != nil } ?? false
                     if let preparedBrowser, let browserPin, browserPin != preparedBrowser.application { clearBrowserProfile() }
+                    canonicalBrowser = try GuestBrowserProjection.resolve(pulse["browserPin"] ?? "", prepared: preparedBrowser,
+                        identity: host, application: browserPin, leaseUntil: until)
+                    browserRegistrationReady = canonicalBrowser != nil
+                    await renewBrowserConnection()
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
                         "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.2",
-                        "browserCandidate": try preparedBrowser.map { String(decoding: try JSONEncoder().encode($0.candidate), as: UTF8.self) } ?? ""])
+                        "browserCandidate": try preparedBrowser.map { String(decoding: try JSONEncoder().encode($0.candidate), as: UTF8.self) } ?? "",
+                        "browserConnection": browserConnected ? "connected" : "waiting"])
                 }
             } catch {
                 if runID == own { message = "Connection ended or could not be verified. Install the signed companion in this guest’s Applications folder, then connect from the Josi app." }
@@ -217,7 +227,39 @@ enum GuestEnvironment {
         candidate = ""; selectedApplication = ""
         browserPin = nil; browserPinUntil = 0; canPrepareBrowser = false; clearBrowserProfile()
     }
-    private func clearBrowserProfile() { preparedBrowser = nil; browserProfile = ""; browserMessage = "" }
+    private func clearBrowserProfile() {
+        preparedBrowser = nil; browserProfile = ""; browserMessage = ""
+        canonicalBrowser = nil; browserRegistrationReady = false
+        browserSession?.stop(); browserSession = nil; browserConnected = false
+    }
+    private func renewBrowserConnection() async {
+        let own = runID
+        do {
+            try current()
+            guard GuestBrowserProfiles.bridgeEnabled, let canonicalBrowser else {
+                browserSession?.stop(); browserSession = nil; browserConnected = false; return
+            }
+            if browserSession?.available != true {
+                browserSession?.stop()
+                browserSession = try GuestBrowserSession(canonicalBrowser, current: { [weak self] in
+                    guard let self, self.runID == own else { throw GuestLinkError.closed }
+                    try self.current()
+                }, status: { [weak self] connected in
+                    guard let self, self.runID == own else { return }
+                    self.browserConnected = connected
+                }, stopped: { [weak self] in
+                    guard let self, self.runID == own else { return }
+                    self.stop()
+                    self.message = "You have control. Reconnect and approve this desktop again to resume automation."
+                })
+            }
+            try await browserSession?.renew(canonicalBrowser)
+        } catch {
+            if runID == own {
+                browserSession?.stop(); browserSession = nil; browserConnected = false
+            }
+        }
+    }
     func prepareBrowser() {
         do {
             try current()
@@ -267,6 +309,7 @@ enum GuestEnvironment {
         Task {
             do {
                 guard NSApp.isActive else { return }
+                browserSession?.stop(); browserSession = nil; browserConnected = false
                 try await GuestBrowserProfiles.disableBridge()
                 browserMessage = "The guest browser connection service is disabled."
             } catch { browserMessage = "The guest browser connection service could not be disabled. Check Login Items settings." }
@@ -376,6 +419,11 @@ enum GuestEnvironment {
                         Button("Prepare Browser Profile") { model.prepareBrowser() }
                         if !model.browserProfile.isEmpty {
                             Text(model.browserProfile).font(.caption)
+                            Text(model.browserRegistrationReady ? "Current Vault registration verified." : "Waiting for this profile’s Vault registration.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if model.browserConnected {
+                                Text("Extension connected. Page access and input are not enabled.").font(.caption)
+                            }
                             HStack {
                                 Button("Open Profile for Extension Setup") { model.openPreparedBrowser() }
                                 Button("Show Extension Folder") { model.revealBrowserExtension() }

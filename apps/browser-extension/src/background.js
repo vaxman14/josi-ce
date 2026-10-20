@@ -42,7 +42,7 @@ function acceptSession(value) {
   if (!value || value.isolatedWorkspace !== true || value.family !== config.family
     || !['sessionId', 'workspaceId', 'profileId'].every(key => uuid(value[key]))
     || !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= now || value.expiresAt > now + 60000
-    || !Array.isArray(value.origins) || !value.origins.length || value.origins.length > 128
+    || !Array.isArray(value.origins) || value.origins.length > 128
     || value.origins.some(origin => webUrl(origin)?.origin !== origin)) throw new Error('invalid_workspace');
   // This assertion is accepted ONLY from the registered native workspace
   // host, whose P4/P6 implementation must attest the real browser process and
@@ -64,7 +64,8 @@ async function connect() {
     const reply = await native('browser.hello', { family: config.family, extensionId: browserApi.runtime.id }, null);
     if (epoch !== generation) return;
     workspace = acceptSession(reply); seen.clear(); lastClock = Date.now();
-    status = 'Connected to an isolated Josi workspace.';
+    status = workspace.origins.length ? 'Connected to an isolated Josi workspace.'
+      : 'Connected. Waiting for a permitted task; page access is not enabled.';
     await browserApi.action.setBadgeText({ text: 'J' });
     pollTimer = setTimeout(poll, 100);
   } catch { if (epoch === generation) stop('No authorized Josi workspace is available. Open one in Josi first.'); }
@@ -78,7 +79,7 @@ async function currentTab(tabId) {
   return tab;
 }
 async function execute(command, epoch) {
-  if (!live() || epoch !== generation || !command || !bounded(command) || !uuid(command.id)
+  if (!live() || !workspace.origins.length || epoch !== generation || !command || !bounded(command) || !uuid(command.id)
     || command.sessionId !== workspace.sessionId || command.profileId !== workspace.profileId
     || !Number.isSafeInteger(command.expiresAt) || command.expiresAt <= Date.now()
     || command.expiresAt > workspace.expiresAt || seen.has(command.id) || seen.size >= 4096) throw new Error('invalid_command');
@@ -133,6 +134,8 @@ async function poll() {
       const renewed = acceptSession(reply.session);
       if (renewed.sessionId !== sessionId || renewed.profileId !== workspace.profileId || renewed.workspaceId !== workspace.workspaceId) throw new Error('workspace_changed');
       workspace = renewed;
+      status = workspace.origins.length ? 'Connected to an isolated Josi workspace.'
+        : 'Connected. Waiting for a permitted task; page access is not enabled.';
     }
     if (reply.command) {
       let result;
