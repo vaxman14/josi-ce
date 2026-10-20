@@ -24,6 +24,10 @@ export interface AutomationExecutionContext {
 export interface AutomationRequest {
   taskId: string; workspaceId: string; observationId: string; action: AutomationAction;
 }
+export interface AutomationObservationRequest {
+  taskId: string; workspaceId: string; controlSessionId: string; surface: 'browser' | 'desktop';
+  previousObservationId: string | null;
+}
 export interface PreparedAutomationOperation {
   identity: AutomationIdentity; observationId: string; intentDigest: string;
   effects: AutomationPermissionEffect[]; effectCoverage: 'verified';
@@ -41,6 +45,15 @@ export interface AutomationRuntimePorts extends AutomationReservationProofPort {
   /** Classify ALL actual effects from the verified target. Unknown business
    * effects must refuse. Model-selected action names are never that proof. */
   prepare(context: Readonly<AutomationExecutionContext>, request: Readonly<AutomationRequest>,
+    signal: AbortSignal): Promise<PreparedAutomationOperation>;
+  /** Resolve the locally selected canonical app/profile and allocate a fresh
+   * observation identity BEFORE capture. No content may be read in prepare.
+   * The immutable payload binds control session, surface and allocated ID.
+   * A refresh must name that session's preceding observation, never one from
+   * a different task/session. Null is for its first observation only.
+   * Dispatch can inspect that target only, with no input or launch fallback.
+   * Missing implementation keeps the bootstrap tool unavailable. */
+  prepareObservation?(context: Readonly<AutomationExecutionContext>, request: Readonly<AutomationObservationRequest>,
     signal: AbortSignal): Promise<PreparedAutomationOperation>;
   /** Must recheck current control/target/authority immediately before input.
    * Called once, only after the durable reservation marks dispatch. */
@@ -84,6 +97,9 @@ export function parseAutomationToolAction(value: unknown): AutomationAction {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AutomationRuntimeError('Choose a supported exact automation action.');
   const action = value as AutomationAction;
   if (typeof action.kind !== 'string') throw new AutomationRuntimeError('Choose a supported exact automation action.');
+  if (action.kind === 'browser.inspect' || action.kind === 'desktop.inspect') {
+    throw new AutomationRuntimeError('Use the observation tool and current control session for initial inspection.');
+  }
   const keys = ['kind'];
   if (action.kind.startsWith('browser.')) {
     if (!('browserProfileId' in action) || !uuid(action.browserProfileId) || !uuid(action.tabId)) throw new AutomationRuntimeError('Use the observed browser profile and tab references.');
@@ -132,6 +148,7 @@ export class AutomationRuntime {
       .some(name => typeof ports?.[name as keyof AutomationRuntimePorts] !== 'function')) throw new AutomationRuntimeError('The authenticated automation service is incomplete.');
     this.reservations = vaultRecords(db, key).automationReservations(ports);
   }
+  get observationAvailable(): boolean { return typeof this.ports.prepareObservation === 'function'; }
   async inventory(ownerUserId: string): Promise<AutomationWorkspaceSummary[]> {
     const [owner] = await this.db.query(`select id from users where id=$1 and status='active'`, [ownerUserId]);
     if (!owner) throw new AutomationRuntimeError('The automation owner is unavailable.');
@@ -218,36 +235,68 @@ export class AutomationRuntime {
       || ![input.taskId, input.workspaceId, input.observationId].every(uuid)) throw new AutomationRuntimeError('Use an original task, discovered workspace and current observation.');
     const request = Object.freeze({ ...structuredClone(input), action: Object.freeze(parseAutomationToolAction(input.action)) });
     const inspection = ['browser.observe', 'desktop.observe'].includes(request.action.kind);
-    await this.current(bound, request.taskId, inspection);
+    return this.perform(bound, request.taskId, request.workspaceId, inspection, automationIntentDigest(request),
+      request.observationId, signal => this.ports.prepare(bound, request, signal));
+  }
+  /** Captures the first (or refreshed) observation without invented old screen
+   * references. It returns a receipt and opaque ID ONLY. Reading these pixels
+   * or labels into a model remains a separate model.transmit projection. */
+  async observe(context: AutomationExecutionContext, input: AutomationObservationRequest) {
+    if (!this.observationAvailable || !exact(input, ['taskId', 'workspaceId', 'controlSessionId', 'surface', 'previousObservationId'])
+      || ![input.taskId, input.workspaceId, input.controlSessionId].every(uuid)
+      || input.previousObservationId !== null && !uuid(input.previousObservationId)
+      || !['browser', 'desktop'].includes(input.surface)) throw new AutomationRuntimeError('Choose a connected isolated workspace and its current control session.');
+    const bound = Object.freeze(structuredClone(context)), request = Object.freeze(structuredClone(input));
+    return this.perform(bound, request.taskId, request.workspaceId, true, cardinalContentDigest(request), null,
+      async signal => {
+        const candidate = await this.ports.prepareObservation!(bound, request, signal);
+        const effect = candidate?.effects?.[0];
+        // Bootstrap is read-only. A chosen app or browser cannot smuggle input,
+        // launch, network, file or model transmission into this first capture.
+        if (!candidate || candidate.observationId === request.previousObservationId || candidate.effects?.length !== 1 || !effect
+          || !Number.isSafeInteger(effect.bytes) || effect.bytes === null || effect.bytes < 0 || effect.bytes > 64 * 1024
+          || (request.surface === 'desktop'
+            ? effect.action !== 'computer.observe' || effect.target.kind !== 'application'
+            : effect.action !== 'browser.observe' || effect.target.kind !== 'browser')) {
+          throw new AutomationRuntimeError('Initial observation requires one bounded, exact read permission.');
+        }
+        return candidate;
+      });
+  }
+  private async perform(bound: Readonly<AutomationExecutionContext>, taskId: string, workspaceId: string,
+    inspection: boolean, intentDigest: string, observationId: string | null,
+    prepare: (signal: AbortSignal) => Promise<PreparedAutomationOperation>) {
+    await this.current(bound, taskId, inspection);
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 60_000);
     let expiryTimer: ReturnType<typeof setTimeout> | undefined;
     let reservation: AutomationReservationView | null = null, dispatchMarked = false;
     try {
-      const candidate = await bounded(this.ports.prepare(bound, request, controller.signal), controller.signal);
-      await this.current(bound, request.taskId, inspection);
+      const candidate = await bounded(prepare(controller.signal), controller.signal);
+      await this.current(bound, taskId, inspection);
       if (controller.signal.aborted || !candidate || !isAutomationIdentity(candidate.identity)
-        || candidate.identity.userId !== bound.ownerUserId || candidate.identity.workspaceId !== request.workspaceId
-        || candidate.observationId !== request.observationId || candidate.intentDigest !== automationIntentDigest(request)
+        || candidate.identity.userId !== bound.ownerUserId || candidate.identity.workspaceId !== workspaceId
+        || !uuid(candidate.observationId) || observationId !== null && candidate.observationId !== observationId
+        || candidate.intentDigest !== intentDigest
         || candidate.effectCoverage !== 'verified' || !(candidate.payload instanceof Secret)) throw new AutomationRuntimeError('The actual target and complete action effects could not be verified.');
       const prepared: PreparedAutomationOperation = { ...structuredClone({ ...candidate, payload: undefined }),
         payload: new Secret(candidate.payload.reveal()) };
       if (!Number.isSafeInteger(prepared.expiresAtMs) || prepared.expiresAtMs <= Date.now()
         || prepared.expiresAtMs > Date.now() + 60_000) throw new AutomationRuntimeError('The prepared operation expired.');
       expiryTimer = setTimeout(() => controller.abort(), Math.max(1, prepared.expiresAtMs - Date.now()));
-      const reserved = await this.reservations.reserve({ actorUserId: bound.ownerUserId, taskId: request.taskId,
-        turnId: bound.turnId, leaseToken: bound.leaseToken, effectIdentity: request.observationId, proposalId: randomUUID(),
+      const reserved = await this.reservations.reserve({ actorUserId: bound.ownerUserId, taskId,
+        turnId: bound.turnId, leaseToken: bound.leaseToken, effectIdentity: prepared.observationId, proposalId: randomUUID(),
         identity: prepared.identity, effects: prepared.effects, effectCoverage: prepared.effectCoverage,
         expected: prepared.expected, expiresAtMs: prepared.expiresAtMs, payload: prepared.payload });
       reservation = reserved.reservation;
       // A prior reservation is evidence to reconcile, never permission to
       // send again. Observation identities are consumed across continuations.
       if (!reserved.created) return this.result(reservation, true);
-      await this.current(bound, request.taskId, inspection);
+      await this.current(bound, taskId, inspection);
       if (controller.signal.aborted) throw new AutomationRuntimeError('Automation preparation expired.');
       reservation = await this.reservations.markDispatched({ actorUserId: bound.ownerUserId, id: reservation.id,
         turnId: bound.turnId, leaseToken: bound.leaseToken, proof: prepared.dispatchProof });
       dispatchMarked = true;
-      await this.current(bound, request.taskId, inspection);
+      await this.current(bound, taskId, inspection);
       if (controller.signal.aborted || Date.now() >= prepared.expiresAtMs) throw new AutomationRuntimeError('Automation dispatch expired.');
       const receipt = await bounded(this.ports.dispatch(reservation.id, Object.freeze(prepared), controller.signal), controller.signal);
       reservation = await this.reservations.settle({ actorUserId: bound.ownerUserId, id: reservation.id,

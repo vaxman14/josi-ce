@@ -22,6 +22,11 @@ export const AUTOMATION_CONTROL_TOOLS: ToolSpec[] = [
   { def: { name: 'connect_automation_workspace',
     description: 'Request control of a discovered isolated workspace for an existing active task. Requires current device-owner consent, permission policy and durable turn. Cannot resume human takeover, widen access or authorize an action. The connection may be refused; report the exact next setup/permission instruction.',
     parameters: shape({ task_id: id, workspace_id: id }) }, actionClass: 'automation_control' },
+  { def: { name: 'observe_automation_workspace',
+    description: 'Capture an initial or refreshed observation of the locally selected permitted application or browser in a connected isolated workspace. Use null for previous_observation_id on its first capture; a refresh names the preceding observation returned for this control session. Requires current control and read permission. Returns a saved capture receipt and opaque observation reference only; it does not expose screen contents to the model, grant input permission or prove a business outcome. Do not claim to see page or app content from this receipt.',
+    parameters: shape({ task_id: id, workspace_id: id, control_session_id: id,
+      previous_observation_id: { anyOf: [id, { type: 'null' }] },
+      surface: { type: 'string', enum: ['browser', 'desktop'] } }) }, actionClass: 'automation_control' },
   { def: { name: 'browser_control',
     description: 'Request one bounded browser operation using a current native observation and opaque profile/tab/element references. Works only in a dedicated Josi workspace. Actual effects and current permissions are verified before dispatch. A lost or uncertain receipt is never permission to retry. Fill uses an authorized value reference, never a raw secret. An input receipt does not verify the user’s business outcome.',
     parameters: shape({ ...properties, action: { oneOf: [
@@ -51,6 +56,8 @@ export async function automationToolAvailability(runtime: AutomationRuntime | un
     const ready = (await runtime.inventory(ownerUserId)).filter(workspace => workspace.state === 'ready');
     if (!ready.length) return [];
     return AUTOMATION_CONTROL_TOOLS.filter(tool => tool.def.name === 'connect_automation_workspace'
+      || tool.def.name === 'observe_automation_workspace' && runtime.observationAvailable
+        && ready.some(workspace => workspace.computerUse || workspace.browserFamilies.length)
       || tool.def.name === 'browser_control' && ready.some(workspace => workspace.browserFamilies.length)
       || tool.def.name === 'computer_control' && ready.some(workspace => workspace.computerUse));
   } catch { return []; }
@@ -71,6 +78,16 @@ export async function executeAutomationTool(ctx: ToolExecutionContext, name: str
   if (name === 'connect_automation_workspace') {
     if (Object.keys(input).sort().join(',') !== 'task_id,workspace_id') throw new Error('Choose an exact task and workspace.');
     return ctx.automationRuntime.acquire(context, String(input.task_id), String(input.workspace_id));
+  }
+  if (name === 'observe_automation_workspace') {
+    if (Object.keys(input).sort().join(',') !== 'control_session_id,previous_observation_id,surface,task_id,workspace_id'
+      || input.previous_observation_id !== null && typeof input.previous_observation_id !== 'string'
+      || !['browser', 'desktop'].includes(String(input.surface))) throw new Error('Choose the current control session and exact observation surface.');
+    const result = await ctx.automationRuntime.observe(context, { taskId: String(input.task_id), workspaceId: String(input.workspace_id),
+      controlSessionId: String(input.control_session_id), surface: input.surface as 'browser' | 'desktop',
+      previousObservationId: input.previous_observation_id as string | null });
+    return { ...result, observationId: result.status === 'succeeded' ? result.reservation.effectIdentity : null,
+      contentProjected: false };
   }
   if (!['browser_control', 'computer_control'].includes(name)
     || Object.keys(input).sort().join(',') !== 'action,observation_id,task_id,workspace_id') throw new Error('Choose a supported exact automation operation.');

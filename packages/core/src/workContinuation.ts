@@ -36,7 +36,7 @@ const BACKGROUND_DENIED = new Set(['own_goal', 'approve_task', 'cancel_task', 'u
   'update_reminder', 'cancel_reminder', 'propose_work_lesson']);
 // These adapters have their own original-task reservation journal and current
 // selected-step check. They cannot use the one-intent-per-step legacy fence.
-const AUTOMATION_TOOLS = new Set(['connect_automation_workspace', 'browser_control', 'computer_control']);
+const AUTOMATION_TOOLS = new Set(['connect_automation_workspace', 'observe_automation_workspace', 'browser_control', 'computer_control']);
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) =>
   item && typeof item === 'object' && !Array.isArray(item)
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);

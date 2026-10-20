@@ -11,7 +11,10 @@ export interface DeviceConsent {
 export interface VerifiedDeviceCommand {
   id: string; reservationId: string; identity: AutomationIdentity; bootId: string; channelId: string;
   taskId: string; generation: number; sequence: number; authority: DeviceAuthority; expiresAtMs: number;
-  observation: { id: string; targetId: string; targetRevision: number; generation: number };
+  /** Null ONLY for initial inspection. All input still requires an exact,
+   * current local observation. The authenticated adapter resolves the initial
+   * target from its current consent and canonical app/profile registry. */
+  observation: { id: string; targetId: string; targetRevision: number; generation: number } | null;
   action: AutomationAction;
 }
 export interface DeviceDispatchReceipt {
@@ -69,6 +72,8 @@ function validAction(a: AutomationAction): boolean {
   if (!a || typeof a !== 'object') return false;
   const exact = (names: string[]) => Object.keys(a).sort().join(',') === names.sort().join(',');
   switch (a.kind) {
+    case 'browser.inspect': return exact(['kind', 'browserProfileId']) && uuid(a.browserProfileId);
+    case 'desktop.inspect': return exact(['kind', 'appId']) && uuid(a.appId);
     case 'browser.observe': return exact(['kind', 'browserProfileId', 'tabId']) && uuid(a.browserProfileId) && uuid(a.tabId);
     case 'browser.navigate': return exact(['kind', 'browserProfileId', 'tabId', 'url']) && uuid(a.browserProfileId) && uuid(a.tabId)
       && typeof a.url === 'string' && a.url.length <= 8192 && !/[\u0000-\u0020\u007f]/u.test(a.url)
@@ -85,12 +90,15 @@ function validAction(a: AutomationAction): boolean {
   }
 }
 function validCommand(c: VerifiedDeviceCommand): boolean {
+  const initial = c?.action?.kind === 'browser.inspect' || c?.action?.kind === 'desktop.inspect';
   return exactKeys(c, ['id', 'reservationId', 'identity', 'bootId', 'channelId', 'taskId', 'generation', 'sequence', 'authority', 'expiresAtMs', 'observation', 'action'])
     && uuid(c.id) && uuid(c.reservationId) && uuid(c.bootId) && uuid(c.channelId) && uuid(c.taskId)
     && identityValid(c.identity) && validAuthority(c.authority) && integer(c.generation) && integer(c.sequence) && c.sequence > 0
-    && integer(c.expiresAtMs) && exactKeys(c.observation, ['id', 'targetId', 'targetRevision', 'generation']) && uuid(c.observation.id) && uuid(c.observation.targetId)
+    && integer(c.expiresAtMs) && validAction(c.action)
+    && (initial ? c.observation === null
+      : c.observation !== null && exactKeys(c.observation, ['id', 'targetId', 'targetRevision', 'generation']) && uuid(c.observation.id) && uuid(c.observation.targetId)
     && integer(c.observation.targetRevision) && c.observation.targetRevision > 0 && integer(c.observation.generation)
-    && validAction(c.action) && c.observation.targetId === ('tabId' in c.action ? c.action.tabId : c.action.windowId);
+    && c.observation.targetId === ('tabId' in c.action ? c.action.tabId : 'windowId' in c.action ? c.action.windowId : null));
 }
 const MAX_LEASE_MS = 60_000;
 
@@ -154,6 +162,10 @@ export function createDeviceControlGate(identity: AutomationIdentity, ports: Dev
     return { ...denied(code, command), outcome: 'uncertain' };
   }
   function observationMatches(command: VerifiedDeviceCommand): boolean {
+    // Bootstrap has no old screen to compare. verifyCommand/invoke must
+    // resolve and authorize the selected local target before reading it.
+    // This exception cannot be used by pointer, keyboard or element input.
+    if (command.observation === null) return command.action.kind === 'browser.inspect' || command.action.kind === 'desktop.inspect';
     const actual = ports.currentObservation(), expected = command.observation;
     return !!actual && actual.id === expected.id && actual.targetId === expected.targetId && actual.targetRevision === expected.targetRevision
       && actual.generation === generation && expected.generation === generation;

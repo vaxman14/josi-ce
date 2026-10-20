@@ -29,3 +29,13 @@ The shared durable-tool catalog also now records plan revisions as mutations. Th
 Functional, concurrency, crash/recovery, real device, model-projection and UI acceptance are deferred to the integrated testing pass. No workspace, browser, VM, Vault record or live task was changed while building this checkpoint.
 
 Build checks passed: complete root TypeScript compilation, web type checking, the production web bundle, public-source secret scan (1,175 files) and whitespace checks.
+
+## Initial observation path — 20 October
+
+The shared catalog now has `observe_automation_workspace` for an active task and current control session. The first request needs no invented window, tab or old screen ID. Refreshes name the preceding captured observation, allowing the durable tool fence to distinguish a new inspection from a repeated call.
+
+The runtime routes this through the same original-task checks, Vault budget reservation, dispatch fence, evidence verification and uncertainty handling as existing operations. The adapter must resolve the locally selected canonical app/profile without reading content during preparation, bind the exact session/request and allocate the capture identity. Bootstrap accepts exactly one bounded `computer.observe` application effect or `browser.observe` browser effect. It cannot add launch, input, network or transmission effects.
+
+The local device gate accepts a missing prior observation only for the two explicit inspection verbs. Pointer, element, navigation and other operations still require a matching local observation. Local consent, control generation, authenticated channel, exact command proof, expiry and replay checks still apply to inspection.
+
+This checkpoint returns only the journal receipt and opaque capture reference; it does not return text, labels, elements or screenshots. Authorized content projection to an exact current model configuration, including preventing fallback to an unapproved model, remains to be assembled. No claim of a model seeing the desktop is made. The bootstrap tool is absent unless the installed runtime supplies the inspection adapter; production transport remains unassembled. Full root TypeScript compilation passed; live capture and functional acceptance remain deferred.
