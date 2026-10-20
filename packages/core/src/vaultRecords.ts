@@ -10,6 +10,7 @@ import type { CardinalActionFacts } from './cardinalRules.js';
 import { AutomationPolicyStore, AUTOMATION_POLICY_RECORD_ID, evaluateAutomationPolicyRecord, type AutomationPolicyAuthority, type AutomationPolicyDecision } from './automationPolicy.js';
 import type { AutomationPermissionFacts } from './automationPermissions.js';
 import { AutomationReservationStore, type AutomationReservationProofPort } from './automationReservations.js';
+import { ProtectedConfirmationStore, type ProtectedConfirmationAuthority } from './protectedConfirmations.js';
 
 export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
@@ -170,6 +171,21 @@ export class VaultRecordStore {
         },
       });
     }), authority);
+  }
+
+  /** Encrypted short-lived protected presentations. The optional existing TX
+   * is used only by the policy mutation's human-proof callback so consumption,
+   * fresh administrator proof, audit and policy all commit or roll back together. */
+  protectedConfirmations(authority: ProtectedConfirmationAuthority): ProtectedConfirmationStore {
+    return new ProtectedConfirmationStore((actorUserId, writing, work, existingTransaction) => {
+      const run = async (tx: Db) => {
+        const state = await this.state(tx, actorUserId, writing), key = await this.key(tx);
+        if (state.authority_reconciliation_required) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
+        await this.requireOwnerAutomationVault(tx, actorUserId);
+        return work({ tx, key, epoch: Number(state.authority_epoch) });
+      };
+      return existingTransaction ? run(existingTransaction) : this.transaction(run);
+    }, authority);
   }
 
   /** Read both kinds of authority under the SAME Vault state lock/epoch.
