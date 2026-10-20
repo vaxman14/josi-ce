@@ -6,6 +6,7 @@
 // tool's existence is the promise. Absent tool, absent promise.
 import { WORKSPACE_TOOLS } from './workspaceTools.js';
 import { WORK_GOAL_TOOLS } from './workGoalTools.js';
+import { AUTOMATION_DISCOVERY_TOOL, AUTOMATION_RECEIPT_TOOL, AUTOMATION_CONTROL_TOOLS } from './automationTools.js';
 import type { ToolDefinition } from '@josi-ce/llm';
 import { CUSTOM_API_TOOLS } from './customApiTools.js';
 import { DATA_TOOLS } from './dataTools.js';
@@ -27,6 +28,8 @@ export interface ToolSpec {
 }
 
 export const TASK_TOOLS: ToolSpec[] = [
+  AUTOMATION_DISCOVERY_TOOL,
+  AUTOMATION_RECEIPT_TOOL,
   ...WORK_GOAL_TOOLS,
   ...WORKSPACE_TOOLS,
   { def: { name: 'get_provider_status', description: 'Read current owner-scoped connection, capability, mapped storage, index/queue and contact-sync metadata. Use for connectivity or available-file claims. Treat the receipt, observation time, account metadata and identifiers as internal grounding evidence: never show them to the person. Summarize useful status with a human-facing provider/source name. Connection status is not proof of provider reachability or indexed files.', parameters: { type: 'object', properties: {}, additionalProperties: false } }, actionClass: null },
@@ -218,6 +221,7 @@ export const TASK_TOOLS: ToolSpec[] = [
  * exist. */
 export const ALL_TOOLS: ToolSpec[] = [
   ...TASK_TOOLS,
+  ...AUTOMATION_CONTROL_TOOLS,
   ...DATA_TOOLS,
   ...CUSTOM_API_TOOLS,
   ...WORKFLOW_TOOLS,

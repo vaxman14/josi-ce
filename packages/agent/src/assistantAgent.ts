@@ -39,6 +39,7 @@ import {
   narrowPolicy, relevantMemories, suggestMemory, type Memory,
 } from '@josi-ce/persona';
 import { isMutatingTool, runDurableEffect } from './durableEffects.js';
+import { automationToolAvailability } from './automationTools.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
   CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsArtifactCompletion,
@@ -120,6 +121,8 @@ export interface TurnArgs {
    * server-derived and never accepted from a client request. */
   durableTurnId?: string;
   durableLeaseToken?: string;
+  /** Installed by the trusted native-device service, never a request field. */
+  automationRuntime?: import('@josi-ce/core').AutomationRuntime;
   /** Server-bound original goal for a background continuation, never a user
    * request field or a model-generated approval. */
   workGoalId?: string;
@@ -406,6 +409,11 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     catch (err) { console.error('native integration availability check failed', (err as Error).message); }
   }
   const workspaceNames = capabilities.toolCalling ? await workspaceToolNames(db,userId) : new Set<string>();
+  // The stdio harness still needs its authenticated service transport. Do not
+  // advertise an in-process runtime to a different process that cannot use it.
+  const automationTools = capabilities.toolCalling && args.durableTurnId && args.durableLeaseToken
+    && !['openai_subscription', 'anthropic_subscription'].includes(stored.provider)
+    ? await automationToolAvailability(args.automationRuntime, userId) : [];
   // `approve_task` is only meaningful when this owner already has a generic
   // task waiting on them. Offering it on an ordinary request lets a model
   // confuse "please create this calendar event" with approval of an unrelated
@@ -420,7 +428,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     && (t.def.name !== 'approve_task' || !!approvableTask)
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
   let tools = capabilities.toolCalling
-    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools].map((t) => t.def)
+    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools].map((t) => t.def)
     : undefined;
   if (args.workGoalId) {
     const humanTools = new Set(['own_goal', 'approve_task', 'cancel_task', 'update_task_slots',
@@ -840,6 +848,9 @@ async function execTool(
       userId: args.userId,
       threadId: args.threadId,
       turnId: args.inboundMessageId,
+      automationRuntime: args.automationRuntime,
+      durableTurnId: args.durableTurnId, durableLeaseToken: args.durableLeaseToken,
+      workMemoryVersion: memoryVersion,
       latestUserText: args.inbound,
       effectiveNow: args.originalRequestAt ?? args.now,
       connectors: masterKey ? {

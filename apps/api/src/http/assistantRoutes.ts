@@ -44,6 +44,7 @@ import { workProgressStream } from './workProgressStream.js';
 
 export interface AssistantRoutesCtx {
   db: Db;
+  automationRuntime?: import('@josi-ce/core').AutomationRuntime;
   appUrl?: string;
   masterKey?: LoadOptions | false;
   fetchImpl?: typeof fetch;
@@ -508,6 +509,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         history,
         inbound: modelInbound,
         inboundMessageId: inboundMessage.id,
+        automationRuntime: ctx.automationRuntime,
         images,
         recall: ctx.recall,
         connectorFetch: ctx.connectorFetch,
@@ -548,6 +550,13 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   );
 
   // ------------------------------------------------------------ tasks
+  r.get('/automation/workspaces', handle(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!ctx.automationRuntime) return res.json({ available: false, workspaces: [],
+      reason: 'An authenticated isolated-device automation service is not connected.' });
+    try { return res.json({ available: true, workspaces: await ctx.automationRuntime.inventory(req.user!.id) }); }
+    catch { return res.status(503).json({ available: false, error: 'Current automation connections could not be verified.' }); }
+  }));
   r.get('/work-goals/stream', asyncRoute(workProgressStream(db)));
   r.get('/work-goals', handle(async (req, res) => {
     res.set('Cache-Control', 'private, no-store');

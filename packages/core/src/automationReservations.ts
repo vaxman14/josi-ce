@@ -93,6 +93,10 @@ async function usageFor(tx: Db, key: MasterKey, taskId: string, effects: Automat
   // counters. A cancelled/uncertain plan still consumes its reserved budget.
   const rows = await tx.query<Row>('select * from automation_reservations where task_id=$1 order by created_at,id limit 1001', [taskId]);
   if (rows.length > 1000 || !excludeId && rows.length === 1000) throw new AutomationReservationError('This task requires an explicit journal-capacity decision.');
+  if (effects.some(effect => !['browser.observe', 'computer.observe', 'model.transmit'].includes(effect.action))
+    && rows.some(row => row.id !== excludeId && ['dispatched', 'uncertain'].includes(row.state))) {
+    throw new AutomationReservationError('Reconcile the original task’s outstanding dispatch before another effect.');
+  }
   const totals = new Map<string, { ruleId: string; taskId: string; actions: number; bytes: number | null }>();
   for (const row of rows) for (const charge of opened(key, row).charges) {
     if (row.id === excludeId) continue;
@@ -222,6 +226,18 @@ export class AutomationReservationStore {
       const receipt = { outcome: 'cancelled', evidenceIds: [] };
       await this.finishEffect(tx, row, receipt);
       return this.transition(tx, key, row, 'cancelled', receipt);
+    });
+  }
+  /** Local loss of a dispatch receipt can only make the journal MORE
+   * restrictive. No success/no-effect inference and no release of its budget. */
+  async recordDispatchUncertainty(actorUserId: string, id: string): Promise<AutomationReservationView> {
+    if (!uuid(id)) throw new AutomationReservationError('The action is unavailable.');
+    return this.backend(actorUserId, false, async ({ tx, key }) => {
+      const [row] = await tx.query<Row>('select * from automation_reservations where id=$1 and owner_user_id=$2 for update', [id, actorUserId]);
+      if (!row) throw new AutomationReservationError('The action is unavailable.');
+      opened(key, row);
+      if (row.state !== 'dispatched') return publicView(row);
+      return this.transition(tx, key, row, 'uncertain', { outcome: 'uncertain', evidenceIds: [] });
     });
   }
   private async finishEffect(tx: Db, row: Row, receipt: NonNullable<Row['receipt']>) {

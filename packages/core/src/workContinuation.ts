@@ -26,6 +26,9 @@ const INTENT_TOOLS = new Set(['create_task', 'draft_email', 'draft_calendar_even
   'call_custom_api', 'run_native_workflow', 'workspace_propose_change', 'workspace_propose_code', 'schedule_reminder']);
 const BACKGROUND_DENIED = new Set(['own_goal', 'approve_task', 'cancel_task', 'update_task_slots',
   'update_reminder', 'cancel_reminder', 'propose_work_lesson']);
+// These adapters have their own original-task reservation journal and current
+// selected-step check. They cannot use the one-intent-per-step legacy fence.
+const AUTOMATION_TOOLS = new Set(['connect_automation_workspace', 'browser_control', 'computer_control']);
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) =>
   item && typeof item === 'object' && !Array.isArray(item)
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
@@ -83,7 +86,7 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
   if (automatic && ['checkpoint_goal', 'verify_goal', 'revise_goal_plan'].includes(name) && input.goal_id !== automatic) {
     throw new WorkContinuationError('Continue only the goal assigned to this work segment.');
   }
-  if (automatic && context.mutating && !INTENT_TOOLS.has(name) && !['checkpoint_goal', 'verify_goal', 'revise_goal_plan'].includes(name)) {
+  if (automatic && context.mutating && !INTENT_TOOLS.has(name) && !AUTOMATION_TOOLS.has(name) && !['checkpoint_goal', 'verify_goal', 'revise_goal_plan'].includes(name)) {
     throw new WorkContinuationError('This effect has no automatic-work adapter.');
   }
   if (automatic && INTENT_TOOLS.has(name) && !context.sourceMessageId) throw new WorkContinuationError('The original request is unavailable.');

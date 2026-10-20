@@ -41,6 +41,7 @@ export * from './ownership.js';
 export * from './tasks.js';
 export * from './workGoals.js';
 export * from './workMemoryContext.js';
+export * from './automationRuntime.js';
 export * from './workContinuation.js';
 export * from './conversations.js';
 export * from './approvals.js';

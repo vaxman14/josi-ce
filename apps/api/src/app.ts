@@ -92,6 +92,9 @@ export interface AppConfig {
   /** How a subscription provider's local binary is run, injected by the tests
    * so no suite ever executes a program. Unset in production. */
   codexRunner?: import('@josi-ce/llm').SpawnRunner;
+  /** Production supplies only the enrolled, authenticated device service.
+   * An absent service never enables automation through capability discovery. */
+  automationRuntime?: import('@josi-ce/core').AutomationRuntime;
   /** Tests may inject Doctor. Production selects native Mac checks or the container's isolated helper. */
   doctorHelper?: DoctorHelper;
   /** Fixed public stable-release channel HTTP. Injected so tests never contact GitHub. */
@@ -232,6 +235,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // requireSuperAdmin either way.
   api.use('/assistant', assistantRoutes({
     db, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
+    automationRuntime: cfg.automationRuntime,
     codexRunner: cfg.codexRunner, connectorFetch: cfg.connectorFetch,
     customApiFetch: cfg.customApiFetch, outboundResolve: cfg.outboundResolve,
   }));

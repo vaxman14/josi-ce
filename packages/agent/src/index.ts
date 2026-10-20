@@ -1,4 +1,5 @@
 export * from './assistantAgent.js';
+export * from './automationTools.js';
 export * from './claimGuard.js';
 export * from './dataClaimGuard.js';
 export * from './customApiTools.js';

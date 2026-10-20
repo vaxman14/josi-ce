@@ -5,6 +5,7 @@ import { api, type Reminder, type Task, type TaskActivity, type TaskRun, type Ta
 import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
 import { plain } from '@/lib/plainLanguage';
 import { WorkGoalManager } from '@/components/WorkProgress';
+import { AutomationWorkspaces } from '@/components/AutomationWorkspaces';
 import { canCancelTask, runAction, tabForRun, tabForTask, taskAction, type TaskTab } from '@/lib/taskManager';
 
 const TABS: Array<{ key: TaskTab; label: string }> = [
@@ -201,6 +202,7 @@ export function Tasks() {
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
       <WorkGoalManager />
+      <AutomationWorkspaces />
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Task status summary">
         {TABS.map((item) => (

@@ -44,6 +44,7 @@ import { purgeGoogleLoginStates } from '@josi-ce/auth';
  * key says so by failing, which is visible, rather than by quietly doing
  * nothing. */
 export interface WorkerContext {
+  automationRuntime?: import('@josi-ce/core').AutomationRuntime;
   scanner?: Scanner;
   masterKey?: MasterKey | null;
   /** Injected by the tests so no suite contacts a provider. */
@@ -106,7 +107,7 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
         const context=textAttachments.map(a=>a.extracted_text?`Attached file ${a.filename}:\n${a.extracted_text}`:a.analysis_status==='unavailable'?`Attached file ${a.filename}; analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`:`Attached file ${a.filename}; no readable text was extracted.`).join('\n\n');
         const provider=await loadStoredProvider(db,'primary');
         const images=capabilitiesOf(provider)?.vision===true?await Promise.all(attachments.filter(a=>mediaType(a.filename)).map(async a=>({mediaType:mediaType(a.filename),base64:(await readAttachment(a.id)).toString('base64')}))):undefined;
-        const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},userId:turn.owner_user_id,threadId:turn.thread_id,history,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,workGoalId:turn.work_goal_id??undefined,originalRequestAt:turn.work_goal_id?new Date(inbound.created_at):undefined,replyToMessageId:turn.reply_to_message_id,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.work_goal_id?`work-goal:${turn.work_goal_id}`:turn.accepted_session_id});
+        const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},userId:turn.owner_user_id,threadId:turn.thread_id,history,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,automationRuntime:ctx.automationRuntime,workGoalId:turn.work_goal_id??undefined,originalRequestAt:turn.work_goal_id?new Date(inbound.created_at):undefined,replyToMessageId:turn.reply_to_message_id,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.work_goal_id?`work-goal:${turn.work_goal_id}`:turn.accepted_session_id});
         if(await durableTurnHasIncompleteEffects(db,turnId)){await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:'effect_outcome_unknown',retryable:false});return;}
         if(result.mediaRequest)await db.query(`update messages set meta=meta||$2 where id=$1 and thread_id=$3`,[inbound.id,json({media_request:result.mediaRequest}),turn.thread_id]);
         if(result.refusal){const crossed=await durableTurnHasEffects(db,turnId);await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:crossed?'effect_then_provider_error':result.refusal.reason,retryable:!turn.work_goal_id&&!crossed&&result.refusal.retryable===true});return;}

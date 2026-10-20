@@ -18,6 +18,8 @@ Element actions consume an observation, check document/URL revision, current geo
 
 The native host is **not registered or installed**. Production peer verification, guest/browser profile attestation, Vault key projection, enrollment, native transport, durable reservation integration and real browser launching belong to P4/P6. The new bridge requires those adapters and provides no permissive defaults. Missing native authority means the popup refuses to connect.
 
+The [CE execution checkpoint](P4_P7_P8_CE_EXECUTION.md) now connects agent tool schemas and the server-side dispatcher to the Vault reservation store, with current task/turn checks and explicit uncertain-result handling. Its native transport and real effect/evidence adapters remain mandatory unassembled dependencies; this does not register a browser host.
+
 Safari still needs its signed native extension wrapper and a verified native round trip. Firefox signing/consent, Chromium distribution identifiers and enterprise/user installation routes remain open. Resource generation is not a packaged Safari app or store submission.
 
 The initial action set does not cover nested frames, shadow roots, file dialogs, content-editable text, drag/drop, full keyboard input, dialogs/popups or browser-chrome takeover. DOM click/fill may be refused by sites requiring trusted native input; the native engine must handle supported fallbacks under the same permissions. New tabs and redirects require authorized workspace routing. Exact effect classification and destination verification must precede live execution. P0's four-browser checks and the integrated acceptance pass are deferred under the owner's build-first direction.
