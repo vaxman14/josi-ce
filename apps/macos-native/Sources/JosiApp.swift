@@ -209,12 +209,14 @@ struct LoginView: View {
     @State private var identifier = ""
     @State private var password = ""
     @State private var code = ""
+    @State private var passwordSetup = false
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             JosiHeading(title: "Sign in to Josi", subtitle: model.address)
             if model.mfaChallenge.isEmpty {
                 TextField("Username or email", text: $identifier).textContentType(.username)
                 SecureField("Password", text: $password).textContentType(.password).onSubmit { submit() }
+                Button("Invitation or password reset…") { password = ""; passwordSetup = true }
             } else {
                 Text("Enter your verification or recovery code.")
                 SecureField("Verification code", text: $code).onSubmit { submit() }
@@ -227,6 +229,7 @@ struct LoginView: View {
             }
         }.textFieldStyle(.roundedBorder).padding(36).frame(maxWidth: 580).frame(maxWidth: .infinity, maxHeight: .infinity)
             .disabled(model.busy)
+            .sheet(isPresented: $passwordSetup) { NativePasswordSetupView().environmentObject(model) }
     }
     private func submit() {
         if model.mfaChallenge.isEmpty {
@@ -260,6 +263,7 @@ struct WorkspaceView: View {
                         nav("Your Settings", icon: "person.crop.circle", section: "account")
                         nav("Messaging Apps", icon: "paperplane", section: "channels")
                         if model.isAdministrator { nav("Models", icon: "brain", section: "models") }
+                        if model.isAdministrator { nav("People", icon: "person.2", section: "people") }
                         if model.isAdministrator { nav("Backups", icon: "externaldrive.badge.timemachine", section: "backups") }
                         nav("Server", icon: "externaldrive.connected.to.line.below", section: "server")
                     }
@@ -298,6 +302,7 @@ struct WorkspaceView: View {
             case "channels": NativeChannelsView()
             case "backups": if model.isAdministrator { NativeBackupsView() }
             case "models": if model.isAdministrator { NativeModelsView() }
+            case "people": if model.isAdministrator { NativePeopleView() }
             default: ChatView()
             }
         }
@@ -307,7 +312,7 @@ struct WorkspaceView: View {
             model.section = section
             if section == "automation" { model.run { try await model.loadAutomation() } }
             else if section == "server" { model.refreshLocal() }
-            else if ["vault", "backups", "models", "account", "channels", "memory"].contains(section) { /* These views load their own scoped status. */ }
+            else if ["vault", "backups", "models", "account", "channels", "memory", "people"].contains(section) { /* These views load their own scoped status. */ }
             else { model.run { try await model.reloadWorkspace() } }
         } label: { Label(title, systemImage: icon).foregroundStyle(model.section == section ? Color.accentColor : Color.primary) }
             .buttonStyle(.plain).disabled(model.busy)

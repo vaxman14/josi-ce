@@ -119,7 +119,10 @@ import SwiftUI
     func signOut() async throws {
         guard mfaRecovery == .null else { throw JosiError(message: "Save your sign-in recovery codes before signing out.") }
         if desktop.requiresClosure { try await desktop.close() }
-        if let api { _ = try await api.request("/auth/logout", method: "POST", body: [:]) }
+        if let api {
+            do { _ = try await api.request("/auth/logout", method: "POST", body: [:]) }
+            catch let error as JosiError where error.status == 401 { /* An already-ended session still clears locally. */ }
+        }
         // run() keeps busy set until this completes; disconnect's UI guard
         // must not prevent clearing the revoked session.
         stopWorkStream(); api?.close(); api = nil

@@ -492,6 +492,18 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
 
   /** Render-side check for the set-password form. Reveals only the username the
    * token already belongs to, and a masked address. */
+  // Native clients send the token in a body so it need not appear in request
+  // paths or URL history. The existing GET remains for older remote clients.
+  r.post('/token/inspect', asyncRoute(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    const token = req.body?.token;
+    if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+      return res.status(400).json({ error: 'use an exact invitation or reset token' });
+    }
+    const found = await peekAuthToken(db, token);
+    if (!found) return res.status(404).json({ error: 'that link is expired or already used' });
+    return res.json({ purpose: found.purpose, username: found.username, email: maskEmail(found.email) });
+  }));
   r.get(
     '/token/:token',
     asyncRoute(async (req, res) => {
@@ -522,6 +534,14 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         subjectId: redeemed.user_id,
         payload: { via: redeemed.purpose },
       });
+
+      // Native recovery returns to normal login, including its authenticator.
+      // Existing web/remote clients retain their established response shape.
+      if (req.body?.signIn === false) {
+        clearSessionCookie(res);
+        res.set('Cache-Control', 'private, no-store');
+        return res.json({ ok: true, passwordChanged: true });
+      }
 
       // setPassword revoked every session, so the token they just burned is the
       // only proof of identity available. Sign them in with a fresh one.
