@@ -34,11 +34,20 @@ host = output / "JosiProtectedKeyHost"
 subprocess.run([
     "xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-O",
     "-target", "arm64-apple-macos14.2", "-module-cache-path", str(output / "module-cache"),
-    "-o", str(host), str(source / "ProtectedKeyProjection.swift"), str(source / "ProtectedKeyHost.swift"),
+    "-o", str(host), str(source / "ProtectedAppTrust.swift"), str(source / "ProtectedKeyProjection.swift"), str(source / "ProtectedKeyHost.swift"),
 ], check=True, timeout=180)
 host.chmod(0o755)
-entries.append({"component": "JosiProtectedKeyHost", "source": ["ProtectedKeyProjection.swift", "ProtectedKeyHost.swift"],
+entries.append({"component": "JosiProtectedKeyHost", "source": ["ProtectedAppTrust.swift", "ProtectedKeyProjection.swift", "ProtectedKeyHost.swift"],
                 "sha256": hashlib.sha256(host.read_bytes()).hexdigest()})
+consent = output / "JosiDeviceConsentHost"
+subprocess.run([
+    "xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-O",
+    "-target", "arm64-apple-macos14.2", "-module-cache-path", str(output / "module-cache"),
+    "-o", str(consent), str(source / "ProtectedAppTrust.swift"), str(source / "DeviceConsentHost.swift"),
+], check=True, timeout=180)
+consent.chmod(0o755)
+entries.append({"component": "JosiDeviceConsentHost", "source": ["ProtectedAppTrust.swift", "DeviceConsentHost.swift"],
+                "sha256": hashlib.sha256(consent.read_bytes()).hexdigest()})
 record = {"schemaVersion": 1, "components": entries, "installed": False, "executed": False,
           "productionAuthorityConnected": False, "developerSigned": False}
 (output / "build.json").write_text(json.dumps(record, indent=2) + "\n")

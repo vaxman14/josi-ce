@@ -5,3 +5,4 @@ export * from './automation.js';
 export * from './permissions.js';
 export * from './protectedControl.js';
 export * from './protectedHost.js';
+export * from './deviceConsent.js';

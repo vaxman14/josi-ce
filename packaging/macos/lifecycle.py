@@ -282,6 +282,19 @@ class Lifecycle:
         # Only the original interactive user receives this credential later.
         self.write(self.data/'secrets/bootstrap/browser-token',setup.encode())
         return cfg
+    def control_layout(self):
+        # Ephemeral one-attempt sockets only, never keys or canonical state.
+        # Traversal permits a local signed app to connect to an exact request;
+        # the native helper independently verifies its kernel peer identity.
+        folder=self.root/'control';plain(folder)
+        uid,gid=self.account('web') if not self.isolated else (os.getuid(),os.getgid())
+        if not folder.exists():
+            folder.mkdir(mode=0o700)
+            if not self.isolated:os.chown(folder,uid,gid)
+            os.chmod(folder,0o700 if self.isolated else 0o711)
+        info=folder.stat()
+        if not folder.is_dir() or info.st_uid!=uid or info.st_mode&0o022:raise ValueError('Unprotected native control directory')
+        if not self.isolated and len(self.run(['/bin/ls','-lde',folder]).stdout.splitlines())!=1:raise ValueError('Unexpected native control directory ACL')
     def arguments(self,role,program=None,cfg=None):
         p=program or self.installed;cfg=cfg if cfg is not None else json.loads((self.data/'config/runtime.json').read_text());config=str(self.data/'config/runtime.json');test=['--isolated'] if self.isolated else []
         if role=='database':return [str(p/'postgresql/bin/postgres'),'-D',str(self.data/'database')]
@@ -624,6 +637,7 @@ class Lifecycle:
                 durable(self.data/'database/postgresql.auto.conf',settings.encode(),replace=True,mode=0o600)
                 if not self.isolated:os.chown(self.data/'database/postgresql.auto.conf',*self.account('database'))
                 self.write(self.data/'config/Caddyfile',f"{{\n admin off\n auto_https off\n}}\nhttp://localhost:{cfg['publicPort']} {{\n bind 127.0.0.1\n reverse_proxy 127.0.0.1:{cfg['apiPort']}\n}}\n".encode(),mode=0o644)
+            self.control_layout()
             phase('provisioned')
             self.run([self.installed/'postgresql/bin/pg_ctl','-D',self.data/'database','-l',self.data/'logs/database/setup.log','-w','-t','60','start'],'database')
             if fresh:

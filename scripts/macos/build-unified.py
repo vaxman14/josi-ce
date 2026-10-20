@@ -126,6 +126,9 @@ def prepare(args):
     protected_host = helpers / 'JosiProtectedKeyHost'
     shutil.copyfile(native_build / 'JosiProtectedKeyHost', protected_host)
     protected_host.chmod(0o755)
+    consent_host = helpers / 'JosiDeviceConsentHost'
+    shutil.copyfile(native_build / 'JosiDeviceConsentHost', consent_host)
+    consent_host.chmod(0o755)
     if runtime_input:
         runtime = resources / 'runtime'
         copy_tree(runtime_input, runtime)
@@ -166,6 +169,7 @@ def prepare(args):
                   'serverIncluded': runtime_input is not None, 'signed': False, 'validated': False,
                   'desktopAsarHeaderSha256': integrity['hash'], 'desktopFuses': integrity['fuses'],
                   'protectedHostSha256': digest(protected_host),
+                  'deviceConsentHostSha256': digest(consent_host),
                   'builtAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
     (resources / 'unified-build.json').write_text(json.dumps(provenance, indent=2) + '\n')
     if args.package:

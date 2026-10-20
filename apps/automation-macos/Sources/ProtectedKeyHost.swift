@@ -12,7 +12,6 @@ private enum HostFailure: Error { case unavailable, invalid }
 private final class ProtectedParent {
     private let pid: pid_t
     private let requirement: SecRequirement
-    private let appURL = URL(fileURLWithPath: "/Applications/Josi.app", isDirectory: true)
     init() throws {
         pid = getppid()
         guard pid > 1, isatty(STDIN_FILENO) == 0, isatty(STDOUT_FILENO) == 0 else { throw HostFailure.unavailable }
@@ -20,62 +19,16 @@ private final class ProtectedParent {
             var info = stat()
             guard fstat(descriptor, &info) == 0, [S_IFIFO, S_IFSOCK].contains(info.st_mode & S_IFMT) else { throw HostFailure.unavailable }
         }
-        var value: SecRequirement?
-        let rule = "anchor apple generic and identifier \"com.heyjosi.ce.unified\" and certificate leaf[subject.OU] = \"LRH75YR6QW\""
-        guard SecRequirementCreateWithString(rule as CFString, [], &value) == errSecSuccess, let value else { throw HostFailure.unavailable }
-        requirement = value
+        requirement = try ProtectedAppTrust.requirement()
         try current(full: true)
-        try packagedCode()
+        try ProtectedAppTrust.packagedCode()
     }
     func current(full: Bool = false) throws {
         guard getppid() == pid else { throw HostFailure.unavailable }
         var dynamic: SecCode?
         guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid as String: pid] as CFDictionary, [], &dynamic) == errSecSuccess,
-              let dynamic, SecCodeCheckValidity(dynamic, [], requirement) == errSecSuccess else { throw HostFailure.unavailable }
-        var code: SecStaticCode?
-        guard SecCodeCopyStaticCode(dynamic, [], &code) == errSecSuccess, let code else { throw HostFailure.unavailable }
-        if full {
-            guard SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSStrictValidate), requirement) == errSecSuccess else { throw HostFailure.unavailable }
-        }
-        var information: CFDictionary?
-        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
-              let info = information as? [String: Any],
-              let flags = info[kSecCodeInfoFlags as String] as? NSNumber,
-              // CS_RUNTIME from Security/CSCommon.h is not imported by Swift.
-              flags.uint32Value & 0x00010000 != 0,
-              let executable = info[kSecCodeInfoMainExecutable as String] as? URL,
-              executable.standardizedFileURL.path == appURL.appendingPathComponent("Contents/MacOS/Josi").path else { throw HostFailure.unavailable }
-        let entitlements = info[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]
-        for name in ["com.apple.security.get-task-allow", "get-task-allow",
-                     "com.apple.security.cs.allow-dyld-environment-variables", "com.apple.security.cs.disable-library-validation"] {
-            if (entitlements[name] as? NSNumber)?.boolValue == true { throw HostFailure.unavailable }
-        }
-    }
-    private func packagedCode() throws {
-        let contents = appURL.appendingPathComponent("Contents", isDirectory: true)
-        let plist = try Data(contentsOf: contents.appendingPathComponent("Info.plist"))
-        guard let info = try PropertyListSerialization.propertyList(from: plist, format: nil) as? [String: Any],
-              info["CFBundleIdentifier"] as? String == "com.heyjosi.ce.unified",
-              info["JosiProtectedHostProtocol"] as? Int == 1,
-              let integrity = info["ElectronAsarIntegrity"] as? [String: [String: String]],
-              integrity["Resources/app.asar"]?["algorithm"] == "SHA256",
-              let hash = integrity["Resources/app.asar"]?["hash"], hash.count == 64,
-              hash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
-              !FileManager.default.fileExists(atPath: contents.appendingPathComponent("Resources/app").path) else { throw HostFailure.unavailable }
-        // Pinned Electron V1 fuse layout. Refuse unrecognized/removed fuses.
-        // Code signing above validates these bytes and the packaged ASAR hash.
-        let binaryURL = contents.appendingPathComponent("Frameworks/Electron Framework.framework/Versions/A/Electron Framework")
-        let size = try binaryURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size > 0, size <= 512 * 1024 * 1024 else { throw HostFailure.unavailable }
-        let binary = try Data(contentsOf: binaryURL, options: .mappedIfSafe)
-        let sentinel = Data("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX".utf8)
-        guard let range = binary.range(of: sentinel), range.upperBound + 11 <= binary.count,
-              binary.range(of: sentinel, in: range.upperBound..<binary.count) == nil,
-              binary[range.upperBound] == 1, binary[range.upperBound + 1] == 9 else { throw HostFailure.unavailable }
-        let start = range.upperBound + 2
-        for (index, expected) in [0: UInt8(48), 2: 48, 3: 48, 4: 49, 5: 49, 7: 48] {
-            guard binary[start + index] == expected else { throw HostFailure.unavailable }
-        }
+              let dynamic else { throw HostFailure.unavailable }
+        try ProtectedAppTrust.verify(dynamic, requirement: requirement, full: full)
     }
 }
 
