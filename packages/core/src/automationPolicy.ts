@@ -1,12 +1,13 @@
 // Canonical automation grants live only in the existing Vault. A policy edit
 // cannot enroll a device or authorize a dispatch; device-owner consent is an
 // independent local gate, including when the server is on another machine.
-import { AUTOMATION_PERMISSION_SEMANTICS, type AutomationPermissionPolicy, type AutomationPermissionEvaluation } from '@josi-ce/protocol';
+import { AUTOMATION_PERMISSION_SEMANTICS, type AutomationPermissionPolicy, type AutomationPermissionEvaluation, type ProtectedControlPresentation } from '@josi-ce/protocol';
 import type { Db } from './db.js';
 import { cardinalContentDigest } from './cardinalRules.js';
 import { evaluateAutomationPermissions, isAutomationIdentity, validateAutomationPermissionPolicy, type AutomationPermissionFacts } from './automationPermissions.js';
 import { VaultRecordConflictError, VaultRecordError, type VaultRecordReference, type VaultRecordValue } from './vaultRecords.js';
 import { Secret } from './sealing.js';
+import { automationReplacementPresentation } from './automationPolicyReview.js';
 
 export const AUTOMATION_POLICY_RECORD_ID = '5864be11-7936-43c5-a8bc-5c725df6c1fd';
 export const AUTOMATION_ENFORCEMENT_VERSION = 'automation-enforcement.1';
@@ -19,11 +20,13 @@ export interface AutomationPolicyView {
   reconciliationRequired: boolean; enforcementCurrent: boolean;
 }
 export interface AutomationPolicyCommand { purpose: 'automation.policy.replace'; requestDigest: string }
+export interface AutomationPolicyReplacement { actorUserId: string; policy: AutomationPermissionPolicy; expected: VaultRecordReference | null }
+export interface AutomationPolicyProtectedReview { command: AutomationPolicyCommand; presentation: ProtectedControlPresentation }
 export interface AutomationPolicyAuthority {
   /** Trusted local verifiers. No HTTP/LLM callbacks or dialog/network waits
    * inside a transaction. Both proofs must bind this exact command. */
   verifyFreshAdministrator(tx: Db, actorUserId: string, command: AutomationPolicyCommand): Promise<void>;
-  verifyProtectedHuman(tx: Db, actorUserId: string, command: AutomationPolicyCommand): Promise<void>;
+  verifyProtectedHuman(tx: Db, actorUserId: string, command: AutomationPolicyCommand, presentation: ProtectedControlPresentation): Promise<void>;
 }
 export interface AutomationPolicyTransaction {
   tx: Db; reconciliationRequired: boolean;
@@ -73,39 +76,55 @@ export function evaluateAutomationPolicyRecord(record: VaultRecordValue, facts: 
   const evaluation = evaluateAutomationPermissions(match, facts);
   return { verdict: evaluation.verdict, code: 'evaluated', policy: record.reference, evaluation };
 }
+async function replacementContents(tx: AutomationPolicyTransaction, snapshot: AutomationPolicyReplacement) {
+  if (tx.reconciliationRequired) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
+  const parsed = validateAutomationPermissionPolicy(snapshot.policy);
+  if (!parsed.valid) throw new VaultRecordError('Use exact supported automation permissions and explicit limits.');
+  const record = await tx.readPolicy(), current = record ? decode(record, tx.reconciliationRequired) : null;
+  if (!(current === null && snapshot.expected === null || current && snapshot.expected
+    && current.reference.recordId === snapshot.expected.recordId && current.reference.version === snapshot.expected.version
+    && current.reference.digest === snapshot.expected.digest && current.reference.epoch === snapshot.expected.epoch)) {
+    throw new VaultRecordConflictError('Automation permissions changed. Review the current settings again.');
+  }
+  if (current && !current.enforcementCurrent) throw new VaultRecordError('Automation permissions require enforcement revalidation.');
+  const [subject] = await tx.tx.query("select id from users where id=$1 and status='active' for share", [parsed.policy.identity.userId]);
+  if (!subject) throw new VaultRecordError('The automation user is unavailable.');
+  const policies = current ? [...current.document.policies] : [];
+  const index = policies.findIndex(p => identityKey(p.identity) === identityKey(parsed.policy.identity));
+  if (index < 0) policies.push(parsed.policy); else policies[index] = parsed.policy;
+  if (policies.length > 100 || new Set(policies.flatMap(p => p.rules.map(r => r.id))).size !== policies.reduce((n, p) => n + p.rules.length, 0)) {
+    throw new VaultRecordError('Use unique permission rule identities within the supported policy count.');
+  }
+  const previous = current?.document.policies.find(p => identityKey(p.identity) === identityKey(parsed.policy.identity)) ?? null;
+  return { policies, presentation: automationReplacementPresentation(previous, parsed.policy) };
+}
 export class AutomationPolicyStore {
   constructor(private readonly backend: AutomationPolicyBackend, private readonly authority: AutomationPolicyAuthority) {}
   async read(actorUserId: string): Promise<AutomationPolicyView | null> {
     return this.backend(actorUserId, false, async tx => { const record = await tx.readPolicy(); return record ? decode(record, tx.reconciliationRequired) : null; });
   }
+  /** Read-only exact review, regenerated at the eventual protected mutation. */
+  async prepareReplacement(args: AutomationPolicyReplacement): Promise<AutomationPolicyProtectedReview> {
+    const snapshot = structuredClone(args);
+    return this.backend(snapshot.actorUserId, false, async tx => {
+      const { presentation } = await replacementContents(tx, snapshot);
+      return { command: automationPolicyChangeBinding(snapshot), presentation };
+    });
+  }
   /** Exact replacement of one identity's policy; all other identities remain
    * unchanged. Disable/remove grants by explicitly saving a disabled policy.
    * History is append-only and every replacement needs protected confirmation. */
-  async replace(args: { actorUserId: string; policy: AutomationPermissionPolicy; expected: VaultRecordReference | null }): Promise<AutomationPolicyView> {
+  async replace(args: AutomationPolicyReplacement): Promise<AutomationPolicyView> {
     const snapshot = structuredClone(args), parsed = validateAutomationPermissionPolicy(snapshot.policy);
     if (!parsed.valid) throw new VaultRecordError('Use exact supported automation permissions and explicit limits.');
     const command = Object.freeze(automationPolicyChangeBinding(snapshot));
     return this.backend(snapshot.actorUserId, true, async tx => {
-      const record = await tx.readPolicy(), current = record ? decode(record, tx.reconciliationRequired) : null;
-      if (!(current === null && snapshot.expected === null || current && snapshot.expected
-        && current.reference.recordId === snapshot.expected.recordId && current.reference.version === snapshot.expected.version
-        && current.reference.digest === snapshot.expected.digest && current.reference.epoch === snapshot.expected.epoch)) {
-        throw new VaultRecordConflictError('Automation permissions changed. Review the current settings again.');
-      }
-      if (current && !current.enforcementCurrent) throw new VaultRecordError('Automation permissions require enforcement revalidation.');
-      const [subject] = await tx.tx.query("select id from users where id=$1 and status='active' for share", [parsed.policy.identity.userId]);
-      if (!subject) throw new VaultRecordError('The automation user is unavailable.');
-      const policies = current ? [...current.document.policies] : [];
-      const index = policies.findIndex(p => identityKey(p.identity) === identityKey(parsed.policy.identity));
-      if (index < 0) policies.push(parsed.policy); else policies[index] = parsed.policy;
-      if (policies.length > 100 || new Set(policies.flatMap(p => p.rules.map(r => r.id))).size !== policies.reduce((n, p) => n + p.rules.length, 0)) {
-        throw new VaultRecordError('Use unique permission rule identities within the supported policy count.');
-      }
+      const { policies, presentation } = await replacementContents(tx, snapshot);
       if (typeof this.authority?.verifyFreshAdministrator !== 'function' || typeof this.authority?.verifyProtectedHuman !== 'function') {
         throw new VaultRecordError('Protected human confirmation is unavailable.');
       }
       await this.authority.verifyFreshAdministrator(tx.tx, snapshot.actorUserId, command);
-      await this.authority.verifyProtectedHuman(tx.tx, snapshot.actorUserId, command);
+      await this.authority.verifyProtectedHuman(tx.tx, snapshot.actorUserId, command, presentation);
       const document: AutomationPolicyDocument = { schemaVersion: 1, enforcementVersion: AUTOMATION_ENFORCEMENT_VERSION, policies,
         lastChange: { actorUserId: snapshot.actorUserId, at: new Date().toISOString() } };
       const reference = await tx.writePolicy(new Secret(JSON.stringify(document)));

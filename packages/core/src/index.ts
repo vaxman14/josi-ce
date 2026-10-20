@@ -18,7 +18,8 @@ export * from './vault.js';
 export * from './cardinalRules.js';
 export * from './automationPermissions.js';
 export { AUTOMATION_ENFORCEMENT_VERSION, automationPolicyChangeBinding,
-  type AutomationPolicyDocument, type AutomationPolicyView, type AutomationPolicyCommand, type AutomationPolicyAuthority, type AutomationPolicyDecision } from './automationPolicy.js';
+  type AutomationPolicyDocument, type AutomationPolicyView, type AutomationPolicyCommand, type AutomationPolicyAuthority, type AutomationPolicyDecision,
+  type AutomationPolicyReplacement, type AutomationPolicyProtectedReview } from './automationPolicy.js';
 export type { VaultAutomationPreview } from './vaultRecords.js';
 export { ProtectedConfirmationError, type ProtectedConfirmationAuthority, type ProtectedConfirmationCommand,
   type ProtectedConfirmationIdentity } from './protectedConfirmations.js';

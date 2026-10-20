@@ -70,6 +70,57 @@ async function cardinal(action: CardinalAction = 'execution.shell') {
 }
 
 describe('Vault-only automation policy lifecycle', () => {
+  it('prepares exact permission scope/mode/limits without changing authority', async () => {
+    const definitionWithLimits = definition();
+    definitionWithLimits.rules[0].mode = { kind: 'until', expiresAt: '2026-12-01T00:00:00.000Z' };
+    definitionWithLimits.rules[0].limits = { maxTaskDurationMs: 60000, maxActionsPerTask: 2, maxBytesPerTask: 0 };
+    const args = { actorUserId: admin, policy: definitionWithLimits, expected: null };
+    const [{ authority_epoch: before }] = await db.query('select authority_epoch from vault_state');
+    const review = await store().prepareReplacement(args);
+    expect(review.command).toEqual(automationPolicyChangeBinding(args));
+    for (const value of ['file.read', 'confidential-planning.txt', id(5), 'rootRevision', 'descendants',
+      '2026-12-01T00:00:00.000Z', '60000 milliseconds', 'Maximum actions per original task: 2.', 'Maximum bytes per original task: 0.']) {
+      expect(review.presentation.meaning).toContain(value);
+    }
+    expect(review.presentation.advisory).toEqual([]);
+    expect(await store().read(admin)).toBeNull();
+    expect((await db.query('select authority_epoch from vault_state'))[0].authority_epoch).toBe(before);
+    await expect(store().prepareReplacement({ ...args, actorUserId: member })).rejects.toThrow(/super admin/);
+  });
+  it('shows every before/after permission change and includes unchanged rules when enabling', async () => {
+    const initial = definition(); initial.rules.push({ ...structuredClone(initial.rules[0]), id: id(88), action: 'file.edit' });
+    const saved = await replace(initial), next = structuredClone(initial);
+    next.rules[0].mode = { kind: 'task', taskId: id(90) }; next.rules[0].limits!.maxActionsPerTask = 1;
+    next.rules.pop(); next.rules.push({ id: id(89), action: 'clipboard.read', scope: { kind: 'workspace' }, mode: { kind: 'ask' }, limits: null });
+    const review = await store().prepareReplacement({ actorUserId: admin, policy: next, expected: saved.reference });
+    for (const value of ['Change rule — before:', 'After:', 'Standing allowance', `original task ${id(90)}`, 'Maximum actions per original task: 1.',
+      'Remove rule:', 'file.edit', 'Add rule:', 'clipboard.read', 'Ask before this action']) expect(review.presentation.meaning).toContain(value);
+    const disabled = await replace({ ...initial, enabled: false }, saved.reference);
+    const enabling = await store().prepareReplacement({ actorUserId: admin, policy: initial, expected: disabled.reference });
+    expect(enabling.presentation.meaning.match(/Existing rule becomes effective when enabled:/g)).toHaveLength(2);
+    expect(enabling.presentation.meaning).toContain('file.read'); expect(enabling.presentation.meaning).toContain('file.edit');
+    expect(enabling.presentation.meaning).toContain('disabled → enabled');
+  });
+  it('does not display or alter another device policy and refuses stale preparation', async () => {
+    const first = await replace(), other = definition(); other.identity.deviceId = id(77); other.rules[0].id = id(78);
+    if (other.rules[0].scope.kind === 'file') other.rules[0].scope.segments = ['another-device-private.txt'];
+    const second = await replace(other, first.reference);
+    await expect(store().prepareReplacement({ actorUserId: admin, policy: definition(), expected: first.reference })).rejects.toThrow(/changed/);
+    const review = await store().prepareReplacement({ actorUserId: admin, policy: { ...definition(), enabled: false }, expected: second.reference });
+    expect(review.presentation.meaning).not.toContain('another-device-private.txt');
+    expect(review.presentation.meaning).toContain('Automation is disabled');
+    expect((await store().read(admin))!.document.policies).toEqual([definition(), other]);
+  });
+  it('refuses a review larger than the full-display bound without changing saved permissions', async () => {
+    const saved = await replace(), next = definition();
+    next.rules = Array.from({ length: 5 }, (_, n) => ({ ...structuredClone(next.rules[0]), id: id(100 + n),
+      scope: { kind: 'file' as const, rootId: id(5), rootRevision: 1, descendants: false, segments: Array(64).fill('x'.repeat(255)) } }));
+    const args = { actorUserId: admin, policy: next, expected: saved.reference };
+    await expect(store().prepareReplacement(args)).rejects.toThrow(/completely displayed/);
+    await expect(store().replace(args)).rejects.toThrow(/completely displayed/);
+    expect((await store().read(admin))!.document.policies).toEqual([definition()]);
+    expect((await store().read(admin))!.reference).toEqual(saved.reference);
+  });
   it('requires both proofs, rejects generic writes and keeps policy/history out of indexes and audit', async () => {
     const args = { actorUserId: admin, policy: definition(), expected: null };
     await expect(vaultRecords(db, key).write({ actorUserId: admin, kind: 'automation_policy', value: new Secret('{}') })).rejects.toThrow(/Unsupported/);

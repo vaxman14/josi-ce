@@ -55,9 +55,9 @@ function signReceipt(challenge: ProtectedControlChallenge): ProtectedControlRece
   return { schemaVersion: 1, challengeId: challenge.id, challengeDigest: createHash('sha256').update(message).digest('hex'),
     signature: sign(null, message, keys.privateKey).toString('base64url') };
 }
-async function prepare(binding = command()) {
+async function prepare(binding = command(), display = presentation) {
   const proof = await fresh(binding), ports = authority(proof), store = vaultRecords(db, key).protectedConfirmations(ports);
-  const issued = await store.issue({ actorUserId: admin, identity: identity(), command: binding, presentation });
+  const issued = await store.issue({ actorUserId: admin, identity: identity(), command: binding, presentation: display });
   const challenge = await store.deliver({ actorUserId: admin, challengeId: issued.challengeId, proof: 'synthetic-host-channel' });
   return { proof, ports, store, issued, challenge, receipt: signReceipt(challenge) };
 }
@@ -102,7 +102,8 @@ describe('Vault-backed protected confirmation challenge journal', () => {
     await expect(db.transaction!(tx => reopened.verifier(f.receipt)(tx, admin, command()))).rejects.toThrow(/consumed/);
   });
   it('uses the same policy transaction for fresh proof, signed receipt, policy, epoch and audit', async () => {
-    const f = await prepare(), human = f.store.verifier(f.receipt);
+    const review = await vaultRecords(db, key).automationPolicy(undefined as never).prepareReplacement(args());
+    const f = await prepare(review.command, review.presentation), human = f.store.verifier(f.receipt);
     const proofs = { verifyFreshAdministrator: async (tx: Db, actorUserId: string, binding: ProtectedConfirmationCommand) => f.proof.check(tx, { actorUserId, ...binding, consume: true }),
       verifyProtectedHuman: human };
     const broken: TestDb = { ...db, transaction: async work => db.transaction!(tx => work({ ...tx, query: async (sql, params) => {
@@ -122,6 +123,17 @@ describe('Vault-backed protected confirmation challenge journal', () => {
     const f = await prepare(), results = await Promise.allSettled([verify(f), verify(f)]);
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter(r => r.status === 'rejected')).toHaveLength(1);
+  });
+  it('refuses a correctly signed permission request with a substitute presentation', async () => {
+    const f = await prepare(); // This fixture text is not the generated policy review.
+    const store = vaultRecords(db, key).automationPolicy({
+      verifyFreshAdministrator: (tx, actorUserId, command) => f.proof.check(tx, { actorUserId, ...command, consume: true }),
+      verifyProtectedHuman: f.store.verifier(f.receipt),
+    });
+    await expect(store.replace(args())).rejects.toThrow(/presentation changed/);
+    expect((await db.query('select used_at from protected_admin_reauth'))[0].used_at).toBeNull();
+    expect((await db.query('select state from protected_control_challenges'))[0].state).toBe('pending');
+    expect(await store.read(admin)).toBeNull();
   });
   it('cancel is idempotent, prevents receipt consumption and cannot unconsume a receipt', async () => {
     const f = await prepare(); await f.store.cancel(admin, f.challenge.id); await f.store.cancel(admin, f.challenge.id);
