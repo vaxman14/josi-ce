@@ -6,7 +6,7 @@ import { hashPassword } from '../../auth/src/passwords.js';
 import { reauthenticateProtectedAdmin } from '../../auth/src/protectedAdmin.js';
 import { MasterKey } from '../src/masterKey.js';
 import { Secret } from '../src/sealing.js';
-import { initializeVault, recoverVault, setVaultLock, vaultRecords } from '../src/vault.js';
+import { initializeVault, putVaultItem, recoverVault, setVaultLock, vaultRecords } from '../src/vault.js';
 import { CardinalDraftStore, cardinalReviewInput } from '../src/cardinalDrafts.js';
 import { cardinalContentDigest, type CardinalRule } from '../src/cardinalRules.js';
 import { cardinalActivationBinding } from '../src/cardinalPolicy.js';
@@ -207,5 +207,22 @@ describe('durable Vault-bound automation reservations', () => {
     await expect(recovered.reserve(request(2))).rejects.toThrow(/reconciliation/);
     expect((await recovered.settle({ actorUserId: owner, id: saved.id, outcome: 'succeeded', evidenceIds: [idEvidence], proof: 'outcome-fixture' })).state).toBe('succeeded');
     expect((await db.query('select authority_reconciliation_required from vault_state'))[0].authority_reconciliation_required).toBe(true);
+  });
+  it('the owner’s private Vault lock still stops automation after global authority references are refreshed', async () => {
+    await putVaultItem(db, key, { ownerUserId: owner, kind: 'secure_note', service: 'fixture', slot: 'fixture', label: 'Fixture', value: new Secret('synthetic note') });
+    const saved = (await store().reserve(request())).reservation;
+    await setVaultLock(db, { ownerUserId: owner, locked: true, actorUserId: owner });
+    const records = vaultRecords(db, key);
+    expected = { permissions: (await records.automationPolicy(undefined as never).read(admin))!.reference,
+      cardinal: (await records.cardinalPolicy(undefined as never).read(admin))!.reference };
+    await expect(store().reserve(request(2))).rejects.toThrow(/Vault box is locked/);
+    await expect(store().read(owner, saved.id)).rejects.toThrow(/Vault box is locked/);
+    const restricted = await records.checkCardinalPolicy({ actorUserId: owner, facts: { effects: ['file.read'], effectCoverage: 'verified', identities: { ...identity(), taskId } } });
+    expect(restricted).toMatchObject({ verdict: 'pause', code: 'vault_unavailable' });
+    const preview = await records.previewAutomation({ actorUserId: owner, facts: { identity: identity(), nowMs: Date.now(), task: { id: taskId, active: true, startedAtMs: Date.now() - 1000 },
+      effectCoverage: 'verified', effects: request().effects, usage: [], }, expected });
+    expect(preview).toMatchObject({ verdict: 'pause', code: 'vault_unavailable' });
+    await setVaultLock(db, { ownerUserId: owner, locked: false, actorUserId: owner });
+    await expect(dispatch(saved.id)).rejects.toThrow(/authority/); // unlock cannot revive the old reserved action
   });
 });

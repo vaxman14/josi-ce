@@ -64,6 +64,13 @@ export class VaultRecordStore {
     return { recordId: head.id, version: head.version, digest: head.digest, epoch: Number(state.authority_epoch) };
   }
 
+  private async requireOwnerAutomationVault(tx: Db, actorUserId: string): Promise<void> {
+    // The Master Vault may be open while this owner's private box is locked.
+    // A newly refreshed global epoch must not undo that owner's pause.
+    const [box] = await tx.query<{ locked: boolean }>('select locked from vault_boxes where owner_user_id=$1 for share', [actorUserId]);
+    if (box?.locked) throw new VaultRecordError('The action owner’s Vault box is locked.');
+  }
+
   private matches(reference: VaultRecordReference, head: Head, state: State): boolean {
     return reference?.recordId === head.id && reference.version === head.version
       && reference.digest === head.digest && reference.epoch === Number(state.authority_epoch);
@@ -181,6 +188,7 @@ export class VaultRecordStore {
         const key = await this.key(tx);
         if (!state || !Number.isSafeInteger(Number(state.authority_epoch))) return pause('vault_unavailable');
         if (state.authority_reconciliation_required) return pause('requires_reconciliation');
+        await this.requireOwnerAutomationVault(tx, snapshot.actorUserId);
         return this.automationPreview(tx, key, state, snapshot.facts, snapshot.expected);
       });
     } catch { return pause('vault_unavailable'); }
@@ -215,6 +223,7 @@ export class VaultRecordStore {
       const key = await this.key(tx);
       if (!state || !Number.isSafeInteger(Number(state.authority_epoch))) throw new VaultRecordError('Vault authority unavailable.');
       if (requiresAuthority && state.authority_reconciliation_required) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
+      await this.requireOwnerAutomationVault(tx, actorUserId);
       return work({ tx, key, preview: (facts, expected) => {
         if (facts.identity.userId !== actorUserId || state.authority_reconciliation_required) throw new VaultRecordError('Action authority unavailable.');
         return this.automationPreview(tx, key, state, facts, expected);
@@ -237,6 +246,7 @@ export class VaultRecordStore {
         const key = await this.key(tx);
         if (!state || !Number.isSafeInteger(Number(state.authority_epoch))) return pause('vault_unavailable');
         if (state.authority_reconciliation_required) return pause('requires_reconciliation');
+        await this.requireOwnerAutomationVault(tx, snapshot.actorUserId);
         const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [CARDINAL_POLICY_RECORD_ID]);
         if (!head) return pause('policy_missing');
         if (head.kind !== 'cardinal_policy') return pause('vault_unavailable');
