@@ -39,7 +39,14 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     <ol className="mt-3 space-y-2">
       {steps.map(step => <li key={step.id} className="flex items-start gap-2">
         <span aria-hidden className={step.state === 'verified' ? 'text-primary' : 'text-muted-foreground'}>{step.state === 'verified' ? '✓' : step.state === 'working' ? '◉' : '○'}</span>
-        <span className="min-w-0 break-words">{step.title}<span className="ml-2 text-xs text-muted-foreground">{stepLabels[step.state]}</span></span>
+        <span className="min-w-0 break-words">{step.title}<span className="ml-2 text-xs text-muted-foreground">{stepLabels[step.state]}</span>
+          {step.state === 'blocked' && step.blockedReason ? <span className="mt-1 block text-xs text-muted-foreground">{step.blockedReason}
+            {step.blockedUntil ? ` Check again ${new Date(step.blockedUntil).toLocaleString()}.` : ''}
+          </span> : null}
+          {!compact && step.dependsOn?.length ? <span className="mt-1 block text-xs text-muted-foreground">
+            After: {step.dependsOn.map(id => goal.steps.find(value => value.id === id)?.title ?? 'Unavailable dependency').join(' · ')}
+          </span> : null}
+        </span>
       </li>)}
     </ol>
     {compact && goal.steps.length > 5 ? <button className="mt-2 min-h-10 text-xs underline" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show less' : `Show all ${goal.totalSteps} steps`}</button> : null}
@@ -58,6 +65,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
       <WorkMemoryEditor goal={goal} refresh={refresh} />
     </details> : null}
     {!compact ? <WorkActivity goal={goal} /> : null}
+    {!compact ? <WorkPlans goal={goal} /> : null}
     <div className="mt-3 flex flex-wrap gap-2 text-xs">
       {compact ? <Link to={`/app/tasks#goal-${goal.goalId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Open task manager ↗</Link> : null}
       {!compact ? <Link to={`/app/talk?thread=${goal.threadId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Continue in chat ↗</Link> : null}
@@ -120,6 +128,44 @@ function WorkMemoryEditor({ goal, refresh }: { goal: WorkGoalSnapshot; refresh: 
 }
 
 interface ActivityEvent { id: string; sequence: number; kind: string; summary: string; created_at: string }
+interface SavedPlan { plan_revision: number; goal_revision: number; steps: WorkGoalSnapshot['steps']; reason: string; created_at: string }
+function WorkPlans({ goal }: { goal: WorkGoalSnapshot }) {
+  const [open, setOpen] = useState(false), [plans, setPlans] = useState<SavedPlan[]>([]);
+  const [before, setBefore] = useState<number | undefined>();
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  useEffect(() => {
+    if (!open) return;
+    let alive = true; setBusy(true); setError('');
+    void api.get<{ plans: SavedPlan[] }>(`/assistant/work-goals/${goal.goalId}/plans${before ? `?before=${before}` : ''}`)
+      .then(value => { if (alive) setPlans(value.plans); })
+      .catch(cause => { if (alive) setError(cause instanceof Error ? cause.message : 'Plan history is unavailable.'); })
+      .finally(() => { if (alive) setBusy(false); });
+    return () => { alive = false; };
+  }, [open, goal.goalId, goal.planRevision, before]);
+  return <details className="mt-3 text-sm" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-muted-foreground">Plan history{goal.planRevision ? ` · Version ${goal.planRevision}` : ''}</summary>
+    {open ? <div className="mt-3 space-y-3" aria-busy={busy}>
+      <p className="text-xs text-muted-foreground">Changes retain original steps and receipts. Revising the plan does not change permissions or the required outcome.</p>
+      {error ? <p role="alert" className="text-destructive">{error}</p> : null}
+      {plans.map(plan => <details key={plan.plan_revision} className="rounded-lg border border-border p-3">
+        <summary className="cursor-pointer">Version {plan.plan_revision} · {plan.reason}</summary>
+        <p className="mt-2 text-xs text-muted-foreground">{new Date(plan.created_at).toLocaleString()}</p>
+        <ol className="mt-2 list-decimal space-y-2 pl-5">{plan.steps.map(step => <li key={step.id} className="break-words">
+          {step.title}<span className="mt-1 block text-xs text-muted-foreground">{step.dependsOn?.length
+            ? `After: ${step.dependsOn.map(id => plan.steps.find(value => value.id === id)?.title ?? 'Unavailable dependency').join(' · ')}`
+            : 'Independent step'}</span>
+        </li>)}</ol>
+      </details>)}
+      {busy ? <p className="text-xs text-muted-foreground">Loading plans…</p> : null}
+      <div className="flex flex-wrap gap-2 text-xs">
+        <button disabled={busy || plans.length < 20 || plans.at(-1)?.plan_revision === 1}
+          onClick={() => setBefore(plans.at(-1)?.plan_revision)}
+          className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50">Older plans</button>
+        {before ? <button onClick={() => setBefore(undefined)} className="min-h-10 rounded-md border border-border px-3">Latest plan</button> : null}
+      </div>
+    </div> : null}
+  </details>;
+}
 function WorkActivity({ goal }: { goal: WorkGoalSnapshot }) {
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState<ActivityEvent[]>([]);

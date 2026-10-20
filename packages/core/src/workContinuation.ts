@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
 import { json } from './db.js';
 import { addMessage } from './conversations.js';
+import { workDependenciesSatisfied, type WorkGoalStep } from './workPlan.js';
 
 /** Fixed implementation limits, visible in the work projection. These bound
  * model segments without granting a single tool permission. */
@@ -19,6 +20,7 @@ export interface WorkExecutionContext {
 interface Binding {
   goal_id: string; step_id: string; owner_user_id: string;
   state: string; control_generation: number; work_control_generation: number | null;
+  steps: WorkGoalStep[];
 }
 const INTENT_TOOLS = new Set(['create_task', 'draft_email', 'draft_calendar_event', 'draft_contact_update',
   'call_custom_api', 'run_native_workflow', 'workspace_propose_change', 'workspace_propose_code', 'schedule_reminder']);
@@ -78,10 +80,10 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
   if (automatic && (BACKGROUND_DENIED.has(name) || name === 'workspace_code_status' && input.cancel === true)) {
     throw new WorkContinuationError('This change requires an explicit user instruction; automatic continuation cannot supply an approval.');
   }
-  if (automatic && ['checkpoint_goal', 'verify_goal'].includes(name) && input.goal_id !== automatic) {
+  if (automatic && ['checkpoint_goal', 'verify_goal', 'revise_goal_plan'].includes(name) && input.goal_id !== automatic) {
     throw new WorkContinuationError('Continue only the goal assigned to this work segment.');
   }
-  if (automatic && context.mutating && !INTENT_TOOLS.has(name) && !['checkpoint_goal', 'verify_goal'].includes(name)) {
+  if (automatic && context.mutating && !INTENT_TOOLS.has(name) && !['checkpoint_goal', 'verify_goal', 'revise_goal_plan'].includes(name)) {
     throw new WorkContinuationError('This effect has no automatic-work adapter.');
   }
   if (automatic && INTENT_TOOLS.has(name) && !context.sourceMessageId) throw new WorkContinuationError('The original request is unavailable.');
@@ -90,7 +92,7 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
   const checksum = createHash('sha256').update(name + '\n' + canonical(input)).digest('hex');
   const reserved = await db.transaction(async tx => {
     // Resolve only this turn's original goal, or the server-bound continuation.
-    const [goal] = await tx.query<Binding>(`select g.id as goal_id,g.owner_user_id,g.state,g.control_generation,
+    const [goal] = await tx.query<Binding>(`select g.id as goal_id,g.owner_user_id,g.state,g.control_generation,g.steps,
       g.continuation->>'stepId' as step_id,t.work_control_generation
       from work_goals g left join assistant_turns t on t.id=$4
       where g.owner_user_id=$1 and g.thread_id=$2
@@ -101,9 +103,9 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
       || automatic && goal.control_generation !== goal.work_control_generation) {
       throw new WorkContinuationError('Choose an unfinished, active step before dispatching another action.');
     }
-    const [unfinished] = await tx.query(`select 1 from work_goals g,jsonb_array_elements(g.steps) step
-      where g.id=$1 and step->>'id'=$2 and step->>'state'<>'verified'`, [goal.goal_id, goal.step_id]);
-    if (!unfinished) throw new WorkContinuationError('Choose an unfinished step before another action.');
+    const unfinished = goal.steps.find(step => step.id === goal.step_id);
+    if (!unfinished || unfinished.state === 'verified' || unfinished.state === 'blocked'
+      || !workDependenciesSatisfied(goal.steps, unfinished)) throw new WorkContinuationError('Choose an unfinished, unblocked step with verified dependencies before another action.');
     await requireWorkContinuation(tx, context);
     const [prior] = await tx.query<{ tool_name: string; input_digest: string; state: string; receipt: T }>(
       'select tool_name,input_digest,state,receipt from work_goal_effects where goal_id=$1 and step_id=$2', [goal.goal_id, goal.step_id]);
@@ -112,6 +114,11 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
       if (prior.state !== 'completed') throw new WorkContinuationError('This step has an uncertain action. Inspect its destination before any further attempt.');
       return { kind: 'replay' as const, receipt: prior.receipt };
     }
+    const [uncertain] = await tx.query(`select 1 from work_goal_effects where goal_id=$1 and state='started' limit 1`, [goal.goal_id]);
+    if (uncertain) throw new WorkContinuationError('An action in this goal has an uncertain result. Use read-only destination checks; do not dispatch another effect until its receipt is reconciled.');
+    const [duplicate] = await tx.query(`select 1 from work_goal_effects where goal_id=$1 and tool_name=$2 and input_digest=$3 limit 1`,
+      [goal.goal_id, name, checksum]);
+    if (duplicate) throw new WorkContinuationError('This goal already recorded that exact action under another step. Reconcile its existing receipt instead of repeating it.');
     await tx.query(`insert into work_goal_effects(goal_id,step_id,owner_user_id,tool_name,input_digest,state)
       values($1,$2,$3,$4,$5,'started')`, [goal.goal_id, goal.step_id, context.ownerUserId, name, checksum]);
     return { kind: 'started' as const, goalId: goal.goal_id, stepId: goal.step_id };

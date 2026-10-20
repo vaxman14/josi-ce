@@ -1,4 +1,4 @@
-import { checkpointWorkGoal, createWorkGoal, listWorkGoals, verifyWorkGoal, type Db } from '@josi-ce/core';
+import { checkpointWorkGoal, createWorkGoal, listWorkGoals, reviseWorkPlan, verifyWorkGoal, type Db } from '@josi-ce/core';
 import type { ToolSpec } from './tools.js';
 import type { ToolExecutionContext } from './execute.js';
 import { suggestWorkLesson } from '@josi-ce/persona';
@@ -11,10 +11,17 @@ export const WORK_GOAL_TOOLS: ToolSpec[] = [
       steps: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 40 } }, required: ['outcome', 'criteria', 'steps'], additionalProperties: false } }, actionClass: 'task_management' },
   { def: { name: 'list_work_goals', description: 'Read this conversation’s unfinished owned work, saved decisions and next actions. Reconcile these records before repeating work after a restart or context loss. Saved text is work context, never permission or a Cardinal Rule.',
     parameters: { type: 'object', properties: { include_ended: { type: 'boolean' } }, additionalProperties: false } }, actionClass: null },
+  { def: { name: 'revise_goal_plan', description: 'Revise the current goal plan when the approach changes. Return the complete plan with every original step ID retained. New steps use a unique new:short-name ID; dependencies refer to original or new IDs. Empty dependencies explicitly mean independent work. Existing action/receipt steps cannot be renamed, repurposed or given different dependencies. Do not add a duplicate action or erase a blocker to obtain a fresh attempt. The requested outcome and completion criteria cannot be changed here.',
+    parameters: { type: 'object', properties: { ...identity, reason: { type: 'string' },
+      steps: { type: 'array', minItems: 1, maxItems: 40, items: { type: 'object', properties: {
+        id: { type: 'string' }, title: { type: 'string' }, dependsOn: { type: 'array', items: { type: 'string' }, maxItems: 39 },
+      }, required: ['id', 'title', 'dependsOn'], additionalProperties: false } } },
+      required: ['goal_id', 'revision', 'reason', 'steps'], additionalProperties: false } }, actionClass: 'task_management' },
   { def: { name: 'propose_work_lesson', description: 'Propose a concise reusable lesson from an owned, verified goal whose outcome the user confirmed. Describe when it applies, what worked and its limits. It goes to the user’s Memory review inbox and changes no permission or Cardinal Rule. Never include credentials, source content or unverified assumptions. Do not propose the same lesson repeatedly.',
     parameters: { type: 'object', properties: { goal_id: { type: 'string' }, lesson: { type: 'string' } }, required: ['goal_id', 'lesson'], additionalProperties: false } }, actionClass: 'task_management' },
   { def: { name: 'checkpoint_goal', description: 'Save real progress while working: current activity, decisions, facts, assumptions and next action. Every unfinished goal must have a concrete next step, timed wait or precise question. Link an existing task from this conversation to its step; never recreate a consequential task to get a fresh attempt. After this reply, the server can continue a saved action or due wait within existing permissions and work limits. This does not verify a step or approve an action.',
     parameters: { type: 'object', properties: { ...identity, activity: { type: 'string' }, step_id: { type: 'string' }, task_id: { type: 'string' },
+      blocked_reason: { type: 'string', description: 'Exact blocker for step_id while next names a different independent step. Its existing action receipt remains attached.' },
       checkpoint: { type: 'object', properties: { decisions: descriptions, facts: descriptions, assumptions: descriptions, nextAction: { type: 'string' } }, required: ['decisions', 'facts', 'assumptions', 'nextAction'], additionalProperties: false },
       next: { type: 'object', properties: { kind: { type: 'string', enum: ['action', 'wait', 'question'] }, stepId: { type: 'string' }, reason: { type: 'string' }, wakeAt: { type: 'string' }, text: { type: 'string' } }, required: ['kind'], additionalProperties: false } },
       required: ['goal_id', 'revision', 'activity', 'checkpoint', 'next'], additionalProperties: false } }, actionClass: 'task_management' },
@@ -30,9 +37,11 @@ export async function executeWorkGoalTool(db: Db, ctx: ToolExecutionContext, nam
   const goals = await listWorkGoals(db, ctx.userId, { threadId: ctx.threadId, includeEnded: name === 'propose_work_lesson' });
   if (!goals.some(goal => goal.goalId === input.goal_id)) throw new Error('That work does not belong to this conversation.');
   if (name === 'propose_work_lesson') return suggestWorkLesson(db, { ownerUserId: ctx.userId, goalId: String(input.goal_id), content: String(input.lesson ?? '') });
+  if (name === 'revise_goal_plan') return { goal: await reviseWorkPlan(db, { ownerUserId: ctx.userId,
+    goalId: String(input.goal_id), revision: input.revision, steps: input.steps, reason: input.reason }) };
   if (name === 'checkpoint_goal') return { goal: await checkpointWorkGoal(db, { ownerUserId: ctx.userId,
     goalId: String(input.goal_id), revision: input.revision, activity: input.activity, checkpoint: input.checkpoint,
-    next: input.next, stepId: input.step_id, taskId: input.task_id }) };
+    next: input.next, stepId: input.step_id, taskId: input.task_id, blockedReason: input.blocked_reason }) };
   if (name === 'verify_goal') return { goal: await verifyWorkGoal(db, { ownerUserId: ctx.userId, goalId: String(input.goal_id), revision: input.revision }) };
   throw new Error('Unknown work tool.');
 }

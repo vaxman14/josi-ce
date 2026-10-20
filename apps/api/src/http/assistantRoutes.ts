@@ -26,7 +26,7 @@ import {
   checkChildAccess, encodeTurnCursor, listNativeReminderActions,
   json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
-  listWorkGoals, workGoalEvents, controlWorkGoal, editWorkMemory, WorkGoalError,
+  listWorkGoals, workGoalEvents, workPlanHistory, controlWorkGoal, editWorkMemory, WorkGoalError,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
 import { runAssistantTurn, type RecallLookup } from '@josi-ce/agent';
@@ -569,6 +569,11 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     if (!['pause', 'resume', 'cancel', 'confirm'].includes(action)) throw new RouteError(400, 'Choose a work control.');
     return res.json({ goal: await controlWorkGoal(db, { ownerUserId: req.user!.id, goalId: param(req, 'id'),
       revision: req.body?.revision, action, instruction: req.body?.instruction }) });
+  }));
+  r.get('/work-goals/:id/plans', handle(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({ plans: await workPlanHistory(db, req.user!.id, param(req, 'id'),
+      req.query.before === undefined ? undefined : Number(req.query.before)) });
   }));
   r.post('/work-goals/:id/memory', handle(async (req, res) => {
     const action = req.body?.action;

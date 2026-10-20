@@ -20,7 +20,19 @@ The shared in-process executor and subscription MCP adapter use the same origina
 
 The ordinary per-turn fence remains underneath this journal. Other automatic mutations without an explicit adapter are refused. An automatic segment cannot create a replacement goal, approve/cancel a pending task, edit a reminder, change collecting task slots, or propose a memory lesson. It may read, checkpoint and verify its assigned goal and use supported tools within their existing authorization. Unsupported tool calls are refused even when their names occur elsewhere in the global catalog.
 
-This journal is conservative. It does not infer provider idempotency, reverse effects, reconcile an uncertain destination, or permit a model to rename a step to retry it. Explicit plan revision and destination-specific reconciliation are still required for those cases. Follow-up user turns and newly requested goals retain their existing conversational behavior; general cross-request duplicate detection is not claimed.
+This journal is conservative. It does not infer provider idempotency, reverse effects, reconcile an uncertain destination, or permit a model to rename a step to retry it. Destination-specific receipt reconciliation is still required for those cases. Follow-up user turns and newly requested goals retain their existing conversational behavior; general cross-request duplicate detection is not claimed.
+
+## Plan changes and independent progress
+
+Migration 0085 adds retained plan versions and explicit step dependencies. Existing and new plain checklists start sequentially; no migration guesses that actions are independent. `revise_goal_plan` can reorder steps, add needed steps and explicitly describe independence, while retaining every original step ID. The server rejects cycles, missing/duplicate dependencies, removal of an old step, and changes to the meaning or dependencies of any step with a task/effect/verified receipt. Outcome criteria remain unchanged. A plan revision cannot erase a blocker, detach its task or supply a fresh action identity. The existing goal revision guards concurrent changes, and pause still requires owner resumption.
+
+Checkpointing and effect dispatch require verified dependencies. The effect journal also refuses the same exact tool/input under another step of the same goal. That is a concrete duplicate check, not a claim to recognize every semantically equivalent request. A model cannot overwrite an existing task link with another task to obtain another attempt.
+
+A step can retain a precise blocker or scheduled check while independent steps continue. A question tied to one step is saved in chat while the returned goal can remain working on an eligible independent step. The reconciliation worker skips active/blocked steps and chooses ready work; when no ready work remains, it retains the earliest timed wait or asks for the unresolved instruction. Timed checks do not reset effect receipts or permit repeating an uncertain action.
+
+An unsettled effect can now receive a bounded inspection segment. Existing read tools and goal bookkeeping remain available; dispatch of any new consequential effect is refused until the original receipt is reconciled. Model prose cannot settle that receipt. The existing no-progress segment limit applies, so unsupported destination reconciliation returns for instructions.
+
+The larger task manager displays dependencies, exact blockers, scheduled rechecks and paginated plan history, including why each version changed. Chat cards show the same step states. History is owner-scoped work data, not a second memory/rule authority.
 
 ## Memory and visibility
 
@@ -30,7 +42,7 @@ Background replies and questions are ordinary saved messages in the original cha
 
 ## Remaining integration and acceptance
 
-The current verifier still covers settled connected-action task receipts and final owner confirmation. Plan revisions/dependencies, independent progress around blocked steps, more precise recovery/backoff, generic artifact/read-only outcome verification, configurable per-goal resource budgets, older-chat pagination, channel delivery and browser/desktop action adapters remain open. Background work currently requires a live owner session. Remote clients keep the existing endpoints and may ignore the additional work projection fields.
+The current verifier still covers settled connected-action task receipts and final owner confirmation. Removing/replacing an obsolete step or changing outcome criteria needs a future explicit owner scope-change flow; the model cannot silently do either. More precise destination reconciliation/backoff, generic artifact/read-only outcome verification, configurable per-goal resource budgets, older-chat pagination, channel delivery and browser/desktop action adapters remain open. Background work currently requires a live owner session. Remote clients keep the existing endpoints and may ignore the additional work projection fields.
 
 No live database migration, model call, provider action or automatic goal was run for this checkpoint. Type/build checks do not establish functional, concurrency, cancellation, crash-recovery, provider-idempotency or migration acceptance; those checks belong to the later integrated pass.
 
