@@ -1,5 +1,6 @@
 import { createHash, createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
-import { vaultRecords, type Db, type MasterKey, type ProtectedConfirmationIdentity, type VaultRecordReference } from '@josi-ce/core';
+import { vaultRecords, openAutomationPresence, renewAutomationPresence, closeAutomationPresence, parseAutomationPresence,
+  type Db, type MasterKey, type ProtectedConfirmationIdentity, type VaultRecordReference } from '@josi-ce/core';
 import { isProtectedControlOrigin, parseWorkspaceStorageChallenge, workspaceStorageMessage, type WorkspaceStorageChallenge } from '@josi-ce/protocol';
 import { ProtectedChangeError } from './protectedChanges.js';
 
@@ -136,6 +137,12 @@ export class WorkspaceStorage {
         }, reference: c.keyReference, workspaceId: c.workspaceId, expires: wall + 2 * 60 * 60_000,
           deadline: mono + 2 * 60 * 60_000, leaseUntil: wall + 10_000, leaseDeadline: mono + 10_000, previousWall: wall };
         this.opened.set(sessionId, s);
+        try {
+          await openAutomationPresence(this.db, { identity: { userId: actor, serverId: c.serverId,
+            deviceId: c.deviceId, workspaceId: c.workspaceId }, storageSessionId: sessionId, authSessionId: session,
+            authorityEpoch: s.reference.epoch, label: c.label, leaseUntilMs: s.leaseUntil });
+          this.openedLive(s);
+        } catch (error) { this.opened.delete(sessionId); throw error; }
         opened = { sessionId, expiresAtMs: s.expires, leaseUntilMs: s.leaseUntil };
       }
       // This deliberate native-only projection must never reach logs/chat.
@@ -186,7 +193,8 @@ export class WorkspaceStorage {
       return { schemaVersion: 1, sessionId: s.id, identity, ...result, expiresAtMs: s.leaseUntil, executionEnabled: false };
     } catch (error) { this.opened.delete(id); throw error; }
   }
-  async renew(actor: string, session: string, id: string) {
+  async renew(actor: string, session: string, id: string, presence?: unknown) {
+    const report = parseAutomationPresence(presence);
     const s = this.opened.get(id);
     if (!uuid(id) || !s || s.actor !== actor || s.session !== session || !this.db.transaction) throw new ProtectedChangeError(409, 'The desktop connection is unavailable.');
     try {
@@ -202,12 +210,17 @@ export class WorkspaceStorage {
       this.openedLive(s);
       const wall = Date.now(), mono = performance.now();
       s.leaseUntil = Math.min(wall + 10_000, s.expires); s.leaseDeadline = Math.min(mono + 10_000, s.deadline);
+      await renewAutomationPresence(this.db, { ownerUserId: actor, authSessionId: session,
+        storageSessionId: id, leaseUntilMs: s.leaseUntil, report });
+      this.openedLive(s);
       return { sessionId: id, workspaceId: s.workspaceId, leaseUntilMs: s.leaseUntil, expiresAtMs: s.expires, executionEnabled: false };
     } catch (error) { this.opened.delete(id); throw error; }
   }
-  close(actor: string, session: string, id: string) {
+  async close(actor: string, session: string, id: string) {
     const s = this.opened.get(id);
     if (s && (s.actor !== actor || s.session !== session)) throw new ProtectedChangeError(403, 'This desktop connection belongs to another sign-in.');
-    this.opened.delete(id); return { closed: true };
+    this.opened.delete(id);
+    await closeAutomationPresence(this.db, actor, session, id);
+    return { closed: true };
   }
 }

@@ -183,3 +183,73 @@ struct NativeTaskDesktopViewer: View {
         }
     }
 }
+
+struct NativeAutomationConnections: View {
+    @EnvironmentObject var model: JosiModel
+    @State private var expanded = false
+    @State private var connections: Wire = .null
+    @State private var message = ""
+    @State private var checked: Date?
+    var body: some View {
+        DisclosureGroup("Automation desktops", isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
+                if connections != .null {
+                    if connections["workspaces"].list.isEmpty {
+                        Text("No separate desktop connection has been reported for your account.").font(.caption)
+                    }
+                    ForEach(connections["workspaces"].list.indices, id: \.self) { index in
+                        let workspace = connections["workspaces"].list[index]
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(workspace["label"].text).font(.headline)
+                            Text(state(workspace)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if connections["controlAvailable"] == .bool(false) {
+                        Text("Connection status is available. Browser and computer control are not connected yet.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if let checked { Text("Last checked " + checked.formatted(date: .omitted, time: .standard))
+                    .font(.caption2).foregroundStyle(.secondary) }
+            }.padding(.top, 8)
+        }
+        .task(id: "\(expanded):\(model.api?.origin.absoluteString ?? ""):\(model.user["id"].text)") {
+            connections = .null; checked = nil; message = ""
+            guard expanded, let api = model.api else { return }
+            let owner = model.user["id"]
+            while !Task.isCancelled && expanded && model.api === api && model.user["id"] == owner {
+                if NSApp.isActive {
+                    do {
+                        let result = try await api.request("/assistant/automation/workspaces")
+                        try Task.checkCancellation()
+                        guard model.api === api, model.user["id"] == owner else { return }
+                        guard result["workspaces"].list.count <= 32,
+                              result["workspaces"].list.allSatisfy({ item in
+                                  item["identity"]["userId"] == owner && ProtectedWire.uuid(item["identity"]["workspaceId"])
+                                    && ProtectedWire.text(item["label"], max: 120)
+                                    && ["ready", "paused", "needs_local_consent", "offline"].contains(item["state"].text)
+                              }) else { throw GuestLinkError.invalid }
+                        connections = result; checked = Date()
+                        message = result["available"].flag ? "" : "This server does not provide automation connections yet."
+                    } catch is CancellationError { return }
+                    catch {
+                        guard !Task.isCancelled, model.api === api, model.user["id"] == owner else { return }
+                        connections = .null; message = "Current desktop connections could not refresh."
+                    }
+                }
+                do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            }
+        }
+    }
+    private func state(_ workspace: Wire) -> String {
+        switch workspace["state"].text {
+        case "ready": return "Ready for permitted work"
+        case "paused": return "Paused"
+        case "needs_local_consent":
+            return connections["controlAvailable"] == .bool(false)
+                ? "Companion connected · automation not enabled" : "Waiting for the device owner"
+        default: return "Offline"
+        }
+    }
+}

@@ -504,6 +504,7 @@ struct TaskManagerView: View {
             VStack(alignment: .leading, spacing: 20) {
                 JosiHeading(title: "Task Manager", subtitle: "What Josi is working on, and what needs your attention.")
                 NativeTaskDesktopViewer(desktop: model.desktop)
+                NativeAutomationConnections()
                 Picker("Work", selection: $filter) {
                     Text("Active").tag("active"); Text("Needs You / Waiting").tag("attention"); Text("History").tag("history")
                 }.pickerStyle(.segmented)

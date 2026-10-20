@@ -15,6 +15,7 @@ import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Router, type Request, type Response } from 'express';
+import { listAutomationPresence } from '@josi-ce/core';
 import { BASELINE_CAPABILITIES } from '@josi-ce/protocol';
 import multer from 'multer';
 import {
@@ -553,9 +554,12 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   // ------------------------------------------------------------ tasks
   r.get('/automation/workspaces', handle(async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
-    if (!ctx.automationRuntime) return res.json({ available: false, workspaces: [],
-      reason: 'An authenticated isolated-device automation service is not connected.' });
-    try { return res.json({ available: true, workspaces: await ctx.automationRuntime.inventory(req.user!.id) }); }
+    try {
+      if (!ctx.automationRuntime) return res.json({ available: true, controlAvailable: false,
+        workspaces: await listAutomationPresence(db, req.user!.id),
+        reason: 'Recent separate-desktop connection reports. Automation execution is not connected yet.' });
+      return res.json({ available: true, workspaces: await ctx.automationRuntime.inventory(req.user!.id) });
+    }
     catch { return res.status(503).json({ available: false, error: 'Current automation connections could not be verified.' }); }
   }));
   r.get('/work-goals/stream', asyncRoute(workProgressStream(db)));

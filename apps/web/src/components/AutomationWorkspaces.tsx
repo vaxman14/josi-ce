@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 /** Discovery only. A displayed connection is never a permission or a lease. */
 export function AutomationWorkspaces() {
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState<{ available: boolean; workspaces: AutomationWorkspaceSummary[] } | null>(null);
+  const [status, setStatus] = useState<{ available: boolean; controlAvailable?: boolean; reason?: string; workspaces: AutomationWorkspaceSummary[] } | null>(null);
   const [error, setError] = useState('');
   const [received, setReceived] = useState<Date | null>(null);
   useEffect(() => {
@@ -15,7 +15,7 @@ export function AutomationWorkspaces() {
       if (!alive || pending || document.hidden) return;
       pending = true;
       try {
-        const result = await api.get<{ available: boolean; workspaces: AutomationWorkspaceSummary[] }>('/assistant/automation/workspaces');
+        const result = await api.get<{ available: boolean; controlAvailable?: boolean; reason?: string; workspaces: AutomationWorkspaceSummary[] }>('/assistant/automation/workspaces');
         if (alive) { setStatus(result); setError(''); setReceived(new Date()); }
       } catch { if (alive) setError('Automation connections could not refresh. Their current state is unavailable.'); }
       finally { pending = false; }
@@ -37,12 +37,14 @@ export function AutomationWorkspaces() {
           : !status.workspaces.length ? <p className="mt-3 text-sm">No automation desktop is connected to your account.</p>
             : <ul className="mt-3 space-y-3">{status.workspaces.map(workspace => <li key={workspace.identity.workspaceId} className="rounded-lg border border-border p-3">
               <p className="font-medium">{workspace.label}</p>
-              <p className="mt-1 text-sm">{labels[workspace.state]}</p>
+              <p className="mt-1 text-sm">{workspace.state === 'needs_local_consent' && status.controlAvailable === false
+                ? 'Companion connected · automation not enabled' : labels[workspace.state]}</p>
               <p className="mt-1 text-xs text-muted-foreground">{[
                 workspace.browserFamilies.length ? `Browsers: ${workspace.browserFamilies.join(', ')}` : null,
                 workspace.computerUse ? 'Computer control supported' : null,
               ].filter(Boolean).join(' · ') || 'No control adapter is currently available.'}</p>
             </li>)}</ul>}
+    {status?.controlAvailable === false ? <p className="mt-3 text-xs text-muted-foreground">Connection status is available. Browser and computer control are not connected yet.</p> : null}
     {received ? <p className="mt-3 text-xs text-muted-foreground">Last checked {received.toLocaleTimeString()}. Each action still checks current access.</p> : null}
   </details>;
 }

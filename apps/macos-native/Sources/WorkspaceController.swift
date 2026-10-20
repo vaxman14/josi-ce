@@ -140,7 +140,10 @@ import Darwin
                     try await Task.sleep(for: .seconds(2)); try current()
                     guard let api else { throw approvalUnavailable() }
                     let id = try api.uuid(session["sessionId"].text)
-                    let next = try await api.request("/admin/automation/storage/sessions/\(id)/renew", method: "POST", body: [:])
+                    let presence: Wire = ["machineState": .string(["running", "paused", "stopped"].contains(state) ? state : "starting"),
+                                          "companionConnected": .bool(guest?.paired == true)]
+                    let next = try await api.request("/admin/automation/storage/sessions/\(id)/renew", method: "POST",
+                                                     body: ["presence": presence])
                     try current()
                     guard next["workspaceId"] == workspace["workspaceId"], next["executionEnabled"] == .bool(false) else { throw approvalUnavailable() }
                     try adoptLease(next)

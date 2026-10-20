@@ -49,3 +49,13 @@ Migration 0093 adds the internal task template and goal/step binding. The templa
 The runtime now requires that original binding before acquisition, preparation and dispatch, including the exact server/device/workspace, current selected step and current plan. Email or other legacy task IDs cannot stand in for automation tasks. The native saved-task view displays existing automation audit events and an explicit refresh control, with operation success distinguished from business-outcome verification.
 
 The complete TypeScript build, Swift 6 app compilation, whitespace check and public-source secret scan (1,242 files) passed. No migration was applied to a live server, and no task or device operation was executed. Production transport, capture/model projection and factual business-outcome verification remain open. This source is later than `native.11`.
+
+## Native desktop presence — 20 October source checkpoint
+
+The hardware-authenticated workspace opening path now creates expiring discovery metadata. Native lifecycle renewals report machine state and whether the verified guest companion is connected. Renewal cannot create a workspace row, transfer ownership or replace another live storage session. Closure ends the report, and missing renewal expires it after at most ten seconds. Session revocation, a changed Vault authority epoch, account loss and Vault locking also make the report unavailable.
+
+The shared presence reader serves the owner-only assistant endpoint and the actual chat tool execution path, including API/worker/subscription MCP consumers that have no in-process executor. Native and web Task Managers expose the same expiring connection reports. The native disclosure polls only while expanded and active, checks owner/server identity before applying responses and hides state when refresh fails. Old clients may renew without the optional report; that leaves readiness unknown and grants no control.
+
+Migration 0094 stores nonsecret discovery metadata only. Canonical credentials, policy, enrolled device identity and storage remain in the Vault. This reader can never return `ready`, a computer-use adapter or a browser adapter; it does not create an `AutomationRuntime`, enable an action tool, authorize input or verify a business outcome. The UI distinguishes a connected companion from enabled automation. Local consent and real command transport remain the next assembly.
+
+Full root TypeScript compilation, web type checking, Swift 6 native compilation, whitespace checks and the public-source secret scan (1,251 files) passed. No live migration, VM, desktop connection, provider request or functional suite was run. This source is later than `native.12`.

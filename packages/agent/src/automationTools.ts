@@ -1,4 +1,4 @@
-import { AutomationRuntime, parseAutomationToolAction, type AutomationExecutionContext } from '@josi-ce/core';
+import { AutomationRuntime, parseAutomationToolAction, listAutomationPresence, type Db, type AutomationExecutionContext } from '@josi-ce/core';
 import type { ToolExecutionContext } from './execute.js';
 import type { ToolSpec } from './tools.js';
 
@@ -48,8 +48,9 @@ export const AUTOMATION_CONTROL_TOOLS: ToolSpec[] = [
     ] } }) }, actionClass: 'automation_control' },
 ];
 export const AUTOMATION_TOOL_NAMES = new Set([AUTOMATION_DISCOVERY_TOOL, AUTOMATION_RECEIPT_TOOL, ...AUTOMATION_CONTROL_TOOLS].map(tool => tool.def.name));
-export async function automationDiscovery(runtime: AutomationRuntime | undefined, ownerUserId: string) {
-  if (!runtime) return { available: false, workspaces: [], reason: 'An authenticated automation device service is not connected. Ordinary Josi chat and remote clients remain available.' };
+export async function automationDiscovery(runtime: AutomationRuntime | undefined, ownerUserId: string, db?: Db) {
+  if (!runtime) return { available: !!db, workspaces: db ? await listAutomationPresence(db, ownerUserId) : [],
+    controlAvailable: false, reason: 'These are recent isolated-desktop connection reports. Execution is not connected; no local consent or permission is granted by presence.' };
   return { available: true, workspaces: await runtime.inventory(ownerUserId),
     reason: 'Discovery describes current connections. Every operation still requires its current target, consent and permission checks.' };
 }
@@ -67,8 +68,8 @@ export async function automationToolAvailability(runtime: AutomationRuntime | un
       || tool.def.name === 'computer_control' && ready.some(workspace => workspace.computerUse));
   } catch { return []; }
 }
-export async function executeAutomationTool(ctx: ToolExecutionContext, name: string, input: Record<string, unknown>) {
-  if (name === 'get_automation_workspaces') return automationDiscovery(ctx.automationRuntime, ctx.userId);
+export async function executeAutomationTool(ctx: ToolExecutionContext, name: string, input: Record<string, unknown>, db?: Db) {
+  if (name === 'get_automation_workspaces') return automationDiscovery(ctx.automationRuntime, ctx.userId, db);
   if (!ctx.automationRuntime) return { ok: false, code: 'automation_unavailable',
     message: 'Authenticated isolated-device control is not connected on this execution surface.' };
   if (name === 'get_automation_receipt') {

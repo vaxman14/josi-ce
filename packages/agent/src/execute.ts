@@ -86,7 +86,7 @@ export async function executeAssistantTool(
   input: Record<string, unknown>,
 ): Promise<unknown> {
   const { userId } = ctx;
-  if (AUTOMATION_TOOL_NAMES.has(name)) return executeAutomationTool(ctx, name, input);
+  if (AUTOMATION_TOOL_NAMES.has(name)) return executeAutomationTool(ctx, name, input, db);
   if (WORK_GOAL_TOOL_NAMES.has(name)) return executeWorkGoalTool(db, ctx, name, input);
   if (WORKSPACE_TOOLS.some(t=>t.def.name===name)) return executeWorkspaceTool(db,userId,name,input);
   if (name === 'get_provider_status') return providerStatus(db, userId);
