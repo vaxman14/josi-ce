@@ -22,7 +22,7 @@ APP_ID = 'com.heyjosi.ce.unified'
 APP_IDENTITY = 'Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
 INSTALLER_IDENTITY = 'Developer ID Installer: Socal Receptionist LLC (LRH75YR6QW)'
 KEYCHAIN = '/Users/roman/Library/Keychains/login.keychain-db'
-VERSION = '0.7.0-native.4'
+VERSION = '0.7.0-native.5'
 PROTECTED_ID = 'com.heyjosi.ce.protected-key'
 SIGNING_CERTIFICATE_SHA1 = '0bdc050694b41330db6833e440a4a8e6f466abdb'
 
@@ -135,7 +135,9 @@ def build(args):
     run('compile-native-josi', ['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-O',
                                 '-target', 'arm64-apple-macos14.2', '-module-cache-path', output / 'module-cache',
                                 '-o', executables / 'Josi', *sorted(source.glob('*.swift')),
-                                REPO / 'packaging/macos/NativeAuthorization.swift'])
+                                REPO / 'packaging/macos/NativeAuthorization.swift',
+                                REPO / 'apps/automation-macos/Sources/WorkspaceMachine.swift'])
+    (output / 'native-app-entitlements.plist').write_bytes(plistlib.dumps({'com.apple.security.virtualization': True}))
     copy_file(REPO / 'packaging/macos/Josi.png', resources / 'Josi.png')
     icons = output / 'Josi.iconset'; icons.mkdir()
     for size in (16, 32, 128, 256, 512):
@@ -147,7 +149,7 @@ def build(args):
     info = {
         'CFBundleIdentifier': APP_ID, 'CFBundleName': 'Josi', 'CFBundleDisplayName': 'Josi',
         'CFBundleExecutable': 'Josi', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.7.0',
-        'CFBundleVersion': '20261020.4', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
+        'CFBundleVersion': '20261020.5', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
         'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
         'JosiNativeClientProtocol': 1, 'JosiProtectedHostProtocol': 1,
@@ -259,7 +261,7 @@ def build(args):
     }
     (resources / 'unified-build.json').write_text(json.dumps(provenance, indent=2) + '\n')
     if args.sign:
-        sign('sign-native-josi', app)
+        sign('sign-native-josi', app, entitlements=output / 'native-app-entitlements.plist')
         sign('sign-native-uninstaller', uninstaller)
         for name, bundle in (('josi', app), ('uninstaller', uninstaller)):
             run('verify-' + name, ['/usr/bin/codesign', '--verify', '--deep', '--strict', bundle])
@@ -277,7 +279,7 @@ def build(args):
         postinstall.write_text('#!/bin/sh\nset -eu\nexec "/Applications/Josi.app/Contents/Resources/runtime/python/bin/python3.11" -I -B "/Applications/Josi.app/Contents/Resources/runtime/app/native/unified-postinstall.py"\n')
         postinstall.chmod(0o755)
         run('build-component', ['/usr/bin/pkgbuild', '--root', output / 'payload', '--component-plist', components,
-                                '--identifier', APP_ID + '.pkg', '--version', '0.7.0.5', '--install-location', '/',
+                                '--identifier', APP_ID + '.pkg', '--version', '0.7.0.6', '--install-location', '/',
                                 '--scripts', scripts, output / 'application.pkg'])
         distribution = output / 'Distribution.xml'
         distribution.write_text('''<?xml version="1.0" encoding="utf-8"?>
@@ -288,7 +290,7 @@ def build(args):
  <allowed-os-versions><os-version min="14.2"/></allowed-os-versions>
  <choices-outline><line choice="josi"/></choices-outline>
  <choice id="josi" title="Josi" visible="false" start_selected="true" start_enabled="false"><pkg-ref id="com.heyjosi.ce.unified.pkg"/></choice>
- <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.5" onConclusion="none">application.pkg</pkg-ref>
+ <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.6" onConclusion="none">application.pkg</pkg-ref>
 </installer-gui-script>
 ''')
         package = output / 'Install Josi.pkg'

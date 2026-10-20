@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { isProtectedControlOrigin, parseWorkspaceStorageChallenge, type WorkspaceStorageChallenge } from '@josi-ce/protocol';
 import type { Db } from './db.js';
 import { Secret } from './sealing.js';
+import { appendEvent } from './events.js';
 import { VaultRecordError, type VaultRecordReference, type VaultRecordValue } from './vaultRecords.js';
 import type { ProtectedConfirmationIdentity } from './protectedConfirmations.js';
 
@@ -19,7 +20,7 @@ type Backend = <T>(actor: string, writing: boolean, work: (context: Context) => 
 export interface WorkspaceStorageAuthority {
   /** Trusted assembly verifies the live session, current enrolled hardware
    * key, one-use challenge and exact request, inside this Vault transaction. */
-  verifyProvision(tx: Db, challenge: WorkspaceStorageChallenge, proof: unknown): Promise<void>;
+  verifyRequest(tx: Db, challenge: WorkspaceStorageChallenge, proof: unknown): Promise<void>;
 }
 const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => !!value && typeof value === 'object'
   && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(k => Object.hasOwn(value, k));
@@ -61,12 +62,12 @@ export class WorkspaceStorageStore {
   }
   /** Repeating an exact provision request after a lost response returns the
    * same canonical credential. It cannot replace an existing workspace key. */
-  provision(actor: string, challenge: WorkspaceStorageChallenge, proof: unknown) {
+  authorize(actor: string, challenge: WorkspaceStorageChallenge, proof: unknown) {
     const c = parseWorkspaceStorageChallenge(challenge);
     if (!c || c.userId !== actor) throw new VaultRecordError('Review this exact workspace in the enrolled native app.');
-    return this.backend(actor, true, async context => {
+    return this.backend(actor, c.operation === 'provision', async context => {
       if (context.reconciliationRequired || context.epoch !== c.keyReference.epoch) throw new VaultRecordError('Vault authority changed. Review the workspace again.');
-      await this.authority.verifyProvision(context.tx, c, proof);
+      await this.authority.verifyRequest(context.tx, c, proof);
       const entries = decode(await context.read());
       let entry = entries.find(e => e.workspaceId === c.workspaceId);
       if (entry) {
@@ -75,6 +76,7 @@ export class WorkspaceStorageStore {
           throw new VaultRecordError('This workspace already exists with different ownership or storage settings.');
         }
       } else {
+        if (c.operation !== 'provision') throw new VaultRecordError('Prepare this workspace’s storage before opening it.');
         if (entries.length >= 64) throw new VaultRecordError('The workspace registry has reached its retained storage limit.');
         entry = { workspaceId: c.workspaceId, label: c.label, capacityGiB: c.capacityGiB, createdAt: new Date().toISOString(),
           identity: { serverOrigin: c.serverOrigin, serverId: c.serverId, userId: actor, deviceId: c.deviceId },
@@ -82,6 +84,8 @@ export class WorkspaceStorageStore {
         entries.push(entry);
         await context.write(new Secret(JSON.stringify({ schemaVersion: 1, workspaces: entries })));
       }
+      await appendEvent(context.tx, { actorUserId: actor, actor: 'super_admin', kind: 'automation.workspace_storage_authorized',
+        subjectType: 'workspace_storage', subjectId: entry.workspaceId, payload: { operation: c.operation, deviceId: c.deviceId } });
       return { workspace: summary(entry), imagePassword: new Secret(entry.imagePassword) };
     });
   }

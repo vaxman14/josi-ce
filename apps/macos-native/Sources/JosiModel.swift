@@ -29,6 +29,7 @@ import SwiftUI
     @Published var automationSettings: Wire = .null
     @Published var automationCatalog: Wire = .null
     @Published var lastRefreshed: Date?
+    let desktop = NativeWorkspaceController()
     private(set) var api: JosiAPI?
     private var installAttempt: UUID?
     private var refreshing = false
@@ -52,6 +53,7 @@ import SwiftUI
         catch { self.error = error.localizedDescription }
     }
     func connect(_ address: String, local: Bool = false) async throws {
+        if desktop.requiresClosure { try await desktop.close() }
         let next = try JosiAPI(address: address)
         api?.close(); api = next
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []
@@ -95,6 +97,7 @@ import SwiftUI
     }
     func disconnect() {
         guard !busy else { return }
+        guard !desktop.requiresClosure else { error = "Close the separate desktop before disconnecting."; return }
         api?.close(); api = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; setup = .null
         setupReview = .null; recovery = .null; mfaChallenge = ""; draft = ""; pending = nil; pendingMessage = false
@@ -102,6 +105,7 @@ import SwiftUI
         screen = .connect; error = ""; activity = ""
     }
     func signOut() async throws {
+        if desktop.requiresClosure { try await desktop.close() }
         if let api { _ = try await api.request("/auth/logout", method: "POST", body: [:]) }
         // run() keeps busy set until this completes; disconnect's UI guard
         // must not prevent clearing the revoked session.
@@ -112,6 +116,7 @@ import SwiftUI
         automationSettings = .null; automationCatalog = .null; automation = .null; screen = .connect
     }
     func operate(_ operation: String) async throws {
+        if desktop.requiresClosure { try await desktop.close() }
         let attempt = UUID(); installAttempt = operation == "install" ? attempt : nil
         activity = "Waiting for macOS authorization…"
         defer { installAttempt = nil; activity = "" ; refreshLocal() }

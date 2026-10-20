@@ -1,13 +1,15 @@
 import AppKit
 import SwiftUI
 import Darwin
+import UniformTypeIdentifiers
 
 extension ProtectedWire {
     static func storageChallenge(_ value: Wire, request: Wire, origin: String, user: String) throws -> Data {
         let base = ["schemaVersion", "id", "nonce", "serverOrigin", "serverId", "userId", "deviceId",
                     "keyReference", "wrappingFingerprint", "issuedAtMs", "expiresAtMs"]
         guard exact(value, base + ["operation", "workspaceId", "label", "capacityGiB"]),
-              value["operation"].text == "provision", value["workspaceId"] == request["workspaceId"],
+              ["provision", "open"].contains(value["operation"].text), value["operation"] == request["operation"],
+              value["workspaceId"] == request["workspaceId"],
               value["label"] == request["label"], value["capacityGiB"] == request["capacityGiB"],
               uuid(value["workspaceId"]), text(value["label"], max: 120),
               integer(value["capacityGiB"]), (64...512).contains(value["capacityGiB"].integer),
@@ -28,7 +30,7 @@ extension ProtectedWire {
 /// bounded result once started; no shell, argv password or persistent key.
 @MainActor enum NativeWorkspaceImage {
     static func run(_ request: Wire, admission: @MainActor () throws -> Void = {}) async throws -> Wire {
-        guard NativeServer.canManage, ["create", "status"].contains(request["operation"].text),
+        guard NativeServer.canManage, ["create", "status", "attach", "detach"].contains(request["operation"].text),
               ProtectedWire.uuid(request["workspaceId"]),
               try await NativeServer.process("/usr/bin/codesign",
                 ["--verify", "--deep", "--strict", "-R", NativeServer.requirement, NativeServer.application]) == 0 else {
@@ -100,22 +102,13 @@ extension ProtectedWire {
 }
 
 @MainActor enum NativeWorkspaceProvision {
-    static func run(model: JosiModel, request: Wire) async throws -> String {
+    static func authorize(model: JosiModel, request: Wire) async throws -> (projection: Wire, lease: ApprovalLease) {
         guard model.isAdministrator, NativeProtectedApproval.available, let api = model.api, let parent = NSApp.keyWindow else {
             throw JosiError(message: "Use the installed Josi app, an enrolled Mac and Touch ID to prepare workspace storage.")
         }
         let user = model.user["id"].text, workspaceID = try api.uuid(request["workspaceId"].text)
         func current() throws {
             guard model.api === api, model.user["id"].text == user, parent.isVisible, !Task.isCancelled else { throw approvalUnavailable() }
-        }
-        let local = try await NativeWorkspaceImage.status(workspaceID)
-        try current()
-        if local["state"].text == "image_ready" && local["imageCreated"].flag && !local["mounted"].flag
-            && local["capacityGiB"] == request["capacityGiB"] {
-            return "Encrypted storage is already prepared and closed."
-        }
-        guard local["state"].text == "uninitialized", !local["imageCreated"].flag, !local["mounted"].flag else {
-            throw JosiError(message: "This workspace has existing or unfinished storage. It needs inspection before setup can continue.")
         }
         let prepared = try await api.request("/admin/automation/storage/prepare", method: "POST", body: request)
         let challenge = prepared["challenge"], id = try api.uuid(challenge["id"].text)
@@ -132,12 +125,17 @@ extension ProtectedWire {
         let lease = try ApprovalLease(challenge)
         try current(); try lease.check()
         let key = NativeKeyPort(identity: ProtectedWire.identity(challenge)); port = key
+        let opening = request["operation"].text == "open"
         guard case .object(var presentation) = challenge else { throw approvalUnavailable() }
         presentation["purpose"] = "workspace.storage"
         presentation["presentation"] = [
-            "wording": .string("Prepare \(request["label"].text) on this Mac"),
-            "meaning": .string("Create a separate encrypted storage volume with a maximum capacity of \(request["capacityGiB"].integer) GiB.\nWorkspace: \(workspaceID)\nThe disk grows as data is added. Its password remains in this server’s Vault.\nThe storage stays closed after preparation."),
-            "advisory": .array(["This prepares storage only. It does not start a desktop or grant browser, app, file or network access.",
+            "wording": .string("\(opening ? "Open" : "Prepare") \(request["label"].text) on this Mac"),
+            "meaning": .string("\(opening ? "Open the separate encrypted workspace" : "Create a separate encrypted storage volume") with a maximum capacity of \(request["capacityGiB"].integer) GiB.\nWorkspace: \(workspaceID)\nIts password remains in this server’s Vault.\n" + (opening
+                ? "This development desktop stays open while Josi maintains its Vault connection, for up to two hours. You can close it at any time."
+                : "The storage stays closed after preparation.")),
+            "advisory": .array([.string(opening
+                ? "This opens a separate development desktop. It grants no automated browser, app, file or network access. Its network and host sharing are disabled."
+                : "This prepares storage only. It does not start a desktop or grant browser, app, file or network access."),
                                "Keep the Vault and your recovery material. If setup is interrupted, resume this same workspace rather than create another."]),
         ]
         let window = NativeApprovalWindow(challenge: .object(presentation), lease: lease, cancelAuthentication: { key.cancel() })
@@ -149,12 +147,12 @@ extension ProtectedWire {
         let signature = try ProtectedWire.signature(signed, host: true)
         try current(); try window.current()
         window.phase = "saving"; committed = true
-        var projection = try await api.request("/admin/automation/storage/\(id)/provision", method: "POST", body: [
+        var projection = try await api.request("/admin/automation/storage/\(id)/\(opening ? "open" : "provision")", method: "POST", body: [
             "proof": ["challengeDigest": .string(ProtectedWire.digest(message)), "signature": .string(signature)],
         ])
         defer { projection = .null }
         try current(); try window.current()
-        guard ProtectedWire.exact(projection, ["schemaVersion", "challengeId", "workspace", "expiresAtMs", "imagePassword", "executionEnabled"]),
+        guard ProtectedWire.exact(projection, ["schemaVersion", "challengeId", "workspace", "expiresAtMs", "imagePassword", "executionEnabled"] + (opening ? ["openSession"] : [])),
               projection["schemaVersion"] == .number(1), projection["challengeId"].text == id,
               projection["expiresAtMs"] == challenge["expiresAtMs"], projection["executionEnabled"] == .bool(false),
               projection["workspace"]["workspaceId"] == request["workspaceId"], projection["workspace"]["label"] == request["label"],
@@ -162,13 +160,33 @@ extension ProtectedWire {
               projection["workspace"]["identity"] == ProtectedWire.identity(challenge),
               ProtectedWire.matches(projection["imagePassword"], "^[A-Za-z0-9_-]{43}$") else { throw approvalUnavailable() }
         window.close(); key.cancel()
+        return (projection, lease)
+    }
+    static func run(model: JosiModel, request: Wire) async throws -> String {
+        guard let api = model.api else { throw approvalUnavailable() }
+        let user = model.user["id"], workspaceID = try api.uuid(request["workspaceId"].text)
+        let local = try await NativeWorkspaceImage.status(workspaceID)
+        if local["state"].text == "image_ready" && local["imageCreated"].flag && !local["mounted"].flag
+            && local["capacityGiB"] == request["capacityGiB"] {
+            return "Encrypted storage is already prepared and closed."
+        }
+        guard local["state"].text == "uninitialized", !local["imageCreated"].flag, !local["mounted"].flag,
+              case .object(var input) = request else {
+            throw JosiError(message: "This workspace has existing or unfinished storage. It needs inspection before setup can continue.")
+        }
+        input["operation"] = "provision"
+        var (projection, lease) = try await authorize(model: model, request: .object(input))
+        defer { projection = .null }
         model.activity = "Preparing encrypted workspace storage…"
         // The approved disk creation may finish after the short projection
         // lease. It never mounts the disk or starts automation.
         defer { model.activity = "" }
         let response = try await NativeWorkspaceImage.run(["schemaVersion": .number(1), "operation": "create",
             "workspaceId": .string(workspaceID), "capacityGiB": request["capacityGiB"], "imagePassword": projection["imagePassword"]],
-            admission: { try lease.check(); try current() })
+            admission: {
+                try lease.check()
+                guard model.api === api, model.user["id"] == user else { throw approvalUnavailable() }
+            })
         projection = .null
         let result = try NativeWorkspaceImage.result(response, id: workspaceID)
         guard result["state"].text == "image_ready", result["imageCreated"].flag, !result["mounted"].flag else {
@@ -180,6 +198,7 @@ extension ProtectedWire {
 
 struct NativeWorkspaceStorageView: View {
     @EnvironmentObject var model: JosiModel
+    @ObservedObject var desktop: NativeWorkspaceController
     @State private var inventory: Wire = .null
     @State private var label = "Josi Automation"
     @State private var capacity = 128
@@ -191,7 +210,22 @@ struct NativeWorkspaceStorageView: View {
     var body: some View {
         GroupBox("Separate desktop storage") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Prepare private encrypted storage on this Mac. The desktop and its control connection are still being built.").foregroundStyle(.secondary)
+                Text("Prepare a separate development desktop on this Mac. Browser and computer automation are not connected yet.").foregroundStyle(.secondary)
+                if desktop.requiresClosure {
+                    Text("\(desktop.label) · \(desktop.state.replacingOccurrences(of: "_", with: " "))").font(.headline)
+                    Text(desktop.progress)
+                    HStack {
+                        Button("Show Desktop") { model.run { try desktop.show() } }
+                            .disabled(model.busy || !["running", "paused"].contains(desktop.state))
+                        Button(desktop.state == "paused" ? "Resume" : "Pause") {
+                            model.run { if desktop.state == "paused" { try await desktop.resume() } else { try await desktop.pause() } }
+                        }.disabled(model.busy || !["running", "paused"].contains(desktop.state))
+                        Button(desktop.state == "needs_repair" ? "Close Again" : "Close Desktop") {
+                            model.run { try await desktop.close() }
+                        }.disabled(model.busy)
+                    }
+                    Divider()
+                }
                 TextField("Workspace name", text: $label).disabled(model.busy || pendingRequest != nil)
                 Picker("Enrolled Mac", selection: $device) {
                     Text("Choose this Mac’s enrollment").tag("")
@@ -205,7 +239,7 @@ struct NativeWorkspaceStorageView: View {
                     Button(pendingRequest == nil ? "Prepare Storage…" : "Retry Storage Preparation…") {
                         begin(pendingRequest ?? ["deviceId": .string(device), "workspaceId": .string(UUID().uuidString.lowercased()),
                                "label": .string(label.trimmingCharacters(in: .whitespacesAndNewlines)), "capacityGiB": .number(Double(capacity))])
-                    }.disabled(model.busy || inventory == .null || (pendingRequest == nil && (device.isEmpty || label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)) || !NativeProtectedApproval.available)
+                    }.disabled(model.busy || desktop.requiresClosure || inventory == .null || (pendingRequest == nil && (device.isEmpty || label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)) || !NativeProtectedApproval.available)
                     Button("Refresh") { model.run { try await load() } }.disabled(model.busy)
                 }
                 if let pendingRequest {
@@ -219,10 +253,16 @@ struct NativeWorkspaceStorageView: View {
                             Text("\(entry["capacityGiB"].integer) GiB maximum · \(entry["workspaceId"].text)").font(.caption).textSelection(.enabled)
                         }
                         Spacer()
-                        Button("Resume Preparation…") {
-                            begin(["deviceId": entry["identity"]["deviceId"], "workspaceId": entry["workspaceId"],
-                                   "label": entry["label"], "capacityGiB": entry["capacityGiB"]])
-                        }.disabled(model.busy || !NativeProtectedApproval.available)
+                        VStack(alignment: .trailing) {
+                            Button("Resume Storage Preparation…") {
+                                begin(["deviceId": entry["identity"]["deviceId"], "workspaceId": entry["workspaceId"],
+                                       "label": entry["label"], "capacityGiB": entry["capacityGiB"]])
+                            }
+                            HStack {
+                                Button("Install macOS…") { openDesktop(entry, installing: true) }
+                                Button("Open Desktop…") { openDesktop(entry, installing: false) }
+                            }
+                        }.disabled(model.busy || desktop.requiresClosure || !NativeProtectedApproval.available)
                     }
                 }
                 if !note.isEmpty { Text(note).textSelection(.enabled) }
@@ -249,5 +289,20 @@ struct NativeWorkspaceStorageView: View {
             }
             try await load()
         }
+    }
+    private func openDesktop(_ entry: Wire, installing: Bool) {
+        guard !model.busy, !desktop.requiresClosure else { return }
+        var restore: URL?
+        if installing {
+            let panel = NSOpenPanel()
+            panel.title = "Choose the macOS restore image for this development desktop"
+            panel.message = "Choose an Apple .ipsw restore image. Josi installs it in this separate workspace with networking and host sharing disabled."
+            panel.allowedContentTypes = [UTType(filenameExtension: "ipsw") ?? .data]
+            panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+            guard panel.runModal() == .OK, let selected = panel.url else { return }
+            restore = selected
+        }
+        let selected = restore
+        model.run { try await desktop.open(model: model, entry: entry, restore: selected) }
     }
 }

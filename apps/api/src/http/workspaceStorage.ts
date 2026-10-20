@@ -1,11 +1,15 @@
 import { createHash, createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
-import { vaultRecords, type Db, type MasterKey, type ProtectedConfirmationIdentity } from '@josi-ce/core';
+import { vaultRecords, type Db, type MasterKey, type ProtectedConfirmationIdentity, type VaultRecordReference } from '@josi-ce/core';
 import { isProtectedControlOrigin, parseWorkspaceStorageChallenge, workspaceStorageMessage, type WorkspaceStorageChallenge } from '@josi-ce/protocol';
 import { ProtectedChangeError } from './protectedChanges.js';
 
 interface Pending {
   actor: string; session: string; challenge: WorkspaceStorageChallenge;
   deadline: number; previousWall: number; busy: boolean; timer: ReturnType<typeof setTimeout>;
+}
+interface OpenSession {
+  id: string; actor: string; session: string; identity: ProtectedConfirmationIdentity; reference: VaultRecordReference;
+  workspaceId: string; deadline: number; expires: number; leaseUntil: number; leaseDeadline: number; previousWall: number;
 }
 const uuid = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
 const exact = (v: unknown, keys: string[]): v is Record<string, unknown> => !!v && typeof v === 'object'
@@ -18,6 +22,7 @@ const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).dige
 export class WorkspaceStorage {
   private pending = new Map<string, Pending>();
   private preparing = new Set<string>();
+  private opened = new Map<string, OpenSession>();
   constructor(private db: Db, private master: () => MasterKey, private origin: string) {}
   private async account(tx: Db, actor: string, session: string) {
     if (!uuid(actor) || !uuid(session)) throw new ProtectedChangeError(403, 'Sign in as the administrator again.');
@@ -42,7 +47,7 @@ export class WorkspaceStorage {
       verifyFreshAdministrator: denied, verifyEnrollmentConsent: denied, verifyProtectedRevocation: denied, verifyHostProjection: denied });
   }
   inventory(actor: string, session: string) {
-    return this.records(actor, session).workspaceStorage({ verifyProvision: denied }).inventory(actor);
+    return this.records(actor, session).workspaceStorage({ verifyRequest: denied }).inventory(actor);
   }
   private forget(id: string) {
     const p = this.pending.get(id);
@@ -59,8 +64,13 @@ export class WorkspaceStorage {
   }
   async prepare(actor: string, session: string, input: unknown) {
     for (const p of this.pending.values()) { try { this.live(p); } catch { /* Pruned. */ } }
-    if (!exact(input, ['deviceId', 'workspaceId', 'label', 'capacityGiB']) || !uuid(input.deviceId)) {
+    this.pruneOpened();
+    if (!exact(input, ['operation', 'deviceId', 'workspaceId', 'label', 'capacityGiB']) || !uuid(input.deviceId)
+      || !['provision', 'open'].includes(String(input.operation))) {
       throw new ProtectedChangeError(400, 'Choose an enrolled Mac, workspace name and capacity.');
+    }
+    if (input.operation === 'open' && [...this.opened.values()].some(s => s.actor === actor && s.identity.deviceId === input.deviceId)) {
+      throw new ProtectedChangeError(409, 'Close this Mac’s existing workspace session before opening another.');
     }
     if (this.preparing.has(actor) || [...this.pending.values()].some(p => p.actor === actor)) throw new ProtectedChangeError(409, 'Finish or cancel the current storage request first.');
     if (this.pending.size + this.preparing.size >= 32) throw new ProtectedChangeError(429, 'Workspace setup is busy. Try again shortly.');
@@ -74,7 +84,7 @@ export class WorkspaceStorage {
       const now = Date.now();
       const challenge = parseWorkspaceStorageChallenge({ schemaVersion: 1, id: randomUUID(), nonce: randomBytes(32).toString('base64url'),
         ...device.identity, keyReference: inventory.reference, wrappingFingerprint: device.wrappingFingerprint,
-        issuedAtMs: now, expiresAtMs: now + 60_000, operation: 'provision',
+        issuedAtMs: now, expiresAtMs: now + 60_000, operation: input.operation,
         workspaceId: input.workspaceId, label: input.label, capacityGiB: input.capacityGiB });
       if (!challenge) throw new ProtectedChangeError(400, 'Use a clear name of up to 120 characters and capacity from 64 to 512 GiB.');
       const timer = setTimeout(() => this.forget(challenge.id), 60_000); timer.unref();
@@ -90,11 +100,12 @@ export class WorkspaceStorage {
   cancel(actor: string, session: string, id: string) {
     this.owned(actor, session, id); this.forget(id); return { cancelled: true };
   }
-  async provision(actor: string, session: string, id: string, proof: unknown) {
+  async authorize(actor: string, session: string, id: string, proof: unknown, operation: 'provision' | 'open') {
     const p = this.owned(actor, session, id); p.busy = true;
     try {
+      if (p.challenge.operation !== operation) throw new ProtectedChangeError(403, 'Use the exact reviewed storage operation.');
       const records = this.records(actor, session), devices = this.devices(records);
-      const result = await records.workspaceStorage({ verifyProvision: async (tx, c, receipt) => {
+      const result = await records.workspaceStorage({ verifyRequest: async (tx, c, receipt) => {
         this.live(p);
         if (workspaceStorageMessage(c) !== workspaceStorageMessage(p.challenge) || !exact(receipt, ['challengeDigest', 'signature'])
           || receipt.challengeDigest !== hash(workspaceStorageMessage(c)) || typeof receipt.signature !== 'string'
@@ -111,12 +122,62 @@ export class WorkspaceStorage {
           x: raw.subarray(1, 33).toString('base64url'), y: raw.subarray(33).toString('base64url') } });
         if (!verify('sha256', Buffer.from(workspaceStorageMessage(c)), key, signature)) throw new ProtectedChangeError(403, 'Authenticate with the enrolled Mac’s hardware key.');
         this.live(p);
-      } }).provision(actor, p.challenge, proof);
+      } }).authorize(actor, p.challenge, proof);
       this.live(p);
+      let opened: { sessionId: string; expiresAtMs: number; leaseUntilMs: number } | null = null;
+      if (operation === 'open') {
+        this.pruneOpened();
+        if (this.opened.size >= 32 || [...this.opened.values()].some(s => s.actor === actor && s.identity.deviceId === p.challenge.deviceId)) {
+          throw new ProtectedChangeError(409, 'Close the existing workspace session first.');
+        }
+        const wall = Date.now(), mono = performance.now(), c = p.challenge, sessionId = randomUUID();
+        const s: OpenSession = { id: sessionId, actor, session, identity: {
+          serverOrigin: c.serverOrigin, serverId: c.serverId, userId: c.userId, deviceId: c.deviceId,
+        }, reference: c.keyReference, workspaceId: c.workspaceId, expires: wall + 2 * 60 * 60_000,
+          deadline: mono + 2 * 60 * 60_000, leaseUntil: wall + 10_000, leaseDeadline: mono + 10_000, previousWall: wall };
+        this.opened.set(sessionId, s);
+        opened = { sessionId, expiresAtMs: s.expires, leaseUntilMs: s.leaseUntil };
+      }
       // This deliberate native-only projection must never reach logs/chat.
       // The typed Secret still redacts accidental serialization elsewhere.
       return { schemaVersion: 1, challengeId: id, workspace: result.workspace, expiresAtMs: p.challenge.expiresAtMs,
-        imagePassword: result.imagePassword.reveal(), executionEnabled: false };
+        imagePassword: result.imagePassword.reveal(), executionEnabled: false, ...(opened ? { openSession: opened } : {}) };
     } finally { this.forget(id); }
+  }
+  private openedLive(s: OpenSession) {
+    const wall = Date.now(), mono = performance.now();
+    if (this.opened.get(s.id) !== s || wall < s.previousWall || wall >= s.expires || mono >= s.deadline
+      || wall >= s.leaseUntil || mono >= s.leaseDeadline) {
+      this.opened.delete(s.id);
+      throw new ProtectedChangeError(409, 'The desktop connection ended. Close the workspace and authenticate again.');
+    }
+    s.previousWall = wall;
+  }
+  private pruneOpened() {
+    for (const s of this.opened.values()) { try { this.openedLive(s); } catch { /* No credential retained. */ } }
+  }
+  async renew(actor: string, session: string, id: string) {
+    const s = this.opened.get(id);
+    if (!uuid(id) || !s || s.actor !== actor || s.session !== session || !this.db.transaction) throw new ProtectedChangeError(409, 'The desktop connection is unavailable.');
+    try {
+      this.openedLive(s);
+      const records = this.records(actor, session);
+      await this.db.transaction(async tx => {
+        const current = await this.devices(records).resolveDeviceKey(tx, s.identity), a = current.reference, b = s.reference;
+        if (a.recordId !== b.recordId || a.version !== b.version || a.digest !== b.digest || a.epoch !== b.epoch) {
+          throw new ProtectedChangeError(409, 'Vault authority changed. Close the workspace and authenticate again.');
+        }
+        this.openedLive(s);
+      });
+      this.openedLive(s);
+      const wall = Date.now(), mono = performance.now();
+      s.leaseUntil = Math.min(wall + 10_000, s.expires); s.leaseDeadline = Math.min(mono + 10_000, s.deadline);
+      return { sessionId: id, workspaceId: s.workspaceId, leaseUntilMs: s.leaseUntil, expiresAtMs: s.expires, executionEnabled: false };
+    } catch (error) { this.opened.delete(id); throw error; }
+  }
+  close(actor: string, session: string, id: string) {
+    const s = this.opened.get(id);
+    if (s && (s.actor !== actor || s.session !== session)) throw new ProtectedChangeError(403, 'This desktop connection belongs to another sign-in.');
+    this.opened.delete(id); return { closed: true };
   }
 }

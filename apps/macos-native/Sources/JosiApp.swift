@@ -15,6 +15,17 @@ import SwiftUI
             alert.informativeText = "Josi is applying your request. Server changes may still be running."
             alert.runModal(); return .terminateCancel
         }
+        if let model, model.desktop.requiresClosure {
+            Task {
+                do { try await model.desktop.close(); sender.reply(toApplicationShouldTerminate: true) }
+                catch {
+                    let alert = NSAlert(); alert.messageText = "The separate desktop still needs to close."
+                    alert.informativeText = "Open Automation and choose Close Again. Josi retained the desktop and storage handles."
+                    alert.runModal(); sender.reply(toApplicationShouldTerminate: false)
+                }
+            }
+            return .terminateLater
+        }
         return .terminateNow
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -469,7 +480,7 @@ struct AutomationView: View {
                     if model.automation["workspaces"].list.isEmpty { Text("No automation desktop is connected to your account.") }
                 } else { Text("Automation control is not connected on this server yet. Your other Josi work can continue.").foregroundStyle(.secondary) }
                 if model.isAdministrator {
-                    NativeWorkspaceStorageView()
+                    NativeWorkspaceStorageView(desktop: model.desktop)
                     NativeAuthoritySettings()
                 }
                 Button("Refresh") { model.run { try await model.loadAutomation() } }.disabled(model.busy)

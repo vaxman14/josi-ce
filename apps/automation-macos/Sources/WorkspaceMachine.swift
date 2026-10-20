@@ -50,7 +50,7 @@ final class WorkspaceMachine: NSObject, @preconcurrency VZVirtualMachineDelegate
     init(authority: WorkspaceMachineAuthority) { self.authority = authority }
 
     private func change(_ state: State) { self.state = state; stateChanged?(state) }
-    private func privateFile(_ relative: String, root: MountedAutomationWorkspace) throws -> URL {
+    private static func privateFile(_ relative: String, root: MountedAutomationWorkspace) throws -> URL {
         guard !relative.contains("/"), !relative.hasPrefix("."), relative.utf8.count < 100 else { throw WorkspaceMachineError.invalidWorkspace }
         let path = root.mountRoot.appendingPathComponent(relative)
         var rootInfo = stat(), info = stat()
@@ -62,7 +62,7 @@ final class WorkspaceMachine: NSObject, @preconcurrency VZVirtualMachineDelegate
               info.st_mode & 0o077 == 0, info.st_nlink == 1 else { throw WorkspaceMachineError.invalidWorkspace }
         return path
     }
-    private func configuration(_ workspace: MountedAutomationWorkspace) throws -> VZVirtualMachineConfiguration {
+    static func configuration(_ workspace: MountedAutomationWorkspace) throws -> VZVirtualMachineConfiguration {
         guard VZVirtualMachine.isSupported, workspace.mountRoot.isFileURL,
               workspace.hardwareModel.count <= 64 * 1024, workspace.machineIdentifier.count <= 64 * 1024,
               let model = VZMacHardwareModel(dataRepresentation: workspace.hardwareModel), model.isSupported,
@@ -107,7 +107,7 @@ final class WorkspaceMachine: NSObject, @preconcurrency VZVirtualMachineDelegate
             try await authority.requireCurrent(volume)
             // This initializer documents main-queue callbacks, matching our
             // MainActor isolation and the delegate's preconcurrency conformance.
-            let vm = VZVirtualMachine(configuration: try configuration(volume))
+            let vm = VZVirtualMachine(configuration: try Self.configuration(volume))
             vm.delegate = self; machine = vm
             try await authority.requireCurrent(volume)
             try await vm.start()

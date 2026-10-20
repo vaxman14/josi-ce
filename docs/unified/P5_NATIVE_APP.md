@@ -36,7 +36,7 @@ The staged signed app actually launched through the computer-use tool and displa
 
 ## Remaining work
 
-New permission-target selection, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and automation-desktop integration remain open. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design. Device enrollment is assembled; actual biometric/local-and-remote acceptance and abandoned-key reconciliation remain open.
+New permission-target selection, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and production automation transport remain open. The development desktop's native storage/provisioning/lifecycle is now assembled in source; see [P6/P8 evidence](P6_P8_NATIVE_COMPONENTS.md) for its limits and remaining recovery work. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design. Device enrollment is assembled; actual biometric/local-and-remote acceptance and abandoned-key reconciliation remain open.
 
 The follow-up work/task and rule-editor sources compiled successfully with Swift 6. No authenticated functional flow or model review was run on the owner's server. The native package version advances to `0.7.0-native.2`; its installer version is `0.7.0.3`.
 

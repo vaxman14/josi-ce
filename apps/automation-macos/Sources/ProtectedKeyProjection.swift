@@ -328,7 +328,7 @@ final class ProtectedKeyProjection {
               let issued = integer(fields[9]), let expires = integer(fields[10]),
               issued <= now, expires > now, expires > issued, expires - issued <= 60_000 else { throw ProtectedKeyError.invalid }
         if storage {
-            guard fields[11] as? String == "provision",
+            guard let operation = fields[11] as? String, ["provision", "open"].contains(operation),
                   let workspace = fields[12] as? String, UUID(uuidString: workspace)?.uuidString.lowercased() == workspace,
                   let label = fields[13] as? String, !label.isEmpty, label.utf16.count <= 120,
                   label.trimmingCharacters(in: .whitespacesAndNewlines) == label,
@@ -351,7 +351,7 @@ final class ProtectedKeyProjection {
                   generation == ownGeneration, hostAuthentication === context, !Task.isCancelled else { throw ProtectedKeyError.expired }
         }
         let reason = storage
-            ? "Prepare the separate Josi workspace storage you reviewed, using its key from \(identity.serverOrigin)."
+            ? "Authorize the separate Josi workspace storage operation you reviewed, using its key from \(identity.serverOrigin)."
             : "Connect this enrolled Mac to \(identity.serverOrigin) for a protected Josi review. This does not approve a rule change."
         guard try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) else {
             throw ProtectedKeyError.cancelled

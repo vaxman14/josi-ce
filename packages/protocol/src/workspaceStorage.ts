@@ -3,7 +3,7 @@ import { parseProtectedHostChallenge, type ProtectedHostChallenge } from './prot
 /** This authorizes storage provisioning only, never desktop/browser execution.
  * A separate signature domain prevents reuse as a protected-rule approval. */
 export interface WorkspaceStorageChallenge extends ProtectedHostChallenge {
-  operation: 'provision';
+  operation: 'provision' | 'open';
   workspaceId: string;
   label: string;
   capacityGiB: number;
@@ -12,12 +12,12 @@ export function parseWorkspaceStorageChallenge(value: unknown): WorkspaceStorage
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const { operation, workspaceId, label, capacityGiB, ...host } = value as Record<string, unknown>;
   const parsed = parseProtectedHostChallenge(host);
-  if (!parsed || operation !== 'provision' || typeof workspaceId !== 'string'
+  if (!parsed || !['provision', 'open'].includes(String(operation)) || typeof workspaceId !== 'string'
     || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(workspaceId)
     || typeof label !== 'string' || !label || label.trim() !== label || label.length > 120
     || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(label)
     || !Number.isSafeInteger(capacityGiB) || Number(capacityGiB) < 64 || Number(capacityGiB) > 512) return null;
-  return { ...parsed, operation, workspaceId, label, capacityGiB: Number(capacityGiB) };
+  return { ...parsed, operation: operation as WorkspaceStorageChallenge['operation'], workspaceId, label, capacityGiB: Number(capacityGiB) };
 }
 export function workspaceStorageMessage(value: WorkspaceStorageChallenge): string {
   const c = parseWorkspaceStorageChallenge(value);
