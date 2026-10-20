@@ -29,6 +29,7 @@ struct NativeWorkDetails: View {
                     }
                 }
                 GroupBox("Latest progress notes") { WorkNotes(notes: goal["checkpoint"]) }
+                NativeWorkChannelProgress(goalId: goal.identifier)
                 WorkMemoryControls(goal: goal)
                 if !["completed", "cancelled"].contains(goal["state"].text) {
                     WorkOutcomeEditor(goal: goal)

@@ -125,3 +125,17 @@ Delivered `JosiDrive/Artifacts/josi-native-unified-20261020-8/Install Josi.pkg` 
 ## Native live progress — subsequent source checkpoint
 
 Chat and Tasks subscribe to the existing owner-authenticated work-goal stream while visible. They refetch saved goal state on changes, coalesce notifications, reject lower revisions and retain polling for older servers and interrupted reads. The footer shows live versus periodic status. Connection changes, inactive views and session revocation end the stream; revoked sessions cannot repopulate the goal view from a pending response. See [P11](P11_TELEGRAM_PROGRESS.md) for the exact scope. The complete native app compiled with Swift 6; live server acceptance remains deferred.
+
+### Native.9 artifact receipt
+
+Delivered `JosiDrive/Artifacts/josi-native-unified-20261020-9/Install Josi.pkg` (698,006,560 bytes), built from clean commit `469b5d36ed03c3ca587a578951af292fe9466351`; app `0.7.0-native.9`, bundle `20261020.9`, package `0.7.0.10`. Adds native live progress and the canonical application readiness connection. All 17,624 extracted entries matched staged bytes/modes/links; extracted app and installer signatures passed under Socal. Exact source, retained runtime sources, profile, integrity receipt and checksums accompany it.
+
+The signed staging candidate was opened through the native-app tool. Its Welcome to Josi screen appeared, and process inspection confirmed the executable under the exact `native.9` staging path was running. This verifies launch only: the package was not installed or notarized, and no authenticated setup, account/provider action, VM connection or automation was exercised.
+
+## Native Task Manager details — subsequent source checkpoint
+
+Compact chat cards now follow the current part of longer plans and omit retired steps from the compact checklist. The full manager exposes step dependencies, timed rechecks, retired-step history, automatic continuation limits/schedule, and the original saved verification task's attempts/approvals through existing owned APIs. Standalone failed tasks appear in Needs You / Waiting and History; tasks already represented by goals are not duplicated as standalone cards.
+
+An expanded delivery section follows the existing Telegram receipt projection every fifteen seconds while the app is active. It distinguishes pending, current, failed, uncertain and disconnected delivery without resending anything; failed status reads are labeled stale. The manager can open the existing local desktop viewer when that desktop is running or paused. This is the current local desktop, not a new remote stream or a claim that it belongs to a particular goal.
+
+The complete native app compiled with Swift 6. No live task, channel message, desktop action or authenticated API flow was executed. These detail changes are later than `native.9` and remain subject to the integrated functional pass.

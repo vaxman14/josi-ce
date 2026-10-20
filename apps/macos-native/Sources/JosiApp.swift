@@ -368,6 +368,16 @@ struct GoalCard: View {
     var compact = false
     @State private var instruction = ""
     @State private var cancelling = false
+    private var visibleSteps: [Wire] {
+        guard compact else { return goal["steps"].list }
+        let required = goal["steps"].list.filter { $0["state"].text != "skipped" }
+        let active = required.firstIndex { $0["state"].text == "working" }
+            ?? required.firstIndex { $0["state"].text != "verified" } ?? max(0, required.count - 1)
+        return Array(required.dropFirst(max(0, active - 1)).prefix(4))
+    }
+    private func stepLabel(_ state: String) -> String {
+        ["pending": "Pending", "working": "Working", "blocked": "Waiting", "verified": "Verified", "skipped": "Retired"][state] ?? state
+    }
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
@@ -379,20 +389,37 @@ struct GoalCard: View {
                 Text("\(goal["verifiedSteps"].integer)/\(goal["totalSteps"].integer) verified")
                     .font(.subheadline.bold())
                 if !goal["activity"].text.isEmpty { Text(goal["activity"].text).foregroundStyle(.secondary) }
-                ForEach(Array(goal["steps"].list.prefix(compact ? 4 : 40).enumerated()), id: \.offset) { _, step in
+                ForEach(visibleSteps, id: \.identifier) { step in
                     HStack(alignment: .top) {
                         Image(systemName: step["state"].text == "verified" ? "checkmark.circle.fill" : step["state"].text == "skipped" ? "minus.circle" : "circle")
                             .foregroundStyle(step["state"].text == "verified" ? Color.green : Color.secondary)
                         Text(step["title"].text).strikethrough(step["state"].text == "skipped")
                         Spacer()
-                        if step["state"].text == "working" { Text("Working").font(.caption).foregroundStyle(.secondary) }
+                        Text(stepLabel(step["state"].text)).font(.caption).foregroundStyle(.secondary)
                     }
                     if !compact, !step["blockedReason"].text.isEmpty {
                         Text(step["blockedReason"].text).font(.caption).foregroundStyle(.secondary)
+                        if !step["blockedUntil"].text.isEmpty {
+                            Text("Next check: " + nativeDate(step["blockedUntil"].text)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if !compact, !step["dependsOn"].list.isEmpty {
+                        Text("After: " + step["dependsOn"].list.map { dependency in
+                            goal["steps"].list.first { $0["id"] == dependency }?["title"].text ?? "Unavailable step"
+                        }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !compact, ProtectedWire.uuid(step["evidence"]), step["evidence"] == step["taskId"] {
+                        NativeTaskReceipt(taskId: step["evidence"].text, revision: goal["revision"].integer, title: "View Saved Verification Task")
                     }
                     if !compact, step["retirement"] != .null {
                         Text("Retired: " + step["retirement"]["reason"].text).font(.caption).foregroundStyle(.secondary)
                     }
+                }
+                if compact, goal["totalSteps"].integer > visibleSteps.count {
+                    Text("Showing the current part of the plan. All steps are in Task Manager.").font(.caption).foregroundStyle(.secondary)
+                }
+                if goal["retiredSteps"].integer > 0 {
+                    Text("\(goal["retiredSteps"].integer) retired steps retained in history.").font(.caption).foregroundStyle(.secondary)
                 }
                 if goal["continuation"]["kind"].text == "question" { Text(goal["continuation"]["text"].text).font(.callout.bold()) }
                 if goal["continuation"]["kind"].text == "wait" {
@@ -404,6 +431,14 @@ struct GoalCard: View {
                     Text("Last saved: " + nativeDate(goal["updatedAt"].text)).font(.caption).foregroundStyle(.secondary)
                 }
                 if !compact {
+                    if goal["automaticWork"] != .null, !["completed", "cancelled"].contains(goal["state"].text) {
+                        let work = goal["automaticWork"]
+                        Text("Automatic continuations since verified progress: \(work["segmentsSinceVerifiedProgress"].integer) of \(work["segmentLimit"].integer).")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if !work["nextCheckAt"].text.isEmpty, ["planning", "working"].contains(goal["state"].text) {
+                            Text("Scheduled to continue: " + nativeDate(work["nextCheckAt"].text)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                     NativeWorkDetails(goal: goal)
                     TextField("Instructions for Josi", text: $instruction).textFieldStyle(.roundedBorder)
                     HStack {
@@ -441,27 +476,44 @@ struct TaskManagerView: View {
             }
         }
     }
+    private var standaloneTasks: [Wire] {
+        let linked = Set(model.goals.flatMap { $0["steps"].list.map { $0["taskId"].text } })
+        return model.tasks.filter { task in
+            guard !linked.contains(task["id"].text) else { return false }
+            let state = task["state"].text
+            switch filter {
+            case "history": return ["closed", "confirmed", "cancelled", "failed"].contains(state)
+            case "attention": return ["held", "awaiting_approval", "awaiting_owner", "failed"].contains(state)
+            default: return !["closed", "confirmed", "cancelled", "failed"].contains(state)
+            }
+        }
+    }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 JosiHeading(title: "Task Manager", subtitle: "What Josi is working on, and what needs your attention.")
+                NativeTaskDesktopViewer(desktop: model.desktop)
                 Picker("Work", selection: $filter) {
                     Text("Active").tag("active"); Text("Needs You / Waiting").tag("attention"); Text("History").tag("history")
                 }.pickerStyle(.segmented)
-                if visible.isEmpty {
+                if visible.isEmpty && standaloneTasks.isEmpty {
                     Text("No work in this view.").foregroundStyle(.secondary)
                 }
                 ForEach(visible, id: \.identifier) { GoalCard(goal: $0) }
-                if filter != "history" && !model.tasks.isEmpty {
-                    Text("Tasks").font(.title2.bold())
-                    ForEach(model.tasks.filter { !["closed", "confirmed", "cancelled", "failed"].contains($0["state"].text) }, id: \.identifier) { task in
+                if !standaloneTasks.isEmpty {
+                    Text("Other tasks").font(.title2.bold())
+                    ForEach(standaloneTasks, id: \.identifier) { task in
                         GroupBox {
-                            HStack {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(task["title"].text.isEmpty ? task["template_key"].text : task["title"].text).font(.headline)
                                     Text(task["state"].text.replacingOccurrences(of: "_", with: " ")).foregroundStyle(.secondary)
                                 }
                                 Spacer()
+                                }
+                                NativeTaskReceipt(taskId: task["id"].text, revision: task["attempt_count"].integer,
+                                                  updatedAt: task["updated_at"].text)
                             }.padding(8)
                         }
                     }
