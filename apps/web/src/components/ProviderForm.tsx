@@ -559,8 +559,8 @@ function SubscriptionSignIn({ info, loginPath, compact, onSignedIn }: {
       ) : (
         <>
           <p className="text-sm text-muted-foreground">
-            You will get a link and a one-time code to approve in your own browser. Josi never sees
-            your password and never stores your login — OpenAI's own CLI keeps it, on this server.
+            You will get a link and a one-time code to approve in your own browser.
+            OpenAI handles your password. Current Josi servers save the resulting subscription login in the Vault.
           </p>
           <Button type="button" disabled={busy} onClick={() => void start()}>
             {busy ? 'Starting…' : 'Sign in with ChatGPT'}

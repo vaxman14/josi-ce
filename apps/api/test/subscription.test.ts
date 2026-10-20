@@ -138,7 +138,7 @@ describe('what a CE build offers (L3.7)', () => {
     // must not still claim the path cannot act.
     expect(chatgpt.reason).toContain('Tools work on this path');
     expect(chatgpt.reason).not.toContain('cannot call tools');
-    expect(chatgpt.reason).toContain('never sees, stores or forwards your login');
+    expect(chatgpt.reason).toContain('saved in the Vault');
   });
 
   it('offers Anthropic through the first-party CLI, and says what that means (L3.5)', async () => {
@@ -154,7 +154,8 @@ describe('what a CE build offers (L3.7)', () => {
     const claude = res.body.subscriptionOptions.find((o: any) => o.id === 'claude_subscription');
     expect(claude.available).toBe(true);
     expect(claude.provider).toBe('anthropic_subscription');
-    expect(claude.reason).toMatch(/never sees, stores or forwards your login/);
+    expect(claude.reason).toContain('in the Vault');
+    expect(claude.reason).toContain('setup-token');
     expect(claude.reason).toMatch(/per installation/);
     expect(claude.reason).toMatch(/Tools work on\s+this path/);
     expect(claude.reason).not.toMatch(/cannot call tools/);

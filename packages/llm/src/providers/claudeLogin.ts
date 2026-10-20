@@ -1,3 +1,7 @@
+// Legacy driver retained for migration/reference and existing parser fixtures.
+// Not mounted by setup/admin routes or used by the production model registry.
+// Current servers use claudeVaultStatus and a canonical Vault setup token.
+//
 // Signing Claude Code in, from inside a container nobody has a shell into.
 //
 // This is the Codex story again with one real difference, and the difference is

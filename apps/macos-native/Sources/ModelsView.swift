@@ -298,16 +298,25 @@ struct NativeSubscriptionControls: View {
     @State private var generation = 0
     private var base: String { prefix + (provider == "anthropic_subscription" ? "/claude" : "") }
     private var supported: Bool { ["openai_subscription", "anthropic_subscription"].contains(provider) }
+    private var vaultClaude: Bool { provider == "anthropic_subscription" && status["connectionMethod"].text == "vault_setup_token" }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Sign in on the connected Josi server using your provider’s subscription. This is separate from an API key.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("Start Sign-In") { action("/login", method: "POST", body: [:]) }
+                if !vaultClaude && (provider != "anthropic_subscription" || status != .null) {
+                    Button("Start Sign-In") { action("/login", method: "POST", body: [:]) }
+                }
                 Button("Check Status") { action("/status") }
-                Button("Cancel Sign-In") { action("/login/cancel", method: "POST", body: [:]) }
+                if !vaultClaude && login != .null {
+                    Button("Cancel Sign-In") { action("/login/cancel", method: "POST", body: [:]) }
+                }
             }
-            if status != .null { Text(status["signedIn"].flag ? "Subscription login available" : "Subscription not signed in").font(.headline) }
+            if status != .null {
+                Text(status["signedIn"].flag
+                    ? (vaultClaude ? "Claude token saved in the Vault" : "Subscription login available")
+                    : "Subscription not connected").font(.headline)
+            }
             if !status["detail"].text.isEmpty {
                 Text(status["detail"].text).font(.caption).foregroundStyle(.secondary)
             }
@@ -318,7 +327,21 @@ struct NativeSubscriptionControls: View {
                 Button("Open Provider Sign-In Page") { NSWorkspace.shared.open(url) }
                 Text(url.host ?? "").font(.caption).foregroundStyle(.secondary)
             }
-            if provider == "anthropic_subscription", login["challenge"] != .null {
+            if vaultClaude {
+                Text("Run claude setup-token with Anthropic’s official CLI, complete its sign-in, then paste the subscription token here. An API key or one-time code will not work.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Link("Anthropic’s setup-token instructions",
+                     destination: URL(string: "https://code.claude.com/docs/en/authentication#generate-a-long-lived-token")!)
+                SecureField("Subscription setup token", text: $code)
+                    .disabled(status["busy"].flag)
+                Button(status["signedIn"].flag ? "Replace Saved Token" : "Save Token in Vault") {
+                    let value = code.trimmingCharacters(in: .whitespacesAndNewlines); code = ""
+                    action("/connect", method: "POST", body: ["token": .string(value)])
+                }.disabled(status["busy"].flag || !status["installed"].flag || status["credential"] == .null
+                    || code.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count < 16 || code.utf8.count > 16384)
+                Text("Saving does not verify the account. Use Test Model to confirm it works. Everyone using this server shares the subscription limits. Expired tokens must be replaced.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if provider == "anthropic_subscription", login["challenge"] != .null {
                 SecureField("Paste the one-time code from the provider", text: $code)
                 Button("Submit Sign-In Code") {
                     let value = code; code = ""
@@ -333,7 +356,7 @@ struct NativeSubscriptionControls: View {
                     alert.informativeText = "Josi will need a new provider sign-in before this subscription can answer tasks."
                     alert.addButton(withTitle: "Sign Out"); alert.addButton(withTitle: "Cancel")
                     if alert.runModal() == .alertFirstButtonReturn { action("/logout", method: "POST", body: [:]) }
-                }
+                }.disabled(status["busy"].flag)
             }
             if provider == "openai_subscription", status["credential"]["state"].text == "leased",
                status["credential"]["expiredLease"].flag || login["state"].text == "failed" {
@@ -345,6 +368,7 @@ struct NativeSubscriptionControls: View {
                 }
             }
         }.disabled(model.busy || !supported)
+        .task { action("/status") }
         .task(id: String(generation) + ":" + login["state"].text) {
             let own = generation
             while ["starting", "awaiting_approval", "awaiting_code", "verifying"].contains(login["state"].text) && !Task.isCancelled {
@@ -378,12 +402,14 @@ struct NativeSubscriptionControls: View {
         model.run {
             let path = route == "/status" && prefix == "/setup/subscription" && provider == "openai_subscription" ? base : base + route
             var submitted = body
-            if provider == "openai_subscription", method == "POST", ["/login", "/logout", "/reconcile"].contains(route), expected != .null {
-                submitted = ["expected": expected]
+            if method == "POST", ["/login", "/connect", "/logout", "/reconcile"].contains(route), expected != .null {
+                if case .object(var values) = submitted {
+                    values["expected"] = expected; submitted = .object(values)
+                } else { submitted = ["expected": expected] }
             }
             let result = try await api.request(path, method: method, body: submitted)
             guard model.api === api, model.user["id"] == user, generation == own else { return }
-            if route == "/status" { status = result["cli"] }
+            if route == "/status" || route == "/connect" { status = result["cli"]; code = "" }
             else if route == "/logout" || route == "/login/cancel" || route == "/reconcile" { login = .null; status = .null; code = "" }
             else { login = result; status = .null }
         }

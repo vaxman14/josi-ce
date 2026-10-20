@@ -195,7 +195,7 @@ export function writeClaudeMcpConfig(session: HarnessSession): string {
         // spawns the server itself and its PATH is not a promise we rely on.
         command: process.execPath,
         args: [session.serverPath],
-        env: session.serverEnvironment,
+        env: { ...session.serverEnvironment, CLAUDE_CODE_OAUTH_TOKEN: '' },
       },
     },
   }), { mode: 0o600 });

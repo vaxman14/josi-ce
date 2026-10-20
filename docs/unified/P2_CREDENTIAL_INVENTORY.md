@@ -1,6 +1,6 @@
 # P2 credential migration inventory
 
-Source audit updated 19 October 2026. This is a work ledger, not a claim that Vault-only authority is complete. See [P2 evidence](P2_VAULT.md) for executed checks. No live user credentials were read during this inventory.
+Source audit updated 20 October 2026. This is a work ledger, not a claim that Vault-only authority is complete. See [P2 evidence](P2_VAULT.md) for executed checks. No live user credentials were read during this inventory.
 
 | Consumer | Canonical target / current checkpoint | Remaining work |
 |---|---|---|
@@ -23,7 +23,7 @@ Source audit updated 19 October 2026. This is a work ledger, not a claim that Va
 | Desktop sessions | P1 uses memory-only connection sessions | P5 Vault-issued, revocable projections; no independent persistent credential store. |
 | Browser sign-ins | No production implementation; [real synthetic Vault-backed encrypted-image proof](P0_BASELINE.md#vault-controlled-disk-image-proof) passed | P6/P7 real profile/VM integration, consumer stop and verified unmount, crash recovery, local reset and provider logout distinctions. |
 | Legacy PC permissions and prepared actions | Installation-key-encrypted policies/requests, no production executor | P4 migration/revalidation into Vault authority; preserve user settings/history without silently activating old grants. |
-| Subscription CLI logins | Codex setup/admin/provider now assembled around one canonical Vault claim and a supervised private CLI projection; TypeScript/Swift compilation passed; [scope and constraints](P2_CLI_RUNTIME.md) | Old Josi login migration, restart/hard-kill cleanup/reconciliation, managed-policy/refresh changes and integrated acceptance remain open. Claude macOS Keychain needs a verified supported route. No personal login import or implicit exception. |
+| Subscription CLI logins | Codex and Claude setup/admin/provider now assembled around separate canonical Vault claims and supervised private CLI projections; TypeScript/Swift compilation passed; [scope and constraints](P2_CLI_RUNTIME.md) | Old Josi login migration, restart/hard-kill cleanup/reconciliation, managed-policy/refresh changes and integrated acceptance remain open. Claude uses a Vault setup-token route in source; pinned CLI, managed/cloud account policy, token UX and expiration need acceptance. No personal login import or implicit exception. |
 
 ## Bootstrap and nonsecret verification material
 

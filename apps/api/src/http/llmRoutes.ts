@@ -217,15 +217,9 @@ export function subscriptionOptions(): Array<{
       label: 'Use my Claude subscription through Claude Code',
       provider: 'anthropic_subscription',
       available: ceOnly,
-      // The previous entry here said Anthropic forbids this outright. Re-reading
-      // the current terms showed that what is forbidden is a third party
-      // implementing Claude.ai login or intermediating credentials — shipping
-      // the unmodified first-party binary and letting the user authenticate
-      // through Anthropic's own flow is the documented arrangement. FI-006.
       reason: ceOnly
-        ? 'Josi runs Anthropic\'s own Claude Code CLI on this machine, signed in as you through '
-          + 'Anthropic\'s own sign-in. Josi never sees, stores or forwards your login — it shows '
-          + 'you the link and carries the one-time code you bring back. It is per installation '
+        ? 'Josi runs Anthropic\'s own Claude Code CLI using a subscription setup token saved '
+          + 'in the Vault. Generate that token with Anthropic\'s official setup-token command. It is per installation '
           + 'rather than per person, and it shares your own Claude usage limits. Tools work on '
           + 'this path once the model test confirms them.'
         : 'A personal Claude plan is licensed for an individual rather than for powering a '
@@ -406,10 +400,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
   if (hasCapability('subscription_auth')) {
     r.use('/subscription', codexSubscriptionRouter(ctx));
 
-    // Claude, on its own prefix. Not a parameter on the routes above because
-    // the flows genuinely differ: Anthropic's CLI blocks on stdin for a code
-    // the operator pastes back, so it needs a route that writes.
-    r.use('/subscription/claude', claudeSubscriptionRouter());
+    r.use('/subscription/claude', claudeSubscriptionRouter(ctx));
   }
 
   /** Configure a provider.

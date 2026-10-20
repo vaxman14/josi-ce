@@ -1,50 +1,10 @@
-// Claude subscription inference, by delegation to Anthropic's own binary.
-//
-// The Codex story, told again for Claude, and the same refusals apply.
-//
-// It runs `claude --print` — Anthropic's own first-party CLI, in the
-// non-interactive mode Anthropic documents — as a subprocess, using whatever
-// login the operator established through the CLI's own `auth login` flow.
-//
-// It does NOT:
-//
-//   * implement "Sign in with Claude". There is no OAuth client here, no
-//     redirect, no callback, no token.
-//   * read the CLI's own credential file, a keychain, a browser profile or a
-//     cookie jar. Nothing in this file opens a credential store.
-//   * store, copy, forward, refresh or expire anything.
-//   * make an HTTP request. CE speaks to no Anthropic endpoint on this path.
-//
-// Scraping a session is impersonation; running the vendor's own signed-in
-// binary on the machine its owner signed in on is delegation. The second is
-// what the CLI is for.
-//
-// WHY IT IS CE-ONLY — the same reason as Codex. A personal Claude plan is for
-// an individual, not for powering a commercial service, so the gate is the
-// edition stamped into the build rather than a setting. `assertCapability`
-// consults it and a hosted artefact cannot reach this code at all.
-//
-// LEGAL STATUS IS NOT SETTLED HERE. `docs/SUBSCRIPTION_AUTH.md` records the
-// terms, the date they were read, and that counsel review is outstanding before
-// this is represented as permitted in a public release (FI-006). This file
-// implements the mechanism; it does not assert a verdict.
-//
-// WHAT IT COSTS THE PRODUCT, stated as plainly as the Codex path states it:
-//
-//   * It is PER INSTALLATION, not per user. Everyone on the installation shares
-//     the operator's plan and the operator's rolling limits.
-//   * It reports REAL TOKEN COUNTS — unlike Codex, which reports none — but no
-//     per-call cost, because a flat monthly fee has none. Usage rows record
-//     `subscription` as the charge basis and zero as the amount.
-//   * Tool calling exists ONLY through the MCP harness (see `harness.ts`): the
-//     CLI's built-in tools stay denied by name, and the one thing allowed is
-//     Josi's own MCP server, whose tools enforce Josi's own step-up policy.
-//     Without the harness in the image, every tool is denied and Josi can talk
-//     but cannot act on this path — and the probe says so.
-import { spawn } from 'node:child_process';
-import { assertCapability } from '@josi-ce/core';
+// Claude subscription model transport. The production registry supplies a
+// Vault-managed setup token through the supervised first-party CLI. No personal
+// login, Keychain import, API key fallback or independent tool execution.
+import { assertCapability, SubscriptionCredentialError, SubscriptionCredentialBusyError } from '@josi-ce/core';
+import { claudeSubscriptionArgs } from './claudeVaultPolicy.js';
 import {
-  MCP_SERVER_NAME, openHarnessSession, readExecutedCalls, resolveMcpServerPath, writeClaudeMcpConfig,
+  openHarnessSession, readExecutedCalls, resolveMcpServerPath, writeClaudeMcpConfig,
   type HarnessSession,
 } from '../harness.js';
 import {
@@ -57,20 +17,8 @@ export const DEFAULT_CLAUDE_COMMAND = 'claude';
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
-/**
- * Every tool the CLI ships, denied by name.
- *
- * `--print` alone does not make the session inert: Claude Code is an agent, and
- * an agent with a Bash tool running inside Josi's container would sit entirely
- * outside Josi's own permission model, which is enforced by routes reading
- * database rows. This is the counterpart of `--sandbox read-only` on the Codex
- * path.
- *
- * Denied by explicit name rather than by a single "no tools" switch because the
- * CLI has no such switch. A tool added in a future release would not be on this
- * list, which is exactly why `claudeArgs` is asserted in the test suite and why
- * the pin is exact.
- */
+/** Legacy names retained for downstream source compatibility. The runtime now
+ * disables all built-in tools with --tools "", including future additions. */
 export const DENIED_TOOLS = [
   'Bash', 'Edit', 'Write', 'Read', 'Glob', 'Grep', 'NotebookEdit',
   'WebFetch', 'WebSearch', 'Task', 'TodoWrite', 'SlashCommand', 'KillShell', 'BashOutput',
@@ -80,7 +28,7 @@ export interface ClaudeCliOptions {
   model: string;
   /** Path or name of the binary. Defaults to `claude` on PATH. */
   command?: string | null;
-  /** The CLI's own configuration directory — where its login lives. */
+  /** Deprecated. Production runs always receive a fresh private Vault projection. */
   configDir?: string | null;
   timeoutMs?: number;
   runner?: SpawnRunner;
@@ -90,82 +38,16 @@ export interface ClaudeCliOptions {
   mcpServerPath?: string | null;
 }
 
-/**
- * The environment handed to the child.
- *
- * `ANTHROPIC_API_KEY` and its relatives are REMOVED, not merely left unset.
- *
- * This is the most important function in the file, for the same reason it is on
- * the Codex path. Claude Code prefers an API key when it finds one, and this
- * server stores provider keys. If one leaked into the environment, "use my
- * subscription" would quietly bill an API account — the precise
- * misrepresentation this feature exists not to commit. Deleting the variables
- * means the child has no key to prefer and either uses the operator's login or
- * fails visibly.
- *
- * `CLAUDE_CONFIG_DIR` is the one thing deliberately KEPT: it is where the CLI's
- * own login lives, and removing it would sign the operator out on every call.
- */
+/** Compatibility seam for injected test runners. Production ignores this
+ * environment and uses the guardian's explicit environment allowlist. */
 export function claudeChildEnvironment(
-  configDir: string | null,
+  _configDir: string | null,
   parent: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...parent };
-  for (const key of [
-    'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL',
-    // An out-of-band subscription token would work, and would mean the
-    // connection Josi shows in its UI is not the one it is using. Predictability
-    // is worth more here than one extra way to authenticate.
-    'CLAUDE_CODE_OAUTH_TOKEN',
-    // Nothing in the child needs the installation's own secrets, and a
-    // subprocess is the classic way an environment leaks into a log.
-    'PGPASSWORD', 'PGPASSWORD_FILE', 'DATABASE_URL', 'MASTER_KEY_FILE',
-    'JOSI_DISABLED_CAPABILITIES',
-  ]) {
-    delete env[key];
-  }
-  if (configDir) env.CLAUDE_CONFIG_DIR = configDir;
-  env.NO_COLOR = '1';
-  env.CI = '1';
-  return env;
+  return { PATH: parent.PATH, NO_COLOR: '1', CI: '1' };
 }
 
-/**
- * The exact command line.
- *
- * Kept as its own function so a test can assert it is the documented
- * non-interactive form and nothing else. Notably absent: `--bare`, which the
- * CLI documents as making authentication "strictly ANTHROPIC_API_KEY" and
- * never reading OAuth — on a subscription path that flag would defeat the
- * entire feature.
- *
- * With a harness, the Josi MCP server is loaded from a private config file and
- * `--strict-mcp-config` refuses every other MCP server the operator's own
- * Claude setup might declare — the CLI is Josi's model transport here, not the
- * operator's dev environment. `--allowed-tools mcp__josi` scopes the allowance
- * to that one server (Claude namespaces MCP tools as `mcp__<server>__<tool>`),
- * which is safe precisely because the approval that matters — Josi's step-up
- * policy — is enforced inside the server, where the CLI cannot reach. The
- * built-in tools stay denied by name, harness or not.
- */
-export function claudeArgs(model: string, mcpConfigPath?: string | null): string[] {
-  return [
-    '--print',
-    '--output-format', 'json',
-    // An empty model means 'the plan's own default': the CLI chooses, exactly
-    // as it does for its interactive users. Passing --model '' would instead
-    // ask for a model literally named nothing.
-    ...(model ? ['--model', model] : []),
-    '--permission-mode', 'manual',
-    ...(mcpConfigPath
-      ? ['--mcp-config', mcpConfigPath, '--strict-mcp-config', '--allowed-tools', `mcp__${MCP_SERVER_NAME}`]
-      : []),
-    '--disallowed-tools', ...DENIED_TOOLS,
-    // The prompt goes on stdin, which keeps it out of the process table. An
-    // argv is world-readable on most systems and the prompt is somebody's
-    // private conversation.
-  ];
-}
+export const claudeArgs = claudeSubscriptionArgs;
 
 /** Flattens a chat request into one prompt, exactly as the Codex path does. */
 export function renderClaudePrompt(request: ChatRequest): string {
@@ -253,42 +135,16 @@ export function classifyClaudeFailure(text: string, command: string): LlmError {
     return new LlmError('Claude Code could not reach Anthropic.', { retryable: true });
   }
   return new LlmError(
-    'Claude Code refused the request. Run it once by hand to see why.',
+    'Claude Code refused the request. Check the saved model and reconnect its subscription if needed.',
     { needsReconfiguration: true },
   );
 }
 
-/** The default runner. Mirrors the Codex one, including its output bound. */
-const defaultRunner: SpawnRunner = ({ command, args, input, env, timeoutMs }) =>
-  new Promise((resolve, reject) => {
-    let child;
-    try {
-      child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
-    } catch (err) {
-      reject(err);
-      return;
-    }
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGKILL');
-    }, timeoutMs);
-
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    // Bounded: a runaway child streaming forever is a memory exhaustion
-    // primitive exactly as a lying Content-Length is.
-    const LIMIT = 4 * 1024 * 1024;
-    child.stdout.on('data', (d: string) => { if (stdout.length < LIMIT) stdout += d; });
-    child.stderr.on('data', (d: string) => { if (stderr.length < LIMIT) stderr += d; });
-    child.on('error', (err) => { clearTimeout(timer); reject(err); });
-    child.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr, timedOut }); });
-
-    child.stdin.on('error', () => { /* the child may exit before we finish writing */ });
-    child.stdin.end(input);
-  });
+/** Production must inject the Vault supervisor. Never fall back to an old
+ * service directory or the operator's personal CLI/Keychain sign-in. */
+const defaultRunner: SpawnRunner = async () => {
+  throw new SubscriptionCredentialError('Connect Claude through Josi’s Vault-managed model settings.');
+};
 
 /**
  * Builds the provider.
@@ -350,6 +206,10 @@ export function claudeCliProvider(opts: ClaudeCliOptions): LlmProvider {
           timeoutMs,
         });
       } catch (err) {
+        if (err instanceof SubscriptionCredentialError) {
+          throw new LlmError(err.message, { needsReconfiguration: !(err instanceof SubscriptionCredentialBusyError),
+            retryable: err instanceof SubscriptionCredentialBusyError });
+        }
         const code = (err as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') {
           throw new LlmError(
@@ -375,6 +235,7 @@ export function claudeCliProvider(opts: ClaudeCliOptions): LlmProvider {
         }
       }
 
+      if (result.cancelled) throw new LlmError('Claude stopped because the current run no longer has authority.');
       if (result.timedOut) {
         throw new LlmError('Claude Code did not answer in time.', { retryable: true });
       }

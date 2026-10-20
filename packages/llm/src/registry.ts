@@ -9,11 +9,11 @@
 //   * A fallback is used only when it was explicitly enabled AND the primary
 //     failed in a way a second attempt could fix.
 //   * Caps are checked before the call, not after.
-import { codexCredentialStoreForInstallation, type Db, type MasterKey } from '@josi-ce/core';
+import { claudeCredentialStoreForInstallation, codexCredentialStoreForInstallation, type Db, type MasterKey } from '@josi-ce/core';
 import { resolveModelCredentials } from './credentials.js';
 import { anthropicProvider } from './providers/anthropic.js';
 import { codexCliProvider, isSubscriptionProvider, type SpawnRunner } from './providers/codexCli.js';
-import { vaultCodexRunner } from './providers/codexVaultRuntime.js';
+import { vaultClaudeRunner, vaultCodexRunner } from './providers/codexVaultRuntime.js';
 import { claudeCliProvider } from './providers/claudeCli.js';
 import { openAiCompatibleProvider } from './providers/openaiCompatible.js';
 import { azureAiProvider } from './providers/azureAi.js';
@@ -160,11 +160,15 @@ function buildProviderClient(opts: RegistryOptions, stored: StoredProvider, secr
       return claudeCliProvider({
         model: stored.model,
         command: stored.subscription_command ?? null,
-        // Where the CLI keeps its own login. Read from the environment rather
-        // than stored, because it is a property of how this container was run.
-        configDir: process.env.CLAUDE_CONFIG_DIR ?? null,
         timeoutMs: opts.timeoutMs,
-        runner: opts.codexRunner,
+        runner: opts.codexRunner ?? (async request => {
+          if (!opts.masterKey) throw new LlmError('Unlock the Vault before using the subscription login.', { needsReconfiguration: true });
+          const store = await claudeCredentialStoreForInstallation(opts.db, opts.masterKey);
+          return vaultClaudeRunner(store, async () => {
+            await resolveModelCredentials(opts.db, opts.masterKey, stored);
+            if (await isLocalOnly(opts.db)) throw new LocalOnlyViolation('Local-only mode stops subscription requests.');
+          })(request);
+        }),
       });
     }
     return codexCliProvider({

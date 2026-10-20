@@ -23,5 +23,6 @@ export * from './providers/codexVaultLogin.js';
 export * from './providers/codexVaultRuntime.js';
 export * from './providers/claudeCli.js';
 export * from './providers/claudeLogin.js';
+export * from './providers/claudeVaultStatus.js';
 export * from './credentials.js';
 export * from './cardinalReview.js';

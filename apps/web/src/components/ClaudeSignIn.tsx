@@ -4,21 +4,22 @@
 // two copies would drift. `basePath` is the only difference: the wizard's routes
 // disappear when setup completes, the admin ones do not.
 //
-// THE SHAPE OF THIS SCREEN IS DICTATED BY THE CLI, not by preference. Anthropic's
-// `claude auth login` prints a link and then BLOCKS waiting for a code on its
-// standard input. So there are two steps here and the second one is an input
-// box — unlike the ChatGPT flow next to it, where the CLI polls by itself and
-// the operator never types anything back. A single "connect" button that spun
-// forever would be the honest-looking version of a broken screen.
+// Current servers store setup tokens in the Vault. The older sign-in UI stays
+// available only when an explicitly connected older CE server advertises its
+// legacy response. The current server never uses that storage path.
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Button, ErrorNote } from '@/components/ui';
+import { ClaudeVaultSignIn } from './ClaudeVaultSignIn';
 
 export interface ClaudeCliStatus {
   installed: boolean;
   signedIn: boolean;
   authMethod: string;
   detail: string;
+  connectionMethod?: 'vault_setup_token';
+  busy?: boolean;
+  credential?: { itemId: string | null; revision: number; state: string };
 }
 
 interface ClaudeLoginState {
@@ -37,7 +38,14 @@ export function ClaudeSignIn({ basePath }: { basePath: string }) {
   const loadStatus = () =>
     api.get<{ cli: ClaudeCliStatus }>(`${basePath}/status`).then((r) => setStatus(r.cli));
 
-  useEffect(() => { void loadStatus().catch(() => undefined); }, [basePath]);
+  useEffect(() => {
+    let current = true;
+    setStatus(null); setLogin(null); setCode(''); setError('');
+    void api.get<{ cli: ClaudeCliStatus }>(`${basePath}/status`)
+      .then(r => { if (current) setStatus(r.cli); })
+      .catch(err => { if (current) setError(err instanceof Error ? err.message : 'Subscription status is unavailable.'); });
+    return () => { current = false; };
+  }, [basePath]);
 
   // Polled only while the CLI is still deciding. `awaiting_code` is NOT polled:
   // nothing changes until the operator pastes something, and a spinner during a
@@ -98,7 +106,11 @@ export function ClaudeSignIn({ basePath }: { basePath: string }) {
     }
   }
 
-  if (!status) return <p className="text-sm text-muted-foreground">Checking Claude Code…</p>;
+  if (!status) return error ? <ErrorNote>{error}</ErrorNote>
+    : <p className="text-sm text-muted-foreground">Checking Claude Code…</p>;
+  if (status.connectionMethod === 'vault_setup_token') {
+    return <ClaudeVaultSignIn key={basePath} basePath={basePath} status={status} onStatus={setStatus} />;
+  }
   if (!status.installed) return <ErrorNote>{status.detail}</ErrorNote>;
 
   if (status.signedIn) {

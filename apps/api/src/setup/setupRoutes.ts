@@ -25,8 +25,7 @@ import { saveSmtpProfiles, SmtpConfigurationError } from '@josi-ce/mail';
 import { describeProvider, discoverModels, saveModelConfiguration, ModelConfigurationError } from '@josi-ce/llm';
 import { reconcileWorkspaceMount } from '@josi-ce/storage';
 import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
-import { claudeAuthStatus } from '@josi-ce/llm';
-import { claudeSubscriptionRouter, claudeEnv } from '../http/claudeSubscriptionRoutes.js';
+import { claudeSubscriptionRouter, claudeSubscriptionStatus } from '../http/claudeSubscriptionRoutes.js';
 import { codexSubscriptionRouter, codexSubscriptionStatus } from '../http/codexSubscriptionRoutes.js';
 import { hasCapability } from '@josi-ce/core';
 import {
@@ -386,19 +385,14 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
           // Reported separately rather than folded into one "the CLI" field:
           // an installation can have either, both or neither signed in, and a
           // single flag could not say which.
-          claudeCli: await claudeAuthStatus(claudeEnv()),
+          claudeCli: await claudeSubscriptionStatus(ctx),
         });
       }),
     );
 
     r.use('/subscription', codexSubscriptionRouter(ctx, true));
 
-    // Claude, on its own prefix, with the same disappear-after-setup rule the
-    // routes above have — expressed as the router's own availability check so
-    // there is one copy of it rather than five.
-    r.use('/subscription/claude', claudeSubscriptionRouter({
-      available: async () => !(await getSetupState(db)).completed,
-    }));
+    r.use('/subscription/claude', claudeSubscriptionRouter(ctx, true));
   }
 
   /** Test one configured thing, for real, and record what happened.
@@ -717,12 +711,10 @@ async function applyStep(
             + 'while calling itself a subscription',
           );
         }
-        // ASKED OF THE CLI THAT WILL ACTUALLY BE RUN. Checking the wrong one
-        // would let an installation finish setup pointing at a binary nobody
-        // has signed in to, which is the failure this whole step exists to
-        // prevent.
+        // Require the selected provider's canonical Vault login. Saving is
+        // not a successful provider probe; verification remains separate.
         const signedIn = provider === 'anthropic_subscription'
-          ? await claudeAuthStatus(claudeEnv())
+          ? await claudeSubscriptionStatus(ctx)
           : await codexSubscriptionStatus(ctx);
         if (!signedIn.signedIn) {
           throw new SetupError(400, `${signedIn.detail} Sign in first, then continue.`);

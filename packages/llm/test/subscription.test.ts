@@ -20,7 +20,7 @@ import {
 } from '../src/providers/codexCli.js';
 import { EXTERNAL_PROVIDERS, LlmError, isExternalProvider } from '../src/types.js';
 import {
-  DENIED_TOOLS, claudeArgs, claudeChildEnvironment, classifyClaudeFailure, parseClaudeResult,
+  claudeArgs, claudeChildEnvironment, classifyClaudeFailure, parseClaudeResult,
 } from '../src/providers/claudeCli.js';
 import { priceCall } from '../src/metering.js';
 
@@ -471,10 +471,13 @@ describe('the Anthropic path runs the first-party CLI and nothing else (L3.5)', 
 
   it('runs the published binary with the documented non-interactive options', () => {
     const source = readFileSync(join(ROOT, 'packages/llm/src/providers/claudeCli.ts'), 'utf8');
-    expect(claudeArgs('sonnet')).toEqual([
-      '--print', '--output-format', 'json', '--model', 'sonnet',
-      '--permission-mode', 'manual', '--disallowed-tools', ...DENIED_TOOLS,
-    ]);
+    const args = claudeArgs('sonnet');
+    expect(args).toContain('--print');
+    expect(args[args.indexOf('--output-format') + 1]).toBe('json');
+    expect(args[args.indexOf('--tools') + 1]).toBe('');
+    expect(args).toContain('--restricted');
+    expect(args).toContain('--strict-mcp-config');
+    expect(args).toContain('--no-session-persistence');
     // `--bare` documents itself as making auth "strictly ANTHROPIC_API_KEY" and
     // never reading OAuth. On a subscription path it would defeat the feature.
     expect(source).not.toMatch(/'--bare'/);
@@ -499,9 +502,11 @@ describe('the Anthropic path runs the first-party CLI and nothing else (L3.5)', 
     ]) {
       expect(env[key], key).toBeUndefined();
     }
-    // The one thing that MUST survive: without it the CLI cannot find the
-    // login and every call would report the operator as signed out.
-    expect(env.CLAUDE_CONFIG_DIR).toBe('/data/claude');
+    // No legacy login location survives. Only the guardian supplies a new
+    // private home and the current canonical Vault projection.
+    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+    expect(env.HOME).toBeUndefined();
+    expect(env.PATH).toBe('/usr/bin');
   });
 
   it('treats a signed-out CLI as a failure even though it exits zero', () => {

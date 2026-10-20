@@ -3,11 +3,13 @@ import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { assertCapability, CodexCredentialStore, Secret, SubscriptionCredentialError,
+import { assertCapability, ClaudeCredentialStore, CodexCredentialStore, Secret, SubscriptionCredentialError,
   type SubscriptionCredentialAdministration, type SubscriptionCredentialReview } from '@josi-ce/core';
 import type { SpawnRunner } from './codexCli.js';
 import type { CodexGuardianInput, CodexGuardianOutput } from './codexVaultWire.js';
 import { requireCompatibleCodexHost } from './codexVaultCompatibility.js';
+import { requireCompatibleClaudeHost } from './claudeVaultCompatibility.js';
+import { validClaudeSubscriptionArgs } from './claudeVaultPolicy.js';
 
 type Result = Extract<CodexGuardianOutput, { type: 'result' }>;
 export interface VaultCodexRun {
@@ -56,17 +58,28 @@ const failure = () => new SubscriptionCredentialError(
  * authority window after checking the canonical Vault claim. A database hang,
  * Vault lock, parent crash or caller stop therefore stops the consumer. */
 export async function startVaultCodex(store: CodexCredentialStore, options: VaultCodexStart): Promise<VaultCodexRun> {
+  if (store.consumer !== 'codex') throw failure();
+  return startVaultSubscription(store, options);
+}
+export async function startVaultClaude(store: ClaudeCredentialStore,
+  options: Omit<VaultCodexStart, 'operation' | 'administration' | 'onLoginOutput'>): Promise<VaultCodexRun> {
+  if (store.consumer !== 'claude' || !validClaudeSubscriptionArgs(options.args)) throw failure();
+  return startVaultSubscription(store, { ...options, operation: 'chat' });
+}
+async function startVaultSubscription(store: CodexCredentialStore | ClaudeCredentialStore,
+  options: VaultCodexStart): Promise<VaultCodexRun> {
   assertCapability('subscription_auth');
   assertCapability('local_command_execution');
   if (process.platform === 'win32') throw new SubscriptionCredentialError('Vault-managed subscription runs require a supported process supervisor.');
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 || options.timeoutMs > 15 * 60_000) throw failure();
-  requireCompatibleCodexHost();
+  if (store.consumer === 'codex') requireCompatibleCodexHost(); else requireCompatibleClaudeHost();
   const command = await executable(options.command);
   const { lease, projection } = await store.begin(options.operation, options.timeoutMs + 30_000, options.administration);
   let guardian: ReturnType<typeof fork>;
   try {
     guardian = fork(fileURLToPath(new URL('./codexVaultGuardian.js', import.meta.url)), [], {
-      execArgv: [], env: { PATH: process.env.PATH }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      execArgv: [], env: { PATH: process.env.PATH, JOSI_SUBSCRIPTION_CONSUMER: store.consumer },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     });
   } catch {
     // fork never created a consumer; no refresh could have happened.
@@ -98,6 +111,10 @@ export async function startVaultCodex(store: CodexCredentialStore, options: Vaul
     try {
       if (!value.stopped) throw failure();
       if (!started && value.cleaned && projection) {
+        await store.finish(lease, projection);
+      } else if (store.consumer === 'claude' && value.cleaned && projection) {
+        // setup-token is not refreshed by this runtime. Only the exact claim's
+        // original projection returns to ready after observed group closure.
         await store.finish(lease, projection);
       } else if (!value.cleaned || value.auth === null || options.operation === 'login'
         && (value.cancelled || value.code !== 0 || value.spawnError)) {
@@ -182,6 +199,18 @@ export function vaultCodexRunner(store: CodexCredentialStore, requireCurrentAuth
       operation: 'chat', command: request.command, args: request.args,
       input: request.input, timeoutMs: request.timeoutMs,
       requireCurrentAuthority,
+    });
+    const value = await run.result;
+    return { code: value.code, stdout: value.stdout, stderr: value.stderr,
+      timedOut: value.timedOut, cancelled: value.cancelled };
+  };
+}
+
+export function vaultClaudeRunner(store: ClaudeCredentialStore, requireCurrentAuthority?: () => Promise<void>): SpawnRunner {
+  return async request => {
+    const run = await startVaultClaude(store, {
+      command: request.command, args: request.args, input: request.input,
+      timeoutMs: request.timeoutMs, requireCurrentAuthority,
     });
     const value = await run.result;
     return { code: value.code, stdout: value.stdout, stderr: value.stderr,

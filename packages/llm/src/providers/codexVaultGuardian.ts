@@ -6,13 +6,18 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, open, realpath, rm, type FileHandle } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { privateTemporaryDirectory, Secret, validateCodexAuthCache } from '@josi-ce/core';
+import { privateTemporaryDirectory, Secret, validateClaudeSubscriptionToken, validateCodexAuthCache } from '@josi-ce/core';
 import type { CodexGuardianInput, CodexGuardianOutput, CodexGuardianStart } from './codexVaultWire.js';
 import { requireCompatibleCodexHost } from './codexVaultCompatibility.js';
+import { requireCompatibleClaudeHost } from './claudeVaultCompatibility.js';
+import { validClaudeSubscriptionArgs } from './claudeVaultPolicy.js';
 
 // The first implementation supports the macOS release and POSIX servers.
 // Windows needs a Job Object implementation, not a weaker kill-one-child path.
 if (!process.send || process.platform === 'win32') process.exit(1);
+const consumer = process.env.JOSI_SUBSCRIPTION_CONSUMER;
+if (consumer !== 'codex' && consumer !== 'claude') process.exit(1);
+const compatible = () => consumer === 'codex' ? requireCompatibleCodexHost() : requireCompatibleClaudeHost();
 
 const send = (value: CodexGuardianOutput) => {
   if (process.connected) process.send!(value, () => {});
@@ -23,6 +28,7 @@ let directoryHandle: FileHandle | undefined;
 let group: number | undefined, started = false, finalizing = false, cancelled = false, timedOut = false;
 let spawnError = false, exitCode: number | null = null, childClosed = false;
 let stdout = '', stderr = '', outputBytes = 0;
+let claudeToken: Secret | undefined;
 let authorityMono = performance.now(), authorityWall = Date.now();
 let operationMono = performance.now(), operationWall = Date.now(), duration = 5_000;
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -83,7 +89,7 @@ async function finish() {
     // keeps the Vault claim unresolved. Continue cleanup after the caller leaves.
     while (!childClosed || groupExists()) { signalGroup('SIGKILL'); await sleep(1_000); }
   }
-  const auth = await readCache();
+  const auth = consumer === 'codex' ? await readCache() : null;
   let cleaned = false;
   try {
     if (directory) {
@@ -93,6 +99,15 @@ async function finish() {
     cleaned = true;
   } catch { /* caller must not mark the projection ready */ }
   await directoryHandle?.close().catch(() => {});
+  if (claudeToken) {
+    // Accumulate before redaction so a credential split across output chunks
+    // cannot escape into a model response, error, event or ordinary log.
+    for (const text of [claudeToken.reveal(), JSON.stringify(claudeToken.reveal()).slice(1, -1)]) {
+      stdout = stdout.split(text).join('[subscription credential removed]');
+      stderr = stderr.split(text).join('[subscription credential removed]');
+    }
+    claudeToken = undefined;
+  }
   send({ type: 'result', code: exitCode, stdout, stderr, timedOut, cancelled,
     spawnError, stopped: true, cleaned, auth });
   // Flush the private result before disconnecting. No stdout/stderr is used.
@@ -111,7 +126,8 @@ function validStart(value: CodexGuardianStart): boolean {
     && value.args.every(a => typeof a === 'string' && a.length <= 16_384 && !a.includes('\0'))
     // The caller may select model/harness options, never redirect auth storage,
     // endpoints or API credentials through a later command-line override.
-    && !value.args.some(a => /cli_auth_credentials_store|forced_login_method|chatgpt_base_url|model_provider|openai_base_url|api_key|auth\.json/i.test(a))
+    && (consumer === 'claude' ? value.auth !== null && validClaudeSubscriptionArgs(value.args)
+      : !value.args.some(a => /cli_auth_credentials_store|forced_login_method|chatgpt_base_url|model_provider|openai_base_url|api_key|auth\.json/i.test(a)))
     && typeof value.input === 'string' && Buffer.byteLength(value.input) <= MAX_INPUT
     && (value.auth === null || typeof value.auth === 'string' && Buffer.byteLength(value.auth) <= 64 * 1024)
     && Number.isSafeInteger(value.timeoutMs) && value.timeoutMs > 0 && value.timeoutMs <= 15 * 60_000;
@@ -121,12 +137,13 @@ async function start(value: CodexGuardianStart) {
   started = true;
   operationMono = performance.now(); operationWall = Date.now(); duration = value.timeoutMs;
   try {
-    requireCompatibleCodexHost();
+    compatible();
     // Canonicalize only the fresh Josi-created empty directory. Never search a
     // user's home, existing Codex directory, Keychain or browser profile.
-    directory = await realpath(privateTemporaryDirectory('josi-codex-vault-'));
+    directory = await realpath(privateTemporaryDirectory(`josi-${consumer}-vault-`));
     directoryHandle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    if (value.auth !== null) {
+    if (consumer === 'claude') claudeToken = validateClaudeSubscriptionToken(new Secret(value.auth!));
+    else if (value.auth !== null) {
       const cache = validateCodexAuthCache(new Secret(value.auth));
       const file = await open(join(directory, 'auth.json'),
         constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -138,19 +155,24 @@ async function start(value: CodexGuardianStart) {
     if (cancelled || !process.connected || !await privateDirectoryStillCurrent()) throw new Error();
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH, LANG: 'en_US.UTF-8', NO_COLOR: '1', CI: '1',
-      HOME: directory, CODEX_HOME: directory, TMPDIR: directory, TMP: directory, TEMP: directory,
+      HOME: directory, TMPDIR: directory, TMP: directory, TEMP: directory,
       XDG_CONFIG_HOME: directory, XDG_CACHE_HOME: directory, XDG_DATA_HOME: directory,
     };
-    child = spawn(value.command, [
-      '-c', 'cli_auth_credentials_store="file"', '-c', 'forced_login_method="chatgpt"',
-      ...value.args,
-    ], { env, cwd: join(directory, 'work'), detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    if (consumer === 'claude') {
+      env.CLAUDE_CONFIG_DIR = directory;
+      env.CLAUDE_CODE_OAUTH_TOKEN = claudeToken!.reveal();
+      env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+    } else env.CODEX_HOME = directory;
+    child = spawn(value.command, consumer === 'codex' ? [
+      '-c', 'cli_auth_credentials_store="file"', '-c', 'forced_login_method="chatgpt"', ...value.args,
+    ] : value.args, { env, cwd: join(directory, 'work'), detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
     group = child.pid;
     const absorb = (stream: 'stdout' | 'stderr', text: string) => {
       outputBytes += Buffer.byteLength(text, 'utf8');
       if (outputBytes > MAX_OUTPUT) { stop(); return; }
       if (stream === 'stdout') stdout += text; else stderr += text;
-      if (value.args[0] === 'login') send({ type: 'output', text });
+      if (consumer === 'codex' && value.args[0] === 'login') send({ type: 'output', text });
     };
     child.stdout!.setEncoding('utf8');
     child.stderr!.setEncoding('utf8');
@@ -181,7 +203,7 @@ process.on('message', (raw: CodexGuardianInput) => {
   if (!raw || typeof raw !== 'object') { stop(); return; }
   if (raw.type === 'start') void start(raw);
   else if (raw.type === 'renew' && !cancelled && !finalizing) {
-    try { requireCompatibleCodexHost(); } catch { stop(); return; }
+    try { compatible(); } catch { stop(); return; }
     authorityMono = performance.now(); authorityWall = Date.now();
   } else if (raw.type === 'stop') stop();
   else stop();

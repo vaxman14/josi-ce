@@ -4,7 +4,8 @@ import type { MasterKey } from './masterKey.js';
 import { Secret } from './sealing.js';
 import { getVaultSecret, putVaultItem, VaultError, VaultLockedError } from './vault.js';
 
-const SERVICE = 'subscription_cli', SLOT = 'codex';
+const SERVICE = 'subscription_cli';
+type Consumer = 'codex' | 'claude';
 const MAX_CACHE_BYTES = 64 * 1024;
 const MAX_LEASE_MS = 16 * 60_000;
 export class SubscriptionCredentialError extends Error {}
@@ -14,7 +15,7 @@ type State = 'ready' | 'leased' | 'reconnect_required' | 'signed_out';
 type Operation = 'login' | 'chat' | 'status';
 interface Document {
   schemaVersion: 1;
-  consumer: 'codex';
+  consumer: Consumer;
   revision: number;
   state: State;
   auth: string | null;
@@ -80,6 +81,17 @@ export function validateCodexAuthCache(value: Secret): Secret {
       && (typeof parsed.last_refresh !== 'string' || parsed.last_refresh.length > 64 || !Number.isFinite(Date.parse(parsed.last_refresh)))) throw failure();
   return new Secret(JSON.stringify(parsed));
 }
+/** Opaque first-party setup token, not a parsed JWT or a guessed expiry.
+ * Authentication remains the vendor's responsibility. API keys are not a
+ * substitute for the explicitly selected subscription credential. */
+export function validateClaudeSubscriptionToken(value: Secret): Secret {
+  if (!(value instanceof Secret) || !/^[!-~]{16,16384}$/.test(value.reveal())
+    || value.reveal().startsWith('sk-ant-api')) throw failure();
+  return new Secret(value.reveal());
+}
+function validateAuth(consumer: Consumer, value: Secret): Secret {
+  return consumer === 'codex' ? validateCodexAuthCache(value) : validateClaudeSubscriptionToken(value);
+}
 /** Compatibility screening, not JWT authentication. The first-party CLI
  * authenticates the credential. The bundled CLI can load cloud-managed
  * storage requirements for workspace plans, so this initial consumer only
@@ -97,11 +109,11 @@ function requireUnmanagedCodexAccount(value: Secret): void {
     throw new SubscriptionCredentialError('This subscription workspace is not supported by Vault-managed execution yet. Use a personal Free, Plus or Pro ChatGPT workspace, or an API provider.');
   }
 }
-function decode(value: Secret): Document {
+function decode(value: Secret, consumer: Consumer): Document {
   let doc: unknown;
   try { doc = JSON.parse(value.reveal()); } catch { throw failure(); }
   if (!exact(doc, ['schemaVersion', 'consumer', 'revision', 'state', 'auth', 'lease'])
-    || doc.schemaVersion !== 1 || doc.consumer !== 'codex' || !integer(doc.revision)
+    || doc.schemaVersion !== 1 || doc.consumer !== consumer || !integer(doc.revision)
     || !['ready', 'leased', 'reconnect_required', 'signed_out'].includes(String(doc.state))
     || doc.auth !== null && typeof doc.auth !== 'string') throw failure();
   if (doc.state === 'leased') {
@@ -112,7 +124,7 @@ function decode(value: Secret): Document {
   } else if (doc.lease !== null) throw failure();
   if (doc.state === 'ready' && doc.auth === null
     || ['signed_out', 'reconnect_required'].includes(String(doc.state)) && doc.auth !== null) throw failure();
-  if (typeof doc.auth === 'string') validateCodexAuthCache(new Secret(doc.auth));
+  if (typeof doc.auth === 'string') validateAuth(consumer, new Secret(doc.auth));
   return doc as unknown as Document;
 }
 interface Current {
@@ -129,12 +141,20 @@ function status(current: Current): SubscriptionCredentialStatus {
 export async function codexCredentialStoreForInstallation(
   db: Db, key: MasterKey, initialOwnerUserId?: string,
 ): Promise<CodexCredentialStore> {
+  return new CodexCredentialStore(db, key, await credentialOwner(db, 'codex', initialOwnerUserId));
+}
+export async function claudeCredentialStoreForInstallation(
+  db: Db, key: MasterKey, initialOwnerUserId?: string,
+): Promise<ClaudeCredentialStore> {
+  return new ClaudeCredentialStore(db, key, await credentialOwner(db, 'claude', initialOwnerUserId));
+}
+async function credentialOwner(db: Db, consumer: Consumer, initialOwnerUserId?: string): Promise<string> {
   const rows = await db.query<{ owner_user_id: string }>(
-    'select owner_user_id from vault_items where service=$1 and slot=$2', [SERVICE, SLOT]);
+    'select owner_user_id from vault_items where service=$1 and slot=$2', [SERVICE, consumer]);
   if (rows.length > 1) throw failure();
   const owner = rows[0]?.owner_user_id ?? initialOwnerUserId;
-  if (!owner) throw new SubscriptionCredentialError('Sign in to ChatGPT through Josi’s model settings first.');
-  return new CodexCredentialStore(db, key, owner);
+  if (!owner) throw new SubscriptionCredentialError(`Connect ${consumer === 'codex' ? 'ChatGPT' : 'Claude'} through Josi’s model settings first.`);
+  return owner;
 }
 function expected(current: Current, value: { itemId: string | null; revision: number }) {
   if (!exact(value, ['itemId', 'revision']) || value.itemId !== current.itemId || value.revision !== (current.doc?.revision ?? 0)) {
@@ -146,15 +166,16 @@ function expected(current: Current, value: { itemId: string | null; revision: nu
  * item as the vendor cache. A crash leaves "leased", never reusable "ready".
  * No filesystem import, projection, provider request or automatic recovery
  * happens in this store. Those require the supervised consumer adapter. */
-export class CodexCredentialStore {
-  constructor(private db: Db, private key: MasterKey, private ownerUserId: string) {
+class SubscriptionCredentialStore {
+  protected constructor(private db: Db, private key: MasterKey, private ownerUserId: string,
+    readonly consumer: Consumer) {
     if (!uuid(ownerUserId)) throw failure();
   }
   private async transaction<T>(work: (tx: Db, current: Current) => Promise<T>): Promise<T> {
     if (!this.db.transaction) throw new SubscriptionCredentialError('Subscription credentials require transactional Vault storage.');
     return this.db.transaction(async tx => {
       // One shared installation login, across API and worker processes.
-      await tx.query("select pg_advisory_xact_lock(hashtext('josi_codex_credentials'))");
+      await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`josi_${this.consumer}_credentials`]);
       const [vault] = await tx.query<{ authority_epoch: string | number; authority_reconciliation_required: boolean;
         initialized_at: string | null; locked: boolean }>(
         'select authority_epoch,authority_reconciliation_required,initialized_at,locked from vault_state where id=true for share');
@@ -168,12 +189,12 @@ export class CodexCredentialStore {
       if (box?.locked) throw new VaultLockedError('Unlock the subscription administrator’s Vault box before continuing.');
       // Reject an ambiguous second canonical owner rather than picking one.
       const rows = await tx.query<{ id: string; owner_user_id: string; status: string }>(
-        'select id,owner_user_id,status from vault_items where service=$1 and slot=$2 order by id for update', [SERVICE, SLOT]);
+        'select id,owner_user_id,status from vault_items where service=$1 and slot=$2 order by id for update', [SERVICE, this.consumer]);
       if (rows.length > 1 || rows[0] && (rows[0].owner_user_id !== this.ownerUserId || rows[0].status !== 'active')) throw failure();
       const item = rows[0];
       const doc = item ? decode(await getVaultSecret(tx, this.key, {
-        ownerUserId: this.ownerUserId, service: SERVICE, slot: SLOT, itemId: item.id,
-      })) : null;
+        ownerUserId: this.ownerUserId, service: SERVICE, slot: this.consumer, itemId: item.id,
+      }), this.consumer) : null;
       const [{ now_ms }] = await tx.query<{ now_ms: string }>('select floor(extract(epoch from clock_timestamp())*1000)::text as now_ms');
       return work(tx, { itemId: item?.id ?? null, doc, epoch: Number(vault.authority_epoch), now: Number(now_ms) });
     });
@@ -181,10 +202,10 @@ export class CodexCredentialStore {
   private async write(tx: Db, current: Current, change: Pick<Document, 'state' | 'auth' | 'lease'>) {
     const revision = (current.doc?.revision ?? 0) + 1;
     if (!integer(revision)) throw failure();
-    const doc: Document = { schemaVersion: 1, consumer: 'codex', revision, ...change };
+    const doc: Document = { schemaVersion: 1, consumer: this.consumer, revision, ...change };
     const saved = await putVaultItem(tx, this.key, { ownerUserId: this.ownerUserId, kind: 'oauth_token',
-      service: SERVICE, slot: SLOT, label: 'ChatGPT subscription login', value: new Secret(JSON.stringify(doc)),
-      metadata: { consumer: 'codex', schemaVersion: 1 } });
+      service: SERVICE, slot: this.consumer, label: `${this.consumer === 'codex' ? 'ChatGPT' : 'Claude'} subscription login`, value: new Secret(JSON.stringify(doc)),
+      metadata: { consumer: this.consumer, schemaVersion: 1 } });
     return { ...current, itemId: saved.id, doc };
   }
   private match(current: Current, lease: Readonly<SubscriptionCredentialLease>, requireLive: boolean) {
@@ -220,7 +241,7 @@ export class CodexCredentialStore {
           purpose: 'subscription.login', ownerUserId: this.ownerUserId, expected: administration.expected, leaseId: null,
         });
       } else if (current.doc?.state !== 'ready') throw failure();
-      if (operation !== 'login') requireUnmanagedCodexAccount(new Secret(current.doc!.auth!));
+      if (operation !== 'login' && this.consumer === 'codex') requireUnmanagedCodexAccount(new Secret(current.doc!.auth!));
       const id = randomUUID(), expiresAtMs = current.now + durationMs;
       // A new sign-in never receives the prior account's refresh material.
       const auth = operation === 'login' ? null : current.doc!.auth;
@@ -235,7 +256,7 @@ export class CodexCredentialStore {
   /** Caller has confirmed its supervised child stopped. Expired exact leases
    * may retain refreshed credentials, but cannot resume execution. */
   async finish(lease: Readonly<SubscriptionCredentialLease>, refreshed: Secret): Promise<SubscriptionCredentialStatus> {
-    const cache = validateCodexAuthCache(refreshed);
+    const cache = validateAuth(this.consumer, refreshed);
     return this.transaction(async (tx, current) => {
       this.match(current, lease, false);
       return status(await this.write(tx, current, { state: 'ready', auth: cache.reveal(), lease: null }));
@@ -247,6 +268,21 @@ export class CodexCredentialStore {
     return this.transaction(async (tx, current) => {
       this.match(current, lease, false);
       return status(await this.write(tx, current, { state: 'reconnect_required', auth: null, lease: null }));
+    });
+  }
+  /** No child is started by an explicit token import. Replace atomically,
+   * without releasing or overwriting another consumer's unresolved claim. */
+  protected async replaceAuthentication(value: Secret, reviewed: SubscriptionCredentialReview['expected'],
+    authority: SubscriptionCredentialAdministration): Promise<SubscriptionCredentialStatus> {
+    const auth = validateAuth(this.consumer, value);
+    return this.transaction(async (tx, current) => {
+      expected(current, reviewed);
+      if (current.doc?.state === 'leased') throw new SubscriptionCredentialBusyError('Stop and reconcile the active subscription run before replacing its login.');
+      if (typeof authority?.requireAdministrator !== 'function') throw failure();
+      await authority.requireAdministrator(tx, {
+        purpose: 'subscription.login', ownerUserId: this.ownerUserId, expected: reviewed, leaseId: null,
+      });
+      return status(await this.write(tx, current, { state: 'ready', auth: auth.reveal(), lease: null }));
     });
   }
   async disconnect(reviewed: SubscriptionCredentialReview['expected'], authority: SubscriptionCredentialAdministration,
@@ -265,5 +301,17 @@ export class CodexCredentialStore {
       }
       return status(await this.write(tx, current, { state: recoverLostConsumer ? 'reconnect_required' : 'signed_out', auth: null, lease: null }));
     });
+  }
+}
+
+export class CodexCredentialStore extends SubscriptionCredentialStore {
+  declare readonly consumer: 'codex';
+  constructor(db: Db, key: MasterKey, ownerUserId: string) { super(db, key, ownerUserId, 'codex'); }
+}
+export class ClaudeCredentialStore extends SubscriptionCredentialStore {
+  declare readonly consumer: 'claude';
+  constructor(db: Db, key: MasterKey, ownerUserId: string) { super(db, key, ownerUserId, 'claude'); }
+  connect(value: Secret, reviewed: SubscriptionCredentialReview['expected'], authority: SubscriptionCredentialAdministration) {
+    return this.replaceAuthentication(value, reviewed, authority);
   }
 }

@@ -1,133 +1,96 @@
-// The Claude subscription sign-in, as HTTP.
-//
-// One router, mounted twice: under the setup wizard while an installation is
-// being built, and under Admin → Model forever afterwards. The wizard's copy
-// disappears when setup completes; an administrator still needs to connect,
-// reconnect, inspect and disconnect, and the Model page is where they do it.
-//
-// WHY THIS IS NOT THE CODEX ROUTER WITH A PARAMETER. The two flows differ in a
-// way that reaches the HTTP surface: Codex prints a URL and a code and then
-// polls by itself, so its client only ever reads. Claude prints a URL and then
-// BLOCKS ON STDIN until the operator pastes back a code from their browser, so
-// its client must also write — `POST .../login/code` exists here and has no
-// Codex equivalent. Collapsing them would mean a route that is meaningless for
-// half its callers.
-//
-// Josi never sees a credential on this path. It shows the link Anthropic's own
-// binary printed, carries one single-use pairing code to that binary's stdin,
-// and asks the binary what its own status is. The login itself is written by
-// the CLI into CLAUDE_CONFIG_DIR, which is a durable volume so that replacing
-// the container does not sign the operator out.
 import { Router, type Request, type Response } from 'express';
-import { ClaudeLogin, claudeAuthStatus, claudeLogout } from '@josi-ce/llm';
+import { claudeCredentialStoreForInstallation, getSetupState, loadMasterKey, Secret,
+  SubscriptionCredentialError, VaultError, VaultLockedError,
+  type Db, type LoadOptions, type SubscriptionCredentialAdministration } from '@josi-ce/core';
+import { vaultClaudeLoginStatus } from '@josi-ce/llm';
+import { canSubmit } from '../setup/steps.js';
 import { asyncRoute } from './async.js';
+import { requireSuperAdmin } from './authz.js';
 
-/** Where the CLI keeps its own login, from how this container was run. */
-export function claudeEnv(): { configDir: string | null } {
-  return { configDir: process.env.CLAUDE_CONFIG_DIR ?? null };
+interface Context { db: Db; masterKey?: LoadOptions | false }
+async function storeFor(context: Context) {
+  if (context.masterKey === false) throw new VaultError('The installation key is unavailable.');
+  let key;
+  try { key = loadMasterKey(context.masterKey ?? {}); }
+  catch { throw new VaultError('The installation key is unavailable.'); }
+  const [owner] = await context.db.query<{ id: string }>(
+    "select id from users where role='super_admin' and status='active' order by created_at,id limit 1");
+  return claudeCredentialStoreForInstallation(context.db, key, owner?.id);
+}
+export async function claudeSubscriptionStatus(context: Context) {
+  return vaultClaudeLoginStatus(await storeFor(context));
 }
 
-export interface ClaudeSubscriptionOptions {
-  /** Returns false to refuse — the wizard uses it to 404 after setup completes.
-   * Absent means always available, which is what the admin mount wants. */
-  available?: (req: Request, res: Response) => Promise<boolean>;
-}
-
-export function claudeSubscriptionRouter(opts: ClaudeSubscriptionOptions = {}): Router {
-  const r = Router();
-
-  /** One administrator-driven login at a time, per mount.
-   *
-   * In memory rather than in the database because it IS a live child process:
-   * a row describing a child that died with the container would be a row that
-   * lies. A restart during sign-in costs one fresh link. */
-  let login: ClaudeLogin | null = null;
-
-  const guard = async (req: Request, res: Response): Promise<boolean> => {
-    if (!opts.available) return true;
-    if (await opts.available(req, res)) return true;
-    if (!res.headersSent) res.status(404).json({ error: 'not found' });
-    return false;
+/** Both setup and administrator clients use one canonical Vault item.
+ * Tokens are write-only request fields, never status, events or response data. */
+export function claudeSubscriptionRouter(context: Context, setup = false): Router {
+  const router = Router(), db = context.db;
+  if (!setup) router.use(requireSuperAdmin);
+  const currentAuthority = (req: Request) => async (tx: Db = db) => {
+    if (setup) {
+      const [state] = await tx.query<{ completed: boolean; completed_steps: string[] }>(
+        'select completed,completed_steps from setup_state where id=true for share');
+      if (!state || state.completed || !canSubmit('llm', state.completed_steps).ok) {
+        throw new SubscriptionCredentialError('Subscription setup is unavailable at this installation step.');
+      }
+    } else {
+      const [account] = await tx.query("select id from users where id=$1 and status='active' and role='super_admin' for share", [req.user?.id]);
+      const [session] = await tx.query(`select id from sessions where id=$1 and user_id=$2
+        and revoked_at is null and expires_at>now() for share`, [req.user?.session_id, req.user?.id]);
+      if (!account || !session) throw new SubscriptionCredentialError('Sign in again with the current administrator account.');
+    }
   };
-
-  /** Is the CLI there, and signed in as what?
-   *
-   * Asked of the CLI every time rather than cached. A cached "signed in" that
-   * outlived the credential is exactly the lie this page exists to avoid. */
-  r.get('/status', asyncRoute(async (req, res) => {
-    if (!(await guard(req, res))) return;
-    return res.json({ cli: await claudeAuthStatus(claudeEnv()) });
-  }));
-
-  /** Start Anthropic's own sign-in and return the link it printed. */
-  r.post('/login', asyncRoute(async (req, res) => {
-    if (!(await guard(req, res))) return;
-    // A second attempt supersedes the first rather than leaving two children
-    // contending for one configuration directory.
-    if (login?.running) login.cancel();
-    login = new ClaudeLogin(claudeEnv());
-    return res.json(await login.start());
-  }));
-
-  /** Poll it. */
-  r.get('/login', asyncRoute(async (req, res) => {
-    if (!(await guard(req, res))) return;
-    if (!login) return res.json({ state: 'idle', challenge: null, message: null });
-
-    const snapshot = login.status;
-    // Confirmed against the CLI rather than inferred from an exit code. The
-    // CLI exiting zero is necessary and not sufficient.
-    if (snapshot.state === 'signed_in') {
-      const status = await claudeAuthStatus(claudeEnv());
-      if (!status.signedIn) {
-        return res.json({
-          state: 'failed', challenge: null,
-          message: 'The sign-in reported success but Claude Code is still not signed in. Try again.',
-        });
+  const authority = (req: Request): SubscriptionCredentialAdministration => ({
+    requireAdministrator: tx => currentAuthority(req)(tx),
+    async requireConsumerStopped() {
+      // A client assertion or lease expiry is not evidence of child closure.
+      throw new SubscriptionCredentialError('The previous subscription consumer cannot be confirmed stopped.');
+    },
+  });
+  const handle = (work: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (setup && (await getSetupState(db)).completed) return res.status(404).json({ error: 'not found' });
+      await currentAuthority(req)();
+      return await work(req, res);
+    } catch (error) {
+      if (error instanceof VaultLockedError) return res.status(423).json({ error: error.message });
+      if (error instanceof SubscriptionCredentialError || error instanceof VaultError) {
+        return res.status(409).json({ error: error.message });
+      }
+      return res.status(503).json({ error: 'The subscription operation could not be confirmed. Refresh status before trying again.' });
+    } finally {
+      if (req.body && typeof req.body === 'object') {
+        delete req.body.token;
+        delete req.body.code;
       }
     }
-    return res.json(snapshot);
-  }));
-
-  /** Hand the CLI the code the operator brought back from their browser.
-   *
-   * The code is written to the child's stdin and referenced nowhere else — not
-   * logged, not stored, not echoed back. It is single use, short lived, and
-   * belongs to Anthropic's exchange rather than to Josi. */
-  r.post('/login/code', asyncRoute(async (req, res) => {
-    if (!(await guard(req, res))) return;
-    if (!login) {
-      return res.status(409).json({
-        state: 'failed', challenge: null,
-        message: 'There is no sign-in in progress. Start one to get a fresh link.',
-      });
+  });
+  router.get('/status', handle(async (_req, res) => res.json({ cli: await claudeSubscriptionStatus(context) })));
+  router.post('/connect', handle(async (req, res) => {
+    if (typeof req.body?.token !== 'string' || !req.body.expected) {
+      throw new SubscriptionCredentialError('Refresh subscription status and enter your Claude setup token.');
     }
-    const code = (req.body ?? {}) as { code?: unknown };
-    if (typeof code.code !== 'string' || !code.code.trim()) {
-      return res.status(400).json({ error: 'Enter the code shown after you approve the sign-in.' });
-    }
-    // Length-bounded before it reaches a pipe. A megabyte pasted into a child's
-    // stdin is a denial of service, not a code.
-    if (code.code.length > 512) {
-      return res.status(400).json({ error: 'That does not look like a sign-in code.' });
-    }
-    return res.json(login.submitCode(code.code));
+    const token = new Secret(req.body.token);
+    delete req.body.token;
+    const store = await storeFor(context);
+    await store.connect(token, req.body.expected, authority(req));
+    return res.json({ cli: await vaultClaudeLoginStatus(store) });
   }));
-
-  r.post('/login/cancel', asyncRoute(async (req, res) => {
-    if (!(await guard(req, res))) return;
-    login?.cancel();
-    login = null;
-    return res.json({ ok: true });
+  // Retired actions explain the settings upgrade without recreating an old
+  // service-directory login. Ordinary remote chat remains on the same API.
+  const reconnect = handle(async (_req, res) => res.status(409).json({
+    error: 'This server stores Claude subscription tokens in the Vault. Open the updated Josi model settings to connect with a setup token.',
+    state: 'failed', challenge: null,
   }));
-
-  /** Undo it. The CLI owns the stored login; this asks it to delete it. */
-  r.post('/logout', asyncRoute(async (req, res) => {
-    if (!(await guard(req, res))) return;
-    login?.cancel();
-    login = null;
-    return res.json(await claudeLogout(claudeEnv()));
+  router.post('/login', reconnect);
+  router.post('/login/code', reconnect);
+  router.get('/login', handle(async (_req, res) => res.json({ state: 'idle', challenge: null, message: null })));
+  router.post('/login/cancel', handle(async (_req, res) => res.json({ ok: true })));
+  router.post('/logout', handle(async (req, res) => {
+    const store = await storeFor(context), saved = await store.inspect();
+    await store.disconnect(req.body?.expected ?? { itemId: saved.itemId, revision: saved.revision }, authority(req));
+    return res.json({ ok: true, detail: 'The canonical Claude subscription token was removed from the Vault.' });
   }));
-
-  return r;
+  return router;
 }
