@@ -72,6 +72,45 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         session = URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
     }
     func close() { closed = true; csrf = nil; session.invalidateAndCancel() }
+    func downloadBackup(_ identifier: String, expectedBytes: Int64, destination: URL,
+                        progress: @MainActor (Int64) throws -> Void) async throws {
+        let id = try uuid(identifier)
+        guard !closed, expectedBytes > 0, expectedBytes <= 9_007_199_254_740_991,
+              let url = URL(string: origin.absoluteString + "/api/ops/admin/backups/\(id)/download") else {
+            throw JosiError(message: "Refresh the completed backup before downloading.")
+        }
+        try progress(0)
+        let storage = try FileManager.default.attributesOfFileSystem(forPath: destination.deletingLastPathComponent().path)
+        guard let free = storage[.systemFreeSize] as? NSNumber, free.int64Value >= expectedBytes else {
+            throw JosiError(message: "The selected disk does not have enough free space for this archive.")
+        }
+        var request = URLRequest(url: url)
+        request.setValue("application/zip", forHTTPHeaderField: "Accept")
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        let (bytes, response) = try await session.bytes(for: request)
+        defer { bytes.task.cancel() }
+        guard !closed, let http = response as? HTTPURLResponse, http.statusCode == 200,
+              response.url == url, response.mimeType == "application/zip",
+              response.expectedContentLength == expectedBytes else {
+            throw JosiError(message: "The completed archive could not be verified. Refresh backup history and try again.")
+        }
+        try progress(0)
+        let file = try NativePrivateExport(destination: destination)
+        var buffer = Data(); buffer.reserveCapacity(256 * 1024)
+        var total: Int64 = 0
+        for try await byte in bytes {
+            guard !closed, total < expectedBytes else { throw JosiError(message: "The backup download changed or was interrupted.") }
+            buffer.append(byte); total += 1
+            if buffer.count == 256 * 1024 {
+                try Task.checkCancellation(); try progress(total)
+                try file.write(buffer); buffer.removeAll(keepingCapacity: true)
+            }
+        }
+        guard !closed, total == expectedBytes else { throw JosiError(message: "The backup download was incomplete. The destination was not replaced.") }
+        try Task.checkCancellation(); try progress(total)
+        if !buffer.isEmpty { try file.write(buffer) }
+        try file.finish()
+    }
     func uuid(_ value: String) throws -> String {
         guard UUID(uuidString: value) != nil else { throw JosiError(message: "Refresh this item before continuing.") }
         return value
