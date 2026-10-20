@@ -18,6 +18,7 @@ from lifecycle import Lifecycle, PRODUCT, diagnostic, plain
 
 LOGS=Path('/Library/Logs/Josi CE Server')
 APP=Path('/Applications/Josi Server.app')
+UNIFIED_APP=Path('/Applications/Josi.app')
 REQUIREMENT='=anchor apple generic and identifier "com.heyjosi.ce.server" and certificate leaf[subject.OU] = "LRH75YR6QW" and certificate leaf[subject.CN] = "Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)"'
 
 def write_event(stream, value):
@@ -44,7 +45,10 @@ def main():
     uid=os.stat('/dev/console').st_uid
     if uid<501:raise PermissionError('Sign in to your Mac before installing Josi')
     runtime=Path(__file__).resolve().parents[2]
-    if runtime!=APP/'Contents/Resources/runtime':raise ValueError('Unexpected package location')
+    unified=runtime==UNIFIED_APP/'Contents/Resources/runtime'
+    app=UNIFIED_APP if unified else APP
+    requirement=REQUIREMENT.replace('com.heyjosi.ce.server','com.heyjosi.ce.unified') if unified else REQUIREMENT
+    if runtime!=app/'Contents/Resources/runtime':raise ValueError('Unexpected package location')
     plain(LOGS)
     LOGS.mkdir(mode=0o755,exist_ok=True)
     info=LOGS.stat()
@@ -67,9 +71,10 @@ def main():
         # Always use the newly installed companion and this attempt's log.
         # Reusing an older running app would keep its failed window and ignore
         # the new command-line progress arguments after an upgrade.
-        subprocess.run(['/bin/launchctl','asuser',str(uid),'/usr/bin/sudo','-H','-u','#'+str(uid),'/usr/bin/open','-n',str(APP),'--args','--progress',str(path)],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        if not unified:
+            subprocess.run(['/bin/launchctl','asuser',str(uid),'/usr/bin/sudo','-H','-u','#'+str(uid),'/usr/bin/open','-n',str(app),'--args','--progress',str(path)],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         try:
-            subprocess.run(['/usr/bin/codesign','--verify','--deep','--strict','-R',REQUIREMENT,str(APP)],check=True,capture_output=True)
+            subprocess.run(['/usr/bin/codesign','--verify','--deep','--strict','-R',requirement,str(app)],check=True,capture_output=True)
             obj=Lifecycle(runtime,progress=lambda phase,service:event({'phase':phase,'service':service}),diagnostics=event)
             run_install(obj,uid,event)
         except Exception as error:

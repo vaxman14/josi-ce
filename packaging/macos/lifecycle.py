@@ -638,7 +638,9 @@ class Lifecycle:
             durable(self.data/'config/runtime.json',cfg,replace=True,mode=0o644)
             if not self.isolated:
                 for role,value in self.plists().items():durable(Path('/Library/LaunchDaemons')/(LABEL+role+'.plist'),plistlib.dumps(value),replace=True,mode=0o644)
-            for role in ROLES:self.start(role)
+            for role in ROLES:
+                if not self.isolated:self.run(['/bin/launchctl','enable','system/'+LABEL+role])
+                self.start(role)
             phase('activated');self.ready();phase('healthy')
             if not self.isolated:
                 handoffs=self.root/'handoff';handoffs.mkdir(mode=0o711,exist_ok=True)

@@ -170,7 +170,7 @@ Live viewing shows only the authorized automation desktop, with protected-conten
 
 ## Build phases and acceptance gates
 
-P0 is in progress; later phase gates remain pending. The default order is sequential; dependencies identify what must be proven before a later phase can enable execution. The owner authorized independent development while pursuing commercial macOS VM permission. Work that does not depend on unresolved feasibility checks may proceed, with execution disabled until its gates pass. Each phase ends with a focused commit, applicable tests, evidence, and an updated status. A feasibility failure does not silently remove an accepted requirement.
+P0 is in progress; later phase gates remain pending. The default order is sequential; dependencies identify what must be proven before a later phase can enable execution. The owner authorized independent development while pursuing commercial macOS VM permission. Work that does not depend on unresolved feasibility checks may proceed, with execution disabled until its gates pass. The owner's subsequent direction is to prioritize building and integration, then run functional and acceptance testing after the features are built. Keep minimal syntax/build checks and the public-data scan before commits. Record implementation checkpoints without claiming their acceptance gates passed. A feasibility failure does not silently remove an accepted requirement.
 
 | Phase | Deliverable | Dependencies |
 |---|---|---|
@@ -271,7 +271,7 @@ Test server-only, client-only, combined, and remote-client installations; preser
 - Keep status and evidence beside each phase; do not mark completion from a model statement alone. Record commit, checks, results, remaining limits, and the next phase.
 - Use Astra for planning/build work when selected by the operator. Phase checkpoints and measurable progress govern continuation; available credits do not authorize unbounded spending or loops. No credit balance or account credentials belong in source control.
 - Preserve historical artifacts, failed-run evidence, databases, keys, and recovery copies. Use disposable environments for fault injection and acceptance preparation.
-- Run relevant checks and the repository's public-data scanner for each change. Plan-only commits require document/link/traceability review and scanning, not unrelated runtime builds.
+- Follow the owner's build-first direction: implement connected features, use only necessary syntax/build checks while building, and defer functional/acceptance suites to the integrated validation pass. Keep the public-data scan before publishing source. Do not confuse compiled or packaged code with tested acceptance.
 - Use the available Ruflo route/memory tools when required by workspace instructions. If unavailable, record that limitation and use the committed plan and phase evidence; do not claim a swarm or memory operation ran.
 - The subsequent owner instruction authorized implementation, disposable development tests, and GitHub phase commits, beginning P0. Commercial VM licensing remains unresolved and is being pursued by the owner. Do not confuse development proofs with production acceptance or release publication.
 

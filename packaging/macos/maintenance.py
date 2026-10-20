@@ -71,7 +71,7 @@ def owned_lock(obj):
     fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
     return fd
 
-def clean_transactions(obj,allow_uninstall=False):
+def clean_transactions(obj,allow_uninstall=False,allow_service=None):
     from lifecycle import Journal
     for folder in (obj.root/'transactions').iterdir():
         j=Journal(folder)
@@ -79,7 +79,51 @@ def clean_transactions(obj,allow_uninstall=False):
     status=obj.root/'maintenance.json'
     if status.exists():
         saved=json.loads(status.read_text())
-        if saved.get('state')!='complete' and not (allow_uninstall and saved.get('operation')=='uninstall'):raise RuntimeError('An earlier settings change needs repair first')
+        allowed=(allow_uninstall and saved.get('operation')=='uninstall') or (allow_service and saved.get('operation')==allow_service)
+        if saved.get('state')!='complete' and not allowed:raise RuntimeError('An earlier settings change needs repair first')
+
+def services(obj,operation):
+    """Explicit local-owner service controls; never replace accounts or data.
+
+    A pending operation can be resumed after interruption. Stop also disables
+    the owned launchd jobs so reboot respects the owner's stopped state.
+    """
+    if operation not in ('start','stop','restart'):raise ValueError('Unsupported service operation')
+    lock=owned_lock(obj)
+    try:
+        clean_transactions(obj,allow_service=operation)
+        receipt=protected_status(obj)
+        cfg=json.loads((obj.data/'config/runtime.json').read_text())
+        obj.check_owned(obj.root/'versions'/cfg['version'])
+        intent=obj.root/'maintenance.json'
+        durable(intent,{'operation':operation,'state':'pending'},replace=True)
+        if operation in ('stop','restart'):
+            if not obj.isolated:
+                for role in ROLES:obj.run(['/bin/launchctl','disable','system/'+LABEL+role])
+            obj.stop()
+        if operation in ('start','restart'):
+            for role in ROLES:
+                if not obj.isolated:
+                    definition=Path('/Library/LaunchDaemons')/(LABEL+role+'.plist')
+                    if not definition.exists():raise RuntimeError('Reinstall Josi to restore its retained service definitions')
+                    obj.run(['/bin/launchctl','enable','system/'+LABEL+role])
+                    query=subprocess.run(['/bin/launchctl','print','system/'+LABEL+role],capture_output=True,text=True,timeout=10)
+                    if query.returncode==0:continue
+                    if query.returncode!=113 or 'Could not find service' not in query.stderr:raise RuntimeError('Cannot inspect owned service: '+role)
+                obj.start(role)
+            obj.ready()
+        receipt['serviceState']='stopped' if operation=='stop' else 'running'
+        durable(obj.root/'status.json',receipt,replace=True,mode=0o644)
+        durable(intent,{'operation':operation,'state':'complete'},replace=True)
+        return {'result':'success','serviceState':receipt['serviceState'],'dataRetained':True}
+    finally:fcntl.flock(lock,fcntl.LOCK_UN);os.close(lock)
+
+def protected_status(obj):
+    path=plain(obj.root/'status.json',os.getuid())
+    if path.stat().st_mode&0o022:raise PermissionError('Unprotected installation receipt')
+    value=json.loads(path.read_text())
+    if value.get('installed') is not True:raise RuntimeError('Install Josi before managing its services')
+    return value
 
 def workspace(obj,path,uid):
     selection=selected_folder(path,uid) if path else None
@@ -156,11 +200,14 @@ def main():
     uid=os.stat('/dev/console').st_uid
     if uid<501:raise PermissionError('Sign in to your Mac first')
     if sys.argv[1:]==['uninstall']:result=uninstall(obj)
+    elif len(sys.argv)==2 and sys.argv[1] in ('start','stop','restart'):result=services(obj,sys.argv[1])
     elif len(sys.argv)==3 and sys.argv[1]=='workspace':result=workspace(obj,sys.argv[2],uid)
     elif sys.argv[1:]==['recover-latest']:
         settings=obj.root/'maintenance.json'
         if settings.exists():
             saved=json.loads(settings.read_text())
+            if saved.get('state')=='pending' and saved.get('operation') in ('start','stop','restart'):
+                emit(services(obj,saved['operation']));return
             if saved.get('state')=='pending' and saved.get('operation')=='workspace':
                 lock=owned_lock(obj)
                 try:

@@ -2,9 +2,21 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Josi</title><link rel="stylesheet" href="shell.css"></head>
-<body><main><div class="mark" aria-hidden="true">j.</div><p class="eyebrow">YOUR JOSI, CONNECTED</p>
-<h1>Welcome to Josi.</h1><p class="intro">Connect to your Josi server on this computer or another device.</p>
+<body><main><header><div class="mark" aria-hidden="true">j.</div><div><p class="eyebrow">ONE JOSI. ALL YOUR DEVICES.</p>
+<h1>Make yourself at home.</h1><p class="intro">Run Josi here, or connect to the server you already use.</p></div></header>
+<div class="choices">
+<section class="card" aria-labelledby="local-title"><div class="card-heading"><h2 id="local-title">On this Mac</h2><span id="local-badge" class="badge">Checking</span></div>
+<p id="local-detail">Checking your local installation…</p>
+<button id="open-local" disabled>Run on this Mac <span aria-hidden="true">→</span></button>
+<p id="local-version" class="note"></p>
+<details id="management"><summary>Server controls</summary><p class="note">The server keeps running when you close Josi. Other devices can keep using it.</p>
+<div class="actions"><button id="start" class="secondary" disabled>Start</button><button id="stop" class="secondary" disabled>Stop</button><button id="restart" class="secondary" disabled>Restart</button></div>
+<div class="actions"><button id="backups" class="secondary" disabled>Backups</button><button id="repair" class="secondary" disabled>Repair</button><button id="diagnostics" class="secondary">Copy diagnostics</button></div>
+<button id="update-local" class="secondary" hidden>Update local server</button><button id="remove-local" class="secondary" hidden>Remove local server…</button></details></section>
+<section class="card" aria-labelledby="remote-title"><h2 id="remote-title">On another computer</h2><p>Use your existing account, tasks and Vault from any connected device.</p>
 <form id="connect"><label for="server">Server address</label><input id="server" name="server" type="url" placeholder="https://josi.example.com" autocomplete="url" required spellcheck="false">
-<button type="submit">Connect to Josi <span aria-hidden="true">↗</span></button></form>
+<button type="submit" id="connect-remote" class="secondary">Connect to server <span aria-hidden="true">↗</span></button></form>
+<p class="note">Sign in on your server after connecting.</p></section></div>
 <p id="status" role="status" aria-live="polite"></p>
-<p class="note">Sign in securely on your server after connecting.</p></main><script src="shell.js"></script></body></html>
+<footer>Setup, conversations and server settings live here in Josi.</footer>
+</main><script src="shell.js"></script></body></html>
