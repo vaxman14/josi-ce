@@ -214,6 +214,7 @@ struct NativeWorkspaceStorageView: View {
                 if desktop.requiresClosure {
                     Text("\(desktop.label) · \(desktop.state.replacingOccurrences(of: "_", with: " "))").font(.headline)
                     Text(desktop.progress)
+                    if let guest = desktop.guest { NativeGuestConnectionView(connection: guest) }
                     HStack {
                         Button("Show Desktop") { model.run { try desktop.show() } }
                             .disabled(model.busy || !["running", "paused"].contains(desktop.state))

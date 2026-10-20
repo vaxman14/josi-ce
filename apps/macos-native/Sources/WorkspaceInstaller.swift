@@ -44,7 +44,8 @@ import Darwin
         try mounted(root, device: device)
         return MountedAutomationWorkspace(workspaceId: id, mountRoot: root, volumeDevice: device,
             hardwareModel: try bytes(value["hardwareModel"]), machineIdentifier: try bytes(value["machineIdentifier"]),
-            cpuCount: value["cpuCount"].integer, memoryBytes: UInt64(value["memoryBytes"].integer))
+            cpuCount: value["cpuCount"].integer, memoryBytes: UInt64(value["memoryBytes"].integer),
+            supportDisk: URL(fileURLWithPath: "/Applications/Josi.app/Contents/Resources/JosiSupport.iso"))
     }
     private static func record(_ value: Wire, root: URL) throws {
         let export = try NativePrivateExport(destination: root.appendingPathComponent("Machine.json"))

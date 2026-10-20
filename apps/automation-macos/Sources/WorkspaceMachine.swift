@@ -14,6 +14,7 @@ struct MountedAutomationWorkspace {
     let machineIdentifier: Data
     let cpuCount: Int
     let memoryBytes: UInt64
+    let supportDisk: URL?
 }
 
 @MainActor
@@ -81,6 +82,15 @@ final class WorkspaceMachine: NSObject, @preconcurrency VZVirtualMachineDelegate
         config.cpuCount = workspace.cpuCount; config.memorySize = workspace.memoryBytes
         let disk = try VZDiskImageStorageDeviceAttachment(url: privateFile("Disk.img", root: workspace), readOnly: false)
         config.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: disk)]
+        if let support = workspace.supportDisk {
+            var info = stat()
+            let expected = "/Applications/Josi.app/Contents/Resources/JosiSupport.iso"
+            guard support.path == expected, support.resolvingSymlinksInPath().path == expected,
+                  lstat(expected, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == 0,
+                  info.st_mode & 0o022 == 0, info.st_nlink == 1 else { throw WorkspaceMachineError.invalidWorkspace }
+            config.storageDevices.append(VZVirtioBlockDeviceConfiguration(attachment:
+                try VZDiskImageStorageDeviceAttachment(url: support, readOnly: true)))
+        }
         let graphics = VZMacGraphicsDeviceConfiguration()
         graphics.displays = [VZMacGraphicsDisplayConfiguration(widthInPixels: 1440, heightInPixels: 900, pixelsPerInch: 110)]
         config.graphicsDevices = [graphics]

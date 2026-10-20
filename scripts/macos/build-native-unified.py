@@ -136,7 +136,8 @@ def build(args):
                                 '-target', 'arm64-apple-macos14.2', '-module-cache-path', output / 'module-cache',
                                 '-o', executables / 'Josi', *sorted(source.glob('*.swift')),
                                 REPO / 'packaging/macos/NativeAuthorization.swift',
-                                REPO / 'apps/automation-macos/Sources/WorkspaceMachine.swift'])
+                                REPO / 'apps/automation-macos/Sources/WorkspaceMachine.swift',
+                                REPO / 'apps/automation-macos/Sources/GuestLinkWire.swift'])
     (output / 'native-app-entitlements.plist').write_bytes(plistlib.dumps({'com.apple.security.virtualization': True}))
     copy_file(REPO / 'packaging/macos/Josi.png', resources / 'Josi.png')
     icons = output / 'Josi.iconset'; icons.mkdir()
@@ -206,6 +207,32 @@ def build(args):
         copy_file(profile, key_bundle / 'Contents/embedded.provisionprofile')
         (output / 'protected-key-entitlements.plist').write_bytes(plistlib.dumps(key_entitlements))
     copy_file(native_build / 'JosiDeviceConsentHost', helpers / 'JosiDeviceConsentHost')
+    support = output / 'guest-support'; support.mkdir()
+    companion = support / 'Josi Companion.app'
+    (companion / 'Contents/MacOS').mkdir(parents=True)
+    (companion / 'Contents/Resources').mkdir()
+    run('compile-guest-companion', ['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-O',
+        '-target', 'arm64-apple-macos14.2', '-module-cache-path', output / 'module-cache',
+        '-o', companion / 'Contents/MacOS/JosiCompanion',
+        REPO / 'apps/automation-macos/Sources/GuestCompanionApp.swift',
+        REPO / 'apps/automation-macos/Sources/GuestLinkWire.swift'])
+    (companion / 'Contents/Info.plist').write_bytes(plistlib.dumps({
+        'CFBundleIdentifier': 'com.heyjosi.ce.guestcompanion', 'CFBundleName': 'Josi Companion',
+        'CFBundleDisplayName': 'Josi Companion', 'CFBundleExecutable': 'JosiCompanion',
+        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.7.0',
+        'CFBundleVersion': info['CFBundleVersion'], 'LSMinimumSystemVersion': '14.2',
+        'CFBundleIconFile': 'Josi.icns', 'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
+        'NSHumanReadableCopyright': info['NSHumanReadableCopyright'],
+    }))
+    for name in ('Josi.icns', 'LICENSE', 'NOTICE'):
+        copy_file(resources / name, companion / 'Contents/Resources' / name)
+    (support / 'Read Me.txt').write_text(
+        'Josi development desktop support\\n\\n'
+        'Inside the separate desktop, copy Josi Companion.app to Applications and open it. '
+        'Choose Connect to Josi and compare the code in both native windows.\\n'
+        'The companion reports permission readiness only; computer/browser execution is not connected yet. '
+        'Do not install this companion on your personal desktop. It requires the isolated guest environment.\\n'
+        'This disk is read-only and contains no credentials or host files.\\n')
 
     uninstaller = output / 'payload/Applications/Uninstall Josi.app'
     ur = uninstaller / 'Contents/Resources'; ur.mkdir(parents=True)
@@ -248,6 +275,10 @@ def build(args):
         sign('sign-JosiProtectedKeyHost', key_bundle, PROTECTED_ID,
              output / 'protected-key-entitlements.plist' if profile else None)
         sign('sign-JosiDeviceConsentHost', helpers / 'JosiDeviceConsentHost', 'com.heyjosi.ce.device-consent')
+        sign('sign-guest-companion', companion, 'com.heyjosi.ce.guestcompanion')
+        run('verify-guest-companion', ['/usr/bin/codesign', '--verify', '--deep', '--strict', companion])
+    run('create-guest-support-image', ['/usr/bin/hdiutil', 'makehybrid', '-hfs',
+        '-hfs-volume-name', 'Josi Support', '-o', resources / 'JosiSupport.iso', support])
     run('runtime-inventory', [sys.executable, '-B', REPO / 'scripts/macos/inventory.py', runtime, '--hash-only'])
     run('uninstaller-inventory', [sys.executable, '-B', REPO / 'scripts/macos/inventory.py', minimal, '--hash-only'])
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()

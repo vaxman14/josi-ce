@@ -9,6 +9,7 @@ import Darwin
     @Published private(set) var state = "closed"
     @Published private(set) var progress = ""
     @Published private(set) var label = ""
+    @Published private(set) var guest: NativeGuestConnection?
     private weak var model: JosiModel?
     private var api: JosiAPI?
     private var user: Wire = .null
@@ -60,6 +61,13 @@ import Darwin
             machine = engine
             try await engine.open(UUID(uuidString: id)!)
             try current()
+            guest = NativeGuestConnection(device: try engine.socketDevice(), context: [
+                "serverOrigin": api.origin.absoluteString, "serverId": entry["identity"]["serverId"].text,
+                "userId": user.text, "deviceId": entry["identity"]["deviceId"].text, "workspaceId": id,
+            ], current: { [weak self] in
+                guard let self else { throw GuestLinkError.closed }
+                try self.current(); return self.session["leaseUntilMs"].integer
+            })
             try engine.show()
             progress = "Separate development desktop · Network and host sharing are disabled."
             self.restore = nil
@@ -163,11 +171,11 @@ import Darwin
         try NativeWorkspaceInstaller.mounted(workspace.mountRoot, device: workspace.volumeDevice)
     }
     func invalidateInput(workspaceId: UUID, reason: String) {
-        // No automation channel is assembled in this development desktop.
-        // A later channel must be synchronously revoked here before dispatch.
+        // The current guest link reports readiness only and cannot issue
+        // input. The later execution gate must be revoked here synchronously.
     }
     func closeChannels(workspaceId: UUID) async throws {
-        // No guest/automation channels are opened by this controller.
+        guest?.close(); guest = nil
     }
     func closeWorkspace(_ workspace: MountedAutomationWorkspace) async throws {
         guard workspace.workspaceId.uuidString.lowercased() == self.workspace["workspaceId"].text else { throw WorkspaceMachineError.invalidWorkspace }
@@ -192,6 +200,7 @@ import Darwin
             Task { _ = try? await api.request("/admin/automation/storage/sessions/\(id)/close", method: "POST", body: [:]) }
         }
         do {
+            guest?.close(); guest = nil
             if let vm = installingMachine, vm.state != .stopped && vm.state != .error { try await vm.stop() }
             installingMachine = nil
             if let machine { try await machine.authorityLost() }
