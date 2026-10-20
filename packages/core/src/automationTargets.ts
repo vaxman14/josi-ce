@@ -86,6 +86,11 @@ async function prepare(context: Context, args: AutomationTargetRegistration) {
   if (entries.length >= 256 || entries.some(e => e.applicationId === args.candidate.candidateId)) {
     throw new VaultRecordError('This app selection is already registered or the target registry is full.');
   }
+  if (entries.some(e => sameAutomationIdentity(e.identity, args.identity)
+    && (['bundlePath', 'bundleId', 'signingId', 'teamId', 'codeHash'] as const)
+      .every(key => e.candidate[key] === args.candidate[key]))) {
+    throw new VaultRecordError('This exact application is already registered. Use its existing permissions.');
+  }
   const c = args.candidate, i = args.identity;
   const presentation = parseProtectedControlPresentation({
     wording: `Register ${c.label} for separate-desktop permission setup.`,

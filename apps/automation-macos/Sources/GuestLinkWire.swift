@@ -98,15 +98,16 @@ final class GuestLinkWire: @unchecked Sendable {
             offset += count
         }
     }
-    static func encode(_ value: [String: String]) throws -> Data {
-        guard value.count <= 24, value.allSatisfy({ $0.key.utf8.count <= 64 && $0.value.utf8.count <= 4096 }) else { throw GuestLinkError.invalid }
+    static func encode(_ value: [String: String], envelope: Bool = false) throws -> Data {
+        guard value.count <= 24, value.allSatisfy({ $0.key.utf8.count <= 64
+            && $0.value.utf8.count <= (envelope && $0.key == "box" ? 22 * 1024 : 4096) }) else { throw GuestLinkError.invalid }
         let bytes = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
-        guard bytes.count <= 16 * 1024 else { throw GuestLinkError.invalid }
+        guard bytes.count <= (envelope ? 24 : 16) * 1024 else { throw GuestLinkError.invalid }
         return bytes
     }
-    private static func decode(_ bytes: Data) throws -> [String: String] {
-        guard bytes.count <= 16 * 1024, let value = try JSONSerialization.jsonObject(with: bytes) as? [String: String],
-              try encode(value) == bytes else { throw GuestLinkError.invalid }
+    private static func decode(_ bytes: Data, envelope: Bool = false) throws -> [String: String] {
+        guard bytes.count <= (envelope ? 24 : 16) * 1024, let value = try JSONSerialization.jsonObject(with: bytes) as? [String: String],
+              try encode(value, envelope: envelope) == bytes else { throw GuestLinkError.invalid }
         return value
     }
     private func frame(_ bytes: Data) throws {
@@ -176,13 +177,13 @@ final class GuestLinkWire: @unchecked Sendable {
                 authenticating: self.associated(sender: self.role, sequence: self.sending))
             guard let combined = box.combined else { throw GuestLinkError.invalid }
             try self.frame(Self.encode(["version": "1", "channel": self.channel,
-                "sequence": String(self.sending), "box": combined.base64EncodedString()]))
+                "sequence": String(self.sending), "box": combined.base64EncodedString()], envelope: true))
         }
     }
     func receive(seconds: Int = 5) async throws -> [String: String] {
         try await perform {
             guard let key = self.receiveKey, self.receiving < 4096 else { throw GuestLinkError.invalid }
-            let packet = try Self.decode(self.frame(seconds: seconds))
+            let packet = try Self.decode(self.frame(seconds: seconds), envelope: true)
             guard Set(packet.keys) == ["version", "channel", "sequence", "box"], packet["version"] == "1",
                   packet["channel"] == self.channel, packet["sequence"] == String(self.receiving + 1),
                   let encoded = packet["box"], let combined = Data(base64Encoded: encoded),

@@ -67,6 +67,9 @@ import Darwin
             ], current: { [weak self] in
                 guard let self else { throw GuestLinkError.closed }
                 try self.current(); return self.session["leaseUntilMs"].integer
+            }, resolveApplication: { [weak self] candidate in
+                guard let self else { throw GuestLinkError.closed }
+                return try await self.applicationProjection(candidate)
             })
             try engine.show()
             progress = "Separate development desktop · Network and host sharing are disabled."
@@ -81,6 +84,35 @@ import Darwin
             }
             throw error
         }
+    }
+    private func applicationProjection(_ candidate: Wire) async throws -> Wire {
+        try current()
+        guard let model, let api else { throw GuestLinkError.closed }
+        let identity: Wire = ["serverId": workspace["identity"]["serverId"], "userId": user,
+                              "deviceId": workspace["identity"]["deviceId"], "workspaceId": workspace["workspaceId"]]
+        let matches = NativeGuestConnection.matchingApplications(candidate, identity: identity,
+            registry: model.automationSettings["targets"])
+        // Multiple old registrations are ambiguous; never silently move grants.
+        guard matches.count == 1 else { return .null }
+        let selected = matches[0], id = try api.uuid(session["sessionId"].text)
+        let applicationId = try api.uuid(selected["applicationId"].text)
+        guard ProtectedWire.integer(selected["installationRevision"], positive: true) else { throw GuestLinkError.invalid }
+        let value = try await api.request("/admin/automation/storage/sessions/\(id)/application", method: "POST",
+            body: ["applicationId": .string(applicationId), "installationRevision": selected["installationRevision"]])
+        try current()
+        let pin = value["application"]
+        guard ProtectedWire.exact(value, ["schemaVersion", "sessionId", "identity", "reference", "application", "expiresAtMs", "executionEnabled"]),
+              value["schemaVersion"] == .number(1), value["sessionId"] == session["sessionId"], value["identity"] == identity,
+              value["executionEnabled"] == .bool(false), ProtectedWire.reference(value["reference"]),
+              value["reference"]["recordId"].text == "32eae367-3509-4241-9829-81c28b7b4088",
+              ProtectedWire.integer(value["expiresAtMs"]), value["expiresAtMs"].integer <= session["leaseUntilMs"].integer,
+              value["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
+              ProtectedWire.exact(pin, ["workspaceId", "applicationId", "installationRevision", "bundlePath", "bundleId", "signingId", "teamId", "codeHash"]),
+              pin["workspaceId"] == workspace["workspaceId"], pin["applicationId"] == selected["applicationId"],
+              pin["installationRevision"] == selected["installationRevision"],
+              ["bundlePath", "bundleId", "signingId", "teamId", "codeHash"].allSatisfy({ pin[$0] == candidate[$0] })
+        else { throw GuestLinkError.invalid }
+        return value
     }
     private func adoptLease(_ value: Wire) throws {
         let now = Int(Date().timeIntervalSince1970 * 1000)

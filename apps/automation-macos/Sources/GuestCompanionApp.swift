@@ -135,15 +135,18 @@ enum GuestEnvironment {
                 message = "Companion connected. Computer and browser automation are not enabled."
                 while !Task.isCancelled {
                     let pulse = try await link.receive(seconds: 5)
-                    guard runID == own, Set(pulse.keys) == ["kind", "leaseUntilMs"], pulse["kind"] == "pulse",
+                    guard runID == own, Set(pulse.keys) == ["kind", "leaseUntilMs", "applicationPin"], pulse["kind"] == "pulse",
                           let raw = pulse["leaseUntilMs"], let until = Int(raw), String(until) == raw else { throw GuestLinkError.invalid }
                     let now = Int(Date().timeIntervalSince1970 * 1000)
                     guard until > now, until - now <= 10_000 else { throw GuestLinkError.expired }
                     expires = until; deadline = .now.advanced(by: .milliseconds(until - now))
                     try current()
+                    let readiness = try GuestApplicationReadiness.inspect(pulse["applicationPin"] ?? "", selection: candidate,
+                        identity: host, leaseUntil: until)
+                    try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
-                        "applicationCandidate": candidate])
+                        "applicationCandidate": candidate, "applicationReadiness": readiness])
                 }
             } catch {
                 if runID == own { message = "Connection ended or could not be verified. Install the signed companion in this guest’s Applications folder, then connect from the Josi app." }

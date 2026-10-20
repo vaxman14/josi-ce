@@ -174,7 +174,7 @@ final class GuestDesktopEngine {
               dimensions.width > 0, dimensions.height > 0 else { return nil }
         return CGRect(origin: point, size: dimensions)
     }
-    private func verify(_ application: NSRunningApplication, pin: GuestPinnedApplication) throws {
+    static func verifyApplication(_ application: NSRunningApplication, pin: GuestPinnedApplication) throws {
         guard pin.installationRevision > 0, pin.bundlePath.hasPrefix("/"), pin.bundlePath.hasSuffix(".app"),
               pin.bundlePath.utf8.count <= 768,
               pin.codeHash.range(of: "^(?:[a-f0-9]{40}|[a-f0-9]{64})$", options: .regularExpression) != nil,
@@ -214,7 +214,7 @@ final class GuestDesktopEngine {
               !bundle.lowercased().hasPrefix("com.heyjosi."), !bundle.lowercased().hasPrefix("com.socalreceptionist.josi"),
               let path = app.executableURL?.resolvingSymlinksInPath().standardizedFileURL.path,
               let launched = app.launchDate else { throw GuestDesktopError.denied }
-        try verify(app, pin: pin)
+        try Self.verifyApplication(app, pin: pin)
         let application = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(application, 0.15)
         guard let rawWindow = attribute(application, kAXFocusedWindowAttribute), CFGetTypeID(rawWindow) == AXUIElementGetTypeID() else {

@@ -11,9 +11,11 @@ import Darwin
     @Published private(set) var accessibility = false
     @Published private(set) var screenCapture = false
     @Published private(set) var applicationCandidate: Wire = .null
+    @Published private(set) var applicationReadiness = ""
     private let device: VZVirtioSocketDevice
     private let context: [String: String]
     private let current: @MainActor () throws -> Int
+    private let resolveApplication: @MainActor (Wire) async throws -> Wire
     private let listener = VZVirtioSocketListener()
     private var connection: VZVirtioSocketConnection?
     private var wire: GuestLinkWire?
@@ -23,9 +25,12 @@ import Darwin
     private var alert: NSAlert?
     private var closed = false
     private var attempts = 0
+    private var applicationTask: Task<Void, Never>?
+    private var applicationPin: Wire = .null
 
-    init(device: VZVirtioSocketDevice, context: [String: String], current: @escaping @MainActor () throws -> Int) {
-        self.device = device; self.context = context; self.current = current
+    init(device: VZVirtioSocketDevice, context: [String: String], current: @escaping @MainActor () throws -> Int,
+         resolveApplication: @escaping @MainActor (Wire) async throws -> Wire) {
+        self.device = device; self.context = context; self.current = current; self.resolveApplication = resolveApplication
         super.init()
         listener.delegate = self
         device.setSocketListener(listener, forPort: GuestLinkWire.port)
@@ -100,10 +105,12 @@ import Darwin
             paired = true; state = "Companion connected. Automation is not enabled."
             while !Task.isCancelled && !closed {
                 let until = try current()
-                try await link.send(["kind": "pulse", "leaseUntilMs": String(until)])
+                let pin = currentApplicationPin(until: until)
+                let encoded = pin == .null ? "" : String(decoding: try JSONEncoder().encode(pin), as: UTF8.self)
+                try await link.send(["kind": "pulse", "leaseUntilMs": String(until), "applicationPin": encoded])
                 let reply = try await link.receive()
                 _ = try current()
-                guard Set(reply.keys) == ["kind", "accessibility", "screenCapture", "executionEnabled", "applicationCandidate"],
+                guard Set(reply.keys) == ["kind", "accessibility", "screenCapture", "executionEnabled", "applicationCandidate", "applicationReadiness"],
                       reply["kind"] == "status", reply["executionEnabled"] == "no",
                       ["yes", "no"].contains(reply["accessibility"] ?? ""),
                       ["yes", "no"].contains(reply["screenCapture"] ?? ""), let candidate = reply["applicationCandidate"],
@@ -123,20 +130,79 @@ import Darwin
                     else { throw GuestLinkError.invalid }
                     applicationCandidate = value
                 }
+                applicationReadiness = ""
+                guard let rawReadiness = reply["applicationReadiness"], rawReadiness.utf8.count <= 512 else { throw GuestLinkError.invalid }
+                if !rawReadiness.isEmpty {
+                    let value = try JSONDecoder().decode(Wire.self, from: Data(rawReadiness.utf8))
+                    guard pin != .null, ProtectedWire.exact(value, ["requestId", "applicationId", "installationRevision", "state"]),
+                          value["requestId"] == pin["requestId"],
+                          value["applicationId"] == pin["projection"]["application"]["applicationId"],
+                          value["installationRevision"].text == String(pin["projection"]["application"]["installationRevision"].integer),
+                          ["running", "not_running", "ambiguous", "changed"].contains(value["state"].text)
+                    else { throw GuestLinkError.invalid }
+                    if pin["candidateId"] == applicationCandidate["candidateId"],
+                       pin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) {
+                        applicationReadiness = value["state"].text
+                    }
+                }
+                refreshApplicationPin()
                 try await Task.sleep(for: .seconds(2))
             }
         } catch {
             if !closed { state = "Companion disconnected or could not be verified. Reconnect inside the desktop." }
         }
         cancelQuestion(); paired = false; accessibility = false; screenCapture = false; applicationCandidate = .null
+        applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
+    }
+    private func currentApplicationPin(until: Int) -> Wire {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        guard applicationPin["candidateId"] == applicationCandidate["candidateId"],
+              applicationPin["projection"]["expiresAtMs"].integer > now,
+              applicationPin["projection"]["expiresAtMs"].integer <= until else { return .null }
+        return applicationPin
+    }
+    private func refreshApplicationPin() {
+        guard !closed, paired, applicationTask == nil, applicationCandidate != .null else { return }
+        if applicationPin["candidateId"] == applicationCandidate["candidateId"],
+           applicationPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) + 4000 { return }
+        let selected = applicationCandidate
+        applicationTask = Task {
+            defer { if !Task.isCancelled { applicationTask = nil } }
+            do {
+                _ = try current()
+                let projection = try await resolveApplication(selected)
+                guard !Task.isCancelled, !closed, paired, applicationCandidate == selected else { return }
+                let until = try current()
+                guard projection != .null else { applicationPin = .null; return }
+                guard projection["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
+                      projection["expiresAtMs"].integer <= until else { throw GuestLinkError.expired }
+                let pin: Wire = ["requestId": .string(UUID().uuidString.lowercased()),
+                                 "candidateId": selected["candidateId"], "projection": projection]
+                guard try JSONEncoder().encode(pin).count <= 4096 else { throw GuestLinkError.invalid }
+                applicationPin = pin
+            } catch {
+                if !Task.isCancelled { applicationPin = .null; applicationReadiness = "" }
+            }
+        }
+    }
+    var identity: Wire {
+        .object(Dictionary(uniqueKeysWithValues: ["serverId", "userId", "deviceId", "workspaceId"].map {
+            ($0, .string(context[$0] ?? ""))
+        }))
+    }
+    /// UI discovery only. The session endpoint must resolve the selected ID
+    /// from the current canonical Vault before sending a pin to the guest.
+    static func matchingApplications(_ candidate: Wire, identity: Wire, registry: Wire) -> [Wire] {
+        guard candidate != .null, !registry["reconciliationRequired"].flag else { return [] }
+        return registry["applications"].list.filter { target in
+            target["identity"] == identity && ["bundlePath", "bundleId", "signingId", "teamId", "codeHash"]
+                .allSatisfy { target["candidate"][$0] == candidate[$0] }
+        }
     }
     func registration(expected: Wire) throws -> Wire {
         _ = try current()
         guard paired, !closed, applicationCandidate != .null else { throw GuestLinkError.closed }
-        let identity: Wire = .object(Dictionary(uniqueKeysWithValues: ["serverId", "userId", "deviceId", "workspaceId"].map {
-            ($0, .string(context[$0] ?? ""))
-        }))
         return ["kind": "automation.target.register", "identity": identity,
                 "candidate": applicationCandidate, "expected": expected]
     }
@@ -148,6 +214,7 @@ import Darwin
         closed = true; cancelQuestion(); wire?.interrupt(); connection?.close()
         device.removeSocketListener(forPort: GuestLinkWire.port)
         task?.cancel(); task = nil; wire = nil; connection = nil
+        applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         paired = false; applicationCandidate = .null; state = "Companion disconnected."
     }
 }
@@ -165,8 +232,9 @@ struct NativeGuestConnectionView: View {
                 if let change = try? connection.registration(expected: registered["reference"]), registered != .null,
                    !registered["reconciliationRequired"].flag {
                     let candidate = change["candidate"]
-                    if registered["applications"].list.contains(where: { $0["applicationId"] == candidate["candidateId"] }) {
+                    if !NativeGuestConnection.matchingApplications(candidate, identity: connection.identity, registry: registered).isEmpty {
                         Text(candidate["label"].text + " is registered. Configure its permissions in Automation Settings.").font(.caption)
+                        Text(readinessText).font(.caption).foregroundStyle(.secondary)
                     } else {
                         Text("Selected guest app: " + candidate["label"].text).font(.headline)
                         Text(candidate["bundlePath"].text).font(.caption).textSelection(.enabled)
@@ -183,6 +251,15 @@ struct NativeGuestConnectionView: View {
                 Text("Inside the desktop, copy Josi Companion from the Josi Support disk into Applications, then open it and choose Connect to Josi.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+    private var readinessText: String {
+        switch connection.applicationReadiness {
+        case "running": return "The running app matches its saved identity. Automation is not enabled yet."
+        case "not_running": return "Open this app inside the separate desktop when you are ready to use it."
+        case "ambiguous": return "More than one copy is running. Leave only the intended copy open."
+        case "changed": return "This running app does not match its saved identity. Select and register the current installation."
+        default: return "Checking the selected app against its saved identity…"
         }
     }
 }
