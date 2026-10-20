@@ -37,18 +37,36 @@ def clone_file(source, destination):
     return destination
 
 
-def copy_tree(source, destination):
-    shutil.copytree(source, destination, symlinks=True, copy_function=clone_file,
+def copy_file(source, destination):
+    # Explicit ordinary-copy mode avoids a blocked APFS clone syscall. Do not
+    # silently turn a space-saving clone into a large copy on a full laptop.
+    with open(source, 'rb') as reader, open(destination, 'xb') as writer:
+        shutil.copyfileobj(reader, writer, length=8 * 1024 * 1024)
+    shutil.copystat(source, destination)
+    return destination
+
+
+def copy_tree(source, destination, mode):
+    shutil.copytree(source, destination, symlinks=True,
+                    copy_function=clone_file if mode == 'clone' else copy_file,
                     ignore=shutil.ignore_patterns('.DS_Store', '__pycache__'))
 
 
-def replace_tree(source, destination):
+def replace_tree(source, destination, mode):
     if not source.is_dir():
         raise ValueError('Build this source package first: ' + str(source))
     if destination.exists():
         shutil.rmtree(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    copy_tree(source, destination)
+    copy_tree(source, destination, mode)
+
+
+def payload_bytes(root):
+    return sum(p.stat().st_size for p in root.rglob('*') if not p.is_symlink() and p.is_file())
+
+
+def progress(message):
+    print(message, flush=True)
 
 
 def prepare(args):
@@ -66,12 +84,19 @@ def prepare(args):
         raise ValueError('Electron version does not match the pinned desktop runtime')
     if args.package and runtime_input is None:
         raise ValueError('A unified installer must include the server runtime')
-    if shutil.disk_usage(output.parent).free < 2 * 1024**3:
-        raise ValueError('Keep at least 2 GiB available for source overlays and packaging')
+    required_space = 2 * 1024**3
+    if args.copy_mode == 'copy':
+        # Include the candidate and both installer intermediates. Source
+        # overlays have a separate reserve. No automatic clone-to-copy retry.
+        size = payload_bytes(electron) + (payload_bytes(runtime_input) if runtime_input else 0)
+        required_space += size * (3 if args.package else 1)
+    if shutil.disk_usage(output.parent).free < required_space:
+        raise ValueError('Insufficient free space for this copy mode and source/packaging reserve')
     output.mkdir(mode=0o700)
     app = output / 'payload/Applications/Josi.app'
     app.parent.mkdir(parents=True)
-    copy_tree(electron, app)
+    progress('Assembling the Josi app shell')
+    copy_tree(electron, app, args.copy_mode)
     resources = app / 'Contents/Resources'
     default = resources / 'default_app.asar'
     if default.exists():
@@ -83,7 +108,7 @@ def prepare(args):
             shutil.rmtree(signature)
     source = resources / 'app'
     source.mkdir()
-    copy_tree(REPO / 'apps/desktop/src', source / 'src')
+    copy_tree(REPO / 'apps/desktop/src', source / 'src', args.copy_mode)
     meta = json.loads((REPO / 'apps/desktop/package.json').read_text())
     meta.update(name='josi', productName='Josi', version=VERSION)
     (source / 'package.json').write_text(json.dumps(meta, indent=2) + '\n')
@@ -91,7 +116,7 @@ def prepare(args):
         package = source / ('node_modules/@josi-ce/' + name)
         package.mkdir(parents=True)
         shutil.copyfile(REPO / ('packages/' + name + '/package.json'), package / 'package.json')
-        copy_tree(REPO / ('packages/' + name + '/dist'), package / 'dist')
+        copy_tree(REPO / ('packages/' + name + '/dist'), package / 'dist', args.copy_mode)
     for name in ('LICENSE', 'NOTICE'):
         if (REPO / name).is_file():
             shutil.copyfile(REPO / name, resources / name)
@@ -109,6 +134,7 @@ def prepare(args):
                 NSDownloadsFolderUsageDescription='Josi accesses only local folders you choose.')
     info.pop('CFBundleURLTypes', None)
     info_path.write_bytes(plistlib.dumps(info))
+    progress('Sealing the desktop code')
     sealed = subprocess.run([str(args.node.resolve(strict=True)), str(REPO / 'scripts/macos/seal-desktop-code.mjs'), str(app)],
                             check=True, capture_output=True, text=True, timeout=180)
     integrity = json.loads(sealed.stdout)
@@ -119,6 +145,7 @@ def prepare(args):
     info_path.write_bytes(plistlib.dumps(info))
     (resources / 'desktop-integrity.json').write_text(json.dumps(integrity, indent=2) + '\n')
     native_build = output / 'native-components'
+    progress('Compiling the native approval helpers')
     subprocess.run([sys.executable, '-B', str(REPO / 'scripts/macos/build-automation-components.py'),
                     '--protected-host-only', '--output', str(native_build)], check=True, timeout=240)
     helpers = app / 'Contents/Helpers'
@@ -131,10 +158,12 @@ def prepare(args):
     consent_host.chmod(0o755)
     if runtime_input:
         runtime = resources / 'runtime'
-        copy_tree(runtime_input, runtime)
+        progress('Bundling the offline server runtime')
+        copy_tree(runtime_input, runtime, args.copy_mode)
         # Refresh every server package, web build, migration and native helper.
         # An old runtime supplies offline native engines/dependencies, not old
         # application code or an old database schema.
+        progress('Adding the current server, web interface and database migrations')
         for group in ('packages', 'apps'):
             for package in (REPO / group).iterdir():
                 if not (package / 'package.json').exists() or package.name == 'desktop':
@@ -143,14 +172,14 @@ def prepare(args):
                 target.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(package / 'package.json', target / 'package.json')
                 if (package / 'tsconfig.json').exists() or (package / 'dist').exists():
-                    replace_tree(package / 'dist', target / 'dist')
+                    replace_tree(package / 'dist', target / 'dist', args.copy_mode)
                 link = runtime / 'app/node_modules/@josi-ce' / package.name
                 link.parent.mkdir(parents=True, exist_ok=True)
                 if link.is_symlink():
                     link.unlink()
                 if not link.exists():
                     link.symlink_to(os.path.relpath(target, link.parent), target_is_directory=True)
-        replace_tree(REPO / 'packages/db/migrations', runtime / 'app/packages/db/migrations')
+        replace_tree(REPO / 'packages/db/migrations', runtime / 'app/packages/db/migrations', args.copy_mode)
         shutil.copyfile(REPO / 'packages/db/migrate.mjs', runtime / 'app/packages/db/migrate.mjs')
         native = runtime / 'app/native'
         native.mkdir(exist_ok=True)
@@ -160,19 +189,22 @@ def prepare(args):
         runtime_meta = json.loads((runtime / 'app/package.json').read_text())
         runtime_meta['version'] = VERSION
         (runtime / 'app/package.json').write_text(json.dumps(runtime_meta, indent=2) + '\n')
+        progress('Recording the assembled runtime bytes')
         subprocess.run([sys.executable, '-B', str(REPO / 'scripts/macos/inventory.py'),
                         str(runtime), '--hash-only'], check=True)
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=REPO, text=True).strip())
     provenance = {'schemaVersion': 1, 'version': VERSION, 'sourceCommit': revision, 'workingTreeModified': dirty,
                   'electronVersion': electron_version, 'electronExecutableSha256': digest(electron / 'Contents/MacOS/Electron'),
-                  'serverIncluded': runtime_input is not None, 'signed': False, 'validated': False,
+                  'serverIncluded': runtime_input is not None, 'payloadCopyMode': args.copy_mode,
+                  'signed': False, 'validated': False,
                   'desktopAsarHeaderSha256': integrity['hash'], 'desktopFuses': integrity['fuses'],
                   'protectedHostSha256': digest(protected_host),
                   'deviceConsentHostSha256': digest(consent_host),
                   'builtAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
     (resources / 'unified-build.json').write_text(json.dumps(provenance, indent=2) + '\n')
     if args.package:
+        progress('Building the single-app installer')
         components = output / 'components.plist'
         components.write_bytes(plistlib.dumps([{'RootRelativeBundlePath': 'Applications/Josi.app',
             'BundleIsRelocatable': False, 'BundleIsVersionChecked': False,
@@ -203,6 +235,8 @@ if __name__ == '__main__':
     parser.add_argument('--electron', type=Path, required=True, help='Pinned Electron.app from the existing verified cache')
     parser.add_argument('--node', type=Path, required=True, help='Node 22.12+ used for pinned ASAR and fuse build tools')
     parser.add_argument('--runtime', type=Path, help='Existing staged native server runtime; required for installer builds')
-    parser.add_argument('--output', type=Path, required=True, help='New candidate folder on the same APFS volume')
+    parser.add_argument('--output', type=Path, required=True, help='New candidate folder; clone mode requires the input APFS volume')
+    parser.add_argument('--copy-mode', choices=('clone', 'copy'), default='clone',
+                        help='APFS clone by default; explicit copy uses ordinary reads with a free-space preflight')
     parser.add_argument('--package', action='store_true', help='Also build the unsigned, one-choice installer')
     prepare(parser.parse_args())
