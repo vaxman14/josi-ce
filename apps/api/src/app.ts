@@ -266,7 +266,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
   }));
   api.use('/admin/vault', adminVaultRoutes({ db, masterKey: cfg.masterKeyCheck }));
-  api.use('/admin/automation', automationSettingsRoutes({ db, masterKey: cfg.masterKeyCheck,
+  api.use('/admin/automation', automationSettingsRoutes({ db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl,
     fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve, codexRunner: cfg.codexRunner }));
   api.use('/admin/custom-apis', adminCustomApiRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,

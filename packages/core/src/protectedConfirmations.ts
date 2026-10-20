@@ -116,7 +116,9 @@ export class ProtectedConfirmationStore {
       const key = await this.current(context, input.identity), issuedAtMs = await now(context.tx);
       const challenge = parseProtectedControlChallenge({ schemaVersion: 1, id: randomUUID(), nonce: randomBytes(32).toString('base64url'),
         ...input.identity, ...input.command, keyReference: key.reference, issuedAtMs, expiresAtMs: issuedAtMs + 120_000, presentation: input.presentation });
-      if (!challenge) throw new ProtectedConfirmationError('Use a bounded exact protected presentation.');
+      if (!challenge || Buffer.byteLength(protectedControlMessage(challenge), 'utf8') > 128 * 1024) {
+        throw new ProtectedConfirmationError('This complete protected presentation exceeds the native review limit. Use a smaller explicit change; no text was truncated.');
+      }
       // Expired projections are not canonical policy/history. Keep a bounded
       // retention window; durable audit references outlive the presentation.
       // Deleting an old challenge cannot make its receipt valid again.

@@ -33,3 +33,5 @@ Build checks for the initial editor checkpoint: root TypeScript compilation, web
 Advisory integration acceptance remains deferred: exact-content/provider substitution, disconnect and late-response handling, concurrent draft/model changes, permission/cap refusal, real local/hosted/subscription provider behavior and complete UI flows must be exercised after implementation. No live provider was called during this build.
 
 The advisory integration passed the root TypeScript build, web type check, web production bundle and public-source secret scan. Functional suites remain deferred.
+
+The later [native-change coordination checkpoint](P3_P4_NATIVE_CHANGE_COORDINATION.md) connects proof-gated server review/commit endpoints for already enrolled devices. The native client coordinator and first-device trust remain open, so the ordinary permanent-change button is still disabled. This supersedes the earlier statement that no HTTP activation/retirement/replacement path exists; it does not enable those actions through an ordinary web approval.

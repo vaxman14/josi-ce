@@ -5,14 +5,16 @@ import {
   cardinalDraftSaveBinding, cardinalDraftTestBinding, cardinalContentDigest, cardinalReviewInput, explainCardinalRule,
   testCardinalRule, validateCardinalRule, validateAutomationPermissionPolicy,
   loadMasterKey, vaultRecords, VaultError, VaultLockedError, VaultRecordError,
+  ProtectedConfirmationError,
   type Db, type LoadOptions, type VaultRecordReference,
 } from '@josi-ce/core';
 import { loadStoredProvider, isExternalProvider, isLocalOnly, reviewConfiguredCardinalMeaning, type SpawnRunner } from '@josi-ce/llm';
 import { asyncRoute, param } from './async.js';
 import { requireSuperAdmin } from './authz.js';
+import { ProtectedChanges, ProtectedChangeError } from './protectedChanges.js';
 
 interface Context { db: Db; masterKey?: LoadOptions | false; fetchImpl?: typeof fetch;
-  resolve?: (hostname: string) => Promise<string[]>; codexRunner?: SpawnRunner }
+  resolve?: (hostname: string) => Promise<string[]>; codexRunner?: SpawnRunner; appUrl?: string }
 class SettingsError extends Error { constructor(readonly status: number, message: string) { super(message); } }
 const handle = (fn: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
   res.set('Cache-Control', 'private, no-store');
@@ -34,8 +36,8 @@ function reference(value: unknown): VaultRecordReference {
   return { ...ref };
 }
 
-/** Administrator-owned drafts and explicitly requested model advice. No
- * permanent-policy mutation, key enrollment or automation grant is exposed. */
+/** Administrator-owned drafts, model advice and the enrolled native review
+ * flow. No model tool, first-device enrollment or execution grant bypass. */
 export function automationSettingsRoutes(context: Context): Router {
   const r = Router(), db = context.db;
   r.use(requireSuperAdmin);
@@ -48,10 +50,23 @@ export function automationSettingsRoutes(context: Context): Router {
   const noMutation = { verifyFreshAdministrator: unavailable, verifyProtectedHuman: unavailable };
   const noDeviceMutation = { requireServerIdentity: unavailable, verifyFreshAdministrator: unavailable,
     verifyEnrollmentConsent: unavailable, verifyProtectedRevocation: unavailable, verifyHostProjection: unavailable };
+  const protectedChanges = new ProtectedChanges(db, master, context.appUrl ?? '');
+  // Protected request failures must not reach the general DB-error logger:
+  // a database error may include full rule/permission or projection contents.
+  const nativeHandle = (fn: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try { return await fn(req, res); }
+    catch (error) {
+      if (error instanceof ProtectedChangeError || error instanceof ProtectedAdminError) return res.status(error.status).json({ error: error.message });
+      if (error instanceof VaultLockedError) return res.status(423).json({ error: error.message });
+      if (error instanceof VaultError || error instanceof VaultRecordError || error instanceof ProtectedConfirmationError) return res.status(409).json({ error: error.message });
+      return res.status(503).json({ error: 'The protected review could not finish reliably. Inspect current settings and start a new review; do not assume the change was applied.' });
+    }
+  });
   r.get('/catalog', handle(async (_req, res) => res.json({
     guidance: CARDINAL_RULE_GUIDANCE, actions: CARDINAL_ACTIONS, scopeKeys: CARDINAL_SCOPE_KEYS,
     restrictions: ['deny', 'maximum_task_duration'], unavailable: ['deny', 'pause'],
-    capabilities: { modelReview: true, permanentChanges: false, deviceEnrollment: false, execution: false },
+    capabilities: { modelReview: true, nativeReview: protectedChanges.enabled, permanentChanges: false, deviceEnrollment: false, execution: false },
   })));
   r.get('/', handle(async (req, res) => {
     const key = master(), records = vaultRecords(db, key);
@@ -156,6 +171,29 @@ export function automationSettingsRoutes(context: Context): Router {
   r.post('/permissions/validate', handle(async (req, res) => {
     const parsed = validateAutomationPermissionPolicy(req.body?.policy);
     return res.json({ validation: parsed, permanent: false, executionEnabled: false });
+  }));
+  r.post('/protected/prepare', nativeHandle(async (req, res) => res.status(201).json(await protectedChanges.prepare({
+    actor: req.user!.id, session: req.user!.session_id, deviceId: req.body?.deviceId, change: req.body?.change,
+    password: typeof req.body?.password === 'string' ? req.body.password : '',
+    mfaCode: typeof req.body?.mfaCode === 'string' ? req.body.mfaCode : undefined,
+  }))));
+  r.get('/protected/:id/host-challenge', nativeHandle(async (req, res) => res.json({
+    challenge: await protectedChanges.hostChallenge(req.user!.id, req.user!.session_id, param(req, 'id')),
+  })));
+  r.get('/protected/:id/current', nativeHandle(async (req, res) => res.json(
+    await protectedChanges.isCurrent(req.user!.id, req.user!.session_id, param(req, 'id')),
+  )));
+  r.post('/protected/:id/presentation', nativeHandle(async (req, res) => res.json({
+    challenge: await protectedChanges.presentation(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.proof),
+  })));
+  r.post('/protected/:id/projection', nativeHandle(async (req, res) => res.json({
+    projection: await protectedChanges.projection(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.proof),
+  })));
+  r.post('/protected/:id/commit', nativeHandle(async (req, res) => res.json(
+    await protectedChanges.commit(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.receipt),
+  )));
+  r.post('/protected/:id/cancel', nativeHandle(async (req, res) => {
+    await protectedChanges.cancel(req.user!.id, req.user!.session_id, param(req, 'id')); return res.json({ cancelled: true });
   }));
   return r;
 }
