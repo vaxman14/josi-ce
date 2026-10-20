@@ -2,18 +2,12 @@
 // permission to execute: identity, ordinary grants, current Vault authority and
 // the device's verified effect boundary are separate mandatory gates (P4).
 import { createHash } from 'node:crypto';
+import { AUTOMATION_EFFECTS } from '@josi-ce/protocol';
 
 export const CARDINAL_RULE_GUIDANCE = 'Cardinal Rules must be explicit and enforceable. Specify exactly what is allowed or forbidden, where it applies, and any limits. Statements such as “do no harm” or “make good decisions” cannot be Cardinal Rules.';
 export const CARDINAL_SEMANTICS_VERSION = 'cardinal-semantics.1';
 export const CARDINAL_TEST_VERSION = 'cardinal-simulator.1';
-export const CARDINAL_ACTIONS = [
-  'browser.navigate', 'browser.observe', 'browser.fill', 'browser.submit', 'browser.download', 'browser.upload',
-  'computer.observe', 'computer.interact', 'application.launch', 'application.close',
-  'file.read', 'file.create', 'file.edit', 'file.rename', 'file.move', 'file.delete', 'file.import', 'file.export',
-  'network.connect', 'execution.shell', 'execution.script', 'system.modify',
-  'clipboard.read', 'clipboard.write', 'credential.use', 'model.transmit',
-  'authority.modify', 'vault.manage',
-] as const;
+export const CARDINAL_ACTIONS = AUTOMATION_EFFECTS;
 export type CardinalAction = typeof CARDINAL_ACTIONS[number];
 export const CARDINAL_SCOPE_KEYS = ['userId', 'serverId', 'deviceId', 'workspaceId', 'taskId'] as const;
 export type CardinalScopeKey = typeof CARDINAL_SCOPE_KEYS[number];

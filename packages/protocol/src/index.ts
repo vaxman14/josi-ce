@@ -2,3 +2,4 @@
 export * from './negotiation.js';
 export * from './work.js';
 export * from './automation.js';
+export * from './permissions.js';

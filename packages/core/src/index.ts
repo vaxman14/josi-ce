@@ -16,6 +16,7 @@ export * from './readiness.js';
 export * from './sealing.js';
 export * from './vault.js';
 export * from './cardinalRules.js';
+export * from './automationPermissions.js';
 export * from './cardinalDrafts.js';
 export { CARDINAL_ENFORCEMENT_VERSION, cardinalActivationBinding, cardinalRetirementBinding,
   type CardinalActiveRule, type CardinalPolicyDocument, type CardinalPolicyView, type CardinalPolicyCommand, type CardinalPolicyAuthority, type CardinalPolicyDecision } from './cardinalPolicy.js';
