@@ -26,7 +26,7 @@ import {
   checkChildAccess, encodeTurnCursor, listNativeReminderActions,
   json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
-  listWorkGoals, workGoalEvents, workPlanHistory, workChannelProgress, controlWorkGoal, editWorkMemory,
+  listWorkGoals, ownedWorkGoal, workGoalEvents, workPlanHistory, workChannelProgress, controlWorkGoal, editWorkMemory,
   changeWorkOutcome, workOutcomeHistory, retireWorkStep, WorkGoalError,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
@@ -573,6 +573,10 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       ...(req.query.before === undefined ? {} : { before: Number(req.query.before) }),
       ...(req.query.limit === undefined ? {} : { limit: Number(req.query.limit) }),
     }) });
+  }));
+  r.get('/work-goals/:id', handle(async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({ goal: await ownedWorkGoal(db, req.user!.id, param(req, 'id')) });
   }));
   r.post('/work-goals/:id/control', handle(async (req, res) => {
     const action = req.body?.action;

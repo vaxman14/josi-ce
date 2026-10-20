@@ -363,6 +363,12 @@ export async function pinnedWorkGoals(db: Db, ownerUserId: string): Promise<Work
     order by updated_at desc,id desc limit 8`, [ownerUserId])).map(snapshot);
 }
 
+/** Owner-facing history lookup, including older completed work outside the
+ * latest list page. Model recall keeps its separate thread/pin restriction. */
+export async function ownedWorkGoal(db: Db, ownerUserId: string, goalId: string): Promise<WorkGoalSnapshot> {
+  return snapshot(await owned(db, ownerUserId, goalId));
+}
+
 export async function readWorkGoal(db: Db, ownerUserId: string, goalId: string, threadId: string): Promise<WorkGoalSnapshot> {
   const row = await owned(db, ownerUserId, goalId);
   // A pin is explicit permission to recall this owner's notes across their

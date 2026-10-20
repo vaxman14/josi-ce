@@ -30,3 +30,13 @@ Owner corrections, clearing, pin changes and new steering advance an owner-scope
 The storage boundary prevents model replacement of the owner's correction. The prompt instructs Josi to surface conflicting evidence for an owner decision. It does not claim a deterministic detector for every semantic contradiction, a guarantee that a model understands a correction, or deletion of text from a provider request already sent. Full personal-memory/persona invalidation, changes outside these work controls, dispatch races and source deletion/recovery still require integrated coverage.
 
 Build checks: root TypeScript compilation, web type checking and the production bundle. Functional and recovery suites remain deferred under the owner's build-first direction.
+
+## Native memory and lesson review
+
+The native Memory page now connects the existing owner-scoped memory and learning APIs. It supports manual/automatic/off learning preference, explicit memory creation, corrections, pinning, deletion and editing/keeping/discarding proposals. Lessons retain their completed-work provenance and still require owner acceptance. The page explains that memory cannot change Cardinal Rules or permissions and that long-term learning choices do not clear unfinished work or its saved progress.
+
+Edits retain their reviewed original record. Before a mutation, the client rereads the owned collection and refuses a changed/missing record; a changed proposal requires explicit review before keeping a retained edit. Original server ownership and transactional lesson-decision checks remain in force. These client checks do not replace a future atomic revision protocol for every memory edit. Deletion describes the retained source conversation/task/backups.
+
+An owner-facing exact goal lookup allows the source-work sheet to display older completed work beyond the first hundred list results. It uses the same owned-goal resolver and returns no other owner's record. The model's separate thread/pin restriction is unchanged. The native sheet displays criteria, saved steps and source/current revisions and can open the original conversation. It cannot mark a lesson approved or a goal complete.
+
+The root TypeScript build and complete Swift 6 native build passed. A subsequent small UI change retains an unsaved learning-mode selection when another memory action reloads records; final compilation follows in the next package. No live memory, rule, model, goal or account data was accessed or changed. Integrated functional, concurrency, privacy/retention and recovery acceptance remain deferred.

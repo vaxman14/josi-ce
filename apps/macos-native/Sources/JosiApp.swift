@@ -254,6 +254,7 @@ struct WorkspaceView: View {
                     Section {
                         nav("Conversations", icon: "bubble.left.and.bubble.right", section: "chat")
                         nav("Task Manager", icon: "checklist", section: "tasks")
+                        nav("Memory", icon: "brain.head.profile", section: "memory")
                         nav("Automation", icon: "macwindow", section: "automation")
                         nav("Vault", icon: "lock.shield", section: "vault")
                         nav("Your Settings", icon: "person.crop.circle", section: "account")
@@ -284,6 +285,7 @@ struct WorkspaceView: View {
         } detail: {
             switch model.section {
             case "tasks": TaskManagerView()
+            case "memory": NativeMemoryView()
             case "server": ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     if model.isAdministrator { NativeServerHealth() }
@@ -305,7 +307,7 @@ struct WorkspaceView: View {
             model.section = section
             if section == "automation" { model.run { try await model.loadAutomation() } }
             else if section == "server" { model.refreshLocal() }
-            else if ["vault", "backups", "models", "account", "channels"].contains(section) { /* These views load their own scoped status. */ }
+            else if ["vault", "backups", "models", "account", "channels", "memory"].contains(section) { /* These views load their own scoped status. */ }
             else { model.run { try await model.reloadWorkspace() } }
         } label: { Label(title, systemImage: icon).foregroundStyle(model.section == section ? Color.accentColor : Color.primary) }
             .buttonStyle(.plain).disabled(model.busy)
