@@ -61,8 +61,13 @@ async function connect() {
   });
   nativeChannel = connection;
   try {
-    const reply = await native('browser.hello', { family: config.family, extensionId: browserApi.runtime.id }, null);
+    const reply = await native('browser.hello', { family: config.family,
+      extensionId: config.family === 'safari' ? config.extensionId : browserApi.runtime.id }, null);
     if (epoch !== generation) return;
+    if (config.family === 'safari' && reply?.profileDiscovered === true) {
+      stop('Profile identified. Confirm it in Josi Companion, then register it in Josi. No page access is enabled.');
+      return;
+    }
     workspace = acceptSession(reply); seen.clear(); lastClock = Date.now();
     status = workspace.origins.length ? 'Connected to an isolated Josi workspace.'
       : 'Connected. Waiting for a permitted task; page access is not enabled.';

@@ -17,6 +17,7 @@ import Foundation
     private var lastWall = Int64(Date().timeIntervalSince1970 * 1000)
     private var ended = false, connected = false, renewing = false
     private var source: Data?
+    private var safariProcess: (pid: Int32, launched: Int64)?
     private var requests = Set<String>()
     private var monitor: Task<Void, Never>?
     private var flight: BrowserInspectionFlight?
@@ -109,6 +110,18 @@ import Foundation
         connection.invalidate(); notify(false)
     }
     private func peer(_ data: Data) throws -> Data {
+        if canonical.prepared.candidate.family == "safari" {
+            let p = canonical.prepared
+            let verified = try Self.safariPeer(data, pin: p.application, profile: p.candidate.nativeProfileId,
+                                              guest: p.candidate.guestBootId, host: hostBoot)
+            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: p.application.bundleId)
+            guard apps.count == 1, let launched = apps[0].launchDate else { throw GuestLinkError.invalid }
+            let actual = (pid: apps[0].processIdentifier, launched: Int64(launched.timeIntervalSince1970 * 1000))
+            if let previous = safariProcess {
+                guard previous.pid == actual.pid, previous.launched == actual.launched else { throw GuestLinkError.invalid }
+            } else { safariProcess = actual }
+            return verified
+        }
         guard data.count <= 8192, let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(value.keys) == ["kind", "family", "extensionId", "guestBootId", "hostBootId", "workspaceId", "profileId",
                                  "profilePath", "processId", "launchedAtMs", "bundleId", "bundlePath", "signingId", "teamId", "codeHash"]
@@ -128,6 +141,19 @@ import Foundation
               let app = NSRunningApplication(processIdentifier: pid.int32Value), let date = app.launchDate,
               Int64(date.timeIntervalSince1970 * 1000) == launch.int64Value else { throw GuestLinkError.invalid }
         try GuestDesktopEngine.verifyApplication(app, pin: pin)
+        return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
+    }
+    static func safariPeer(_ data: Data, pin: GuestPinnedApplication, profile: String?, guest: String, host: String) throws -> Data {
+        guard data.count <= 8192, let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(value.keys) == ["kind", "family", "profileId", "guestBootId", "hostBootId", "extensionId"],
+              value["kind"] as? String == "safari-profile", value["family"] as? String == "safari",
+              value["guestBootId"] as? String == guest, value["hostBootId"] as? String == host,
+              value["extensionId"] as? String == "com.heyjosi.ce.guestcompanion.workspace-safari",
+              let actual = value["profileId"] as? String, UUID(uuidString: actual)?.uuidString.lowercased() == actual,
+              profile == nil || profile == actual, pin.bundleId == "com.apple.Safari" else { throw GuestLinkError.invalid }
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: pin.bundleId)
+        guard apps.count == 1 else { throw GuestLinkError.invalid }
+        try GuestDesktopEngine.verifyApplication(apps[0], pin: pin)
         return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
     }
     private func session() -> [String: Any] {
@@ -153,9 +179,16 @@ import Foundation
         guard let source, let peer = try JSONSerialization.jsonObject(with: source) as? [String: Any],
               let browser = command.browser else { throw GuestDesktopError.denied }
         let c = canonical.prepared.candidate
+        let process: Any, launched: Any
+        if c.family == "safari", let safariProcess {
+            process = safariProcess.pid; launched = safariProcess.launched
+        } else {
+            guard let pid = peer["processId"], let time = peer["launchedAtMs"] else { throw GuestDesktopError.denied }
+            process = pid; launched = time
+        }
         let value: [String: Any] = ["kind": "browser", "profileId": canonical.profileId.uuidString.lowercased(),
             "nativeProfileId": c.nativeProfileId, "family": c.family, "extensionId": c.extensionId, "extensionDigest": c.extensionDigest,
-            "processId": peer["processId"]!, "launchedAtMs": peer["launchedAtMs"]!, "codeHash": canonical.prepared.application.codeHash,
+            "processId": process, "launchedAtMs": launched, "codeHash": canonical.prepared.application.codeHash,
             "origin": browser.origin]
         return String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
     }
@@ -297,6 +330,109 @@ import Foundation
             return try JSONSerialization.data(withJSONObject: ["version": 1, "requestId": id, "ok": false, "code": "no_reserved_command"])
         }
         return try JSONSerialization.data(withJSONObject: ["version": 1, "requestId": id, "ok": true, "payload": output])
+    }
+}
+
+/// An explicit, short-lived local setup gesture. Only Safari's native profile
+/// UUID is returned, and the user must confirm it before a candidate is shared
+/// for protected Vault registration. This owner cannot create a control session.
+@MainActor final class GuestSafariDiscovery {
+    private let connection = NSXPCConnection(machServiceName: GuestBrowserBoundary.ownerService)
+    private let scope = UUID().uuidString.lowercased()
+    private let boot: (guest: String, host: String)
+    private let pin: GuestPinnedApplication
+    private let requireCurrent: @MainActor () throws -> Void
+    private let found: @MainActor (GuestBrowserProfiles.Prepared) -> Void
+    private let end = ContinuousClock.now.advanced(by: .seconds(60))
+    private var lease = ContinuousClock.now
+    private var expiry: Int64 = 0
+    private var lastWall = Int64(Date().timeIntervalSince1970 * 1000)
+    private var ended = false, renewing = false
+    private var selected: String?
+    private var requests = Set<String>()
+    private var monitor: Task<Void, Never>?
+    init(pin: GuestPinnedApplication, current: @escaping @MainActor () throws -> Void,
+         found: @escaping @MainActor (GuestBrowserProfiles.Prepared) -> Void) throws {
+        try GuestEnvironment.signedApplication()
+        boot = try GuestEnvironment.identity()
+        guard pin.bundleId == "com.apple.Safari" else { throw GuestLinkError.invalid }
+        self.pin = pin; requireCurrent = current; self.found = found
+        connection.remoteObjectInterface = NSXPCInterface(with: GuestBrowserOwner.self)
+        connection.exportedInterface = NSXPCInterface(with: GuestBrowserOwnerCallback.self)
+        connection.setCodeSigningRequirement(GuestBrowserBoundary.requirement(GuestBrowserBoundary.brokerIdentifier))
+        connection.exportedObject = BrowserSessionCallback { [weak self] request, peer in
+            guard let self else { throw GuestLinkError.closed }
+            return try self.handle(request, peer: peer)
+        }
+        connection.interruptionHandler = { [weak self] in Task { @MainActor in self?.stop() } }
+        connection.invalidationHandler = { [weak self] in Task { @MainActor in self?.stop() } }
+        connection.resume()
+    }
+    var available: Bool { !ended && ContinuousClock.now < end }
+    private func current() throws {
+        try requireCurrent()
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        guard available, now >= lastWall, now < expiry, ContinuousClock.now < lease else { throw GuestLinkError.expired }
+        lastWall = now
+    }
+    func renew(until: Int) async throws {
+        try requireCurrent()
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        guard available, !renewing, now >= lastWall, until > now, Int64(until) - now <= 10_000 else { throw GuestLinkError.expired }
+        if monitor != nil { try current() }
+        renewing = true
+        defer { renewing = false }
+        let body = try JSONSerialization.data(withJSONObject: [
+            "mode": "safari-profile-discovery", "workspaceId": pin.workspaceId.uuidString.lowercased(),
+            "profileId": NSNull(), "family": "safari", "guestBootId": boot.guest, "hostBootId": boot.host,
+            "connectionId": scope, "generation": 0, "leaseUntilMs": until,
+        ])
+        let accepted = await withCheckedContinuation { continuation in
+            let reply = BrowserSessionRenewal { continuation.resume(returning: $0) }
+            let timeout = DispatchWorkItem { reply.finish(false) }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1, execute: timeout)
+            guard let remote = connection.remoteObjectProxyWithErrorHandler({ _ in timeout.cancel(); reply.finish(false) }) as? GuestBrowserOwner
+            else { timeout.cancel(); reply.finish(false); return }
+            remote.renew(body) { value in timeout.cancel(); reply.finish(value) }
+        }
+        guard accepted, available else { stop(); throw GuestLinkError.unavailable }
+        expiry = Int64(until)
+        lease = .now.advanced(by: .milliseconds(max(0, expiry - Int64(Date().timeIntervalSince1970 * 1000))))
+        try current()
+        if monitor == nil {
+            monitor = Task { [weak self] in
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(200)); guard let self else { return }; try self.current() }
+                    catch { self?.stop(); return }
+                }
+            }
+        }
+    }
+    private func handle(_ data: Data, peer: Data) throws -> Data {
+        try current()
+        let request = try GuestBrowserBoundary.request(data)
+        guard request["operation"] as? String == "browser.hello", request["sessionId"] is NSNull,
+              let id = request["requestId"] as? String, !requests.contains(id), requests.count < 64,
+              let payload = request["payload"] as? [String: Any], Set(payload.keys) == ["family", "extensionId"],
+              payload["family"] as? String == "safari",
+              payload["extensionId"] as? String == "com.heyjosi.ce.guestcompanion.workspace-safari"
+        else { throw GuestLinkError.invalid }
+        requests.insert(id)
+        let verified = try GuestBrowserSession.safariPeer(peer, pin: pin, profile: selected, guest: boot.guest, host: boot.host)
+        guard let value = try JSONSerialization.jsonObject(with: verified) as? [String: Any],
+              let profile = value["profileId"] as? String else { throw GuestLinkError.invalid }
+        let prepared = try GuestBrowserProfiles.prepareSafari(pin, profile: profile)
+        try current()
+        if selected == nil { selected = profile; found(prepared) }
+        return try JSONSerialization.data(withJSONObject: [
+            "version": 1, "requestId": id, "ok": true, "payload": ["profileDiscovered": true],
+        ])
+    }
+    func stop() {
+        guard !ended else { return }
+        ended = true; monitor?.cancel(); monitor = nil
+        (connection.remoteObjectProxy as? GuestBrowserOwner)?.stop()
+        connection.invalidate()
     }
 }
 

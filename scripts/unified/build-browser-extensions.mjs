@@ -10,7 +10,9 @@ const catalog = { schemaVersion: 1, distribution: 'unpacked-development', extens
 for (const family of ['chrome', 'brave', 'firefox', 'safari']) {
   const destination = join(output, family);
   await cp(join(repo, 'apps/browser-extension/src'), destination, { recursive: true, force: false, errorOnExist: true });
-  await writeFile(join(destination, 'config.js'), `'use strict';\nglobalThis.JOSI_BROWSER_CONFIG = Object.freeze(${JSON.stringify({ family })});\n`, { flag: 'wx' });
+  await writeFile(join(destination, 'config.js'), `'use strict';\nglobalThis.JOSI_BROWSER_CONFIG = Object.freeze(${JSON.stringify({
+    family, ...(family === 'safari' ? { extensionId: identity.safariId } : {}),
+  })});\n`, { flag: 'wx' });
   const manifest = {
     ...(['chrome', 'brave'].includes(family) ? { key: identity.chromiumPublicKey } : {}),
     manifest_version: 3, name: 'Josi Workspace', version: '0.7.0',

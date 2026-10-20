@@ -12,12 +12,29 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
     let nativeProfileId: String, profilePath: String?
     let extensionId: String, extensionVersion: String, extensionDigest: String
     let distribution = "unpacked-development"
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, kind, candidateId, guestBootId, label, family, applicationId, installationRevision
+        case nativeProfileId, profilePath, extensionId, extensionVersion, extensionDigest, distribution
+    }
+    func encode(to encoder: Encoder) throws {
+        var value = encoder.container(keyedBy: CodingKeys.self)
+        try value.encode(schemaVersion, forKey: .schemaVersion); try value.encode(kind, forKey: .kind)
+        try value.encode(candidateId, forKey: .candidateId); try value.encode(guestBootId, forKey: .guestBootId)
+        try value.encode(label, forKey: .label); try value.encode(family, forKey: .family)
+        try value.encode(applicationId, forKey: .applicationId); try value.encode(installationRevision, forKey: .installationRevision)
+        try value.encode(nativeProfileId, forKey: .nativeProfileId)
+        if let profilePath { try value.encode(profilePath, forKey: .profilePath) }
+        else { try value.encodeNil(forKey: .profilePath) }
+        try value.encode(extensionId, forKey: .extensionId); try value.encode(extensionVersion, forKey: .extensionVersion)
+        try value.encode(extensionDigest, forKey: .extensionDigest); try value.encode(distribution, forKey: .distribution)
+    }
 }
 
 /// User-operated guest setup. Local profile hints contain no permission or
 /// credential, and cannot replace the server's canonical Vault registration.
 @MainActor enum GuestBrowserProfiles {
-    static let families = ["com.google.Chrome": "chrome", "com.brave.Browser": "brave", "org.mozilla.firefox": "firefox"]
+    static let families = ["com.google.Chrome": "chrome", "com.brave.Browser": "brave", "org.mozilla.firefox": "firefox",
+                           "com.apple.Safari": "safari"]
     struct Prepared {
         let candidate: GuestBrowserProfileCandidate
         let application: GuestPinnedApplication
@@ -30,6 +47,7 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
         guard try GuestEnvironment.identity().guest == prepared.candidate.guestBootId,
               families[prepared.application.bundleId] == prepared.candidate.family else { throw GuestLinkError.invalid }
         let family = prepared.candidate.family
+        if family == "safari" { return try enableSafariDiscovery(prepared.application) }
         let file = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/NativeMessagingHosts/" + family + ".json")
         let body = try readFile(file, maximum: 4096)
         let value = try JSONSerialization.jsonObject(with: body) as? [String: Any]
@@ -90,7 +108,7 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
     static func prepare(_ pin: GuestPinnedApplication) throws -> Prepared {
         try GuestEnvironment.signedApplication()
         let boot = try GuestEnvironment.identity()
-        guard let family = families[pin.bundleId], pin.installationRevision == 1 else { throw GuestLinkError.invalid }
+        guard let family = families[pin.bundleId], family != "safari", pin.installationRevision == 1 else { throw GuestLinkError.invalid }
         try verifyApplication(pin)
         let (entry, folder) = try extensionResources(family)
         let workspace = pin.workspaceId.uuidString.lowercased()
@@ -100,6 +118,30 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
             applicationId: pin.applicationId.uuidString.lowercased(), nativeProfileId: nativeId, profilePath: path,
             extensionId: entry.extensionId, extensionVersion: entry.version, extensionDigest: entry.digest)
         guard try JSONEncoder().encode(value).count <= 3000 else { throw GuestLinkError.invalid }
+        return Prepared(candidate: value, application: pin, extensionFolder: folder)
+    }
+    static func enableSafariDiscovery(_ pin: GuestPinnedApplication) throws -> Bool {
+        try GuestEnvironment.signedApplication()
+        _ = try GuestEnvironment.identity()
+        guard pin.bundleId == "com.apple.Safari", pin.installationRevision == 1 else { throw GuestLinkError.invalid }
+        try verifyApplication(pin)
+        _ = try extensionResources("safari")
+        if bridgeService.status != .enabled && bridgeService.status != .requiresApproval { try bridgeService.register() }
+        return bridgeService.status == .enabled
+    }
+    /// The caller obtains this UUID only from the signed Safari native handler's
+    /// SFExtensionProfileKey. No text field or page-selected profile is accepted.
+    static func prepareSafari(_ pin: GuestPinnedApplication, profile: String) throws -> Prepared {
+        try GuestEnvironment.signedApplication()
+        let boot = try GuestEnvironment.identity()
+        guard pin.bundleId == "com.apple.Safari", pin.installationRevision == 1,
+              UUID(uuidString: profile)?.uuidString.lowercased() == profile else { throw GuestLinkError.invalid }
+        try verifyApplication(pin)
+        let (entry, folder) = try extensionResources("safari")
+        let value = GuestBrowserProfileCandidate(candidateId: UUID().uuidString.lowercased(), guestBootId: boot.guest,
+            label: "Safari · Josi workspace", family: "safari", applicationId: pin.applicationId.uuidString.lowercased(),
+            nativeProfileId: profile, profilePath: nil, extensionId: entry.extensionId,
+            extensionVersion: entry.version, extensionDigest: entry.digest)
         return Prepared(candidate: value, application: pin, extensionFolder: folder)
     }
     static func open(_ prepared: Prepared) async throws {
@@ -128,6 +170,14 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
     static func requireInstalledExtension(_ prepared: Prepared) throws {
         try GuestEnvironment.signedApplication()
         let c = prepared.candidate
+        if c.family == "safari" {
+            guard c.profilePath == nil, c.distribution == "unpacked-development" else { throw GuestDesktopError.denied }
+            let current = try prepareSafari(prepared.application, profile: c.nativeProfileId)
+            guard current.candidate.extensionDigest == c.extensionDigest, current.candidate.extensionId == c.extensionId,
+                  current.candidate.extensionVersion == c.extensionVersion, current.extensionFolder == prepared.extensionFolder
+            else { throw GuestDesktopError.stale }
+            return
+        }
         guard ["chrome", "brave"].contains(c.family), let profile = c.profilePath,
               c.distribution == "unpacked-development" else { throw GuestDesktopError.unsupported }
         let (entry, folder) = try extensionResources(c.family)
@@ -183,7 +233,10 @@ struct GuestBrowserProfileCandidate: Encodable, Equatable {
         let catalog = try JSONDecoder().decode(Catalog.self, from: bytes)
         let entries = catalog.extensions.filter { $0.family == family }
         guard catalog.schemaVersion == 1, catalog.distribution == "unpacked-development", entries.count == 1 else { throw GuestLinkError.invalid }
-        let entry = entries[0], folder = root.appendingPathComponent(family, isDirectory: true)
+        let entry = entries[0]
+        let folder = family == "safari"
+            ? Bundle.main.bundleURL.appendingPathComponent("Contents/PlugIns/Josi Workspace.appex/Contents/Resources", isDirectory: true)
+            : root.appendingPathComponent(family, isDirectory: true)
         guard !entry.files.isEmpty, entry.files.count <= 64,
               Set(entry.files.map(\.path)).count == entry.files.count else { throw GuestLinkError.invalid }
         var fingerprint = ""

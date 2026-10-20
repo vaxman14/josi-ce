@@ -148,7 +148,7 @@ export class NativeAutomationTransport {
         ? await c.browser(request.identity, request.browser.profileId, request.browser.family, request.applicationId) : null;
       if (browser && !sameRef(browser.reference, target.reference)
         || isBrowserApplication(target.application.bundleId) && !browser) throw unavailable();
-      if (browser && (!['chrome', 'brave'].includes(browser.browser.family)
+      if (browser && (!['chrome', 'brave', 'safari'].includes(browser.browser.family)
         || browser.browser.distribution !== 'unpacked-development')) throw unavailable();
       const now = Date.now();
       if (request.leaseUntilMs <= now || request.leaseUntilMs > now + 10_000 || request.leaseUntilMs > consent.consentUntilMs) throw unavailable();

@@ -83,6 +83,8 @@ enum GuestEnvironment {
     @Published var browserMessage = ""
     @Published var browserRegistrationReady = false
     @Published var browserConnected = false
+    @Published var safariBrowser = false
+    @Published var safariProfileToConfirm = ""
     private var task: Task<Void, Never>?
     private var timeout: Task<Void, Never>?
     private var wire: GuestLinkWire?
@@ -98,6 +100,8 @@ enum GuestEnvironment {
     private var preparedBrowser: GuestBrowserProfiles.Prepared?
     private var canonicalBrowser: GuestCanonicalBrowser?
     private var browserSession: GuestBrowserSession?
+    private var safariDiscovery: GuestSafariDiscovery?
+    private var pendingSafari: GuestBrowserProfiles.Prepared?
 
     func start() {
         guard !working else { return }
@@ -186,6 +190,7 @@ enum GuestEnvironment {
                        let end = projection["expiresAtMs"] as? Int { browserPinUntil = min(end, until) }
                     else { browserPinUntil = 0 }
                     canPrepareBrowser = browserPin.map { GuestBrowserProfiles.families[$0.bundleId] != nil } ?? false
+                    safariBrowser = browserPin?.bundleId == "com.apple.Safari"
                     if let preparedBrowser, let browserPin, browserPin != preparedBrowser.application { clearBrowserProfile() }
                     canonicalBrowser = try GuestBrowserProjection.resolve(pulse["browserPin"] ?? "", prepared: preparedBrowser,
                         identity: host, application: browserPin, leaseUntil: until)
@@ -194,7 +199,7 @@ enum GuestEnvironment {
                     try current()
                     try await link.send(["kind": "status", "accessibility": AXIsProcessTrusted() ? "yes" : "no",
                         "screenCapture": CGPreflightScreenCaptureAccess() ? "yes" : "no", "executionEnabled": "no",
-                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.3",
+                        "applicationCandidate": candidate, "applicationReadiness": readiness, "executionProtocol": "desktop-command.4",
                         "browserCandidate": try preparedBrowser.map { String(decoding: try JSONEncoder().encode($0.candidate), as: UTF8.self) } ?? "",
                         "browserConnection": browserConnected ? "connected" : "waiting"])
                 }
@@ -228,6 +233,7 @@ enum GuestEnvironment {
         browserPin = nil; browserPinUntil = 0; canPrepareBrowser = false; clearBrowserProfile()
     }
     private func clearBrowserProfile() {
+        safariDiscovery?.stop(); safariDiscovery = nil; pendingSafari = nil; safariProfileToConfirm = ""
         preparedBrowser = nil; browserProfile = ""; browserMessage = ""
         canonicalBrowser = nil; browserRegistrationReady = false
         browserSession?.stop(); browserSession = nil; browserConnected = false
@@ -236,6 +242,16 @@ enum GuestEnvironment {
         let own = runID
         do {
             try current()
+            if let discovery = safariDiscovery {
+                do { try await discovery.renew(until: browserPinUntil) }
+                catch {
+                    if runID == own, safariDiscovery === discovery {
+                        discovery.stop(); safariDiscovery = nil; pendingSafari = nil; safariProfileToConfirm = ""
+                        browserMessage = "Safari profile setup expired or disconnected. Choose Identify Safari Profile to try again."
+                    }
+                }
+                return
+            }
             guard GuestBrowserProfiles.bridgeEnabled, let canonicalBrowser else {
                 browserSession?.stop(); browserSession = nil; browserConnected = false; return
             }
@@ -258,6 +274,10 @@ enum GuestEnvironment {
         } catch {
             if runID == own {
                 browserSession?.stop(); browserSession = nil; browserConnected = false
+                if safariDiscovery != nil {
+                    safariDiscovery?.stop(); safariDiscovery = nil; pendingSafari = nil; safariProfileToConfirm = ""
+                    browserMessage = "Safari profile setup expired or disconnected. Choose Identify Safari Profile to try again."
+                }
             }
         }
     }
@@ -265,12 +285,44 @@ enum GuestEnvironment {
         do {
             try current()
             guard NSApp.isActive, let pin = browserPin, browserPinUntil > Int(Date().timeIntervalSince1970 * 1000) else { throw GuestLinkError.expired }
+            if pin.bundleId == "com.apple.Safari" {
+                clearBrowserProfile()
+                guard try GuestBrowserProfiles.enableSafariDiscovery(pin) else {
+                    browserMessage = "Allow Josi Companion in this guest’s Login Items, then choose Identify Safari Profile again."
+                    return
+                }
+                let own = runID
+                safariDiscovery = try GuestSafariDiscovery(pin: pin, current: { [weak self] in
+                    guard let self, self.runID == own, self.browserPin == pin,
+                          self.browserPinUntil > Int(Date().timeIntervalSince1970 * 1000) else { throw GuestLinkError.expired }
+                    try self.current()
+                }, found: { [weak self] prepared in
+                    guard let self, self.runID == own, self.browserPin == pin else { return }
+                    self.pendingSafari = prepared
+                    self.safariProfileToConfirm = prepared.candidate.nativeProfileId
+                    self.browserMessage = "Safari identified the profile you used. Confirm it here within one minute to make it available for registration in Josi."
+                })
+                browserMessage = "Within one minute, open your automation profile in this guest’s Safari. Enable Josi Workspace in Safari Settings → Extensions, open its toolbar button and choose Connect. Return here to confirm the profile."
+                return
+            }
             let prepared = try GuestBrowserProfiles.prepare(pin)
             try current()
             guard browserPin == pin, browserPinUntil > Int(Date().timeIntervalSince1970 * 1000) else { throw GuestLinkError.expired }
             preparedBrowser = prepared; browserProfile = prepared.candidate.label
             browserMessage = "This profile is ready for registration in Josi on your Mac. Registration grants no automation access."
         } catch { clearBrowserProfile(); browserMessage = "Register the selected browser in Josi first, then prepare its separate profile." }
+    }
+    func confirmSafariProfile() {
+        do {
+            try current()
+            guard NSApp.isActive, safariDiscovery?.available == true, let pendingSafari,
+                  browserPin == pendingSafari.application, browserPinUntil > Int(Date().timeIntervalSince1970 * 1000)
+            else { throw GuestLinkError.expired }
+            let prepared = try GuestBrowserProfiles.prepareSafari(pendingSafari.application, profile: pendingSafari.candidate.nativeProfileId)
+            safariDiscovery?.stop(); safariDiscovery = nil; self.pendingSafari = nil; safariProfileToConfirm = ""
+            preparedBrowser = prepared; browserProfile = prepared.candidate.label
+            browserMessage = "Register this profile in Josi on your Mac, then reconnect the Safari extension. Page inspection requires site and model permissions; input is unavailable."
+        } catch { clearBrowserProfile(); browserMessage = "Profile confirmation expired. Identify the Safari profile again." }
     }
     func openPreparedBrowser() {
         let own = runID
@@ -279,6 +331,10 @@ enum GuestEnvironment {
                 try current()
                 guard NSApp.isActive, let prepared = preparedBrowser, browserPin == prepared.application,
                       browserPinUntil > Int(Date().timeIntervalSince1970 * 1000) else { throw GuestLinkError.expired }
+                if prepared.candidate.family == "safari" {
+                    browserMessage = "Open the Safari profile you confirmed, then use the Josi Workspace toolbar button to connect."
+                    return
+                }
                 try await GuestBrowserProfiles.open(prepared)
                 guard runID == own else { return }
                 try current()
@@ -310,6 +366,7 @@ enum GuestEnvironment {
         Task {
             do {
                 guard NSApp.isActive else { return }
+                safariDiscovery?.stop(); safariDiscovery = nil; pendingSafari = nil; safariProfileToConfirm = ""
                 browserSession?.stop(); browserSession = nil; browserConnected = false
                 try await GuestBrowserProfiles.disableBridge()
                 browserMessage = "The guest browser connection service is disabled."
@@ -417,7 +474,14 @@ enum GuestEnvironment {
                     if model.canPrepareBrowser {
                         Divider()
                         Text("Separate browser profile").font(.headline)
-                        Button("Prepare Browser Profile") { model.prepareBrowser() }
+                        HStack {
+                            Button(model.safariBrowser ? "Identify Safari Profile" : "Prepare Browser Profile") { model.prepareBrowser() }
+                            Button("Login Items…") { GuestBrowserProfiles.bridgeSettings() }
+                        }
+                        if !model.safariProfileToConfirm.isEmpty {
+                            Text("Safari profile: " + model.safariProfileToConfirm).font(.caption)
+                            Button("Use This Safari Profile") { model.confirmSafariProfile() }
+                        }
                         if !model.browserProfile.isEmpty {
                             Text(model.browserProfile).font(.caption)
                             Text(model.browserRegistrationReady ? "Current Vault registration verified." : "Waiting for this profile’s Vault registration.")
@@ -427,12 +491,11 @@ enum GuestEnvironment {
                             }
                             HStack {
                                 Button("Open Profile for Extension Setup") { model.openPreparedBrowser() }
-                                Button("Show Extension Folder") { model.revealBrowserExtension() }
+                                if !model.safariBrowser { Button("Show Extension Folder") { model.revealBrowserExtension() } }
                             }
                             HStack {
                                 Button("Enable Browser Connection") { model.enableBrowserBridge() }
                                 Button("Disable Connection") { model.disableBrowserBridge() }
-                                Button("Login Items…") { GuestBrowserProfiles.bridgeSettings() }
                             }
                         }
                     }
