@@ -558,7 +558,8 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       if (!ctx.automationRuntime) return res.json({ available: true, controlAvailable: false,
         workspaces: await listAutomationPresence(db, req.user!.id),
         reason: 'Recent separate-desktop connection reports. Automation execution is not connected yet.' });
-      return res.json({ available: true, workspaces: await ctx.automationRuntime.inventory(req.user!.id) });
+      return res.json({ available: true, controlAvailable: ctx.automationRuntime.actionAvailable,
+        inspectionAvailable: ctx.automationRuntime.observationAvailable, workspaces: await ctx.automationRuntime.inventory(req.user!.id) });
     }
     catch { return res.status(503).json({ available: false, error: 'Current automation connections could not be verified.' }); }
   }));

@@ -16,7 +16,8 @@ import { WorkspaceStorageStore, WORKSPACE_STORAGE_RECORD_ID, type WorkspaceStora
 
 import { AutomationTargetStore, AUTOMATION_TARGETS_RECORD_ID, readAutomationTargetDocument, sameAutomationIdentity, type AutomationTargetAuthority } from './automationTargets.js';
 import { describeAutomationModel, requireCurrentAutomationModel } from './automationModelTargets.js';
-import { AutomationConsentStore, type AutomationConsentAuthority } from './automationConsent.js';
+import { AutomationConsentStore, readAutomationConsentRecord, type AutomationConsentAuthority } from './automationConsent.js';
+import { NativeAutomationTransport, type NativeTransportAuthority } from './nativeAutomationTransport.js';
 
 export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices' | 'workspace_storage' | 'automation_targets' | 'automation_consent';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
@@ -317,6 +318,45 @@ export class VaultRecordStore {
         },
       });
     }), authority);
+  }
+
+  /** Transport snapshots contain references and bounded operations, never a
+   * second policy/credential store. They use the existing Vault key. */
+  nativeAutomation(authority: NativeTransportAuthority): NativeAutomationTransport {
+    return new NativeAutomationTransport((actor, work, transaction) => {
+      const run = async (tx: Db) => {
+        const state = await this.state(tx, actor, false), key = await this.key(tx);
+        await this.requireOwnerAutomationVault(tx, actor);
+        return work({ tx, key, epoch: Number(state.authority_epoch),
+          requireConsent: async (identity, sessionId, reference) => {
+            if (state.authority_reconciliation_required || identity.userId !== actor || !uuid.test(sessionId)) {
+              throw new VaultRecordError('Native automation authority is unavailable.');
+            }
+            const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [sessionId]);
+            if (!head || !this.matches(reference, head, state)) throw new VaultRecordError('Local desktop consent changed.');
+            const doc = readAutomationConsentRecord(await this.open(tx, key, head, state), actor, sessionId), c = doc?.challenge;
+            if (!c || doc?.state !== 'active' || c.keyReference.epoch !== Number(state.authority_epoch)
+              || c.workspaceId !== identity.workspaceId || c.serverId !== identity.serverId || c.deviceId !== identity.deviceId
+              || Date.now() < c.issuedAtMs || Date.now() >= c.consentUntilMs) throw new VaultRecordError('Local desktop consent ended.');
+            const [permissions] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_POLICY_RECORD_ID]);
+            const [cardinal] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [CARDINAL_POLICY_RECORD_ID]);
+            const [devices] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [PROTECTED_DEVICES_RECORD_ID]);
+            if (!permissions || !cardinal || !devices || !this.matches(c.permissions, permissions, state)
+              || !this.matches(c.cardinal, cardinal, state) || !this.matches(c.keyReference, devices, state)
+              || !readAutomationPolicyRecord(await this.open(tx, key, permissions, state), false).enforcementCurrent
+              || !readCardinalPolicyRecord(await this.open(tx, key, cardinal, state), false).enforcementCurrent) {
+              throw new VaultRecordError('Native automation policies require current review.');
+            }
+            return structuredClone(c);
+          },
+          application: (identity, applicationId, revision) => this.automationTargets({
+            verifyFreshAdministrator: async () => { throw new VaultRecordError('Use protected target administration.'); },
+            verifyProtectedHuman: async () => { throw new VaultRecordError('Use protected target administration.'); },
+          }).resolve(actor, identity, applicationId, revision, tx),
+        });
+      };
+      return transaction ? run(transaction) : this.transaction(run);
+    }, authority);
   }
 
   /** Encrypted short-lived protected presentations. The optional existing TX

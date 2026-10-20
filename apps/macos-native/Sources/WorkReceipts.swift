@@ -198,15 +198,16 @@ struct NativeAutomationConnections: View {
                     if connections["workspaces"].list.isEmpty {
                         Text("No separate desktop connection has been reported for your account.").font(.caption)
                     }
-                    ForEach(connections["workspaces"].list.indices, id: \.self) { index in
-                        let workspace = connections["workspaces"].list[index]
+                    ForEach(Array(connections["workspaces"].list.enumerated()), id: \.offset) { _, workspace in
                         VStack(alignment: .leading, spacing: 3) {
                             Text(workspace["label"].text).font(.headline)
                             Text(state(workspace)).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     if connections["controlAvailable"] == .bool(false) {
-                        Text("Connection status is available. Browser and computer control are not connected yet.")
+                        Text(connections["inspectionAvailable"].flag
+                             ? "App inspection is available with local approval. Input and model-visible screen content are not connected yet."
+                             : "Connection status is available. Browser and computer control are not connected yet.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -244,7 +245,7 @@ struct NativeAutomationConnections: View {
     }
     private func state(_ workspace: Wire) -> String {
         switch workspace["state"].text {
-        case "ready": return "Ready for permitted work"
+        case "ready": return connections["controlAvailable"] == .bool(false) ? "Ready for permitted inspection" : "Ready for permitted work"
         case "paused": return "Paused"
         case "needs_local_consent":
             return connections["controlAvailable"] == .bool(false)

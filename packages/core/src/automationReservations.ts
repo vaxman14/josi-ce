@@ -30,9 +30,14 @@ export interface AutomationReservationRequest {
 }
 export interface AutomationReservationProofPort {
   /** Local cryptographic/receipt checks only; no remote calls in the TX. */
-  verifyDispatch(tx: Db, context: { reservationId: string; planMac: string; identity: AutomationIdentity; payload: Secret }, proof: unknown): Promise<void>;
+  verifyDispatch(tx: Db, context: AutomationDispatchContext, proof: unknown): Promise<void>;
   verifyOutcome(tx: Db, context: { reservationId: string; planMac: string; identity: AutomationIdentity;
     outcome: 'succeeded' | 'no_effect' | 'uncertain'; evidenceIds: string[] }, proof: unknown): Promise<void>;
+}
+export interface AutomationDispatchContext {
+  reservationId: string; planMac: string; identity: AutomationIdentity; payload: Secret;
+  taskId: string; turnId: string; effects: AutomationPermissionEffect[];
+  expected: AutomationReservationRequest['expected']; expiresAtMs: number;
 }
 export interface AutomationReservationTransaction {
   tx: Db; key: MasterKey;
@@ -51,6 +56,9 @@ interface Plan {
   effects: AutomationPermissionEffect[]; effectCoverage: 'verified' | 'incomplete';
   expected: AutomationReservationRequest['expected']; expiresAtMs: number; payload: string;
   charges: AutomationPermissionEvaluation['charges'];
+  /** New native dispatches bind the original turn lease. Historical journal
+   * reads retain compatibility, but old plans cannot obtain a native permit. */
+  leaseToken?: string;
 }
 const uuid = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
 const publicView = (row: Row): AutomationReservationView => ({ id: row.id, taskId: row.task_id, effectIdentity: row.effect_identity,
@@ -144,7 +152,8 @@ export class AutomationReservationStore {
       const id = randomUUID(), turnEffectId = randomUUID(), plan: Plan = { purpose: 'josi-automation-reservation', schemaVersion: 1, id,
         ownerUserId: request.actorUserId, taskId: request.taskId, effectIdentity: request.effectIdentity, proposalId: request.proposalId,
         turnId: request.turnId, turnEffectId, identity: request.identity, effects: request.effects, effectCoverage: request.effectCoverage,
-        expected: request.expected, expiresAtMs: request.expiresAtMs, payload: request.payload, charges: checked.permissions.evaluation.charges };
+        expected: request.expected, expiresAtMs: request.expiresAtMs, payload: request.payload,
+        charges: checked.permissions.evaluation.charges, leaseToken: request.leaseToken };
       if (Buffer.byteLength(JSON.stringify(plan), 'utf8') > 256 * 1024) throw new AutomationReservationError('The verified action plan is too large.');
       const [effect] = await tx.query<{ id: string }>(`insert into assistant_turn_effects(id,turn_id,effect_key,tool_name)
         values($1,$2,$3,'automation.dispatch') on conflict(turn_id,effect_key) do nothing returning id`, [turnEffectId, request.turnId, `automation:${request.effectIdentity}`]);
@@ -177,7 +186,9 @@ export class AutomationReservationStore {
       const [lookup] = await tx.query<Row>('select * from automation_reservations where id=$1 and owner_user_id=$2', [request.id, request.actorUserId]);
       if (!lookup) throw new AutomationReservationError('The action is unavailable.');
       const initial = opened(key, lookup);
-      if (initial.turnId !== request.turnId) throw new AutomationReservationError('The action belongs to a different durable turn.');
+      if (initial.turnId !== request.turnId || initial.leaseToken && initial.leaseToken !== request.leaseToken) {
+        throw new AutomationReservationError('The action belongs to a different durable turn lease.');
+      }
       const original = await taskAndTurn(tx, request.actorUserId, initial.taskId, request.turnId, request.leaseToken);
       const [row] = await tx.query<Row>('select * from automation_reservations where id=$1 and owner_user_id=$2 for update', [request.id, request.actorUserId]);
       const plan = opened(key, row);
@@ -190,11 +201,50 @@ export class AutomationReservationStore {
       const [effect] = await tx.query("select id from assistant_turn_effects where id=$1 and turn_id=$2 and state='started' for update", [row.turn_effect_id, plan.turnId]);
       if (!effect) throw new AutomationReservationError('The durable effect fence changed.');
       if (typeof this.proofs?.verifyDispatch !== 'function') throw new AutomationReservationError('Verified device dispatch is unavailable.');
-      await this.proofs.verifyDispatch(tx, { reservationId: row.id, planMac: row.plan_mac, identity: structuredClone(plan.identity), payload: new Secret(plan.payload) }, proof);
+      await this.proofs.verifyDispatch(tx, this.dispatchContext(row, plan), proof);
       const refreshed = await taskAndTurn(tx, request.actorUserId, initial.taskId, request.turnId, request.leaseToken);
       facts.nowMs = refreshed.nowMs;
       if (plan.expiresAtMs <= refreshed.nowMs || (await preview(facts, plan.expected)).verdict !== 'covered') throw new AutomationReservationError('The action expired or its limits changed during verification.');
       return this.transition(tx, key, row, 'dispatched', null);
+    });
+  }
+  private dispatchContext(row: Row, plan: Plan): AutomationDispatchContext {
+    return { reservationId: row.id, planMac: row.plan_mac, identity: structuredClone(plan.identity), payload: new Secret(plan.payload),
+      taskId: plan.taskId, turnId: plan.turnId, effects: structuredClone(plan.effects), expected: structuredClone(plan.expected),
+      expiresAtMs: plan.expiresAtMs };
+  }
+  /** The guest's final permit is a SECOND check after durable dispatch. A
+   * transport must consume its one-use delivery fence in verifyDispatch,
+   * inside this transaction, before returning any permit to the native app.
+   * This method never resends an action or changes its recorded outcome. */
+  async confirmNativeDispatch(actorUserId: string, id: string, proof: unknown): Promise<AutomationDispatchContext> {
+    if (![actorUserId, id].every(uuid)) throw new AutomationReservationError('The native action identity is invalid.');
+    return this.backend(actorUserId, true, async ({ tx, key, preview }) => {
+      const [lookup] = await tx.query<Row>('select * from automation_reservations where id=$1 and owner_user_id=$2', [id, actorUserId]);
+      if (!lookup) throw new AutomationReservationError('The native action is unavailable.');
+      const initial = opened(key, lookup);
+      if (!uuid(initial.leaseToken)) throw new AutomationReservationError('This historical action cannot obtain a native permit.');
+      const original = await taskAndTurn(tx, actorUserId, initial.taskId, initial.turnId, initial.leaseToken);
+      const [row] = await tx.query<Row>('select * from automation_reservations where id=$1 and owner_user_id=$2 for update', [id, actorUserId]);
+      const plan = opened(key, row);
+      if (row.state !== 'dispatched' || plan.expiresAtMs <= original.nowMs || plan.leaseToken !== initial.leaseToken) {
+        throw new AutomationReservationError('The native action is no longer awaiting a permit.');
+      }
+      const facts = await usageFor(tx, key, plan.taskId, plan.effects, plan.identity, original, row.id);
+      for (const charge of plan.charges) if (!facts.usage.some(u => u.ruleId === charge.ruleId)) {
+        facts.usage.push({ ruleId: charge.ruleId, taskId: plan.taskId, actions: 0, bytes: 0 });
+      }
+      if ((await preview(facts, plan.expected)).verdict !== 'covered') throw new AutomationReservationError('Native action permissions or limits changed.');
+      const [effect] = await tx.query("select id from assistant_turn_effects where id=$1 and turn_id=$2 and state='started' for update", [row.turn_effect_id, plan.turnId]);
+      if (!effect || typeof this.proofs?.verifyDispatch !== 'function') throw new AutomationReservationError('The native effect fence is unavailable.');
+      const context = this.dispatchContext(row, plan);
+      await this.proofs.verifyDispatch(tx, context, proof);
+      const refreshed = await taskAndTurn(tx, actorUserId, plan.taskId, plan.turnId, initial.leaseToken);
+      facts.nowMs = refreshed.nowMs;
+      if (plan.expiresAtMs <= refreshed.nowMs || (await preview(facts, plan.expected)).verdict !== 'covered') {
+        throw new AutomationReservationError('The native action expired during its final permit check.');
+      }
+      return context;
     });
   }
   /** Authenticated factual outcomes may be recorded after task/turn/policy

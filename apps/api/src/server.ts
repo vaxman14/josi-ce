@@ -1,6 +1,6 @@
 // Josi CE API entrypoint.
 import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
-import { apiListenHost, connectFromEnv, loadMasterKey } from '@josi-ce/core';
+import { apiListenHost, connectFromEnv, loadMasterKey, createNativeInspectionRuntime } from '@josi-ce/core';
 import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
 import { createApp } from './app.js';
 import { publicAddressFromEnvironment, reconcilePublicAddress } from './setup/publicAddress.js';
@@ -16,8 +16,9 @@ console.log(`josi-ce: database ${describe}`);
 // Load the key once at boot so a misconfigured installation fails immediately
 // and visibly, rather than at the first request that needs to decrypt something.
 // The value is never logged — MasterKey redacts itself on inspection.
+let installationKey: ReturnType<typeof loadMasterKey> | null = null;
 try {
-  loadMasterKey();
+  installationKey = loadMasterKey();
   console.log('josi-ce: master key loaded');
 } catch (err) {
   console.error(`josi-ce: ${(err as Error).message}`);
@@ -57,6 +58,7 @@ const cookieSecure = process.env.COOKIE_SECURE === 'true'
     : new URL(appUrl).protocol === 'https:';
 
 const app = createApp(db, {
+  automationRuntime: installationKey ? createNativeInspectionRuntime(db, installationKey) : undefined,
   attachmentStorageRoot: attachmentRoot(),
   // Empty/unset follows APP_URL. This keeps first-run LAN HTTP usable without
   // weakening cookies on a public HTTPS installation. An explicit value is an

@@ -39,6 +39,8 @@ export interface PreparedAutomationOperation {
 /** Implemented only by an authenticated enrolled-device service. There is no
  * renderer/JSON adapter, ambient browser session or default trust provider. */
 export interface AutomationRuntimePorts extends AutomationReservationProofPort {
+  /** An inspection-only adapter must not advertise or accept input tools. */
+  actionsAvailable?: boolean;
   inventory(ownerUserId: string, signal: AbortSignal): Promise<AutomationWorkspaceSummary[]>;
   /** Current local consent, task ownership and Vault authority are required.
    * Cannot resume a human takeover or manufacture new consent/grants. */
@@ -65,6 +67,7 @@ export interface AutomationRuntimePorts extends AutomationReservationProofPort {
 }
 export class AutomationRuntimeError extends Error {}
 const refusalMessages = {
+  connection_refreshing: 'The desktop connection needs a fresh lease before this operation. No command was dispatched.',
   device_offline: 'The automation device is offline. Reconnect the isolated workspace in Josi.',
   local_consent_required: 'The device owner must enable this workspace from its local Josi controls.',
   human_takeover: 'The device owner has control. Resume automation from the local Josi controls when ready.',
@@ -151,6 +154,7 @@ export class AutomationRuntime {
     this.reservations = vaultRecords(db, key).automationReservations(ports);
   }
   get observationAvailable(): boolean { return typeof this.ports.prepareObservation === 'function'; }
+  get actionAvailable(): boolean { return this.ports.actionsAvailable !== false; }
   async inventory(ownerUserId: string): Promise<AutomationWorkspaceSummary[]> {
     const [owner] = await this.db.query(`select id from users where id=$1 and status='active'`, [ownerUserId]);
     if (!owner) throw new AutomationRuntimeError('The automation owner is unavailable.');
@@ -253,6 +257,7 @@ export class AutomationRuntime {
     } finally { clearTimeout(timer); controller.abort(); }
   }
   async execute(context: AutomationExecutionContext, input: AutomationRequest) {
+    if (!this.actionAvailable) throw new AutomationRuntimeRefusal('unclassified_effect');
     const bound = Object.freeze(structuredClone(context));
     if (!exact(input, ['taskId', 'workspaceId', 'observationId', 'action'])
       || ![input.taskId, input.workspaceId, input.observationId].every(uuid)) throw new AutomationRuntimeError('Use an original task, discovered workspace and current observation.');

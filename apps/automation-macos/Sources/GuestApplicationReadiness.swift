@@ -62,7 +62,10 @@ import Foundation
         if apps.isEmpty { state = "not_running" }
         else if apps.count != 1 { state = "ambiguous" }
         else {
-            do { try GuestDesktopEngine.verifyApplication(apps[0], pin: pin); state = "running" }
+            do {
+                try GuestDesktopEngine.verifyApplication(apps[0], pin: pin)
+                state = NSWorkspace.shared.frontmostApplication?.processIdentifier == apps[0].processIdentifier ? "running" : "background"
+            }
             catch { state = "changed" }
         }
         // Signature inspection can take time; an expired result is not ready.

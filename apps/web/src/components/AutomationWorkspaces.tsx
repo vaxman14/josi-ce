@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 /** Discovery only. A displayed connection is never a permission or a lease. */
 export function AutomationWorkspaces() {
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState<{ available: boolean; controlAvailable?: boolean; reason?: string; workspaces: AutomationWorkspaceSummary[] } | null>(null);
+  const [status, setStatus] = useState<{ available: boolean; controlAvailable?: boolean; inspectionAvailable?: boolean; reason?: string; workspaces: AutomationWorkspaceSummary[] } | null>(null);
   const [error, setError] = useState('');
   const [received, setReceived] = useState<Date | null>(null);
   useEffect(() => {
@@ -15,7 +15,7 @@ export function AutomationWorkspaces() {
       if (!alive || pending || document.hidden) return;
       pending = true;
       try {
-        const result = await api.get<{ available: boolean; controlAvailable?: boolean; reason?: string; workspaces: AutomationWorkspaceSummary[] }>('/assistant/automation/workspaces');
+        const result = await api.get<{ available: boolean; controlAvailable?: boolean; inspectionAvailable?: boolean; reason?: string; workspaces: AutomationWorkspaceSummary[] }>('/assistant/automation/workspaces');
         if (alive) { setStatus(result); setError(''); setReceived(new Date()); }
       } catch { if (alive) setError('Automation connections could not refresh. Their current state is unavailable.'); }
       finally { pending = false; }
@@ -26,7 +26,7 @@ export function AutomationWorkspaces() {
     document.addEventListener('visibilitychange', visible);
     return () => { alive = false; window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
   }, [open]);
-  const labels = { ready: 'Ready for permission-checked work', paused: 'Paused',
+  const labels = { ready: status?.controlAvailable === false ? 'Ready for permitted inspection' : 'Ready for permission-checked work', paused: 'Paused',
     needs_local_consent: 'Waiting for the device owner', offline: 'Offline' };
   return <details className="rounded-xl border border-border bg-card p-4" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="cursor-pointer font-medium">Automation desktops</summary>
@@ -41,10 +41,12 @@ export function AutomationWorkspaces() {
                 ? 'Companion connected · automation not enabled' : labels[workspace.state]}</p>
               <p className="mt-1 text-xs text-muted-foreground">{[
                 workspace.browserFamilies.length ? `Browsers: ${workspace.browserFamilies.join(', ')}` : null,
-                workspace.computerUse ? 'Computer control supported' : null,
+                workspace.computerUse ? status.controlAvailable === false ? 'App inspection supported' : 'Computer control supported' : null,
               ].filter(Boolean).join(' · ') || 'No control adapter is currently available.'}</p>
             </li>)}</ul>}
-    {status?.controlAvailable === false ? <p className="mt-3 text-xs text-muted-foreground">Connection status is available. Browser and computer control are not connected yet.</p> : null}
+    {status?.controlAvailable === false ? <p className="mt-3 text-xs text-muted-foreground">{status.inspectionAvailable
+      ? 'App inspection is available with local approval. Input and model-visible screen content are not connected yet.'
+      : 'Connection status is available. Browser and computer control are not connected yet.'}</p> : null}
     {received ? <p className="mt-3 text-xs text-muted-foreground">Last checked {received.toLocaleTimeString()}. Each action still checks current access.</p> : null}
   </details>;
 }

@@ -1,0 +1,91 @@
+import { randomUUID } from 'node:crypto';
+import type { Db } from './db.js';
+import type { MasterKey } from './masterKey.js';
+import { Secret } from './sealing.js';
+import { vaultRecords } from './vault.js';
+import { listAutomationPresence } from './automationPresence.js';
+import { cardinalContentDigest } from './cardinalRules.js';
+import { AutomationRuntime, AutomationRuntimeRefusal, type PreparedAutomationOperation } from './automationRuntime.js';
+import type { AutomationReservationProofPort } from './automationReservations.js';
+import { NativeTransportError, type NativeObservationPayload } from './nativeAutomationTransport.js';
+
+/** Shared by API and worker. The database carries Vault-authenticated bounded
+ * delivery records; only the live native API boundary can issue a permit.
+ * This first adapter classifies AX inspection only, never generic input. */
+export function createNativeInspectionRuntime(db: Db, master: MasterKey): AutomationRuntime {
+  const records = vaultRecords(db, master);
+  const transport = records.nativeAutomation({ requireNativeConnection: async () => {
+    throw new NativeTransportError('Native permits require the current hardware-authenticated API connection.');
+  } });
+  const proofs: AutomationReservationProofPort = {
+    verifyDispatch: async (tx, context, proof) => {
+      if ((proof as { phase?: unknown })?.phase === 'prepared') return transport.verifyPrepared(tx, context, proof);
+      if ((proof as { phase?: unknown })?.phase === 'queue') return transport.enqueue(tx, context, proof);
+      throw new NativeTransportError('Use the native API for the final guest permit.');
+    },
+    verifyOutcome: (tx, context, proof) => transport.verifyOutcome(tx, context, proof),
+  };
+  const reservations = records.automationReservations(proofs);
+  return new AutomationRuntime(db, master, {
+    ...proofs, actionsAvailable: false,
+    inventory: async (owner, signal) => {
+      const reports = await listAutomationPresence(db, owner);
+      for (const report of reports) {
+        if (signal.aborted) throw new NativeTransportError('Discovery ended.');
+        try {
+          const current = await transport.current(owner, report.identity.workspaceId);
+          if (report.state !== 'offline' && current.leaseUntilMs > Date.now()) {
+            report.state = 'ready'; report.computerUse = true;
+          }
+        } catch { /* Presence alone cannot advertise inspection. */ }
+      }
+      return reports;
+    },
+    acquire: async (context, taskId, workspaceId, signal) => {
+      if (signal.aborted) throw new NativeTransportError('Control acquisition ended.');
+      const control = await transport.acquire(context.ownerUserId, workspaceId, taskId);
+      if (!control.holder || signal.aborted) throw new NativeTransportError('Control acquisition ended.');
+      return { identity: control.identity, taskId, controlSessionId: control.holder.controlSessionId, expiresAtMs: control.leaseUntilMs };
+    },
+    prepare: async () => { throw new AutomationRuntimeRefusal('unclassified_effect'); },
+    prepareObservation: async (context, request, signal): Promise<PreparedAutomationOperation> => {
+      if (request.surface !== 'desktop' || signal.aborted) throw new AutomationRuntimeRefusal('device_offline');
+      const c = await transport.current(context.ownerUserId, request.workspaceId);
+      const expiresAtMs = c.leaseUntilMs - 500;
+      if (signal.aborted || c.holder?.taskId !== request.taskId || c.holder.controlSessionId !== request.controlSessionId) {
+        throw new AutomationRuntimeRefusal('local_consent_required');
+      }
+      if (expiresAtMs - Date.now() < 5000) throw new AutomationRuntimeRefusal('connection_refreshing');
+      const observationId = randomUUID();
+      const payload: NativeObservationPayload = { purpose: 'josi-native-observation', schemaVersion: 1,
+        storageSessionId: c.storageSessionId, consent: c.consent, targetReference: c.targetReference,
+        guestBootId: c.guestBootId, guestChannelId: c.guestChannelId, application: c.application,
+        command: { id: randomUUID(), workspaceId: c.identity.workspaceId, appId: c.application.applicationId,
+          installationRevision: c.application.installationRevision, taskId: request.taskId, sessionId: request.controlSessionId,
+          generation: c.generation, expiresAtMs, operation: 'observe', observationId: request.previousObservationId,
+          resultObservationId: observationId, maxOutputBytes: 64 * 1024 } };
+      return { identity: c.identity, observationId, intentDigest: cardinalContentDigest(request), effects: [
+        { action: 'computer.observe', target: { kind: 'application', applicationId: c.application.applicationId,
+          installationRevision: c.application.installationRevision }, bytes: payload.command.maxOutputBytes },
+      ], effectCoverage: 'verified', expected: { permissions: c.permissions, cardinal: c.cardinal }, expiresAtMs,
+      payload: new Secret(JSON.stringify(payload)), dispatchProof: { phase: 'prepared', commandId: payload.command.id } };
+    },
+    dispatch: async (reservationId, prepared, signal) => {
+      const payload = JSON.parse(prepared.payload.reveal()) as NativeObservationPayload;
+      if (signal.aborted) throw new NativeTransportError('Delivery ended.');
+      await reservations.confirmNativeDispatch(prepared.identity.userId, reservationId, { phase: 'queue', commandId: payload.command.id });
+      while (!signal.aborted && Date.now() < prepared.expiresAtMs) {
+        const delivery = await transport.result(prepared.identity.userId, reservationId);
+        if (delivery?.result) return { outcome: delivery.result.outcome, evidenceIds: [delivery.result.evidenceId],
+          proof: { phase: 'native-result', reservationId } };
+        await new Promise<void>(resolve => {
+          const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
+          const timer = setTimeout(done, 200); timer.unref();
+          signal.addEventListener('abort', done, { once: true });
+          if (signal.aborted) done();
+        });
+      }
+      throw new NativeTransportError('The native delivery outcome could not be confirmed. Do not resend it.');
+    },
+  });
+}

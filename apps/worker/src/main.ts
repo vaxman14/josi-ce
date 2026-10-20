@@ -4,7 +4,7 @@
 // compose stack needs a second process to prove restart policy, health
 // checking and least-privilege networking against — and because adding it later
 // would mean revisiting all three.
-import { connectFromEnv, loadMasterKey, resolveDataPath } from '@josi-ce/core';
+import { connectFromEnv, loadMasterKey, resolveDataPath, createNativeInspectionRuntime } from '@josi-ce/core';
 import { cleanupAttachments, probeAttachmentStorage, nativeScanner } from '@josi-ce/storage';
 import { processQueue } from './jobs.js';
 import { writeFileSync } from 'node:fs';
@@ -36,6 +36,7 @@ try {
 }
 
 let running = true;
+const automationRuntime = masterKey ? createNativeInspectionRuntime(db, masterKey) : undefined;
 
 /** The container healthcheck reads this file's mtime. A worker that is wedged
  * stops touching it and gets restarted; one that is merely idle keeps ticking. */
@@ -72,7 +73,7 @@ async function tick(): Promise<void> {
   if (Date.now() - lastCleanup > 3600000) {
     await cleanupAttachments(db); lastCleanup = Date.now();
   }
-  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey, pushFetch: fetch, scanner });
+  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey, pushFetch: fetch, scanner, automationRuntime });
   if (outcome.claimed) {
     console.log(`josi-ce worker: ${outcome.done} done, ${outcome.failed} failed`);
   }

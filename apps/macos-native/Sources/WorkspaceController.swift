@@ -33,6 +33,8 @@ import Darwin
     private var busy = false
     private var lost = false
     private var heartbeat: Task<Void, Never>?
+    private var commandLoop: Task<Void, Never>?
+    private var serverControlActive = false
     private var watchdog: Task<Void, Never>?
     private var sleepObserver: NSObjectProtocol?
     var requiresClosure: Bool { state != "closed" || attachmentAttempted }
@@ -150,8 +152,16 @@ import Darwin
                     let presence: Wire = ["machineState": .string(["running", "paused", "stopped"].contains(state) ? state : "starting"),
                                           "companionConnected": .bool(guest?.paired == true)]
                     let priorConsent = localConsent, generation = consentGeneration
+                    var body: Wire = ["presence": presence]
+                    if localConsent != .null, let selection = try? guest?.controlSelection(), selection != .null,
+                       case .object(var fields) = body {
+                        fields["control"] = ["generation": .number(Double(consentGeneration)),
+                            "guestBootId": localConsent["guestBootId"], "guestChannelId": localConsent["guestChannelId"],
+                            "applicationId": selection["applicationId"], "installationRevision": selection["installationRevision"]]
+                        body = .object(fields)
+                    }
                     let next = try await api.request("/admin/automation/storage/sessions/\(id)/renew", method: "POST",
-                                                     body: ["presence": presence])
+                                                     body: body)
                     try current()
                     guard next["workspaceId"] == workspace["workspaceId"], next["executionEnabled"] == .bool(false) else { throw approvalUnavailable() }
                     try adoptLease(next)
@@ -164,6 +174,8 @@ import Darwin
                            state == "running" {
                             consentDeadline = leaseDeadline
                             consentLeaseUntil = session["leaseUntilMs"].integer
+                            if serverControlActive && !next["nativeControl"].flag { stopAutomationLocally() }
+                            else { serverControlActive = next["nativeControl"].flag }
                         } else { stopAutomationLocally() }
                     }
                     try guardian?.renew()
@@ -189,6 +201,41 @@ import Darwin
         }
         sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in await self?.connectionLost() }
+        }
+        commandLoop = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled && !lost {
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                    guard serverControlActive, localConsent != .null, let api, let guest else { continue }
+                    try current()
+                    let id = try api.uuid(session["sessionId"].text), generation = consentGeneration
+                    let base = "/admin/automation/storage/sessions/\(id)/commands"
+                    let response = try await api.request(base + "/next", method: "POST", body: [:])
+                    try current()
+                    guard generation == consentGeneration, localConsent != .null, self.guest === guest else { throw GuestLinkError.closed }
+                    let packet = response["command"]
+                    if packet == .null { continue }
+                    let result = try await guest.execute(packet, authorize: { query in
+                        try self.current()
+                        guard self.api === api, generation == self.consentGeneration,
+                              self.localConsent != .null, self.guest === guest else { throw GuestLinkError.closed }
+                        let permit = try await api.request(base + "/permit", method: "POST", body: query)
+                        try self.current()
+                        guard generation == self.consentGeneration, self.localConsent != .null else { throw GuestLinkError.closed }
+                        return permit
+                    })
+                    try current()
+                    guard generation == consentGeneration, localConsent != .null else { throw GuestLinkError.closed }
+                    let recorded = try await api.request(base + "/result", method: "POST", body: result)
+                    guard recorded["recorded"].flag else { throw GuestLinkError.invalid }
+                } catch {
+                    if !Task.isCancelled && !lost {
+                        try? await stopAutomation()
+                        model?.error = "Automation stopped because command delivery could not be confirmed. Check the original task before trying again."
+                    }
+                }
+            }
         }
     }
     private func connectionLost() async {
@@ -258,6 +305,7 @@ import Darwin
         guard !busy else { throw WorkspaceMachineError.busy }
         busy = true; lost = true; defer { busy = false }
         heartbeat?.cancel(); heartbeat = nil; watchdog?.cancel(); watchdog = nil
+        commandLoop?.cancel(); commandLoop = nil
         if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver); self.sleepObserver = nil }
         projection = .null; projectionLease = nil
         if let api, ProtectedWire.uuid(session["sessionId"]) {
@@ -291,6 +339,7 @@ import Darwin
 
     private func stopAutomationLocally() {
         consentGeneration += 1; localConsent = .null; consentDeadline = .now
+        serverControlActive = false
         consentLeaseUntil = 0; guest?.revokeAutomation()
         // The dispatch bridge must consult this volatile generation and lease
         // immediately before input. A saved Vault receipt cannot restart it.
@@ -305,6 +354,7 @@ import Darwin
     func approveAutomation() async throws {
         try current()
         guard state == "running", localConsent == .null, let model, let guest, guest.supportsExecution else { throw approvalUnavailable() }
+        _ = try guest.controlSelection()
         let binding = try guest.consentBinding(), generation = consentGeneration
         let result = try await NativeAutomationConsent.approve(model: model, workspace: workspace, session: session, guest: binding,
             current: {

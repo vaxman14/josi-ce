@@ -52,6 +52,7 @@ export async function automationDiscovery(runtime: AutomationRuntime | undefined
   if (!runtime) return { available: !!db, workspaces: db ? await listAutomationPresence(db, ownerUserId) : [],
     controlAvailable: false, reason: 'These are recent isolated-desktop connection reports. Execution is not connected; no local consent or permission is granted by presence.' };
   return { available: true, workspaces: await runtime.inventory(ownerUserId),
+    controlAvailable: runtime.actionAvailable, inspectionAvailable: runtime.observationAvailable,
     reason: 'Discovery describes current connections. Every operation still requires its current target, consent and permission checks.' };
 }
 export async function automationToolAvailability(runtime: AutomationRuntime | undefined, ownerUserId: string): Promise<ToolSpec[]> {
@@ -64,8 +65,8 @@ export async function automationToolAvailability(runtime: AutomationRuntime | un
       || tool.def.name === 'connect_automation_workspace'
       || tool.def.name === 'observe_automation_workspace' && runtime.observationAvailable
         && ready.some(workspace => workspace.computerUse || workspace.browserFamilies.length)
-      || tool.def.name === 'browser_control' && ready.some(workspace => workspace.browserFamilies.length)
-      || tool.def.name === 'computer_control' && ready.some(workspace => workspace.computerUse));
+      || tool.def.name === 'browser_control' && runtime.actionAvailable && ready.some(workspace => workspace.browserFamilies.length)
+      || tool.def.name === 'computer_control' && runtime.actionAvailable && ready.some(workspace => workspace.computerUse));
   } catch { return []; }
 }
 export async function executeAutomationTool(ctx: ToolExecutionContext, name: string, input: Record<string, unknown>, db?: Db) {

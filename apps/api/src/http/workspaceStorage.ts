@@ -13,6 +13,7 @@ interface OpenSession {
   id: string; actor: string; session: string; identity: ProtectedConfirmationIdentity; reference: VaultRecordReference;
   workspaceId: string; deadline: number; expires: number; leaseUntil: number; leaseDeadline: number; previousWall: number;
   label: string; consent: VaultRecordReference | null; consentGeneration: number;
+  nativeGeneration: number | null; applicationSelection: { applicationId: string; installationRevision: number } | null;
 }
 interface PendingConsent {
   owner: OpenSession; challenge: AutomationConsentChallenge; generation: number;
@@ -144,7 +145,7 @@ export class WorkspaceStorage {
           serverOrigin: c.serverOrigin, serverId: c.serverId, userId: c.userId, deviceId: c.deviceId,
         }, reference: c.keyReference, workspaceId: c.workspaceId, expires: wall + 2 * 60 * 60_000,
           deadline: mono + 2 * 60 * 60_000, leaseUntil: wall + 10_000, leaseDeadline: mono + 10_000, previousWall: wall,
-          label: c.label, consent: null, consentGeneration: 0 };
+          label: c.label, consent: null, consentGeneration: 0, nativeGeneration: null, applicationSelection: null };
         this.opened.set(sessionId, s);
         try {
           await openAutomationPresence(this.db, { identity: { userId: actor, serverId: c.serverId,
@@ -234,6 +235,49 @@ export class WorkspaceStorage {
       },
     });
   }
+  private nativeTransport(actor: string, session: string) {
+    return this.records(actor, session).nativeAutomation({ requireNativeConnection: async (_tx, c) => {
+      const s = this.session(actor, session, c.storageSessionId), ref = s.consent;
+      if (!ref || c.authSessionId !== session || s.nativeGeneration !== c.generation
+        || c.leaseUntilMs > s.leaseUntil || c.identity.userId !== actor || c.identity.workspaceId !== s.workspaceId
+        || c.identity.serverId !== s.identity.serverId || c.identity.deviceId !== s.identity.deviceId
+        || ref.recordId !== c.consent.recordId || ref.version !== c.consent.version
+        || ref.digest !== c.consent.digest || ref.epoch !== c.consent.epoch
+        || s.applicationSelection?.applicationId !== c.applicationId
+        || s.applicationSelection.installationRevision !== c.installationRevision) {
+        throw new ProtectedChangeError(409, 'This native automation connection changed.');
+      }
+    } });
+  }
+  async nextNativeCommand(actor: string, session: string, id: string) {
+    this.session(actor, session, id);
+    const command = await this.nativeTransport(actor, session).take(actor, id);
+    this.session(actor, session, id);
+    return { command };
+  }
+  async permitNativeCommand(actor: string, session: string, id: string, query: unknown) {
+    this.session(actor, session, id);
+    if (!exact(query, ['kind', 'commandId', 'reservationId', 'commandDigest', 'target', 'targetDigest', 'consentDigest'])
+      || !uuid(query.reservationId)) throw new ProtectedChangeError(400, 'Use the exact pending native command.');
+    const transport = this.nativeTransport(actor, session);
+    const records = this.records(actor, session).automationReservations({
+      verifyDispatch: async (tx, context, proof) => {
+        if (proof !== query) throw new ProtectedChangeError(403, 'Use the native permit route.');
+        await transport.permit(tx, context, id, query);
+        this.session(actor, session, id);
+      },
+      verifyOutcome: denied,
+    });
+    const result = await records.confirmNativeDispatch(actor, query.reservationId, query);
+    this.session(actor, session, id);
+    return { kind: 'permit', commandId: query.commandId, reservationId: query.reservationId,
+      commandDigest: query.commandDigest, targetDigest: query.targetDigest, consentDigest: query.consentDigest,
+      expiresAtMs: String(result.expiresAtMs) };
+  }
+  async reportNativeCommand(actor: string, session: string, id: string, receipt: unknown) {
+    this.session(actor, session, id);
+    return this.nativeTransport(actor, session).report(actor, id, receipt);
+  }
   async prepareConsent(actor: string, session: string, id: string, input: unknown) {
     const s = this.session(actor, session, id);
     if (!exact(input, ['guestBootId', 'guestChannelId']) || !uuid(input.guestBootId) || !uuid(input.guestChannelId)) {
@@ -286,9 +330,10 @@ export class WorkspaceStorage {
   async stopConsent(actor: string, session: string, id: string) {
     const s = this.session(actor, session, id);
     // Volatile revocation precedes DB work, so lock/failure cannot keep input enabled.
-    s.consent = null; s.consentGeneration += 1;
+    s.consent = null; s.consentGeneration += 1; s.nativeGeneration = null;
     for (const p of this.consents.values()) if (p.owner === s) this.forgetConsent(p.challenge.id);
     await this.consentStore(s).stop(actor, this.consentIdentity(s), id);
+    await this.nativeTransport(actor, session).stop(actor, id);
     return { stopped: true };
   }
   cancelConsent(actor: string, session: string, id: string, challengeId: unknown) {
@@ -324,10 +369,11 @@ export class WorkspaceStorage {
         return target;
       });
       this.openedLive(s);
+      s.applicationSelection = { applicationId: input.applicationId as string, installationRevision: Number(input.installationRevision) };
       return { schemaVersion: 1, sessionId: s.id, identity, ...result, expiresAtMs: s.leaseUntil, executionEnabled: false };
     } catch (error) { this.opened.delete(id); throw error; }
   }
-  async renew(actor: string, session: string, id: string, presence?: unknown) {
+  async renew(actor: string, session: string, id: string, presence?: unknown, controlInput?: unknown) {
     const report = parseAutomationPresence(presence);
     const s = this.opened.get(id);
     if (!uuid(id) || !s || s.actor !== actor || s.session !== session || !this.db.transaction) throw new ProtectedChangeError(409, 'The desktop connection is unavailable.');
@@ -355,8 +401,23 @@ export class WorkspaceStorage {
           if (s.consent === reference && generation === s.consentGeneration) consent = resolved;
         }
       }
+      let nativeControl = false;
+      if (controlInput !== undefined && controlInput !== null) {
+        if (!consent || !s.consent || !exact(controlInput, ['generation', 'guestBootId', 'guestChannelId', 'applicationId', 'installationRevision'])
+          || !Number.isSafeInteger(controlInput.generation) || Number(controlInput.generation) < 0
+          || controlInput.guestBootId !== consent.guestBootId || controlInput.guestChannelId !== consent.guestChannelId
+          || !uuid(controlInput.applicationId) || !Number.isSafeInteger(controlInput.installationRevision)
+          || Number(controlInput.installationRevision) < 1 || s.nativeGeneration !== null && s.nativeGeneration !== controlInput.generation) {
+          throw new ProtectedChangeError(409, 'This local automation connection needs a new approval.');
+        }
+        s.nativeGeneration = Number(controlInput.generation);
+        await this.nativeTransport(actor, session).renew(actor, { identity: this.consentIdentity(s), storageSessionId: id,
+          authSessionId: session, consent: s.consent, generation: s.nativeGeneration, leaseUntilMs: s.leaseUntil,
+          applicationId: controlInput.applicationId, installationRevision: Number(controlInput.installationRevision) });
+        nativeControl = true;
+      }
       this.openedLive(s);
-      return { sessionId: id, workspaceId: s.workspaceId, leaseUntilMs: s.leaseUntil, expiresAtMs: s.expires, consent, executionEnabled: false };
+      return { sessionId: id, workspaceId: s.workspaceId, leaseUntilMs: s.leaseUntil, expiresAtMs: s.expires, consent, nativeControl, executionEnabled: false };
     } catch (error) { this.opened.delete(id); throw error; }
   }
   async close(actor: string, session: string, id: string) {
@@ -367,6 +428,9 @@ export class WorkspaceStorage {
       for (const p of this.consents.values()) if (p.owner === s) this.forgetConsent(p.challenge.id);
     }
     this.opened.delete(id);
+    if (s) {
+      try { await this.nativeTransport(actor, session).stop(actor, id); } catch { /* Native closure and short expiry remain mandatory. */ }
+    }
     await closeAutomationPresence(this.db, actor, session, id);
     return { closed: true };
   }

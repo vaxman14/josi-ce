@@ -27,7 +27,7 @@ export { protectedDeviceEnrollmentMessage, type ProtectedDeviceAuthority, type P
   type ProtectedDeviceEnrollment, type ProtectedDeviceRevocation, type ProtectedDeviceInventory,
   type ProtectedDeviceSummary, type NativeVaultSigningMaterial } from './protectedDevices.js';
 export { AutomationReservationError, type AutomationReservationRequest, type AutomationReservationView, type AutomationReservationState,
-  type AutomationReservationProofPort } from './automationReservations.js';
+  type AutomationReservationProofPort, type AutomationDispatchContext } from './automationReservations.js';
 export * from './cardinalDrafts.js';
 export { CARDINAL_ENFORCEMENT_VERSION, cardinalActivationBinding, cardinalRetirementBinding,
   type CardinalActiveRule, type CardinalPolicyDocument, type CardinalPolicyView, type CardinalPolicyCommand, type CardinalPolicyAuthority, type CardinalPolicyDecision,
@@ -44,6 +44,9 @@ export * from './workMemoryContext.js';
 export * from './automationRuntime.js';
 export * from './automationPresence.js';
 export { type AutomationConsentAuthority } from './automationConsent.js';
+export { NativeTransportError, type NativeControlRenewal, type NativeControlState,
+  type NativeObservationPayload, type NativeApplicationPin, type NativeTransportAuthority } from './nativeAutomationTransport.js';
+export { createNativeInspectionRuntime } from './nativeAutomationRuntime.js';
 export * from './subscriptionCredentials.js';
 export { type WorkspaceStorageAuthority, type WorkspaceStorageSummary } from './workspaceStorage.js';
 export * from './workContinuation.js';

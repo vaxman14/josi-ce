@@ -5,7 +5,7 @@ import {
   cardinalDraftSaveBinding, cardinalDraftTestBinding, cardinalContentDigest, cardinalReviewInput, explainCardinalRule,
   testCardinalRule, validateCardinalRule, validateAutomationPermissionPolicy,
   loadMasterKey, vaultRecords, VaultError, VaultLockedError, VaultRecordError,
-  ProtectedConfirmationError, listAutomationModelCandidates,
+  ProtectedConfirmationError, NativeTransportError, AutomationReservationError, listAutomationModelCandidates,
   type Db, type LoadOptions, type VaultRecordReference,
 } from '@josi-ce/core';
 import { loadStoredProvider, isExternalProvider, isLocalOnly, reviewConfiguredCardinalMeaning, type SpawnRunner } from '@josi-ce/llm';
@@ -63,6 +63,7 @@ export function automationSettingsRoutes(context: Context): Router {
     catch (error) {
       if (error instanceof ProtectedChangeError || error instanceof ProtectedAdminError) return res.status(error.status).json({ error: error.message });
       if (error instanceof VaultLockedError) return res.status(423).json({ error: error.message });
+      if (error instanceof NativeTransportError || error instanceof AutomationReservationError) return res.status(409).json({ error: error.message });
       if (error instanceof VaultError || error instanceof VaultRecordError || error instanceof ProtectedConfirmationError) return res.status(409).json({ error: error.message });
       return res.status(503).json({ error: 'The protected review could not finish reliably. Inspect current settings and start a new review; do not assume the change was applied.' });
     }
@@ -192,7 +193,7 @@ export function automationSettingsRoutes(context: Context): Router {
     await storage.authorize(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.proof, 'open'),
   )));
   r.post('/storage/sessions/:id/renew', nativeHandle(async (req, res) => res.json(
-    await storage.renew(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.presence),
+    await storage.renew(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.presence, req.body?.control),
   )));
   r.post('/storage/sessions/:id/application', nativeHandle(async (req, res) => res.json(
     await storage.application(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
@@ -208,6 +209,15 @@ export function automationSettingsRoutes(context: Context): Router {
   )));
   r.post('/storage/sessions/:id/consent/stop', nativeHandle(async (req, res) => res.json(
     await storage.stopConsent(req.user!.id, req.user!.session_id, param(req, 'id')),
+  )));
+  r.post('/storage/sessions/:id/commands/next', nativeHandle(async (req, res) => res.json(
+    await storage.nextNativeCommand(req.user!.id, req.user!.session_id, param(req, 'id')),
+  )));
+  r.post('/storage/sessions/:id/commands/permit', nativeHandle(async (req, res) => res.json(
+    await storage.permitNativeCommand(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
+  )));
+  r.post('/storage/sessions/:id/commands/result', nativeHandle(async (req, res) => res.json(
+    await storage.reportNativeCommand(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));
   r.post('/storage/sessions/:id/close', nativeHandle(async (req, res) => res.json(
     await storage.close(req.user!.id, req.user!.session_id, param(req, 'id')),

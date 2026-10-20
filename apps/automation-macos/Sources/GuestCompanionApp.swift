@@ -162,6 +162,9 @@ enum GuestEnvironment {
                     try current()
                     try execution?.adopt(pulse["consent"] ?? "", leaseUntil: until)
                     try current()
+                    message = execution?.approved == true
+                        ? "Josi may inspect permitted apps. Interact with the desktop or choose Disconnect to stop. Input automation is unavailable."
+                        : "Companion connected. Inspection is not approved."
                     let readiness = try GuestApplicationReadiness.inspect(pulse["applicationPin"] ?? "", selection: candidate,
                         identity: host, leaseUntil: until)
                     try current()

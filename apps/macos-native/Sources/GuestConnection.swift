@@ -136,6 +136,8 @@ import Darwin
                       candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
                 accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
                 supportsExecution = reply["executionProtocol"] == "desktop-command.1"
+                state = consent == .null ? "Companion connected. Inspection is not approved."
+                    : "Companion connected. Inspection is approved; input is unavailable."
                 if candidate.isEmpty { applicationCandidate = .null }
                 else {
                     let value = try JSONDecoder().decode(Wire.self, from: Data(candidate.utf8))
@@ -158,7 +160,7 @@ import Darwin
                           value["requestId"] == pin["requestId"],
                           value["applicationId"] == pin["projection"]["application"]["applicationId"],
                           value["installationRevision"].text == String(pin["projection"]["application"]["installationRevision"].integer),
-                          ["running", "not_running", "ambiguous", "changed"].contains(value["state"].text)
+                          ["running", "background", "not_running", "ambiguous", "changed"].contains(value["state"].text)
                     else { throw GuestLinkError.invalid }
                     if pin["candidateId"] == applicationCandidate["candidateId"],
                        pin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) {
@@ -236,16 +238,26 @@ import Darwin
         guard !closed, paired, pairedBinding != .null else { throw GuestLinkError.closed }
         return pairedBinding
     }
+    func controlSelection() throws -> Wire {
+        let until = try current(), pin = currentApplicationPin(until: until)
+        guard !closed, paired, supportsExecution, accessibility, applicationReadiness == "running",
+              pin != .null, pin["candidateId"] == applicationCandidate["candidateId"]
+        else { throw GuestLinkError.unavailable }
+        return ["applicationId": pin["projection"]["application"]["applicationId"],
+                "installationRevision": pin["projection"]["application"]["installationRevision"]]
+    }
     /// Internal server-bridge entry only. No renderer, tool or arbitrary JSON
     /// endpoint may supply the authorizer. There is deliberately no default.
     func execute(_ packet: Wire, authorize: @escaping @MainActor (Wire) async throws -> Wire) async throws -> Wire {
         _ = try current()
         guard paired, supportsExecution, !closed, execution == nil, let link = wire,
-              ProtectedWire.exact(packet, ["reservationId", "command", "application"]),
+              ProtectedWire.exact(packet, ["reservationId", "command", "commandJSON", "application"]),
               ProtectedWire.uuid(packet["reservationId"]), usedReservations.count < 4096,
               !usedReservations.contains(packet["reservationId"].text) else { throw GuestLinkError.unavailable }
         let consent = try consentProjection()
-        guard consent != .null else { throw GuestLinkError.unavailable }
+        guard consent != .null, case .string(let commandJSON) = packet["commandJSON"], commandJSON.utf8.count <= 4096,
+              try JSONDecoder().decode(Wire.self, from: Data(commandJSON.utf8)) == packet["command"]
+        else { throw GuestLinkError.unavailable }
         usedReservations.insert(packet["reservationId"].text)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -289,7 +301,7 @@ import Darwin
     private func runExecution(_ request: GuestPendingExecution, link: GuestLinkWire) async throws {
         try requireExecution(request)
         let c = request.packet["command"], reservation = request.packet["reservationId"].text
-        let rawCommand = String(decoding: try JSONEncoder().encode(c), as: UTF8.self)
+        let rawCommand = request.packet["commandJSON"].text
         let rawApplication = String(decoding: try JSONEncoder().encode(request.packet["application"]), as: UTF8.self)
         try await link.send(["kind": "execute", "reservationId": reservation, "command": rawCommand, "application": rawApplication,
                              "consentDigest": request.consent["authority"]["consent"]["digest"].text])
@@ -397,8 +409,9 @@ struct NativeGuestConnectionView: View {
     }
     private var readinessText: String {
         switch connection.applicationReadiness {
-        case "running": return "The running app matches its saved identity. Automation is not enabled yet."
+        case "running": return "The running app matches its saved identity."
         case "not_running": return "Open this app inside the separate desktop when you are ready to use it."
+        case "background": return "Bring this app’s window to the front inside the separate desktop before approving inspection."
         case "ambiguous": return "More than one copy is running. Leave only the intended copy open."
         case "changed": return "This running app does not match its saved identity. Select and register the current installation."
         default: return "Checking the selected app against its saved identity…"
