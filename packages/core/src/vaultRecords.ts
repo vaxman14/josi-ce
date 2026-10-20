@@ -1,12 +1,14 @@
-// Internal storage for protected records. P3 supplies rule semantics and
-// human-only activation. This module cannot activate a rule or grant access.
+// Internal storage for protected records. Generic writes are drafts/reviews/
+// tests only. Permanent policy uses the separate guarded P3 lifecycle.
 import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
 import { appendEvent } from './events.js';
 import type { MasterKey } from './masterKey.js';
 import { openSealed, seal, Secret } from './sealing.js';
+import { CardinalPolicyStore, CARDINAL_POLICY_RECORD_ID, evaluateCardinalPolicyRecord, type CardinalPolicyAuthority, type CardinalPolicyDecision } from './cardinalPolicy.js';
+import type { CardinalActionFacts } from './cardinalRules.js';
 
-export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test';
+export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
 export interface VaultRecordValue { reference: VaultRecordReference; kind: VaultRecordKind; value: Secret }
 /** Optional server-owned authorization, never a callback supplied over HTTP.
@@ -76,25 +78,89 @@ export class VaultRecordStore {
         // Do not extend a corrupted history merely because its index matches.
         await this.open(tx, key, previous, state);
       }
-      const id = previous?.id ?? randomUUID();
+      return this.persist(tx, key, args.actorUserId, args.kind, args.value, previous);
+    });
+  }
+
+  private async persist(tx: Db, key: MasterKey, actorUserId: string, kind: VaultRecordKind, value: Secret, previous?: Head, newId?: string): Promise<VaultRecordReference> {
+      if (value.isEmpty || Buffer.byteLength(value.reveal(), 'utf8') > 256 * 1024) throw new VaultRecordError('Protected Vault record is too large.');
+      const id = previous?.id ?? newId ?? randomUUID();
       const version = (previous?.version ?? 0) + 1;
       const [next] = await tx.query<State>(`update vault_state set authority_epoch=authority_epoch+1,updated_at=now()
         where id=true returning authority_epoch,authority_reconciliation_required`);
       const envelope: Envelope = { purpose: 'josi-vault-record', schemaVersion: 1, recordId: id,
-        kind: args.kind, version, epoch: Number(next.authority_epoch), previousDigest: previous?.digest ?? null,
-        createdBy: args.actorUserId, value: args.value.reveal() };
+        kind, version, epoch: Number(next.authority_epoch), previousDigest: previous?.digest ?? null,
+        createdBy: actorUserId, value: value.reveal() };
       const ciphertext = seal(key, envelope), checksum = digest(ciphertext);
       // Digest ciphertext, not low-entropy rule text. Plain SQL indexes contain
       // no rule wording, labels, test cases, LLM output, or secret previews.
       await tx.query(`insert into vault_record_heads(id,kind,version,digest) values($1,$2,$3,$4)
         on conflict(id) do update set version=excluded.version,digest=excluded.digest,updated_at=now()`,
-      [id, args.kind, version, checksum]);
+      [id, kind, version, checksum]);
       await tx.query(`insert into vault_record_versions(record_id,version,schema_version,authority_epoch,digest,previous_digest,value_enc,created_by)
-        values($1,$2,1,$3,$4,$5,$6,$7)`, [id, version, envelope.epoch, checksum, envelope.previousDigest, ciphertext, args.actorUserId]);
-      await appendEvent(tx, { actorUserId: args.actorUserId, actor: 'super_admin', kind: 'vault.record_written',
-        subjectType: 'vault_record', subjectId: id, payload: { recordKind: args.kind, version, epoch: envelope.epoch, digest: checksum } });
+        values($1,$2,1,$3,$4,$5,$6,$7)`, [id, version, envelope.epoch, checksum, envelope.previousDigest, ciphertext, actorUserId]);
+      await appendEvent(tx, { actorUserId, actor: 'super_admin', kind: 'vault.record_written',
+        subjectType: 'vault_record', subjectId: id, payload: { recordKind: kind, version, epoch: envelope.epoch, digest: checksum } });
       return { recordId: id, version, digest: checksum, epoch: envelope.epoch };
-    });
+  }
+
+  /** Internal server assembly. The authority port must verify fresh account
+   * credentials AND an enrolled protected human control, with no network wait.
+   * The generic write API cannot write or replace this singleton. */
+  cardinalPolicy(authority: CardinalPolicyAuthority): CardinalPolicyStore {
+    return new CardinalPolicyStore((actorUserId, writing, work) => this.transaction(async tx => {
+      const state = await this.state(tx, actorUserId, writing), key = await this.key(tx);
+      if (writing && state.authority_reconciliation_required) throw new VaultRecordError('Vault authority requires recovery reconciliation');
+      let previous: Head | undefined;
+      const [root] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [CARDINAL_POLICY_RECORD_ID]);
+      if (root && root.kind !== 'cardinal_policy') throw new VaultRecordError('The Cardinal Rule policy context did not match.');
+      previous = root;
+      let written = false;
+      return work({
+        tx,
+        reconciliationRequired: state.authority_reconciliation_required,
+        readPolicy: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
+        readDraft: async expected => {
+          if (!expected || !uuid.test(expected.recordId)) throw new VaultRecordConflictError('The tested draft changed.');
+          const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [expected.recordId]);
+          if (!head || head.kind !== 'cardinal_draft' || !this.matches(expected, head, state)) throw new VaultRecordConflictError('The tested draft changed.');
+          return this.open(tx, key, head, state);
+        },
+        writePolicy: async value => {
+          if (!writing || written) throw new VaultRecordError('Only one protected policy change is permitted.');
+          written = true;
+          return this.persist(tx, key, actorUserId, 'cardinal_policy', value, previous, CARDINAL_POLICY_RECORD_ID);
+        },
+      });
+    }), authority);
+  }
+
+  /** Restrictive engine check, not admin inspection and never a grant. The
+   * caller supplies authenticated adapter facts; P4 must bind this snapshot to
+   * current grants, observation, device consent and the final dispatch lease. */
+  async checkCardinalPolicy(args: { actorUserId: string; facts: CardinalActionFacts; expected?: VaultRecordReference }): Promise<CardinalPolicyDecision> {
+    const snapshot = structuredClone(args);
+    const pause = (code: CardinalPolicyDecision['code']): CardinalPolicyDecision => ({ verdict: 'pause', code, policy: null, rules: [] });
+    if (!uuid.test(snapshot.actorUserId) || snapshot.facts?.identities?.userId !== snapshot.actorUserId) return pause('identity_unavailable');
+    try {
+      return await this.transaction(async tx => {
+        const [state] = await tx.query<State>('select authority_epoch,authority_reconciliation_required from vault_state where id=true for share');
+        const [actor] = await tx.query("select id from users where id=$1 and status='active' for share", [snapshot.actorUserId]);
+        if (!actor) return pause('identity_unavailable');
+        const key = await this.key(tx);
+        if (!state || !Number.isSafeInteger(Number(state.authority_epoch))) return pause('vault_unavailable');
+        if (state.authority_reconciliation_required) return pause('requires_reconciliation');
+        const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [CARDINAL_POLICY_RECORD_ID]);
+        if (!head) return pause('policy_missing');
+        if (head.kind !== 'cardinal_policy') return pause('vault_unavailable');
+        if (snapshot.expected && !this.matches(snapshot.expected, head, state)) return pause('stale_policy');
+        return evaluateCardinalPolicyRecord(await this.open(tx, key, head, state), snapshot.facts);
+      });
+    } catch {
+      // Keys, DB/provider errors and corrupt encrypted contents never reach an
+      // automation response or become an implicit empty policy.
+      return pause('vault_unavailable');
+    }
   }
 
   private async open(tx: Db, key: MasterKey, head: Head, state: State): Promise<VaultRecordValue> {

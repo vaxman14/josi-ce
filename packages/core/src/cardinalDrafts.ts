@@ -118,7 +118,8 @@ export class CardinalDraftStore {
   }): Promise<CardinalDraftView> {
     const actorUserId = args.actorUserId, expected = { ...args.expected }, reviewer = args.reviewer;
     const identity = { ...args.reviewerIdentity }, approvedDigest = args.approvedReviewInputDigest;
-    if (![identity.providerId, identity.model, identity.configurationVersion].every(v => typeof v === 'string' && v.length > 0 && v.length <= 300)) {
+    if (![identity.providerId, identity.configurationVersion].every(v => typeof v === 'string' && v.length > 0 && v.length <= 300)
+      || typeof identity.model !== 'string' || identity.model.length > 300) {
       throw new VaultRecordError('The selected review model is unavailable.');
     }
     const records = this.records(cardinalDraftTestBinding({ expected, approvedReviewInputDigest: approvedDigest, reviewerIdentity: identity }));
