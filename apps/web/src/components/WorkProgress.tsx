@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { useWorkGoals, type WorkGoalSnapshot } from '@/lib/workGoals';
 import { WorkOutcome } from './WorkOutcome';
 import { RetireWorkStep } from './RetireWorkStep';
+import { WorkLimits } from './WorkLimits';
 
 const labels: Record<string, string> = { accepted: 'Accepted', planning: 'Planning', working: 'In progress',
   waiting: 'Waiting', needs_instruction: 'Needs your input', paused: 'Paused', verifying: 'Checking the result',
@@ -77,6 +78,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
       <WorkMemoryEditor goal={goal} refresh={refresh} />
     </details> : null}
     {!compact ? <WorkActivity goal={goal} /> : null}
+    {!compact ? <WorkLimits goal={goal} refresh={refresh} /> : null}
     {!compact ? <WorkPlans goal={goal} /> : null}
     {!compact ? <RetireWorkStep goal={goal} refresh={refresh} /> : null}
     {!compact ? <WorkChannelProgress goalId={goal.goalId} /> : null}

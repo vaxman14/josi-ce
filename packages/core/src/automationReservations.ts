@@ -10,6 +10,8 @@ import { cardinalContentDigest } from './cardinalRules.js';
 import { seal, openSealed, Secret } from './sealing.js';
 import { isAutomationIdentity, type AutomationPermissionFacts, type AutomationPermissionEffect } from './automationPermissions.js';
 import type { VaultAutomationPreview, VaultRecordReference } from './vaultRecords.js';
+import { requireWorkContinuation } from './workContinuation.js';
+import { workDependenciesSatisfied, type WorkGoalStep } from './workPlan.js';
 
 export type AutomationReservationState = 'reserved' | 'dispatched' | 'succeeded' | 'no_effect' | 'uncertain' | 'cancelled';
 export interface AutomationReservationView {
@@ -92,6 +94,23 @@ async function taskAndTurn(tx: Db, actor: string, taskId: string, turnId: string
   const [turn] = await tx.query(`select id from assistant_turns where id=$1 and owner_user_id=$2 and thread_id=$3
     and status='running' and lease_token=$4 and lease_expires_at>clock_timestamp() for update`, [turnId, actor, task.thread_id, leaseToken]);
   if (!turn) throw new AutomationReservationError('The durable turn lease is unavailable.');
+  if (task.thread_id) await requireWorkContinuation(tx, {
+    ownerUserId: actor, threadId: task.thread_id, durableTurnId: turnId, durableLeaseToken: leaseToken,
+  });
+  // A command already queued to the native app must still respect owner
+  // Pause/steering and the selected goal step at its final permit boundary.
+  const [work] = await tx.query<{ state: string; steps: WorkGoalStep[]; step_id: string; selected: string | null;
+    reviewed: boolean }>(`select g.state,g.steps,b.step_id,g.continuation->>'stepId' as selected,
+      (g.outcome_revision=g.planned_outcome_revision and not g.plan_review_required) as reviewed
+    from automation_work_tasks b join work_goals g on g.id=b.goal_id and g.owner_user_id=b.owner_user_id
+    where b.task_id=$1 and b.owner_user_id=$2 for share of g`, [taskId, actor]);
+  if (work) {
+    const step = work.steps.find(item => item.id === work.step_id && item.taskId === taskId);
+    if (!work.reviewed || !['planning', 'working'].includes(work.state) || work.selected !== work.step_id
+      || !step || !['pending', 'working'].includes(step.state) || !workDependenciesSatisfied(work.steps, step)) {
+      throw new AutomationReservationError('The original goal or selected step changed before native dispatch.');
+    }
+  }
   const [{ now_ms }] = await tx.query<{ now_ms: string }>('select floor(extract(epoch from clock_timestamp())*1000)::text as now_ms');
   return { task, nowMs: Number(now_ms) };
 }

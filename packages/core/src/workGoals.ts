@@ -7,6 +7,7 @@ import { queueWorkContinuation, requireReviewedWorkOutcome, requireWorkContinuat
 import { requireCurrentWorkMemory } from './workMemoryContext.js';
 import { ISOLATED_AUTOMATION_TEMPLATE } from './tasks.js';
 import { appendEvent } from './events.js';
+import { workBudgetReason, type WorkBudgetRow } from './workBudget.js';
 import { isAutomationIdentity } from './automationPermissions.js';
 import { readyWorkSteps, workDependencies, workDependenciesSatisfied, workStepRequired, workStepUnfinished, type WorkGoalStep } from './workPlan.js';
 export type { WorkGoalStep } from './workPlan.js';
@@ -20,7 +21,7 @@ export interface WorkCheckpoint {
   assumptions: string[];
   nextAction: string;
 }
-interface GoalRow {
+interface GoalRow extends WorkBudgetRow {
   id: string; owner_user_id: string; thread_id: string; source_message_id: string;
   revision: number; state: GoalProgress['state']; outcome: string; criteria: string[];
   steps: WorkGoalStep[]; continuation: Continuation | null; activity: string;
@@ -44,7 +45,8 @@ export interface WorkGoalSnapshot extends GoalProgress {
   planRevision?: number;
   outcomeRevision?: number;
   planNeedsReview?: boolean;
-  automaticWork?: { segmentsSinceVerifiedProgress: number; segmentLimit: number; nextCheckAt: string | null };
+  automaticWork?: { segmentsSinceVerifiedProgress: number; segmentLimit: number; nextCheckAt: string | null;
+    runsUsed?: number; runLimit?: number | null; deadline?: string | null };
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function id(value: unknown): string {
@@ -71,7 +73,8 @@ function snapshot(row: GoalRow): WorkGoalSnapshot {
     createdAt: row.created_at, updatedAt: row.updated_at, planRevision: row.plan_revision,
     outcomeRevision: row.outcome_revision, planNeedsReview: needsPlanReview(row),
     automaticWork: { segmentsSinceVerifiedProgress: row.continuation_segments, segmentLimit: WORK_SEGMENT_LIMIT,
-      nextCheckAt: row.continuation_ready_at } };
+      nextCheckAt: row.continuation_ready_at, runsUsed: row.automatic_runs_used ?? 0,
+      runLimit: row.automatic_run_limit ?? null, deadline: row.automatic_deadline ?? null } };
 }
 async function owned(db: Db, owner: string, goalId: string, lock = false): Promise<GoalRow> {
   const [row] = await db.query<GoalRow>(`select * from work_goals where id=$1 and owner_user_id=$2${lock ? ' for update' : ''}`, [id(goalId), owner]);
@@ -590,6 +593,8 @@ export async function controlWorkGoal(db: Db, args: { ownerUserId: string; goalI
       if (needsPlanReview(row) || row.state !== 'verifying' || row.steps.some(workStepUnfinished)) throw new WorkGoalError('Review the current plan and verify all recorded steps before confirming the outcome.', 409);
       row.state = 'completed'; row.continuation = null; row.activity = 'Outcome confirmed by you';
     } else if (args.action === 'resume') {
+      const budget = workBudgetReason(row);
+      if (budget) throw new WorkGoalError(budget, 409);
       const instruction = text(args.instruction);
       row.checkpoint = { decisions: row.checkpoint.decisions ?? [], facts: row.checkpoint.facts ?? [],
         assumptions: row.checkpoint.assumptions ?? [], nextAction: instruction };
@@ -620,6 +625,37 @@ export async function controlWorkGoal(db: Db, args: { ownerUserId: string; goalI
     await tx.query(`update assistant_turns set status='failed',error_code='work_control_changed',error_retryable=false,completed_at=now()
       where work_goal_id=$1 and status='queued'`, [row.id]);
     return save(tx, row, `goal.${args.action}`);
+  });
+}
+
+/** Owner API only; deliberately absent from model/automation tool registries. */
+export async function setWorkLimits(db: Db, args: { ownerUserId: string; goalId: string; revision: unknown;
+  runLimit: unknown; deadline: unknown }): Promise<WorkGoalSnapshot> {
+  if (args.runLimit !== null && (!Number.isSafeInteger(args.runLimit) || Number(args.runLimit) < 0 || Number(args.runLimit) > 10000)) {
+    throw new WorkGoalError('Use a total between 0 and 10,000 background runs, or choose no goal-specific run limit.');
+  }
+  if (args.deadline !== null && (typeof args.deadline !== 'string' || !Number.isFinite(Date.parse(args.deadline))
+    || new Date(args.deadline).toISOString() !== args.deadline)) {
+    throw new WorkGoalError('Choose an exact background-work deadline or no goal-specific deadline.');
+  }
+  return transaction(db, async tx => {
+    const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
+    row.automatic_run_limit = args.runLimit as number | null; row.automatic_deadline = args.deadline as string | null;
+    const reason = workBudgetReason(row), active = ['planning', 'working', 'waiting'].includes(row.state);
+    if (active && reason) {
+      row.state = 'needs_instruction'; row.activity = 'Your work limit was reached';
+      row.continuation = { kind: 'question', questionId: randomUUID(), text: reason };
+    } else row.activity = 'Your background-work limits were saved';
+    await tx.query(`update work_goals set automatic_run_limit=$2,automatic_deadline=$3,
+      control_generation=control_generation+1,
+      continuation_ready_at=case when $4 then now() else null end where id=$1`,
+    [row.id, row.automatic_run_limit, row.automatic_deadline, active && !reason]);
+    await tx.query(`update assistant_turns set status='failed',error_code='work_control_changed',error_retryable=false,completed_at=now()
+      where work_goal_id=$1 and status='queued'`, [row.id]);
+    const saved = await save(tx, row, 'goal.limits_changed');
+    if (active && reason) await addMessage(tx, { threadId: row.thread_id, direction: 'out', body: reason,
+      meta: { work_goal_id: row.id, work_goal_revision: saved.revision, progress_notice: true } });
+    return saved;
   });
 }
 
@@ -667,6 +703,11 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
         row.state = 'verifying'; row.activity = 'Steps verified; waiting for outcome confirmation';
         row.continuation = { kind: 'question', questionId: randomUUID(), text: 'The remaining required steps have verified receipts. Does the result meet every completion criterion? Retired steps were not counted as completed work.' };
         updated = true;
+      } else if (options.continueReady && workBudgetReason(row)) {
+        row.state = 'needs_instruction'; row.activity = 'Your work limit was reached';
+        row.continuation = { kind: 'question', questionId: randomUUID(), text: workBudgetReason(row)! };
+        await tx.query('update work_goals set continuation_ready_at=null where id=$1', [row.id]);
+        updated = true;
       } else if (!needsPlan && !nextStep && !activeSteps.size && !timed && (failed || row.steps.some(step => step.state === 'blocked'))) {
         const blocked = failed ?? row.steps.find(step => step.state === 'blocked')!;
         row.state = 'needs_instruction'; row.activity = 'The remaining work needs your instructions';
@@ -683,7 +724,7 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
         const [uncertain] = await tx.query('select 1 from work_goal_effects where goal_id=$1 and state=$2 limit 1', [row.id, 'started']);
         const [thread] = await tx.query(`select id from threads where id=$1 and owner_user_id=$2 and status='open'`, [row.thread_id, row.owner_user_id]);
         const [capacity] = await tx.query<{ active_count: number }>('select active_count from assistant_turn_capacity where owner_user_id=$1', [row.owner_user_id]);
-        if (thread && row.continuation_segments < WORK_SEGMENT_LIMIT && (capacity?.active_count ?? 0) < 50) {
+        if (!workBudgetReason(row) && thread && row.continuation_segments < WORK_SEGMENT_LIMIT && (capacity?.active_count ?? 0) < 50) {
           row.state = needsPlan ? 'planning' : 'working';
           row.continuation = needsPlan ? { kind: 'question', questionId: randomUUID(),
             text: 'Review the current outcome, criteria and any retired steps, then save a revised plan before further actions.' }
@@ -695,10 +736,10 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
           if (await queueWorkContinuation(tx, row)) { changed++; continue; }
         }
         row.state = 'needs_instruction'; row.activity = 'Work needs your instructions';
-        row.continuation = { kind: 'question', questionId: randomUUID(), text: !thread ? 'This conversation is closed. Reopen it before continuing this work.'
+        row.continuation = { kind: 'question', questionId: randomUUID(), text: workBudgetReason(row) ?? (!thread ? 'This conversation is closed. Reopen it before continuing this work.'
           : row.continuation_segments >= WORK_SEGMENT_LIMIT ? `Josi used ${WORK_SEGMENT_LIMIT} work segments without a new verified step. What should change before it continues?`
           : (capacity?.active_count ?? 0) >= 50 ? 'The work queue is full. Finish or cancel queued work, then resume this goal.'
-          : 'Sign in again, then resume this goal so Josi can continue.' };
+          : 'Sign in again, then resume this goal so Josi can continue.') };
         updated = true;
       } else if (!needsPlan && !nextStep && !activeSteps.size && timed) {
         if (row.continuation?.kind !== 'wait' || row.continuation.wakeAt !== timed.blockedUntil) {

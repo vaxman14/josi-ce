@@ -32,6 +32,7 @@ struct NativeWorkDetails: View {
                 NativeWorkChannelProgress(goalId: goal.identifier)
                 WorkMemoryControls(goal: goal)
                 if !["completed", "cancelled"].contains(goal["state"].text) {
+                    NativeWorkLimits(goal: goal)
                     WorkOutcomeEditor(goal: goal)
                     if goal["retiredSteps"] != .null && goal["totalSteps"].integer > 1 { WorkRetirementEditor(goal: goal) }
                 }

@@ -66,8 +66,18 @@ Background replies and questions are ordinary saved messages in the original cha
 
 ## Remaining integration and acceptance
 
-The current verifier still covers settled connected-action task receipts and final owner confirmation. Explicit owner retirement is implemented; automatic retirement and erasure are unavailable. More precise destination reconciliation/backoff, generic artifact/read-only outcome verification, configurable per-goal resource budgets, older-chat pagination and production browser/desktop adapters remain open. Telegram checklist delivery is connected in the separate P11 checkpoint. Background work currently requires a live owner session. Remote clients keep the existing endpoints and may ignore the additional work projection fields.
+The current verifier still covers settled connected-action task receipts and final owner confirmation. Explicit owner retirement is implemented; automatic retirement and erasure are unavailable. More precise destination reconciliation/backoff, generic artifact/read-only outcome verification, token/cost accounting, older-chat pagination and production browser/desktop adapters remain open. Background-run and deadline controls are added below. Telegram checklist delivery is connected in the separate P11 checkpoint. Background work currently requires a live owner session. Remote clients keep the existing endpoints and may ignore the additional work projection fields.
 
 No live database migration, model call, provider action or automatic goal was run for this checkpoint. Type/build checks do not establish functional, concurrency, cancellation, crash-recovery, provider-idempotency or migration acceptance; those checks belong to the later integrated pass.
 
 Build checks passed: the complete root TypeScript project build, web TypeScript check and web production bundle. No functional test suite was run.
+
+## Owner background-work limits — 20 October 2026
+
+Migration 0098 adds an optional total background-run allowance and deadline, plus a lifetime count of queued runs. Existing goals retain no goal-specific cap by default; their historical queued/completed/interrupted automatic turns are counted. The existing twelve-segment no-progress boundary still applies. Queueing consumes one run atomically; progress, Resume, outcome changes and retired steps do not reset the lifetime count. These are ordinary owner work instructions, not Vault rules, tool grants, token caps or provider-spend estimates.
+
+Native and web Task Managers expose **Work limits**, current usage, exact local-time deadline and a revision-protected editor. Only the owned-goal API can change these settings; no model tool is registered. Saving does not resume a paused or attention-needed goal. A reached limit moves unfinished automatic work to a specific instruction request in its original chat. Extending the allowance and Resume are distinct owner actions.
+
+The scheduler checks before queueing; running background turns recheck before model hops/tools. Native reservation checks now also recheck the background-turn limit and the original selected goal step before their final permit. This closes the gap where a previously queued native operation could otherwise outlive owner Pause or plan changes. Already handed-off provider operations may finish; their receipts remain available. A deadline is a boundary for new background work, not a promise to retract an external operation.
+
+Root TypeScript, web type checking, the web production bundle and the full optimized native Swift 6 build passed. No migration, model call, owner-limit edit or functional test was performed. Acceptance must cover the final allowed run, queue/revision races, deadline expiry during a model request, paused/ended goals, original-task permits, old-client capability hiding, historical count migration and preserved receipts after interrupted work.

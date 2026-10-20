@@ -3,6 +3,7 @@ import type { Db } from './db.js';
 import { json } from './db.js';
 import { addMessage } from './conversations.js';
 import { workDependenciesSatisfied, type WorkGoalStep } from './workPlan.js';
+import { workBudgetReason, type WorkBudgetRow } from './workBudget.js';
 
 /** Fixed implementation limits, visible in the work projection. These bound
  * model segments without granting a single tool permission. */
@@ -46,7 +47,9 @@ const canonical = (value: unknown): string => JSON.stringify(value, (_key, item)
  * Already-dispatched legacy effects may finish and retain their receipts. */
 export async function requireWorkContinuation(db: Db, context: WorkExecutionContext, allowCheckpoint = false): Promise<string | null> {
   if (!context.durableTurnId) return null;
-  const [turn] = await db.query<{ work_goal_id: string | null; current: boolean }>(`select t.work_goal_id,
+  const [turn] = await db.query<{ work_goal_id: string | null; current: boolean; budget_current: boolean }>(`select t.work_goal_id,
+    ((g.automatic_deadline is null or g.automatic_deadline>clock_timestamp())
+      and (g.automatic_run_limit is null or g.automatic_runs_used<=g.automatic_run_limit)) as budget_current,
     (t.status='running' and t.lease_token=$2 and t.lease_expires_at>now()
       and t.owner_user_id=$3 and t.thread_id=$4
       and g.owner_user_id=t.owner_user_id and g.thread_id=t.thread_id
@@ -62,6 +65,7 @@ export async function requireWorkContinuation(db: Db, context: WorkExecutionCont
   [context.durableTurnId, context.durableLeaseToken ?? null, context.ownerUserId, context.threadId, allowCheckpoint]);
   if (!turn) throw new WorkContinuationError('The durable work segment is unavailable.');
   if (!turn.work_goal_id) return null;
+  if (!allowCheckpoint && !turn.budget_current) throw new WorkContinuationError('This background run reached the owner’s work limit. Save the existing outcome; the owner must review Work limits before more automatic work.');
   if (!turn.current) throw new WorkContinuationError('Automatic work stopped because its instructions, control or sign-in changed.');
   return turn.work_goal_id;
 }
@@ -154,6 +158,8 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
  * No message is invented and no user-policy or step-up approval is reused. */
 export async function queueWorkContinuation(tx: Db, goal: { id: string; owner_user_id: string; thread_id: string;
   source_message_id: string; revision: number; control_generation: number }): Promise<boolean> {
+  const [budget] = await tx.query<WorkBudgetRow>('select automatic_run_limit,automatic_runs_used,automatic_deadline from work_goals where id=$1', [goal.id]);
+  if (!budget || workBudgetReason(budget)) return false;
   const [session] = await tx.query<{ id: string }>(`select s.id from sessions s join users u on u.id=s.user_id
     where s.user_id=$1 and s.revoked_at is null and s.expires_at>now() and u.status='active'
     order by s.created_at desc limit 1`, [goal.owner_user_id]);
@@ -169,7 +175,8 @@ export async function queueWorkContinuation(tx: Db, goal: { id: string; owner_us
     `work:${goal.id}:${goal.revision}`, createHash('sha256').update(`work:${goal.id}:${goal.revision}:${goal.control_generation}`).digest('hex'),
     goal.source_message_id, goal.id, goal.revision, goal.control_generation, attachments.map(value => value.id)]);
   await tx.query(`insert into job_queue(kind,payload) values('assistant.turn',$1)`, [json({ turnId })]);
-  await tx.query(`update work_goals set continuation_ready_at=null,continuation_segments=continuation_segments+1 where id=$1`, [goal.id]);
+  await tx.query(`update work_goals set continuation_ready_at=null,continuation_segments=continuation_segments+1,
+    automatic_runs_used=automatic_runs_used+1 where id=$1`, [goal.id]);
   return true;
 }
 
@@ -180,8 +187,8 @@ export async function settleWorkContinuation(db: Db, turnId: string): Promise<vo
   await db.transaction(async tx => {
     const [bound] = await tx.query<{ work_goal_id: string | null }>('select work_goal_id from assistant_turns where id=$1', [turnId]);
     if (!bound?.work_goal_id) return;
-    const [goal] = await tx.query<{ id: string; owner_user_id: string; thread_id: string; revision: number; state: string; control_generation: number }>(
-      'select id,owner_user_id,thread_id,revision,state,control_generation from work_goals where id=$1 for update', [bound.work_goal_id]);
+    const [goal] = await tx.query<WorkBudgetRow & { id: string; owner_user_id: string; thread_id: string; revision: number; state: string; control_generation: number }>(
+      'select id,owner_user_id,thread_id,revision,state,control_generation,automatic_run_limit,automatic_runs_used,automatic_deadline from work_goals where id=$1 for update', [bound.work_goal_id]);
     const [turn] = await tx.query<{ status: string; error_code: string | null; work_control_generation: number; work_goal_revision: number }>(
       'select status,error_code,work_control_generation,work_goal_revision from assistant_turns where id=$1', [turnId]);
     if (!goal || !turn || goal.control_generation !== turn.work_control_generation
@@ -193,10 +200,10 @@ export async function settleWorkContinuation(db: Db, turnId: string): Promise<vo
       await tx.query(`update work_goals set continuation_ready_at=now()+interval '30 seconds' where id=$1`, [goal.id]);
       return;
     }
-    const question = turn.status === 'failed'
+    const question = workBudgetReason(goal) ?? (turn.status === 'failed'
       ? turn.error_code === 'session_expired' ? 'Sign in again, then use Resume with instructions to continue this work.'
         : 'The last work segment did not finish reliably. Should Josi inspect the existing results, change the approach, or stop?'
-      : 'The last segment did not save a next step or verified result. What should Josi try next?';
+      : 'The last segment did not save a next step or verified result. What should Josi try next?');
     const continuation = { kind: 'question', questionId: randomUUID(), text: question };
     const [saved] = await tx.query<{ revision: number }>(`update work_goals set revision=revision+1,state='needs_instruction',
       continuation=$2,continuation_ready_at=null,activity='Work needs your instructions',updated_at=now()
