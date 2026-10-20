@@ -9,6 +9,9 @@ The owner requested a native replacement after installing the unfinished Electro
 - Local first-time setup exchanges the protected bootstrap handoff for a one-use setup session inside the app. Native forms cover host checks, owner, domain, provider/model selection, SMTP, folder/security options, telemetry, review and completion. Recovery material is displayed only in memory unless the owner explicitly saves their recovery copy.
 - Password/MFA login, conversations and durable turn submission are connected. A lost submission reply retains the original message identifier/body for an explicit retry during the current app session.
 - Chat progress cards and the native Task Manager consume the server's work-goal records. Pause, resume with instructions, cancellation and completion confirmation use the current goal revision.
+- The native Task Manager has Active, Needs You / Waiting and History views, continuation questions and scheduled rechecks. Expand a goal for completion criteria, the owner's correction, current progress notes, paginated activity/plan/outcome history and the original conversation.
+- Work-memory correction, pin/unpin and clearing, requested-outcome changes and obsolete-step retirement use the existing owner-scoped APIs. An edit retains its original revision and requires explicit review of newer work before submission; server conflict checks remain authoritative.
+- Super-admin native settings display current Cardinal Rules, permission scopes/limits and enrolled devices from the Vault. Rule drafts have explicit action/scope/restriction forms, deterministic **Test Validity**, password/MFA-protected Vault saving, exact provider/content preview and an explicit model-review request. Saved advice remains inactive. Unsupported saved draft shapes cannot be silently rewritten by the editor.
 - Fixed local lifecycle controls provide install/update, start, stop, restart and journal recovery using macOS administrator authorization and Socal signature verification. Closing the window leaves server hosting independent.
 - The package includes the native **Uninstall Josi.app**, with keep-data and complete-removal choices. Its existing removal machinery now recognizes the unified app and installer receipt.
 - Installing the package over a recorded existing server invokes the normal recovery-copy/migration lifecycle. A new or remote-only install adds the app without automatically provisioning a local server.
@@ -31,6 +34,8 @@ The staged signed app actually launched through the computer-use tool and displa
 
 ## Remaining work
 
-Native administrator settings, device enrollment and protected approval coordination, full work-memory/task detail controls, provider-specific subscription setup parity and automation-desktop integration remain open. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design.
+Native device enrollment and protected approval coordination, permission editing, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and automation-desktop integration remain open. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design.
+
+The follow-up work/task and rule-editor sources compiled successfully with Swift 6. No authenticated functional flow or model review was run on the owner's server. The native package version advances to `0.7.0-native.2`; its installer version is `0.7.0.3`.
 
 Functional setup/login/chat, service operations, real upgrade/recovery and uninstallation acceptance remain unverified. Notarization and final release acceptance are outstanding. The owner asked to defer functional suites until features are built; the targeted launch and packaged-signature checks address the immediate broken-app report.

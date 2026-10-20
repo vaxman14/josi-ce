@@ -57,7 +57,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         guard var url = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
               let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
               url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/",
-              url.scheme == "https" || (url.scheme == "http" && ["localhost", "127.0.0.1", "[::1]"].contains(host.lowercased())),
+              url.scheme == "https" || (url.scheme == "http" && ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host.lowercased())),
               url.port == nil || (1...65535).contains(url.port!) else {
             throw JosiError(message: "Use your server’s HTTPS address, or HTTP localhost for a server on this Mac.")
         }

@@ -26,6 +26,7 @@ import SwiftUI
     @Published var mfaChallenge = ""
     @Published var automation: Wire = .null
     @Published var automationSettings: Wire = .null
+    @Published var automationCatalog: Wire = .null
     @Published var lastRefreshed: Date?
     private(set) var api: JosiAPI?
     private var installAttempt: UUID?
@@ -33,7 +34,7 @@ import SwiftUI
     private var pending: (id: String, thread: String, message: String)?
     var signedInName: String { user["displayName"].text.isEmpty ? user["username"].text : user["displayName"].text }
     var isAdministrator: Bool { user["role"].text == "super_admin" }
-    var chatGoals: [Wire] { goals.filter { $0["threadId"].text == selectedThread } }
+    var chatGoals: [Wire] { goals.filter { $0["threadId"].text == selectedThread }.prefix(6).map { $0 } }
 
     func run(_ action: @escaping @MainActor () async throws -> Void) {
         guard !busy else { return }
@@ -55,7 +56,7 @@ import SwiftUI
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []
         pending = nil; pendingMessage = false; draft = ""; selectedThread = nil
         recovery = .null; setup = .null; setupReview = .null; mfaChallenge = ""
-        automation = .null; automationSettings = .null
+        automation = .null; automationSettings = .null; automationCatalog = .null
         self.address = next.origin.absoluteString
         try await next.primeCSRF()
         var incomplete = false
@@ -96,7 +97,7 @@ import SwiftUI
         api?.close(); api = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; setup = .null
         setupReview = .null; recovery = .null; mfaChallenge = ""; draft = ""; pending = nil; pendingMessage = false
-        automationSettings = .null; automation = .null; selectedThread = nil
+        automationSettings = .null; automationCatalog = .null; automation = .null; selectedThread = nil
         screen = .connect; error = ""; activity = ""
     }
     func signOut() async throws {
@@ -107,7 +108,7 @@ import SwiftUI
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []
         draft = ""; pending = nil; pendingMessage = false; selectedThread = nil
         recovery = .null; setup = .null; setupReview = .null; mfaChallenge = ""
-        automationSettings = .null; automation = .null; screen = .connect
+        automationSettings = .null; automationCatalog = .null; automation = .null; screen = .connect
     }
     func operate(_ operation: String) async throws {
         let attempt = UUID(); installAttempt = operation == "install" ? attempt : nil
@@ -129,7 +130,7 @@ import SwiftUI
         guard self.api === api else { return }
         threads = threadResult["threads"].list
         do {
-            let result = try await api.request("/assistant/work-goals")
+            let result = try await api.request("/assistant/work-goals?all=1")
             guard self.api === api else { return }; goals = result["goals"].list
         } catch let e as JosiError where e.status == 404 { goals = [] } // Older remote CE servers remain usable.
         if section == "tasks" {
@@ -191,12 +192,23 @@ import SwiftUI
     }
     func loadAutomation() async throws {
         guard let api else { return }
+        automation = .null; automationSettings = .null; automationCatalog = .null
         let result = try await api.request("/assistant/automation/workspaces")
         guard self.api === api else { return }; automation = result
         if isAdministrator {
             let result = try await api.request("/admin/automation")
             guard self.api === api else { return }; automationSettings = result
+            let catalog = try await api.request("/admin/automation/catalog")
+            guard self.api === api else { return }; automationCatalog = catalog
         }
+    }
+    func changeGoal(_ goal: Wire, endpoint: String, fields: [String: Wire]) async throws {
+        guard let api, ["memory", "outcome", "retire-step"].contains(endpoint) else { return }
+        let id = try api.uuid(goal["goalId"].text)
+        var body = fields; body["revision"] = goal["revision"]
+        _ = try await api.request("/assistant/work-goals/\(id)/\(endpoint)", method: "POST", body: .object(body))
+        guard self.api === api else { return }
+        try await reloadWorkspace()
     }
     func loadSetup() async throws {
         guard let api else { return }

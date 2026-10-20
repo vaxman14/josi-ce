@@ -354,9 +354,24 @@ struct GoalCard: View {
                         Spacer()
                         if step["state"].text == "working" { Text("Working").font(.caption).foregroundStyle(.secondary) }
                     }
+                    if !compact, !step["blockedReason"].text.isEmpty {
+                        Text(step["blockedReason"].text).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !compact, step["retirement"] != .null {
+                        Text("Retired: " + step["retirement"]["reason"].text).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
-                if !goal["continuation"]["question"].text.isEmpty { Text(goal["continuation"]["question"].text).font(.callout.bold()) }
+                if goal["continuation"]["kind"].text == "question" { Text(goal["continuation"]["text"].text).font(.callout.bold()) }
+                if goal["continuation"]["kind"].text == "wait" {
+                    Text(goal["continuation"]["reason"].text).foregroundStyle(.secondary)
+                    Text("Next check: " + nativeDate(goal["continuation"]["wakeAt"].text)).font(.caption).foregroundStyle(.secondary)
+                }
+                if goal["planNeedsReview"].flag { Text("Josi must review the changed plan before new actions.").font(.caption).foregroundStyle(.secondary) }
+                if !goal["updatedAt"].text.isEmpty {
+                    Text("Last saved: " + nativeDate(goal["updatedAt"].text)).font(.caption).foregroundStyle(.secondary)
+                }
                 if !compact {
+                    NativeWorkDetails(goal: goal)
                     TextField("Instructions for Josi", text: $instruction).textFieldStyle(.roundedBorder)
                     HStack {
                         if goal["state"].text != "completed" && goal["state"].text != "cancelled" {
@@ -366,8 +381,10 @@ struct GoalCard: View {
                         }
                         if goal["state"].text == "verifying" { Button("Confirm Complete") { control("confirm") } }
                     }.disabled(model.busy)
-                } else if goal["steps"].list.count > 4 {
-                    Button("View All Steps") { model.section = "tasks" }.buttonStyle(.link)
+                    Button("Continue in Chat") { model.run { try await model.selectThread(goal["threadId"].text) } }
+                        .disabled(model.busy)
+                } else {
+                    Button("Open Task Manager") { model.section = "tasks"; model.run { try await model.reloadWorkspace() } }.buttonStyle(.link)
                 }
             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -380,17 +397,31 @@ struct GoalCard: View {
 
 struct TaskManagerView: View {
     @EnvironmentObject var model: JosiModel
+    @State private var filter = "active"
+    private var visible: [Wire] {
+        model.goals.filter { goal in
+            let state = goal["state"].text
+            switch filter {
+            case "attention": return ["needs_instruction", "waiting", "paused"].contains(state)
+            case "history": return ["completed", "cancelled"].contains(state)
+            default: return !["completed", "cancelled"].contains(state)
+            }
+        }
+    }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 JosiHeading(title: "Task Manager", subtitle: "What Josi is working on, and what needs your attention.")
-                if model.goals.isEmpty && model.tasks.isEmpty {
-                    ContentUnavailableView("No active work", systemImage: "checkmark.circle", description: Text("Ask Josi to take on a task in a conversation."))
+                Picker("Work", selection: $filter) {
+                    Text("Active").tag("active"); Text("Needs You / Waiting").tag("attention"); Text("History").tag("history")
+                }.pickerStyle(.segmented)
+                if visible.isEmpty {
+                    Text("No work in this view.").foregroundStyle(.secondary)
                 }
-                ForEach(model.goals, id: \.identifier) { GoalCard(goal: $0) }
-                if !model.tasks.isEmpty {
+                ForEach(visible, id: \.identifier) { GoalCard(goal: $0) }
+                if filter != "history" && !model.tasks.isEmpty {
                     Text("Tasks").font(.title2.bold())
-                    ForEach(model.tasks, id: \.identifier) { task in
+                    ForEach(model.tasks.filter { !["closed", "confirmed", "cancelled", "failed"].contains($0["state"].text) }, id: \.identifier) { task in
                         GroupBox {
                             HStack {
                                 VStack(alignment: .leading, spacing: 5) {
@@ -421,16 +452,7 @@ struct AutomationView: View {
                     if model.automation["workspaces"].list.isEmpty { Text("No automation desktop is connected to your account.") }
                 } else { Text("Automation control is not connected on this server yet. Your other Josi work can continue.").foregroundStyle(.secondary) }
                 if model.isAdministrator {
-                    GroupBox("Vault-backed authority") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Cardinal Rules and permissions remain on your server in the Vault.")
-                            Text("Native rule editing, device enrollment and approval controls are being connected. This view does not grant automation access.")
-                                .foregroundStyle(.secondary)
-                            ForEach(Array(model.automationSettings["devices"]["devices"].list.enumerated()), id: \.offset) { _, device in
-                                Text(device["label"].text)
-                            }
-                        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    NativeAuthoritySettings()
                 }
                 Button("Refresh") { model.run { try await model.loadAutomation() } }.disabled(model.busy)
             }.padding(30)
