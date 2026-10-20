@@ -194,29 +194,33 @@ export class VaultRecordStore {
   }
 
   automationTargets(authority: AutomationTargetAuthority): AutomationTargetStore {
-    return new AutomationTargetStore((actor, writing, work) => this.transaction(async tx => {
-      const state = await this.state(tx, actor, writing), key = await this.key(tx);
-      await this.requireOwnerAutomationVault(tx, actor);
-      const [previous] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_TARGETS_RECORD_ID]);
-      if (previous && previous.kind !== 'automation_targets') throw new VaultRecordError('Application target context did not match.');
-      let written = false;
-      return work({ tx, reconciliationRequired: state.authority_reconciliation_required,
-        read: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
-        requireWorkspace: async identity => {
-          const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [WORKSPACE_STORAGE_RECORD_ID]);
-          if (!head || !workspaceStorageContains(await this.open(tx, key, head, state), identity)) {
-            throw new VaultRecordError('The selected app does not belong to a prepared workspace for this identity.');
-          }
-          const rows = await tx.query<{ installation_id: string }>('select installation_id from workspace limit 2 for share');
-          if (rows.length !== 1 || rows[0].installation_id !== identity.serverId) throw new VaultRecordError('This workspace belongs to another server.');
-        },
-        write: async value => {
-          if (!writing || written || state.authority_reconciliation_required) throw new VaultRecordError('Application registration authority is unavailable.');
-          written = true;
-          return this.persist(tx, key, actor, 'automation_targets', value, previous, AUTOMATION_TARGETS_RECORD_ID);
-        },
-      });
-    }), authority);
+    return new AutomationTargetStore((actor, writing, work, existingTransaction) => {
+      const run = async (tx: Db) => {
+        const state = await this.state(tx, actor, writing), key = await this.key(tx);
+        await this.requireOwnerAutomationVault(tx, actor);
+        const [previous] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_TARGETS_RECORD_ID]);
+        if (previous && previous.kind !== 'automation_targets') throw new VaultRecordError('Application target context did not match.');
+        let written = false;
+        return work({ tx, reconciliationRequired: state.authority_reconciliation_required,
+          read: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
+          requireWorkspace: async identity => {
+            const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [WORKSPACE_STORAGE_RECORD_ID]);
+            if (!head || !workspaceStorageContains(await this.open(tx, key, head, state), identity)) {
+              throw new VaultRecordError('The selected app does not belong to a prepared workspace for this identity.');
+            }
+            const rows = await tx.query<{ installation_id: string }>('select installation_id from workspace limit 2 for share');
+            if (rows.length !== 1 || rows[0].installation_id !== identity.serverId) throw new VaultRecordError('This workspace belongs to another server.');
+          },
+          write: async value => {
+            if (!writing || written || state.authority_reconciliation_required) throw new VaultRecordError('Application registration authority is unavailable.');
+            written = true;
+            return this.persist(tx, key, actor, 'automation_targets', value, previous, AUTOMATION_TARGETS_RECORD_ID);
+          },
+        });
+      };
+      if (existingTransaction && writing) throw new VaultRecordError('Target writes require their own protected transaction.');
+      return existingTransaction ? run(existingTransaction) : this.transaction(run);
+    }, authority);
   }
 
   /** Canonical protected signing enrollments use the existing encrypted

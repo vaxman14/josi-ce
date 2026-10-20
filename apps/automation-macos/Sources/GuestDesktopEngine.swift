@@ -3,6 +3,7 @@ import ApplicationServices
 import Carbon
 import CryptoKit
 import ScreenCaptureKit
+import Security
 
 enum GuestDesktopError: Error { case unavailable, stale, denied, busy, unsupported, uncertain }
 
@@ -10,6 +11,8 @@ struct GuestDesktopCommand: Codable, Equatable {
     enum Operation: String, Codable { case observe, capture, press, focus, click, text, key }
     let id: UUID
     let workspaceId: UUID
+    let appId: UUID
+    let installationRevision: Int
     let sessionId: UUID
     let generation: Int
     let expiresAtMs: Int64
@@ -31,6 +34,19 @@ struct GuestDesktopTarget: Codable, Equatable {
     let bounds: CGRect
 }
 
+/// Minimized immutable identity from the canonical Vault target registry.
+/// The authority port, never a model or page, supplies this projection.
+struct GuestPinnedApplication: Codable, Equatable {
+    let workspaceId: UUID
+    let applicationId: UUID
+    let installationRevision: Int
+    let bundlePath: String
+    let bundleId: String
+    let signingId: String
+    let teamId: String
+    let codeHash: String
+}
+
 struct GuestDesktopNode: Codable {
     let id: UUID
     let role: String
@@ -44,6 +60,8 @@ struct GuestDesktopNode: Codable {
 struct GuestDesktopObservation: Codable {
     let id: UUID
     let workspaceId: UUID
+    let appId: UUID
+    let installationRevision: Int
     let sessionId: UUID
     let generation: Int
     let target: GuestDesktopTarget
@@ -69,6 +87,9 @@ protocol GuestDesktopAuthority: AnyObject {
     /// Verify this process belongs to the enrolled isolated guest and this
     /// exact workspace/session/generation is still current. Must fail closed.
     func requireCurrentGuest(_ command: GuestDesktopCommand) async throws
+    /// Resolve this exact app/revision from current canonical Vault authority.
+    /// Returning caller-supplied metadata does not implement this contract.
+    func pinnedApplication(_ command: GuestDesktopCommand) async throws -> GuestPinnedApplication
     /// Verify exact command + locally observed target, current policy, consent,
     /// budget and one-use reservation. Record durable dispatch before input.
     /// Observation and capture require their own read/transmission permission.
@@ -99,7 +120,7 @@ final class GuestDesktopEngine {
     private var commandDeadline: ContinuousClock.Instant?
     private let eventMarker: Int64 = 0x4a4f534947554553
     private static let blockedApps: Set<String> = [
-        "com.apple.systempreferences", "com.apple.SystemSettings", "com.apple.SecurityAgent",
+        "com.apple.systempreferences", "com.apple.systemsettings", "com.apple.securityagent",
         "com.apple.loginwindow", "com.apple.keychainaccess",
     ]
 
@@ -153,12 +174,47 @@ final class GuestDesktopEngine {
               dimensions.width > 0, dimensions.height > 0 else { return nil }
         return CGRect(origin: point, size: dimensions)
     }
-    private func frontWindow() throws -> (GuestDesktopTarget, AXUIElement) {
+    private func verify(_ application: NSRunningApplication, pin: GuestPinnedApplication) throws {
+        guard pin.installationRevision > 0, pin.bundlePath.hasPrefix("/"), pin.bundlePath.hasSuffix(".app"),
+              pin.bundlePath.utf8.count <= 768,
+              pin.codeHash.range(of: "^(?:[a-f0-9]{40}|[a-f0-9]{64})$", options: .regularExpression) != nil,
+              let bundleURL = application.bundleURL?.resolvingSymlinksInPath().standardizedFileURL,
+              bundleURL.path == pin.bundlePath, application.bundleIdentifier == pin.bundleId,
+              let executable = application.executableURL?.resolvingSymlinksInPath().standardizedFileURL,
+              executable.path.hasPrefix(bundleURL.path + "/"), !application.isTerminated else { throw GuestDesktopError.denied }
+        var code: SecCode?, requirement: SecRequirement?, disk: SecStaticCode?
+        // Only validated hexadecimal is interpolated into the requirement.
+        // Dynamic validation binds the PID to the expected code directory,
+        // while static validation also rejects modified on-disk resources.
+        let expression = "anchor apple generic and cdhash H\"\(pin.codeHash)\""
+        guard SecRequirementCreateWithString(expression as CFString, [], &requirement) == errSecSuccess, let requirement,
+              SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid as String: application.processIdentifier] as CFDictionary,
+                                            [], &code) == errSecSuccess, let code,
+              SecCodeCheckValidity(code, [], requirement) == errSecSuccess,
+              SecCodeCopyStaticCode(code, [], &disk) == errSecSuccess, let disk,
+              SecStaticCodeCheckValidity(disk, SecCSFlags(rawValue: kSecCSStrictValidate), requirement) == errSecSuccess
+        else { throw GuestDesktopError.denied }
+        var details: CFDictionary?
+        guard SecCodeCopySigningInformation(disk, SecCSFlags(rawValue: kSecCSSigningInformation), &details) == errSecSuccess,
+              let fields = details as? [String: Any],
+              fields[kSecCodeInfoIdentifier as String] as? String == pin.signingId,
+              (fields[kSecCodeInfoTeamIdentifier as String] as? String ?? "") == pin.teamId,
+              let hash = fields[kSecCodeInfoUnique as String] as? Data,
+              hash.map({ String(format: "%02x", $0) }).joined() == pin.codeHash,
+              let again = NSRunningApplication(processIdentifier: application.processIdentifier), !again.isTerminated,
+              again.launchDate == application.launchDate,
+              again.executableURL?.resolvingSymlinksInPath().standardizedFileURL == executable
+        else { throw GuestDesktopError.stale }
+    }
+
+    private func frontWindow(_ pin: GuestPinnedApplication) throws -> (GuestDesktopTarget, AXUIElement) {
         guard let app = NSWorkspace.shared.frontmostApplication, !app.isTerminated,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
-              let bundle = app.bundleIdentifier, !Self.blockedApps.contains(bundle),
-              !bundle.hasPrefix("com.heyjosi."), !bundle.hasPrefix("com.socalreceptionist.josi"),
-              let path = app.executableURL?.path, let launched = app.launchDate else { throw GuestDesktopError.denied }
+              let bundle = app.bundleIdentifier, !Self.blockedApps.contains(bundle.lowercased()),
+              !bundle.lowercased().hasPrefix("com.heyjosi."), !bundle.lowercased().hasPrefix("com.socalreceptionist.josi"),
+              let path = app.executableURL?.resolvingSymlinksInPath().standardizedFileURL.path,
+              let launched = app.launchDate else { throw GuestDesktopError.denied }
+        try verify(app, pin: pin)
         let application = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(application, 0.15)
         guard let rawWindow = attribute(application, kAXFocusedWindowAttribute), CFGetTypeID(rawWindow) == AXUIElementGetTypeID() else {
@@ -217,12 +273,13 @@ final class GuestDesktopEngine {
         return Tree(nodes: nodes, references: references, fingerprint: Data(SHA256.hash(data: data)), partial: partial)
     }
 
-    private func fresh(_ command: GuestDesktopCommand) throws -> (GuestDesktopObservation, AXUIElement) {
+    private func fresh(_ command: GuestDesktopCommand, pin: GuestPinnedApplication) throws -> (GuestDesktopObservation, AXUIElement) {
         guard let observation = snapshot, let oldWindow = window, let savedFingerprint = fingerprint,
               command.observationId == observation.id, command.workspaceId == observation.workspaceId,
+              command.appId == observation.appId, command.installationRevision == observation.installationRevision,
               command.sessionId == observation.sessionId, command.generation == observation.generation,
               Date().timeIntervalSince(observation.capturedAt) < 15 else { throw GuestDesktopError.stale }
-        let (target, current) = try frontWindow()
+        let (target, current) = try frontWindow(pin)
         guard target == observation.target, CFEqual(current, oldWindow),
               try tree(current).fingerprint == savedFingerprint else { throw GuestDesktopError.stale }
         return (observation, current)
@@ -244,25 +301,30 @@ final class GuestDesktopEngine {
             try check(command, epoch: epoch)
             try await authority.requireCurrentGuest(command)
             try check(command, epoch: epoch)
+            let pin = try await authority.pinnedApplication(command)
+            guard pin.workspaceId == command.workspaceId, pin.applicationId == command.appId,
+                  pin.installationRevision == command.installationRevision else { throw GuestDesktopError.denied }
+            try check(command, epoch: epoch)
             if command.operation == .observe {
                 guard command.observationId == nil, command.elementId == nil, command.valueReference == nil,
                       command.x == nil, command.y == nil, command.key == nil else { throw GuestDesktopError.unsupported }
-                let (target, current) = try frontWindow()
+                let (target, current) = try frontWindow(pin)
                 try await authority.authorize(command, target: target)
                 try check(command, epoch: epoch)
-                let (after, afterWindow) = try frontWindow()
+                let (after, afterWindow) = try frontWindow(pin)
                 guard target == after, CFEqual(current, afterWindow) else { throw GuestDesktopError.stale }
                 let captured = try tree(current)
                 try check(command, epoch: epoch)
-                guard try frontWindow().0 == target else { throw GuestDesktopError.stale }
-                let observation = GuestDesktopObservation(id: UUID(), workspaceId: command.workspaceId, sessionId: command.sessionId,
+                guard try frontWindow(pin).0 == target else { throw GuestDesktopError.stale }
+                let observation = GuestDesktopObservation(id: UUID(), workspaceId: command.workspaceId,
+                    appId: command.appId, installationRevision: command.installationRevision, sessionId: command.sessionId,
                     generation: command.generation, target: target, elements: captured.nodes, partial: captured.partial,
                     capturedAt: Date(), untrustedContent: true)
                 snapshot = observation; window = current; elements = captured.references; fingerprint = captured.fingerprint
                 return GuestDesktopReceipt(commandId: command.id, outcome: .observed, verificationRequired: true, observation: observation)
             }
             guard command.operation != .capture else { throw GuestDesktopError.unsupported }
-            let (observation, _) = try fresh(command)
+            let (observation, _) = try fresh(command, pin: pin)
             var projected: String?
             try await authority.authorize(command, target: observation.target)
             if command.operation == .text {
@@ -271,7 +333,7 @@ final class GuestDesktopEngine {
             }
             defer { projected = nil }
             try check(command, epoch: epoch)
-            let (_, current) = try fresh(command)
+            let (_, current) = try fresh(command, pin: pin)
             let targetElement = command.elementId.flatMap { elements[$0] }
             // Consume the snapshot before the first native call. A timeout is
             // uncertain, and cannot make this observation reusable.
@@ -354,13 +416,17 @@ final class GuestDesktopEngine {
         try check(command, epoch: epoch)
         try await authority.requireCurrentGuest(command)
         try check(command, epoch: epoch)
-        let (observation, _) = try fresh(command)
+        let pin = try await authority.pinnedApplication(command)
+        guard pin.workspaceId == command.workspaceId, pin.applicationId == command.appId,
+              pin.installationRevision == command.installationRevision else { throw GuestDesktopError.denied }
+        try check(command, epoch: epoch)
+        let (observation, _) = try fresh(command, pin: pin)
         try await authority.authorize(command, target: observation.target)
         try check(command, epoch: epoch)
-        _ = try fresh(command)
+        _ = try fresh(command, pin: pin)
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         try check(command, epoch: epoch)
-        _ = try fresh(command)
+        _ = try fresh(command, pin: pin)
         let matches = content.windows.filter {
             $0.owningApplication?.processID == observation.target.processId
                 && $0.frame == observation.target.bounds && ($0.title ?? "") == observation.target.windowTitle
@@ -376,7 +442,7 @@ final class GuestDesktopEngine {
         configuration.ignoreShadowsSingleWindow = true; configuration.includeChildWindows = false
         let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
         try check(command, epoch: epoch)
-        _ = try fresh(command)
+        _ = try fresh(command, pin: pin)
         guard let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]),
               data.count <= 8 * 1024 * 1024 else { throw GuestDesktopError.unavailable }
         return data

@@ -30,7 +30,7 @@ interface Context {
   requireWorkspace(identity: AutomationIdentity): Promise<void>;
   write(value: Secret): Promise<VaultRecordReference>;
 }
-type Backend = <T>(actor: string, writing: boolean, work: (context: Context) => Promise<T>) => Promise<T>;
+type Backend = <T>(actor: string, writing: boolean, work: (context: Context) => Promise<T>, existingTransaction?: Db) => Promise<T>;
 const exact = (v: unknown, keys: string[]): v is Record<string, unknown> => !!v && typeof v === 'object'
   && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const uuid = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
@@ -103,6 +103,28 @@ async function prepare(context: Context, args: AutomationTargetRegistration) {
 }
 export class AutomationTargetStore {
   constructor(private readonly backend: Backend, private readonly authority: AutomationTargetAuthority) {}
+  /** Trusted transport resolution, under the same transaction as its live
+   * device/session check. This returns identity metadata, never an input grant. */
+  resolve(actor: string, identity: AutomationIdentity, applicationId: string, installationRevision: number, transaction: Db) {
+    const scope = structuredClone(identity);
+    if (!isAutomationIdentity(scope) || scope.userId !== actor || !uuid(applicationId)
+      || !Number.isSafeInteger(installationRevision) || installationRevision < 1) {
+      throw new VaultRecordError('Choose an exact registered application in this workspace.');
+    }
+    return this.backend(actor, false, async context => {
+      if (context.reconciliationRequired) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
+      await context.requireWorkspace(scope);
+      const record = await context.read();
+      const target = readAutomationTargets(record).find(t => t.applicationId === applicationId
+        && t.installationRevision === installationRevision && sameAutomationIdentity(t.identity, scope));
+      if (!target || !record) throw new VaultRecordError('This application installation is not registered for the current workspace.');
+      return { reference: record.reference, application: {
+        workspaceId: scope.workspaceId, applicationId, installationRevision,
+        bundlePath: target.candidate.bundlePath, bundleId: target.candidate.bundleId,
+        signingId: target.candidate.signingId, teamId: target.candidate.teamId, codeHash: target.candidate.codeHash,
+      } };
+    }, transaction);
+  }
   inventory(actor: string) {
     return this.backend(actor, false, async context => {
       const record = await context.read();

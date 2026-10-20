@@ -4,7 +4,7 @@ Source audit updated 19 October 2026. This is a work ledger, not a claim that Va
 
 | Consumer | Canonical target / current checkpoint | Remaining work |
 |---|---|---|
-| Cardinal Rules | Existing Vault protected drafts/reviews/tests and permanent policy versions; exact-command administrator verification and guarded lifecycle tested | P3 protected-human verification and UI/API integration; P4 final dispatch; revalidation and recovery reconciliation. No production activation route yet. |
+| Cardinal Rules | Existing Vault protected drafts/reviews/tests and permanent policy versions; exact-command administrator verification and guarded lifecycle tested | Protected native activation/retirement and UI/API coordination are assembled; final dispatch, revalidation, recovery reconciliation and functional acceptance remain open. |
 | Telegram, Slack, WhatsApp | Owner-bound recoverable Vault references, transactional legacy import | Upgrade-wide migration before replacing an installation key. |
 | Mobile push | Vault item per owner/device identity; registration and receipt fencing | End-to-end remote-client acceptance in P12. |
 | Custom API | Vault item per connection; transactional import/rotation/deletion | P4 dispatch authority; full upgrade migration. |

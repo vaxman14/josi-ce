@@ -156,6 +156,36 @@ export class WorkspaceStorage {
   private pruneOpened() {
     for (const s of this.opened.values()) { try { this.openedLive(s); } catch { /* No credential retained. */ } }
   }
+  /** One canonical app pin for this hardware-authenticated open workspace.
+   * Does not renew the lease, authorize observation or grant native input. */
+  async application(actor: string, session: string, id: string, input: unknown) {
+    if (!exact(input, ['applicationId', 'installationRevision']) || !uuid(input.applicationId)
+      || !Number.isSafeInteger(input.installationRevision) || Number(input.installationRevision) < 1) {
+      throw new ProtectedChangeError(400, 'Choose the registered application and installation revision.');
+    }
+    const s = this.opened.get(id);
+    if (!uuid(id) || !s || s.actor !== actor || s.session !== session || !this.db.transaction) {
+      throw new ProtectedChangeError(409, 'The desktop connection is unavailable.');
+    }
+    try {
+      this.openedLive(s);
+      const records = this.records(actor, session);
+      const identity = { userId: actor, serverId: s.identity.serverId, deviceId: s.identity.deviceId, workspaceId: s.workspaceId };
+      const result = await this.db.transaction(async tx => {
+        const current = await this.devices(records).resolveDeviceKey(tx, s.identity), a = current.reference, b = s.reference;
+        if (a.recordId !== b.recordId || a.version !== b.version || a.digest !== b.digest || a.epoch !== b.epoch) {
+          throw new ProtectedChangeError(409, 'Vault authority changed. Reopen the desktop before resolving an app.');
+        }
+        const target = await records.automationTargets({ verifyFreshAdministrator: denied, verifyProtectedHuman: denied })
+          .resolve(actor, identity, input.applicationId as string, Number(input.installationRevision), tx);
+        if (target.reference.epoch !== a.epoch) throw new ProtectedChangeError(409, 'Application authority changed.');
+        this.openedLive(s);
+        return target;
+      });
+      this.openedLive(s);
+      return { schemaVersion: 1, sessionId: s.id, identity, ...result, expiresAtMs: s.leaseUntil, executionEnabled: false };
+    } catch (error) { this.opened.delete(id); throw error; }
+  }
   async renew(actor: string, session: string, id: string) {
     const s = this.opened.get(id);
     if (!uuid(id) || !s || s.actor !== actor || s.session !== session || !this.db.transaction) throw new ProtectedChangeError(409, 'The desktop connection is unavailable.');

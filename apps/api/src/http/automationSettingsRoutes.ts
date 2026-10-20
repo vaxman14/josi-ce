@@ -191,6 +191,9 @@ export function automationSettingsRoutes(context: Context): Router {
   r.post('/storage/sessions/:id/renew', nativeHandle(async (req, res) => res.json(
     await storage.renew(req.user!.id, req.user!.session_id, param(req, 'id')),
   )));
+  r.post('/storage/sessions/:id/application', nativeHandle(async (req, res) => res.json(
+    await storage.application(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
+  )));
   r.post('/storage/sessions/:id/close', nativeHandle(async (req, res) => res.json(
     storage.close(req.user!.id, req.user!.session_id, param(req, 'id')),
   )));
