@@ -15,4 +15,18 @@ Build-first implementation; functional, privacy/retention and recovery acceptanc
 
 ## Remaining
 
-Automatic model continuation, conflict resolution across independently reported facts, broader evidence types, learning from reconciled failures, authoritative correction precedence across long-lived CLI contexts, complete retention/export/recovery reconciliation, and acceptance across all clients remain open. This checkpoint does not claim a completed P10 gate or a universal secret detector.
+Automatic continuation is connected in [P9](P9_CONTINUATION.md). Owner correction provenance and stale-context refusal are connected below. Broader evidence types, learning from reconciled failures, automatic conflict discovery, complete retention/export/recovery reconciliation, and acceptance across all clients remain open. This checkpoint does not claim a completed P10 gate or a universal secret detector.
+
+## Owner corrections and current context
+
+Migration 0087 separates the most recent owner correction from the model's progress checkpoint. Only the owner memory/control routes write that source; ordinary checkpoint saves cannot overwrite it. The record carries its save time. New steering records the owner's next instruction without relabelling existing model facts as human-confirmed. Existing notes are not retrospectively labelled as owner corrections because their authorship cannot be established.
+
+The task manager shows **Your saved correction** and **Latest progress notes** separately. The owner can edit the correction or explicitly review the latest notes as a replacement. Editing captures the displayed goal revision: a background update cannot silently make an old form current. The owner must review a newer version before applying the retained edit. Clearing removes both current note sources and the pin; original conversation, task/effect receipts, audit history and backups remain. Later activity may save fresh progress.
+
+The model receives current saved work again on each server model hop. Complete JSON records are added within a bounded context budget; oversized records are identified as omitted, rather than slicing their text into broken JSON or cutting through a correction. `read_work_goal` supplies the full exact record from the current owned conversation or an explicitly owner-pinned checkpoint. The primary background goal is prioritized. Omission does not imply absence or completion.
+
+Owner corrections, clearing, pin changes and new steering advance an owner-scoped context version in the same transaction. Model dispatch, returned responses and in-process tools check it. The trusted subscription harness also carries the captured version and checks before each user-scoped MCP tool. A stale context must finish and reload; it cannot refresh its own stamp to retain an old prompt. Contextless capability probes remain available. Already-dispatched provider requests/actions cannot be recalled by this check and their truthful receipts are retained.
+
+The storage boundary prevents model replacement of the owner's correction. The prompt instructs Josi to surface conflicting evidence for an owner decision. It does not claim a deterministic detector for every semantic contradiction, a guarantee that a model understands a correction, or deletion of text from a provider request already sent. Full personal-memory/persona invalidation, changes outside these work controls, dispatch races and source deletion/recovery still require integrated coverage.
+
+Build checks: root TypeScript compilation, web type checking and the production bundle. Functional and recovery suites remain deferred under the owner's build-first direction.

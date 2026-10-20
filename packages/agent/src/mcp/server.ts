@@ -25,7 +25,7 @@
 // database, so a context with no user can still prove the plumbing.
 import { appendFileSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { checkStepUp, connectFromEnv, loadMasterKey, runWorkIntent } from '@josi-ce/core';
+import { checkStepUp, connectFromEnv, loadMasterKey, runWorkIntent, requireCurrentWorkMemory, WorkMemoryChangedError } from '@josi-ce/core';
 import type { Db, MasterKey } from '@josi-ce/core';
 import type { HarnessContext } from '@josi-ce/llm';
 import { executeAssistantTool } from '../execute.js';
@@ -118,6 +118,8 @@ export function buildCore(ctx: McpHarnessContext, connect: () => Promise<Db>): M
     try {
       db ??= connect();
       const conn = await db;
+      if (ctx.workMemoryVersion === null || ctx.workMemoryVersion === undefined) throw new WorkMemoryChangedError();
+      await requireCurrentWorkMemory(conn, ctx.userId, ctx.workMemoryVersion);
 
       // The same gate, the same key, the same sentence as the in-process loop.
       const decision = await checkStepUp(conn, {

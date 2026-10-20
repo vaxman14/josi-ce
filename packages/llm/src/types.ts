@@ -117,6 +117,8 @@ export interface ToolContext {
   durableTurnId?: string | null;
   durableLeaseToken?: string | null;
   inboundMessageId?: string | null;
+  /** Captured by the server while loading work notes, never a model argument. */
+  workMemoryVersion?: number | null;
   /** Latest authenticated user turn and server clock. The out-of-process MCP
    * server uses these to enforce relative calendar dates independently of the
    * model's absolute timestamps. */

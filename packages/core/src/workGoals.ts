@@ -21,6 +21,7 @@ interface GoalRow {
   revision: number; state: GoalProgress['state']; outcome: string; criteria: string[];
   steps: WorkGoalStep[]; continuation: Continuation | null; activity: string;
   checkpoint: WorkCheckpoint; checkpoint_pinned: boolean; created_at: string; updated_at: string;
+  owner_checkpoint: WorkCheckpoint | null; owner_checkpoint_at: string | null;
   control_generation: number; continuation_ready_at: string | null;
   continuation_segments: number; continuation_verified: number;
   plan_revision: number;
@@ -31,6 +32,8 @@ export interface WorkGoalSnapshot extends GoalProgress {
   steps: WorkGoalStep[];
   checkpoint: WorkCheckpoint;
   checkpointPinned: boolean;
+  ownerCheckpoint?: WorkCheckpoint | null;
+  ownerCheckpointAt?: string | null;
   createdAt: string;
   updatedAt: string;
   planRevision?: number;
@@ -56,6 +59,7 @@ function snapshot(row: GoalRow): WorkGoalSnapshot {
     steps: row.steps.map(step => ({ ...step, dependsOn: workDependencies(row.steps, step) })),
     verifiedSteps: row.steps.filter(step => step.state === 'verified').length, totalSteps: row.steps.length,
     continuation: row.continuation, checkpoint: row.checkpoint, checkpointPinned: row.checkpoint_pinned,
+    ownerCheckpoint: row.owner_checkpoint ?? null, ownerCheckpointAt: row.owner_checkpoint_at ?? null,
     createdAt: row.created_at, updatedAt: row.updated_at, planRevision: row.plan_revision,
     automaticWork: { segmentsSinceVerifiedProgress: row.continuation_segments, segmentLimit: WORK_SEGMENT_LIMIT,
       nextCheckAt: row.continuation_ready_at } };
@@ -73,11 +77,11 @@ function transaction<T>(db: Db, work: (tx: Db) => Promise<T>): Promise<T> {
   if (!db.transaction) throw new WorkGoalError('Durable work storage is unavailable.', 503);
   return db.transaction(work);
 }
-async function save(db: Db, row: GoalRow, kind: string): Promise<WorkGoalSnapshot> {
+async function save(db: Db, row: GoalRow, kind: string, summary?: string): Promise<WorkGoalSnapshot> {
   const [saved] = await db.query<GoalRow>(`update work_goals set revision=revision+1,state=$3,steps=$4,continuation=$5,
     activity=$6,checkpoint=$7,checkpoint_pinned=$8,plan_revision=$9,updated_at=now() where id=$1 and owner_user_id=$2 returning *`,
   [row.id, row.owner_user_id, row.state, json(row.steps), row.continuation ? json(row.continuation) : null, row.activity, json(row.checkpoint), row.checkpoint_pinned, row.plan_revision]);
-  await event(db, saved, kind, saved.activity);
+  await event(db, saved, kind, summary ?? saved.activity);
   return snapshot(saved);
 }
 function current(row: GoalRow, revision: unknown) {
@@ -220,6 +224,14 @@ export async function pinnedWorkGoals(db: Db, ownerUserId: string): Promise<Work
     order by updated_at desc,id desc limit 8`, [ownerUserId])).map(snapshot);
 }
 
+export async function readWorkGoal(db: Db, ownerUserId: string, goalId: string, threadId: string): Promise<WorkGoalSnapshot> {
+  const row = await owned(db, ownerUserId, goalId);
+  // A pin is explicit permission to recall this owner's notes across their
+  // conversations; it does not grant another owner's or an unpinned record.
+  if (row.thread_id !== threadId && !row.checkpoint_pinned) throw new WorkGoalError('Work item not found in this conversation.', 404);
+  return snapshot(row);
+}
+
 /** Owner-only correction, pinning and forgetting; deliberately not a model
  * tool. Corrections never resume a paused goal or grant execution authority. */
 export async function editWorkMemory(db: Db, args: { ownerUserId: string; goalId: string; revision: unknown;
@@ -241,12 +253,20 @@ export async function editWorkMemory(db: Db, args: { ownerUserId: string; goalId
       row.checkpoint = { decisions: strings(value.decisions), facts: strings(value.facts), assumptions: strings(value.assumptions), nextAction: text(value.nextAction) };
     } else throw new WorkGoalError('Choose a memory action.');
     if (args.action === 'correct' || args.action === 'forget') {
+      // Only this owner route writes the correction source. Model checkpoints
+      // use save(), which deliberately does not include these columns.
+      await tx.query(`update work_goals set owner_checkpoint=$2,owner_checkpoint_at=case when $2::jsonb is null then null else now() end where id=$1`,
+        [row.id, args.action === 'forget' ? null : json(row.checkpoint)]);
       await tx.query(`update work_goals set control_generation=control_generation+1,
         continuation_ready_at=case when state in ('planning','working','waiting') then now()+interval '30 seconds' else null end where id=$1`, [row.id]);
       await tx.query(`update assistant_turns set status='failed',error_code='work_control_changed',error_retryable=false,completed_at=now()
         where work_goal_id=$1 and status='queued'`, [row.id]);
     }
-    return save(tx, row, `memory.${args.action}`);
+    await tx.query(`update users set work_memory_version=work_memory_version+1 where id=$1`, [args.ownerUserId]);
+    const summaries = { correct: 'Your correction was saved separately from Josi’s progress notes',
+      forget: 'Saved work notes and your correction were cleared', pin: 'Work notes pinned for future conversations',
+      unpin: 'Work notes unpinned from future conversations' };
+    return save(tx, row, `memory.${args.action}`, summaries[args.action]);
   });
 }
 
@@ -349,6 +369,10 @@ export async function controlWorkGoal(db: Db, args: { ownerUserId: string; goalI
       const instruction = text(args.instruction);
       row.checkpoint = { decisions: row.checkpoint.decisions ?? [], facts: row.checkpoint.facts ?? [],
         assumptions: row.checkpoint.assumptions ?? [], nextAction: instruction };
+      const correction: WorkCheckpoint = { decisions: row.owner_checkpoint?.decisions ?? [], facts: row.owner_checkpoint?.facts ?? [],
+        assumptions: row.owner_checkpoint?.assumptions ?? [], nextAction: instruction };
+      await tx.query(`update work_goals set owner_checkpoint=$2,owner_checkpoint_at=now() where id=$1`, [row.id, json(correction)]);
+      await tx.query(`update users set work_memory_version=work_memory_version+1 where id=$1`, [args.ownerUserId]);
       // Reconsider the first unfinished step without clearing unrelated waits,
       // original effect/task receipts or dependency ordering.
       const first = row.steps.find(step => step.state !== 'verified');

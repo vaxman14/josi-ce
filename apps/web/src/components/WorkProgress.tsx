@@ -60,8 +60,14 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     <p className="mt-2 text-xs text-muted-foreground">{stale ? 'No recent update · ' : ''}Last saved {new Date(goal.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</p>
     {!compact ? <details className="mt-3 text-sm"><summary className="cursor-pointer text-muted-foreground">Outcome and saved work</summary>
       <p className="mt-3 font-medium">Finished means</p><ul className="mt-1 list-disc space-y-1 pl-5">{goal.criteria.map((criterion, index) => <li key={index}>{criterion}</li>)}</ul>
-      {(['decisions', 'facts', 'assumptions'] as const).map(kind => goal.checkpoint[kind]?.length ? <div key={kind} className="mt-3"><p className="font-medium capitalize">{kind}</p><ul className="mt-1 list-disc space-y-1 pl-5">{goal.checkpoint[kind].map((value, index) => <li key={index}>{value}</li>)}</ul></div> : null)}
-      {goal.checkpoint.nextAction ? <p className="mt-3"><strong>Next: </strong>{goal.checkpoint.nextAction}</p> : null}
+      {goal.ownerCheckpoint ? <div className="mt-3 rounded-lg border border-border p-3">
+        <p className="font-medium">Your saved correction</p>
+        <p className="mt-1 text-xs text-muted-foreground">Josi cannot replace this with its own notes. {goal.ownerCheckpointAt ? `Saved ${new Date(goal.ownerCheckpointAt).toLocaleString()}.` : ''}</p>
+        <CheckpointNotes checkpoint={goal.ownerCheckpoint} />
+      </div> : null}
+      <p className="mt-3 font-medium">Latest progress notes</p>
+      {goal.ownerCheckpoint ? <p className="mt-1 text-xs text-muted-foreground">New progress appears here separately. If it conflicts with your correction, Josi must ask you to resolve the difference.</p> : null}
+      <CheckpointNotes checkpoint={goal.checkpoint} />
       <WorkMemoryEditor goal={goal} refresh={refresh} />
     </details> : null}
     {!compact ? <WorkActivity goal={goal} /> : null}
@@ -85,26 +91,36 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
   </article>;
 }
 
+function CheckpointNotes({ checkpoint }: { checkpoint: WorkGoalSnapshot['checkpoint'] }) {
+  return <>{(['decisions', 'facts', 'assumptions'] as const).map(kind => checkpoint[kind]?.length ? <div key={kind} className="mt-3">
+    <p className="font-medium">{kind === 'facts' ? 'Reported facts' : kind === 'decisions' ? 'Decisions' : 'Assumptions'}</p>
+    <ul className="mt-1 list-disc space-y-1 pl-5">{checkpoint[kind].map((value, index) => <li key={index}>{value}</li>)}</ul>
+  </div> : null)}{checkpoint.nextAction ? <p className="mt-3"><strong>Next action noted: </strong>{checkpoint.nextAction}</p> : null}</>;
+}
+
 function WorkMemoryEditor({ goal, refresh }: { goal: WorkGoalSnapshot; refresh: () => Promise<void> }) {
   const [editing, setEditing] = useState(false);
+  const [editingRevision, setEditingRevision] = useState(goal.revision);
   const [notes, setNotes] = useState({ decisions: '', facts: '', assumptions: '', nextAction: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
-  function edit() {
-    setNotes({ decisions: (goal.checkpoint.decisions ?? []).join('\n'), facts: (goal.checkpoint.facts ?? []).join('\n'),
-      assumptions: (goal.checkpoint.assumptions ?? []).join('\n'), nextAction: goal.checkpoint.nextAction ?? '' });
+  function edit(latest = false) {
+    const checkpoint = latest ? goal.checkpoint : goal.ownerCheckpoint ?? goal.checkpoint;
+    setNotes({ decisions: (checkpoint.decisions ?? []).join('\n'), facts: (checkpoint.facts ?? []).join('\n'),
+      assumptions: (checkpoint.assumptions ?? []).join('\n'), nextAction: checkpoint.nextAction ?? '' });
+    setEditingRevision(goal.revision);
     setEditing(true); setSaved('');
   }
   async function change(action: 'correct' | 'pin' | 'unpin' | 'forget') {
     if (busy) return;
-    if (action === 'forget' && !window.confirm('Clear these saved work notes? The task, evidence and original conversation remain.')) return;
+    if (action === 'forget' && !window.confirm('Clear the latest progress notes and your saved correction? The task, evidence and original conversation remain. Later work may save new progress.')) return;
     setBusy(true); setError(''); setSaved('');
     try {
       const lines = (value: string) => value.split('\n').map(line => line.trim()).filter(Boolean);
-      await api.post(`/assistant/work-goals/${goal.goalId}/memory`, { revision: goal.revision, action,
+      await api.post(`/assistant/work-goals/${goal.goalId}/memory`, { revision: action === 'correct' ? editingRevision : goal.revision, action,
         ...(action === 'correct' ? { checkpoint: { decisions: lines(notes.decisions), facts: lines(notes.facts), assumptions: lines(notes.assumptions), nextAction: notes.nextAction } } : {}) });
-      setEditing(false); setSaved(action === 'forget' ? 'Saved notes cleared.' : 'Saved. Future work will use this version.');
+      setEditing(false); setSaved(action === 'forget' ? 'Saved notes and correction cleared.' : 'Saved. Future work will load the current version.');
       await refresh();
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Saved work could not be changed.'); }
     finally { setBusy(false); }
@@ -112,16 +128,23 @@ function WorkMemoryEditor({ goal, refresh }: { goal: WorkGoalSnapshot; refresh: 
   return <div className="mt-4 border-t border-border pt-3">
     <p className="text-xs text-muted-foreground">Saved work notes are context. They cannot change permissions or Cardinal Rules.</p>
     <div className="mt-2 flex flex-wrap gap-2 text-xs">
-      <button disabled={busy} className="min-h-10 rounded-md border border-border px-3" onClick={edit}>Correct notes</button>
+      <button disabled={busy} className="min-h-10 rounded-md border border-border px-3" onClick={() => edit()}>{goal.ownerCheckpoint ? 'Edit your correction' : 'Correct notes'}</button>
+      {goal.ownerCheckpoint ? <button disabled={busy} className="min-h-10 rounded-md border border-border px-3" onClick={() => edit(true)}>Review latest notes as a correction</button> : null}
       <button disabled={busy} className="min-h-10 rounded-md border border-border px-3" onClick={() => void change(goal.checkpointPinned ? 'unpin' : 'pin')}>{goal.checkpointPinned ? 'Unpin from memory' : 'Pin for future work'}</button>
       <button disabled={busy} className="min-h-10 rounded-md border border-border px-3" onClick={() => void change('forget')}>Clear saved notes</button>
     </div>
     {editing ? <form className="mt-3 space-y-3" onSubmit={event => { event.preventDefault(); void change('correct'); }}>
+      {editingRevision !== goal.revision ? <div className="space-y-2 text-sm text-muted-foreground">
+        <p>Work changed while you were editing. Your text stays here; review the latest notes above before saving a new correction.</p>
+        <button type="button" disabled={busy} onClick={() => setEditingRevision(goal.revision)} className="min-h-10 rounded-md border border-border px-3">I reviewed the change — keep my edit</button>
+      </div> : null}
+      <fieldset disabled={busy} className="space-y-3">
       {(['decisions', 'facts', 'assumptions', 'nextAction'] as const).map(key => <label key={key} className="block text-sm">{key === 'nextAction' ? 'Next action' : key === 'facts' ? 'Reported facts' : key === 'decisions' ? 'Decisions' : 'Assumptions'}
         <textarea rows={key === 'nextAction' ? 2 : 3} maxLength={key === 'nextAction' ? 2000 : 24000} required={key === 'nextAction'} value={notes[key]} onChange={event => setNotes(current => ({ ...current, [key]: event.target.value }))} className="mt-1 w-full rounded-md border border-border bg-background p-2 text-base" />
       </label>)}
       <p className="text-xs text-muted-foreground">One item per line, up to 12 in each list. Put secrets in the Vault.</p>
-      <button disabled={busy} className="min-h-10 rounded-md bg-primary px-4 text-primary-foreground">Save correction</button>
+      <button disabled={busy || editingRevision !== goal.revision} className="min-h-10 rounded-md bg-primary px-4 text-primary-foreground disabled:opacity-50">Save correction</button>
+      </fieldset>
     </form> : null}
     {error ? <p role="alert" className="mt-2 text-sm text-destructive">{error}</p> : null}
     {saved ? <p role="status" className="mt-2 text-xs text-muted-foreground">{saved}</p> : null}

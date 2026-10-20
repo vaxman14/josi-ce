@@ -70,6 +70,7 @@ export interface HarnessContext {
   durableTurnId: string | null;
   durableLeaseToken: string | null;
   inboundMessageId?: string | null;
+  workMemoryVersion?: number | null;
   latestUserText: string | null;
   effectiveNow: string | null;
   /** Non-secret installation state captured from Josi's server environment.
@@ -123,6 +124,7 @@ export function openHarnessSession(args: {
     durableTurnId: args.toolContext?.durableTurnId ?? null,
     durableLeaseToken: args.toolContext?.durableLeaseToken ?? null,
     inboundMessageId: args.toolContext?.inboundMessageId ?? null,
+    workMemoryVersion: args.toolContext?.workMemoryVersion ?? null,
     latestUserText: args.toolContext?.latestUserText ?? null,
     effectiveNow: args.toolContext?.effectiveNow ?? null,
     workspaceEnabled,

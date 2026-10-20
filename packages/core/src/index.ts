@@ -40,6 +40,7 @@ export * from './ownership.js';
 // Phase 5 — the assistant's domain logic.
 export * from './tasks.js';
 export * from './workGoals.js';
+export * from './workMemoryContext.js';
 export * from './workContinuation.js';
 export * from './conversations.js';
 export * from './approvals.js';
