@@ -292,18 +292,22 @@ final class ProtectedKeyProjection {
     /// wrapped Ed25519 key. This operation neither unwraps that key nor signs
     /// a rule change. Only the fixed host-authentication message is accepted.
     func proveHost(message: Data) async throws -> Data {
-        try await proveBoundHost(message: message, storage: false)
+        try await proveBoundHost(message: message, domain: "host")
     }
     /// A separate, exact storage domain; cannot authorize rules or input.
     func proveWorkspaceStorage(message: Data) async throws -> Data {
-        try await proveBoundHost(message: message, storage: true)
+        try await proveBoundHost(message: message, domain: "storage")
     }
-    private func proveBoundHost(message: Data, storage: Bool) async throws -> Data {
+    func proveAutomationConsent(message: Data) async throws -> Data {
+        try await proveBoundHost(message: message, domain: "consent")
+    }
+    private func proveBoundHost(message: Data, domain: String) async throws -> Data {
         guard pending == nil, hostAuthentication == nil, !hostProofUsed else { throw ProtectedKeyError.busy }
-        let prefix = Data((storage ? "josi-workspace-storage.1\n" : "josi-protected-host-auth.1\n").utf8)
+        let prefix = Data((domain == "storage" ? "josi-workspace-storage.1\n"
+            : domain == "consent" ? "josi-automation-consent.1\n" : "josi-protected-host-auth.1\n").utf8)
         guard message.count <= 4096, message.starts(with: prefix),
               let fields = try JSONSerialization.jsonObject(with: message.dropFirst(prefix.count)) as? [Any],
-              fields.count == (storage ? 15 : 11) else { throw ProtectedKeyError.invalid }
+              fields.count == (domain == "storage" ? 15 : domain == "consent" ? 19 : 11) else { throw ProtectedKeyError.invalid }
         func integer(_ value: Any) -> Int64? {
             guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
                   number.doubleValue.isFinite, number.doubleValue >= 0, number.doubleValue <= 9_007_199_254_740_991,
@@ -327,13 +331,32 @@ final class ProtectedKeyProjection {
               let epoch = integer(reference[3]), epoch > 0, let expectedFingerprint = digest(fields[8]),
               let issued = integer(fields[9]), let expires = integer(fields[10]),
               issued <= now, expires > now, expires > issued, expires - issued <= 60_000 else { throw ProtectedKeyError.invalid }
-        if storage {
+        if domain == "storage" {
             guard let operation = fields[11] as? String, ["provision", "open"].contains(operation),
                   let workspace = fields[12] as? String, UUID(uuidString: workspace)?.uuidString.lowercased() == workspace,
                   let label = fields[13] as? String, !label.isEmpty, label.utf16.count <= 120,
                   label.trimmingCharacters(in: .whitespacesAndNewlines) == label,
                   label.range(of: "[\\x{0000}-\\x{001f}\\x{007f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]", options: .regularExpression) == nil,
                   let capacity = integer(fields[14]), (64...512).contains(capacity) else { throw ProtectedKeyError.invalid }
+        }
+        if domain == "consent" {
+            func uuid(_ value: Any) -> Bool {
+                guard let s = value as? String else { return false }
+                return UUID(uuidString: s)?.uuidString.lowercased() == s
+            }
+            func reference(_ value: Any, id: String) -> Bool {
+                guard let r = value as? [Any], r.count == 4 else { return false }
+                return r[0] as? String == id && (integer(r[1]) ?? 0) > 0
+                    && digest(r[2]) != nil && integer(r[3]) == epoch
+            }
+            guard [fields[11], fields[13], fields[14], fields[15]].allSatisfy(uuid),
+                  let label = fields[12] as? String, !label.isEmpty, label.utf16.count <= 120,
+                  label.trimmingCharacters(in: .whitespacesAndNewlines) == label,
+                  label.range(of: "[\\x{0000}-\\x{001f}\\x{007f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]", options: .regularExpression) == nil,
+                  let until = integer(fields[16]), until > expires, until - issued <= 7_200_000,
+                  reference(fields[17], id: "5864be11-7936-43c5-a8bc-5c725df6c1fd"),
+                  reference(fields[18], id: "ea230e88-65fc-4c35-b05d-1792c00471cf")
+            else { throw ProtectedKeyError.invalid }
         }
         let context = LAContext()
         context.localizedFallbackTitle = ""
@@ -350,8 +373,10 @@ final class ProtectedKeyProjection {
             guard wall >= now, wall < expires, ContinuousClock.now < deadline,
                   generation == ownGeneration, hostAuthentication === context, !Task.isCancelled else { throw ProtectedKeyError.expired }
         }
-        let reason = storage
+        let reason = domain == "storage"
             ? "Authorize the separate Josi workspace storage operation you reviewed, using its key from \(identity.serverOrigin)."
+            : domain == "consent"
+            ? "Allow Josi to automate the separate desktop you reviewed under its existing rules on \(identity.serverOrigin)."
             : "Connect this enrolled Mac to \(identity.serverOrigin) for a protected Josi review. This does not approve a rule change."
         guard try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) else {
             throw ProtectedKeyError.cancelled

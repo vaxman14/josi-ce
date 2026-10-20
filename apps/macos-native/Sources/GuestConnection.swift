@@ -27,6 +27,7 @@ import Darwin
     private var attempts = 0
     private var applicationTask: Task<Void, Never>?
     private var applicationPin: Wire = .null
+    private var pairedBinding: Wire = .null
 
     init(device: VZVirtioSocketDevice, context: [String: String], current: @escaping @MainActor () throws -> Int,
          resolveApplication: @escaping @MainActor (Wire) async throws -> Wire) {
@@ -102,6 +103,7 @@ import Darwin
             let accepted = try await link.receive(seconds: max(1, min(60, (expiry - Int(Date().timeIntervalSince1970 * 1000)) / 1000)))
             guard accepted == ["kind": "accept", "code": code], !closed else { throw GuestLinkError.invalid }
             _ = try current()
+            pairedBinding = ["guestBootId": .string(boot), "guestChannelId": .string(guest["channel"]!)]
             paired = true; state = "Companion connected. Automation is not enabled."
             while !Task.isCancelled && !closed {
                 let until = try current()
@@ -151,7 +153,7 @@ import Darwin
         } catch {
             if !closed { state = "Companion disconnected or could not be verified. Reconnect inside the desktop." }
         }
-        cancelQuestion(); paired = false; accessibility = false; screenCapture = false; applicationCandidate = .null
+        cancelQuestion(); paired = false; pairedBinding = .null; accessibility = false; screenCapture = false; applicationCandidate = .null
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
         link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
     }
@@ -209,13 +211,18 @@ import Darwin
     func requireSelection(_ change: Wire) throws {
         guard try registration(expected: change["expected"]) == change else { throw GuestLinkError.invalid }
     }
+    func consentBinding() throws -> Wire {
+        _ = try current()
+        guard !closed, paired, pairedBinding != .null else { throw GuestLinkError.closed }
+        return pairedBinding
+    }
     func close() {
         guard !closed else { return }
         closed = true; cancelQuestion(); wire?.interrupt(); connection?.close()
         device.removeSocketListener(forPort: GuestLinkWire.port)
         task?.cancel(); task = nil; wire = nil; connection = nil
         applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
-        paired = false; applicationCandidate = .null; state = "Companion disconnected."
+        paired = false; pairedBinding = .null; applicationCandidate = .null; state = "Companion disconnected."
     }
 }
 

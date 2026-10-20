@@ -187,7 +187,7 @@ enum ProtectedWire {
     }
     func request(_ operation: String, fields: [String: Wire]) async throws -> Wire {
         guard !closed, process.isRunning, !pending,
-              ["create", "proveHost", "proveWorkspaceStorage", "authenticate", "sign", "authenticateEnrollment", "signEnrollment"].contains(operation)
+              ["create", "proveHost", "proveWorkspaceStorage", "proveAutomationConsent", "authenticate", "sign", "authenticateEnrollment", "signEnrollment"].contains(operation)
         else { throw approvalUnavailable() }
         pending = true; defer { pending = false }
         let id = UUID().uuidString.lowercased()
@@ -321,6 +321,7 @@ struct ProtectedApprovalView: View {
         if review.challenge["enrollmentId"] != .null { return "Enroll this protected confirmation device" }
         switch review.challenge["purpose"].text {
         case "workspace.storage": return review.challenge["operation"].text == "open" ? "Open the separate development desktop" : "Prepare separate workspace storage"
+        case "automation.consent": return "Allow automation in this separate desktop"
         case "automation.target.register": return "Register an automation target"
         case "cardinal.activate": return "Make this Cardinal Rule permanent"
         case "cardinal.retire": return "Retire this Cardinal Rule"

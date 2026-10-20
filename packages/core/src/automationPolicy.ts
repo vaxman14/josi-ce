@@ -44,7 +44,7 @@ export interface AutomationPolicyDecision {
 function identityKey(identity: AutomationPermissionPolicy['identity']): string {
   return [identity.userId, identity.serverId, identity.deviceId, identity.workspaceId].join(':');
 }
-function decode(record: VaultRecordValue, reconciliationRequired: boolean): AutomationPolicyView {
+export function readAutomationPolicyRecord(record: VaultRecordValue, reconciliationRequired: boolean): AutomationPolicyView {
   let doc: AutomationPolicyDocument;
   try { doc = JSON.parse(record.value.reveal()); } catch { throw new VaultRecordError('The automation policy is unreadable.'); }
   if (record.kind !== 'automation_policy' || record.reference.recordId !== AUTOMATION_POLICY_RECORD_ID
@@ -69,7 +69,7 @@ export function automationPolicyChangeBinding(args: { policy: AutomationPermissi
 /** Internal evaluation of a current authenticated Vault snapshot. No policy
  * contents or authority-expansion capability are returned to the agent. */
 export function evaluateAutomationPolicyRecord(record: VaultRecordValue, facts: AutomationPermissionFacts): AutomationPolicyDecision {
-  const current = decode(record, false);
+  const current = readAutomationPolicyRecord(record, false);
   if (!current.enforcementCurrent) return { verdict: 'pause', code: 'requires_revalidation', policy: record.reference, evaluation: null };
   if (!isAutomationIdentity(facts?.identity)) return { verdict: 'pause', code: 'identity_unavailable', policy: record.reference, evaluation: null };
   const match = current.document.policies.find(p => identityKey(p.identity) === identityKey(facts.identity));
@@ -81,7 +81,7 @@ async function replacementContents(tx: AutomationPolicyTransaction, snapshot: Au
   if (tx.reconciliationRequired) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
   const parsed = validateAutomationPermissionPolicy(snapshot.policy);
   if (!parsed.valid) throw new VaultRecordError('Use exact supported automation permissions and explicit limits.');
-  const record = await tx.readPolicy(), current = record ? decode(record, tx.reconciliationRequired) : null;
+  const record = await tx.readPolicy(), current = record ? readAutomationPolicyRecord(record, tx.reconciliationRequired) : null;
   if (!(current === null && snapshot.expected === null || current && snapshot.expected
     && current.reference.recordId === snapshot.expected.recordId && current.reference.version === snapshot.expected.version
     && current.reference.digest === snapshot.expected.digest && current.reference.epoch === snapshot.expected.epoch)) {
@@ -103,7 +103,7 @@ async function replacementContents(tx: AutomationPolicyTransaction, snapshot: Au
 export class AutomationPolicyStore {
   constructor(private readonly backend: AutomationPolicyBackend, private readonly authority: AutomationPolicyAuthority) {}
   async read(actorUserId: string): Promise<AutomationPolicyView | null> {
-    return this.backend(actorUserId, false, async tx => { const record = await tx.readPolicy(); return record ? decode(record, tx.reconciliationRequired) : null; });
+    return this.backend(actorUserId, false, async tx => { const record = await tx.readPolicy(); return record ? readAutomationPolicyRecord(record, tx.reconciliationRequired) : null; });
   }
   /** Read-only exact review, regenerated at the eventual protected mutation. */
   async prepareReplacement(args: AutomationPolicyReplacement): Promise<AutomationPolicyProtectedReview> {

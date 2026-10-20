@@ -43,6 +43,7 @@ export * from './workGoals.js';
 export * from './workMemoryContext.js';
 export * from './automationRuntime.js';
 export * from './automationPresence.js';
+export { type AutomationConsentAuthority } from './automationConsent.js';
 export * from './subscriptionCredentials.js';
 export { type WorkspaceStorageAuthority, type WorkspaceStorageSummary } from './workspaceStorage.js';
 export * from './workContinuation.js';

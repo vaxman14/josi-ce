@@ -1,7 +1,8 @@
 import { createHash, createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
 import { vaultRecords, openAutomationPresence, renewAutomationPresence, closeAutomationPresence, parseAutomationPresence,
   type Db, type MasterKey, type ProtectedConfirmationIdentity, type VaultRecordReference } from '@josi-ce/core';
-import { isProtectedControlOrigin, parseWorkspaceStorageChallenge, workspaceStorageMessage, type WorkspaceStorageChallenge } from '@josi-ce/protocol';
+import { isProtectedControlOrigin, parseWorkspaceStorageChallenge, workspaceStorageMessage, type WorkspaceStorageChallenge,
+  parseAutomationConsentChallenge, automationConsentMessage, type AutomationConsentChallenge } from '@josi-ce/protocol';
 import { ProtectedChangeError } from './protectedChanges.js';
 
 interface Pending {
@@ -11,6 +12,11 @@ interface Pending {
 interface OpenSession {
   id: string; actor: string; session: string; identity: ProtectedConfirmationIdentity; reference: VaultRecordReference;
   workspaceId: string; deadline: number; expires: number; leaseUntil: number; leaseDeadline: number; previousWall: number;
+  label: string; consent: VaultRecordReference | null; consentGeneration: number;
+}
+interface PendingConsent {
+  owner: OpenSession; challenge: AutomationConsentChallenge; generation: number;
+  deadline: number; previousWall: number; busy: boolean; timer: ReturnType<typeof setTimeout>;
 }
 const uuid = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
 const exact = (v: unknown, keys: string[]): v is Record<string, unknown> => !!v && typeof v === 'object'
@@ -24,6 +30,8 @@ export class WorkspaceStorage {
   private pending = new Map<string, Pending>();
   private preparing = new Set<string>();
   private opened = new Map<string, OpenSession>();
+  private consents = new Map<string, PendingConsent>();
+  private consentPreparing = new Set<string>();
   constructor(private db: Db, private master: () => MasterKey, private origin: string) {}
   private async account(tx: Db, actor: string, session: string) {
     if (!uuid(actor) || !uuid(session)) throw new ProtectedChangeError(403, 'Sign in as the administrator again.');
@@ -135,7 +143,8 @@ export class WorkspaceStorage {
         const s: OpenSession = { id: sessionId, actor, session, identity: {
           serverOrigin: c.serverOrigin, serverId: c.serverId, userId: c.userId, deviceId: c.deviceId,
         }, reference: c.keyReference, workspaceId: c.workspaceId, expires: wall + 2 * 60 * 60_000,
-          deadline: mono + 2 * 60 * 60_000, leaseUntil: wall + 10_000, leaseDeadline: mono + 10_000, previousWall: wall };
+          deadline: mono + 2 * 60 * 60_000, leaseUntil: wall + 10_000, leaseDeadline: mono + 10_000, previousWall: wall,
+          label: c.label, consent: null, consentGeneration: 0 };
         this.opened.set(sessionId, s);
         try {
           await openAutomationPresence(this.db, { identity: { userId: actor, serverId: c.serverId,
@@ -162,6 +171,131 @@ export class WorkspaceStorage {
   }
   private pruneOpened() {
     for (const s of this.opened.values()) { try { this.openedLive(s); } catch { /* No credential retained. */ } }
+  }
+  private session(actor: string, session: string, id: string) {
+    const s = this.opened.get(id);
+    if (!uuid(id) || !s || s.actor !== actor || s.session !== session) {
+      throw new ProtectedChangeError(409, 'The desktop connection is unavailable.');
+    }
+    this.openedLive(s); return s;
+  }
+  private consentIdentity(s: OpenSession) {
+    return { userId: s.actor, serverId: s.identity.serverId, deviceId: s.identity.deviceId, workspaceId: s.workspaceId };
+  }
+  private forgetConsent(id: string) {
+    const p = this.consents.get(id);
+    if (p) clearTimeout(p.timer);
+    this.consents.delete(id);
+  }
+  private liveConsent(p: PendingConsent) {
+    this.openedLive(p.owner);
+    const now = Date.now();
+    if (this.consents.get(p.challenge.id) !== p || p.generation !== p.owner.consentGeneration
+      || now < p.previousWall || now >= p.challenge.expiresAtMs || performance.now() >= p.deadline) {
+      this.forgetConsent(p.challenge.id);
+      throw new ProtectedChangeError(409, 'Local automation approval expired. Review it again on the enrolled Mac.');
+    }
+    p.previousWall = now;
+  }
+  private consentStore(s: OpenSession, pending?: PendingConsent) {
+    const records = this.records(s.actor, s.session), devices = this.devices(records);
+    return records.automationConsent({
+      requireConnection: async (tx, c) => {
+        this.openedLive(s);
+        if (c.storageSessionId !== s.id || c.workspaceId !== s.workspaceId || c.label !== s.label
+          || c.consentUntilMs !== s.expires || ['userId', 'serverId', 'serverOrigin', 'deviceId']
+            .some(k => c[k as keyof typeof s.identity] !== s.identity[k as keyof typeof s.identity])) {
+          throw new ProtectedChangeError(409, 'The reviewed desktop connection changed.');
+        }
+        const current = await devices.resolveDeviceKey(tx, s.identity), a = current.reference, b = c.keyReference;
+        if ([s.reference, b].some(r => r.recordId !== a.recordId || r.version !== a.version || r.digest !== a.digest || r.epoch !== a.epoch)
+          || hash(Buffer.from(current.wrappingPublicKey, 'base64')) !== c.wrappingFingerprint) {
+          throw new ProtectedChangeError(409, 'Vault authority changed. Reopen this desktop.');
+        }
+        this.openedLive(s);
+      },
+      verifyLocalHuman: async (tx, c, proof) => {
+        if (!pending) throw new ProtectedChangeError(403, 'Use a fresh local automation approval.');
+        this.liveConsent(pending);
+        const message = automationConsentMessage(c);
+        if (message !== automationConsentMessage(pending.challenge) || !exact(proof, ['challengeDigest', 'signature'])
+          || proof.challengeDigest !== hash(message) || typeof proof.signature !== 'string'
+          || !/^[A-Za-z0-9_-]{11,96}$/.test(proof.signature)) throw new ProtectedChangeError(403, 'The local automation proof did not match.');
+        const current = await devices.resolveDeviceKey(tx, s.identity);
+        const raw = Buffer.from(current.wrappingPublicKey, 'base64'), signature = Buffer.from(proof.signature, 'base64url');
+        if (raw.length !== 65 || raw[0] !== 4 || hash(raw) !== c.wrappingFingerprint
+          || signature.length < 8 || signature.length > 72 || signature.toString('base64url') !== proof.signature) {
+          throw new ProtectedChangeError(403, 'The enrolled hardware key did not match.');
+        }
+        const key = createPublicKey({ format: 'jwk', key: { kty: 'EC', crv: 'P-256',
+          x: raw.subarray(1, 33).toString('base64url'), y: raw.subarray(33).toString('base64url') } });
+        if (!verify('sha256', Buffer.from(message), key, signature)) throw new ProtectedChangeError(403, 'Authenticate on the enrolled Mac.');
+        this.liveConsent(pending);
+      },
+    });
+  }
+  async prepareConsent(actor: string, session: string, id: string, input: unknown) {
+    const s = this.session(actor, session, id);
+    if (!exact(input, ['guestBootId', 'guestChannelId']) || !uuid(input.guestBootId) || !uuid(input.guestChannelId)) {
+      throw new ProtectedChangeError(400, 'Connect and compare codes with this desktop’s companion first.');
+    }
+    for (const p of this.consents.values()) { try { this.liveConsent(p); } catch { /* Pruned. */ } }
+    if (s.consent || this.consentPreparing.has(id) || [...this.consents.values()].some(p => p.owner === s)) {
+      throw new ProtectedChangeError(409, 'Finish or stop this desktop’s current automation approval first.');
+    }
+    if (this.consents.size + this.consentPreparing.size >= 32) throw new ProtectedChangeError(429, 'Local approval is busy.');
+    this.consentPreparing.add(id);
+    const generation = s.consentGeneration;
+    try {
+      const policies = await this.consentStore(s).policies(actor, this.consentIdentity(s), id);
+      const inventory = await this.devices(this.records(actor, session)).inventory(actor);
+      const device = inventory.devices.find(d => d.identity.deviceId === s.identity.deviceId && !d.revokedAt);
+      this.openedLive(s);
+      if (!device || !inventory.reference || inventory.reconciliationRequired || generation !== s.consentGeneration) {
+        throw new ProtectedChangeError(409, 'The local automation request changed.');
+      }
+      const now = Date.now();
+      const challenge = parseAutomationConsentChallenge({ schemaVersion: 1, id: randomUUID(), nonce: randomBytes(32).toString('base64url'),
+        ...s.identity, keyReference: inventory.reference, wrappingFingerprint: device.wrappingFingerprint,
+        issuedAtMs: now, expiresAtMs: now + 60_000, workspaceId: s.workspaceId, label: s.label, storageSessionId: s.id,
+        guestBootId: input.guestBootId, guestChannelId: input.guestChannelId, consentUntilMs: s.expires, ...policies });
+      if (!challenge || challenge.keyReference.epoch !== s.reference.epoch) {
+        throw new ProtectedChangeError(409, 'This desktop’s authority changed or its session is ending. Close and reopen it.');
+      }
+      const timer = setTimeout(() => this.forgetConsent(challenge.id), 60_000); timer.unref();
+      this.consents.set(challenge.id, { owner: s, challenge, generation, previousWall: now,
+        deadline: performance.now() + 60_000, busy: false, timer });
+      return { challenge };
+    } finally { this.consentPreparing.delete(id); }
+  }
+  async authorizeConsent(actor: string, session: string, id: string, input: unknown) {
+    const s = this.session(actor, session, id);
+    if (!exact(input, ['challengeId', 'proof']) || !uuid(input.challengeId)) throw new ProtectedChangeError(400, 'Review the local approval again.');
+    const p = this.consents.get(input.challengeId);
+    if (!p || p.owner !== s || p.busy) throw new ProtectedChangeError(409, 'This local approval is unavailable.');
+    this.liveConsent(p); p.busy = true;
+    try {
+      const result = await this.consentStore(s, p).grant(actor, p.challenge, input.proof);
+      this.liveConsent(p);
+      s.consent = result.reference;
+      return { schemaVersion: 1, sessionId: s.id, challengeId: p.challenge.id, identity: this.consentIdentity(s),
+        guestBootId: p.challenge.guestBootId, guestChannelId: p.challenge.guestChannelId, ...result,
+        leaseUntilMs: s.leaseUntil, executionEnabled: false };
+    } finally { this.forgetConsent(p.challenge.id); }
+  }
+  async stopConsent(actor: string, session: string, id: string) {
+    const s = this.session(actor, session, id);
+    // Volatile revocation precedes DB work, so lock/failure cannot keep input enabled.
+    s.consent = null; s.consentGeneration += 1;
+    for (const p of this.consents.values()) if (p.owner === s) this.forgetConsent(p.challenge.id);
+    await this.consentStore(s).stop(actor, this.consentIdentity(s), id);
+    return { stopped: true };
+  }
+  cancelConsent(actor: string, session: string, id: string, challengeId: unknown) {
+    const s = this.session(actor, session, id), p = typeof challengeId === 'string' ? this.consents.get(challengeId) : undefined;
+    if (p && p.owner !== s) throw new ProtectedChangeError(403, 'This review belongs to another desktop.');
+    if (p) this.forgetConsent(p.challenge.id);
+    return { cancelled: true };
   }
   /** One canonical app pin for this hardware-authenticated open workspace.
    * Does not renew the lease, authorize observation or grant native input. */
@@ -212,13 +346,26 @@ export class WorkspaceStorage {
       s.leaseUntil = Math.min(wall + 10_000, s.expires); s.leaseDeadline = Math.min(mono + 10_000, s.deadline);
       await renewAutomationPresence(this.db, { ownerUserId: actor, authSessionId: session,
         storageSessionId: id, leaseUntilMs: s.leaseUntil, report });
+      let consent = null;
+      if (s.consent) {
+        if (report.machineState !== 'running' || !report.companionConnected) await this.stopConsent(actor, session, id);
+        else {
+          const reference = s.consent, generation = s.consentGeneration;
+          const resolved = await this.consentStore(s).resolve(actor, this.consentIdentity(s), id, reference);
+          if (s.consent === reference && generation === s.consentGeneration) consent = resolved;
+        }
+      }
       this.openedLive(s);
-      return { sessionId: id, workspaceId: s.workspaceId, leaseUntilMs: s.leaseUntil, expiresAtMs: s.expires, executionEnabled: false };
+      return { sessionId: id, workspaceId: s.workspaceId, leaseUntilMs: s.leaseUntil, expiresAtMs: s.expires, consent, executionEnabled: false };
     } catch (error) { this.opened.delete(id); throw error; }
   }
   async close(actor: string, session: string, id: string) {
     const s = this.opened.get(id);
     if (s && (s.actor !== actor || s.session !== session)) throw new ProtectedChangeError(403, 'This desktop connection belongs to another sign-in.');
+    if (s) {
+      s.consent = null; s.consentGeneration += 1;
+      for (const p of this.consents.values()) if (p.owner === s) this.forgetConsent(p.challenge.id);
+    }
     this.opened.delete(id);
     await closeAutomationPresence(this.db, actor, session, id);
     return { closed: true };

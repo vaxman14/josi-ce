@@ -57,7 +57,7 @@ function currentEnforcement(document: CardinalPolicyDocument): boolean {
       && entry.tested.report.suiteVersion === CARDINAL_TEST_VERSION && entry.tested.report.contentDigest === cardinalContentDigest(entry.definition));
 }
 
-function decode(record: VaultRecordValue, reconciliationRequired: boolean): CardinalPolicyView {
+export function readCardinalPolicyRecord(record: VaultRecordValue, reconciliationRequired: boolean): CardinalPolicyView {
   let doc: CardinalPolicyDocument;
   try { doc = JSON.parse(record.value.reveal()) as CardinalPolicyDocument; } catch { throw new VaultRecordError('The Cardinal Rule policy is unreadable.'); }
   if (record.kind !== 'cardinal_policy' || record.reference.recordId !== CARDINAL_POLICY_RECORD_ID
@@ -83,7 +83,7 @@ function requirePolicyReference(current: CardinalPolicyView | null, expected: Va
 /** Internal evaluation of an authenticated current snapshot. Emits references,
  * never protected wording/model advice. It still grants no execution authority. */
 export function evaluateCardinalPolicyRecord(record: VaultRecordValue, facts: CardinalActionFacts): CardinalPolicyDecision {
-  const { document, enforcementCurrent } = decode(record, false);
+  const { document, enforcementCurrent } = readCardinalPolicyRecord(record, false);
   if (!enforcementCurrent) {
     return { verdict: 'pause', code: 'requires_revalidation', policy: record.reference, rules: [] };
   }
@@ -101,7 +101,7 @@ export function cardinalRetirementBinding(args: { ruleId: string; policy: VaultR
 
 async function activationContents(tx: CardinalPolicyTransaction, snapshot: CardinalActivationRequest) {
   if (tx.reconciliationRequired) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
-  const root = await tx.readPolicy(), current = root ? decode(root, tx.reconciliationRequired) : null;
+  const root = await tx.readPolicy(), current = root ? readCardinalPolicyRecord(root, tx.reconciliationRequired) : null;
   requirePolicyReference(current, snapshot.policy);
   if (current && !current.enforcementCurrent) {
     throw new VaultRecordError('Active rules require enforcement revalidation.');
@@ -163,7 +163,7 @@ function retirementPresentation(entry: CardinalActiveRule): ProtectedControlPres
 }
 async function retirementContents(tx: CardinalPolicyTransaction, snapshot: CardinalRetirementRequest) {
   if (tx.reconciliationRequired) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
-  const root = await tx.readPolicy(), current = root ? decode(root, false) : null;
+  const root = await tx.readPolicy(), current = root ? readCardinalPolicyRecord(root, false) : null;
   requirePolicyReference(current, snapshot.policy);
   const entry = current?.document.rules.find(r => r.ruleId === snapshot.ruleId);
   if (!current || !entry) throw new VaultRecordError('The active Cardinal Rule was not found.');
@@ -186,7 +186,7 @@ export class CardinalPolicyStore {
   }
 
   async read(actorUserId: string): Promise<CardinalPolicyView | null> {
-    return this.backend(actorUserId, false, async tx => { const value = await tx.readPolicy(); return value ? decode(value, tx.reconciliationRequired) : null; });
+    return this.backend(actorUserId, false, async tx => { const value = await tx.readPolicy(); return value ? readCardinalPolicyRecord(value, tx.reconciliationRequired) : null; });
   }
 
   /** Read-only command preparation from exact current Vault records. The same

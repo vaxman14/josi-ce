@@ -5,9 +5,9 @@ import type { Db } from './db.js';
 import { appendEvent } from './events.js';
 import type { MasterKey } from './masterKey.js';
 import { openSealed, seal, Secret } from './sealing.js';
-import { CardinalPolicyStore, CARDINAL_POLICY_RECORD_ID, evaluateCardinalPolicyRecord, type CardinalPolicyAuthority, type CardinalPolicyDecision } from './cardinalPolicy.js';
+import { CardinalPolicyStore, CARDINAL_POLICY_RECORD_ID, evaluateCardinalPolicyRecord, readCardinalPolicyRecord, type CardinalPolicyAuthority, type CardinalPolicyDecision } from './cardinalPolicy.js';
 import type { CardinalActionFacts } from './cardinalRules.js';
-import { AutomationPolicyStore, AUTOMATION_POLICY_RECORD_ID, evaluateAutomationPolicyRecord, type AutomationPolicyAuthority, type AutomationPolicyDecision } from './automationPolicy.js';
+import { AutomationPolicyStore, AUTOMATION_POLICY_RECORD_ID, evaluateAutomationPolicyRecord, readAutomationPolicyRecord, type AutomationPolicyAuthority, type AutomationPolicyDecision } from './automationPolicy.js';
 import type { AutomationPermissionFacts } from './automationPermissions.js';
 import { AutomationReservationStore, type AutomationReservationProofPort } from './automationReservations.js';
 import { ProtectedConfirmationStore, type ProtectedConfirmationAuthority } from './protectedConfirmations.js';
@@ -16,8 +16,9 @@ import { WorkspaceStorageStore, WORKSPACE_STORAGE_RECORD_ID, type WorkspaceStora
 
 import { AutomationTargetStore, AUTOMATION_TARGETS_RECORD_ID, readAutomationTargetDocument, sameAutomationIdentity, type AutomationTargetAuthority } from './automationTargets.js';
 import { describeAutomationModel, requireCurrentAutomationModel } from './automationModelTargets.js';
+import { AutomationConsentStore, type AutomationConsentAuthority } from './automationConsent.js';
 
-export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices' | 'workspace_storage' | 'automation_targets';
+export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices' | 'workspace_storage' | 'automation_targets' | 'automation_consent';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
 export interface VaultRecordValue { reference: VaultRecordReference; kind: VaultRecordKind; value: Secret }
 export interface VaultAutomationPreview {
@@ -109,7 +110,12 @@ export class VaultRecordStore {
       if (value.isEmpty || Buffer.byteLength(value.reveal(), 'utf8') > 256 * 1024) throw new VaultRecordError('Protected Vault record is too large.');
       const id = previous?.id ?? newId ?? randomUUID();
       const version = (previous?.version ?? 0) + 1;
-      const [next] = await tx.query<State>(`update vault_state set authority_epoch=authority_epoch+1,updated_at=now()
+      // Temporary local participation has its own exact version fence. It
+      // cannot edit rules and must not close every other open workspace.
+      // All permanent authority changes continue to advance the global epoch.
+      const [next] = await tx.query<State>(kind === 'automation_consent'
+        ? 'select authority_epoch,authority_reconciliation_required from vault_state where id=true for update'
+        : `update vault_state set authority_epoch=authority_epoch+1,updated_at=now()
         where id=true returning authority_epoch,authority_reconciliation_required`);
       const envelope: Envelope = { purpose: 'josi-vault-record', schemaVersion: 1, recordId: id,
         kind, version, epoch: Number(next.authority_epoch), previousDigest: previous?.digest ?? null,
@@ -274,6 +280,40 @@ export class VaultRecordStore {
           if (!writing || written || state.authority_reconciliation_required) throw new VaultRecordError('Workspace storage authority is unavailable.');
           written = true;
           return this.persist(tx, key, actor, 'workspace_storage', value, previous, WORKSPACE_STORAGE_RECORD_ID);
+        },
+      });
+    }), authority);
+  }
+
+  automationConsent(authority: AutomationConsentAuthority): AutomationConsentStore {
+    return new AutomationConsentStore((actor, identity, sessionId, writing, work) => this.transaction(async tx => {
+      if (!uuid.test(sessionId) || identity.userId !== actor) throw new VaultRecordError('Local consent identity changed.');
+      const state = await this.state(tx, actor, writing), key = await this.key(tx);
+      await this.requireOwnerAutomationVault(tx, actor);
+      if (state.authority_reconciliation_required) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
+      const [previous] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [sessionId]);
+      if (previous && previous.kind !== 'automation_consent') throw new VaultRecordError('Local consent record context changed.');
+      let written = false;
+      return work({ tx, epoch: Number(state.authority_epoch),
+        read: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
+        policies: async () => {
+          const [permissionHead] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_POLICY_RECORD_ID]);
+          const [cardinalHead] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [CARDINAL_POLICY_RECORD_ID]);
+          const [storageHead] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [WORKSPACE_STORAGE_RECORD_ID]);
+          if (!permissionHead || !cardinalHead || !storageHead) throw new VaultRecordError('Configure the workspace permissions and Cardinal Rules before enabling automation.');
+          const permissions = readAutomationPolicyRecord(await this.open(tx, key, permissionHead, state), false);
+          const cardinal = readCardinalPolicyRecord(await this.open(tx, key, cardinalHead, state), false);
+          if (!permissions.enforcementCurrent || !cardinal.enforcementCurrent
+            || !permissions.document.policies.some(p => sameAutomationIdentity(p.identity, identity))
+            || !workspaceStorageContains(await this.open(tx, key, storageHead, state), identity)) {
+            throw new VaultRecordError('The workspace or its automation policies need review.');
+          }
+          return { permissions: permissions.reference, cardinal: cardinal.reference };
+        },
+        write: async value => {
+          if (!writing || written) throw new VaultRecordError('Only one local consent change is permitted.');
+          written = true;
+          return this.persist(tx, key, actor, 'automation_consent', value, previous, sessionId);
         },
       });
     }), authority);
@@ -444,6 +484,7 @@ export class VaultRecordStore {
       if (head.kind === 'protected_devices') throw new VaultRecordError('Protected-device material requires the authenticated host projection path.');
       if (head.kind === 'automation_targets') throw new VaultRecordError('Application targets require the owner-scoped inventory.');
       if (head.kind === 'workspace_storage') throw new VaultRecordError('Workspace credentials require the authenticated native storage path.');
+      if (head.kind === 'automation_consent') throw new VaultRecordError('Local consent requires the current native workspace session.');
       if (args.expected && (state.authority_reconciliation_required || !this.matches(args.expected, head, state))) {
         throw new VaultRecordConflictError('Protected Vault record changed or requires reconciliation');
       }

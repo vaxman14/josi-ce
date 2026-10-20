@@ -215,6 +215,16 @@ struct NativeWorkspaceStorageView: View {
                     Text("\(desktop.label) · \(desktop.state.replacingOccurrences(of: "_", with: " "))").font(.headline)
                     Text(desktop.progress)
                     if let guest = desktop.guest { NativeGuestConnectionView(connection: guest) }
+                    if desktop.localConsent != .null {
+                        Text("Desktop approval is active. Automated input is awaiting the command connection.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if desktop.guest?.paired == true {
+                        Button("Approve This Desktop for Automation…") { model.run { try await desktop.approveAutomation() } }
+                            .disabled(model.busy || desktop.state != "running")
+                    }
+                    Button("Stop Automation", role: .destructive) {
+                        Task { do { try await desktop.stopAutomation() } catch { model.error = error.localizedDescription } }
+                    }
                     HStack {
                         Button("Show Desktop") { model.run { try desktop.show() } }
                             .disabled(model.busy || !["running", "paused"].contains(desktop.state))
