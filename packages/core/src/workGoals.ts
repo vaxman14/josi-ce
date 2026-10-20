@@ -3,6 +3,7 @@ import type { Continuation, GoalProgress } from '@josi-ce/protocol';
 import { json, type Db } from './db.js';
 import { addMessage } from './conversations.js';
 import { refuseMemorySecret } from './memorySafety.js';
+import { queueWorkContinuation, WORK_SEGMENT_LIMIT } from './workContinuation.js';
 
 export class WorkGoalError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -25,6 +26,8 @@ interface GoalRow {
   revision: number; state: GoalProgress['state']; outcome: string; criteria: string[];
   steps: WorkGoalStep[]; continuation: Continuation | null; activity: string;
   checkpoint: WorkCheckpoint; checkpoint_pinned: boolean; created_at: string; updated_at: string;
+  control_generation: number; continuation_ready_at: string | null;
+  continuation_segments: number; continuation_verified: number;
 }
 export interface WorkGoalSnapshot extends GoalProgress {
   threadId: string;
@@ -34,6 +37,7 @@ export interface WorkGoalSnapshot extends GoalProgress {
   checkpointPinned: boolean;
   createdAt: string;
   updatedAt: string;
+  automaticWork?: { segmentsSinceVerifiedProgress: number; segmentLimit: number; nextCheckAt: string | null };
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function id(value: unknown): string {
@@ -54,7 +58,9 @@ function snapshot(row: GoalRow): WorkGoalSnapshot {
     state: row.state, title: row.outcome, activity: row.activity, criteria: row.criteria, steps: row.steps,
     verifiedSteps: row.steps.filter(step => step.state === 'verified').length, totalSteps: row.steps.length,
     continuation: row.continuation, checkpoint: row.checkpoint, checkpointPinned: row.checkpoint_pinned,
-    createdAt: row.created_at, updatedAt: row.updated_at };
+    createdAt: row.created_at, updatedAt: row.updated_at,
+    automaticWork: { segmentsSinceVerifiedProgress: row.continuation_segments, segmentLimit: WORK_SEGMENT_LIMIT,
+      nextCheckAt: row.continuation_ready_at } };
 }
 async function owned(db: Db, owner: string, goalId: string, lock = false): Promise<GoalRow> {
   const [row] = await db.query<GoalRow>(`select * from work_goals where id=$1 and owner_user_id=$2${lock ? ' for update' : ''}`, [id(goalId), owner]);
@@ -149,6 +155,12 @@ export async function editWorkMemory(db: Db, args: { ownerUserId: string; goalId
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new WorkGoalError('Enter the corrected work notes.');
       row.checkpoint = { decisions: strings(value.decisions), facts: strings(value.facts), assumptions: strings(value.assumptions), nextAction: text(value.nextAction) };
     } else throw new WorkGoalError('Choose a memory action.');
+    if (args.action === 'correct' || args.action === 'forget') {
+      await tx.query(`update work_goals set control_generation=control_generation+1,
+        continuation_ready_at=case when state in ('planning','working','waiting') then now()+interval '30 seconds' else null end where id=$1`, [row.id]);
+      await tx.query(`update assistant_turns set status='failed',error_code='work_control_changed',error_retryable=false,completed_at=now()
+        where work_goal_id=$1 and status='queued'`, [row.id]);
+    }
     return save(tx, row, `memory.${args.action}`);
   });
 }
@@ -239,20 +251,28 @@ export async function controlWorkGoal(db: Db, args: { ownerUserId: string; goalI
       row.continuation = step ? { kind: 'action', stepId: step.id } : { kind: 'question', questionId: randomUUID(), text: 'Confirm the completed outcome.' };
       row.activity = 'Your instructions were saved';
     } else throw new WorkGoalError('Unsupported work control.');
+    // Fence the old automatic segment before recording owner steering. A
+    // queued segment can be cancelled; already dispatched effects keep receipts.
+    await tx.query(`update work_goals set control_generation=control_generation+1,
+      continuation_ready_at=case when $2='resume' then now() else null end,
+      continuation_segments=case when $2='resume' then 0 else continuation_segments end where id=$1`, [row.id, args.action]);
+    await tx.query(`update assistant_turns set status='failed',error_code='work_control_changed',error_retryable=false,completed_at=now()
+      where work_goal_id=$1 and status='queued'`, [row.id]);
     return save(tx, row, `goal.${args.action}`);
   });
 }
 
-/** Continue observing existing executor work after a reply ends. This worker
- * performs no new consequential action and never retries a failed effect. */
-export async function reconcileWorkGoals(db: Db): Promise<number> {
+/** Reconcile receipts, then schedule a bounded model continuation. Scheduling
+ * grants no effect permission and never retries an uncertain dispatch. */
+export async function reconcileWorkGoals(db: Db, options: { continueReady?: boolean } = {}): Promise<number> {
   return transaction(db, async tx => {
-    const rows = await tx.query<GoalRow & { stale: boolean; wake_due: boolean }>(`select g.*,
+    const rows = await tx.query<GoalRow & { stale: boolean; wake_due: boolean; continuation_due: boolean }>(`select g.*,
       g.updated_at < now()-interval '5 minutes' as stale,
+      g.continuation_ready_at <= now() as continuation_due,
       case when g.continuation->>'kind'='wait' then (g.continuation->>'wakeAt')::timestamptz <= now() else false end as wake_due
       from work_goals g where g.state in ('planning','working','waiting')
       and not exists(select 1 from assistant_turns t where t.thread_id=g.thread_id
-        and t.status='running' and t.lease_expires_at>=now())
+        and t.status in ('queued','running'))
       order by g.reconciled_at,g.id for update of g skip locked limit 100`);
     let changed = 0;
     for (const row of rows) {
@@ -276,12 +296,44 @@ export async function reconcileWorkGoals(db: Db): Promise<number> {
         failed.state = 'blocked'; row.state = 'needs_instruction'; row.activity = 'A step needs your instructions';
         row.continuation = { kind: 'question', questionId: randomUUID(), text: `“${failed.title}” did not finish. Should Josi check the destination and try another approach, change the task, or stop?` };
         updated = true;
-      } else if (!active && (row.wake_due || (row.stale && row.continuation?.kind !== 'wait'))) {
+      } else if (!active && options.continueReady && row.continuation_due
+        && (row.continuation?.kind === 'action' || row.wake_due)) {
+        const verified = row.steps.filter(step => step.state === 'verified').length;
+        if (verified > row.continuation_verified) {
+          row.continuation_segments = 0; row.continuation_verified = verified;
+          await tx.query(`update work_goals set continuation_segments=0,continuation_verified=$2 where id=$1`, [row.id, verified]);
+        }
+        const [uncertain] = await tx.query('select 1 from work_goal_effects where goal_id=$1 and state=$2 limit 1', [row.id, 'started']);
+        const [thread] = await tx.query(`select id from threads where id=$1 and owner_user_id=$2 and status='open'`, [row.thread_id, row.owner_user_id]);
+        const [capacity] = await tx.query<{ active_count: number }>('select active_count from assistant_turn_capacity where owner_user_id=$1', [row.owner_user_id]);
+        if (!uncertain && thread && row.continuation_segments < WORK_SEGMENT_LIMIT && (capacity?.active_count ?? 0) < 50) {
+          const selected = row.continuation?.kind === 'action' ? row.continuation.stepId : null;
+          row.state = 'working'; row.continuation = { kind: 'action',
+            stepId: row.steps.find(step => step.id === selected && step.state !== 'verified')?.id
+              ?? row.steps.find(step => step.state !== 'verified')!.id };
+          row.activity = 'Continuing the next step';
+          const saved = await save(tx, row, 'continuation.queued');
+          row.revision = saved.revision;
+          if (await queueWorkContinuation(tx, row)) { changed++; continue; }
+        }
+        row.state = 'needs_instruction'; row.activity = 'Work needs your instructions';
+        row.continuation = { kind: 'question', questionId: randomUUID(), text: uncertain
+          ? 'An earlier action has an uncertain result. Should Josi inspect its destination before choosing another approach?'
+          : !thread ? 'This conversation is closed. Reopen it before continuing this work.'
+          : row.continuation_segments >= WORK_SEGMENT_LIMIT ? `Josi used ${WORK_SEGMENT_LIMIT} work segments without a new verified step. What should change before it continues?`
+          : (capacity?.active_count ?? 0) >= 50 ? 'The work queue is full. Finish or cancel queued work, then resume this goal.'
+          : 'Sign in again, then resume this goal so Josi can continue.' };
+        updated = true;
+      } else if (!active && (row.wake_due || (row.stale && row.continuation?.kind !== 'wait'))
+        && (!options.continueReady || !row.continuation_ready_at)) {
         row.state = 'needs_instruction'; row.activity = row.wake_due ? 'The requested check is due' : 'Work needs a continuation instruction';
         row.continuation = { kind: 'question', questionId: randomUUID(), text: row.checkpoint.nextAction
           ? `Continue with this next action: ${row.checkpoint.nextAction}` : `How should Josi continue “${row.steps.find(step => step.state !== 'verified')!.title}”?` };
         updated = true;
-      } else if (updated) row.activity = 'A task result was verified';
+      } else if (updated) {
+        row.activity = 'A task result was verified';
+        if (options.continueReady) await tx.query(`update work_goals set continuation_ready_at=now() where id=$1`, [row.id]);
+      }
       if (updated) {
         const saved = await save(tx, row, row.state === 'needs_instruction' ? 'instruction.requested' : 'step.verified');
         if (row.continuation?.kind === 'question') await addMessage(tx, { threadId: row.thread_id, direction: 'out',

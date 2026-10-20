@@ -71,8 +71,11 @@ export async function listThreadsFor(
  * half-applied. */
 export async function listMessages(
   db: Db,
-  args: { threadId: string; limit?: number },
+  args: { threadId: string; limit?: number; recent?: boolean },
 ): Promise<Message[]> {
+  if (args.recent) return db.query<Message>(
+    `select * from (select * from messages where thread_id=$1 order by created_at desc,id desc limit $2) recent
+      order by created_at,id`, [args.threadId, Math.min(500, args.limit ?? 200)]);
   return db.query<Message>(
     `select * from messages where thread_id = $1 order by created_at limit $2`,
     [args.threadId, Math.min(500, args.limit ?? 200)],

@@ -325,7 +325,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       const threadId = param(req, 'id');
       return res.json({
         thread: await getThread(db, threadId),
-        messages: (await listMessages(db, { threadId })).map(presentMessage),
+        messages: (await listMessages(db, { threadId, recent: req.query.recent === '1' })).map(presentMessage),
       });
     }),
   );

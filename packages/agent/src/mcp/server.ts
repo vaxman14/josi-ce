@@ -25,7 +25,7 @@
 // database, so a context with no user can still prove the plumbing.
 import { appendFileSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { checkStepUp, connectFromEnv, loadMasterKey } from '@josi-ce/core';
+import { checkStepUp, connectFromEnv, loadMasterKey, runWorkIntent } from '@josi-ce/core';
 import type { Db, MasterKey } from '@josi-ce/core';
 import type { HarnessContext } from '@josi-ce/llm';
 import { executeAssistantTool } from '../execute.js';
@@ -113,6 +113,7 @@ export function buildCore(ctx: McpHarnessContext, connect: () => Promise<Db>): M
       // for the work, and inventing one is the thing this file must never do.
       return completed({ ok: false, error: 'no_user', message: 'This session has no signed-in person attached, so no work can be created or changed.' });
     }
+    if (!offered.has(name)) return completed({ ok: false, error: 'tool_unavailable', message: 'This tool was not offered for this work.' });
 
     try {
       db ??= connect();
@@ -132,15 +133,20 @@ export function buildCore(ctx: McpHarnessContext, connect: () => Promise<Db>): M
         conn,
         {
           userId: ctx.userId!, threadId: ctx.threadId, connectors: connectors(),
+          turnId: ctx.inboundMessageId,
           latestUserText: ctx.latestUserText ?? undefined,
           effectiveNow: ctx.effectiveNow ? new Date(ctx.effectiveNow) : undefined,
         },
         name,
         input,
       );
-      const result=isMutatingTool(name,input)
+      const fenced=async()=>isMutatingTool(name,input)
         ? await runDurableEffect(conn,{turnId:ctx.durableTurnId,leaseToken:ctx.durableLeaseToken},name,input,execute)
         : await execute();
+      const result = ctx.threadId ? await runWorkIntent(conn, { ownerUserId: ctx.userId, threadId: ctx.threadId,
+        sourceMessageId: ctx.inboundMessageId ?? undefined, durableTurnId: ctx.durableTurnId ?? undefined,
+        durableLeaseToken: ctx.durableLeaseToken ?? undefined,
+        mutating: !!ALL_TOOLS.find(tool => tool.def.name === name)?.actionClass || isMutatingTool(name, input) }, name, input, fenced) : await fenced();
       return completed(result);
     } catch (err) {
       // Record the real failure shape for guards, but keep stack traces and

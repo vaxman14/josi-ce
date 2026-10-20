@@ -67,6 +67,9 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
   const transcript = useRef<HTMLElement>(null);
   const inputElement = useRef<HTMLTextAreaElement>(null);
   const sendLock = useRef(false);
+  const sendGeneration = useRef(0);
+  const followLatest = useRef(true);
+  const [backgroundOffline, setBackgroundOffline] = useState(false);
 
   // The most recent thread, or a new one. A member always has somewhere to talk.
   useEffect(() => {
@@ -76,7 +79,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       try {
         if (requestedThread) {
           if (!/^[a-f0-9-]{36}$/i.test(requestedThread)) throw new Error('Choose an existing conversation.');
-          const detail = await api.get<{ thread: Thread; messages: Message[] }>(`/assistant/threads/${requestedThread}`);
+          const detail = await api.get<{ thread: Thread; messages: Message[] }>(`/assistant/threads/${requestedThread}?recent=1`);
           if (!alive) return;
           setThread(detail.thread); setMessages(detail.messages);
           talkCache.set(user.id, { thread: detail.thread, messages: detail.messages });
@@ -86,7 +89,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
         if (!alive) return;
         const existing = threads[0];
         if (existing) {
-          const detail = await api.get<{ messages: Message[] }>(`/assistant/threads/${existing.id}`);
+          const detail = await api.get<{ messages: Message[] }>(`/assistant/threads/${existing.id}?recent=1`);
           if (!alive) return;
           setThread(existing);
           setMessages(detail.messages);
@@ -110,13 +113,39 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
     if (user && thread) talkCache.set(user.id, { thread, messages });
   }, [messages, thread, user]);
 
+  // Background work writes real messages in the original conversation. Use
+  // canonical IDs after foreground sends settle; never merge an optimistic
+  // bubble into a second copy of the same server message.
+  useEffect(() => {
+    if (!thread || !user || loading) return;
+    let alive = true, pending = false;
+    async function refreshConversation() {
+      if (!alive || pending || sendLock.current || document.hidden) return;
+      pending = true;
+      const generation = sendGeneration.current;
+      try {
+        const result = await api.get<{ messages: Message[] }>(`/assistant/threads/${thread!.id}?recent=1`);
+        if (!alive || sendLock.current || sendGeneration.current !== generation) return;
+        setBackgroundOffline(false);
+        setMessages(current => JSON.stringify(current) === JSON.stringify(result.messages) ? current : result.messages);
+      } catch {
+        if (alive) setBackgroundOffline(true);
+      } finally { pending = false; }
+    }
+    void refreshConversation();
+    const timer = window.setInterval(() => void refreshConversation(), 5000);
+    const visible = () => { if (!document.hidden) void refreshConversation(); };
+    document.addEventListener('visibilitychange', visible);
+    return () => { alive = false; window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
+  }, [thread?.id, user?.id, loading]);
+
   // Never animate through the full transcript when a message is sent. On a
   // long thread, that looked exactly like the conversation was being fetched
   // and replayed from the top (especially while Chrome-on-iOS also resized its
   // toolbar). Put the newest message in place immediately; the bubble itself is
   // the motion/feedback the user needs.
   useEffect(() => {
-    transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: 'instant' as ScrollBehavior });
+    if (followLatest.current) transcript.current?.scrollTo({ top: transcript.current.scrollHeight, behavior: 'instant' as ScrollBehavior });
   }, [messages]);
 
   // When the keyboard opens/closes the page height changes and the scrolling
@@ -129,7 +158,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
     const vv = window.visualViewport;
     if (!vv) return;
     const repin = () => {
-      if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
+      if (transcript.current && followLatest.current) transcript.current.scrollTop = transcript.current.scrollHeight;
     };
     vv.addEventListener('resize', repin);
     return () => vv.removeEventListener('resize', repin);
@@ -143,6 +172,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
     const attachments = spoken === undefined ? files : [];
     if (!thread || (!body && !attachments.length) || sendLock.current) return;
     sendLock.current = true;
+    sendGeneration.current++; followLatest.current = true;
 
     const optimistic: Message = {
       id: `pending-${Math.random().toString(36).slice(2)}`,
@@ -211,7 +241,11 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_20%,hsl(var(--secondary)/0.18),transparent_52%)] lg:rounded-2xl lg:border lg:border-border lg:bg-card"
       style={{ height: '100%' }}
     >
-      <section ref={transcript} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6" aria-live="polite">
+      <section ref={transcript} onScroll={event => {
+        const view = event.currentTarget; followLatest.current = view.scrollHeight - view.clientHeight - view.scrollTop < 100;
+      }} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6" aria-live="polite">
+        {backgroundOffline ? <p className="text-xs text-muted-foreground" role="status">Chat updates are offline. Showing the last saved conversation.</p> : null}
+        {messages.length >= 200 ? <p className="text-xs text-muted-foreground">Showing the most recent 200 messages.</p> : null}
         {loading ? <p className="text-sm text-muted-foreground">Opening…</p> : null}
         {!loading && messages.length === 0 ? (
           <div className="mx-auto mt-10 max-w-sm text-center">

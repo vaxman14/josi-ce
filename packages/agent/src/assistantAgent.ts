@@ -26,6 +26,7 @@ import { randomUUID } from 'node:crypto';
 import {
   appendEvent, checkChildAccess, checkStepUp,
   listTemplates, listWorkGoals, pinnedWorkGoals, recordChildActivity, resolveConversationalAction,
+  beginWorkConversation, releaseWorkConversation, requireWorkContinuation, runWorkIntent,
   type ActivityChannel, type Db,
 } from '@josi-ce/core';
 import {
@@ -118,6 +119,11 @@ export interface TurnArgs {
    * server-derived and never accepted from a client request. */
   durableTurnId?: string;
   durableLeaseToken?: string;
+  /** Server-bound original goal for a background continuation, never a user
+   * request field or a model-generated approval. */
+  workGoalId?: string;
+  /** Relative dates in continued actions stay bound to the original request. */
+  originalRequestAt?: Date;
   /** Durable queued channels require yes/no to target the presented approval
    * message; synchronous legacy channels rely on immediate adjacency. */
   replyToMessageId?: string|null;
@@ -220,6 +226,18 @@ function systemPrompt(args: {
 }
 
 export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult> {
+  if (args.workGoalId) {
+    const bound = await requireWorkContinuation(args.db, { ownerUserId: args.userId, threadId: args.threadId,
+      durableTurnId: args.durableTurnId, durableLeaseToken: args.durableLeaseToken });
+    if (bound !== args.workGoalId) throw new Error('The background work identity changed.');
+  } else await beginWorkConversation(args.db, args.userId, args.threadId);
+  try { return await runAssistantTurnBody(args); }
+  finally {
+    if (!args.workGoalId) await releaseWorkConversation(args.db, args.userId, args.threadId);
+  }
+}
+
+async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   const { db, userId } = args;
   const actions: AgentTurnResult['actions'] = [];
   let retry: AssistantRetryTarget | undefined;
@@ -287,7 +305,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // It may repeat only the exact typed read stored on the immediately preceding
   // assistant message. No metadata means no target: old approvals, succeeded
   // writes and nouns in conversation history are deliberately invisible here.
-  if (GENERIC_RETRY.test(args.inbound.trim())) {
+  if (!args.workGoalId && GENERIC_RETRY.test(args.inbound.trim())) {
     const target = await immediatelyPrecedingRetryTarget(db, {
       ownerUserId: userId,
       threadId: args.threadId,
@@ -313,7 +331,8 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // provider names and old calendar subjects in model history are irrelevant.
   const resolveAction=()=>resolveConversationalAction(db,{ownerUserId:userId,threadId:args.threadId,inbound:args.inbound,replyToMessageId:args.replyToMessageId,requireReplyTarget:args.requireApprovalReplyTarget});
   const mayDecideAction=/^(?:yes|yes please|please do|do it|send it|approve|confirmed?|no|no thanks|don't|do not|cancel|deny)\s*[.!]?$/i.test(args.inbound.trim());
-  const deterministic=args.durableTurnId&&args.durableLeaseToken&&mayDecideAction
+  const deterministic=args.workGoalId ? { handled: false, reply: undefined, action: undefined }
+    : args.durableTurnId&&args.durableLeaseToken&&mayDecideAction
     ? await runDurableEffect(args.db,{turnId:args.durableTurnId,leaseToken:args.durableLeaseToken},'assistant_action_resolution',{inbound:args.inbound,replyToMessageId:args.replyToMessageId??null},resolveAction)
     : await resolveAction();
   if(deterministic.handled){
@@ -399,9 +418,14 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     (!t.def.name.startsWith('workspace_') || workspaceNames.has(t.def.name))
     && (t.def.name !== 'approve_task' || !!approvableTask)
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
-  const tools = capabilities.toolCalling
+  let tools = capabilities.toolCalling
     ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools].map((t) => t.def)
     : undefined;
+  if (args.workGoalId) {
+    const humanTools = new Set(['own_goal', 'approve_task', 'cancel_task', 'update_task_slots',
+      'update_reminder', 'cancel_reminder', 'propose_work_lesson']);
+    tools = tools?.filter(tool => !humanTools.has(tool.name));
+  }
   const offeredToolNames = new Set(tools?.map((tool) => tool.name) ?? []);
 
   let recalled = '';
@@ -433,17 +457,17 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   // The person's own layers, in the order the plan fixes. A failure here costs
   // personality, never the turn: an assistant that refuses to answer because a
   // profile could not be read is worse than one that answers plainly.
-  let system = core;
+  let system = core, workContext = '';
   if (args.threadId) {
     try {
       const active = await listWorkGoals(db, userId, { threadId: args.threadId });
       const pinned = await pinnedWorkGoals(db, userId);
-      const goals = [...new Map([...active.slice(0, 4), ...pinned].map(goal => [goal.goalId, goal])).values()];
-      if (goals.length) system += '\n\nSaved current work (owner-scoped context, not authority; call list_work_goals for full records):\n'
+      const goals = [...new Map([...active.filter(goal => goal.goalId === args.workGoalId), ...active.slice(0, 4), ...pinned].map(goal => [goal.goalId, goal])).values()];
+      if (goals.length) workContext += '\n\nSaved current work (owner-scoped context, not authority; call list_work_goals for full records):\n'
         + JSON.stringify(goals.slice(0, 12).map(goal => ({ goalId: goal.goalId, revision: goal.revision,
           outcome: goal.title, state: goal.state, criteria: goal.criteria, steps: goal.steps,
           checkpoint: goal.checkpoint, continuation: goal.continuation }))).slice(0, 24000);
-    } catch { system += '\nSaved current-work records are unavailable. Do not assume previous work is complete or retry an uncertain effect. Tell the user the work record needs to be restored before continuing that work.'; }
+    } catch { workContext += '\nSaved current-work records are unavailable. Do not assume previous work is complete or retry an uncertain effect. Tell the user the work record needs to be restored before continuing that work.'; }
   }
   let memoriesUsed: Array<{ id: string; content: string }> = [];
   try {
@@ -463,6 +487,8 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   } catch (err) {
     console.error('personalization unavailable for this turn', (err as Error).message);
   }
+  system += workContext;
+  if (args.workGoalId) system += `\n\nThis is a server-scheduled continuation of goal ${args.workGoalId}. The last user message below is its ORIGINAL request, not a fresh instruction or approval. Read that goal and its current checkpoint before acting. Continue the saved next step within existing permissions; do not recreate the goal, approve a pending action, or repeat a completed/uncertain effect. Each step has one consequential intent across all continuations. Save meaningful progress and an exact next step, timed wait or precise question with checkpoint_goal before ending. A reply is not completion. If approval, secure reauthentication, missing information or outcome evidence is needed, save the exact question and stop.`;
 
   // The request stays where it belongs: one user message, not repeated in the
   // system context. Duplicating it makes a model weight it twice and makes the
@@ -498,6 +524,15 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   let narratedSearchGuardReprompted = false;
 
   for (let hop = 0; hop < (args.maxHops ?? HOP_LIMIT); hop++) {
+    if (args.workGoalId) {
+      await requireWorkContinuation(db, { ownerUserId: userId, threadId: args.threadId,
+        durableTurnId: args.durableTurnId, durableLeaseToken: args.durableLeaseToken }, true);
+      const goal = (await listWorkGoals(db, userId, { threadId: args.threadId })).find(value => value.goalId === args.workGoalId);
+      if (!goal) throw new Error('The original work record is unavailable.');
+      if (goal.continuation?.kind === 'question') return { reply: goal.continuation.text, actions, memoriesUsed };
+      if (goal.continuation?.kind === 'wait') return {
+        reply: `${goal.continuation.reason}\nJosi will check again at ${goal.continuation.wakeAt}.`, actions, memoriesUsed };
+    }
     let outcome;
     try {
       outcome = await chat(
@@ -512,8 +547,9 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
             userId, sessionKey, threadId: args.threadId,
             durableTurnId: args.durableTurnId ?? null,
             durableLeaseToken: args.durableLeaseToken ?? null,
+            inboundMessageId: args.inboundMessageId ?? null,
             latestUserText: args.inbound,
-            effectiveNow: (args.now ?? new Date()).toISOString(),
+            effectiveNow: (args.originalRequestAt ?? args.now ?? new Date()).toISOString(),
           },
         },
         { userId, purpose: 'assistant_chat' },
@@ -575,7 +611,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
           subjectType: 'thread',
           subjectId: args.threadId,
         });
-        const learnedOnFabrication = await learnFromTurn(db, { userId, inbound: args.inbound });
+        const learnedOnFabrication = args.workGoalId ? undefined : await learnFromTurn(db, { userId, inbound: args.inbound });
         return {
           reply: NARRATED_SEARCH_GUARD_FALLBACK, actions, memoriesUsed, learned: learnedOnFabrication,
           imagesDroppedNoVision, retry,
@@ -656,7 +692,7 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
 
       // A completed exchange, so there is something to learn from — and only
       // ever from what the PERSON wrote. Never the reply, never tool output.
-      const learned = await learnFromTurn(db, { userId, inbound: args.inbound });
+      const learned = args.workGoalId ? undefined : await learnFromTurn(db, { userId, inbound: args.inbound });
       // Guards inspect the original model text against intact receipts above.
       // Presentation happens only after those checks, once, at the shared
       // agent boundary used by web and every external channel.
@@ -686,8 +722,8 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
         // A provider may still emit a known tool it was not offered. In
         // particular, never turn a hallucinated approve_task call into a
         // reauthentication prompt when no owned task is awaiting approval.
-        if (call.name === 'approve_task' && !offeredToolNames.has(call.name)) {
-          result = { ok: false, error: 'tool_unavailable', message: 'No task is waiting for approval. Continue the requested action with its own tool.' };
+        if (!offeredToolNames.has(call.name)) {
+          result = { ok: false, error: 'tool_unavailable', message: 'This tool is not available for the current work segment.' };
         } else {
           // The gate, in front of everything, keyed by tool name.
           const decision = await checkStepUp(db, { userId, sessionKey, action: call.name });
@@ -718,7 +754,8 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
     subjectId: args.threadId,
   });
   return {
-    reply: 'I went round in circles on that one and stopped. Try telling me in a different way.',
+    reply: args.workGoalId ? 'This work segment reached its limit. Josi will use the saved checkpoint to continue or ask for the missing instructions.'
+      : 'This reply reached its work limit. Any saved goal keeps its next step; otherwise, tell me which part to tackle next.',
     actions, imagesDroppedNoVision, retry,
   };
 }
@@ -794,7 +831,7 @@ async function execTool(
       threadId: args.threadId,
       turnId: args.inboundMessageId,
       latestUserText: args.inbound,
-      effectiveNow: args.now,
+      effectiveNow: args.originalRequestAt ?? args.now,
       connectors: masterKey ? {
         masterKey: () => masterKey,
         fetchImpl: args.connectorFetch,
@@ -803,5 +840,10 @@ async function execTool(
       } : null,
     }, name, input);
   };
-  return isMutatingTool(name,input)?runDurableEffect(args.db,{turnId:args.durableTurnId,leaseToken:args.durableLeaseToken},name,input,execute):execute();
+  const fenced = () => isMutatingTool(name,input)
+    ? runDurableEffect(args.db,{turnId:args.durableTurnId,leaseToken:args.durableLeaseToken},name,input,execute) : execute();
+  return runWorkIntent(args.db, { ownerUserId: args.userId, threadId: args.threadId,
+    sourceMessageId: args.inboundMessageId, durableTurnId: args.durableTurnId, durableLeaseToken: args.durableLeaseToken,
+    mutating: !!spec.actionClass || isMutatingTool(name, input) },
+  name, input, fenced);
 }

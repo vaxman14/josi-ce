@@ -116,6 +116,7 @@ export interface ToolContext {
    * It is never model input and never accepted from a client request. */
   durableTurnId?: string | null;
   durableLeaseToken?: string | null;
+  inboundMessageId?: string | null;
   /** Latest authenticated user turn and server clock. The out-of-process MCP
    * server uses these to enforce relative calendar dates independently of the
    * model's absolute timestamps. */

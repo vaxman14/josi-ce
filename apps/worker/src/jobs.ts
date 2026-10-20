@@ -12,7 +12,7 @@
 import {
   addMessage, approvalHash, claimJobs, claimReadyTask, completeJob, consumeApproval, enqueue,
   expireApprovals, expireHolds, failJob, getTask, tickSchedules,
-  reconcileWorkGoals,
+  reconcileWorkGoals, settleWorkContinuation,
   claimDurableTurn, completeDurableTurn, durableTurnHasEffects, durableTurnHasIncompleteEffects, failDurableTurn, renewDurableTurnLease, renewJobLease, processPushBatch, processPushReceipts, deliverReminderPersisted, json,
   expirePreparedActionApprovals, settleActionForTask, transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
@@ -77,7 +77,7 @@ function durableHistoryContent(message: { direction: 'in' | 'out'; body: string;
 export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise<void> {
   switch (job.kind) {
     case 'work-goals.reconcile': {
-      await reconcileWorkGoals(db);
+      await reconcileWorkGoals(db, { continueReady: true });
       return;
     }
     case 'assistant.turn': {
@@ -87,13 +87,14 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       const turn=await claimDurableTurn(db,turnId);
       // A later turn waits until the thread's earlier turn settles. Completed
       // and failed turns make a duplicate queue row harmless.
-      if(!turn){const [state]=await db.query<{status:string}>(`select status from assistant_turns where id=$1`,[turnId]);if(state?.status==='queued')throw new Error('assistant thread has an earlier turn');return;}
+      if(!turn){const [state]=await db.query<{status:string}>(`select status from assistant_turns where id=$1`,[turnId]);if(state?.status==='queued')throw new Error('assistant thread has an earlier turn');await settleWorkContinuation(db,turnId);return;}
       const leaseHeartbeat=setInterval(()=>{void renewDurableTurnLease(db,{turnId,leaseToken:turn.lease_token}).then(ok=>ok&&ctx.workerId?renewJobLease(db,job.id,ctx.workerId):ok).catch(()=>undefined);},60_000);
       leaseHeartbeat.unref?.();
       try{
         const [inbound]=await db.query<{id:string;body:string;created_at:string}>(`select id,body,created_at from messages where id=$1 and thread_id=$2 and direction='in'`,[turn.inbound_message_id,turn.thread_id]);
         if(!inbound)throw new Error('durable inbound message is unavailable');
-        const preceding=await db.query<{direction:'in'|'out';body:string;meta:Record<string,unknown>}>(`select direction,body,meta from messages where thread_id=$1 and id<>$2 and created_at<=$3 order by created_at desc,id desc limit 40`,[turn.thread_id,inbound.id,inbound.created_at]);
+        const preceding=await db.query<{direction:'in'|'out';body:string;meta:Record<string,unknown>}>(`select direction,body,meta from messages where thread_id=$1 and id<>$2
+          and ($4::boolean or created_at<=$3) order by created_at desc,id desc limit 40`,[turn.thread_id,inbound.id,inbound.created_at,!!turn.work_goal_id]);
         const history=preceding.reverse().map(m=>({role:m.direction==='in'?('user' as const):('assistant' as const),content:durableHistoryContent(m)}));
         const attachments=turn.attachment_ids.length?await db.query<{id:string;filename:string;extracted_text:string|null;analysis_status:string;analysis_code:string|null}>(`select id,filename,extracted_text,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 and storage_state='ready' order by id`,[turn.attachment_ids,turn.owner_user_id,turn.thread_id]):[];
         const mediaType=(name:string)=>IMAGE_MEDIA_TYPES[extname(name).replace(/^\./,'').toLowerCase()];
@@ -101,14 +102,15 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
         const context=textAttachments.map(a=>a.extracted_text?`Attached file ${a.filename}:\n${a.extracted_text}`:a.analysis_status==='unavailable'?`Attached file ${a.filename}; analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`:`Attached file ${a.filename}; no readable text was extracted.`).join('\n\n');
         const provider=await loadStoredProvider(db,'primary');
         const images=capabilitiesOf(provider)?.vision===true?await Promise.all(attachments.filter(a=>mediaType(a.filename)).map(async a=>({mediaType:mediaType(a.filename),base64:(await readAttachment(a.id)).toString('base64')}))):undefined;
-        const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},userId:turn.owner_user_id,threadId:turn.thread_id,history,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,replyToMessageId:turn.reply_to_message_id,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.accepted_session_id});
+        const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},userId:turn.owner_user_id,threadId:turn.thread_id,history,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,workGoalId:turn.work_goal_id??undefined,originalRequestAt:turn.work_goal_id?new Date(inbound.created_at):undefined,replyToMessageId:turn.reply_to_message_id,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.work_goal_id?`work-goal:${turn.work_goal_id}`:turn.accepted_session_id});
         if(await durableTurnHasIncompleteEffects(db,turnId)){await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:'effect_outcome_unknown',retryable:false});return;}
         if(result.mediaRequest)await db.query(`update messages set meta=meta||$2 where id=$1 and thread_id=$3`,[inbound.id,json({media_request:result.mediaRequest}),turn.thread_id]);
-        if(result.refusal){const crossed=await durableTurnHasEffects(db,turnId);await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:crossed?'effect_then_provider_error':result.refusal.reason,retryable:!crossed&&result.refusal.retryable===true});return;}
+        if(result.refusal){const crossed=await durableTurnHasEffects(db,turnId);await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:crossed?'effect_then_provider_error':result.refusal.reason,retryable:!turn.work_goal_id&&!crossed&&result.refusal.retryable===true});return;}
         const approvalNeeded=result.actions.some(a=>a.result&&typeof a.result==='object'&&String((a.result as any).state)==='prepared');
         const taskIds=result.actions.map(a=>a.result).filter((v):v is {state:string;task_id:string}=>!!v&&typeof v==='object'&&['collecting','prepared'].includes(String((v as any).state))&&typeof (v as any).task_id==='string').map(v=>v.task_id);
         const calendarReceipts=result.actions.filter(a=>DURABLE_CALENDAR_CONTINUITY_TOOLS.has(a.tool)).slice(-6);
         const replyMeta:Record<string,unknown>={};
+        if(turn.work_goal_id)replyMeta.work_goal_id=turn.work_goal_id;
         const nativeApproval=result.actions.map(a=>a.result).find((value):value is {state:string;approval_id:string;summary:string;action?:string;action_class?:string;expires_at?:string|null}=>
           !!value&&typeof value==='object'&&String((value as any).state)==='prepared'&&typeof (value as any).approval_id==='string'&&typeof (value as any).summary==='string');
         if(nativeApproval)replyMeta.nativeApproval={approvalId:nativeApproval.approval_id,summary:nativeApproval.summary,action:nativeApproval.action??'approve',actionClass:nativeApproval.action_class??'',expiresAt:nativeApproval.expires_at??null,requiresDeviceAuth:true,status:'pending'};
@@ -118,8 +120,8 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
         if(result.retry)replyMeta.retry=result.retry;
         if(result.mediaResult)replyMeta.media_result=result.mediaResult;
         await completeDurableTurn(db,{turnId,leaseToken:turn.lease_token,reply:result.reply,toolReceipts:result.actions,replyMeta,approvalNeeded,presentedTaskIds:taskIds});
-      }catch{const crossed=await durableTurnHasEffects(db,turnId);await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:crossed?'effect_outcome_unknown':'turn_execution_failed',retryable:!crossed});}
-      finally{clearInterval(leaseHeartbeat);}
+      }catch{const crossed=await durableTurnHasEffects(db,turnId);await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:crossed?'effect_outcome_unknown':'turn_execution_failed',retryable:!turn.work_goal_id&&!crossed});}
+      finally{clearInterval(leaseHeartbeat);await settleWorkContinuation(db,turnId);}
       return;
     }
 

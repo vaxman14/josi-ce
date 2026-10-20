@@ -5,7 +5,7 @@ import { deleteVaultSlot, openCredentialEnvelope, isVaultCredentialReference, op
 import type { MasterKey } from './masterKey.js';
 
 export type TurnStatus='queued'|'running'|'completed'|'failed';
-export interface DurableTurn { id:string;owner_user_id:string;accepted_session_id:string;thread_id:string;client_message_id:string;attempt_of:string|null;inbound_message_id:string;reply_to_message_id:string|null;attachment_ids:string[];status:TurnStatus;assistant_message_id:string|null;tool_receipts:unknown[];error_code:string|null;error_retryable:boolean|null;created_at:string;updated_at:string; }
+export interface DurableTurn { id:string;owner_user_id:string;accepted_session_id:string;thread_id:string;client_message_id:string;attempt_of:string|null;inbound_message_id:string;reply_to_message_id:string|null;attachment_ids:string[];status:TurnStatus;assistant_message_id:string|null;tool_receipts:unknown[];error_code:string|null;error_retryable:boolean|null;created_at:string;updated_at:string;work_goal_id?:string|null;work_goal_revision?:number|null;work_control_generation?:number|null; }
 export interface TaskRunSummary { id:string;thread_id:string;thread_title:string|null;status:TurnStatus;attempt_of:string|null;error_code:string|null;error_retryable:boolean|null;started_at:string|null;completed_at:string|null;created_at:string;updated_at:string; }
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const canonical=(v:unknown):string=>JSON.stringify(v,(_k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.entries(x).sort(([a],[b])=>a.localeCompare(b))):x);
@@ -116,7 +116,7 @@ export async function claimDurableTurn(db:Db,turnId:string,leaseSeconds=300):Pro
   ), interrupted as (
     update assistant_turns t set status='failed',lease_token=null,lease_expires_at=null,
       error_code=case when exists(select 1 from assistant_turn_effects e where e.turn_id=t.id) then 'effect_outcome_unknown' else 'worker_interrupted' end,
-      error_retryable=not exists(select 1 from assistant_turn_effects e where e.turn_id=t.id),completed_at=now()
+      error_retryable=t.work_goal_id is null and not exists(select 1 from assistant_turn_effects e where e.turn_id=t.id),completed_at=now()
       where id=$1 and status='running' and lease_expires_at<now() returning id
   ) update assistant_turns t set status='running',lease_token=$2,lease_expires_at=now()+($3*interval '1 second'),started_at=coalesce(started_at,now()),error_code=null,error_retryable=null
     where t.id=$1 and t.status='queued' and not exists(select 1 from interrupted) and not exists(select 1 from revoked where id=t.id)

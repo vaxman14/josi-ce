@@ -44,6 +44,10 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     </ol>
     {compact && goal.steps.length > 5 ? <button className="mt-2 min-h-10 text-xs underline" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show less' : `Show all ${goal.totalSteps} steps`}</button> : null}
     <p className="mt-3 text-sm text-muted-foreground">{goal.activity}</p>
+    {!compact && goal.automaticWork && !ended ? <p className="mt-1 text-xs text-muted-foreground">
+      {goal.automaticWork.segmentsSinceVerifiedProgress}/{goal.automaticWork.segmentLimit} automatic work segments since the last verified step.
+      {goal.automaticWork.nextCheckAt && ['planning', 'working'].includes(goal.state) ? ' Next continuation is scheduled.' : ''}
+    </p> : null}
     {goal.continuation?.kind === 'question' ? <p className="mt-2 rounded-lg bg-secondary p-3 text-sm">{goal.continuation.text}</p> : null}
     {goal.continuation?.kind === 'wait' ? <p className="mt-2 text-sm text-muted-foreground">{goal.continuation.reason}<br />Check requested for {new Date(goal.continuation.wakeAt).toLocaleString()}.</p> : null}
     <p className="mt-2 text-xs text-muted-foreground">{stale ? 'No recent update · ' : ''}Last saved {new Date(goal.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</p>
@@ -65,8 +69,8 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     {editing ? <form className="mt-3 space-y-2" onSubmit={event => { event.preventDefault(); void control('resume'); }}>
       <label className="block text-sm" htmlFor={`instruction-${goal.goalId}`}>What should Josi do next?</label>
       <textarea id={`instruction-${goal.goalId}`} value={instruction} onChange={event => setInstruction(event.target.value)} required maxLength={2000} rows={3} className="w-full rounded-lg border border-border bg-background p-3 text-base" />
-      <p className="text-xs text-muted-foreground">Save this direction, then continue the work in chat. Actions already sent to a provider may still finish.</p>
-      <button disabled={busy || !instruction.trim()} className="min-h-10 rounded-md bg-primary px-4 text-sm text-primary-foreground disabled:opacity-50">Save instructions</button>
+      <p className="text-xs text-muted-foreground">Save this direction and Josi will continue within its permissions. Missing access or an uncertain result comes back here for your instructions. Actions already sent to a provider may still finish.</p>
+      <button disabled={busy || !instruction.trim()} className="min-h-10 rounded-md bg-primary px-4 text-sm text-primary-foreground disabled:opacity-50">Save and continue</button>
     </form> : null}
     {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
   </article>;
