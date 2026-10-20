@@ -93,6 +93,8 @@ struct NativePermissionEditor: View {
     @State private var browserTarget = ""
     @State private var browserAction = "browser.observe"
     @State private var browserOrigin = ""
+    @State private var networkOrigin = ""
+    @State private var networkClass = "public"
 
     init(snapshot: PermissionEditSnapshot) {
         self.snapshot = snapshot
@@ -119,13 +121,13 @@ struct NativePermissionEditor: View {
     private var browserTargets: [Wire] {
         snapshot.targets["browsers"].list.filter { $0["identity"] == snapshot.policy["identity"] }
     }
-    private var exactBrowserOrigin: Bool {
-        guard !browserOrigin.isEmpty, browserOrigin.utf8.count <= 2048,
-              browserOrigin.range(of: "[\\s\\\\*]", options: .regularExpression) == nil,
-              let parts = URLComponents(string: browserOrigin), ["https", "http"].contains(parts.scheme),
+    private func exactOrigin(_ origin: String) -> Bool {
+        guard !origin.isEmpty, origin.utf8.count <= 2048,
+              origin.range(of: "[\\s\\\\*]", options: .regularExpression) == nil,
+              let parts = URLComponents(string: origin), ["https", "http"].contains(parts.scheme),
               let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil,
               parts.path.isEmpty, parts.query == nil, parts.fragment == nil else { return false }
-        return parts.string == browserOrigin
+        return parts.string == origin
     }
     private var draft: Wire? {
         guard case .object(var policy) = snapshot.policy else { return nil }
@@ -212,7 +214,7 @@ struct NativePermissionEditor: View {
                                     Text("Upload").tag("browser.upload")
                                 }
                                 Button("Add Browser Rule") {
-                                    guard current, exactBrowserOrigin,
+                                    guard current, exactOrigin(browserOrigin),
                                           let profile = browserTargets.first(where: { $0["profileId"].text == browserTarget }),
                                           grants.filter({ !$0.removed }).count < 100 else { return }
                                     let rule: Wire = ["id": .string(UUID().uuidString.lowercased()), "action": .string(browserAction),
@@ -220,11 +222,34 @@ struct NativePermissionEditor: View {
                                                   "profileId": profile["profileId"], "origin": .string(browserOrigin)],
                                         "mode": ["kind": "ask"], "limits": .null]
                                     grants.append(PermissionGrantDraft(rule))
-                                }.disabled(!current || browserTarget.isEmpty || !exactBrowserOrigin || grants.filter({ !$0.removed }).count >= 100)
+                                }.disabled(!current || browserTarget.isEmpty || !exactOrigin(browserOrigin) || grants.filter({ !$0.removed }).count >= 100)
                                 Text("Use an exact site origin without a path or wildcard. New rules start with Ask. Network access, content sharing and unsupported operations need their own checks.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }.padding(8)
                         }
+                    }
+                    GroupBox("Add a network permission") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            TextField("Exact destination, for example https://example.com", text: $networkOrigin)
+                                .textFieldStyle(.roundedBorder)
+                            Picker("Destination network", selection: $networkClass) {
+                                Text("Public internet").tag("public")
+                                Text("Private network").tag("private")
+                                Text("This automation host (loopback)").tag("loopback")
+                            }
+                            Button("Add Network Rule") {
+                                guard current, exactOrigin(networkOrigin), ["public", "private", "loopback"].contains(networkClass),
+                                      grants.filter({ !$0.removed }).count < 100 else { return }
+                                let rule: Wire = ["id": .string(UUID().uuidString.lowercased()), "action": "network.connect",
+                                    "scope": ["kind": "network", "origin": .string(networkOrigin), "networkClass": .string(networkClass)],
+                                    "mode": ["kind": "ask"], "limits": .null]
+                                grants.append(PermissionGrantDraft(rule))
+                            }.disabled(!current || !exactOrigin(networkOrigin) || grants.filter({ !$0.removed }).count >= 100)
+                            Text("Use a destination without a path or wildcard. The connection must match both the destination and its actual network. New rules start with Ask; choose limits below.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text("Network permission does not grant browser input, file transfers, credentials or model sharing. Guest networking is still being connected; saving this rule does not turn it on.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.padding(8)
                     }
                     if !modelTargets.isEmpty {
                         GroupBox("Add a model transmission permission") {
