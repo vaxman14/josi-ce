@@ -24,6 +24,7 @@
 // The e2e suite taps this button in WebKit with touch emulation, which is the
 // closest thing to Safari on an iPhone that runs unattended.
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, ApiError, type Message, type Thread, type TurnResult } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { VoiceChat } from '@/components/VoiceChat';
@@ -43,8 +44,17 @@ import { ErrorNote } from '@/components/ui';
 const talkCache = new Map<string, { thread: Thread; messages: Message[] }>();
 
 export function Talk() {
+  const [params] = useSearchParams();
+  const requestedThread = params.get('thread');
+  // Separate mounted conversation state: a late response from the previous
+  // conversation must not append its messages to a newly selected goal.
+  return <TalkConversation key={requestedThread ?? 'recent'} requestedThread={requestedThread} />;
+}
+
+function TalkConversation({ requestedThread }: { requestedThread: string | null }) {
   const { user } = useAuth();
-  const cached = user ? talkCache.get(user.id) : undefined;
+  const previous = user ? talkCache.get(user.id) : undefined;
+  const cached = previous && (!requestedThread || previous.thread.id === requestedThread) ? previous : undefined;
   const [thread, setThread] = useState<Thread | null>(cached?.thread ?? null);
   const [messages, setMessages] = useState<Message[]>(cached?.messages ?? []);
   const [input, setInput] = useState('');
@@ -60,28 +70,41 @@ export function Talk() {
 
   // The most recent thread, or a new one. A member always has somewhere to talk.
   useEffect(() => {
-    if (!user || talkCache.has(user.id)) return;
+    if (!user || (cached && !requestedThread)) return;
+    let alive = true;
     void (async () => {
       try {
+        if (requestedThread) {
+          if (!/^[a-f0-9-]{36}$/i.test(requestedThread)) throw new Error('Choose an existing conversation.');
+          const detail = await api.get<{ thread: Thread; messages: Message[] }>(`/assistant/threads/${requestedThread}`);
+          if (!alive) return;
+          setThread(detail.thread); setMessages(detail.messages);
+          talkCache.set(user.id, { thread: detail.thread, messages: detail.messages });
+          return;
+        }
         const { threads } = await api.get<{ threads: Thread[] }>('/assistant/threads');
+        if (!alive) return;
         const existing = threads[0];
         if (existing) {
-          setThread(existing);
           const detail = await api.get<{ messages: Message[] }>(`/assistant/threads/${existing.id}`);
+          if (!alive) return;
+          setThread(existing);
           setMessages(detail.messages);
           talkCache.set(user.id, { thread: existing, messages: detail.messages });
         } else {
           const created = await api.post<{ thread: Thread }>('/assistant/threads', { title: 'Talk' });
+          if (!alive) return;
           setThread(created.thread);
           talkCache.set(user.id, { thread: created.thread, messages: [] });
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Could not open the conversation');
+        if (alive) setError(err instanceof Error ? err.message : 'Could not open the conversation');
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
-  }, [user]);
+    return () => { alive = false; };
+  }, [user, requestedThread]);
 
   useEffect(() => {
     if (user && thread) talkCache.set(user.id, { thread, messages });

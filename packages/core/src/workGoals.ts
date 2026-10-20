@@ -105,17 +105,23 @@ export async function createWorkGoal(db: Db, args: { ownerUserId: string; thread
   });
 }
 
-export async function listWorkGoals(db: Db, ownerUserId: string, options: { threadId?: string; includeEnded?: boolean } = {}): Promise<WorkGoalSnapshot[]> {
+export async function listWorkGoals(db: Db, ownerUserId: string, options: { threadId?: string; includeEnded?: boolean; endedOnly?: boolean } = {}): Promise<WorkGoalSnapshot[]> {
   const rows = await db.query<GoalRow>(`select * from work_goals where owner_user_id=$1
-    ${options.threadId ? 'and thread_id=$2' : ''} ${options.includeEnded ? '' : "and state not in ('completed','cancelled')"}
+    ${options.threadId ? 'and thread_id=$2' : ''} ${options.endedOnly ? "and state in ('completed','cancelled')" : options.includeEnded ? '' : "and state not in ('completed','cancelled')"}
     order by (state in ('completed','cancelled')),updated_at desc,id desc limit 100`, [ownerUserId, ...(options.threadId ? [id(options.threadId)] : [])]);
   return rows.map(snapshot);
 }
-export async function workGoalEvents(db: Db, ownerUserId: string, goalId: string, after: number) {
+export async function workGoalEvents(db: Db, ownerUserId: string, goalId: string, after: number, options: { before?: number; limit?: number } = {}) {
   await owned(db, ownerUserId, goalId);
   if (!Number.isSafeInteger(after) || after < 0) throw new WorkGoalError('Invalid progress cursor.');
-  return db.query<{ id: string; sequence: number; kind: string; summary: string; created_at: string }>(
-    `select id,sequence,kind,summary,created_at from work_goal_events where goal_id=$1 and owner_user_id=$2 and sequence>$3 order by sequence limit 200`, [goalId, ownerUserId, after]);
+  const limit = options.limit ?? 200;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200 || options.before !== undefined
+    && (!Number.isSafeInteger(options.before) || options.before < 1 || after !== 0)) throw new WorkGoalError('Invalid activity page.');
+  const rows = await db.query<{ id: string; sequence: number; kind: string; summary: string; created_at: string }>(
+    `select id,sequence,kind,summary,created_at from work_goal_events where goal_id=$1 and owner_user_id=$2
+      and sequence${options.before === undefined ? '>' : '<'}$3 order by sequence ${options.before === undefined ? 'asc' : 'desc'} limit $4`,
+    [goalId, ownerUserId, options.before ?? after, limit]);
+  return options.before === undefined ? rows : rows.reverse();
 }
 
 export async function pinnedWorkGoals(db: Db, ownerUserId: string): Promise<WorkGoalSnapshot[]> {

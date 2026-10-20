@@ -40,6 +40,7 @@ import {
 } from '@josi-ce/storage';
 import { asyncRoute, param } from './async.js';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
+import { workProgressStream } from './workProgressStream.js';
 
 export interface AssistantRoutesCtx {
   db: Db;
@@ -547,16 +548,21 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   );
 
   // ------------------------------------------------------------ tasks
+  r.get('/work-goals/stream', asyncRoute(workProgressStream(db)));
   r.get('/work-goals', handle(async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     return res.json({ goals: await listWorkGoals(db, req.user!.id, {
       threadId: typeof req.query.threadId === 'string' ? req.query.threadId : undefined,
       includeEnded: req.query.all === '1',
+      endedOnly: req.query.ended === '1',
     }) });
   }));
   r.get('/work-goals/:id/events', handle(async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
-    return res.json({ events: await workGoalEvents(db, req.user!.id, param(req, 'id'), Number(req.query.after ?? 0)) });
+    return res.json({ events: await workGoalEvents(db, req.user!.id, param(req, 'id'), Number(req.query.after ?? 0), {
+      ...(req.query.before === undefined ? {} : { before: Number(req.query.before) }),
+      ...(req.query.limit === undefined ? {} : { limit: Number(req.query.limit) }),
+    }) });
   }));
   r.post('/work-goals/:id/control', handle(async (req, res) => {
     const action = req.body?.action;

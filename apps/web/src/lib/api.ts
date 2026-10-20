@@ -100,6 +100,13 @@ export const api = {
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {}),
   del: <T>(path: string) => request<T>('DELETE', path),
   upload,
+  /** Same-origin cookie session only. The stream carries invalidation signals,
+   * never setup credentials in a URL or durable automation authorization. */
+  openEventSource: async (path: string): Promise<EventSource> => {
+    await consumeSetupHandoff();
+    if (!path.startsWith('/assistant/work-goals/stream?')) throw new Error('Unsupported progress stream.');
+    return new EventSource(`/api${path}`);
+  },
 };
 
 /** Fetches the CSRF cookie before the first state-changing request. The login

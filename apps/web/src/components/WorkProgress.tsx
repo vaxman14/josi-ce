@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useWorkGoals, type WorkGoalSnapshot } from '@/lib/workGoals';
@@ -53,8 +53,10 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
       {goal.checkpoint.nextAction ? <p className="mt-3"><strong>Next: </strong>{goal.checkpoint.nextAction}</p> : null}
       <WorkMemoryEditor goal={goal} refresh={refresh} />
     </details> : null}
+    {!compact ? <WorkActivity goal={goal} /> : null}
     <div className="mt-3 flex flex-wrap gap-2 text-xs">
       {compact ? <Link to={`/app/tasks#goal-${goal.goalId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Open task manager ↗</Link> : null}
+      {!compact ? <Link to={`/app/talk?thread=${goal.threadId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Continue in chat ↗</Link> : null}
       {!ended && goal.state !== 'paused' ? <button disabled={busy} onClick={() => void control('pause')} className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50">Pause goal</button> : null}
       {!ended ? <button disabled={busy} onClick={() => setEditing(!editing)} className="min-h-10 rounded-md border border-border px-3">{goal.state === 'paused' ? 'Resume with instructions' : 'Add instructions'}</button> : null}
       {goal.state === 'verifying' ? <button disabled={busy} onClick={() => void control('confirm')} className="min-h-10 rounded-md bg-primary px-3 text-primary-foreground">Confirm outcome</button> : null}
@@ -113,26 +115,86 @@ function WorkMemoryEditor({ goal, refresh }: { goal: WorkGoalSnapshot; refresh: 
   </div>;
 }
 
+interface ActivityEvent { id: string; sequence: number; kind: string; summary: string; created_at: string }
+function WorkActivity({ goal }: { goal: WorkGoalSnapshot }) {
+  const [open, setOpen] = useState(false);
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [page, setPage] = useState<{ before?: number; after?: number }>({});
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const latest = page.before === undefined && page.after === undefined;
+  const revision = latest ? goal.revision : 0;
+  useEffect(() => {
+    if (!open) return;
+    let alive = true; setBusy(true); setError('');
+    const query = new URLSearchParams({ limit: '40' });
+    if (page.before !== undefined) query.set('before', String(page.before));
+    else query.set('after', String(page.after ?? Math.max(0, revision - 40)));
+    void api.get<{ events: ActivityEvent[] }>(`/assistant/work-goals/${goal.goalId}/events?${query}`).then(result => {
+      if (alive) setEvents(result.events);
+    }).catch(cause => { if (alive) setError(cause instanceof Error ? cause.message : 'Activity is unavailable.'); })
+      .finally(() => { if (alive) setBusy(false); });
+    return () => { alive = false; };
+  }, [open, goal.goalId, revision, page.before, page.after]);
+  return <details className="mt-3 text-sm" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-muted-foreground">Activity history</summary>
+    {open ? <div className="mt-3 space-y-3">
+      {error ? <p role="alert" className="text-destructive">{error}</p> : null}
+      <ol className="space-y-3 border-l border-border pl-4" aria-busy={busy}>
+        {events.map(event => <li key={event.id}><p>{event.summary}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString()} · Update {event.sequence}</p></li>)}
+      </ol>
+      {busy ? <p className="text-xs text-muted-foreground">Loading activity…</p> : !events.length ? <p className="text-xs text-muted-foreground">No saved activity on this page.</p> : null}
+      <div className="flex flex-wrap gap-2 text-xs">
+        <button disabled={busy || !events.length || events[0].sequence <= 1} className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50"
+          onClick={() => setPage({ before: events[0].sequence })}>Older updates</button>
+        <button disabled={busy || !events.length || events[events.length - 1].sequence >= goal.revision} className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50"
+          onClick={() => setPage({ after: events[events.length - 1].sequence })}>Newer updates</button>
+        {!latest ? <button className="min-h-10 rounded-md border border-border px-3" onClick={() => setPage({})}>Follow latest</button> : null}
+      </div>
+    </div> : null}
+  </details>;
+}
+
 export function ChatWorkProgress({ threadId }: { threadId: string }) {
-  const { goals, error, refresh } = useWorkGoals(threadId, true);
-  if (!goals.length) return null;
+  const { goals, error, refresh, connection } = useWorkGoals(threadId, true);
+  if (!goals.length && !error) return null;
   return <div className="space-y-3" aria-label="Current work progress">
     {error ? <p className="text-xs text-muted-foreground">Progress is offline. Showing the last saved update.</p> : null}
+    {!error && connection === 'live' ? <p className="text-xs text-muted-foreground">Live work updates</p> : null}
     {goals.slice(0, 6).map(goal => <WorkProgressCard key={goal.goalId} goal={goal} compact refresh={refresh} />)}
     {goals.length > 6 ? <Link className="inline-flex min-h-10 items-center text-sm underline" to="/app/tasks">See all saved work</Link> : null}
   </div>;
 }
 
 export function WorkGoalManager() {
-  const { goals, error, refresh } = useWorkGoals(undefined, true);
-  const [history, setHistory] = useState(false);
-  const visible = goals.filter(goal => history === ['completed', 'cancelled'].includes(goal.state));
-  if (!goals.length && !error) return null;
+  const [view, setView] = useState('unfinished');
+  const [search, setSearch] = useState('');
+  const { goals, error, refresh, connection } = useWorkGoals(undefined, false, view === 'history');
+  const views = [{ id: 'unfinished', label: 'Unfinished' }, { id: 'working', label: 'Working' },
+    { id: 'attention', label: 'Needs you' }, { id: 'waiting', label: 'Waiting / scheduled' },
+    { id: 'paused', label: 'Paused' }, { id: 'history', label: 'History' }];
+  const matches = (goal: WorkGoalSnapshot, group: string) => group === 'unfinished' || group === 'history'
+    || (group === 'working' && ['accepted', 'planning', 'working'].includes(goal.state))
+    || (group === 'attention' && ['needs_instruction', 'verifying'].includes(goal.state))
+    || (group === 'waiting' && goal.state === 'waiting') || (group === 'paused' && goal.state === 'paused');
+  const currentGoals = goals.filter(goal => (view === 'history') === ['completed', 'cancelled'].includes(goal.state));
+  const visible = currentGoals.filter(goal => matches(goal, view) && (!search.trim()
+    || `${goal.title} ${goal.activity} ${goal.steps.map(step => step.title).join(' ')}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
   return <section className="space-y-3" aria-label="Owned work">
     <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">Owned work</h2>
-      <button onClick={() => setHistory(!history)} className="min-h-10 text-sm underline">{history ? 'Show unfinished' : 'Show completed and cancelled'}</button></div>
+      <span className="text-xs text-muted-foreground">{connection === 'live' ? 'Live updates' : connection === 'offline' ? 'Offline' : connection === 'connecting' ? 'Connecting…' : 'Refreshing periodically'}</span></div>
+    <div className="flex flex-wrap gap-2" aria-label="Work views">{views.map(item => <button key={item.id}
+      aria-pressed={view === item.id} onClick={() => setView(item.id)}
+      className={`min-h-10 rounded-lg border px-3 text-sm ${view === item.id ? 'border-primary bg-primary/10 text-primary' : 'border-border'}`}>
+      {item.label}{item.id !== 'history' && view !== 'history' ? ` (${currentGoals.filter(goal => matches(goal, item.id)).length})` : ''}
+    </button>)}</div>
+    <label className="block text-sm">Find work
+      <input type="search" value={search} onChange={event => setSearch(event.target.value)} maxLength={200}
+        placeholder="Search goals, steps or activity" className="mt-1 min-h-11 w-full rounded-lg border border-border bg-background px-3 text-base" />
+    </label>
+    {view === 'history' ? <p className="text-xs text-muted-foreground">The most recent 100 completed or cancelled goals. Their activity remains saved.</p> : null}
     {error ? <p className="text-sm text-muted-foreground">Progress could not refresh. Saved results may be out of date.</p> : null}
     {visible.map(goal => <WorkProgressCard key={goal.goalId} goal={goal} refresh={refresh} />)}
-    {!visible.length ? <p className="text-sm text-muted-foreground">No {history ? 'completed or cancelled' : 'unfinished'} goals.</p> : null}
+    {!visible.length ? <p className="text-sm text-muted-foreground">{connection === 'connecting' ? 'Loading saved work…' : 'No goals match this view.'}</p> : null}
   </section>;
 }
