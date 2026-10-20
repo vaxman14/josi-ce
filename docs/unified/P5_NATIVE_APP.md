@@ -169,3 +169,13 @@ Native password recovery asks the server to finish without issuing a sign-in, th
 Implementation checks and the next package receipt are recorded separately below. No live account, invitation, token, session, quota or password was changed while building these screens.
 
 The complete native app compiled with Swift 6 and the complete root TypeScript build passed. Whitespace checks and the public-source secret scan (1,237 files) passed. The next candidate is `native.11` / bundle `20261020.11` / package `0.7.0.12`, including Memory, People and the initial-observation source checkpoint. Live behavior and installation acceptance remain deferred.
+
+### Native.11 artifact receipt
+
+Delivered `JosiDrive/Artifacts/josi-native-unified-20261020-11/Install Josi.pkg` (698,338,064 bytes), clean source `888ea98fac7eb3bdab15bc1c4841fcd3f6c736d2`; app `0.7.0-native.11`, bundle `20261020.11`, package `0.7.0.12`. Includes Memory/lesson review and source-work inspection, People administration, invitation/password setup and the initial-observation request source.
+
+All 17,624 extracted payload entries matched staged bytes/modes/links; extracted app and installer signatures verified under Socal. Source/runtime archives, the helper profile, packaging evidence, integrity receipt and complete artifact checksums are retained alongside the installer. This exact candidate was not installed, launched, notarized or functionally accepted.
+
+### Model-destination permission setup — later source
+
+The native Automation permissions page now selects an activated configured model and an owned separate workspace for exact protected registration in the Vault. The grant editor can add `model.transmit` rules for these registered configurations, initially set to Ask, with the existing task, time, action and byte controls. Full details are in [P4 permissions](P4_PERMISSIONS.md). Source compilation passed; this addition is newer than `native.11`.

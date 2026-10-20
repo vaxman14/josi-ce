@@ -5,7 +5,7 @@ import {
   cardinalDraftSaveBinding, cardinalDraftTestBinding, cardinalContentDigest, cardinalReviewInput, explainCardinalRule,
   testCardinalRule, validateCardinalRule, validateAutomationPermissionPolicy,
   loadMasterKey, vaultRecords, VaultError, VaultLockedError, VaultRecordError,
-  ProtectedConfirmationError,
+  ProtectedConfirmationError, listAutomationModelCandidates,
   type Db, type LoadOptions, type VaultRecordReference,
 } from '@josi-ce/core';
 import { loadStoredProvider, isExternalProvider, isLocalOnly, reviewConfiguredCardinalMeaning, type SpawnRunner } from '@josi-ce/llm';
@@ -84,6 +84,9 @@ export function automationSettingsRoutes(context: Context): Router {
     const targets = await records.automationTargets(noMutation).inventory(req.user!.id);
     return res.json({ rules, permissions, drafts, devices, targets });
   }));
+  r.get('/model-target-candidates', nativeHandle(async (_req, res) => res.json({
+    candidates: await listAutomationModelCandidates(db), executionEnabled: false,
+  })));
   r.post('/rules/validate', handle(async (req, res) => {
     const parsed = validateCardinalRule(req.body?.draft);
     return res.json({ report: testCardinalRule(req.body?.draft ?? null),

@@ -14,7 +14,8 @@ import { ProtectedConfirmationStore, type ProtectedConfirmationAuthority } from 
 import { ProtectedDeviceStore, PROTECTED_DEVICES_RECORD_ID, type ProtectedDeviceAuthority } from './protectedDevices.js';
 import { WorkspaceStorageStore, WORKSPACE_STORAGE_RECORD_ID, type WorkspaceStorageAuthority, workspaceStorageContains } from './workspaceStorage.js';
 
-import { AutomationTargetStore, AUTOMATION_TARGETS_RECORD_ID, readAutomationTargets, sameAutomationIdentity, type AutomationTargetAuthority } from './automationTargets.js';
+import { AutomationTargetStore, AUTOMATION_TARGETS_RECORD_ID, readAutomationTargetDocument, sameAutomationIdentity, type AutomationTargetAuthority } from './automationTargets.js';
+import { describeAutomationModel, requireCurrentAutomationModel } from './automationModelTargets.js';
 
 export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices' | 'workspace_storage' | 'automation_targets';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
@@ -169,19 +170,28 @@ export class VaultRecordStore {
       return work({ tx, reconciliationRequired: state.authority_reconciliation_required,
         readPolicy: () => previous ? this.open(tx, key, previous, state) : Promise.resolve(null),
         requireApplicationTargets: async policy => {
-          const rules = policy.rules.filter(r => r.scope.kind === 'application');
+          const rules = policy.rules.filter(r => r.scope.kind === 'application' || r.scope.kind === 'model');
           if (!rules.length) return [];
           await this.requireOwnerAutomationVault(tx, policy.identity.userId);
           const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_TARGETS_RECORD_ID]);
-          const targets = readAutomationTargets(head ? await this.open(tx, key, head, state) : null);
-          if (rules.some(rule => !['deny', 'ask'].includes(rule.mode.kind) && !targets.some(t => rule.scope.kind === 'application'
+          const document = readAutomationTargetDocument(head ? await this.open(tx, key, head, state) : null), targets = document.applications;
+          if (rules.some(rule => rule.scope.kind === 'application' && !['deny', 'ask'].includes(rule.mode.kind) && !targets.some(t => rule.scope.kind === 'application'
             && t.applicationId === rule.scope.applicationId && t.installationRevision === rule.scope.installationRevision
             && sameAutomationIdentity(t.identity, policy.identity)))) {
             throw new VaultRecordError('Select a registered app installation in this exact workspace before granting access.');
           }
-          return targets.filter(t => sameAutomationIdentity(t.identity, policy.identity) && rules.some(r => r.scope.kind === 'application'
+          const models = document.models.filter(t => sameAutomationIdentity(t.identity, policy.identity) && rules.some(r => r.scope.kind === 'model'
+            && r.scope.configurationId === t.configurationId && r.scope.configurationRevision === t.configurationRevision));
+          for (const rule of rules.filter(r => r.scope.kind === 'model' && !['deny', 'ask'].includes(r.mode.kind))) {
+            const target = models.find(m => rule.scope.kind === 'model' && m.configurationId === rule.scope.configurationId
+              && m.configurationRevision === rule.scope.configurationRevision);
+            if (!target) throw new VaultRecordError('Register the exact model configuration for this workspace before granting transmission.');
+            await requireCurrentAutomationModel(tx, target.candidate);
+          }
+          return [...targets.filter(t => sameAutomationIdentity(t.identity, policy.identity) && rules.some(r => r.scope.kind === 'application'
             && r.scope.applicationId === t.applicationId && r.scope.installationRevision === t.installationRevision)).map(t =>
-            `Registered application ${t.applicationId}, installation ${t.installationRevision}:\n${t.candidate.label}\nLocation: ${t.candidate.bundlePath}\nBundle: ${t.candidate.bundleId}\nSigning identity: ${t.candidate.signingId}\nTeam: ${t.candidate.teamId || '(none)'}\nCode hash: ${t.candidate.codeHash}`);
+            `Registered application ${t.applicationId}, installation ${t.installationRevision}:\n${t.candidate.label}\nLocation: ${t.candidate.bundlePath}\nBundle: ${t.candidate.bundleId}\nSigning identity: ${t.candidate.signingId}\nTeam: ${t.candidate.teamId || '(none)'}\nCode hash: ${t.candidate.codeHash}`),
+            ...models.map(describeAutomationModel)];
 
         },
         writePolicy: async value => {
@@ -206,7 +216,7 @@ export class VaultRecordStore {
           requireWorkspace: async identity => {
             const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [WORKSPACE_STORAGE_RECORD_ID]);
             if (!head || !workspaceStorageContains(await this.open(tx, key, head, state), identity)) {
-              throw new VaultRecordError('The selected app does not belong to a prepared workspace for this identity.');
+              throw new VaultRecordError('The selected target does not belong to a prepared workspace for this identity.');
             }
             const rows = await tx.query<{ installation_id: string }>('select installation_id from workspace limit 2 for share');
             if (rows.length !== 1 || rows[0].installation_id !== identity.serverId) throw new VaultRecordError('This workspace belongs to another server.');
@@ -331,6 +341,21 @@ export class VaultRecordStore {
     if (permissions.kind !== 'automation_policy' || cardinal.kind !== 'cardinal_policy') return pause('vault_unavailable');
     if (expected && (!this.matches(expected.permissions, permissions, state) || !this.matches(expected.cardinal, cardinal, state))) return pause('stale_policy');
     const ordinary = evaluateAutomationPolicyRecord(await this.open(tx, key, permissions, state), input);
+    // A copied UUID in an older policy must not become a model destination.
+    // Recheck canonical registration and current routing before any covered
+    // reservation/dispatch. This is still not proof of the actual LLM hop;
+    // the projection adapter must bind registry dispatch to this destination.
+    if (ordinary.verdict === 'covered' && input.effects.some(e => e.action === 'model.transmit')) {
+      const [head] = await tx.query<Head>('select id,kind,version,digest from vault_record_heads where id=$1', [AUTOMATION_TARGETS_RECORD_ID]);
+      const targets = readAutomationTargetDocument(head ? await this.open(tx, key, head, state) : null).models;
+      for (const effect of input.effects.filter(e => e.action === 'model.transmit')) {
+        const target = targets.find(t => effect.target.kind === 'model'
+          && t.configurationId === effect.target.configurationId && t.configurationRevision === effect.target.configurationRevision
+          && sameAutomationIdentity(t.identity, input.identity));
+        if (!target) return pause('stale_policy');
+        try { await requireCurrentAutomationModel(tx, target.candidate); } catch { return pause('stale_policy'); }
+      }
+    }
     const facts: CardinalActionFacts = { identities: { ...input.identity, taskId: input.task?.id },
       effects: [...new Set(input.effects.map(e => e.action))], effectCoverage: input.effectCoverage,
       taskElapsedMs: input.nowMs - input.task.startedAtMs };

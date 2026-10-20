@@ -89,6 +89,7 @@ struct NativePermissionEditor: View {
     @State private var validationMessage = ""
     @State private var target = ""
     @State private var action = "computer.observe"
+    @State private var modelTarget = ""
 
     init(snapshot: PermissionEditSnapshot) {
         self.snapshot = snapshot
@@ -108,6 +109,9 @@ struct NativePermissionEditor: View {
     }
     private var applications: [Wire] {
         snapshot.targets["applications"].list.filter { $0["identity"] == snapshot.policy["identity"] }
+    }
+    private var modelTargets: [Wire] {
+        snapshot.targets["models"].list.filter { $0["identity"] == snapshot.policy["identity"] }
     }
     private var draft: Wire? {
         guard case .object(var policy) = snapshot.policy else { return nil }
@@ -174,6 +178,31 @@ struct NativePermissionEditor: View {
                             }.padding(8)
                         }
                     }
+                    if !modelTargets.isEmpty {
+                        GroupBox("Add a model transmission permission") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Picker("Registered model configuration", selection: $modelTarget) {
+                                    Text("Choose a model").tag("")
+                                    ForEach(Array(modelTargets.enumerated()), id: \.offset) { _, target in
+                                        Text(target["candidate"]["providerId"].text + " / " + target["candidate"]["model"].text
+                                             + " · " + String(target["configurationId"].text.prefix(8)))
+                                            .tag(target["configurationId"].text)
+                                    }
+                                }
+                                Button("Add Transmission Rule") {
+                                    guard current, let target = modelTargets.first(where: { $0["configurationId"].text == modelTarget }),
+                                          grants.filter({ !$0.removed }).count < 100 else { return }
+                                    let rule: Wire = ["id": .string(UUID().uuidString.lowercased()), "action": "model.transmit",
+                                        "scope": ["kind": "model", "configurationId": target["configurationId"],
+                                                  "configurationRevision": target["configurationRevision"]],
+                                        "mode": ["kind": "ask"], "limits": .null]
+                                    grants.append(PermissionGrantDraft(rule))
+                                }.disabled(!current || modelTarget.isEmpty || grants.filter({ !$0.removed }).count >= 100)
+                                Text("This rule starts with Ask. Choose explicit per-task limits below. Observation access and transmission access are checked separately.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }.padding(8)
+                        }
+                    }
                     ForEach($grants) { $grant in
                         grantEditor($grant)
                     }
@@ -218,6 +247,10 @@ struct NativePermissionEditor: View {
                 if let app = applications.first(where: { $0["applicationId"] == grant.original["scope"]["applicationId"] }) {
                     Text(app["candidate"]["label"].text).font(.headline)
                     Text(app["candidate"]["bundlePath"].text).font(.caption).textSelection(.enabled)
+                }
+                if let target = modelTargets.first(where: { $0["configurationId"] == grant.original["scope"]["configurationId"] }) {
+                    Text(target["candidate"]["providerId"].text + " / " + target["candidate"]["model"].text).font(.headline)
+                    Text("Saved configuration: " + target["candidate"]["configurationVersion"].text).font(.caption)
                 }
                 Text(permissionScope(grant.original["scope"])).textSelection(.enabled)
                 Toggle("Remove this rule", isOn: binding.removed)

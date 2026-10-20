@@ -321,7 +321,7 @@ struct ProtectedApprovalView: View {
         if review.challenge["enrollmentId"] != .null { return "Enroll this protected confirmation device" }
         switch review.challenge["purpose"].text {
         case "workspace.storage": return review.challenge["operation"].text == "open" ? "Open the separate development desktop" : "Prepare separate workspace storage"
-        case "automation.target.register": return "Register an app for permission setup"
+        case "automation.target.register": return "Register an automation target"
         case "cardinal.activate": return "Make this Cardinal Rule permanent"
         case "cardinal.retire": return "Retire this Cardinal Rule"
         case "device.revoke": return "Revoke this confirmation device"

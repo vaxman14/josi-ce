@@ -6,6 +6,8 @@ import { cardinalContentDigest } from './cardinalRules.js';
 import { isAutomationIdentity } from './automationPermissions.js';
 import { Secret } from './sealing.js';
 import { VaultRecordError, VaultRecordConflictError, type VaultRecordReference, type VaultRecordValue } from './vaultRecords.js';
+import { isAutomationModelCandidate, isAutomationModelTarget, requireCurrentAutomationModel, describeAutomationModel,
+  type AutomationModelCandidate, type AutomationModelTarget } from './automationModelTargets.js';
 
 export const AUTOMATION_TARGETS_RECORD_ID = '32eae367-3509-4241-9829-81c28b7b4088';
 export interface ApplicationCandidate {
@@ -17,7 +19,7 @@ export interface AutomationApplicationTarget {
   candidate: ApplicationCandidate; registeredAt: string;
 }
 export interface AutomationTargetRegistration {
-  actorUserId: string; identity: AutomationIdentity; candidate: ApplicationCandidate; expected: VaultRecordReference | null;
+  actorUserId: string; identity: AutomationIdentity; candidate: ApplicationCandidate | AutomationModelCandidate; expected: VaultRecordReference | null;
 }
 export interface AutomationTargetCommand { purpose: 'automation.target.register'; requestDigest: string }
 export interface AutomationTargetAuthority {
@@ -46,21 +48,27 @@ export function isApplicationCandidate(v: unknown): v is ApplicationCandidate {
     && typeof v.codeHash === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(v.codeHash);
 }
 export function readAutomationTargets(record: VaultRecordValue | null): AutomationApplicationTarget[] {
-  if (!record) return [];
+  return readAutomationTargetDocument(record).applications;
+}
+export function readAutomationTargetDocument(record: VaultRecordValue | null): { applications: AutomationApplicationTarget[]; models: AutomationModelTarget[] } {
+  if (!record) return { applications: [], models: [] };
   try {
     const doc: unknown = JSON.parse(record.value.reveal());
     if (record.kind !== 'automation_targets' || record.reference.recordId !== AUTOMATION_TARGETS_RECORD_ID
-      || !exact(doc, ['schemaVersion', 'applications']) || doc.schemaVersion !== 1
+      || !(exact(doc, ['schemaVersion', 'applications']) && doc.schemaVersion === 1
+        || exact(doc, ['schemaVersion', 'applications', 'models']) && doc.schemaVersion === 2)
       || !Array.isArray(doc.applications) || doc.applications.length > 256) throw new Error();
     const entries = doc.applications as AutomationApplicationTarget[];
+    const models = doc.schemaVersion === 1 ? [] : doc.models;
+    if (!Array.isArray(models) || models.length + entries.length > 256 || !models.every(isAutomationModelTarget)) throw new Error();
     if (entries.some(e => !exact(e, ['applicationId', 'installationRevision', 'identity', 'candidate', 'registeredAt'])
       || !uuid(e.applicationId) || e.installationRevision !== 1 || !isAutomationIdentity(e.identity)
       || !isApplicationCandidate(e.candidate) || e.applicationId !== e.candidate.candidateId
       || typeof e.registeredAt !== 'string' || !Number.isFinite(Date.parse(e.registeredAt))
       || new Date(e.registeredAt).toISOString() !== e.registeredAt)
-      || new Set(entries.map(e => e.applicationId)).size !== entries.length) throw new Error();
-    return entries;
-  } catch { throw new VaultRecordError('The application target registry is invalid.'); }
+      || new Set([...entries.map(e => e.applicationId), ...models.map(e => e.configurationId)]).size !== entries.length + models.length) throw new Error();
+    return { applications: entries, models };
+  } catch { throw new VaultRecordError('The automation target registry is invalid.'); }
 }
 export function sameAutomationIdentity(a: AutomationIdentity, b: AutomationIdentity): boolean {
   return a.userId === b.userId && a.serverId === b.serverId && a.deviceId === b.deviceId && a.workspaceId === b.workspaceId;
@@ -72,23 +80,46 @@ function binding(args: AutomationTargetRegistration): AutomationTargetCommand {
 }
 async function prepare(context: Context, args: AutomationTargetRegistration) {
   if (context.reconciliationRequired || !isAutomationIdentity(args.identity)
-    || args.identity.userId !== args.actorUserId || !isApplicationCandidate(args.candidate)) {
-    throw new VaultRecordError('Choose an exact guest application in your own enrolled workspace.');
+    || args.identity.userId !== args.actorUserId || !(isApplicationCandidate(args.candidate) || isAutomationModelCandidate(args.candidate))) {
+    throw new VaultRecordError('Choose an exact app or model target for your own enrolled workspace.');
   }
   await context.requireWorkspace(args.identity);
-  const record = await context.read(), entries = readAutomationTargets(record), ref = record?.reference ?? null;
+  const record = await context.read(), document = readAutomationTargetDocument(record), entries = document.applications, models = document.models, ref = record?.reference ?? null;
   if (!(ref === null && args.expected === null || ref && args.expected
     && exact(args.expected, ['recordId', 'version', 'digest', 'epoch'])
     && ref.recordId === args.expected.recordId && ref.version === args.expected.version
     && ref.digest === args.expected.digest && ref.epoch === args.expected.epoch)) {
-    throw new VaultRecordConflictError('The application registry changed. Refresh and review the current selection.');
+    throw new VaultRecordConflictError('The target registry changed. Refresh and review the current selection.');
   }
-  if (entries.length >= 256 || entries.some(e => e.applicationId === args.candidate.candidateId)) {
-    throw new VaultRecordError('This app selection is already registered or the target registry is full.');
+  if (entries.length + models.length >= 256 || [...entries.map(e => e.applicationId), ...models.map(e => e.configurationId)].includes(args.candidate.candidateId)) {
+    throw new VaultRecordError('This selection is already registered or the target registry is full.');
   }
+  if (args.candidate.kind === 'model') {
+    const candidate = args.candidate;
+    await requireCurrentAutomationModel(context.tx, candidate);
+    if (models.some(m => sameAutomationIdentity(m.identity, args.identity) && m.candidate.configurationDigest === candidate.configurationDigest)) {
+      throw new VaultRecordError('This exact model configuration is already registered for this workspace.');
+    }
+    const target: AutomationModelTarget = { configurationId: candidate.candidateId, configurationRevision: 1,
+      identity: args.identity, candidate, registeredAt: new Date().toISOString() };
+    const i = args.identity;
+    const presentation = parseProtectedControlPresentation({
+      wording: `Register ${candidate.providerId} / ${candidate.model} as a model destination for permission setup.`,
+      meaning: [
+        `User: ${i.userId}\nServer: ${i.serverId}\nDevice: ${i.deviceId}\nWorkspace: ${i.workspaceId}`,
+        describeAutomationModel(target),
+        'This stores the exact configured destination in the Vault. Registration sends no content and grants no transmission permission. Configure model.transmit and its limits separately.',
+        'Any saved configuration change invalidates this destination. Existing grants do not move to the new configuration or another provider. A fallback requires its own exact permission.',
+        'The executor must match this current configuration immediately before every transmission. This does not enable an unfinished observation or model-projection adapter.',
+      ].join('\n\n'), advisory: [],
+    });
+    if (!presentation) throw new VaultRecordError('The exact model destination cannot be displayed safely.');
+    return { entries, models, presentation };
+  }
+  const candidate = args.candidate;
   if (entries.some(e => sameAutomationIdentity(e.identity, args.identity)
     && (['bundlePath', 'bundleId', 'signingId', 'teamId', 'codeHash'] as const)
-      .every(key => e.candidate[key] === args.candidate[key]))) {
+      .every(key => e.candidate[key] === candidate[key]))) {
     throw new VaultRecordError('This exact application is already registered. Use its existing permissions.');
   }
   const c = args.candidate, i = args.identity;
@@ -104,7 +135,7 @@ async function prepare(context: Context, args: AutomationTargetRegistration) {
     ].join('\n\n'), advisory: [],
   });
   if (!presentation) throw new VaultRecordError('The full application identity cannot be displayed safely.');
-  return { entries, presentation };
+  return { entries, models, presentation };
 }
 export class AutomationTargetStore {
   constructor(private readonly backend: Backend, private readonly authority: AutomationTargetAuthority) {}
@@ -132,11 +163,31 @@ export class AutomationTargetStore {
   }
   inventory(actor: string) {
     return this.backend(actor, false, async context => {
-      const record = await context.read();
+      const record = await context.read(), document = readAutomationTargetDocument(record);
       return { reference: record?.reference ?? null,
-        applications: readAutomationTargets(record).filter(e => e.identity.userId === actor),
+        applications: document.applications.filter(e => e.identity.userId === actor),
+        models: document.models.filter(e => e.identity.userId === actor),
         reconciliationRequired: context.reconciliationRequired, executionEnabled: false as const };
     });
+  }
+  /** Resolves a canonical destination in the same TX as transmission authority.
+   * The caller must bind this to the actual registry dispatch, not a tool
+   * argument or a later unpinned/fallback chat call. */
+  resolveModel(actor: string, identity: AutomationIdentity, configurationId: string, configurationRevision: number, transaction: Db) {
+    const scope = structuredClone(identity);
+    if (!isAutomationIdentity(scope) || scope.userId !== actor || !uuid(configurationId) || configurationRevision !== 1) {
+      throw new VaultRecordError('Choose an exact registered model configuration for this workspace.');
+    }
+    return this.backend(actor, false, async context => {
+      if (context.reconciliationRequired) throw new VaultRecordError('Vault authority requires recovery reconciliation.');
+      await context.requireWorkspace(scope);
+      const record = await context.read();
+      const target = readAutomationTargetDocument(record).models.find(m => m.configurationId === configurationId
+        && m.configurationRevision === configurationRevision && sameAutomationIdentity(m.identity, scope));
+      if (!record || !target) throw new VaultRecordError('The model destination is not registered for this workspace.');
+      await requireCurrentAutomationModel(context.tx, target.candidate);
+      return { reference: record.reference, target: structuredClone(target) };
+    }, transaction);
   }
   prepareRegistration(input: AutomationTargetRegistration) {
     const args = structuredClone(input);
@@ -147,12 +198,18 @@ export class AutomationTargetStore {
   register(input: AutomationTargetRegistration) {
     const args = structuredClone(input), command = binding(args);
     return this.backend(args.actorUserId, true, async context => {
-      const { entries, presentation } = await prepare(context, args);
+      const { entries, models, presentation } = await prepare(context, args);
       await this.authority.verifyFreshAdministrator(context.tx, args.actorUserId, command);
       await this.authority.verifyProtectedHuman(context.tx, args.actorUserId, command, presentation);
-      entries.push({ applicationId: args.candidate.candidateId, installationRevision: 1, identity: args.identity,
-        candidate: args.candidate, registeredAt: new Date().toISOString() });
-      const reference = await context.write(new Secret(JSON.stringify({ schemaVersion: 1, applications: entries })));
+      if (args.candidate.kind === 'model') {
+        models.push({ configurationId: args.candidate.candidateId, configurationRevision: 1, identity: args.identity,
+          candidate: args.candidate, registeredAt: new Date().toISOString() });
+      } else {
+        entries.push({ applicationId: args.candidate.candidateId, installationRevision: 1, identity: args.identity,
+          candidate: args.candidate, registeredAt: new Date().toISOString() });
+      }
+      const reference = await context.write(new Secret(JSON.stringify(models.length
+        ? { schemaVersion: 2, applications: entries, models } : { schemaVersion: 1, applications: entries })));
       return { reference };
     });
   }

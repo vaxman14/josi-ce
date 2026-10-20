@@ -107,7 +107,7 @@ export class ProtectedChanges {
     try {
       const change = changeInput(args.change), key = this.master(), records = vaultRecords(this.db, key);
       if (change.kind === 'automation.target.register' && change.identity?.deviceId !== args.deviceId) {
-        throw new ProtectedChangeError(409, 'Use the enrolled Mac that owns this workspace to register its apps.');
+        throw new ProtectedChangeError(409, 'Use the enrolled Mac that owns this workspace to register its automation targets.');
       }
       const review = await this.review(records, args.actor, change);
       const proof = await reauthenticateProtectedAdmin(this.db, key, { ...review.command, userId: args.actor, sessionId: args.session,
