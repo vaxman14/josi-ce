@@ -7,6 +7,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { assertAllowedJosiCeUrl, sameOrigin, internalRoute, requireTrustedFrame } = require('./connection-policy.cjs');
 const { LocalWorkspaceBroker } = require('./local-workspace.cjs');
+const { createProtectedConfirmationSurface } = require('./protected-control.cjs');
 const { negotiateCapabilities } = require('@josi-ce/protocol');
 
 // Development never opens the installed client's data. Until P2 supplies vault
@@ -19,8 +20,14 @@ let lastError = '';
 let connectionGeneration = 0;
 let workspace = null;
 let currentSession = null;
+// Main-process-only ports. No remote renderer/guest IPC can open a protected
+// challenge. Enrollment and the authenticated server challenge source must be
+// installed before the broker can use these ports to produce any receipt.
+const protectedConfirmation = createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session,
+  systemPreferences, parentWindow: () => window });
 
 function discardConnection() {
+  protectedConfirmation.cancel();
   workspace = null;
   if (currentSession) {
     const previous = currentSession;
@@ -198,3 +205,4 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (!window) showShell(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', () => protectedConfirmation.dispose());

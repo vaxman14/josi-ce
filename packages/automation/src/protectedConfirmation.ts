@@ -4,8 +4,10 @@ import { parseProtectedControlChallenge, protectedControlMessage, isProtectedCon
 
 export interface ProtectedConfirmationPorts {
   loadChallenge(id: string, signal: AbortSignal): Promise<unknown>;
-  /** Trusted HOST presentation only; remote content is rendered as plain text. */
-  present(challenge: Readonly<ProtectedControlChallenge>, signal: AbortSignal): Promise<boolean>;
+  /** Trusted HOST presentation only; remote content is rendered as plain text.
+   * Call cancel on local closure/cancellation even AFTER review or OS presence
+   * resolves, until signal aborts at the end of the entire confirmation. */
+  present(challenge: Readonly<ProtectedControlChallenge>, signal: AbortSignal, cancel: () => void): Promise<boolean>;
   /** Genuine local OS authentication, not an approval boolean from a renderer.
    * Missing/unsupported authentication must reject; no dialog-only fallback. */
   authenticate(challenge: Readonly<ProtectedControlChallenge>, signal: AbortSignal): Promise<void>;
@@ -70,7 +72,7 @@ export function createProtectedConfirmationBroker(identity: { serverOrigin: stri
         // Consume before showing it: closing/cancelling a prompt requires a
         // fresh server challenge, not silent resubmission of an old approval.
         consumed.add(id);
-        if (await Promise.race([ports.present(immutable(challenge), controller.signal), aborted]) !== true) return { status: 'refused', code: 'cancelled' };
+        if (await Promise.race([ports.present(immutable(challenge), controller.signal, () => controller.abort()), aborted]) !== true) return { status: 'refused', code: 'cancelled' };
         await current();
         const authenticated = await Promise.race([ports.authenticate(immutable(challenge), controller.signal), aborted]);
         if (authenticated !== undefined) throw new Error('invalid authentication result');

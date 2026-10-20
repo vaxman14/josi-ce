@@ -97,6 +97,23 @@ describe('host-only confirmation broker with synthetic user-presence/key-lease p
     const result = f.broker.confirm(f.source.id); await entered.promise; f.broker.cancel();
     expect((await result).status).toBe('refused'); answer.resolve(); await Promise.resolve(); expect(f.signing).not.toHaveBeenCalled();
   });
+  it('local Cancel after OS presence invalidates a pending authority check', async () => {
+    let cancel!: () => void, checks = 0;
+    const entered = deferred<void>(), answer = deferred<boolean>();
+    const f = fixture({ present: async (_c, _signal, invalidate) => { cancel = invalidate; return true; },
+      isCurrent: async () => { checks++; if (checks !== 3) return true; entered.resolve(); return answer.promise; } });
+    const result = f.broker.confirm(f.source.id); await entered.promise; cancel();
+    expect((await result).status).toBe('refused'); answer.resolve(true); await Promise.resolve();
+    expect(f.authenticate).toHaveBeenCalledTimes(1); expect(f.signing).not.toHaveBeenCalled();
+  });
+  it('local Cancel during signing prevents a late signature from being returned', async () => {
+    let cancel!: () => void;
+    const entered = deferred<void>(), answer = deferred<string>();
+    const f = fixture({ present: async (_c, _signal, invalidate) => { cancel = invalidate; return true; },
+      sign: async () => { entered.resolve(); return answer.promise; } });
+    const result = f.broker.confirm(f.source.id); await entered.promise; cancel();
+    expect((await result).status).toBe('refused'); answer.resolve('a'.repeat(86));
+  });
   it('expired prompts and clock rollback cannot extend a confirmation', async () => {
     for (const delta of [-1, 60_000]) {
       const f = fixture(); f.ports.authenticate = async () => f.clock(delta);
