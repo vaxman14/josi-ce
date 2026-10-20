@@ -1,8 +1,8 @@
 'use strict';
-if (typeof importScripts === 'function') importScripts('config.js');
+if (typeof importScripts === 'function') importScripts('config.js', 'native-channel.js');
 const browserApi = globalThis.browser ?? globalThis.chrome;
 const config = globalThis.JOSI_BROWSER_CONFIG;
-const host = 'com.heyjosi.workspace';
+let nativeChannel = null;
 let workspace = null, pollTimer = null, pending = false, generation = 0;
 let status = 'Open an automation workspace in Josi to connect.';
 let lastClock = Date.now();
@@ -19,8 +19,9 @@ function live() {
   lastClock = now;
   return true;
 }
-function stop(message = 'Paused. Resume control in Josi.') {
+function stop(message = 'Paused. Resume control in Josi.', disconnect = true) {
   generation++; workspace = null; status = message;
+  if (disconnect) { const previous = nativeChannel; nativeChannel = null; previous?.close(); }
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
   void browserApi.action.setBadgeText({ text: '' });
@@ -29,16 +30,12 @@ async function native(operation, payload = {}, sessionId = workspace?.sessionId)
   const requestId = crypto.randomUUID();
   const request = { version: 1, requestId, operation, sessionId: sessionId ?? null, payload };
   if (!bounded(request)) throw new Error('message_too_large');
-  let timer;
-  try {
-    const response = await Promise.race([
-      browserApi.runtime.sendNativeMessage(host, request),
-      new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error('host_timeout')), 5000); }),
-    ]);
-    if (!response || !bounded(response) || response.version !== 1 || response.requestId !== requestId) throw new Error('invalid_host_response');
-    if (response.ok !== true) throw new Error('host_refused');
-    return response.payload;
-  } finally { clearTimeout(timer); }
+  const current = nativeChannel;
+  if (!current) throw new Error('host_unavailable');
+  const response = await current.request(request);
+  if (!response || !bounded(response) || response.version !== 1 || response.requestId !== requestId) throw new Error('invalid_host_response');
+  if (response.ok !== true) throw new Error('host_refused');
+  return response.payload;
 }
 function acceptSession(value) {
   const now = Date.now();
@@ -58,6 +55,11 @@ async function connect() {
   if (pending || workspace) return;
   pending = true; const epoch = ++generation;
   status = 'Connecting to your Josi workspace…';
+  nativeChannel?.close();
+  const connection = globalThis.createJosiNativeChannel(browserApi, config.family, () => {
+    if (nativeChannel === connection) stop('Connection interrupted. Reconnect from Josi; uncertain actions will not be repeated.');
+  });
+  nativeChannel = connection;
   try {
     const reply = await native('browser.hello', { family: config.family, extensionId: browserApi.runtime.id }, null);
     if (epoch !== generation) return;
@@ -153,8 +155,10 @@ browserApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const pageStop = message?.kind === 'local_input' && sender.id === browserApi.runtime.id && sender.frameId === 0
     && sender.tab && workspace && message.sessionId === workspace.sessionId && workspace.origins.includes(webUrl(sender.url)?.origin);
   if ((popup && message?.kind === 'stop') || pageStop) {
-    const previous = workspace?.sessionId; stop('You have control. Resume automation in Josi.');
-    if (previous) void native('browser.stop', { reason: 'local_takeover' }, previous).catch(() => {});
+    const previous = workspace?.sessionId, connection = nativeChannel;
+    const notified = previous ? native('browser.stop', { reason: 'local_takeover' }, previous) : Promise.resolve();
+    stop('You have control. Resume automation in Josi.', false); nativeChannel = null;
+    void notified.catch(() => {}).finally(() => connection?.close());
     sendResponse({ stopped: true });
   }
   return false;
