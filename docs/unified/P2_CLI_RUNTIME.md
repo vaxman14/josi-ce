@@ -19,3 +19,11 @@ The bundled pin is 2.1.258. [Anthropic's authentication documentation](https://c
 ## Integration boundary
 
 P5 owns startup/shutdown/restart and private runtime directories; P4 owns bounded dispatch authority and cancellation. These dependencies do not close P2: end-to-end Vault authority and preserved/reconciled sign-ins remain release gates. Continue independent rule/permission work without enabling automation or claiming that the current subscription login directories are compliant.
+
+## Canonical refresh claim — 20 October source checkpoint
+
+`CodexCredentialStore` now stores the validated vendor auth cache and its exclusive refresh claim inside one canonical Vault item. API/worker claims serialize with a shared PostgreSQL lock. Each operation checks current Vault authority, the active administrator and their unlocked box. Every mutation advances the item revision. A current consumer may write back only to its exact lease, item, owner and authority epoch; loss of refresh state requires reconnection rather than replaying an earlier cache.
+
+Administrative sign-in/disconnect requires an injected trusted verifier and the exact reviewed item/revision. A lease timeout does not prove that its consumer stopped. Lost-consumer reconciliation requires a separate trusted stop verifier, and is not automatically granted on expiry. A new sign-in receives no previous account cache. Shape validation is tied to the bundled Codex 0.152.0 vendor format and refuses API keys and other authentication modes.
+
+The root TypeScript build passed for this storage checkpoint. No live credential, login, provider request or Vault state was read or changed. The store is not yet wired into login/provider routes; supervised private projections, cleanup, migration and recovery remain required. No functional suite was run, following the owner's build-first direction. This source is later than `native.12`.

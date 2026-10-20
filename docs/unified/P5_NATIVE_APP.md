@@ -187,3 +187,9 @@ Email Delivery now configures the system and communications SMTP profiles after 
 Saved metadata never includes a credential or encrypted credential reference. Test delivery is an explicit single fixed message to one entered address; saving/loading does not send mail. A failed or lost response is not automatically retried, and an accepted message is distinguished from confirmed inbox delivery. Recent operational delivery status uses the existing metadata-only administrator endpoint.
 
 The full Swift 6 app and root TypeScript build passed. No SMTP credential, profile, account, Vault record or email was changed or sent during implementation. Functional acceptance remains deferred; this source is newer than `native.11`.
+
+### Native.12 artifact receipt
+
+Delivered `JosiDrive/Artifacts/josi-native-unified-20261020-12/Install Josi.pkg` (698,476,836 bytes), clean source `c5f9246c7bf1eec7d6370cf2a2840d3382f7ef69`; app `0.7.0-native.12`, bundle `20261020.12`, package `0.7.0.13`. Includes exact model-destination registration and permissions, Email Delivery settings, original automation task attachment/history and the bounded task-bound guest observation source.
+
+All 17,631 extracted payload entries matched staged bytes/modes/links. App, helper, companion, uninstaller, installer and extracted app signatures verified under Socal Receptionist LLC. Exact source, retained dependency source, profile, packaging evidence, integrity receipt and checksums accompany the installer. This candidate was not installed, launched, notarized or functionally accepted. Production automation remains disabled and subscription CLI Vault migration remains unfinished. Later subscription credential source is not included in this artifact.
