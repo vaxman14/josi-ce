@@ -247,7 +247,7 @@ class WorkspaceImage:
             raise
         return self.status()
 
-    def detach(self):
+    def detach(self, timeout=120):
         record = self.record()
         if not record:
             raise Refusal('workspace_missing')
@@ -256,7 +256,7 @@ class WorkspaceImage:
             if self.attachments():
                 # The private managed mount point avoids a stale /dev/diskN
                 # name. No force flag, unrelated volume or recursive cleanup.
-                tool(['detach', str(self.mount)])
+                tool(['detach', str(self.mount)], timeout=timeout)
             if self.attachments():
                 raise Refusal('storage_needs_repair')
             self.save(record, 'image_ready' if record['imageCreated'] else 'needs_repair')

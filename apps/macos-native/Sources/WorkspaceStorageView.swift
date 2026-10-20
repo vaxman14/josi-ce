@@ -262,6 +262,7 @@ struct NativeWorkspaceStorageView: View {
                                 Button("Install macOS…") { openDesktop(entry, installing: true) }
                                 Button("Open Desktop…") { openDesktop(entry, installing: false) }
                             }
+                            Button("Inspect / Close Storage…") { inspectStorage(entry) }
                         }.disabled(model.busy || desktop.requiresClosure || !NativeProtectedApproval.available)
                     }
                 }
@@ -304,5 +305,31 @@ struct NativeWorkspaceStorageView: View {
         }
         let selected = restore
         model.run { try await desktop.open(model: model, entry: entry, restore: selected) }
+    }
+    private func inspectStorage(_ entry: Wire) {
+        guard !model.busy, !desktop.requiresClosure, let api = model.api else { return }
+        let user = model.user["id"]
+        model.run {
+            let id = try api.uuid(entry["workspaceId"].text), status = try await NativeWorkspaceImage.status(id)
+            guard model.api === api, model.user["id"] == user else { throw approvalUnavailable() }
+            if status["state"].text == "uninitialized" {
+                note = "This workspace has no local storage yet. Use Resume Storage Preparation."
+                return
+            }
+            if status["state"].text == "image_ready" && !status["mounted"].flag {
+                note = "This workspace’s encrypted storage is closed."
+                return
+            }
+            let alert = NSAlert()
+            alert.messageText = "Close retained storage for \(entry["label"].text)?"
+            alert.informativeText = "Workspace: \(id)\nJosi will request a normal unmount and keep every file. If another desktop process is using the disk, closure may require further attention."
+            alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Close Storage")
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+            guard model.api === api, model.user["id"] == user else { throw approvalUnavailable() }
+            let response = try await NativeWorkspaceImage.run(["schemaVersion": .number(1), "operation": "detach", "workspaceId": .string(id)])
+            let result = try NativeWorkspaceImage.result(response, id: id)
+            guard !result["mounted"].flag, result["state"].text == "image_ready" else { throw WorkspaceMachineError.needsRepair }
+            note = "Encrypted storage is closed. Any unfinished macOS installation still needs repair."
+        }
     }
 }

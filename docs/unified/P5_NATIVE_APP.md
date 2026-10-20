@@ -38,6 +38,12 @@ The staged signed app actually launched through the computer-use tool and displa
 
 New permission-target selection, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and production automation transport remain open. The development desktop's native storage/provisioning/lifecycle is now assembled in source; see [P6/P8 evidence](P6_P8_NATIVE_COMPONENTS.md) for its limits and remaining recovery work. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design. Device enrollment is assembled; actual biometric/local-and-remote acceptance and abandoned-key reconciliation remain open.
 
+## Native.5 installer — 20 October
+
+Delivered `JosiDrive/Artifacts/josi-native-unified-20261020-5/Install Josi.pkg` (697,466,497 bytes), built from clean commit `6e1649e8c4d4cf96a6fa5462b0a9900291af52b8`; app version `0.7.0-native.5`, bundle `20261020.5`, package `0.7.0.6`. Includes Vault-backed storage preparation and the development desktop's installation/open/show/pause/resume/close path. The main app has the virtualization entitlement; app, helper and installer use the approved Socal identity/profile.
+
+All 17,618 extracted payload file/link entries matched staged bytes, modes and links. Both extracted app signatures and the installer signature verified. Artifact metadata, checksum, exact Git source archive, corresponding runtime sources and profile are retained alongside the installer. This candidate was **not installed, launched, notarized or functionally tested**; earlier native.4 launch evidence is not evidence of its VM or biometric behavior. Subsequent source-only guardian/recovery changes are tracked in P6/P8.
+
 The follow-up work/task and rule-editor sources compiled successfully with Swift 6. No authenticated functional flow or model review was run on the owner's server. The native package version advances to `0.7.0-native.2`; its installer version is `0.7.0.3`.
 
 That signed installer is retained at `/Users/roman/Documents/Josi Mac Native/JosiDrive/Artifacts/josi-native-unified-20261020-2/Install Josi.pkg`, with clean source revision `db33e6d3f38d89d70241c11519b9ea6a6aac1e6b`, checksums, current application source and retained runtime dependency sources. Its extracted file comparison and both app signature checks passed. This package predates the native protected-approval connection described above.

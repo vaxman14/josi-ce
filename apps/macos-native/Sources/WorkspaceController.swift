@@ -20,6 +20,7 @@ import Darwin
     private var previousWall = 0
     private var machine: WorkspaceMachine?
     private var installingMachine: VZVirtualMachine?
+    private var guardian: NativeWorkspaceGuardian?
     private var root: URL?
     private var volumeDevice: dev_t?
     private var restore: URL?
@@ -85,6 +86,7 @@ import Darwin
     private func current() throws {
         let now = Int(Date().timeIntervalSince1970 * 1000)
         guard !lost, let model, let api, model.api === api, model.user["id"] == user, model.isAdministrator,
+              !attachmentAttempted || guardian?.running == true,
               now >= previousWall, now < session["leaseUntilMs"].integer, ContinuousClock.now < leaseDeadline else {
             throw JosiError(message: "The Vault or desktop connection ended. Reopen the workspace to continue.")
         }
@@ -102,6 +104,7 @@ import Darwin
                     try current()
                     guard next["workspaceId"] == workspace["workspaceId"], next["executionEnabled"] == .bool(false) else { throw approvalUnavailable() }
                     try adoptLease(next)
+                    try guardian?.renew()
                 } catch { if !Task.isCancelled { await connectionLost() }; return }
             }
         }
@@ -129,6 +132,10 @@ import Darwin
         guard projectionLease != nil, workspace["workspaceId"].text == id.uuidString.lowercased(),
               ProtectedWire.matches(projection["imagePassword"], "^[A-Za-z0-9_-]{43}$") else { throw approvalUnavailable() }
         state = "opening"; progress = "Opening the encrypted workspace…"
+        let guardProcess = NativeWorkspaceGuardian()
+        try await guardProcess.start(id.uuidString.lowercased())
+        guardian = guardProcess
+        try current()
         attachmentAttempted = true
         let response = try await NativeWorkspaceImage.run(["schemaVersion": .number(1), "operation": "attach",
             "workspaceId": workspace["workspaceId"], "imagePassword": projection["imagePassword"]],
@@ -189,6 +196,7 @@ import Darwin
             installingMachine = nil
             if let machine { try await machine.authorityLost() }
             try await detach()
+            guardian?.closed(); guardian = nil
             machine = nil; api = nil; model = nil; session = .null; workspace = .null; restore = nil
             state = "closed"; progress = "Desktop closed; encrypted storage is closed."
         } catch {
