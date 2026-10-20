@@ -121,3 +121,7 @@ Swift 6 compilation passed for the account page, recovery state and app integrat
 ### Native.8 artifact receipt
 
 Delivered `JosiDrive/Artifacts/josi-native-unified-20261020-8/Install Josi.pkg` (697,904,709 bytes), from clean commit `1f5eb3eb01fff6133a985c991503d85feb69b78d`; app `0.7.0-native.8`, bundle `20261020.8`, package `0.7.0.9`. Includes the Models and account/MFA pages and the final shared recovery-sheet integration. All 17,624 extracted file/link entries matched staged bytes/modes/links, and extracted app signatures and installer signature passed. Exact source, runtime dependency source, checksums and Socal profile accompany it. No installation, launch, sign-in, provider probe, MFA action, VM action, functional acceptance or notarization was performed for this candidate. Subscription CLI credential migration remains a release gate; the new UI does not implement that missing lifecycle.
+
+## Native live progress — subsequent source checkpoint
+
+Chat and Tasks subscribe to the existing owner-authenticated work-goal stream while visible. They refetch saved goal state on changes, coalesce notifications, reject lower revisions and retain polling for older servers and interrupted reads. The footer shows live versus periodic status. Connection changes, inactive views and session revocation end the stream; revoked sessions cannot repopulate the goal view from a pending response. See [P11](P11_TELEGRAM_PROGRESS.md) for the exact scope. The complete native app compiled with Swift 6; live server acceptance remains deferred.

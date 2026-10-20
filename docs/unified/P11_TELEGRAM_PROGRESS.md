@@ -19,3 +19,11 @@ Real bot acceptance, first-send crash/reconciliation, concurrent link changes, r
 Automatic model continuation still requires the existing live CE owner session; an active Telegram link alone does not manufacture a server session or step-up approval. No live bot message, model request, migration or channel configuration change was made while building this checkpoint.
 
 Build checks passed: root TypeScript compilation, web type checking, the web production bundle, the public-source secret scan (1,169 files) and whitespace checks. Functional suites remain deferred.
+
+## Native chat and Tasks progress
+
+The native app now follows the existing authenticated, owner-scoped work-goal stream while Chat or Tasks is visible and the app is active. Events invalidate the saved projection; the app then reloads the ordinary goal API, coalescing closely spaced changes and retaining higher saved revisions against late replies. No event becomes completion evidence, a displayed instruction, or permission authority.
+
+The footer distinguishes live progress from periodic updates. Older servers returning 404 retain polling; interrupted connections reconnect with a delay, while failed snapshot reads remain eligible for polling even if heartbeats continue. Logout, owner/server changes and inactive views cancel the stream. Session revocation stops reconnecting and clears the goal view until sign-in. Response size, line/frame size, event names and payload shape are bounded and checked; redirects are refused by the existing session.
+
+Swift 6 compilation passed for the assembled native app. No authenticated stream or task was opened on the owner's server; reconnect, revocation, backgrounding and live checklist acceptance remain for the integrated testing pass.

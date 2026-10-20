@@ -53,6 +53,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
     private let session: URLSession
     private var csrf: String?
     private var closed = false
+    private var workEventRequest: URLSessionTask?
     init(address: String) throws {
         guard var url = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
               let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
@@ -71,7 +72,61 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         config.httpAdditionalHeaders = ["User-Agent": "JosiNative/0.7", "Accept": "application/json"]
         session = URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
     }
-    func close() { closed = true; csrf = nil; session.invalidateAndCancel() }
+    func close() { closed = true; csrf = nil; cancelWorkProgress(); session.invalidateAndCancel() }
+    func cancelWorkProgress() { workEventRequest?.cancel(); workEventRequest = nil }
+
+    /// Owner-scoped invalidations only. Event contents never become goal text,
+    /// completion evidence, permissions, or instructions.
+    func followWorkProgress(signal: @MainActor (String) -> Void) async throws {
+        guard !closed, workEventRequest == nil,
+              let url = URL(string: origin.absoluteString + "/api/assistant/work-goals/stream?all=1") else { throw CancellationError() }
+        var request = URLRequest(url: url)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
+        let (bytes, response) = try await session.bytes(for: request)
+        guard !closed, !Task.isCancelled else { bytes.task.cancel(); throw CancellationError() }
+        workEventRequest = bytes.task
+        defer {
+            bytes.task.cancel()
+            if workEventRequest === bytes.task { workEventRequest = nil }
+        }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              response.url == url, response.mimeType == "text/event-stream" else {
+            throw JosiError(message: "Live progress is unavailable.", status: (response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        var line = Data(), event = "", payload = "", total = 0, frameBytes = 0
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard !closed, total < 1024 * 1024, line.count < 8192, frameBytes < 16_384 else {
+                throw JosiError(message: "The live progress connection ended.")
+            }
+            total += 1; frameBytes += 1
+            if byte != 10 { line.append(byte); continue }
+            if line.last == 13 { line.removeLast() }
+            guard let text = String(data: line, encoding: .utf8) else { throw JosiError(message: "Invalid progress event.") }
+            line.removeAll(keepingCapacity: true)
+            if text.isEmpty {
+                if !event.isEmpty {
+                    guard ["progress", "heartbeat", "unavailable", "access-ended"].contains(event),
+                          let value = try? JSONDecoder().decode(Wire.self, from: Data(payload.utf8)),
+                          event == "progress" ? ProtectedWire.exact(value, ["revision"])
+                            && ProtectedWire.matches(value["revision"], "^[a-f0-9]{64}$") : ProtectedWire.exact(value, [])
+                    else { throw JosiError(message: "Invalid progress event.") }
+                    signal(event)
+                    if event == "access-ended" || event == "unavailable" { return }
+                }
+                event = ""; payload = ""; frameBytes = 0
+            } else if text.hasPrefix("event:") {
+                guard event.isEmpty else { throw JosiError(message: "Invalid progress event.") }
+                event = String(text.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            } else if text.hasPrefix("data:") {
+                if !payload.isEmpty { payload += "\n" }
+                payload += String(text.dropFirst(5).drop(while: { $0 == " " }))
+            } else if !text.hasPrefix(":") && !text.hasPrefix("retry:") {
+                throw JosiError(message: "Unsupported progress event.")
+            }
+        }
+    }
     func downloadBackup(_ identifier: String, expectedBytes: Int64, destination: URL,
                         progress: @MainActor (Int64) throws -> Void) async throws {
         let id = try uuid(identifier)

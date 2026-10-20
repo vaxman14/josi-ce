@@ -30,10 +30,18 @@ import SwiftUI
     @Published var automationSettings: Wire = .null
     @Published var automationCatalog: Wire = .null
     @Published var lastRefreshed: Date?
+    @Published var progressConnection = "Periodic updates"
     let desktop = NativeWorkspaceController()
     private(set) var api: JosiAPI?
     private var installAttempt: UUID?
     private var refreshing = false
+    private var workStream: Task<Void, Never>?
+    private var workRefresh: Task<Void, Never>?
+    private var lastProgressSignal: ContinuousClock.Instant?
+    private var workStreamUnsupported = false
+    private var workAccessEnded = false
+    private var workRefreshRequested = false
+    private var workNeedsRefresh = true
     private var pending: (id: String, thread: String, message: String)?
     var signedInName: String { user["displayName"].text.isEmpty ? user["username"].text : user["displayName"].text }
     var isAdministrator: Bool { user["role"].text == "super_admin" }
@@ -57,7 +65,8 @@ import SwiftUI
         guard mfaRecovery == .null else { throw JosiError(message: "Save your sign-in recovery codes before changing servers.") }
         if desktop.requiresClosure { try await desktop.close() }
         let next = try JosiAPI(address: address)
-        api?.close(); api = next
+        stopWorkStream(); api?.close(); api = next
+        workStreamUnsupported = false; workAccessEnded = false
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []
         pending = nil; pendingMessage = false; draft = ""; selectedThread = nil
         recovery = .null; setup = .null; setupReview = .null; mfaChallenge = ""
@@ -101,7 +110,7 @@ import SwiftUI
         guard !busy else { return }
         guard mfaRecovery == .null else { error = "Save your sign-in recovery codes before disconnecting."; return }
         guard !desktop.requiresClosure else { error = "Close the separate desktop before disconnecting."; return }
-        api?.close(); api = nil
+        stopWorkStream(); api?.close(); api = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; setup = .null
         setupReview = .null; recovery = .null; mfaChallenge = ""; draft = ""; pending = nil; pendingMessage = false
         automationSettings = .null; automationCatalog = .null; automation = .null; selectedThread = nil
@@ -113,7 +122,7 @@ import SwiftUI
         if let api { _ = try await api.request("/auth/logout", method: "POST", body: [:]) }
         // run() keeps busy set until this completes; disconnect's UI guard
         // must not prevent clearing the revoked session.
-        api?.close(); api = nil
+        stopWorkStream(); api?.close(); api = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []
         draft = ""; pending = nil; pendingMessage = false; selectedThread = nil
         recovery = .null; setup = .null; setupReview = .null; mfaChallenge = ""
@@ -129,27 +138,115 @@ import SwiftUI
     }
     func poll() async {
         if let installAttempt { activity = NativeServer.progress(installAttempt) ?? activity }
+        followWork()
         guard screen == .workspace, !busy, !refreshing, NSApp.isActive else { return }
         refreshing = true; defer { refreshing = false }
-        do { try await reloadWorkspace() }
+        do { try await reloadWorkspace(refreshGoals: workNeedsRefresh || (lastProgressSignal.map { $0.duration(to: .now) >= .seconds(20) } ?? true)) }
         catch is CancellationError {}
         catch { self.error = "Updates are unavailable. " + error.localizedDescription }
     }
-    func reloadWorkspace() async throws {
+    func reloadWorkspace(refreshGoals: Bool = true) async throws {
         guard let api, screen == .workspace else { return }
         let threadResult = try await api.request("/assistant/threads")
         guard self.api === api else { return }
         threads = threadResult["threads"].list
-        do {
-            let result = try await api.request("/assistant/work-goals?all=1")
-            guard self.api === api else { return }; goals = result["goals"].list
-        } catch let e as JosiError where e.status == 404 { goals = [] } // Older remote CE servers remain usable.
+        if refreshGoals && !workAccessEnded {
+            do {
+                let result = try await api.request("/assistant/work-goals?all=1")
+                guard self.api === api, !workAccessEnded else { return }; adoptGoals(result["goals"].list)
+            } catch let e as JosiError where e.status == 404 { goals = [] } // Older remote CE servers remain usable.
+        }
         if section == "tasks" {
             let result = try await api.request("/assistant/tasks?all=1")
             guard self.api === api else { return }; tasks = result["tasks"].list
         }
         if let selectedThread { try await loadThread(selectedThread) }
         if self.api === api { lastRefreshed = Date() }
+    }
+    private func adoptGoals(_ next: [Wire]) {
+        workNeedsRefresh = false
+        goals = next.map { value in
+            if let previous = goals.first(where: { $0["goalId"] == value["goalId"] }),
+               previous["revision"].integer > value["revision"].integer { return previous }
+            return value
+        }
+    }
+    private var wantsWorkStream: Bool {
+        screen == .workspace && NSApp.isActive && ["chat", "tasks"].contains(section) && !workAccessEnded
+    }
+    private func stopWorkStream() {
+        workStream?.cancel(); workStream = nil; api?.cancelWorkProgress()
+        workRefresh?.cancel(); workRefresh = nil; workRefreshRequested = false
+        workNeedsRefresh = true
+        lastProgressSignal = nil; progressConnection = workAccessEnded ? "Sign in again to follow work" : "Periodic updates"
+    }
+    private func followWork() {
+        guard wantsWorkStream else { stopWorkStream(); return }
+        if let lastProgressSignal, lastProgressSignal.duration(to: .now) >= .seconds(20) {
+            progressConnection = "Periodic updates"
+        }
+        guard workStream == nil, !workStreamUnsupported, let api else { return }
+        let owner = user["id"]
+        workStream = Task {
+            while !Task.isCancelled && self.api === api && user["id"] == owner && wantsWorkStream {
+                var retrySeconds = 5
+                progressConnection = "Connecting live progress…"
+                do {
+                    try await api.followWorkProgress { event in
+                        guard self.api === api, self.user["id"] == owner, !Task.isCancelled else { return }
+                        switch event {
+                        case "progress", "heartbeat":
+                            self.lastProgressSignal = .now; self.progressConnection = "Live progress"
+                            if event == "progress" { self.refreshWork(api, owner: owner) }
+                        case "access-ended":
+                            self.workAccessEnded = true; self.goals = []
+                            self.progressConnection = "Sign in again to follow work"
+                            self.error = "Your progress session ended. Sign in again to continue following your work."
+                        default:
+                            self.lastProgressSignal = nil; self.progressConnection = "Periodic updates"
+                        }
+                    }
+                } catch let error as JosiError {
+                    guard !Task.isCancelled, self.api === api, user["id"] == owner else { return }
+                    if error.status == 404 { workStreamUnsupported = true; break }
+                    if [401, 403].contains(error.status) {
+                        workAccessEnded = true; goals = []
+                        self.error = "Sign in again to follow your work."; break
+                    }
+                    if error.status == 429 { retrySeconds = 15 }
+                } catch { if Task.isCancelled { return } }
+                guard !Task.isCancelled, self.api === api, user["id"] == owner, wantsWorkStream else { return }
+                lastProgressSignal = nil; progressConnection = "Periodic updates"
+                do { try await Task.sleep(for: .seconds(retrySeconds)) } catch { return }
+            }
+            if !Task.isCancelled, self.api === api, user["id"] == owner {
+                workStream = nil
+                progressConnection = workAccessEnded ? "Sign in again to follow work" : "Periodic updates"
+            }
+        }
+    }
+    private func refreshWork(_ api: JosiAPI, owner: Wire) {
+        workNeedsRefresh = true
+        workRefreshRequested = true
+        guard workRefresh == nil else { return }
+        workRefresh = Task {
+            // Collapse closely spaced invalidations without guessing a local
+            // checklist or allowing an older request to lower a saved revision.
+            defer { if !Task.isCancelled { workRefresh = nil } }
+            while workRefreshRequested && !Task.isCancelled {
+                workRefreshRequested = false
+                do {
+                    try await Task.sleep(for: .milliseconds(200))
+                    guard self.api === api, user["id"] == owner, wantsWorkStream else { return }
+                    let result = try await api.request("/assistant/work-goals?all=1")
+                    guard !Task.isCancelled, self.api === api, user["id"] == owner, !workAccessEnded else { return }
+                    adoptGoals(result["goals"].list); lastRefreshed = Date()
+                } catch {
+                    if !Task.isCancelled { workNeedsRefresh = true; lastProgressSignal = nil; progressConnection = "Periodic updates" }
+                    return
+                }
+            }
+        }
     }
     func selectThread(_ id: String) async throws {
         selectedThread = id; messages = []; turns = []; section = "chat"

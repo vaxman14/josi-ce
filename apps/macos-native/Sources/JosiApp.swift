@@ -350,7 +350,7 @@ struct ChatView: View {
                     if model.pendingMessage {
                         Text("Delivery is unconfirmed. Retry uses the same message ID.").font(.caption).foregroundStyle(.secondary)
                     } else {
-                        Text("Josi keeps working on the server when you close this window.").font(.caption).foregroundStyle(.secondary)
+                        Text(model.progressConnection + " · Work continues on the server when this window closes.").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button(model.pendingMessage ? "Retry Delivery" : "Send") { model.run { try await model.send() } }
@@ -466,6 +466,7 @@ struct TaskManagerView: View {
                         }
                     }
                 }
+                Text(model.progressConnection).font(.caption).foregroundStyle(.secondary)
                 if let refreshed = model.lastRefreshed { Text("Updated \(refreshed.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary) }
             }.padding(28)
         }
