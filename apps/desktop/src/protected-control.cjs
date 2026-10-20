@@ -13,7 +13,9 @@ const titles = Object.freeze({ 'cardinal.activate': 'Make this Cardinal Rule per
  * open a challenge, authenticate, access a key or sign. This is presentation
  * and local presence only; enrollment and the server's verification are separate. */
 function createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session, systemPreferences, parentWindow,
+  authenticateNative = null,
   platform = process.platform, clock = () => ({ wallMs: Date.now(), monotonicMs: performance.now() }) }) {
+  if (authenticateNative !== null && typeof authenticateNative !== 'function') throw new Error('Invalid native authentication port.');
   const pageUrl = pathToFileURL(path.join(__dirname, 'protected-control.html')).href;
   const resourceUrls = new Set(['protected-control.html', 'protected-control.css', 'protected-control.js']
     .map(name => pathToFileURL(path.join(__dirname, name)).href));
@@ -129,7 +131,11 @@ function createProtectedConfirmationSurface({ BrowserWindow, ipcMain, session, s
       // or boolean IPC result. The system API must resolve successfully itself.
       const prompt = Promise.resolve().then(() => {
         if (!live(entry)) throw new Error('Protected confirmation cancelled.');
-        return systemPreferences.promptTouchID(titles[entry.challenge.purpose]);
+        // The protected-key host retains the same authenticated LAContext for
+        // unwrapping/signing. A native port avoids a second, unrelated prompt.
+        return authenticateNative
+          ? authenticateNative(entry.challenge, entry.signal)
+          : systemPreferences.promptTouchID(titles[entry.challenge.purpose]);
       }).finally(() => { authenticating = false; });
       try {
         const result = await Promise.race([prompt, cancelled]);

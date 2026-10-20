@@ -16,7 +16,9 @@ The owner directed build-first work with functional testing after feature implem
 
 The new app identity is `com.heyjosi.ce.unified`, installed at `/Applications/Josi.app`. The server remains under the existing Josi CE Server support directory and existing `com.heyjosi.ce.*` jobs. The legacy installer stays available as migration input; the new builder does not reuse its separate client packaging.
 
-The builder only writes a fresh output folder and never installs or signs it. A desktop-only development candidate may omit `--runtime`; creating an installer requires it. Build current TypeScript and the web application before packaging. The candidate records its source commit, dirty-tree flag, Electron version/executable hash, and unvalidated/unsigned status. Final signing must update the byte inventory after nested code signing.
+The builder only writes a fresh output folder and never installs or signs it. A desktop-only development candidate may omit `--runtime`; creating an installer requires it. Supply `--node` with Node 22.12+ for the pinned ASAR/fuse tools. Build current TypeScript and the web application before packaging. The candidate records its source commit, dirty-tree flag, Electron version/executable hash, desktop ASAR hash/fuse state, protected native helper hash, and unvalidated/unsigned status. Final signing must update the byte inventory after nested code signing. The minimum macOS version is 14.2.
+
+Desktop code sealing and protected helper packaging are described in the [P4/P5 native-host checkpoint](P4_P5_PROTECTED_HOST.md). The candidate contains no unpacked fallback app directory; protected signing still requires final trusted signing and app/server enrollment assembly.
 
 The existing bootstrap file predates this checkpoint and is used only before the Vault/account setup is complete; this is not an additional secret authority. Its final lifecycle/revocation and production loopback service-identity verification remain part of the P2/P5 acceptance work.
 

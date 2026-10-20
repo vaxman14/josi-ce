@@ -54,7 +54,7 @@ def replace_tree(source, destination):
 def prepare(args):
     if sys.platform != 'darwin' or os.uname().machine != 'arm64':
         raise ValueError('Build the macOS candidate on Apple Silicon')
-    output = args.output.expanduser().absolute()
+    output = args.output.expanduser().resolve()
     if output.exists() or output.is_symlink():
         raise ValueError('Use a new output directory; existing builds are retained')
     electron = args.electron.resolve(strict=True)
@@ -101,13 +101,30 @@ def prepare(args):
     info = plistlib.loads(info_path.read_bytes())
     info.update(CFBundleIdentifier=IDENTIFIER, CFBundleName='Josi', CFBundleDisplayName='Josi',
                 CFBundleExecutable='Josi', CFBundleShortVersionString='0.7.0', CFBundleVersion='20261019.1',
-                LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
+                LSMinimumSystemVersion='14.2', NSHighResolutionCapable=True,
                 NSSystemAdministrationUsageDescription='Josi manages the local server when you choose Run on this Mac.',
                 NSDocumentsFolderUsageDescription='Josi accesses only local folders you choose.',
                 NSDesktopFolderUsageDescription='Josi accesses only local folders you choose.',
                 NSDownloadsFolderUsageDescription='Josi accesses only local folders you choose.')
     info.pop('CFBundleURLTypes', None)
     info_path.write_bytes(plistlib.dumps(info))
+    sealed = subprocess.run([str(args.node.resolve(strict=True)), str(REPO / 'scripts/macos/seal-desktop-code.mjs'), str(app)],
+                            check=True, capture_output=True, text=True, timeout=180)
+    integrity = json.loads(sealed.stdout)
+    if integrity.get('algorithm') != 'SHA256' or len(integrity.get('hash', '')) != 64:
+        raise ValueError('The desktop integrity record is unavailable')
+    info['ElectronAsarIntegrity'] = {'Resources/app.asar': {'algorithm': 'SHA256', 'hash': integrity['hash']}}
+    info['JosiProtectedHostProtocol'] = 1
+    info_path.write_bytes(plistlib.dumps(info))
+    (resources / 'desktop-integrity.json').write_text(json.dumps(integrity, indent=2) + '\n')
+    native_build = output / 'native-components'
+    subprocess.run([sys.executable, '-B', str(REPO / 'scripts/macos/build-automation-components.py'),
+                    '--protected-host-only', '--output', str(native_build)], check=True, timeout=240)
+    helpers = app / 'Contents/Helpers'
+    helpers.mkdir(exist_ok=True)
+    protected_host = helpers / 'JosiProtectedKeyHost'
+    shutil.copyfile(native_build / 'JosiProtectedKeyHost', protected_host)
+    protected_host.chmod(0o755)
     if runtime_input:
         runtime = resources / 'runtime'
         copy_tree(runtime_input, runtime)
@@ -146,6 +163,8 @@ def prepare(args):
     provenance = {'schemaVersion': 1, 'version': VERSION, 'sourceCommit': revision, 'workingTreeModified': dirty,
                   'electronVersion': electron_version, 'electronExecutableSha256': digest(electron / 'Contents/MacOS/Electron'),
                   'serverIncluded': runtime_input is not None, 'signed': False, 'validated': False,
+                  'desktopAsarHeaderSha256': integrity['hash'], 'desktopFuses': integrity['fuses'],
+                  'protectedHostSha256': digest(protected_host),
                   'builtAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
     (resources / 'unified-build.json').write_text(json.dumps(provenance, indent=2) + '\n')
     if args.package:
@@ -162,7 +181,7 @@ def prepare(args):
  <title>Josi</title>
  <options customize="never" require-scripts="false" hostArchitectures="arm64" rootVolumeOnly="true"/>
  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
- <allowed-os-versions><os-version min="14.0"/></allowed-os-versions>
+ <allowed-os-versions><os-version min="14.2"/></allowed-os-versions>
  <choices-outline><line choice="josi"/></choices-outline>
  <choice id="josi" title="Josi" visible="false" start_selected="true" start_enabled="false"><pkg-ref id="com.heyjosi.ce.unified.pkg"/></choice>
  <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.1" onConclusion="none">application.pkg</pkg-ref>
@@ -177,6 +196,7 @@ def prepare(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--electron', type=Path, required=True, help='Pinned Electron.app from the existing verified cache')
+    parser.add_argument('--node', type=Path, required=True, help='Node 22.12+ used for pinned ASAR and fuse build tools')
     parser.add_argument('--runtime', type=Path, help='Existing staged native server runtime; required for installer builds')
     parser.add_argument('--output', type=Path, required=True, help='New candidate folder on the same APFS volume')
     parser.add_argument('--package', action='store_true', help='Also build the unsigned, one-choice installer')

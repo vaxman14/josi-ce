@@ -1,5 +1,11 @@
 'use strict';
 const { app, BrowserWindow, Menu, ipcMain, session, dialog, shell, clipboard, Notification, systemPreferences } = require('electron');
+// The protected helper trusts only the sealed packaged app. Reject alternate
+// debugger/Chromium launch arguments before creating any renderer or key port.
+// Electron fuses independently disable Node launch/options/inspector paths.
+if (app.isPackaged && (process.argv.slice(1).some(value => !/^-psn_[0-9]+_[0-9]+$/.test(value))
+  || ['NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ASAR',
+    'ELECTRON_ENABLE_LOGGING', 'ELECTRON_LOG_FILE', 'ELECTRON_ENABLE_STACK_DUMPING'].some(key => !!process.env[key]))) process.exit(78);
 const { randomUUID } = require('node:crypto');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
