@@ -31,6 +31,9 @@ struct NativeAuthoritySettings: View {
                             Text(item["definition"]["label"].text).font(.headline)
                             Text(item["definition"]["wording"].text).textSelection(.enabled)
                             Text("Definition version \(item["source"]["version"].integer)").font(.caption).foregroundStyle(.secondary)
+                            NativeProtectedChange(title: "Retire Rule…",
+                                change: ["kind": "cardinal.retire", "ruleId": item["ruleId"],
+                                         "policy": model.automationSettings["rules"]["reference"]])
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                     }
                 }
@@ -110,10 +113,14 @@ struct NativeAuthoritySettings: View {
                                     Text("Hardware key: " + device["wrappingFingerprint"].text)
                                 }.font(.caption).textSelection(.enabled)
                             }
+                            if device["revokedAt"] == .null {
+                                NativeProtectedChange(title: "Revoke Device…",
+                                    change: ["kind": "device.revoke", "enrollmentId": device["enrollmentId"], "expected": devices["reference"]])
+                            }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                     }
                 }
-                Text("Enrollment alone grants no browser or computer access. Native enrollment and revocation controls are not available in this checkpoint.")
+                Text("Enrollment alone grants no browser or computer access. Native enrollment controls are not available in this checkpoint.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -318,8 +325,14 @@ struct NativeRuleEditor: View {
                             .disabled(password.isEmpty || !unchanged || !preview["canTransmit"].flag)
                     }
                 }
-                Text("Saving a draft or requesting model advice never makes a rule permanent. Permanent approval requires the protected native confirmation, which is not connected in this checkpoint.")
+                Text("Saving a draft or requesting model advice never makes a rule permanent. You must approve the exact change in Josi's protected confirmation window.")
                     .font(.caption).foregroundStyle(.secondary)
+                if unchanged, initial["document"]["tested"]["report"]["status"].text == "passed",
+                   initial["document"]["tested"]["review"]["status"].text == "available" {
+                    NativeProtectedChange(title: "Make Permanent…",
+                        change: ["kind": "cardinal.activate", "draft": initial["reference"],
+                                 "policy": model.automationSettings["rules"]["reference"]])
+                }
             }.textFieldStyle(.roundedBorder).padding(12).disabled(model.busy)
         }
         .onChange(of: draft) { _, _ in check = .null; preview = .null; checkedDraft = .null; previewedDraft = .null }

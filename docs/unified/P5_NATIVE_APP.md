@@ -15,7 +15,8 @@ The owner requested a native replacement after installing the unfinished Electro
 - Fixed local lifecycle controls provide install/update, start, stop, restart and journal recovery using macOS administrator authorization and Socal signature verification. Closing the window leaves server hosting independent.
 - The package includes the native **Uninstall Josi.app**, with keep-data and complete-removal choices. Its existing removal machinery now recognizes the unified app and installer receipt.
 - Installing the package over a recorded existing server invokes the normal recovery-copy/migration lifecycle. A new or remote-only install adds the app without automatically provisioning a local server.
-- Existing protected-key and server-consent helpers accept the signed native host identity. They retain their installed-path, signature, hardened-runtime and entitlement checks. Their native UI coordination is still to be ported; packaging them alone does not enable permanent policy changes.
+- Existing protected-key and server-consent helpers accept the signed native host identity. They retain their installed-path, signature, hardened-runtime and entitlement checks.
+- Native permanent-rule activation/retirement and device revocation now use the protected server challenge flow: fresh administrator verification, hardware host proof, complete native presentation, genuine biometric authentication through the existing key helper, current-Vault checks around signing, and one commit attempt. Closing/cancelling the review kills its owned helper; expiry uses wall and monotonic clocks. Lost commit responses require inspecting refreshed settings, never automatic replay. An already enrolled device is required; native enrollment remains open.
 
 ## Packaging and observed behavior
 
@@ -34,8 +35,12 @@ The staged signed app actually launched through the computer-use tool and displa
 
 ## Remaining work
 
-Native device enrollment and protected approval coordination, permission editing, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and automation-desktop integration remain open. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design.
+Native device enrollment, permission editing, remaining administrator/settings parity, channel-delivery status, provider-specific subscription setup parity and automation-desktop integration remain open. Existing CE web and remote APIs are retained. Authenticated sessions are currently memory-only; a durable client session must use the accepted Vault authority design.
 
 The follow-up work/task and rule-editor sources compiled successfully with Swift 6. No authenticated functional flow or model review was run on the owner's server. The native package version advances to `0.7.0-native.2`; its installer version is `0.7.0.3`.
+
+That signed installer is retained at `/Users/roman/Documents/Josi Mac Native/JosiDrive/Artifacts/josi-native-unified-20261020-2/Install Josi.pkg`, with clean source revision `db33e6d3f38d89d70241c11519b9ea6a6aac1e6b`, checksums, current application source and retained runtime dependency sources. Its extracted file comparison and both app signature checks passed. This package predates the native protected-approval connection described above.
+
+The later protected-approval sources compile with Swift 6. A bounded, local compatibility check compared the actual native encoder with the CE protocol implementation: a hardware host challenge and three full protected presentations, including quotes, slashes, newline/tab and Unicode text, produced identical signed bytes. No hardware key was created/read, no biometric prompt was opened and no rule/device was changed. Real protected-flow acceptance remains open.
 
 Functional setup/login/chat, service operations, real upgrade/recovery and uninstallation acceptance remain unverified. Notarization and final release acceptance are outstanding. The owner asked to defer functional suites until features are built; the targeted launch and packaged-signature checks address the immediate broken-app report.
