@@ -4,6 +4,20 @@ Roman's Josi CE feature list (October 21, "hey-josi-ce-features.txt") checked ag
 
 **Have** = a working screen in the Windows app. **Partial** = some of it is there. **Missing** = no screen yet. **Server** = enforced by the server with nothing to show in the app. **Not this app** = another client or the installer.
 
+## Build status (October 21)
+
+Built in the Windows app, compiled, and opened on the test server (39 sections, no crashes); not yet tested against the real server: items 1–3, 5–15, 17–28, 30–33, plus remembered sign-in and conversation search. Item 34 is wired: the installer kit now carries the app (`scripts/windows/Build-NativeApp.ps1`), setup installs it beside the server, and the Start menu opens it. Item 35 has its script (`scripts/windows/Sign-WindowsArtifacts.ps1`).
+
+Server changes made for the app: connections started from the app finish through `josi://connections/callback` with the same session (`connectorRoutes.ts`), and approval history (`GET /api/assistant/approvals/history`).
+
+Still open:
+- **4 Google sign-in live test**: needs Google registered under Connectors, which needs a public HTTPS address.
+- **16 Streaming replies**: the server does not stream replies to any client yet; the app now checks every second while a reply is written. True streaming is a server change.
+- **27 Desktop + Chrome** and **29 Windows Hello approvals**: need Roman's test page. Windows Hello also needs the server's protected-confirmation enrollment (currently Mac-only) ported to Windows.
+- **34 full installer build**: needs the pinned runtimes and helper builds rebuilt on this PC, then the installer compiled.
+- **35 signing**: needs Roman's Azure Trusted Signing sign-in.
+- Family and Companion apps show "coming soon", matching the web app, where those features are not released.
+
 ## Full build list
 
 Everything still to do for the Windows app, in build order. It combines the missing and partial features below with the remaining plan items. Each item ends when it works against the development server and its click-through test passes.
