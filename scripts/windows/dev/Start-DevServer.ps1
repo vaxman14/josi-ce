@@ -2,32 +2,51 @@
 # PostgreSQL, migrations, then the API (web) and worker as this user's
 # processes, with the same environment packaging/windows/Runtime.mjs gives
 # the installed services. Listens on 127.0.0.1 only.
+#
+# Long-running processes are created through WMI (Win32_Process.Create), not
+# as children of this script. Children of an editor, terminal or tool session
+# can share its Job Object and be ended together with it; these must keep
+# running until Stop-DevServer.ps1 stops them.
 [CmdletBinding()]
 param([string]$Root = 'C:\Dev\josi-dev')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $data = Join-Path $Root 'data'
-# pg_ctl start leaves the database holding any handles it inherits; launch it
-# through the shell (no handle inheritance) and wait for pg_ctl alone.
-function Start-Database([string]$Bin, [string]$Cluster, [string]$Log) {
-    $process = Start-Process (Join-Path $Bin 'pg_ctl.exe') -ArgumentList ('-D "' + $Cluster + '" -l "' + $Log + '" -w start') -WindowStyle Hidden -PassThru
-    $process.WaitForExit()
-    if ($process.ExitCode) { throw "PostgreSQL did not start; see $Log" }
-}
 $pg = Join-Path $Root 'pgsql\bin'
 $repo = Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent
 $settings = Get-Content -Raw (Join-Path $data 'config\runtime.json') | ConvertFrom-Json
 $cluster = Join-Path $data 'database'
 $cli = Join-Path $Root 'cli'
+$node = (Get-Command node).Source
 
-& (Join-Path $pg 'pg_ctl.exe') -D $cluster status | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Start-Database $pg $cluster (Join-Path $data 'logs\database.log')
+function Start-Independent([string]$CommandLine, [string]$Directory) {
+    # Hidden console (SW_HIDE): there is no window to close, and so no console
+    # close/Ctrl+C event that would shut PostgreSQL or Node down.
+    $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine = $CommandLine; CurrentDirectory = $Directory; ProcessStartupInformation = $startup }
+    if ($result.ReturnValue -ne 0) { throw "Windows could not start: $CommandLine (code $($result.ReturnValue))" }
+    return $result.ProcessId
+}
+function Test-Database { & (Join-Path $pg 'pg_ctl.exe') -D $cluster status 2>$null | Out-Null; return $LASTEXITCODE -eq 0 }
+# "Running" is not "accepting connections"; recovery after an unclean stop can take a moment.
+function Test-Accepting { & (Join-Path $pg 'pg_isready.exe') -h 127.0.0.1 -p $settings.databasePort -q 2>$null; return $LASTEXITCODE -eq 0 }
+
+if (!(Test-Database)) {
+    $log = Join-Path $data 'logs\database.log'
+    $null = Start-Independent ('"' + (Join-Path $pg 'pg_ctl.exe') + '" -D "' + $cluster + '" -l "' + $log + '" start') $Root
+}
+$deadline = (Get-Date).AddSeconds(60)
+while (!(Test-Accepting)) {
+    if ((Get-Date) -gt $deadline) { throw "PostgreSQL is not accepting connections; see $(Join-Path $data 'logs\database.log')" }
+    Start-Sleep -Milliseconds 500
 }
 
-function Set-RoleEnvironment([string]$Role) {
+function Get-RoleEnvironment([string]$Role) {
     $url = [Uri]$settings.publicUrl
-    $values = [ordered]@{
+    $profile = Join-Path $data "profiles\$Role"
+    return [ordered]@{
+        SystemRoot = $env:SystemRoot; WINDIR = $env:SystemRoot; COMSPEC = (Join-Path $env:SystemRoot 'System32\cmd.exe')
         NODE_ENV = 'production'; JOSI_NATIVE_RUNTIME = '1'; JOSI_VERSION = $settings.version
         JOSI_DATA_DIR = $data; JOSI_STORAGE_ROOT_BASE = (Join-Path $data 'roots'); JOSI_UPLOAD_DIR = (Join-Path $data 'chat-attachments')
         MASTER_KEY_FILE = (Join-Path $data 'secrets\master-key')
@@ -39,36 +58,61 @@ function Set-RoleEnvironment([string]$Role) {
         JOSI_WORKER_HEARTBEAT_FILE = (Join-Path $data 'state\worker-heartbeat'); CODEX_HOME = (Join-Path $data 'codex')
         JOSI_VOICE_HELPER_TOKEN_FILE = (Join-Path $data 'secrets\voice-control-token'); JOSI_VOICE_HELPER_PORT = '18082'
         TEMP = (Join-Path $data "temp\$Role"); TMP = (Join-Path $data "temp\$Role")
+        # Same private profile layout as the installed services.
+        USERPROFILE = $profile; HOME = $profile
+        APPDATA = (Join-Path $profile 'AppData\Roaming'); LOCALAPPDATA = (Join-Path $profile 'AppData\Local')
         # Service PATH: pinned subscription CLIs (vendor-signed native .exe
         # files), Codex's bundled ripgrep, Node, and System32. Nothing from the
-        # developer's own PATH or profile.
+        # developer's own PATH, profile or provider credentials.
         PATH = (@((Join-Path $cli 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin'),
             (Join-Path $cli 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\codex-path'),
             (Join-Path $cli 'node_modules\@anthropic-ai\claude-code-win32-x64'),
-            (Split-Path (Get-Command node).Source), (Join-Path $env:SystemRoot 'System32')) -join ';')
-    }
-    foreach ($pair in $values.GetEnumerator()) { Set-Item -Path "Env:$($pair.Key)" -Value $pair.Value }
-    # Never pass this developer's provider credentials to the server.
-    foreach ($name in 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'MASTER_KEY', 'CREDENTIALS_KEY', 'PGPASSWORD') {
-        Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
+            (Split-Path $node), (Join-Path $env:SystemRoot 'System32')) -join ';')
     }
 }
 
 Push-Location $repo
 try {
-    Set-RoleEnvironment 'migrate'
-    & node packages\db\migrate.mjs
-    if ($LASTEXITCODE) { throw 'Database migrations failed' }
+    # Migrations finish before anything starts, so they run here directly.
+    $saved = @{}
+    foreach ($pair in (Get-RoleEnvironment 'migrate').GetEnumerator()) {
+        $saved[$pair.Key] = [Environment]::GetEnvironmentVariable($pair.Key)
+        Set-Item -Path "Env:$($pair.Key)" -Value $pair.Value
+    }
+    try {
+        & $node packages\db\migrate.mjs
+        if ($LASTEXITCODE) { throw 'Database migrations failed' }
+    } finally {
+        foreach ($pair in $saved.GetEnumerator()) { [Environment]::SetEnvironmentVariable($pair.Key, $pair.Value) }
+    }
+
     foreach ($role in 'web', 'worker') {
-        Set-RoleEnvironment $role
+        $pidFile = Join-Path $data "state\$role.pid"
+        if (Test-Path $pidFile) {
+            $existing = Get-Process -Id ([int](Get-Content $pidFile)) -ErrorAction SilentlyContinue
+            if ($existing) { Write-Host "$role already running (pid $($existing.Id))"; continue }
+        }
+        foreach ($folder in "profiles\$role\AppData\Roaming", "profiles\$role\AppData\Local", "temp\$role") {
+            $null = New-Item -ItemType Directory -Force (Join-Path $data $folder)
+        }
         $entry = if ($role -eq 'web') { 'apps\api\dist\server.js' } else { 'apps\worker\dist\main.js' }
-        $log = Join-Path $data "logs\$role.log"
-        # Launched through the shell so no caller handle is inherited; the
-        # process outlives this script and logs to files.
-        $command = '/d /c node ' + $entry + ' 1>>"' + $log + '" 2>>"' + (Join-Path $data "logs\$role.err.log") + '"'
-        $process = Start-Process cmd.exe -ArgumentList $command -WorkingDirectory $repo -WindowStyle Hidden -PassThru
-        Set-Content -Path (Join-Path $data "state\$role.pid") -Value $process.Id
-        Write-Host "$role started (pid $($process.Id)); log: $log"
+        # A launcher file carries the exact environment; it holds paths only,
+        # never secret values (those stay in the protected secret files).
+        $launcher = Join-Path $data "state\run-$role.cmd"
+        $lines = @('@echo off')
+        foreach ($pair in (Get-RoleEnvironment $role).GetEnumerator()) { $lines += 'set "' + $pair.Key + '=' + $pair.Value + '"' }
+        $lines += 'cd /d "' + $repo + '"'
+        $lines += '"' + $node + '" ' + $entry + ' 1>>"' + (Join-Path $data "logs\$role.log") + '" 2>>"' + (Join-Path $data "logs\$role.err.log") + '"'
+        [IO.File]::WriteAllLines($launcher, $lines, [Text.Encoding]::ASCII)
+        $id = Start-Independent ('"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /d /c "' + $launcher + '"') $repo
+        Set-Content -Path $pidFile -Value $id
+        Write-Host "$role started (pid $id); log: $(Join-Path $data "logs\$role.log")"
     }
 } finally { Pop-Location }
+
+$deadline = (Get-Date).AddSeconds(30)
+while ($true) {
+    try { $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "$($settings.publicUrl)api/onboarding/state"; break }
+    catch { if ((Get-Date) -gt $deadline) { throw "The API did not answer; see $(Join-Path $data 'logs\web.err.log')" }; Start-Sleep -Milliseconds 500 }
+}
 Write-Host "Josi development server: $($settings.publicUrl)"
