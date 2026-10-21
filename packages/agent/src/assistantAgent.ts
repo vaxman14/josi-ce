@@ -40,7 +40,7 @@ import {
 } from '@josi-ce/persona';
 import { isMutatingTool, runDurableEffect } from './durableEffects.js';
 import { automationToolAvailability } from './automationTools.js';
-import { pcBrowserToolAvailability } from './pcBrowserTools.js';
+import { pcBrowserToolAvailability, PC_BROWSER_PROMPT } from './pcBrowserTools.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
   CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsArtifactCompletion,
@@ -465,7 +465,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     customApis: customApis.connectionNames,
     imagesAttached,
     temporalContext: temporal.prompt,
-  }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '');
+  }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '')
+    + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : '');
 
   // The person's own layers, in the order the plan fixes. A failure here costs
   // personality, never the turn: an assistant that refuses to answer because a
