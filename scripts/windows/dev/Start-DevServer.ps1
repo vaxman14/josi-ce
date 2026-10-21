@@ -64,6 +64,8 @@ function Get-RoleEnvironment([string]$Role) {
         # Upload scanning through Windows AMSI (the registered antivirus), as
         # in the installed services: pinned private Python plus the adapter.
         JOSI_PYTHON_EXE = (Join-Path $Root 'python\python.exe')
+        # Josi's tool server for the Claude Code and Codex harnesses.
+        JOSI_MCP_SERVER = (Join-Path $repo 'packages\agent\dist\mcp\server.js')
         JOSI_SCANNER_ADAPTER = (Join-Path $repo 'services\scanner\windows_amsi.py')
         JOSI_SCANNER_TEMP = (Join-Path $data 'temp\scanner')
         # Pinned ffmpeg (Get-Ffmpeg.ps1): video frames and soundtracks for attachments.

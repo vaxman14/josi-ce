@@ -67,6 +67,9 @@ try {
     // case audio and video stay 'analysis unavailable'.
     JOSI_FFMPEG_EXE: join(program, 'ffmpeg/ffmpeg.exe'), JOSI_FFPROBE_EXE: join(program, 'ffmpeg/ffprobe.exe'),
     JOSI_SCANNER_TEMP: join(data, 'temp/scanner'),
+    // Josi's tool server for the Claude Code and Codex harnesses. Without it
+    // they fall back to the container path and every tool is switched off.
+    JOSI_MCP_SERVER: join(program, 'app/packages/agent/dist/mcp/server.js'),
   });
   process.chdir(join(program, 'app'));
   if (role === 'migrate') {
