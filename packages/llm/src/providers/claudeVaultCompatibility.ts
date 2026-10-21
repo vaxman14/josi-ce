@@ -2,6 +2,7 @@ import { lstatSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { userInfo } from 'node:os';
 import { SubscriptionCredentialError } from '@josi-ce/core';
+import { windowsClaudePolicyPresent } from './windowsManagedPolicy.js';
 
 const unsupported = () => new SubscriptionCredentialError(
   'This server has managed Claude settings that need a supported Vault integration. Use an API provider on this server.');
@@ -10,6 +11,10 @@ let managedPreferencesPresent: (() => boolean) | undefined;
 /** Do not override installed organizational policy. Inspect only whether a
  * source exists; no policy values or personal credential stores are read. */
 export function requireCompatibleClaudeHost(): void {
+  if (process.platform === 'win32') {
+    try { if (!windowsClaudePolicyPresent()) return; } catch { /* unreadable counts as present */ }
+    throw unsupported();
+  }
   if (!['darwin', 'linux'].includes(process.platform)) throw unsupported();
   const base = process.platform === 'darwin' ? '/Library/Application Support/ClaudeCode' : '/etc/claude-code';
   const paths = ['managed-settings.json', 'managed-settings.d', 'managed-mcp.json'].map(name => `${base}/${name}`);

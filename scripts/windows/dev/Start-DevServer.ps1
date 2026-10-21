@@ -18,6 +18,7 @@ $pg = Join-Path $Root 'pgsql\bin'
 $repo = Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent
 $settings = Get-Content -Raw (Join-Path $data 'config\runtime.json') | ConvertFrom-Json
 $cluster = Join-Path $data 'database'
+$cli = Join-Path $Root 'cli'
 
 & (Join-Path $pg 'pg_ctl.exe') -D $cluster status | Out-Null
 if ($LASTEXITCODE -ne 0) {
@@ -38,6 +39,13 @@ function Set-RoleEnvironment([string]$Role) {
         JOSI_WORKER_HEARTBEAT_FILE = (Join-Path $data 'state\worker-heartbeat'); CODEX_HOME = (Join-Path $data 'codex')
         JOSI_VOICE_HELPER_TOKEN_FILE = (Join-Path $data 'secrets\voice-control-token'); JOSI_VOICE_HELPER_PORT = '18082'
         TEMP = (Join-Path $data "temp\$Role"); TMP = (Join-Path $data "temp\$Role")
+        # Service PATH: pinned subscription CLIs (vendor-signed native .exe
+        # files), Codex's bundled ripgrep, Node, and System32. Nothing from the
+        # developer's own PATH or profile.
+        PATH = (@((Join-Path $cli 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin'),
+            (Join-Path $cli 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\codex-path'),
+            (Join-Path $cli 'node_modules\@anthropic-ai\claude-code-win32-x64'),
+            (Split-Path (Get-Command node).Source), (Join-Path $env:SystemRoot 'System32')) -join ';')
     }
     foreach ($pair in $values.GetEnumerator()) { Set-Item -Path "Env:$($pair.Key)" -Value $pair.Value }
     # Never pass this developer's provider credentials to the server.

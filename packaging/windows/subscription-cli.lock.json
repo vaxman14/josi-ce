@@ -1,0 +1,40 @@
+[
+  {
+    "id": "codex",
+    "name": "@openai/codex",
+    "version": "0.152.0",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.152.0.tgz",
+    "integrity": "sha512-Vx0tg/J5SbxYYGJazTtL/XySK9Dlqc5KW1MZM71NMwVci/4F1ap+FfSKPFTlrICEtOTuq3KNcWSdv9oMGdPuRw==",
+    "note": "Same tarball as packaging/macos/subscription-cli.lock.json",
+    "license": "Apache-2.0"
+  },
+  {
+    "id": "codex-win32-x64",
+    "name": "@openai/codex",
+    "version": "0.152.0-win32-x64",
+    "binary": "vendor/x86_64-pc-windows-msvc/bin/codex.exe",
+    "binarySha256": "e31b931087c22f0039c11476600d0933c3e661d8c2c03bace4995a66d2994bc6",
+    "binarySize": 293066544,
+    "authenticode": "Valid; OpenAI OpCo, LLC",
+    "license": "Apache-2.0"
+  },
+  {
+    "id": "claude",
+    "name": "@anthropic-ai/claude-code",
+    "version": "2.1.258",
+    "url": "https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.258.tgz",
+    "integrity": "sha512-Zis1AYrHuCcK4V1tXJUkzJdklFsTvvqIcj7gk4K8lyEeJOW99ZoQH/E+WxugMqDEO7xncYZ41gydxlkSTmj/2Q==",
+    "note": "Same tarball as packaging/macos/subscription-cli.lock.json; bin/claude.exe in it is a placeholder",
+    "license": "SEE LICENSE IN README.md"
+  },
+  {
+    "id": "claude-win32-x64",
+    "name": "@anthropic-ai/claude-code-win32-x64",
+    "version": "2.1.258",
+    "binary": "claude.exe",
+    "binarySha256": "22f5f3a44093e14c75a4d1c8ce25c730b21dd634318fbe3268e9057d12b17c41",
+    "binarySize": 218507936,
+    "authenticode": "Valid; Anthropic, PBC",
+    "license": "SEE LICENSE IN LICENSE.md"
+  }
+]

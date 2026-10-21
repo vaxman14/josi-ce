@@ -1,9 +1,9 @@
 import { fork } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { assertCapability, ClaudeCredentialStore, CodexCredentialStore, Secret, SubscriptionCredentialError,
+import { assertCapability, ClaudeCredentialStore, CodexCredentialStore, Secret, SubscriptionCredentialError, windowsPathTrusted,
   type SubscriptionCredentialAdministration, type SubscriptionCredentialReview } from '@josi-ce/core';
 import type { SpawnRunner } from './codexCli.js';
 import type { CodexGuardianInput, CodexGuardianOutput, CodexPrivateFile } from './codexVaultWire.js';
@@ -40,6 +40,7 @@ export interface VaultCodexStart {
  * The guardian will not inherit a shell, personal HOME or credential env. */
 async function executable(command: string): Promise<string> {
   if (!command || command.includes('\0')) throw new SubscriptionCredentialError('The subscription executable is unavailable.');
+  if (process.platform === 'win32') return windowsExecutable(command);
   const candidates = isAbsolute(command) ? [command]
     : command.includes('/') ? [] : (process.env.PATH ?? '').split(':').filter(isAbsolute).map(path => join(path, command));
   for (const candidate of candidates) {
@@ -49,6 +50,28 @@ async function executable(command: string): Promise<string> {
     } catch { /* try next service PATH entry */ }
   }
   throw new SubscriptionCredentialError('The subscription executable is unavailable or writable by another account.');
+}
+/** Windows: a native .exe only (never a .cmd/.ps1 shim that needs a shell),
+ * from an absolute path or the service PATH, whose file and parent folders
+ * no other account can replace. */
+async function windowsExecutable(command: string): Promise<string> {
+  const name = /\.exe$/i.test(command) ? command : command + '.exe';
+  const candidates = win32.isAbsolute(name) ? [name]
+    : /[\\/]/.test(name) ? [] : (process.env.PATH ?? '').split(';').filter(entry => win32.isAbsolute(entry)).map(entry => win32.join(entry, name));
+  for (const candidate of candidates) {
+    try {
+      const path = await realpath(candidate), metadata = await stat(path);
+      if (metadata.isFile() && /\.exe$/i.test(path) && windowsPathTrusted(win32.normalize(path))) return path;
+    } catch { /* try next service PATH entry */ }
+  }
+  throw new SubscriptionCredentialError('The subscription executable is unavailable or another account can replace it.');
+}
+/** Windows processes need their system folders; temporary files stay in the
+ * server's own private temp folder. No profile, credential or provider env. */
+function windowsBaseEnvironment(): NodeJS.ProcessEnv {
+  if (process.platform !== 'win32') return {};
+  const keep = ['SystemRoot', 'windir', 'ProgramData', 'ProgramFiles', 'ProgramW6432', 'TEMP', 'TMP'];
+  return Object.fromEntries(keep.filter(key => process.env[key]).map(key => [key, process.env[key]]));
 }
 export async function vaultCodexExecutableAvailable(command: string): Promise<boolean> {
   try { await executable(command); return true; } catch { return false; }
@@ -72,7 +95,6 @@ async function startVaultSubscription(store: CodexCredentialStore | ClaudeCreden
   options: VaultCodexStart): Promise<VaultCodexRun> {
   assertCapability('subscription_auth');
   assertCapability('local_command_execution');
-  if (process.platform === 'win32') throw new SubscriptionCredentialError('Vault-managed subscription runs require a supported process supervisor.');
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 || options.timeoutMs > 15 * 60_000) throw failure();
   if (store.consumer === 'codex') requireCompatibleCodexHost(); else requireCompatibleClaudeHost();
   const command = await executable(options.command);
@@ -80,7 +102,7 @@ async function startVaultSubscription(store: CodexCredentialStore | ClaudeCreden
   let guardian: ReturnType<typeof fork>;
   try {
     guardian = fork(fileURLToPath(new URL('./codexVaultGuardian.js', import.meta.url)), [], {
-      execArgv: [], env: { PATH: process.env.PATH, JOSI_SUBSCRIPTION_CONSUMER: store.consumer },
+      execArgv: [], env: { PATH: process.env.PATH, JOSI_SUBSCRIPTION_CONSUMER: store.consumer, ...windowsBaseEnvironment() },
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     });
   } catch {

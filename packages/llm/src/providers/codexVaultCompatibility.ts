@@ -1,6 +1,7 @@
 import { lstatSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { SubscriptionCredentialError } from '@josi-ce/core';
+import { windowsCodexPolicyPresent } from './windowsManagedPolicy.js';
 
 const unsupported = () => new SubscriptionCredentialError(
   'This server has managed Codex settings that may override Vault-only sign-in storage. Use an API provider until those settings have a supported integration.');
@@ -10,6 +11,10 @@ let managedPreferencesPresent: (() => boolean) | undefined;
  * storage. Refuse such a host, rather than weakening or ignoring its policy.
  * Reads only presence of configuration sources, never their values or keys. */
 export function requireCompatibleCodexHost(): void {
+  if (process.platform === 'win32') {
+    if (windowsCodexPolicyPresent()) throw unsupported();
+    return;
+  }
   if (!['darwin', 'linux'].includes(process.platform)) throw unsupported();
   for (const path of ['/etc/codex/requirements.toml', '/etc/codex/managed_config.toml', '/etc/codex/config.toml']) {
     try { lstatSync(path); }

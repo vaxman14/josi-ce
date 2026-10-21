@@ -6,17 +6,24 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, open, realpath, rm, type FileHandle } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { privateTemporaryDirectory, Secret, validateClaudeSubscriptionToken, validateCodexAuthCache } from '@josi-ce/core';
+import { joinNewWindowsProcessJob, privateTemporaryDirectory, Secret, validateClaudeSubscriptionToken, validateCodexAuthCache,
+  type WindowsProcessJob } from '@josi-ce/core';
 import type { CodexGuardianInput, CodexGuardianOutput, CodexGuardianStart } from './codexVaultWire.js';
 import { requireCompatibleCodexHost } from './codexVaultCompatibility.js';
 import { requireCompatibleClaudeHost } from './claudeVaultCompatibility.js';
 import { validClaudeSubscriptionArgs } from './claudeVaultPolicy.js';
 
-// The first implementation supports the macOS release and POSIX servers.
-// Windows needs a Job Object implementation, not a weaker kill-one-child path.
-if (!process.send || process.platform === 'win32') process.exit(1);
+// POSIX owns a process group. Windows owns a Job Object that this guardian
+// joins before it starts anything, so every consumer descendant is inside it
+// and the job kills them all if the guardian itself disappears.
+if (!process.send) process.exit(1);
 const consumer = process.env.JOSI_SUBSCRIPTION_CONSUMER;
 if (consumer !== 'codex' && consumer !== 'claude') process.exit(1);
+const windows = process.platform === 'win32';
+let job: WindowsProcessJob | undefined;
+if (windows) {
+  try { job = joinNewWindowsProcessJob(); } catch { process.exit(1); }
+}
 const compatible = () => consumer === 'codex' ? requireCompatibleCodexHost() : requireCompatibleClaudeHost();
 
 const send = (value: CodexGuardianOutput) => {
@@ -34,16 +41,32 @@ let operationMono = performance.now(), operationWall = Date.now(), duration = 5_
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 function groupExists(): boolean {
+  if (windows) {
+    // An unanswerable query is not evidence of closure.
+    try { return job!.others() > 0; } catch { return true; }
+  }
   if (!group) return false;
   try { process.kill(-group, 0); return true; }
   catch (err) { return (err as NodeJS.ErrnoException).code !== 'ESRCH'; }
 }
 function signalGroup(signal: NodeJS.Signals) {
+  if (windows) {
+    // Windows has no group-wide TERM; both phases end every job member.
+    try { job!.terminateOthers(); } catch { /* absence is checked separately */ }
+    return;
+  }
   if (!group) return;
   try { process.kill(-group, signal); } catch { /* absence is checked separately */ }
 }
 async function privateDirectoryStillCurrent(): Promise<boolean> {
   if (!directory || !directoryHandle) return false;
+  if (windows) {
+    // The folder was created with a protected owner/SYSTEM/Administrators
+    // DACL. Confirm it is still that same folder, not a junction or swap.
+    const [held, current] = await Promise.all([directoryHandle.stat({ bigint: true }), lstat(directory, { bigint: true })]);
+    return current.isDirectory() && !current.isSymbolicLink() && held.dev === current.dev && held.ino === current.ino
+      && (await realpath(directory)).toLowerCase() === directory.toLowerCase();
+  }
   const [held, current] = await Promise.all([directoryHandle.stat(), lstat(directory)]);
   return current.isDirectory() && !current.isSymbolicLink() && held.dev === current.dev && held.ino === current.ino
     && current.uid === process.getuid!() && (current.mode & 0o777) === 0o700
@@ -55,8 +78,8 @@ async function readCache(): Promise<string | null> {
     if (!await privateDirectoryStillCurrent()) return null;
     file = await open(join(directory!, 'auth.json'), constants.O_RDONLY | constants.O_NOFOLLOW);
     const before = await file.stat();
-    if (!before.isFile() || before.nlink !== 1 || before.uid !== process.getuid!()
-      || (before.mode & 0o777) !== 0o600 || before.size <= 0 || before.size > 64 * 1024) return null;
+    if (!before.isFile() || before.nlink !== 1 || before.size <= 0 || before.size > 64 * 1024
+      || !windows && (before.uid !== process.getuid!() || (before.mode & 0o777) !== 0o600)) return null;
     // A bounded fd read never follows a replaced pathname or allocates from an
     // attacker-controlled file size. The entire process group is already gone.
     const bytes = Buffer.alloc(64 * 1024 + 1);
@@ -94,6 +117,8 @@ async function finish() {
   try {
     if (directory) {
       if (!await privateDirectoryStillCurrent()) throw new Error();
+      // Windows cannot fully remove a folder this process still holds open.
+      if (windows) { await directoryHandle?.close(); directoryHandle = undefined; }
       await rm(directory, { recursive: true, force: false });
     }
     cleaned = true;
@@ -176,6 +201,20 @@ async function start(value: CodexGuardianStart) {
       HOME: directory, TMPDIR: directory, TMP: directory, TEMP: directory,
       XDG_CONFIG_HOME: directory, XDG_CACHE_HOME: directory, XDG_DATA_HOME: directory,
     };
+    if (windows) {
+      // Windows CLIs resolve their profile from these, not HOME. All point
+      // into the private folder; system folders are kept so the vendors'
+      // managed-policy locations are still honoured, never bypassed.
+      for (const key of ['SystemRoot', 'windir', 'ProgramData', 'ProgramFiles', 'ProgramW6432']) {
+        if (process.env[key]) env[key] = process.env[key];
+      }
+      env.PATHEXT = '.COM;.EXE';
+      env.USERPROFILE = directory;
+      env.APPDATA = join(directory, 'AppData', 'Roaming');
+      env.LOCALAPPDATA = join(directory, 'AppData', 'Local');
+      await mkdir(env.APPDATA, { recursive: true });
+      await mkdir(env.LOCALAPPDATA, { recursive: true });
+    }
     if (consumer === 'claude') {
       env.CLAUDE_CONFIG_DIR = directory;
       env.CLAUDE_CODE_OAUTH_TOKEN = claudeToken!.reveal();
@@ -183,7 +222,7 @@ async function start(value: CodexGuardianStart) {
     } else env.CODEX_HOME = directory;
     child = spawn(value.command, consumer === 'codex' ? [
       '-c', 'cli_auth_credentials_store="file"', '-c', 'forced_login_method="chatgpt"', ...value.args,
-    ] : value.args, { env, cwd: join(directory, 'work'), detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    ] : value.args, { env, cwd: join(directory, 'work'), detached: !windows, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
     group = child.pid;
     const absorb = (stream: 'stdout' | 'stderr', text: string) => {

@@ -21,6 +21,13 @@ $pg = Join-Path $Root 'pgsql\bin'
 if (!(Test-Path (Join-Path $pg 'postgres.exe'))) { throw "PostgreSQL 16 binaries not found in $pg" }
 if (Test-Path (Join-Path $data 'database\PG_VERSION')) { throw "A development database already exists in $data; refusing to overwrite it" }
 
+# Folders under C:\ inherit "Authenticated Users: Modify". The root must be
+# changeable only by this user, SYSTEM and Administrators, or another account
+# could replace the subscription CLIs that receive Vault credentials.
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+& icacls $Root /inheritance:r /grant:r "$($me):(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q | Out-Null
+if ($LASTEXITCODE) { throw "Could not restrict $Root to this user" }
+
 foreach ($folder in 'config', 'secrets', 'database', 'roots', 'chat-attachments', 'state', 'codex', 'logs',
     'temp\web', 'temp\worker', 'temp\migrate', 'temp\database', 'temp\scanner',
     'profiles\web', 'profiles\worker', 'profiles\migrate') {

@@ -67,6 +67,8 @@ export { privateTemporaryDirectory } from './privateTemporaryDirectory.js';
 export { resolveDataPath } from './dataPath.js';
 export { apiListenHost } from './nativeNetwork.js';
 export { readWindowsSecret } from './windowsSecrets.js';
+export { joinNewWindowsProcessJob, type WindowsProcessJob } from './windowsJob.js';
+export { windowsPathTrusted } from './windowsTrust.js';
 export { readMacSecret } from './macosSecrets.js';
 export { inspectCredentialMigration, migrateStoredCredentials, type CredentialMigrationCount, type CredentialMigrationReport } from './credentialMigration.js';
 
