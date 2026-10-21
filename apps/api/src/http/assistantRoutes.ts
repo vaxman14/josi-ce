@@ -755,6 +755,19 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       res.set('Cache-Control', 'private, no-store').json(await pendingApprovalSnapshot(db, req.user!.id))),
   );
 
+  /** Approval history: this person's own decided and expired requests, newest
+   * first. Read-only; the summary is the exact text that was shown. */
+  r.get(
+    '/approvals/history',
+    handle(async (req, res) => {
+      const rows = await db.query(
+        `select id, action_class, action, summary, status, decided_at, expires_at, created_at
+         from approvals where owner_user_id = $1 and status <> 'pending'
+         order by coalesce(decided_at, expires_at, created_at) desc limit 200`, [req.user!.id]);
+      return res.set('Cache-Control', 'private, no-store').json({ approvals: rows });
+    }),
+  );
+
   r.post(
     '/approvals/:id/decide',
     handle(async (req, res) => {

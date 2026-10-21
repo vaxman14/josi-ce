@@ -64,7 +64,9 @@ namespace Josi.Native {
     public void Attach(Window owner) {
       window = owner;
       var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
-      timer.Tick += async delegate { await Poll(); };
+      // While a reply is being written, check every second so it appears
+      // promptly; otherwise every three seconds.
+      timer.Tick += async delegate { timer.Interval = TimeSpan.FromSeconds(PendingMessage ? 1 : 3); await Poll(); };
       timer.Start();
     }
     public void Notify() { var handler = Changed; if (handler != null) handler(); }
@@ -233,6 +235,99 @@ namespace Josi.Native {
       return "";
     }
 
+    // ------------------------------------------------- account connections
+    /// Raised after a connection finishes through josi://connections/callback.
+    public event Action ConnectionFinished;
+    readonly HashSet<string> connectionStates = new HashSet<string>();
+
+    /// Opens the provider's consent page in the browser for a handshake started
+    /// with this app's session; CompleteConnection finishes it.
+    public async Task StartConnection(string provider, string connectionId) {
+      var api = Api; if (api == null) return;
+      AppLinks.Register();
+      var body = Wires.O("native", true);
+      if (!string.IsNullOrEmpty(connectionId)) body["connectionId"] = connectionId;
+      var result = await api.Request("/connections/" + Uri.EscapeDataString(provider) + "/start", "POST", body);
+      Uri url;
+      if (!Uri.TryCreate(result["url"].Text, UriKind.Absolute, out url) || url.Scheme != "https" || url.UserInfo.Length > 0)
+        throw new JosiException("The server did not return a usable sign-in address for " + provider + ".");
+      var state = Query(url, "state");
+      if (!Regex.IsMatch(state, "^[A-Za-z0-9_-]{20,512}$")) throw new JosiException("The server could not start the connection.");
+      connectionStates.Add(state);
+      ModelText.Open(url);
+      Activity = ""; Error = "";
+    }
+
+    public async Task CompleteConnection(string link) {
+      Uri uri;
+      if (!Uri.TryCreate(link, UriKind.Absolute, out uri) || uri.Scheme != "josi" || uri.Host != "connections" || uri.AbsolutePath != "/callback")
+        throw new JosiException("Josi received a connection link it does not recognise.");
+      var api = Api; var state = Query(uri, "state"); var provider = Query(uri, "provider");
+      if (api == null || !connectionStates.Remove(state)) throw new JosiException("That connection was not started from this Josi window. Start it again from Connections.");
+      if (!Regex.IsMatch(provider, "^(google|microsoft|dropbox|box)$")) throw new JosiException("Josi received a connection link it does not recognise.");
+      var declined = Query(uri, "error").Length > 0;
+      try {
+        await api.Request("/connections/" + provider + "/native/complete", "POST", Wires.O("state", state, "code", Query(uri, "code"), "declined", declined));
+      } catch (JosiException e) {
+        throw new JosiException(ConnectionProblem(e.Message));
+      } finally { var handler = ConnectionFinished; if (handler != null) handler(); }
+    }
+    static string ConnectionProblem(string reason) {
+      switch (reason) {
+        case "declined": return "You cancelled at the provider, so nothing was connected.";
+        case "consumed": case "unknown": case "expired": return "That sign-in had already been used or had expired. Start again.";
+        case "session_mismatch": return "That sign-in was started by a different session. Start again here.";
+        case "wrong_provider": return "That sign-in did not match the provider it was started for.";
+        case "revoked": return "The provider refused the connection. Check the application credentials under Connectors.";
+        default: return reason.Length > 0 && reason.Length < 300 ? reason : "The connection could not be completed. Try again.";
+      }
+    }
+
+    // ------------------------------------------ Send to, and notifications
+    readonly List<string> pendingShares = new List<string>();
+    readonly NotificationWatcher watcher = new NotificationWatcher();
+    DateTime lastNotificationCheck = DateTime.MinValue;
+    bool wasPending;
+    /// Files from File Explorer's Send to menu: attached to the open
+    /// conversation, or once you are signed in.
+    public void Share(List<string> paths) {
+      pendingShares.AddRange(paths.Where(p => p.Length > 0).Take(10));
+      AttachShares();
+    }
+    void AttachShares() {
+      if (Screen != Screen.Workspace || pendingShares.Count == 0 || Busy) return;
+      var files = pendingShares.ToList(); pendingShares.Clear();
+      Section = "chat";
+      Run(async () => { foreach (var path in files) await AttachFile(path); });
+    }
+    /// Called on the poll timer: background notifications, at most every 30
+    /// seconds, and "reply finished" when Josi is not the active window.
+    async Task Watch() {
+      if (Screen != Screen.Workspace) return;
+      if (wasPending && !PendingMessage && !Active) Notifications.Show("Josi replied", "Your reply is ready.");
+      wasPending = PendingMessage;
+      if ((DateTime.UtcNow - lastNotificationCheck).TotalSeconds < 30) return;
+      lastNotificationCheck = DateTime.UtcNow;
+      await watcher.Check(this);
+    }
+
+    /// "auto" (follow Windows) or "pinned", remembered per server on this PC.
+    public string WorkspaceZoneMode {
+      get { return Api == null ? "auto" : LocalSettings.Get("workspaceZone:" + Api.OriginText, "auto"); }
+      set { if (Api != null) LocalSettings.Set("workspaceZone:" + Api.OriginText, value == "pinned" ? "pinned" : "auto"); }
+    }
+    /// With the automatic setting, keeps the workspace time zone on Windows'
+    /// zone. Administrators only; best effort.
+    async Task FollowWindowsZone(JosiApi api) {
+      if (!IsAdministrator || WorkspaceZoneMode != "auto") return;
+      try {
+        var current = (await api.Request("/admin/workspace"))["workspace"];
+        var local = TimeZones.Local();
+        if (Api == api && !current.IsNull && current["timezone"].Text != local)
+          await api.Request("/admin/workspace", "PATCH", Wires.O("name", current["name"].Text, "timezone", local));
+      } catch (JosiException) { }
+    }
+
     async Task FinishNativeLogin(JosiApi api, string identifier, Wire result) {
       var token = result["sessionToken"].Text;
       api.UseSession(token);
@@ -255,6 +350,8 @@ namespace Josi.Native {
       User = user; MfaChallenge = ""; Screen = Screen.Workspace; section = "chat";
       Notify();
       await ReloadWorkspace();
+      await FollowWindowsZone(api);
+      _ = Dispatcher.CurrentDispatcher.BeginInvoke(new Action(AttachShares), DispatcherPriority.Background);
     }
     public void Disconnect() {
       if (Busy) return;
@@ -293,6 +390,7 @@ namespace Josi.Native {
 
     async Task Poll() {
       FollowWork();
+      if (!refreshing && !Busy) { try { await Watch(); } catch (Exception) { } }
       if (Screen != Screen.Workspace || Busy || refreshing || !Active) return;
       refreshing = true;
       try {

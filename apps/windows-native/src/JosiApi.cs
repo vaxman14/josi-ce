@@ -247,6 +247,38 @@ namespace Josi.Native {
       }
     }
 
+    /// Uploads regular files as one multipart form (field repeated per file).
+    public async Task<Wire> UploadFiles(string route, string field, IList<string> paths, long maxTotal) {
+      long total = 0;
+      var parts = new List<KeyValuePair<string, byte[]>>();
+      foreach (var path in paths) {
+        var info = new FileInfo(path);
+        if (!info.Exists || (info.Attributes & (FileAttributes.Directory | FileAttributes.Device | FileAttributes.ReparsePoint)) != 0) throw new JosiException("Choose regular files.");
+        total += info.Length;
+        if (total > maxTotal) throw new JosiException("The selected files are too large together.");
+        parts.Add(new KeyValuePair<string, byte[]>(info.Name.Replace("\"", "_").Replace("\r", "_").Replace("\n", "_"), File.ReadAllBytes(info.FullName)));
+      }
+      if (!native && csrf == null) await PrimeCsrf();
+      using (var message = Message("POST", Route(route)))
+      using (var form = new MultipartFormDataContent("Josi-" + Guid.NewGuid().ToString("N"))) {
+        foreach (var part in parts) {
+          var file = new ByteArrayContent(part.Value);
+          file.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+          file.Headers.ContentDisposition = new ContentDispositionHeaderValue("form-data") { Name = "\"" + field + "\"", FileName = "\"" + part.Key + "\"" };
+          form.Add(file);
+        }
+        message.Content = form;
+        using (var response = await http.SendAsync(message, closing.Token)) {
+          var value = Wires.Parse(await response.Content.ReadAsStringAsync());
+          if (!response.IsSuccessStatusCode) {
+            var detail = value["error"].Text;
+            throw new JosiException(detail.Length == 0 ? "The server could not process these files." : detail, (int)response.StatusCode);
+          }
+          return value;
+        }
+      }
+    }
+
     /// Voice routes return audio bytes rather than JSON.
     public async Task<byte[]> VoiceAudio(string route, object body) {
       if (route != "/voice/speech" && route != "/admin/voice-box/preview") throw new OperationCanceledException();
@@ -262,6 +294,35 @@ namespace Josi.Native {
           var type = response.Content.Headers.ContentType == null ? "" : response.Content.Headers.ContentType.MediaType;
           if (!type.StartsWith("audio/")) throw new JosiException("The server did not return voice audio.");
           return bytes;
+        }
+      }
+    }
+
+    /// Saves a file from the server (workspace files, attachments, exports) to
+    /// a temporary file next to the destination and moves it into place only
+    /// when the whole response arrived.
+    public async Task DownloadFile(string route, string destination, long maxBytes) {
+      var folder = Path.GetDirectoryName(Path.GetFullPath(destination));
+      using (var message = Message("GET", Route(route))) {
+        message.Headers.Accept.Clear(); message.Headers.Accept.ParseAdd("*/*");
+        using (var response = await streaming.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, closing.Token)) {
+          if (!response.IsSuccessStatusCode) {
+            var detail = Wires.Parse(await response.Content.ReadAsStringAsync())["error"].Text;
+            throw new JosiException(detail.Length == 0 ? "The file could not be downloaded." : detail, (int)response.StatusCode);
+          }
+          var temporary = Path.Combine(folder, ".josi-download-" + Guid.NewGuid().ToString("N"));
+          try {
+            using (var input = await response.Content.ReadAsStreamAsync())
+            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
+              var buffer = new byte[128 * 1024]; long total = 0; int read;
+              while ((read = await input.ReadAsync(buffer, 0, buffer.Length, closing.Token)) > 0) {
+                total += read;
+                if (total > maxBytes) throw new JosiException("The file is larger than Josi will download here.");
+                await output.WriteAsync(buffer, 0, read);
+              }
+            }
+            if (File.Exists(destination)) File.Replace(temporary, destination, null); else File.Move(temporary, destination);
+          } finally { try { if (File.Exists(temporary)) File.Delete(temporary); } catch (IOException) { } }
         }
       }
     }

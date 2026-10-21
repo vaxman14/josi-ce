@@ -25,6 +25,17 @@ import {
 } from '@josi-ce/connectors';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
+import { isNativeClient } from './cookies.js';
+
+/** Native apps (the Windows app) start a handshake with their bearer session,
+ * which the browser that returns from the provider does not carry. Such a
+ * handshake is marked by this return path. Its callback does not exchange the
+ * code: it hands state and code to the app (josi://connections/callback), and
+ * the app finishes with the same session that started it, so the session
+ * binding still holds and a leaked code is useless without that session and
+ * the PKCE verifier kept here. */
+const NATIVE_CONNECTION_RETURN = '/app/connections/native-return';
+const NATIVE_CONNECTION_URI = 'josi://connections/callback';
 
 export interface ConnectorRoutesCtx {
   db: Db;
@@ -289,7 +300,9 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         provider,
         capabilities,
         scopes,
-        returnPath: safeReturnPath(req.body?.returnPath),
+        returnPath: isNativeClient(req) && req.body?.native === true
+          ? NATIVE_CONNECTION_RETURN
+          : safeReturnPath(req.body?.returnPath === NATIVE_CONNECTION_RETURN ? undefined : req.body?.returnPath),
         targetConnectionId,
       });
 
@@ -318,11 +331,50 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
       const provider = param(req, 'provider');
       if (!isOAuthRouteProvider(provider)) throw new RouteError(404, 'no such provider');
 
-      const fail = (reason: string) =>
-        res.redirect(`/app/connections?error=${encodeURIComponent(reason)}`);
+      const state = String(req.query.state ?? '');
+      // A native-app handshake is finished by the app, not here.
+      if (state && state.length <= 512) {
+        const [pending] = await db.query<{ return_path: string; provider: string }>(
+          'select return_path, provider from oauth_states where id = $1 and consumed_at is null', [state]);
+        if (pending?.return_path === NATIVE_CONNECTION_RETURN && pending.provider === provider) {
+          const back = new URL(NATIVE_CONNECTION_URI);
+          back.searchParams.set('provider', provider);
+          back.searchParams.set('state', state);
+          if (typeof req.query.error === 'string') back.searchParams.set('error', 'declined');
+          else back.searchParams.set('code', String(req.query.code ?? '').slice(0, 4096));
+          return res.redirect(back.toString());
+        }
+      }
+      return finishHandshake(req, res, provider, state, typeof req.query.error === 'string', String(req.query.code ?? ''),
+        req.user?.session_id ?? null, null);
+    }),
+  );
+
+  /** The native app finishes its handshake with the session that started it. */
+  r.post(
+    '/:provider/native/complete',
+    requireAuth,
+    handle(async (req, res) => {
+      const provider = param(req, 'provider');
+      if (!isOAuthRouteProvider(provider)) throw new RouteError(404, 'no such provider');
+      if (!isNativeClient(req)) throw new RouteError(403, 'native client required');
+      return finishHandshake(req, res, provider, str(req.body?.state, 512), req.body?.declined === true,
+        str(req.body?.code, 4096), req.user!.session_id, NATIVE_CONNECTION_RETURN);
+    }),
+  );
+
+  /** Shared by the browser callback and the native completion. `nativeOnly`
+   * set: answer JSON and accept only a native handshake; unset: redirect the
+   * browser and refuse a native handshake. */
+  async function finishHandshake(req: Request, res: Response, provider: OAuthProvider, state: string, declined: boolean,
+    code: string, sessionId: string | null, nativeOnly: string | null) {
+    {
+      const fail = (reason: string) => nativeOnly
+        ? res.status(409).json({ error: reason, reason })
+        : res.redirect(`/app/connections?error=${encodeURIComponent(reason)}`);
 
       // The provider itself can refuse — a person clicking "cancel" lands here.
-      if (typeof req.query.error === 'string') {
+      if (declined) {
         await appendEvent(db, {
           actorUserId: req.user?.id ?? null,
           actor: 'user',
@@ -332,13 +384,14 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         return fail('declined');
       }
 
+      // A browser callback never redeems a native handshake, and the native
+      // completion never redeems a browser one.
+      const [kind] = await db.query<{ return_path: string }>('select return_path from oauth_states where id = $1', [state]);
+      if (kind && (kind.return_path === NATIVE_CONNECTION_RETURN) !== (nativeOnly !== null)) return fail('unknown');
+
       const key = requireKey(ctx);
       const store = createStateStore(db, key);
-      const consumed = await store.consume({
-        state: String(req.query.state ?? ''),
-        provider,
-        sessionId: req.user?.session_id ?? null,
-      });
+      const consumed = await store.consume({ state, provider, sessionId });
       if (!consumed.ok) {
         await appendEvent(db, {
           actorUserId: req.user?.id ?? null,
@@ -351,7 +404,6 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
 
       const handshake = consumed.handshake;
       const client = await loadClient(db, key, provider);
-      const code = String(req.query.code ?? '');
       if (!code) return fail('no_code');
 
       let tokens;
@@ -398,9 +450,9 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         enableRequestedCapabilities: false,
       });
 
-      return res.redirect(handshake.returnPath);
-    }),
-  );
+      return nativeOnly ? res.json({ ok: true, provider, account: identity.email }) : res.redirect(handshake.returnPath);
+    }
+  }
 
   /** Turn a capability on or off. */
   r.put(

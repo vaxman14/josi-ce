@@ -155,6 +155,10 @@ try{
     $launcher=Join-Path $source 'JosiLauncher.exe'
     [IO.File]::Copy((Join-Path $KitRoot 'JosiLauncher.exe'),$launcher,$false)
     $entries.Add([ordered]@{path='JosiLauncher.exe';size=(Get-Item $launcher).Length;sha256=(Get-FileHash $launcher -Algorithm SHA256).Hash.ToLowerInvariant()})
+    # The native Windows app: sign-in, setup and everything else in one window.
+    $app=Join-Path $source 'Josi.exe'
+    [IO.File]::Copy((Join-Path $KitRoot 'Josi.exe'),$app,$false)
+    $entries.Add([ordered]@{path='Josi.exe';size=(Get-Item $app).Length;sha256=(Get-FileHash $app -Algorithm SHA256).Hash.ToLowerInvariant()})
     $program=Assert-PlainNativePath (Join-Path $product ('versions\'+$Version))
     $wrapper=Join-Path $KitRoot 'WinSW.Josi.exe'
     $null=Write-NativeServiceFiles $source $data $wrapper

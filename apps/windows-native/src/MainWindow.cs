@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
@@ -15,6 +16,11 @@ namespace Josi.Native {
       bool created;
       // A josi:// link (Google sign-in returning) arrives as the only argument.
       var link = args.Length == 1 && AppLinks.IsLink(args[0]) ? args[0] : null;
+      // Send to › Josi: "--share" followed by the chosen files.
+      if (args.Length > 1 && args[0] == "--share") {
+        var files = args.Skip(1).Where(p => System.IO.File.Exists(p)).Take(10).ToList();
+        if (files.Count > 0) link = AppLinks.SharePrefix + string.Join("\n", files);
+      }
       // Automated UI tests run beside a person's open copy without touching it.
       using (var single = new Mutex(true, @"Local\Josi.Native.Windows" + AppLinks.Instance, out created)) {
         if (!created) {
@@ -22,6 +28,9 @@ namespace Josi.Native {
           if (!AppLinks.Testing) Activation.ActivateExisting();
           return 0;
         }
+        AppLinks.Register();
+        Notifications.Register();
+        SendTo.Register();
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         Ui.Load();
         app.Resources.MergedDictionaries.Add(Ui.Resources);
@@ -97,7 +106,10 @@ namespace Josi.Native {
     public void ReceiveLink(string link) {
       if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
       Activate();
-      Model.Run(() => Model.CompleteGoogle(link));
+      if (link.StartsWith(AppLinks.SharePrefix, StringComparison.Ordinal)) Model.Share(link.Substring(AppLinks.SharePrefix.Length).Split('\n').ToList());
+      else if (link.StartsWith("josi://open", StringComparison.OrdinalIgnoreCase)) return;
+      else if (link.StartsWith("josi://connections/", StringComparison.OrdinalIgnoreCase)) Model.Run(() => Model.CompleteConnection(link));
+      else Model.Run(() => Model.CompleteGoogle(link));
     }
 
     void Render() {

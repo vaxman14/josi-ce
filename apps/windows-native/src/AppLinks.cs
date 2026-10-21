@@ -13,7 +13,9 @@ namespace Josi.Native {
   /// running one over a pipe only this Windows account can open, then exits.
   static class AppLinks {
     public const string GoogleReturn = "josi://auth/callback";
-    const int MaxLink = 4096;
+    const int MaxLink = 4096, MaxMessage = 32768;
+    /// Files from File Explorer's Send to menu travel as "share:" + paths.
+    public const string SharePrefix = "share:";
 
     /// Separates automated UI tests from a person's open copy: "" normally.
     public static readonly string Instance = InstanceSuffix();
@@ -25,6 +27,9 @@ namespace Josi.Native {
     public static bool Testing { get { return Instance.Length > 0; } }
     static string PipeName { get { return "Josi.Native.Windows.Links" + Instance + "." + WindowsIdentity.GetCurrent().User.Value; } }
 
+    public static bool IsMessage(string value) {
+      return IsLink(value) || (value != null && value.Length <= MaxMessage && value.StartsWith(SharePrefix, StringComparison.Ordinal));
+    }
     public static bool IsLink(string value) {
       return value != null && value.Length <= MaxLink && value.StartsWith("josi:", StringComparison.OrdinalIgnoreCase);
     }
@@ -62,11 +67,11 @@ namespace Josi.Native {
           try {
             using (var pipe = new NamedPipeServerStream(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.CurrentUserOnly)) {
               pipe.WaitForConnection();
-              var buffer = new byte[MaxLink + 1]; var total = 0; int read;
+              var buffer = new byte[MaxMessage + 1]; var total = 0; int read;
               while (total < buffer.Length && (read = pipe.Read(buffer, total, buffer.Length - total)) > 0) total += read;
-              if (total > 0 && total <= MaxLink) {
+              if (total > 0 && total <= MaxMessage) {
                 var link = Encoding.UTF8.GetString(buffer, 0, total);
-                if (IsLink(link)) received(link);
+                if (IsMessage(link)) received(link);
               }
             }
           } catch (IOException) { Thread.Sleep(200); }

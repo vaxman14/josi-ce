@@ -33,18 +33,18 @@ SetupLogging=yes
 WizardStyle=modern
 
 [Messages]
-FinishedLabel=Installation complete. Finish setting up Josi in your browser.
-WelcomeLabel2=This private, unsigned candidate installs or upgrades Josi. Existing accounts, data, configuration and recovery material are preserved. Keep the payloads folder beside this EXE. Windows will request administrator approval. Browser setup opens separately after Josi is ready.
+FinishedLabel=Installation complete. Josi opens to finish setting up.
+WelcomeLabel2=This private, unsigned candidate installs or upgrades Josi. Existing accounts, data, configuration and recovery material are preserved. Keep the payloads folder beside this EXE. Windows will request administrator approval. Josi opens to finish setup after the server is ready.
 
 [Files]
 Source: "{#KitRoot}\*"; DestDir: "{tmp}\kit"; Flags: dontcopy
 Source: "{#ReleaseRoot}\release-manifest.json"; DestDir: "{tmp}"; Flags: dontcopy
 
 [Icons]
-Name: "{commonprograms}\Josi"; Filename: "{pf64}\Josi CE Server\versions\{#CandidateVersion}\JosiLauncher.exe"; Check: WasInstalled
+Name: "{commonprograms}\Josi"; Filename: "{pf64}\Josi CE Server\versions\{#CandidateVersion}\Josi.exe"; Check: WasInstalled
 
 [Run]
-Filename: "{pf64}\Josi CE Server\versions\{#CandidateVersion}\JosiLauncher.exe"; Flags: nowait runasoriginaluser; Check: WasInstalled
+Filename: "{pf64}\Josi CE Server\versions\{#CandidateVersion}\Josi.exe"; Flags: nowait runasoriginaluser; Check: WasInstalled
 
 [Code]
 var

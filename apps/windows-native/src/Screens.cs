@@ -246,7 +246,7 @@ namespace Josi.Native {
               if (!ownerPassword.Valid) return;
               var secret = ownerPassword.Password; ownerPassword.Clear();
               Submit(Wires.O("displayName", Value("displayName"), "email", Value("email"), "username", Value("username"),
-                "password", secret, "timezone", IanaZone()));
+                "password", secret, "timezone", TimeZones.Local()));
             }, true);
             create.IsEnabled = ownerPassword.Valid;
             createOwner = create;

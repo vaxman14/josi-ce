@@ -151,7 +151,8 @@ namespace Josi.Native {
     UIElement Saved(Wire item) {
       var stack = new StackPanel();
       Ui.Add(stack, Ui.Copyable(item["content"].Text), 0);
-      Ui.Add(stack, Ui.Caption(item["provenance"].Text), 8);
+      var confidence = item["confidence"].IsNumber && item["confidence"].Number < 1 ? " · confidence " + Math.Round(item["confidence"].Number * 100) + "%" : "";
+      Ui.Add(stack, Ui.Caption(item["provenance"].Text + confidence + (item["pinned"].Flag ? " · pinned" : "")), 8);
       if (item["confirmed_at"].Text.Length > 0) Ui.Add(stack, Ui.Caption("Confirmed " + Wires.Date(item["confirmed_at"].Text)), 4);
       var editor = new Disclosure("Correct", () => {
         var draft = Draft("m:" + item.Id, item["content"].Text);
@@ -615,6 +616,9 @@ namespace Josi.Native {
       var buttons = Ui.Row(10, Ui.Pill("Back Up Now", () => Create("full"), true), Ui.Pill("Portable Export", () => Create("portable")));
       buttons.IsEnabled = !Running && model.IsAdministrator && !view.IsNull;
       Ui.Add(page, buttons, 20);
+      destination = destination ?? new BackupDestinationPanel(model, owner);
+      Ui.Detach(destination);
+      Ui.Add(page, destination, 20);
       if (downloading) Ui.Add(page, Ui.Row(10, Ui.T("Saving the archive to your selected folder…"), Ui.Pill(cancelDownload ? "Cancelling…" : "Cancel Download", () => { cancelDownload = true; Render(); })), 20);
       if (note.Length > 0) Ui.Add(page, Ui.Copyable(note), 20);
       if (view.IsNull) Ui.Add(page, Ui.T("Backup history is unavailable. Refresh to load the current server state."), 20);
@@ -627,11 +631,26 @@ namespace Josi.Native {
           items.Add(Ui.Caption("Step " + backup["progress_step"].Integer + " of " + backup["progress_steps"].Integer));
         } else if (backup["state"].Text == "complete") {
           var item = backup;
-          items.Add(Ui.Pill("Save Archive…", () => Download(item)));
+          var row = Ui.Wrap(Ui.Pill("Save Archive…", () => Download(item)));
+          if (backup["kind"].Text == "full") row.Children.Add(Ui.Danger("Restore This Backup…", () => Restore(item)));
+          items.Add(row);
         } else if (backup["state"].Text == "failed") items.Add(Ui.T(backup["error_category"].Text, 12, null, Ui.Orange));
         Ui.Add(page, Ui.CardBox(backup["kind"].Text == "full" ? "Full backup" : "Portable export", items.ToArray()), 20);
       }
       return page;
+    }
+    BackupDestinationPanel destination;
+    /// Restoring replaces the current database. The server reports what came
+    /// back separately from whether credentials work.
+    void Restore(Wire backup) {
+      var id = backup.Id;
+      Perform(async (api, stamp) => {
+        var pre = await api.Request("/ops/admin/restore/preflight");
+        var detail = pre["warning"].Text + "\n\n" + pre["guidance"].Text + (pre["masterKeyPresent"].Flag ? "" : "\n\nThe installation master key is not present on this server, so stored credentials will not be readable after the restore.");
+        if (!Dialogs.Confirm(owner, "Replace the current database with this backup?", detail + "\n\nThis cannot be undone.", "Restore")) return;
+        var r = await api.Request("/ops/admin/restore", "POST", Wires.O("confirm", "restore", "backupId", id));
+        note = "Restore finished. " + r.Json;
+      }, false);
     }
     static long? Count(Wire value) {
       long n;

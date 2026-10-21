@@ -8,6 +8,9 @@ $base=Join-Path $repo 'artifacts\windows-native'
 Import-Module (Join-Path $repo 'packaging\windows\Payloads.psm1')
 $helper=Get-Content -LiteralPath (Join-Path $base 'evidence\native-setup-helper.json') -Raw | ConvertFrom-Json
 $launcher=Get-Content -LiteralPath (Join-Path $base 'evidence\onboarding-launcher.json') -Raw | ConvertFrom-Json
+$app=Get-Content -LiteralPath (Join-Path $base 'evidence\native-app.json') -Raw | ConvertFrom-Json
+if(!$app.passed -or !$app.selfContained -or $app.architecture -cne 'x64' -or (Get-Item -LiteralPath $app.binary).Length -ne $app.size -or
+    (Get-FileHash -LiteralPath $app.binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $app.sha256){throw 'Verified native Windows app required; run Build-NativeApp.ps1'}
 if(!$launcher.passed -or !$launcher.testsPassed -or $launcher.sourceSha256 -cne (Get-FileHash (Join-Path $repo 'packaging\windows\launcher\JosiLauncher.cs') -Algorithm SHA256).Hash.ToLowerInvariant() -or
     (Get-FileHash $launcher.binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $launcher.sha256){throw 'Verified onboarding launcher required'}
 if(!$helper.passed -or !$helper.testedInOsPowerShell -or $helper.architecture -cne 'x64' -or $helper.framework -cne 'net462' -or
@@ -19,8 +22,8 @@ $null=[IO.Directory]::CreateDirectory($root)
 $files=[Collections.Generic.List[object]]::new()
 foreach($name in @('Initialize-NativeSetup.ps1','Josi.NativeSetup.dll','Configuration.psm1','DataLayout.psm1','Database.psm1',
     'Maintenance.psm1','Payloads.psm1','Services.psm1','Transactions.psm1','service-host.lock.json',
-    'Lifecycle.psm1','Diagnostics.psm1','StartupEvidence.psm1','Invoke-NativeSetup.ps1','WinSW.Josi.exe','JosiLauncher.exe')){
-    $source=if($name -ceq 'Josi.NativeSetup.dll'){$helper.binary}elseif($name -ceq 'JosiLauncher.exe'){$launcher.binary}elseif($name -ceq 'WinSW.Josi.exe'){Join-Path $base 'cache\WinSW.Josi-2.12.0-windows1.exe'}else{Join-Path $repo ('packaging\windows\'+$name)}
+    'Lifecycle.psm1','Diagnostics.psm1','StartupEvidence.psm1','Invoke-NativeSetup.ps1','WinSW.Josi.exe','JosiLauncher.exe','Josi.exe')){
+    $source=if($name -ceq 'Josi.NativeSetup.dll'){$helper.binary}elseif($name -ceq 'JosiLauncher.exe'){$launcher.binary}elseif($name -ceq 'Josi.exe'){$app.binary}elseif($name -ceq 'WinSW.Josi.exe'){Join-Path $base 'cache\WinSW.Josi-2.12.0-windows1.exe'}else{Join-Path $repo ('packaging\windows\'+$name)}
     $null=Assert-PlainNativePath $source
     if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($source)){throw 'Linked installer input refused'}
     if($name -ceq 'WinSW.Josi.exe'){

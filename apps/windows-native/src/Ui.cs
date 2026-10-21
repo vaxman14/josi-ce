@@ -351,6 +351,11 @@ namespace Josi.Native {
       Server = "", Compose = "", SignOut = "", Warning = "", Close = "", Plus = "",
       Chevron = "", Mic = "", Stop = "", Up = "", Copy = "", Speaker = "", Clip = "",
       Wave = "", Check = "", Circle = "", Minus = "", Desktop = "", Network = "", Bubble = "",
-      Pause = "", Play = "", Refresh = "";
+      Pause = "", Play = "", Refresh = "",
+      // Segoe Fluent Icons for the sections added with the full build list.
+      Calendar = "\uE787", Contact = "\uE77B", Folder = "\uE8B7", Clock = "\uE823", Link = "\uE71B", Shield = "\uE83D",
+      Approve = "\uE8FB", Emoji = "\uE76E", Flow = "\uE9D5", Chart = "\uE9D9", Settings = "\uE713", Globe = "\uE774",
+      History = "\uE81C", Code = "\uE943", Plug = "\uE703", Import = "\uE8B5", Document = "\uE8A5", Health = "\uE95E",
+      Repair = "\uE90F", List = "\uE8FD", Phone = "\uE8EA", Home = "\uE80F";
   }
 }

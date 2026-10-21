@@ -11,6 +11,7 @@ namespace Josi.Native {
     readonly StackPanel threads = new StackPanel();
     readonly ContentControl detail = new ContentControl { Focusable = false };
     readonly Border footer = new Border();
+    readonly TextBox threadSearch = Ui.Input("Search conversations");
     ChatView chat;
     TaskManagerView tasks;
     string shownSection;
@@ -29,6 +30,9 @@ namespace Josi.Native {
       list.Children.Add(new Border { Height = 1, Background = Ui.Border, Margin = new Thickness(0, 12, 0, 12) });
       var recent = Ui.Caption("Recent conversations"); recent.Margin = new Thickness(12, 0, 0, 5);
       list.Children.Add(recent);
+      threadSearch.Margin = new Thickness(4, 0, 4, 6);
+      threadSearch.TextChanged += delegate { RenderThreads(); };
+      list.Children.Add(threadSearch);
       list.Children.Add(threads);
       var scroller = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
       var sidebar = new DockPanel { Background = Ui.Sidebar };
@@ -64,18 +68,52 @@ namespace Josi.Native {
       nav.Children.Clear();
       Item("Conversations", Glyph.Chat, "chat");
       Item("Task Manager", Glyph.Checklist, "tasks");
+      Item("Approvals", Glyph.Approve, "approvals");
+      Item("Calendar", Glyph.Calendar, "calendar");
+      Item("Contacts", Glyph.Contact, "contacts");
+      Item("Files", Glyph.Folder, "files");
+      Item("Reminders", Glyph.Clock, "reminders");
+      Group("Your assistant");
       Item("Memory", Glyph.Memory, "memory");
+      Item("Personalization", Glyph.Emoji, "personalization");
+      Item("Email Templates", Glyph.Document, "templates");
+      Item("Workflows", Glyph.Flow, "workflows");
       Item("Automation", Glyph.Automation, "automation");
+      Item("Migrate", Glyph.Import, "migration");
+      Group("Account");
+      Item("Connections", Glyph.Link, "connections");
       Item("Vault", Glyph.Vault, "vault");
-      Item("Your Settings", Glyph.Person, "account");
       Item("Messaging Apps", Glyph.Send, "channels");
+      Item("Usage", Glyph.Chart, "usage");
+      Item("Your Settings", Glyph.Person, "account");
+      Item("Family", Glyph.Home, "family");
+      Item("Companion Apps", Glyph.Phone, "apps");
       if (model.IsAdministrator) {
+        Group("Administration");
+        Item("Overview", Glyph.Health, "overview");
+        Item("Getting Started", Glyph.List, "checklist");
         Item("Models", Glyph.Layers, "models");
         Item("People", Glyph.People, "people");
+        Item("Connectors", Glyph.Plug, "connectors");
+        Item("Integrations", Glyph.Code, "integrations");
+        Item("Custom APIs", Glyph.Code, "custom-apis");
+        Item("Workflow Providers", Glyph.Flow, "workflow-providers");
+        Item("Approval Policy", Glyph.Shield, "policy");
+        Item("Storage", Glyph.Folder, "storage");
         Item("Email Delivery", Glyph.Mail, "mail-settings");
         Item("Backups", Glyph.Backups, "backups");
+        Item("Voice Box", Glyph.Speaker, "voice-box");
+        Item("PC Control", Glyph.Desktop, "pc-control");
+        Item("Workspace", Glyph.Settings, "workspace");
+        Item("Network", Glyph.Globe, "network");
+        Item("Maintenance", Glyph.Repair, "maintenance");
+        Item("Audit Log", Glyph.History, "audit");
       }
       Item("Server", Glyph.Server, "server");
+    }
+    void Group(string title) {
+      var label = Ui.Caption(title.ToUpperInvariant()); label.Margin = new Thickness(12, 14, 0, 6); label.FontWeight = FontWeights.SemiBold;
+      nav.Children.Add(label);
     }
     void Item(string title, string glyph, string section) {
       var on = model.Section == section;
@@ -99,7 +137,9 @@ namespace Josi.Native {
 
     void RenderThreads() {
       threads.Children.Clear();
+      var term = threadSearch.Text.Trim();
       foreach (var thread in model.Threads) {
+        if (term.Length > 0 && thread["title"].Text.IndexOf(term, StringComparison.CurrentCultureIgnoreCase) < 0) continue;
         var id = thread.Id; var on = model.SelectedThread == id;
         var title = Ui.T(thread["title"].Text.Length == 0 ? "Conversation" : thread["title"].Text, 13.5); title.ClearValue(TextBlock.ForegroundProperty);
         title.TextWrapping = TextWrapping.NoWrap; title.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -142,6 +182,33 @@ namespace Josi.Native {
         case "mail-settings": view = model.IsAdministrator ? new MailSettingsView(model, owner) : null; break;
         case "backups": view = model.IsAdministrator ? new BackupsView(model, owner) : null; break;
         case "server": view = new ServerView(model, owner); break;
+        case "approvals": view = new ApprovalsView(model, owner); break;
+        case "calendar": view = new CalendarView(model, owner); break;
+        case "contacts": view = new ContactsView(model, owner); break;
+        case "files": view = new FilesView(model, owner); break;
+        case "reminders": view = new RemindersView(model, owner); break;
+        case "personalization": view = new PersonalizationView(model, owner); break;
+        case "templates": view = new TemplatesView(model, owner); break;
+        case "workflows": view = new WorkflowsView(model, owner); break;
+        case "migration": view = new MigrationView(model, owner); break;
+        case "connections": view = new ConnectionsView(model, owner); break;
+        case "usage": view = new UsageView(model, owner); break;
+        case "family": view = ComingSoonPage.Build("Family", "Parental Controls are being redesigned. No supervision, schedules, limits, monitoring or child-safety enforcement are active today. The future feature is intended to let parents or guardians create and manage child profiles, set age-appropriate rules and schedules, and review relevant Josi activity, keeping parental authority separate from ordinary administration.", "Suggest features at roman@socalreceptionist.com."); break;
+        case "apps": view = ComingSoonPage.Build("Companion Apps", "There is no iPhone or Android build of Josi yet. When one exists it will be linked here.", "Signing in will use your email address and normal Josi password. A small directory service tells the app which installation owns your address; it never receives your password or anything else from this installation. Your administrator adds your address to the approved list first."); break;
+        case "overview": view = model.IsAdministrator ? new OverviewView(model, owner) : null; break;
+        case "checklist": view = model.IsAdministrator ? new ChecklistView(model, owner) : null; break;
+        case "connectors": view = model.IsAdministrator ? new ConnectorsView(model, owner) : null; break;
+        case "integrations": view = model.IsAdministrator ? new IntegrationsView(model, owner) : null; break;
+        case "custom-apis": view = model.IsAdministrator ? new CustomApisView(model, owner) : null; break;
+        case "workflow-providers": view = model.IsAdministrator ? new WorkflowAdminView(model, owner) : null; break;
+        case "policy": view = model.IsAdministrator ? new PolicyView(model, owner) : null; break;
+        case "storage": view = model.IsAdministrator ? new StorageAdminView(model, owner) : null; break;
+        case "voice-box": view = model.IsAdministrator ? new VoiceBoxView(model, owner) : null; break;
+        case "pc-control": view = model.IsAdministrator ? new PcControlView(model, owner) : null; break;
+        case "workspace": view = model.IsAdministrator ? new WorkspaceSettingsView(model, owner) : null; break;
+        case "network": view = model.IsAdministrator ? new NetworkView(model, owner) : null; break;
+        case "maintenance": view = model.IsAdministrator ? new MaintenanceView(model, owner) : null; break;
+        case "audit": view = model.IsAdministrator ? new AuditView(model, owner) : null; break;
         default: chat = chat ?? new ChatView(model, owner); chat.Refresh(); view = chat; break;
       }
       detail.Content = view;
@@ -149,4 +216,11 @@ namespace Josi.Native {
   }
 
   public interface IWorkspaceRefresh { void WorkspaceUpdated(); }
+
+  static class ComingSoonPage {
+    /// A section the product has not released yet: said plainly, nothing to press.
+    public static UIElement Build(string title, string detail, string more) {
+      return Ui.Scroll(Ui.Stack(20, Ui.Row(10, Ui.Title2(title), ModelText.Pill("Coming soon", false)), Ui.CardBox(null, Ui.Secondary(detail), Ui.Caption(more))), 900, 30);
+    }
+  }
 }
