@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import secrets
 import socketserver
+import subprocess
 import threading
 import time
 
@@ -85,6 +86,33 @@ class VoiceService:
             if service:
                 self.api.CloseServiceHandle(service)
             self.api.CloseServiceHandle(manager)
+
+
+class DevelopmentGateway:
+    """Development servers only (JOSI_VOICE_DEVELOPMENT=1, set by
+    scripts/windows/dev/Start-DevServer.ps1): runs the gateway as this
+    account's hidden child process instead of the JosiVoice Windows service,
+    which a development server does not install."""
+    def __init__(self, gateway_port):
+        self.port, self.process = gateway_port, None
+        self.service = Path(__file__).resolve().parent
+
+    def change(self, running):
+        if self.process and self.process.poll() is None:
+            if running:
+                return
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+        self.process = None
+        if running:
+            launch = ('import runpy, sys; sys.path.insert(0, ' + repr(str(self.service)) + '); '
+                      'runpy.run_path(' + repr(str(self.service / 'gateway.py')) + ", run_name='__main__')")
+            self.process = subprocess.Popen([sys.executable, '-I', '-B', '-c', launch], cwd=str(self.service),
+                                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                            creationflags=0x08000000)  # CREATE_NO_WINDOW
 
 
 class Manager:
@@ -300,9 +328,10 @@ class Server(BoundedRequests, socketserver.ThreadingMixIn, socketserver.TCPServe
 
 
 if __name__ == '__main__':
+    gateway_port = int(os.environ.get('JOSI_VOICE_PORT', '18081'))
     manager = Manager(os.environ['JOSI_VOICE_HELPER_STATE_DIR'], os.environ['JOSI_VOICE_STATE_DIR'],
-                      os.environ['JOSI_VOICE_HELPER_TOKEN_FILE'], int(os.environ.get('JOSI_VOICE_PORT', '18081')),
-                      os.environ['JOSI_VERSION'])
+                      os.environ['JOSI_VOICE_HELPER_TOKEN_FILE'], gateway_port, os.environ['JOSI_VERSION'],
+                      DevelopmentGateway(gateway_port) if os.environ.get('JOSI_VOICE_DEVELOPMENT') == '1' else None)
     port = int(os.environ.get('JOSI_VOICE_HELPER_PORT', '18082'))
     if not 1024 <= port <= 65535 or port == manager.port:
         raise ValueError('Invalid private voice control port')

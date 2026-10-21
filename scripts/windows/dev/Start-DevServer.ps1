@@ -120,9 +120,53 @@ try {
     }
 } finally { Pop-Location }
 
+# Voice Box, when its pinned runtime and verified models are present (see
+# docs/WINDOWS_DEV_VOICE.md). The control helper runs as this user with the
+# installed services' environment; JOSI_VOICE_DEVELOPMENT=1 makes it start the
+# speech gateway as its own hidden process instead of a Windows service.
+$voicePython = Join-Path $Root 'voice-python\python.exe'
+$voiceModels = Join-Path $Root 'voice-models'
+if ((Test-Path $voicePython) -and (Test-Path (Join-Path $voiceModels 'base.en\model.bin'))) {
+    $pidFile = Join-Path $data 'state\voice.pid'
+    $running = (Test-Path $pidFile) -and (Get-Process -Id ([int](Get-Content $pidFile)) -ErrorAction SilentlyContinue)
+    if (!$running) {
+        foreach ($folder in 'voice\gateway', 'voice\control', 'temp\voice', 'profiles\voice') { $null = New-Item -ItemType Directory -Force (Join-Path $data $folder) }
+        $gateway = Join-Path $data 'voice\gateway'
+        if (!(Test-Path (Join-Path $gateway 'token'))) {
+            $bytes = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+            [IO.File]::WriteAllText((Join-Path $gateway 'token'), (([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()), [Text.Encoding]::ASCII)
+        }
+        if (!(Test-Path (Join-Path $gateway 'settings.json'))) {
+            [IO.File]::WriteAllText((Join-Path $gateway 'settings.json'), '{"model":"base.en","voice":"af_heart","threshold":0.5,"silenceMs":700,"speed":1.0,"device":"cpu"}', [Text.UTF8Encoding]::new($false))
+        }
+        $service = Join-Path $repo 'services\voice-box'
+        $voiceEnv = [ordered]@{
+            SystemRoot = $env:SystemRoot; WINDIR = $env:SystemRoot; PATH = ((Split-Path $voicePython) + ';' + (Join-Path $env:SystemRoot 'System32'))
+            TEMP = (Join-Path $data 'temp\voice'); TMP = (Join-Path $data 'temp\voice')
+            USERPROFILE = (Join-Path $data 'profiles\voice'); HOME = (Join-Path $data 'profiles\voice')
+            JOSI_VERSION = $settings.version; JOSI_VOICE_PORT = '18081'; JOSI_VOICE_HELPER_PORT = '18082'
+            JOSI_VOICE_STATE_DIR = $gateway; JOSI_VOICE_HELPER_STATE_DIR = (Join-Path $data 'voice\control')
+            JOSI_VOICE_MODELS_DIR = $voiceModels; JOSI_VOICE_HELPER_TOKEN_FILE = (Join-Path $data 'secrets\voice-control-token')
+            JOSI_VOICE_DEVELOPMENT = '1'
+        }
+        $lines = @('@echo off')
+        foreach ($pair in $voiceEnv.GetEnumerator()) { $lines += 'set "' + $pair.Key + '=' + $pair.Value + '"' }
+        $lines += 'cd /d "' + $service + '"'
+        $launch = "import runpy,sys;sys.path.insert(0,r'$service');runpy.run_path(r'$(Join-Path $service 'windows_helper.py')',run_name='__main__')"
+        $lines += '"' + $voicePython + '" -I -B -c "' + $launch + '" 1>>"' + (Join-Path $data 'logs\voice.log') + '" 2>>"' + (Join-Path $data 'logs\voice.err.log') + '"'
+        $launcher = Join-Path $data 'state\run-voice.cmd'
+        [IO.File]::WriteAllLines($launcher, $lines, [Text.Encoding]::ASCII)
+        $id = Start-Independent ('"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /d /c "' + $launcher + '"') $service
+        Set-Content -Path $pidFile -Value $id
+        Write-Host "voice started (pid $id); log: $(Join-Path $data 'logs\voice.err.log')"
+    }
+} else { Write-Warning 'Voice Box runtime or models are missing; audio and video transcripts are unavailable.' }
+
+# 127.0.0.1, not localhost: the API listens on IPv4 only, and Windows tries
+# ::1 first, which used up the whole per-attempt timeout.
 $deadline = (Get-Date).AddSeconds(180)
 while ($true) {
-    try { $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "$($settings.publicUrl)api/onboarding/state"; break }
+    try { $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 "http://127.0.0.1:$($settings.apiPort)/api/onboarding/state"; break }
     catch { if ((Get-Date) -gt $deadline) { throw "The API did not answer; see $(Join-Path $data 'logs\web.err.log')" }; Start-Sleep -Milliseconds 500 }
 }
 Write-Host "Josi development server: $($settings.publicUrl)"
