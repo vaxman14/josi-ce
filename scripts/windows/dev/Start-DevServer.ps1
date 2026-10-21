@@ -118,7 +118,7 @@ try {
     }
 } finally { Pop-Location }
 
-$deadline = (Get-Date).AddSeconds(90)
+$deadline = (Get-Date).AddSeconds(180)
 while ($true) {
     try { $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "$($settings.publicUrl)api/onboarding/state"; break }
     catch { if ((Get-Date) -gt $deadline) { throw "The API did not answer; see $(Join-Path $data 'logs\web.err.log')" }; Start-Sleep -Milliseconds 500 }

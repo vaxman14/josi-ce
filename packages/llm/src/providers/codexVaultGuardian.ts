@@ -29,7 +29,9 @@ const compatible = () => consumer === 'codex' ? requireCompatibleCodexHost() : r
 const send = (value: CodexGuardianOutput) => {
   if (process.connected) process.send!(value, () => {});
 };
-const MAX_OUTPUT = 4 * 1024 * 1024, MAX_INPUT = 4 * 1024 * 1024;
+// Input carries base64 images on image turns (Claude stream-json), so it is
+// bounded like the Codex private image files rather than like plain prompts.
+const MAX_OUTPUT = 4 * 1024 * 1024, MAX_INPUT = 24 * 1024 * 1024;
 let child: ChildProcess | undefined, directory: string | undefined;
 let directoryHandle: FileHandle | undefined;
 let group: number | undefined, started = false, finalizing = false, cancelled = false, timedOut = false;

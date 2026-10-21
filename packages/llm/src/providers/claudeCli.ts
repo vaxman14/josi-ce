@@ -16,6 +16,8 @@ import type { SpawnRunner } from './codexCli.js';
 export const DEFAULT_CLAUDE_COMMAND = 'claude';
 
 const DEFAULT_TIMEOUT_MS = 180_000;
+/** Matches the Vault guardian's input limit for one run. */
+export const CLAUDE_MAX_INPUT_BYTES = 24 * 1024 * 1024;
 
 /** Legacy names retained for downstream source compatibility. The runtime now
  * disables all built-in tools with --tools "", including future additions. */
@@ -61,6 +63,25 @@ export function renderClaudePrompt(request: ChatRequest): string {
   return parts.join('\n\n');
 }
 
+/** Media types Anthropic's models accept as image content. */
+const CLAUDE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** The images on the last user turn, if any, in a form Claude accepts. */
+export function claudeImages(request: ChatRequest): NonNullable<ChatRequest['messages'][number]['images']> {
+  const last = [...request.messages].reverse().find((m) => m.role === 'user');
+  return (last?.images ?? []).filter((image) => CLAUDE_IMAGE_TYPES.has(image.mediaType) && image.base64.length > 0);
+}
+
+/** One stream-json user message: the images as real image blocks, then the
+ * same flattened prompt the text path sends. */
+export function renderClaudeStructuredInput(request: ChatRequest): string {
+  const content: unknown[] = claudeImages(request).map((image) => ({
+    type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.base64 },
+  }));
+  content.push({ type: 'text', text: renderClaudePrompt(request) });
+  return `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
+}
+
 export interface ClaudeResult {
   text: string;
   isError: boolean;
@@ -79,16 +100,24 @@ export interface ClaudeResult {
  * the text is used for anything.
  */
 export function parseClaudeResult(stdout: string): ClaudeResult | null {
+  let payload: Record<string, unknown> | null = null;
   const start = stdout.indexOf('{');
   const end = stdout.lastIndexOf('}');
   if (start === -1 || end <= start) return null;
-
-  let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(stdout.slice(start, end + 1)) as Record<string, unknown>;
   } catch {
-    return null;
+    // stream-json output (image turns): one event per line; the last
+    // `result` event is the same envelope the json format prints.
+    for (const line of stdout.split(/\r?\n/).reverse()) {
+      if (!line.trim().startsWith('{')) continue;
+      try {
+        const event = JSON.parse(line) as Record<string, unknown>;
+        if (event.type === 'result') { payload = event; break; }
+      } catch { /* not an event line */ }
+    }
   }
+  if (!payload) return null;
 
   const usage = (payload.usage ?? {}) as Record<string, unknown>;
   const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
@@ -197,11 +226,19 @@ export function claudeCliProvider(opts: ClaudeCliOptions): LlmProvider {
       const started = Date.now();
       let result: Awaited<ReturnType<SpawnRunner>>;
       let executedToolCalls: ChatResponse['executedToolCalls'];
+      // A turn with images goes in as structured input so the model sees the
+      // pictures themselves; every other turn keeps the plain text path.
+      const structured = claudeImages(request).length > 0;
+      const input = structured ? renderClaudeStructuredInput(request) : renderClaudePrompt(request);
+      if (Buffer.byteLength(input) > CLAUDE_MAX_INPUT_BYTES) {
+        harness?.cleanup();
+        throw new LlmError('These images are too large to send through Claude Code together. Attach fewer or smaller images.');
+      }
       try {
         result = await runner({
           command,
-          args: claudeArgs(opts.model, mcpConfigPath),
-          input: renderClaudePrompt(request),
+          args: claudeArgs(opts.model, mcpConfigPath, structured),
+          input,
           env: claudeChildEnvironment(configDir),
           timeoutMs,
         });
