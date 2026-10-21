@@ -327,7 +327,19 @@ namespace Josi.Native {
     IEnumerable<UIElement> ProviderForm() {
       if (setupModel == null) {
         setupModel = new ModelSetupPanel(model, owner, new ModelEndpoints(true), "primary", Wire.Null,
-          model.SetupState["providerCatalog"].List, null, async body => { await model.SetupStep("llm", body); return false; });
+          model.SetupState["providerCatalog"].List, null, async body => {
+            var check = await model.SetupStep("llm", body);
+            // Passing moves setup to its next step. Otherwise show why, with
+            // Change Settings, instead of returning silently to the same step.
+            if (!check.IsNull && check["status"].Text != "passed") {
+              var probe = check["probe"];
+              setupModel.ShowResult(new Wire(Wires.O(
+                "provider", Wires.O("active", false, "capabilities", probe["capabilities"].IsNull ? null : probe["capabilities"].Raw),
+                "result", Wires.O("steps", probe["steps"].IsNull ? new List<object>() : probe["steps"].Raw,
+                  "fatal", check["detail"].Text.Length > 0 ? check["detail"].Text : "The model did not pass its check."))));
+            }
+            return false;
+          });
         // A fixed height tied to the window: long steps scroll inside the
         // panel and Back/Continue stay visible at its bottom.
         Action fit = () => setupModel.Height = Math.Max(420, owner.ActualHeight - 400);

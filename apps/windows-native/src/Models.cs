@@ -655,7 +655,7 @@ namespace Josi.Native {
       if (checkResult["result"]["fatal"].Text.Length > 0) Ui.Add(stack, Ui.Copyable(checkResult["result"]["fatal"].Text, 13.5, Ui.Orange), 10);
       Ui.Add(stack, Ui.Row(10, passed ? null : Ui.Pill("Change Settings", () => { checkResult = Wire.Null; step = 1; Render(); }),
         // Only the separate setup window closes; first-run setup embeds this panel in the main window.
-        Ui.Pill("Done", () => { var window = Window.GetWindow(this) as ModelSetupWindow; if (window != null) window.Close(); }, passed)), 18);
+        endpoints.Setup ? null : Ui.Pill("Done", () => { var window = Window.GetWindow(this) as ModelSetupWindow; if (window != null) window.Close(); }, passed)), 18);
       return stack;
     }
     void SaveAndCheck() {

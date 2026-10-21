@@ -5,6 +5,8 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 
 const port = Number(process.argv[2] || 8787);
+// `node mock-server.mjs <port> setup`: an unfinished first-run setup.
+const setupMode = process.argv[3] === 'setup';
 const now = () => new Date().toISOString();
 const user = { id: randomUUID(), username: 'roman', displayName: 'Roman Vaxman', role: 'super_admin' };
 const threadId = randomUUID();
@@ -78,7 +80,27 @@ http.createServer(async (req, res) => {
   const body = method === 'GET' ? {} : await readBody(req);
   let m;
   if (path === '/auth/csrf') return send(res, 200, { csrfToken: 'mock-csrf' }, { 'set-cookie': 'josi_csrf=mock-csrf; Path=/; HttpOnly; SameSite=Strict' });
-  if (path === '/onboarding/state') return send(res, 200, { completed: true });
+  if (path === '/onboarding/state') return send(res, 200, { completed: !setupMode });
+  if (setupMode) {
+    // First-run setup waiting at the model step; the model check fails the
+    // way the server reports a subscription that is not signed in.
+    if (path === '/onboarding/launch' && method === 'POST') return send(res, 200, { token: 'b'.repeat(64) });
+    if (path === '/onboarding/consume' && method === 'POST') return send(res, 200, {});
+    if (path === '/setup/state') return send(res, 200, {
+      completed: false, recoveryPending: false, ownerExists: true, completedSteps: ['host_checks', 'owner', 'domain'], nextStep: 'llm',
+      steps: [['host_checks', 'Check this machine'], ['owner', 'Your account'], ['domain', 'Address and HTTPS'], ['llm', 'Language model'], ['review', 'Review and finish']]
+        .map(([id, title]) => ({ id, title, done: ['host_checks', 'owner', 'domain'].includes(id) })),
+      providerCatalog });
+    if (path === '/setup/subscription') return send(res, 200, { cli: subscriptionStatus('codex'), claudeCli: subscriptionStatus('claude') });
+    if (path === '/setup/subscription/claude/connect' && method === 'POST') { llm.signedIn.claude = true; return send(res, 200, { cli: subscriptionStatus('claude') }); }
+    if (path === '/setup/models' && method === 'POST') return send(res, 200, { ok: true, models: [{ id: 'haiku', label: 'Claude Haiku' }], fromCatalog: true, allowsCustomModel: true });
+    if (path === '/setup/steps/llm' && method === 'POST') return send(res, 200, { ok: true, completedSteps: ['host_checks', 'owner', 'domain', 'llm'], nextStep: 'llm' });
+    if (path === '/setup/verify/llm' && method === 'POST') return send(res, 200, {
+      status: 'failed', category: 'auth', detail: 'The model did not answer: Claude Code on this installation is not signed in.',
+      probe: { capabilities: { chat: false, toolCalling: false, vision: false, structuredOutput: false, contextTokens: 0 },
+        steps: [{ id: 'chat', label: 'Basic reply', detail: 'Claude Code on this installation is not signed in. Connect your Claude subscription, then test the model again.', passed: false }] } });
+    if (path === '/setup/review') return send(res, 200, { canComplete: false });
+  }
   if (path === '/auth/login' && method === 'POST') {
     if (body.password !== 'correct horse battery') return send(res, 401, { error: 'Incorrect username or password.' });
     return send(res, 200, { user }, { 'set-cookie': 'josi_session=mock; Path=/; HttpOnly; SameSite=Strict' });

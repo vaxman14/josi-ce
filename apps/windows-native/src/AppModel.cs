@@ -438,15 +438,19 @@ namespace Josi.Native {
       Notify();
     }
     static readonly string[] SetupSteps = { "host_checks", "owner", "domain", "llm", "smtp", "security", "telemetry", "review" };
-    public async Task SetupStep(string step, object body) {
+    /// Submits a setup step. For the model step, returns the server's check
+    /// of the saved model: setup stays on that step until the check passes.
+    public async Task<Wire> SetupStep(string step, object body) {
       var api = Api;
-      if (api == null || !SetupSteps.Contains(step)) return;
+      if (api == null || !SetupSteps.Contains(step)) return Wire.Null;
       var value = await api.Request("/setup/steps/" + step, "POST", body);
-      if (Api != api) return;
+      if (Api != api) return Wire.Null;
       if (!value["vaultRecovery"].IsNull) Recovery = value["vaultRecovery"];
-      if (step == "llm") await api.Request("/setup/verify/llm", "POST", Wires.O());
-      if (Api != api) return;
+      var check = Wire.Null;
+      if (step == "llm") check = await api.Request("/setup/verify/llm", "POST", Wires.O());
+      if (Api != api) return Wire.Null;
       await LoadSetup();
+      return check;
     }
     public async Task ConfirmRecovery() {
       var api = Api; if (api == null) return;
