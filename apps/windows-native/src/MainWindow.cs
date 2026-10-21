@@ -13,7 +13,10 @@ namespace Josi.Native {
     [STAThread]
     public static int Main(string[] args) {
       bool created;
-      using (var single = new Mutex(true, @"Local\Josi.Native.Windows", out created)) {
+      // Automated UI tests run beside a person's open copy without touching it.
+      var instance = Environment.GetEnvironmentVariable("JOSI_TEST_NO_BROWSER") == "1"
+        ? @"Local\Josi.Native.Windows.Test." + Guid.NewGuid().ToString("N") : @"Local\Josi.Native.Windows";
+      using (var single = new Mutex(true, instance, out created)) {
         if (!created) { Activation.ActivateExisting(); return 0; }
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         Ui.Load();

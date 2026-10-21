@@ -89,8 +89,16 @@ namespace Josi.Native {
       this.model = model; this.owner = owner; this.endpoints = endpoints; this.provider = provider;
       Content = body;
       poll.Tick += async delegate { await PollLogin(); };
-      Loaded += async delegate { await Refresh(); };
-      Unloaded += delegate { poll.Stop(); CancelClaude(); manualToken.Clear(); };
+      Loaded += async delegate { model.Changed += SyncEnabled; SyncEnabled(); await Refresh(); };
+      Unloaded += delegate {
+        model.Changed -= SyncEnabled;
+        // A parent redraw removes and re-adds this panel; only end the
+        // sign-in when it has really left the screen.
+        Dispatcher.BeginInvoke(new Action(() => {
+          if (IsLoaded) return;
+          poll.Stop(); CancelClaude(); manualToken.Clear();
+        }), DispatcherPriority.Background);
+      };
       claudeCode.KeyDown += (s, e) => { if (e.Key == Key.Enter) SubmitClaudeCode(); };
       Render();
     }
@@ -130,8 +138,15 @@ namespace Josi.Native {
         signOut.IsEnabled = !status["busy"].Flag;
         Ui.Add(stack, signOut, 12);
       }
-      stack.IsEnabled = !model.Busy;
       body.Content = stack;
+      SyncEnabled();
+      if (claude != null && claudePage != null)
+        Dispatcher.BeginInvoke(new Action(() => { if (claudeCode.IsEnabled) claudeCode.Focus(); }), DispatcherPriority.Background);
+    }
+    /// Follows the app's busy state on every change, not only when this panel
+    /// redraws: otherwise a panel drawn during a request stays disabled.
+    void SyncEnabled() {
+      body.IsEnabled = !model.Busy;
     }
 
     // ------------------------------------------------------------ ChatGPT
