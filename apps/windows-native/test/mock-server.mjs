@@ -128,6 +128,12 @@ http.createServer(async (req, res) => {
     setTimeout(() => { llm.codexLogin = { state: 'signed_in', challenge: null }; llm.signedIn.codex = true; }, 8000);
     return send(res, 200, llm.codexLogin);
   }
+  if (path === '/admin/llm/subscription/claude/connect' && method === 'POST') {
+    if (!/^sk-ant-oat01-/.test(body.token ?? '')) return send(res, 400, { error: 'That is not a Claude subscription token.' });
+    await new Promise(resolve => setTimeout(resolve, 700));
+    llm.signedIn.claude = true;
+    return send(res, 200, { cli: subscriptionStatus('claude') });
+  }
   if (path === '/admin/llm/subscription/login' && method === 'GET') return send(res, 200, llm.codexLogin ?? { state: 'idle', challenge: null });
   if (path === '/admin/llm/models' && method === 'POST') return send(res, 200, body.provider === 'anthropic'
     ? { ok: true, models: [{ id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' }, { id: 'claude-opus-5-5', label: 'Claude Opus 5.5' }, { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' }], fromCatalog: true, allowsCustomModel: true }

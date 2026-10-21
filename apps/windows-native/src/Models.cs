@@ -371,7 +371,17 @@ namespace Josi.Native {
       DockPanel.SetDock(rail, Dock.Top); DockPanel.SetDock(footer, Dock.Bottom);
       layout.Children.Add(rail); layout.Children.Add(footer); layout.Children.Add(stepHost);
       Content = layout;
+      // The footer buttons wait while the app is busy; a sign-in that finishes
+      // during a request must enable them once that request ends.
+      Loaded += delegate { model.Changed += FollowBusy; FollowBusy(); };
+      Unloaded += delegate { model.Changed -= FollowBusy; };
       Render();
+    }
+    bool footerBusy;
+    void FollowBusy() {
+      if (footerBusy == model.Busy) return;
+      footerBusy = model.Busy;
+      UpdateFooter();
     }
     Wire Entry { get { return ModelText.Entry(catalog, kind); } }
     bool IsSubscription { get { return ModelText.Subscription(kind); } }

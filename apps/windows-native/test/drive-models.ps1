@@ -82,6 +82,14 @@ try {
   Click $wizard 'Claude subscription'
   Start-Sleep -Seconds 2
   Capture $wizard 'm05-claude-connect'
+  # No Claude Code next to a test build, so this is the paste-a-token path;
+  # the save runs while the app is busy, and Continue must enable afterwards.
+  Click $wizard 'Sign In with Claude'
+  (Find $wizard 'Claude subscription token' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('sk-ant-oat01-mock-token-for-the-test-only')
+  Click $wizard 'Save Token in Vault'
+  Start-Sleep -Seconds 3
+  Write-Host ("claude continue after connect: enabled=" + (Find $wizard 'Continue' $C::Button).Current.IsEnabled)
+  Capture $wizard 'm05b-claude-connected'
   Click $wizard '1  Choose'
   Click $wizard 'Anthropic API'
   (Find $wizard 'API key' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('sk-ant-test-key')
