@@ -52,6 +52,7 @@ $mock = Start-Process node -ArgumentList "`"$(Join-Path $PSScriptRoot 'mock-serv
 $app = $null
 try {
   Start-Sleep -Seconds 1
+  $data = & (Join-Path $PSScriptRoot 'mock-local.ps1') -Port $Port; $env:JOSI_SERVER_DATA = $data; $env:JOSI_TEST_NO_BROWSER = '1'; $env:JOSI_TEST_INSTANCE = [Guid]::NewGuid().ToString('N')
   $app = Start-Process $exe -PassThru
   $deadline = (Get-Date).AddSeconds(20)
   do { Start-Sleep -Milliseconds 300; $app.Refresh() } while ($app.MainWindowHandle -eq 0 -and !$app.HasExited -and (Get-Date) -lt $deadline)
@@ -61,8 +62,7 @@ try {
   $window = $A::FromHandle($h)
   Capture $h '01-welcome'
 
-  TypeInto $window 'https://josi.example.com' "http://localhost:$Port"
-  Click $window 'Connect'
+  Click $window 'Open Josi'
   Find $window 'Sign In' | Out-Null
   Capture $h '02-sign-in'
 
@@ -106,4 +106,6 @@ try {
 } finally {
   if ($app -and !$app.HasExited) { $app.CloseMainWindow() | Out-Null; Start-Sleep -Seconds 1; if (!$app.HasExited) { $app.Kill() } }
   if ($mock -and !$mock.HasExited) { $mock.Kill() }
+  if ($data) { Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue }
+  if ($env:JOSI_TEST_INSTANCE) { cmdkey "/delete:Josi/session/http://localhost:$Port/test/$($env:JOSI_TEST_INSTANCE)" | Out-Null }
 }

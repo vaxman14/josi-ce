@@ -492,7 +492,7 @@ namespace Josi.Native {
             if (!pass && detail.Length > 0) items.Add(Ui.Copyable(detail, 13, Ui.Muted));
           }
         }
-        items.Add(Ui.Caption("Local service changes use the controls below. For a server on another PC, use Josi's local controls on that PC."));
+        items.Add(Ui.Caption("Local service changes use the controls below."));
         Ui.Add(page, Ui.CardBox("Connected server health", items.ToArray()), 0);
       }
       Ui.Add(page, new ServerControls(model, owner, false), 28);

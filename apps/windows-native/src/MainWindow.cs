@@ -13,11 +13,15 @@ namespace Josi.Native {
     [STAThread]
     public static int Main(string[] args) {
       bool created;
+      // A josi:// link (Google sign-in returning) arrives as the only argument.
+      var link = args.Length == 1 && AppLinks.IsLink(args[0]) ? args[0] : null;
       // Automated UI tests run beside a person's open copy without touching it.
-      var instance = Environment.GetEnvironmentVariable("JOSI_TEST_NO_BROWSER") == "1"
-        ? @"Local\Josi.Native.Windows.Test." + Guid.NewGuid().ToString("N") : @"Local\Josi.Native.Windows";
-      using (var single = new Mutex(true, instance, out created)) {
-        if (!created) { Activation.ActivateExisting(); return 0; }
+      using (var single = new Mutex(true, @"Local\Josi.Native.Windows" + AppLinks.Instance, out created)) {
+        if (!created) {
+          if (link != null) AppLinks.Forward(link);
+          if (!AppLinks.Testing) Activation.ActivateExisting();
+          return 0;
+        }
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         Ui.Load();
         app.Resources.MergedDictionaries.Add(Ui.Resources);
@@ -30,7 +34,9 @@ namespace Josi.Native {
         };
         var main = new MainWindow();
         app.MainWindow = main;
+        AppLinks.Listen(value => app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(value))));
         main.Show();
+        if (link != null) app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(link)));
         return app.Run();
       }
     }
@@ -78,9 +84,21 @@ namespace Josi.Native {
       SourceInitialized += delegate { DarkTitleBar(); };
       Model.RefreshLocal();
       Render();
+      // A remembered sign-in opens the server on this PC straight away, once
+      // the window runs (requests must resume on its thread).
+      var r = Model.Receipt;
+      if (r.Installed && r.Running && r.Address.Length > 0 && SessionStore.Load(r.Address) != null)
+        Loaded += delegate { if (Model.Screen == Screen.Connect) Model.Run(() => Model.Connect(r.Address, true)); };
     }
 
     public void ShowError(string message) { Model.Error = message; Model.Busy = false; Render(); }
+
+    /// A josi:// link from the browser: Google sign-in returning.
+    public void ReceiveLink(string link) {
+      if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+      Activate();
+      Model.Run(() => Model.CompleteGoogle(link));
+    }
 
     void Render() {
       if (shown != Model.Screen) {

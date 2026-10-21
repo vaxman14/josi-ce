@@ -47,12 +47,11 @@ $mock = Start-Process node -ArgumentList "`"$(Join-Path $PSScriptRoot 'mock-serv
 $app = $null
 try {
   Start-Sleep -Seconds 1
-  $env:JOSI_TEST_NO_BROWSER = '1'; $env:JOSI_SERVER_DATA = ''
+  $data = & (Join-Path $PSScriptRoot 'mock-local.ps1') -Port $Port; $env:JOSI_SERVER_DATA = $data; $env:JOSI_TEST_NO_BROWSER = '1'; $env:JOSI_TEST_INSTANCE = [Guid]::NewGuid().ToString('N')
   $app = Start-Process $Exe -PassThru
   do { Start-Sleep -Milliseconds 300; $app.Refresh() } while ($app.MainWindowHandle -eq 0 -and !$app.HasExited)
   $main = $A::FromHandle($app.MainWindowHandle)
-  (Find $main 'https://josi.example.com' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue("http://localhost:$Port")
-  Click $main 'Connect'
+  Click $main 'Open Josi'
   (Find $main 'Username or email' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('roman')
   (Find $main 'Password' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('hunter2-secret')
   Click $main 'Show password'
@@ -73,4 +72,6 @@ try {
 } finally {
   if ($app -and !$app.HasExited) { $app.Kill() }
   if ($mock -and !$mock.HasExited) { $mock.Kill() }
+  if ($data) { Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue }
+  if ($env:JOSI_TEST_INSTANCE) { cmdkey "/delete:Josi/session/http://localhost:$Port/test/$($env:JOSI_TEST_INSTANCE)" | Out-Null }
 }

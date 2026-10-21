@@ -7,6 +7,12 @@ import { randomUUID } from 'node:crypto';
 const port = Number(process.argv[2] || 8787);
 // `node mock-server.mjs <port> setup`: an unfinished first-run setup.
 const setupMode = process.argv[3] === 'setup';
+// Native sessions, and the fixed values a test uses to finish Google sign-in
+// by opening josi://auth/callback?code=…&state=… itself.
+const sessions = new Set();
+const issueSession = () => { const token = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', ''); sessions.add(token); return token; };
+const GOOGLE_STATE = 'mock-google-state-0123456789abcdefghijklmnop';
+const GOOGLE_CODE = 'mock-google-code-0123456789abcdefghijklmnopq';
 const now = () => new Date().toISOString();
 const user = { id: randomUUID(), username: 'roman', displayName: 'Roman Vaxman', role: 'super_admin' };
 const threadId = randomUUID();
@@ -76,7 +82,10 @@ http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${port}`);
   const path = url.pathname.replace(/^\/api/, '');
   const method = req.method;
-  if (method !== 'GET' && path !== '/auth/csrf' && req.headers['x-josi-csrf'] !== 'mock-csrf') return send(res, 403, { error: 'Missing CSRF token' });
+  // Native-app requests: explicit bearer session, no Origin, no CSRF.
+  const native = req.headers['x-josi-client'] === 'native' && !req.headers.origin;
+  const bearer = native ? /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '')?.[1] : undefined;
+  if (!native && method !== 'GET' && path !== '/auth/csrf' && req.headers['x-josi-csrf'] !== 'mock-csrf') return send(res, 403, { error: 'Missing CSRF token' });
   const body = method === 'GET' ? {} : await readBody(req);
   let m;
   if (path === '/auth/csrf') return send(res, 200, { csrfToken: 'mock-csrf' }, { 'set-cookie': 'josi_csrf=mock-csrf; Path=/; HttpOnly; SameSite=Strict' });
@@ -103,9 +112,21 @@ http.createServer(async (req, res) => {
   }
   if (path === '/auth/login' && method === 'POST') {
     if (body.password !== 'correct horse battery') return send(res, 401, { error: 'Incorrect username or password.' });
+    if (native) return send(res, 200, { user, sessionToken: issueSession() });
     return send(res, 200, { user }, { 'set-cookie': 'josi_session=mock; Path=/; HttpOnly; SameSite=Strict' });
   }
-  if (path === '/auth/logout') return send(res, 200, {});
+  if (path === '/auth/me') return bearer && sessions.has(bearer) ? send(res, 200, { user }) : send(res, 401, { error: 'authentication required' });
+  if (path === '/auth/logout') { if (bearer) sessions.delete(bearer); return send(res, 200, {}); }
+  if (path === '/auth/native/config') return send(res, 200, { appUrl: `http://localhost:${port}`, googleSignIn: true, appleSignIn: false });
+  if (path === '/auth/google/native/start') {
+    if (url.searchParams.get('redirect_uri') !== 'josi://auth/callback') return send(res, 400, { error: 'unsupported native redirect URI' });
+    return send(res, 302, {}, { location: `https://accounts.google.com/o/oauth2/v2/auth?client_id=mock&state=${GOOGLE_STATE}` });
+  }
+  if (path === '/auth/google/native/exchange' && method === 'POST') {
+    if (!native) return send(res, 403, { error: 'native client required' });
+    if (body.code !== GOOGLE_CODE) return send(res, 401, { error: 'invalid or expired code' });
+    return send(res, 200, { user: { ...user, email: 'roman@example.com' }, sessionToken: issueSession() });
+  }
   if (path === '/assistant/threads' && method === 'GET') return send(res, 200, { threads });
   if (path === '/assistant/threads' && method === 'POST') {
     const id = randomUUID(); threads.unshift({ id, title: '' }); messages[id] = []; turns[id] = [];

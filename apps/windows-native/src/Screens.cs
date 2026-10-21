@@ -6,13 +6,11 @@ using System.Windows.Controls;
 using System.Windows.Input;
 
 namespace Josi.Native {
+  /// The server on this PC. Other devices use the standalone Josi client.
   public sealed class ConnectView : UserControl, IRefresh {
     readonly AppModel model; readonly Window owner;
-    readonly TextBox address;
     public ConnectView(AppModel model, Window owner) {
       this.model = model; this.owner = owner;
-      address = Ui.Input("https://josi.example.com", model.Address.Contains("localhost") ? "" : model.Address);
-      address.KeyDown += (s, e) => { if (e.Key == Key.Enter) Connect(); };
       Refresh();
     }
     public void Refresh() {
@@ -25,25 +23,11 @@ namespace Josi.Native {
         r.Installed ? Ui.Pill("Open Josi", () => model.Run(() => model.Connect(r.Address, true)), true)
                     : Ui.Pill("Set Up on This PC…", () => ServerControls.ChooseInstaller(model, owner), true),
         new ServerControls(model, owner, true));
-      var remote = Ui.CardBox(null,
-        Ui.Row(10, Ui.Icon(Glyph.Network, 22, Ui.Text), Ui.T("On another computer", 21, FontWeights.Bold)),
-        Ui.Secondary("Connect to your Josi server and use the same account, conversations and work."),
-        address,
-        Ui.Pill("Connect", Connect, true),
-        Ui.Caption("Remote connections use HTTPS. Localhost is supported for a server on this PC."));
-      var cards = new Grid();
-      cards.ColumnDefinitions.Add(new ColumnDefinition()); cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) }); cards.ColumnDefinitions.Add(new ColumnDefinition());
-      Grid.SetColumn(remote, 2); cards.Children.Add(local); cards.Children.Add(remote);
       var brand = Ui.Row(14, Ui.JosiMark(52), Ui.Stack(2, Ui.T("Josi", 28, FontWeights.SemiBold), Ui.Caption("Your assistant, on your own server.")));
-      var page = Ui.Stack(28, brand, Ui.Heading("Welcome to Josi", "Your conversations, your work, your PC."), cards,
+      var page = Ui.Stack(28, brand, Ui.Heading("Welcome to Josi", "Your conversations, your work, your PC."), local,
         Ui.Secondary("Closing this window leaves your server running for your other devices."));
       page.IsEnabled = !model.Busy;
-      Content = Ui.Scroll(page, 1100, 36);
-    }
-    void Connect() {
-      var value = address.Text;
-      if (value.Trim().Length == 0) return;
-      model.Run(() => model.Connect(value));
+      Content = Ui.Scroll(page, 720, 36);
     }
   }
 
@@ -96,25 +80,42 @@ namespace Josi.Native {
     readonly TextBox identifier = Ui.Input("Username or email");
     readonly PasswordInput password = new PasswordInput("Password");
     readonly PasswordBox code = Ui.Secret("Verification code");
-    string shownChallenge;
+    string shown;
     public LoginView(AppModel model, Window owner) {
       this.model = model; this.owner = owner;
+      identifier.Text = model.RememberedIdentifier;
       password.Submitted += Submit;
       code.KeyDown += (s, e) => { if (e.Key == Key.Enter) Submit(); };
       Refresh();
-      Loaded += delegate { identifier.Focus(); };
+      Loaded += async delegate {
+        if (identifier.Text.Length > 0) password.Focus(); else identifier.Focus();
+        await model.LoadSignInOptions();
+      };
     }
     public void Refresh() {
-      if (shownChallenge == model.MfaChallenge && Content != null) { ((FrameworkElement)Content).IsEnabled = !model.Busy; return; }
-      shownChallenge = model.MfaChallenge;
+      var key = model.MfaChallenge + "|" + model.GoogleSignIn + "|" + model.GoogleWaiting;
+      if (shown == key && Content != null) { ((FrameworkElement)Content).IsEnabled = !model.Busy; return; }
+      shown = key;
       var stack = new StackPanel { MaxWidth = 580, Margin = new Thickness(36), VerticalAlignment = VerticalAlignment.Center };
       Ui.Add(stack, Ui.Row(14, Ui.JosiMark(44), Ui.Heading("Sign in to Josi", model.Address)), 0);
       if (model.MfaChallenge.Length == 0) {
+        Ui.Detach(identifier); Ui.Detach(password);
         Ui.Add(stack, Ui.Field("Username or email", identifier), 22);
         Ui.Add(stack, Ui.Field("Password", password), 14);
         Ui.Add(stack, Ui.Row(18,
           Ui.Link("Forgot password?", () => { password.Clear(); Dialogs.ForgotPassword(owner, model, identifier.Text.Trim()); }),
           Ui.Link("Have an invitation or reset link?", () => { password.Clear(); Dialogs.PasswordSetup(owner, model); })), 10);
+        if (model.GoogleWaiting) {
+          Ui.Add(stack, Ui.Row(10, new ProgressBar { IsIndeterminate = true, Width = 60, Height = 4 },
+            Ui.Caption("Finish signing in with Google in your browser.")), 22);
+          Ui.Add(stack, Ui.Row(14, Ui.Caption("Josi continues when Google sends you back."), Ui.Link("Cancel", model.CancelGoogle)), 6);
+        } else if (model.GoogleSignIn) {
+          var google = Ui.Pill("Sign in with Google", () => model.Run(() => model.StartGoogle()));
+          google.HorizontalAlignment = HorizontalAlignment.Stretch;
+          Ui.Add(stack, Ui.T("or", 13, null, Ui.Muted), 18);
+          Ui.Add(stack, google, 10);
+          Ui.Add(stack, Ui.Caption("For a Google account connected to your Josi account under Connections."), 6);
+        }
       } else {
         Ui.Add(stack, Ui.T("Enter your verification or recovery code."), 22);
         Ui.Add(stack, code, 12);

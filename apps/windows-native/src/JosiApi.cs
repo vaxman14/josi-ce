@@ -10,8 +10,10 @@ using System.Threading;
 using System.Threading.Tasks;
 
 namespace Josi.Native {
-  /// One authenticated connection to a Josi CE server. Cookies and the CSRF
-  /// token live only in this object's memory and end with it.
+  /// One authenticated connection to a Josi CE server. First-run setup uses
+  /// the browser-style cookie and CSRF token, held only in memory. Signed-in
+  /// use is the server's native-app mode: an explicit bearer session with no
+  /// Origin header, so no browser can attach it and CSRF does not apply.
   public sealed class JosiApi : IDisposable {
     public const string UserAgent = "JosiWindows/0.7";
     const int MaxResponse = 4 * 1024 * 1024;
@@ -21,8 +23,8 @@ namespace Josi.Native {
     readonly HttpClient http;
     readonly HttpClient streaming;
     readonly CancellationTokenSource closing = new CancellationTokenSource();
-    string csrf;
-    bool closed;
+    string csrf, session;
+    bool closed, native;
     CancellationTokenSource progress;
 
     public JosiApi(string address) {
@@ -53,9 +55,19 @@ namespace Josi.Native {
     }
     public bool IsLocal { get { return IsLoopback(Origin.Host); } }
 
+    /// Switches to native-app requests (sign-in and everything after it).
+    public void UseNative() { native = true; csrf = null; }
+    /// The bearer session from a native sign-in.
+    public void UseSession(string token) {
+      if (string.IsNullOrEmpty(token) || token.Length > 512 || !Regex.IsMatch(token, "^[A-Za-z0-9_-]+$"))
+        throw new JosiException("The server did not return a usable session.");
+      UseNative(); session = token;
+    }
+    public void EndSession() { session = null; }
+
     public void Dispose() {
       if (closed) return;
-      closed = true; csrf = null;
+      closed = true; csrf = null; session = null;
       CancelWorkProgress();
       closing.Cancel();
       http.Dispose(); streaming.Dispose(); handler.Dispose();
@@ -79,13 +91,19 @@ namespace Josi.Native {
     }
     HttpRequestMessage Message(string method, Uri url) {
       var message = new HttpRequestMessage(new HttpMethod(method), url);
-      message.Headers.TryAddWithoutValidation("Origin", OriginText);
+      if (native) {
+        message.Headers.TryAddWithoutValidation("x-josi-client", "native");
+        if (session != null) message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session);
+      } else {
+        message.Headers.TryAddWithoutValidation("Origin", OriginText);
+        if (method != "GET" && csrf != null) message.Headers.TryAddWithoutValidation("x-josi-csrf", csrf);
+      }
       message.Headers.Accept.ParseAdd("application/json");
-      if (method != "GET" && csrf != null) message.Headers.TryAddWithoutValidation("x-josi-csrf", csrf);
       return message;
     }
 
     public async Task PrimeCsrf() {
+      if (native) return;
       var result = await Request("/auth/csrf");
       var token = result["csrfToken"].Text;
       if (token.Length == 0 || token.Length > 256) throw new JosiException("The server could not prepare a secure session.");
@@ -96,7 +114,7 @@ namespace Josi.Native {
     public Task<Wire> Request(string route, string method, object body) { return Request(route, method, body, null); }
     public async Task<Wire> Request(string route, string method, object body, IDictionary<string, string> headers) {
       var url = Route(route);
-      if (method != "GET" && csrf == null) await PrimeCsrf();
+      if (method != "GET" && csrf == null && !native) await PrimeCsrf();
       using (var message = Message(method, url)) {
         if (headers != null) foreach (var pair in headers) message.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
         if (body != null) message.Content = new StringContent(Wires.Serialize(body), Encoding.UTF8, "application/json");
@@ -121,6 +139,26 @@ namespace Josi.Native {
         }
       }
     }
+    /// The server answers the native Google start with a redirect: to Google
+    /// (carrying the state the app checks on return) or straight back to the
+    /// app with an error. Returned, not followed.
+    public async Task<Uri> GoogleSignInStart(string returnUri) {
+      using (var message = Message("GET", Route("/auth/google/native/start?redirect_uri=" + Uri.EscapeDataString(returnUri)))) {
+        HttpResponseMessage response;
+        try { response = await http.SendAsync(message, closing.Token); }
+        catch (OperationCanceledException) { if (closed) throw; throw new JosiException("The server did not answer in time. Check the connection and try again."); }
+        catch (HttpRequestException e) { throw new JosiException(Unreachable(e)); }
+        using (response) {
+          var status = (int)response.StatusCode;
+          if (status < 300 || status >= 400 || response.Headers.Location == null) {
+            var detail = Wires.Parse(await response.Content.ReadAsStringAsync())["error"].Text;
+            throw new JosiException(detail.Length > 0 && detail.Length < 300 ? detail : "The server could not start Google sign-in.", status);
+          }
+          return response.Headers.Location.IsAbsoluteUri ? response.Headers.Location : new Uri(Origin, response.Headers.Location);
+        }
+      }
+    }
+
     static string Unreachable(HttpRequestException e) {
       var inner = e.InnerException as WebException;
       if (inner != null && inner.Status == WebExceptionStatus.TrustFailure) return "The server's HTTPS certificate is not trusted by Windows.";

@@ -35,13 +35,12 @@ $mock = Start-Process node -ArgumentList "`"$(Join-Path $PSScriptRoot 'mock-serv
 $app = $null
 try {
   Start-Sleep -Seconds 1
-  $env:JOSI_TEST_NO_BROWSER = '1'; $env:JOSI_SERVER_DATA = ''
+  $data = & (Join-Path $PSScriptRoot 'mock-local.ps1') -Port $Port; $env:JOSI_SERVER_DATA = $data; $env:JOSI_TEST_NO_BROWSER = '1'; $env:JOSI_TEST_INSTANCE = [Guid]::NewGuid().ToString('N')
   $env:JOSI_CLAUDE_EXE = 'C:\Dev\josi-dev\cli\node_modules\@anthropic-ai\claude-code-win32-x64\claude.exe'
   $app = Start-Process $Exe -PassThru
   do { Start-Sleep -Milliseconds 300; $app.Refresh() } while ($app.MainWindowHandle -eq 0 -and !$app.HasExited)
   $main = $A::FromHandle($app.MainWindowHandle)
-  (Find $main 'https://josi.example.com' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue("http://localhost:$Port")
-  (Find $main 'Connect' $C::Button).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  (Find $main 'Open Josi' $C::Button).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
   (Find $main 'Username or email' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('roman')
   (Find $main 'Password' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('correct horse battery{ENTER}')
   (Find $main 'Models' $C::Button).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
@@ -62,4 +61,6 @@ try {
 } finally {
   if ($app -and !$app.HasExited) { $app.Kill() }
   if ($mock -and !$mock.HasExited) { $mock.Kill() }
+  if ($data) { Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue }
+  if ($env:JOSI_TEST_INSTANCE) { cmdkey "/delete:Josi/session/http://localhost:$Port/test/$($env:JOSI_TEST_INSTANCE)" | Out-Null }
 }

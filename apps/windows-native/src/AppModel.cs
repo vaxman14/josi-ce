@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
@@ -113,8 +114,132 @@ namespace Josi.Native {
         if (Api != next) return;
         Screen = Screen.Setup;
         await LoadSetup();
-      } else Screen = Screen.Login;
+      } else {
+        Screen = Screen.Login;
+        Notify();
+        await Resume(next);
+      }
       Notify();
+    }
+
+    // --------------------------------------------------------- signing in
+    /// The username of a remembered sign-in that has ended, to fill in.
+    public string RememberedIdentifier = "";
+    /// Whether this server offers Sign in with Google (set up under Connections).
+    public bool GoogleSignIn;
+    string googleState, signingInAs = "";
+    public bool GoogleWaiting { get { return googleState != null; } }
+
+    /// Opens a remembered sign-in, if this PC has one for the server.
+    async Task Resume(JosiApi api) {
+      var saved = SessionStore.Load(api.OriginText);
+      if (saved == null) return;
+      RememberedIdentifier = saved.Identifier;
+      try { api.UseSession(saved.Token); }
+      catch (JosiException) { SessionStore.Forget(api.OriginText); return; }
+      Wire me;
+      try { me = await api.Request("/auth/me"); }
+      catch (JosiException e) {
+        if (Api != api) return;
+        api.EndSession();
+        // Ended or revoked on the server: forget it and ask again. Any other
+        // problem keeps it for next time.
+        if (e.Status == 401) SessionStore.Forget(api.OriginText); else Error = e.Message;
+        return;
+      }
+      if (Api != api) return;
+      await FinishLogin(api, me["user"]);
+    }
+
+    public async Task LoadSignInOptions() {
+      var api = Api; if (api == null) return;
+      api.UseNative();
+      try {
+        var config = await api.Request("/auth/native/config");
+        if (Api != api) return;
+        GoogleSignIn = config["googleSignIn"].Flag;
+      } catch (JosiException) { GoogleSignIn = false; }
+      Notify();
+    }
+
+    public async Task SignIn(string identifier, string password) {
+      var api = Api; if (api == null) return;
+      api.UseNative();
+      // A native sign-in is the server's persistent session; Josi remembers it.
+      var result = await api.Request("/auth/login", "POST", Wires.O("identifier", identifier, "password", password));
+      if (Api != api) return;
+      signingInAs = identifier;
+      if (result["mfaRequired"].Flag) { MfaChallenge = result["challenge"].Text; Notify(); return; }
+      await FinishNativeLogin(api, identifier, result);
+    }
+    public async Task VerifyMfa(string code) {
+      var api = Api; if (api == null) return;
+      var result = await api.Request("/auth/mfa/verify-login", "POST", Wires.O("challenge", MfaChallenge, "code", code));
+      if (Api != api) return;
+      await FinishNativeLogin(api, signingInAs, result);
+    }
+
+    /// Opens Google's page in the browser. Google returns to josi://auth/callback
+    /// and CompleteGoogle finishes the sign-in.
+    public async Task StartGoogle() {
+      var api = Api; if (api == null) return;
+      api.UseNative();
+      AppLinks.Register();
+      var next = await api.GoogleSignInStart(AppLinks.GoogleReturn);
+      if (Api != api) return;
+      if (next.Scheme == "josi") throw new JosiException(GoogleProblem(Query(next, "error")));
+      if (next.Scheme != "https" || !next.IsDefaultPort || next.UserInfo.Length > 0 || next.Host != "accounts.google.com")
+        throw new JosiException("The server's Google sign-in address was not Google's, so it was not opened.");
+      var state = Query(next, "state");
+      if (!Regex.IsMatch(state, "^[A-Za-z0-9_-]{20,512}$")) throw new JosiException("The server could not start Google sign-in.");
+      googleState = state;
+      ModelText.Open(next);
+      Notify();
+    }
+    public void CancelGoogle() { googleState = null; Notify(); }
+
+    public async Task CompleteGoogle(string link) {
+      Uri uri;
+      if (!Uri.TryCreate(link, UriKind.Absolute, out uri) || uri.Scheme != "josi" || uri.Host != "auth" || uri.AbsolutePath != "/callback")
+        throw new JosiException("Josi received a sign-in link it does not recognise.");
+      var api = Api; var expected = googleState;
+      if (api == null || expected == null || Screen != Screen.Login)
+        throw new JosiException("Start Sign in with Google from Josi's sign-in page, then try again.");
+      // Only the sign-in this window started may finish here.
+      if (Query(uri, "state") != expected) throw new JosiException("That Google sign-in was not started here. Start it again.");
+      googleState = null; Notify();
+      var error = Query(uri, "error");
+      if (error.Length > 0) throw new JosiException(GoogleProblem(error));
+      var code = Query(uri, "code");
+      if (!Regex.IsMatch(code, "^[A-Za-z0-9_-]{20,512}$")) throw new JosiException("Google sign-in did not finish. Try again.");
+      var result = await api.Request("/auth/google/native/exchange", "POST", Wires.O("code", code));
+      if (Api != api) return;
+      var user = result["user"];
+      await FinishNativeLogin(api, user["email"].Text.Length > 0 ? user["email"].Text : user["username"].Text, result);
+    }
+    static string GoogleProblem(string error) {
+      switch (error) {
+        case "google_not_linked": return "This Google account is not linked to a Josi account. Sign in with your password, then connect this Google account under Connections.";
+        case "google_declined": return "Google sign-in was cancelled.";
+        case "google_unavailable": return "Google sign-in is not available on this server right now. Sign in with your password.";
+        default: return "Google sign-in did not finish. Try again.";
+      }
+    }
+    static string Query(Uri uri, string name) {
+      foreach (var part in uri.Query.TrimStart('?').Split('&')) {
+        var at = part.IndexOf('=');
+        if (at > 0 && Uri.UnescapeDataString(part.Substring(0, at)) == name) return Uri.UnescapeDataString(part.Substring(at + 1).Replace('+', ' '));
+      }
+      return "";
+    }
+
+    async Task FinishNativeLogin(JosiApi api, string identifier, Wire result) {
+      var token = result["sessionToken"].Text;
+      api.UseSession(token);
+      try { SessionStore.Save(api.OriginText, identifier, token); }
+      catch (JosiException e) { Error = e.Message; }
+      RememberedIdentifier = identifier ?? "";
+      await FinishLogin(api, result["user"]);
     }
     void ClearAccount() {
       User = Wire.Null; Threads.Clear(); Messages.Clear(); Turns.Clear(); Goals.Clear(); Tasks.Clear(); TaskRuns.Clear();
@@ -124,19 +249,6 @@ namespace Josi.Native {
       AutomationError = ""; AutomationDevicesError = "";
     }
 
-    public async Task SignIn(string identifier, string password) {
-      var api = Api; if (api == null) return;
-      var result = await api.Request("/auth/login", "POST", Wires.O("identifier", identifier, "password", password, "rememberMe", false));
-      if (Api != api) return;
-      if (result["mfaRequired"].Flag) { MfaChallenge = result["challenge"].Text; Notify(); return; }
-      await FinishLogin(api, result["user"]);
-    }
-    public async Task VerifyMfa(string code) {
-      var api = Api; if (api == null) return;
-      var result = await api.Request("/auth/mfa/verify-login", "POST", Wires.O("challenge", MfaChallenge, "code", code));
-      if (Api != api) return;
-      await FinishLogin(api, result["user"]);
-    }
     async Task FinishLogin(JosiApi api, Wire user) {
       await api.PrimeCsrf();
       if (Api != api) return;
@@ -158,7 +270,9 @@ namespace Josi.Native {
       if (Api != null) {
         try { await Api.Request("/auth/logout", "POST", Wires.O()); }
         catch (JosiException e) { if (e.Status != 401) throw; /* An already-ended session still clears locally. */ }
+        SessionStore.Forget(Api.OriginText);
       }
+      RememberedIdentifier = "";
       StopWorkStream();
       if (Api != null) Api.Dispose();
       Api = null; ClearAccount(); Screen = Screen.Connect;
