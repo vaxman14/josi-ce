@@ -267,4 +267,59 @@ export class PcControl {
         activity:logs.map(row=>({id:row.id,at:row.created_at,...(row.detail_enc?this.unpack<Record<string,unknown>>(owner,row.detail_enc):{kind:row.kind})}))};
     });
   }
+  /** The local executor reports its live browser connection. It expires on
+   * its own, so a closed app or browser never looks connected for long. */
+  async setPresence(owner:string,presence:PcBrowserPresence|null){
+    if(!uuid(owner))fail('Invalid owner.');
+    await this.db.query(`insert into pc_control_settings(owner_user_id,pc_id) values($1,$2) on conflict do nothing`,[owner,this.pcId]);
+    if(!presence){await this.db.query(`delete from pc_control_presence where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);return;}
+    const value=normalizePresence(presence);
+    await this.db.query(`insert into pc_control_presence(owner_user_id,pc_id,presence_enc,expires_at) values($1,$2,$3,$4)
+      on conflict(owner_user_id,pc_id) do update set presence_enc=excluded.presence_enc,expires_at=excluded.expires_at`,
+      [owner,this.pcId,this.pack(owner,value),new Date(this.now()+PRESENCE_TTL).toISOString()]);
+  }
+  async presence(owner:string):Promise<PcBrowserPresence|null>{
+    if(!uuid(owner))return null;
+    const [row]=await this.db.query<{presence_enc:string}>(`select presence_enc from pc_control_presence where owner_user_id=$1 and pc_id=$2 and expires_at>$3`,[owner,this.pcId,new Date(this.now()).toISOString()]);
+    return row?this.unpack<PcBrowserPresence>(owner,row.presence_enc):null;
+  }
+  /** Approved, unexpired work for the executor, oldest first. Claiming still
+   * goes through execute(), which rechecks everything under the lock. */
+  async approved(owner:string):Promise<{id:string;plan:PcPlan}[]>{
+    return this.locked(owner,async(db,s)=>{
+      const rows=await db.query<RequestRow>(`select * from pc_control_requests where owner_user_id=$1 and pc_id=$2 and state='approved' and epoch=$3 and expires_at>$4 order by created_at limit 10`,[owner,this.pcId,s.epoch,new Date(this.now()).toISOString()]);
+      return rows.map(row=>({id:row.id,plan:this.unpack<PcPlan>(owner,row.request_enc)}));
+    });
+  }
+  async saveResult(owner:string,id:string,result:unknown){
+    if(!uuid(owner)||!uuid(id))fail('Invalid request.');
+    if(Buffer.byteLength(canonical(result))>256*1024)fail('Result is too large.');
+    await this.db.query(`insert into pc_control_results(request_id,owner_user_id,pc_id,result_enc) values($1,$2,$3,$4) on conflict(request_id) do nothing`,[id,owner,this.pcId,this.pack(owner,result)]);
+  }
+  /** Current state of one request and, once it ran, what the executor saw. */
+  async outcome(owner:string,id:string):Promise<{state:string;result:unknown}|null>{
+    if(!uuid(owner)||!uuid(id))return null;
+    const [row]=await this.db.query<{state:string;expires_at:string;result_enc:string|null}>(`select q.state,q.expires_at,r.result_enc from pc_control_requests q left join pc_control_results r on r.request_id=q.id
+      where q.id=$1 and q.owner_user_id=$2 and q.pc_id=$3`,[id,owner,this.pcId]);
+    if(!row)return null;
+    const expired=['pending','approved'].includes(row.state)&&Date.parse(row.expires_at)<=this.now();
+    return {state:expired?'expired':row.state,result:row.result_enc?this.unpack<unknown>(owner,row.result_enc):null};
+  }
+}
+
+export const LOCAL_WINDOWS_PC='local-windows-host';
+const PRESENCE_TTL=30_000;
+/** What the Windows app reports about the browser attached through its
+ * native messaging host. Page content never travels here. */
+export type PcBrowserPresence={family:string;application:string;profile:string;origin:string|null;title:string|null};
+function normalizePresence(p:PcBrowserPresence):PcBrowserPresence {
+  if(!p||typeof p!=='object')fail('Invalid browser connection.');
+  const family=['chrome','brave','edge'].includes(p.family)?p.family:fail('Unsupported browser.');
+  let origin:string|null=null;
+  if(p.origin!==null&&p.origin!==undefined){
+    try{const url=new URL(text(p.origin,2048));if(!['http:','https:'].includes(url.protocol)||url.username||url.password)fail('');origin=url.origin;}
+    catch{fail('Invalid attached site.');}
+  }
+  const title=p.title===null||p.title===undefined||p.title===''?null:String(p.title).replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,300);
+  return {family,application:localPath(p.application),profile:text(p.profile,120),origin,title};
 }

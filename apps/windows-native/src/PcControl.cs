@@ -24,8 +24,11 @@ namespace Josi.Native {
       actionPick.SelectionChanged += delegate { var catalog = state["catalog"].List; if (actionPick.SelectedIndex >= 0 && actionPick.SelectedIndex < catalog.Count) { action = catalog[actionPick.SelectedIndex]["action"].Text; target.Text = application.Text = ""; Render(); } };
       timer.Tick += delegate { if (owner.IsActive && !model.Busy) StartLoad(); };
       Loaded += delegate { timer.Start(); };
+      refresh = () => { if (!state.IsNull) Render(); };
+      BrowserBridge.Current.Changed += refresh;
     }
-    protected override void OnLeave() { timer.Stop(); foreach (var p in passwords.Values) p.Clear(); }
+    readonly Action refresh;
+    protected override void OnLeave() { timer.Stop(); BrowserBridge.Current.Changed -= refresh; foreach (var p in passwords.Values) p.Clear(); }
     protected override async Task Load() {
       var api = Api; var stamp = Stamp; var s = await api.Request("/admin/pc-control");
       if (!Current(stamp)) return;
@@ -48,6 +51,7 @@ namespace Josi.Native {
         Ui.Caption("Off by default. Turning this on grants no browser, folder or application access by itself. These permissions apply only to this PC and your account."),
         Ui.Danger("Stop Control and Revoke Temporary Access", () => { if (Dialogs.Confirm(owner, "Stop PC control now?", "Disables control, cancels active actions and revokes pending approvals and task or temporary grants. Completed changes cannot be undone. Permanent scope choices stay saved.", "Stop")) Perform(async (api, stamp) => await api.Request("/admin/pc-control/stop", "POST", Wires.O())); }),
         state["uac"].Text.Length > 0 ? Ui.Caption(state["uac"].Text) : null), 0);
+      Ui.Add(page, BrowserCard(enabled), 0);
       var spec = state["catalog"].List.FirstOrDefault(c => c["action"].Text == action) ?? Wire.Null; var kind = spec["kind"].Text;
       foreach (var c in new Control[] { actionPick, target, application, profile, expires, taskPick }) Ui.Detach(c);
       var form = new List<UIElement> { Ui.Caption("Each browser executable, profile and origin needs its own permission. Folder choices apply to that exact folder; application choices to that exact executable. No wildcard or inherited grants."),
@@ -97,6 +101,36 @@ namespace Josi.Native {
       Ui.Add(page, new Disclosure("Activity log", () => activity), 0);
       Ui.Add(page, Note(), 0);
       return page;
+    }
+    /// The browser extension: browsers you allowed, the attached tab, and a
+    /// shortcut to let Josi read the attached site without asking each time.
+    UIElement BrowserCard(bool enabled) {
+      var bridge = BrowserBridge.Current; var items = new List<UIElement>();
+      var asked = bridge.Discovered;
+      if (asked != null) items.Add(Ui.Stack(6, Ui.T(asked.Browser + " asked to connect to Josi", 14, FontWeights.Medium),
+        Ui.Caption(asked.Application + " · attaching " + asked.Url),
+        Ui.Wrap(Ui.Pill("Allow This Browser", () => bridge.Allow(), true), Ui.Pill("Ignore", () => bridge.Ignore())),
+        Ui.Caption("After allowing it, click the Josi extension in the browser and choose Attach this tab again.")));
+      if (bridge.Attached) {
+        var origin = bridge.AttachedOrigin;
+        items.Add(Ui.Stack(6, Ui.T(bridge.AttachedBrowser + " tab attached: " + (bridge.AttachedTitle.Length > 0 ? bridge.AttachedTitle : origin), 14, FontWeights.Medium),
+          Ui.Caption(origin + " · " + bridge.AttachedApplication + " · profile " + bridge.AttachedProfile),
+          Ui.Wrap(origin.Length > 0 ? Ui.Pill("Always Let Josi Read This Site", () => Perform(async (api, stamp) => await api.Request("/admin/pc-control/policies", "PUT",
+              Wires.O("action", "browser.view", "scope", Wires.O("kind", "browser", "target", origin, "application", bridge.AttachedApplication, "profile", bridge.AttachedProfile), "mode", "always")))) : null,
+            Ui.Pill("Detach Tab", () => bridge.Disconnect()))));
+        if (!enabled) items.Add(Ui.Caption("Turn on \"Allow Josi to control this PC\" above, or Josi cannot use the attached tab."));
+      } else if (asked == null) items.Add(Ui.Caption("To let Josi use a browser tab: open the site in Chrome, Brave or Edge with the Josi extension installed, click the Josi icon and choose Attach this tab. Josi stays limited to that tab."));
+      var allowed = bridge.Allowed();
+      if (allowed.Count > 0) {
+        var list = Ui.Stack(6, Ui.Caption("Allowed browsers"));
+        foreach (var a in allowed) {
+          var nativeProfileId = a["nativeProfileId"].Text;
+          list.Children.Add(Ui.Spread(Ui.Caption(a["browser"].Text + " · " + a["application"].Text), Ui.Pill("Remove", () => bridge.Remove(nativeProfileId))));
+        }
+        items.Add(list);
+      }
+      items.Add(Ui.Caption("Reading a page asks first unless you allowed that site. Every click asks, with your password. Josi never types passwords or payment details."));
+      return Ui.CardBox("Browser", items.ToArray());
     }
     void Save() {
       var spec = state["catalog"].List.FirstOrDefault(c => c["action"].Text == action); if (spec == null) return;

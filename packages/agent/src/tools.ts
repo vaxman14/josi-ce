@@ -12,6 +12,7 @@ import { CUSTOM_API_TOOLS } from './customApiTools.js';
 import { DATA_TOOLS } from './dataTools.js';
 import { WORKFLOW_TOOLS } from './workflowTools.js';
 import { DEVELOPER_INTEGRATION_TOOLS, OBSIDIAN_TOOLS } from './developerIntegrationTools.js';
+import { PC_BROWSER_TOOLS } from './pcBrowserTools.js';
 
 /** Everything the assistant can do that changes something.
  *
@@ -227,6 +228,7 @@ export const ALL_TOOLS: ToolSpec[] = [
   ...WORKFLOW_TOOLS,
   ...DEVELOPER_INTEGRATION_TOOLS,
   ...OBSIDIAN_TOOLS,
+  ...PC_BROWSER_TOOLS,
 ];
 
 /** Names that map to the step-up gate. The gate keys on the tool name, so

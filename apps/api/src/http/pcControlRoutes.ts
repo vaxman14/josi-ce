@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { verifyPassword } from '@josi-ce/auth';
-import { disablePcControl, loadMasterKey, PcControl, PcControlError, type Db, type LoadOptions, type PcPolicy } from '@josi-ce/core';
+import { disablePcControl, loadMasterKey, PcControl, PcControlError, LOCAL_WINDOWS_PC, type Db, type LoadOptions, type PcPolicy, type PcBrowserPresence } from '@josi-ce/core';
 import { requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
@@ -8,7 +8,8 @@ interface Ctx { db:Db; windows:boolean; masterKey?:LoadOptions|false }
 // This is the hosting PC only. A future paired desktop gets an independently
 // authenticated device identity and its own consent; browser input cannot pick
 // another PC or owner. No execution/proposal endpoint is exposed to the browser.
-const PC='local-windows-host';
+const PC=LOCAL_WINDOWS_PC;
+const EXECUTOR_WAIT=60_000;
 export function pcControlRoutes(ctx:Ctx):Router {
   const r=Router();let service:PcControl|undefined;
   r.use(requireSuperAdmin);
@@ -26,8 +27,13 @@ export function pcControlRoutes(ctx:Ctx):Router {
       return res.status(503).json({error:'PC permission storage is unavailable. No PC action was started.'});
     }
   });
-  r.get('/',handle(async(req,res)=>res.json({...await control().snapshot(req.user!.id),executorAvailable:false,
-    availability:'Permissions can be saved here. PC control is unavailable until the separate Windows desktop client is connected.',uac:'Windows UAC always requires its own approval. Josi cannot approve future prompts.'})));
+  r.get('/',handle(async(req,res)=>{
+    const browser=await control().presence(req.user!.id);
+    return res.json({...await control().snapshot(req.user!.id),executorAvailable:!!browser,browser,
+      availability:browser?'The Josi app on this PC is connected'+(browser.origin?' with a '+browser.family+' tab attached ('+browser.origin+').':'. No browser tab is attached.')
+        :'Permissions can be saved here. Browser control starts when the Josi app is open and a tab is attached with the Josi browser extension.',
+      uac:'Windows UAC always requires its own approval. Josi cannot approve future prompts.'});
+  }));
   r.put('/enabled',handle(async(req,res)=>{await control().setEnabled(req.user!.id,req.body?.enabled);return res.json({ok:true});}));
   r.post('/stop',handle(async(req,res)=>{
     if(service)await service.stop(req.user!.id);else await disablePcControl(ctx.db,req.user!.id,PC);
@@ -46,6 +52,42 @@ export function pcControlRoutes(ctx:Ctx):Router {
       }
     }
     await control().decide(req.user!.id,param(req,'id'),req.body.approve);return res.json({ok:true});
+  }));
+  // The Windows app is the executor. It reports its attached browser, claims
+  // approved work one request at a time and reports what happened. A claim
+  // goes through execute(), so every policy check runs again at that moment.
+  const running=new Map<string,(ok:boolean,result:unknown)=>Promise<void>>();
+  r.put('/executor/presence',handle(async(req,res)=>{
+    await control().setPresence(req.user!.id,req.body?.connected===true?req.body.browser as PcBrowserPresence:null);
+    return res.json({ok:true});
+  }));
+  r.post('/executor/next',handle(async(req,res)=>{
+    const owner=req.user!.id,service=control();
+    for(const {id,plan} of await service.approved(owner)){
+      if(running.has(id))continue;
+      let claimed!:()=>void;const started=new Promise<boolean>(resolve=>{claimed=()=>resolve(true);});
+      const done=service.execute(owner,id,plan,(_plan,signal)=>new Promise<void>((resolve,reject)=>{
+        const timer=setTimeout(()=>{running.delete(id);void service.saveResult(owner,id,{ok:false,code:'executor_timeout'}).finally(()=>reject(new Error('timeout')));},EXECUTOR_WAIT);
+        signal.addEventListener('abort',()=>{clearTimeout(timer);running.delete(id);reject(new Error('stopped'));},{once:true});
+        running.set(id,async(ok,result)=>{
+          clearTimeout(timer);running.delete(id);
+          await service.saveResult(owner,id,{ok,result});
+          if(ok)resolve();else reject(new Error('failed'));
+        });
+        claimed();
+      }));
+      done.catch(()=>undefined);
+      if(await Promise.race([started,done.then(()=>false,()=>false)]))
+        return res.json({request:{id,description:plan.description,requirements:plan.requirements,payload:plan.payload}});
+    }
+    return res.json({request:null});
+  }));
+  r.post('/executor/:id/result',handle(async(req,res)=>{
+    const finish=running.get(param(req,'id'));
+    if(!finish)throw new PcControlError(404,'This request is not running.');
+    if(typeof req.body?.ok!=='boolean')throw new PcControlError(400,'Report success or failure.');
+    await finish(req.body.ok,req.body.result??null);
+    return res.json({ok:true});
   }));
   return r;
 }

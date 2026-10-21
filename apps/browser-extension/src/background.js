@@ -5,9 +5,12 @@ const config = globalThis.JOSI_BROWSER_CONFIG;
 let nativeChannel = null;
 let attachedTabId = null;
 let workspace = null, pollTimer = null, pending = false, generation = 0;
-let status = 'Connect this Mac in Josi, then attach the tab you want to use.';
+let status = 'Open Josi on this computer, then attach the tab you want to use.';
 let lastClock = Date.now();
 const seen = new Set();
+// The Windows host has no other way to learn the attached site; the macOS
+// host requires these messages' exact fields, so only Windows gets them.
+const windowsHost = /^Win/.test(globalThis.navigator?.platform ?? '');
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const bounded = value => new TextEncoder().encode(JSON.stringify(value)).length <= 192 * 1024;
 function webUrl(value) {
@@ -65,12 +68,14 @@ async function connect() {
     attachedTabId = tabs[0].id;
     const origin = webUrl(tabs[0].url).origin;
     // Site access is scoped to this attachment; never request all-site access.
-    if (!await browserApi.permissions.request({ origins: [origin + '/*'] })) throw new Error('site_permission_required');
+    // The popup asked for it during the click; a service worker cannot.
+    if (!await browserApi.permissions.contains({ origins: [origin + '/*'] })) throw new Error('site_permission_required');
     const saved = await browserApi.storage.local.get('josiBrowserInstance');
     const nativeProfileId = uuid(saved.josiBrowserInstance) ? saved.josiBrowserInstance : crypto.randomUUID();
     if (!saved.josiBrowserInstance) await browserApi.storage.local.set({ josiBrowserInstance: nativeProfileId });
     const reply = await native('browser.hello', { family: config.family,
-      extensionId: config.family === 'safari' ? config.extensionId : browserApi.runtime.id, nativeProfileId, attachedTabId }, null);
+      extensionId: config.family === 'safari' ? config.extensionId : browserApi.runtime.id, nativeProfileId, attachedTabId,
+      ...(windowsHost ? { url: tabs[0].url, title: String(tabs[0].title ?? '').slice(0, 300) } : {}) }, null);
     if (epoch !== generation) return;
     if (reply?.profileDiscovered === true) {
       stop('Browser identified. Register it in Josi and configure its sites, then attach this tab again.');
@@ -83,7 +88,7 @@ async function connect() {
       : 'Connected. Waiting for a permitted task; page access is not enabled.';
     await browserApi.action.setBadgeText({ text: 'J' });
     pollTimer = setTimeout(poll, 100);
-  } catch { if (epoch === generation) stop('No current Josi connection is available. Connect this Mac and browser in Josi first.'); }
+  } catch { if (epoch === generation) stop('No current Josi connection is available. Open Josi on this computer and allow this browser there first.'); }
   finally { pending = false; }
 }
 async function currentTab(tabId) {
@@ -176,7 +181,12 @@ async function poll() {
   if (pending || !live()) return;
   pending = true; const epoch = generation, sessionId = workspace.sessionId;
   try {
-    const reply = await native('browser.poll', {});
+    let place = {};
+    if (windowsHost) {
+      const tab = await browserApi.tabs.get(attachedTabId);
+      place = { url: webUrl(tab.url) ? tab.url : null, title: String(tab.title ?? '').slice(0, 300) };
+    }
+    const reply = await native('browser.poll', place);
     if (!live() || epoch !== generation) return;
     if (reply.session) {
       const renewed = acceptSession(reply.session);

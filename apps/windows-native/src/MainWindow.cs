@@ -13,6 +13,8 @@ namespace Josi.Native {
   public static class Program {
     [STAThread]
     public static int Main(string[] args) {
+      // Chrome starting Josi as the browser extension's native host.
+      if (BrowserHost.IsLaunch(args)) return BrowserHost.Run();
       bool created;
       // A josi:// link (Google sign-in returning) arrives as the only argument.
       var link = args.Length == 1 && AppLinks.IsLink(args[0]) ? args[0] : null;
@@ -31,6 +33,7 @@ namespace Josi.Native {
         AppLinks.Register();
         Notifications.Register();
         SendTo.Register();
+        BrowserHost.Register();
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         Ui.Load();
         app.Resources.MergedDictionaries.Add(Ui.Resources);
@@ -44,6 +47,7 @@ namespace Josi.Native {
         var main = new MainWindow();
         app.MainWindow = main;
         AppLinks.Listen(value => app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(value))));
+        BrowserBridge.Current.Start(main.Model, app.Dispatcher);
         main.Show();
         if (link != null) app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(link)));
         return app.Run();

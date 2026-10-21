@@ -71,7 +71,7 @@ namespace Josi.Native {
     }
     public void Notify() { var handler = Changed; if (handler != null) handler(); }
     void NotifyWorkspace() { var handler = WorkspaceChanged; if (handler != null) handler(); }
-    bool Active { get { return window != null && window.IsActive; } }
+    public bool Active { get { return window != null && window.IsActive; } }
 
     /// One user-initiated operation at a time; errors surface in the banner.
     public async void Run(Func<Task> action) {

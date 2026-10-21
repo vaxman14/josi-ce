@@ -40,6 +40,7 @@ import {
 } from '@josi-ce/persona';
 import { isMutatingTool, runDurableEffect } from './durableEffects.js';
 import { automationToolAvailability } from './automationTools.js';
+import { pcBrowserToolAvailability } from './pcBrowserTools.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
   CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsArtifactCompletion,
@@ -416,6 +417,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   const automationTools = capabilities.toolCalling && args.durableTurnId && args.durableLeaseToken
     && stored.provider !== 'anthropic_subscription'
     ? await automationToolAvailability(args.automationRuntime, userId) : [];
+  const pcBrowserTools = capabilities.toolCalling ? await pcBrowserToolAvailability(db, userId, args.registry.masterKey) : [];
   // `approve_task` is only meaningful when this owner already has a generic
   // task waiting on them. Offering it on an ordinary request lets a model
   // confuse "please create this calendar event" with approval of an unrelated
@@ -430,7 +432,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     && (t.def.name !== 'approve_task' || !!approvableTask)
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
   let tools = capabilities.toolCalling
-    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools].map((t) => t.def)
+    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools, ...pcBrowserTools].map((t) => t.def)
     : undefined;
   if (args.workGoalId) {
     const humanTools = new Set(['own_goal', 'approve_task', 'cancel_task', 'update_task_slots',

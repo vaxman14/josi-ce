@@ -31,6 +31,7 @@ import { effectiveTimeContext } from './timeContext.js';
 import { formatCalendarRange } from './calendarPresentation.js';
 import { executeWorkGoalTool, WORK_GOAL_TOOL_NAMES } from './workGoalTools.js';
 import { executeAutomationTool, AUTOMATION_TOOL_NAMES } from './automationTools.js';
+import { executePcBrowserTool, PC_BROWSER_TOOL_NAMES } from './pcBrowserTools.js';
 
 async function actionSummary(db:Db,userId:string,domain:string,operation:string,slots:Record<string,unknown>):Promise<string>{
   if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}${Array.isArray(slots.cc) && slots.cc.length ? `\nCc: ${slots.cc.join(', ')}` : ''}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
@@ -87,6 +88,7 @@ export async function executeAssistantTool(
 ): Promise<unknown> {
   const { userId } = ctx;
   if (AUTOMATION_TOOL_NAMES.has(name)) return executeAutomationTool(ctx, name, input, db);
+  if (PC_BROWSER_TOOL_NAMES.has(name)) return executePcBrowserTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input);
   if (WORK_GOAL_TOOL_NAMES.has(name)) return executeWorkGoalTool(db, ctx, name, input);
   if (WORKSPACE_TOOLS.some(t=>t.def.name===name)) return executeWorkspaceTool(db,userId,name,input);
   if (name === 'get_provider_status') return providerStatus(db, userId);
