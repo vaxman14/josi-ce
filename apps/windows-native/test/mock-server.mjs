@@ -1,0 +1,112 @@
+// Test fixture only: a tiny in-memory stand-in for the Josi CE API so the
+// Windows client's screens can be exercised without a real server.
+//   node test/mock-server.mjs 8787
+import http from 'node:http';
+import { randomUUID } from 'node:crypto';
+
+const port = Number(process.argv[2] || 8787);
+const now = () => new Date().toISOString();
+const user = { id: randomUUID(), username: 'roman', displayName: 'Roman Vaxman', role: 'super_admin' };
+const threadId = randomUUID();
+const threads = [{ id: threadId, title: 'Garage sale photo descriptions' }];
+const messages = { [threadId]: [
+  { id: randomUUID(), direction: 'in', body: 'Can you help me describe the photos on my garage sale uploads page?', attachments: [] },
+  { id: randomUUID(), direction: 'out', body: 'Yes. I will start with the **first photo with an empty description**, describe only what is visible, and stop so you can review it before anything is saved. See [the uploads page](https://romansgaragesale.com/uploads).' },
+] };
+const turns = { [threadId]: [] };
+const goalId = randomUUID();
+const goals = [{
+  goalId, threadId, title: 'Describe the first garage-sale photo', state: 'needs_instruction', revision: 3,
+  verifiedSteps: 1, totalSteps: 3, retiredSteps: 0, activity: 'Automation needs setup', updatedAt: now(),
+  criteria: ['The first empty description contains a reviewed draft', 'Existing descriptions are unchanged'],
+  steps: [
+    { id: randomUUID(), title: 'Open the attached uploads tab', state: 'verified', taskId: '', evidence: '' },
+    { id: randomUUID(), title: 'Read the first photo with an empty description', state: 'blocked', blockedReason: 'Connect this PC and attach the Chrome tab.', dependsOn: [] },
+    { id: randomUUID(), title: 'Fill and verify the description, then stop for review', state: 'pending', dependsOn: [] },
+  ],
+  continuation: { kind: 'question', text: 'Connect this PC in Automation, then continue.' },
+  checkpoint: { decisions: ['Start with one photo'], facts: ['Photos are already on the page'], assumptions: [], nextAction: 'Attach the Chrome tab' },
+  ownerCheckpoint: null, automaticWork: { segmentsSinceVerifiedProgress: 1, segmentLimit: 12, runsUsed: 2, runLimit: null, deadline: null },
+}];
+const memories = [{ id: randomUUID(), content: 'Roman prefers short, factual product descriptions.', provenance: 'From a conversation', pinned: false, confirmed_at: now() }];
+
+function send(res, status, body, headers = {}) {
+  res.writeHead(status, { 'content-type': 'application/json', ...headers });
+  res.end(body === undefined ? '' : JSON.stringify(body));
+}
+function readBody(req) {
+  return new Promise(resolve => { let data = ''; req.on('data', c => data += c); req.on('end', () => { try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); } }); });
+}
+
+http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://localhost:${port}`);
+  const path = url.pathname.replace(/^\/api/, '');
+  const method = req.method;
+  if (method !== 'GET' && path !== '/auth/csrf' && req.headers['x-josi-csrf'] !== 'mock-csrf') return send(res, 403, { error: 'Missing CSRF token' });
+  const body = method === 'GET' ? {} : await readBody(req);
+  let m;
+  if (path === '/auth/csrf') return send(res, 200, { csrfToken: 'mock-csrf' }, { 'set-cookie': 'josi_csrf=mock-csrf; Path=/; HttpOnly; SameSite=Strict' });
+  if (path === '/onboarding/state') return send(res, 200, { completed: true });
+  if (path === '/auth/login' && method === 'POST') {
+    if (body.password !== 'correct horse battery') return send(res, 401, { error: 'Incorrect username or password.' });
+    return send(res, 200, { user }, { 'set-cookie': 'josi_session=mock; Path=/; HttpOnly; SameSite=Strict' });
+  }
+  if (path === '/auth/logout') return send(res, 200, {});
+  if (path === '/assistant/threads' && method === 'GET') return send(res, 200, { threads });
+  if (path === '/assistant/threads' && method === 'POST') {
+    const id = randomUUID(); threads.unshift({ id, title: '' }); messages[id] = []; turns[id] = [];
+    return send(res, 200, { thread: { id } });
+  }
+  if ((m = path.match(/^\/assistant\/threads\/([0-9a-f-]{36})$/))) return send(res, 200, { messages: messages[m[1]] || [] });
+  if ((m = path.match(/^\/assistant\/threads\/([0-9a-f-]{36})\/turns$/))) {
+    const id = m[1];
+    if (method === 'GET') return send(res, 200, { turns: turns[id] || [] });
+    const inbound = { id: randomUUID(), direction: 'in', body: body.message, attachments: [] };
+    messages[id].push(inbound);
+    const thread = threads.find(t => t.id === id); if (thread && !thread.title) thread.title = body.message.slice(0, 40);
+    const turn = { id: randomUUID(), status: 'running', inbound_message_id: inbound.id, client_message_id: body.client_message_id };
+    turns[id].push(turn);
+    setTimeout(() => {
+      if (/fail/i.test(body.message)) { turn.status = 'failed'; turn.error = { code: 'provider_error' }; return; }
+      const reply = { id: randomUUID(), direction: 'out', body: `Got it — you said: *${body.message}*` };
+      messages[id].push(reply); turn.status = 'completed'; turn.assistant_message_id = reply.id;
+    }, 4000);
+    return send(res, 200, { turn: { id: turn.id } });
+  }
+  if (path === '/assistant/work-goals') return send(res, 200, { goals });
+  if (path === '/assistant/work-goals/stream') return send(res, 404, { error: 'Not supported by mock' });
+  if ((m = path.match(/^\/assistant\/work-goals\/([0-9a-f-]{36})\/control$/))) {
+    const goal = goals.find(g => g.goalId === m[1]); goal.revision++; goal.state = body.action === 'pause' ? 'paused' : body.action === 'cancel' ? 'cancelled' : 'working';
+    goal.updatedAt = now(); return send(res, 200, { goal });
+  }
+  if ((m = path.match(/^\/assistant\/work-goals\/([0-9a-f-]{36})\/(events|plans|outcomes)$/)))
+    return send(res, 200, { [m[2]]: [{ sequence: 1, plan_revision: 1, outcome_revision: 1, summary: 'Goal accepted', reason: 'Initial plan', outcome: goals[0].title, created_at: now(), steps: goals[0].steps, criteria: goals[0].criteria }] });
+  if (path === '/assistant/tasks') return send(res, 200, { tasks: [] });
+  if (path === '/assistant/task-runs') return send(res, 200, { runs: [{ id: randomUUID(), status: 'failed', thread_id: threadId, thread_title: 'Garage sale photo descriptions', updated_at: now(), error_code: 'provider_error' }] });
+  if (path === '/admin/llm' && method === 'GET') return send(res, 200, {
+    primary: { provider: 'openai_subscription', model: '', active: true, probedAt: now(), probeSteps: [{ label: 'Reply', detail: 'Passed', passed: true }] }, fallback: null,
+    localOnly: false, caps: { monthly_cost_usd: null, monthly_tokens: 2000000 }, disabledFeatures: [],
+    providerCatalog: [{ kind: 'openai_subscription', label: 'ChatGPT subscription', fields: [], baseUrlMode: 'none', external: true }, { kind: 'ollama', label: 'Ollama (local)', fields: [], baseUrlMode: 'optional', defaultBaseUrl: 'http://localhost:11434', external: false }],
+  });
+  if (path === '/admin/llm/usage') return send(res, 200, { summary: { totalTokens: 18234, calls: 41, reportedCostUsd: 0, estimatedCostUsd: 0.12, subscriptionCalls: 41, selfHostedCalls: 0, notes: [] } });
+  if (path === '/voice/status') return send(res, 200, { available: false });
+  if (path === '/admin/voice-box') return send(res, 200, { verified: false, helperAvailable: true, releaseAvailable: true, settings: { voice: 'af_heart', model: 'base.en' } });
+  if (path === '/persona/memories' && method === 'GET') return send(res, 200, { memories });
+  if (path === '/persona/suggestions') return send(res, 200, { suggestions: [] });
+  if (path === '/persona/settings') return send(res, 200, { settings: { memory_mode: 'manual' } });
+  if (path === '/admin/vault') return send(res, 200, { status: { initialized: true, locked: false, boxes: 1, items: 3, keyVersion: 1, recoveryFingerprint: 'AB12-CD34', recentFailures: 0 } });
+  if (path === '/admin/vault/migration') return send(res, 200, { sources: [{ legacyFields: 0 }] });
+  if (path === '/vault') return send(res, 200, { status: { initialized: true, locked: false }, box: { unlocked: false, items: [] } });
+  if (path === '/auth/mfa') return send(res, 200, { enabled: false });
+  if (path.startsWith('/assistant/approval-levels/')) return send(res, 200, { level: 'risky_only', userChoice: 'risky_only', managedPolicy: false });
+  if (path === '/admin/doctor') return send(res, 200, { available: true, diagnosis: { healthy: false, checkedAt: now(), checks: [
+    { label: 'Database', state: 'pass', detail: 'Ready' }, { label: 'Worker heartbeat', state: 'pass', detail: 'Seen 1s ago' }, { label: 'Backups', state: 'warn', detail: 'No backup in the last 7 days.' }] } });
+  if (path === '/assistant/automation/workspaces') return send(res, 200, { workspaces: [], blocker: { code: 'no_device', message: 'No device is connected for automation yet.' } });
+  if (path === '/admin/automation') return send(res, 200, { rules: { document: { rules: [] } }, drafts: [], permissions: { document: { policies: [] } }, targets: {} });
+  if (path === '/admin/automation/catalog') return send(res, 200, { actions: [], scopeKeys: [] });
+  if (path === '/admin/automation/devices') return send(res, 200, { devices: [] });
+  if (path === '/ops/admin/backups') return send(res, 200, { backups: [] });
+  if (path === '/channels') return send(res, 200, { channels: [], links: [] });
+  if (path === '/telegram') return send(res, 200, { channel: { enabled: false }, links: [] });
+  return send(res, 404, { error: `Not available in the test fixture: ${method} ${path}` });
+}).listen(port, '127.0.0.1', () => console.log(`mock Josi API on http://localhost:${port}`));

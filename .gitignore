@@ -33,3 +33,8 @@ caddy_config/
 *.swp
 .idea/
 .vscode/
+
+# Windows native client build output
+apps/windows-native/bin/
+apps/windows-native/obj/
+apps/windows-native/test/shots/

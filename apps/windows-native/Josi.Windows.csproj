@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Native Windows client for Josi CE: WPF on .NET 8. The Windows SDK
+       projection provides Windows Hello (KeyCredentialManager) for protected approval. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Josi.Native</RootNamespace>
+    <AssemblyName>Josi</AssemblyName>
+    <ApplicationManifest>src\Josi.manifest</ApplicationManifest>
+    <ApplicationIcon>obj\Josi.ico</ApplicationIcon>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <StartupObject>Josi.Native.Program</StartupObject>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Product>Josi</Product>
+    <Company>SOCAL RECEPTIONIST LLC</Company>
+    <Description>Your assistant, on your own server.</Description>
+    <Copyright>Copyright © 2026 SOCAL RECEPTIONIST LLC. AGPL-3.0-or-later.</Copyright>
+    <Version>0.7.0</Version>
+    <InformationalVersion>0.7.0-windows.1</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="src\Theme.xaml" LogicalName="Theme.xaml" />
+    <EmbeddedResource Include="assets\josi-mark.png" LogicalName="josi-mark.png" />
+    <EmbeddedResource Include="obj\Josi.ico" LogicalName="Josi.ico" />
+    <Compile Remove="test\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+  </ItemGroup>
+  <!-- The application icon is derived from the approved 512 px master on every build. -->
+  <Target Name="JosiIcon" BeforeTargets="PrepareForBuild" Inputs="assets\icon-512.png" Outputs="obj\Josi.ico">
+    <Exec Command="powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\tools\New-Icon.ps1&quot; &quot;$(MSBuildProjectDirectory)\assets\icon-512.png&quot; &quot;$(MSBuildProjectDirectory)\obj\Josi.ico&quot;" />
+  </Target>
+</Project>
