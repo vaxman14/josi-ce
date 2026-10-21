@@ -143,7 +143,7 @@ namespace Josi.Native {
     string renderedKey;
     string provider = "";
     List<Wire> discovered = new List<Wire>();
-    CheckBox enabled, external, recoverySaved;
+    CheckBox enabled, recoverySaved;
     public SetupView(AppModel model, Window owner) { this.model = model; this.owner = owner; Refresh(); }
     string Step { get { return model.SetupState["nextStep"].Text; } }
     Wire ProviderEntry { get { return model.SetupState["providerCatalog"].List.FirstOrDefault(p => p["kind"].Text == provider) ?? Wire.Null; } }
@@ -299,61 +299,17 @@ namespace Josi.Native {
       return map.TryGetValue(id, out zone) ? zone : "UTC";
     }
 
+    ModelSetupPanel setupModel;
+    /// The same four-step model setup as the Models page, on the setup routes.
+    /// The server saves and checks the model; setup then moves to its next step.
     IEnumerable<UIElement> ProviderForm() {
-      var list = new List<UIElement>();
-      var options = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("", "Choose a provider") };
-      options.AddRange(model.SetupState["providerCatalog"].List.Select(e => new KeyValuePair<string, string>(e["kind"].Text, e["label"].Text)));
-      var picker = Ui.Choice(options, provider);
-      picker.SelectionChanged += delegate {
-        var next = Ui.Selected(picker);
-        if (next == provider) return;
-        provider = next; discovered = new List<Wire>();
-        foreach (var k in fields.Keys.ToList()) if (k != "tlsMode" && k != "security") fields.Remove(k);
-        external = null;
-        var entry = ProviderEntry;
-        if (entry["defaultBaseUrl"].Text.Length > 0) fields["baseUrl"] = Ui.Input(null, entry["defaultBaseUrl"].Text);
-        Refresh();
-      };
-      list.Add(Ui.Field("Provider", picker));
-      var current = ProviderEntry;
-      foreach (var field in current["fields"].List) list.Add(Field(field["label"].Text, field["key"].Text, field["secret"].Flag));
-      if (current["baseUrlMode"].Text != "none" && provider.Length > 0) list.Add(Field("Endpoint", "baseUrl"));
-      if (provider == "openai_subscription" || provider == "anthropic_subscription") list.Add(new SubscriptionControls(model, owner, provider, "/setup/subscription"));
-      if (provider.Length > 0) {
-        list.Add(Ui.Pill("Find Available Models", () => {
-          var body = Credentials();
-          model.Run(async () => {
-            var api = model.Api; if (api == null) return;
-            var result = await api.Request("/setup/models", "POST", body);
-            if (model.Api != api) return; discovered = result["models"].List; Refresh();
-          });
-        }));
-        if (discovered.Count > 0) {
-          var choices = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("", "Choose a model") };
-          choices.AddRange(discovered.Select(d => new KeyValuePair<string, string>(d["id"].Text, d["label"].Text.Length == 0 ? d["id"].Text : d["label"].Text)));
-          var models = Ui.Choice(choices, Value("model"));
-          models.SelectionChanged += delegate { var box = Get("model") as TextBox; if (box != null) box.Text = Ui.Selected(models); };
-          list.Add(Ui.Field("Available models", models));
-        }
-        list.Add(Field(provider.EndsWith("_subscription") ? "Model (blank uses your subscription default)" : "Model", "model"));
-        if (current["external"].Flag) {
-          external = external ?? Ui.Toggle("Allow task content to be sent to this provider");
-          list.Add(Detach(external));
-        }
-        list.Add(Ui.Pill("Save and Check Model", () => {
-          var body = Credentials();
-          body["model"] = Value("model"); body["externalAcknowledged"] = external != null && external.IsChecked == true;
-          Submit(body);
-        }, true));
+      if (setupModel == null) {
+        setupModel = new ModelSetupPanel(model, owner, new ModelEndpoints(true), "primary", Wire.Null,
+          model.SetupState["providerCatalog"].List, null, async body => { await model.SetupStep("llm", body); return false; });
+        setupModel.MinHeight = 420;
       }
-      return list;
+      return new UIElement[] { setupModel };
     }
-    Dictionary<string, object> Credentials() {
-      var body = Wires.O("provider", provider, "baseUrl", Value("baseUrl"));
-      foreach (var field in ProviderEntry["fields"].List) body[field["key"].Text] = Value(field["key"].Text);
-      return body;
-    }
-
     UIElement RecoveryCard() {
       var key = model.Recovery["key"].Text; var fingerprint = model.Recovery["fingerprint"].Text;
       var shown = Ui.Copyable(key, 14, null, true); shown.Visibility = Visibility.Collapsed;

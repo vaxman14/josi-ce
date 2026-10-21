@@ -16,7 +16,7 @@ namespace Josi.Native {
   public static class Dialogs {
     static bool recoveryOpen;
 
-    public sealed class Sheet : Window {
+    public class Sheet : Window {
       public bool Locked;
       public Sheet(Window owner, string title, double width) {
         Owner = owner; Title = title; Width = width; SizeToContent = SizeToContent.Height; MaxHeight = 760;
@@ -240,102 +240,6 @@ namespace Josi.Native {
         } catch (JosiException) { body.Content = Ui.T("The original work is unavailable on this server.", 14, null, Ui.Orange); }
       };
       sheet.ShowDialog();
-    }
-
-    /// Returns true when a model was saved; the caller reloads settings.
-    public static bool ModelEditor(Window owner, AppModel model, string role, Wire initial, List<Wire> catalog) {
-      var sheet = new Sheet(owner, role == "primary" ? "Primary Model" : "Fallback Model", 680);
-      var saved = false;
-      var api = model.Api; var administrator = model.User["id"].Text;
-      var selected = initial["provider"].Text;
-      var values = new Dictionary<string, Control>();
-      var discovered = new List<Wire>(); var discoveryNote = "";
-      var external = Ui.Toggle("Allow required task content to be sent to this provider", initial["externalAcknowledged"].Flag);
-      var host = new ContentControl { Focusable = false };
-      Func<Wire> entry = () => catalog.FirstOrDefault(c => c["kind"].Text == selected) ?? Wire.Null;
-      Func<string, string> read = key => {
-        Control c; if (!values.TryGetValue(key, out c)) return "";
-        var t = c as TextBox; if (t != null) return t.Text;
-        var p = c as PasswordBox; return p == null ? "" : p.Password;
-      };
-      Action reset = () => {
-        values.Clear(); discovered = new List<Wire>(); discoveryNote = "";
-        var item = entry();
-        values["baseUrl"] = Ui.Input(null, selected == initial["provider"].Text ? initial["baseUrl"].Text : item["defaultBaseUrl"].Text);
-        values["model"] = Ui.Input(null, selected == initial["provider"].Text ? initial["model"].Text : "");
-        foreach (var field in item["fields"].List)
-          values[field["key"].Text] = field["secret"].Flag ? (Control)Ui.Secret(field["label"].Text)
-            : Ui.Input(null, selected == initial["provider"].Text ? initial["providerConfig"][field["key"].Text].Text : "");
-        external.IsChecked = selected == initial["provider"].Text && initial["externalAcknowledged"].Flag;
-      };
-      Func<Dictionary<string, object>> body = () => {
-        var fields = Wires.O("provider", selected, "baseUrl", read("baseUrl"), "model", read("model"), "externalAcknowledged", external.IsChecked == true);
-        foreach (var field in entry()["fields"].List) fields[field["key"].Text] = read(field["key"].Text);
-        return fields;
-      };
-      Action clearSecrets = () => { foreach (var c in values.Values) { var p = c as PasswordBox; if (p != null) p.Clear(); } };
-      Func<bool> current = () => model.IsAdministrator && model.Api == api && model.User["id"].Text == administrator;
-      Action render = null;
-      Func<Control, Control> detach = c => { var panel = c.Parent as Panel; if (panel != null) panel.Children.Remove(c); return c; };
-      render = () => {
-        var options = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("", "Choose a provider") };
-        options.AddRange(catalog.Select(c => new KeyValuePair<string, string>(c["kind"].Text, c["label"].Text)));
-        var picker = Ui.Choice(options, selected);
-        picker.SelectionChanged += delegate { var next = Ui.Selected(picker); if (next == selected) return; selected = next; reset(); render(); };
-        var stack = Ui.Stack(14, Ui.Field("Provider", picker));
-        var item = entry();
-        if (!item.IsNull) {
-          foreach (var field in item["fields"].List) {
-            Ui.Add(stack, Ui.Field(field["label"].Text, detach(values[field["key"].Text])), 12);
-            if (field["help"].Text.Length > 0) Ui.Add(stack, Ui.Caption(field["help"].Text), 4);
-          }
-          if (initial["provider"].Text == selected && initial["apiKeySet"].Flag)
-            Ui.Add(stack, Ui.Caption("A credential is already stored in the Vault. Leave secret fields blank to retain it, or enter replacements."), 8);
-          if (item["baseUrlMode"].Text != "none") Ui.Add(stack, Ui.Field("Endpoint", detach(values["baseUrl"])), 12);
-          if (selected.EndsWith("_subscription")) Ui.Add(stack, new SubscriptionControls(model, sheet, selected, "/admin/llm/subscription"), 12);
-          Ui.Add(stack, Ui.Pill("Find Available Models", () => {
-            if (!current()) return;
-            var request = body(); var provider = selected;
-            model.Run(async () => {
-              var result = await api.Request("/admin/llm/models", "POST", request);
-              if (!current() || selected != provider) return;
-              discovered = result["models"].List;
-              discoveryNote = result["fromCatalog"].Flag ? "Josi's model catalog; the provider did not supply this list." : result["message"].Text;
-              render();
-            });
-          }), 12);
-          if (discovered.Count > 0) {
-            var choices = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("", "Choose a model") };
-            choices.AddRange(discovered.Select(d => new KeyValuePair<string, string>(d["id"].Text, d["label"].Text.Length == 0 ? d["id"].Text : d["label"].Text)));
-            var models = Ui.Choice(choices, read("model"));
-            models.SelectionChanged += delegate { ((TextBox)values["model"]).Text = Ui.Selected(models); };
-            Ui.Add(stack, Ui.Field("Available models", models), 12);
-          }
-          if (discoveryNote.Length > 0) Ui.Add(stack, Ui.Caption(discoveryNote), 6);
-          Ui.Add(stack, Ui.Field(selected.EndsWith("_subscription") ? "Model (blank uses subscription default)" : "Model", detach(values["model"])), 12);
-          if (item["external"].Flag) { var p = external.Parent as Panel; if (p != null) p.Children.Remove(external); Ui.Add(stack, external, 12); }
-          Ui.Add(stack, Ui.Caption("Saving deactivates this slot until you explicitly check its capabilities. Existing credentials are never displayed."), 12);
-          Ui.Add(stack, Ui.Pill("Save Model", () => {
-            if (!current()) return;
-            if (item["external"].Flag && external.IsChecked != true) { model.Error = "Allow task content to be sent to this provider, or choose a local provider."; model.Notify(); return; }
-            if (!selected.EndsWith("_subscription") && read("model").Length == 0) { model.Error = "Choose a model."; model.Notify(); return; }
-            var request = body(); clearSecrets();
-            model.Run(async () => {
-              var latest = await api.Request("/admin/llm");
-              if (!current() || !latest[role].Same(initial)) throw new JosiException("The model settings changed. Close this editor and review the current configuration.");
-              await api.Request("/admin/llm/providers/" + role, "PUT", request);
-              if (!current()) return;
-              saved = true; sheet.Close();
-            });
-          }, true), 14);
-        }
-        host.Content = stack;
-      };
-      reset(); render();
-      sheet.Body(Ui.Stack(16, Ui.Spread(Ui.Title2(role == "primary" ? "Primary Model" : "Fallback Model"), Ui.Pill("Close", () => sheet.Close())), host));
-      sheet.Closed += delegate { clearSecrets(); };
-      sheet.ShowDialog();
-      return saved;
     }
 
     public static void VoiceSettings(Window owner, AppModel model, Voice voice) {
