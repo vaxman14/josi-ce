@@ -4,76 +4,105 @@ Roman's Josi CE feature list (October 21, "hey-josi-ce-features.txt") checked ag
 
 **Have** = a working screen in the Windows app. **Partial** = some of it is there. **Missing** = no screen yet. **Server** = enforced by the server with nothing to show in the app. **Not this app** = another client or the installer.
 
-## Build order for what is missing
+## Full build list
 
-1. **Connections** (your accounts): Google, Microsoft 365, Dropbox, Box and Nextcloud sign-in, per-capability switches, read/write separation, connection test, health, rotation and revoke. Includes **Developer services**: GitHub, GitLab, Cloudflare, Netlify, Vercel, Supabase, Docker Hub, GHCR, Railway, Render, Sentry, Linear, Jira Cloud, npm, Neon, Notion and Obsidian, with resource discovery and health checks. (Web: `Connections.tsx`.)
-2. **Connectors** (administrator): register the Google, Microsoft, Dropbox and Box OAuth apps, Nextcloud settings, capability ceilings. Google sign-in in Josi depends on this. (Web: `admin/Connectors.tsx`, `admin/DeveloperServices.tsx`.)
-3. **Files and storage**: Local Workspace and cloud folders (Google Drive, OneDrive, Dropbox, Box, Nextcloud, WebDAV); folder mapping (read-only and read/write), browsing, search, preview, download, create/edit/rename/move/delete with file-change approvals and recovery copies; indexing and full-text/semantic search; quotas; the local coding sandbox. Administrator storage settings and quotas. (Web: `LocalWorkspace.tsx`, `admin/Storage.tsx`.) Today only per-member folder permissions exist, under People.
-4. **Calendar**: Google and Outlook calendars, multiple accounts, list/month/week/day views, source selection, default write calendar, time zone, all-day and recurring events, attendees, event details, sync status, conflicts. (Web: `Calendar.tsx`.)
-5. **Contacts**: manual contacts, Google and Outlook contacts, import, two-way and automatic sync with intervals, deduplication, merging, conflicts, source tracking. (Web: `Contacts.tsx`.)
-6. **Email templates**: templates, merge fields, HTML/mobile/plain-text previews, draft approval, send status. (Web: `EmailTemplates.tsx`.)
-7. **Approvals**: pending requests (including custom API requests and prepared work), expiring approvals, approval history. (Web: `Approvals.tsx`.) Administrator **approval policy** ceilings. (Web: `admin/Policy.tsx`.)
-8. **Personalization**: Assistant Soul, About Me, Working Style, personality presets with live preview, profile version history and restore. (Web: `Personalization.tsx`.) Memory already exists; add pinned memory and memory confidence where missing.
-9. **Assistant migration**: OpenClaw, Hermes and Josi v1 imports with preview, receipts, rollback and the read-only imported archive. (Web: `AssistantMigration.tsx`.)
-10. **Workflows and custom APIs**: Zapier, Zapier MCP, n8n (including private network) and Make, with workflow discovery, exposure controls, input schemas, approvals, execution, history and disconnect. Custom REST APIs with OpenAPI 3 import, endpoint allowlists, authentication types, write/delete approval and audit history. User and administrator screens. (Web: `Workflows.tsx`, `admin/Workflows.tsx`, `admin/CustomApis.tsx`.)
-11. **Usage**: personal usage and cost, per-user budgets and allowances; administrator overview with per-user activity, interrupt-rate and correction-rate metrics. (Web: `Usage.tsx`, `admin/Overview.tsx`.)
-12. **Workspace settings**: workspace name, **workspace time zone** (merges with the planned time zone setting: automatic from Windows, or pinned from a list), and the getting-started checklist. (Web: `admin/Workspace.tsx`, `admin/LaunchChecklist.tsx`.)
-13. **Network and address**: LAN, public domain, reverse proxy, HTTPS and port after setup. (Web: `admin/Network.tsx`.)
-14. **Operations**: Josi Doctor repair plans with approval and post-repair verification, release-update checks with release notes, backup-before-update, approved updates, health verification and rollback, diagnostics bundles with redaction, support-ticket preparation and approval. Today the app only runs a system check. (Web: `admin/Diagnostics.tsx`.)
-15. **Backups**: off-site destinations (NAS, SMB, NFS, Amazon S3, S3-compatible, MinIO, Cloudflare R2, Backblaze B2) with encryption, recovery key, destination testing and folder browsing; integrity checks; database restore and credential-recovery verification. Today: back up now, portable export, history and download. (Web: `admin/Backups.tsx`.)
-16. **PC control** (administrator): scopes, temporary access, pending actions and activity log. (Web: `admin/PcControl.tsx`.) Part of the Desktop + Chrome phase, with Windows Hello approval.
-17. **Family module**: family workspace, managed child accounts, Josi-only schedules, message-minute limits, usage reports, parent conversation review, relationship verification, Child Mode, Parental Controls licensing. (Web: `Family.tsx`, `admin/ParentalControls.tsx`.)
-18. **Native Windows extras**: Windows notifications for task updates and reminders; Windows Share target (share files and text into Josi); conversation search; audit events view; companion apps page (web `Apps.tsx`).
+Everything still to do for the Windows app, in build order. It combines the missing and partial features below with the remaining plan items. Each item ends when it works against the development server and its click-through test passes.
 
+### Phase 1 — Your accounts and data
+1. **Connectors** (administrator): register the Google, Microsoft, Dropbox and Box OAuth apps and Nextcloud settings; administrator capability ceilings; developer-service settings. (Web: `admin/Connectors.tsx`, `admin/DeveloperServices.tsx`.)
+2. **Connections** (your accounts): Google, Microsoft 365, Dropbox, Box and Nextcloud sign-in; incremental permissions, per-capability switches, read/write separation; connection test, health, credential rotation and revoke; per-user ownership. (Web: `Connections.tsx`.)
+3. **Developer services**: GitHub, GitLab, Cloudflare, Netlify, Vercel, Supabase, Docker Hub, GitHub Container Registry, Railway, Render, Sentry, Linear, Jira Cloud, npm, Neon, Notion and Obsidian; repository, package, project, deployment-site, organization, Notion page and Obsidian vault discovery; Obsidian Markdown reading; per-user permissions; health checks. (Web: `Connections.tsx`.)
+4. **Google sign-in, live test**: once Connectors has Google, sign in with a real linked Google account.
+5. **Files and storage**: Local Workspace; Google Drive, OneDrive, Dropbox, Box, Nextcloud and WebDAV folders; folder mapping (read-only and read/write); browsing, search, preview and download; create, edit, rename, move and delete with file-change approvals and recovery copies; document indexing, full-text and semantic search, versioning, archive indexing; storage quotas, file-count and file-size limits. Administrator storage settings. (Web: `LocalWorkspace.tsx`, `admin/Storage.tsx`.)
+6. **Local coding sandbox**: JavaScript syntax checking and isolated execution with review. (Web: `LocalWorkspace.tsx`.)
+7. **Calendar**: Google and Outlook calendars, multiple accounts and calendars; list, month, week and day views; source selection, primary calendar, default write calendar, time zone; all-day and recurring events, attendees, event details; sync status and conflict detection. (Web: `Calendar.tsx`.)
+8. **Contacts**: manual contacts, Google and Outlook contacts, import, two-way and automatic sync with intervals, deduplication, merging, conflict handling, source tracking. (Web: `Contacts.tsx`.)
+9. **Email templates**: templates, merge fields, HTML, mobile and plain-text previews, draft approval, send-status tracking; operational threads, sharing, trash and restore where the server shows them. (Web: `EmailTemplates.tsx`.)
+
+### Phase 2 — The assistant
+10. **Approvals**: pending requests (custom API requests, prepared work), expiring approvals, approval history. (Web: `Approvals.tsx`.)
+11. **Approval policy** (administrator): approval-policy ceilings over personal settings. (Web: `admin/Policy.tsx`.)
+12. **Personalization**: Assistant Soul, About Me, Working Style, personality presets with live preview, profile version history and restore; pinned memory and memory confidence. (Web: `Personalization.tsx`.)
+13. **Assistant migration**: OpenClaw, Hermes and Josi v1 profile, memory and conversation-archive imports with preview, receipts, rollback and the read-only imported archive. (Web: `AssistantMigration.tsx`.)
+14. **Workflows**: Zapier, Zapier MCP, n8n (including private network) and Make; workflow discovery, exposure controls, input schemas, preparation, approvals, execution, signed callbacks, history and disconnect. User and administrator screens. (Web: `Workflows.tsx`, `admin/Workflows.tsx`.)
+15. **Custom APIs**: custom REST APIs, OpenAPI 3 import, endpoint allowlists, GET/HEAD actions, write and delete approval, bearer, API-key, basic and custom-header authentication, audit history. (Web: `admin/CustomApis.tsx`.)
+16. **Streaming replies**: show the reply as it is written instead of on refresh.
+17. **Conversation search** and **conversation privacy** controls.
+18. **Reminders and scheduled tasks**: a screen for reminders and scheduled work.
+19. **Usage**: personal usage and cost, per-user budgets and model allowances; administrator overview with per-user activity, interrupt-rate and correction-rate metrics. (Web: `Usage.tsx`, `admin/Overview.tsx`.)
+
+### Phase 3 — Administration and operations
+20. **Workspace settings**: workspace name; **time zone** (automatic from Windows by default, or pinned from a list); getting-started checklist; anonymous telemetry setting. (Web: `admin/Workspace.tsx`, `admin/LaunchChecklist.tsx`.)
+21. **Network and address**: LAN, public domain, reverse proxy, HTTPS and port after setup. (Web: `admin/Network.tsx`.)
+22. **Operations**: Josi Doctor repair plans with approval and post-repair verification; release-update checks and release notes; backup-before-update, approved updates, update health verification and automatic rollback; diagnostics bundles with redaction; support-ticket preparation and approval; liveness, readiness, worker, database, storage, notification and network health. (Web: `admin/Diagnostics.tsx`.)
+23. **Backups**: NAS, SMB, NFS, Amazon S3, S3-compatible, MinIO, Cloudflare R2 and Backblaze B2 destinations; off-site encryption and backup recovery key; destination testing and folder browsing; integrity checks; database restore and credential-recovery verification. (Web: `admin/Backups.tsx`.)
+24. **Voice Box administration**: install, update, rollback, restart and uninstall; NVIDIA acceleration option (finish where partial).
+25. **Audit events** view and **local password reset** from the Server page.
+26. **Finish partial items**: attachment download and deletion; check every "Partial" line below against the web app and close the gaps.
+
+### Phase 4 — Desktop and Chrome
+27. **Desktop + Chrome**: Josi works on this PC and in Chrome; Chrome extension loaded unpacked for testing; secure device enrollment for this PC. Needs Roman's test page.
+28. **PC control** (administrator): exact scopes, saved scopes and temporary access, actions awaiting approval, activity log. (Web: `admin/PcControl.tsx`.)
+29. **Windows Hello approvals**: protected approvals confirmed with fingerprint, face or PIN.
+
+### Phase 5 — Windows extras and family
+30. **Windows notifications** for task updates, approvals and reminders.
+31. **Windows Share target**: share files and text into Josi from other apps; optional camera capture.
+32. **Companion apps** page. (Web: `Apps.tsx`.)
+33. **Family module**: family workspace, managed child accounts, Josi-only schedules, message-minute limits, child usage reports, parent conversation review, relationship-authority verification, Child Mode, Parental Controls licensing. (Web: `Family.tsx`, `admin/ParentalControls.tsx`.)
+
+### Phase 6 — Packaging and release
+34. **Windows installer**: one installer for the server and app, replacing the development setup; uninstaller and recovery installer; updates keep the remembered sign-in.
+35. **Code signing** with Azure Trusted Signing (Roman signs in when ready).
 ## Feature-by-feature status
 
 ### Clients and access
 - Windows app: **Have** (this app). Web app, PWA, iPhone, iPad, Android, macOS, Linux apps: **Not this app**.
 - Telegram, WhatsApp and Slack access: **Have** (Messaging Apps linking; administrator channel setup).
 - Email and password sign-in: **Have**. Google Sign-In: **Have** (needs Connectors, item 2, to be usable). Apple Sign-In: **Not this app** (Apple platforms).
-- Native push notifications, native reminders, native share intake: **Missing** (item 18).
+- Native push notifications, native reminders, native share intake: **Missing** (items 18, 30 and 31).
 - Secure device enrollment: **Partial** (Automation "This PC"; finished in the Desktop + Chrome phase).
 - Multi-device sessions and session revocation: **Have**. Remembered sign-in: **Have**.
 
 ### Assistant
 - AI chat, durable history, conversation task tracking, background task manager, task activity, retry and cancellation: **Have**.
 - Streaming replies: **Partial** (replies arrive by refresh, not token streaming).
-- Conversation search: **Missing** (item 18). Conversation privacy: **Partial** (verify against web).
-- Scheduled tasks and reminders: **Partial** (scheduled continuation shown; no reminders screen, item 18).
-- Exact-action approvals: **Have** (routine approval settings, step-up). Expiring approvals and approval history: **Missing** (item 7).
-- Email drafting/sending, calendar and contact changes, custom API actions, workflow execution: done by the assistant on the server; their review screens are items 4–7 and 10.
+- Conversation search: **Missing** (item 17). Conversation privacy: **Partial** (item 17).
+- Scheduled tasks and reminders: **Partial** (scheduled continuation shown; no reminders screen; item 18).
+- Exact-action approvals: **Have** (routine approval settings, step-up). Expiring approvals and approval history: **Missing** (item 10).
+- Email drafting/sending, calendar and contact changes, custom API actions, workflow execution: done by the assistant on the server; their review screens are items 7–10, 14 and 15.
 - Tool-call receipts: **Partial** (task source work). Fabrication guards: **Server**.
 - Usage tracking, cost tracking, per-user budgets, workspace usage metrics: **Partial** (Models page shows this month's totals and limits); full screens are item 11.
 
-### Calendar — **Missing** (item 4)
+### Calendar — **Missing** (item 7)
 ### Email
 - System SMTP and communications SMTP, SMTP sending, test sends: **Have** (Email Delivery).
-- Gmail and Outlook reading/sending: through Connections (item 1); no mailbox screen in the web app either.
-- Operational threads, sharing, trash and restore: **Server** tools; review screens with item 7.
-- Templates, merge fields, previews, plain-text fallback, draft approval, send status: **Missing** (item 6).
+- Gmail and Outlook reading/sending: through Connections (item 2); no mailbox screen in the web app either.
+- Operational threads, sharing, trash and restore: **Server** tools; review screens with item 10.
+- Templates, merge fields, previews, plain-text fallback, draft approval, send status: **Missing** (item 9).
 
-### Contacts — **Missing** (item 5)
+### Contacts — **Missing** (item 8)
 
 ### Chat attachments
 - File selection, upload, image vision, document/PDF/Office/OpenDocument/text extraction, HEIC/HEIF conversion, quotas, malware scanning (Windows antivirus), active-content rejection: **Have** (upload in chat; conversion, extraction and scanning are server-side).
 - Camera capture and photo-library selection: **Not this app** (phones); Windows camera capture could be added later.
 - Attachment download and deletion: **Partial** (verify; add if missing).
 
-### Files and storage — **Missing** except folder permissions (item 3)
+### Files and storage — **Missing** except folder permissions (item 5)
 
 ### Personalization and memory
 - Personal memory, manual memory, proposed memories, confirmation, deletion, learning preferences: **Have**.
 - Pinned memory, memory confidence: **Partial** (verify).
-- Assistant Soul, About Me, Working Style, presets, live preview, version history, restore: **Missing** (item 8).
-- OpenClaw, Hermes, Josi v1 migration and related: **Missing** (item 9).
+- Assistant Soul, About Me, Working Style, presets, live preview, version history, restore: **Missing** (item 12).
+- OpenClaw, Hermes, Josi v1 migration and related: **Missing** (item 13).
 
 ### Model providers — **Have**
 - All 22 API providers, local servers (Ollama, vLLM, LM Studio, LocalAI, OpenAI-compatible), ChatGPT and Claude subscriptions, primary and fallback, discovery, custom models, all capability tests, context detection, local-only mode, external-provider consent, token and spending caps.
-- Per-user model allowances: **Partial** (verify; add with item 11 if missing).
+- Per-user model allowances: **Partial** (verify; add with item 19 if missing).
 
-### Cloud account connections — **Missing** (items 1 and 2)
-### Developer integrations — **Missing** (items 1 and 2)
-### Automation (Zapier, n8n, Make, custom APIs) — **Missing** (item 10)
+### Cloud account connections — **Missing** (items 1–3)
+### Developer integrations — **Missing** (items 1–3)
+### Automation (Zapier, n8n, Make, custom APIs) — **Missing** (items 14 and 15)
 - Browser and computer automation settings: **Have** (Automation section).
 
 ### Messaging channels — **Have**
@@ -86,25 +115,25 @@ Roman's Josi CE feature list (October 21, "hey-josi-ce-features.txt") checked ag
 ### Security and identity
 - Super-admin and member roles, invitations, password setup and reset links, MFA (TOTP) and recovery codes, session revocation, password step-up, Master Vault (lock, unlock, recovery key, all item types), personal approval settings: **Have**.
 - Local password-reset utility: **Not this app** (server tool; could be wired into Server later).
-- Approval-policy ceilings: **Missing** (item 7). Audit events: **Missing** (item 18).
+- Approval-policy ceilings: **Missing** (item 11). Audit events: **Missing** (item 25).
 - Owner isolation, encrypted credentials, installation master key, rate limiting, CSRF, secret-safe diagnostics: **Server**.
 
 ### Administration
 - Setup wizard, machine checks, user management, model administration, channel administration: **Have**.
 - Storage administration: **Partial** (folder permissions per member; item 3).
-- Connector, integration and workflow administration: **Missing** (items 2 and 10). Approval-policy administration: **Missing** (item 7).
-- Workspace name and time zone, first-run checklist: **Missing** (item 12).
-- Usage overview and per-user metrics: **Missing** (item 11). Anonymous telemetry controls: **Partial** (setup step only; add a setting).
+- Connector, integration and workflow administration: **Missing** (items 1, 14 and 15). Approval-policy administration: **Missing** (item 11).
+- Workspace name and time zone, first-run checklist: **Missing** (item 20).
+- Usage overview and per-user metrics: **Missing** (item 19). Anonymous telemetry controls: **Partial** (setup step only; add a setting).
 - Network address, LAN, domain, reverse proxy, HTTPS, port: **Partial** (setup step only; item 13).
 
 ### Backups and recovery
 - Full backups, portable exports, downloads, progress, history: **Have**.
-- Integrity checks, restore, credential-recovery verification, all off-site destinations, encryption and testing: **Missing** (item 15).
+- Integrity checks, restore, credential-recovery verification, all off-site destinations, encryption and testing: **Missing** (item 23).
 
 ### Operations
-- System health checks: **Have**. Everything else in the list: **Missing** (item 14).
+- System health checks: **Have**. Everything else in the list: **Missing** (item 22).
 
 ### Deployment — **Not this app**
 - Docker, Linux and macOS installers, Caddy, Portainer, Unraid, TrueNAS, OCR and ClamAV services. The Windows installer, uninstaller and recovery installer are the packaging phase.
 
-### Family module — **Missing** (item 17)
+### Family module — **Missing** (item 33)
