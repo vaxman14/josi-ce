@@ -16,6 +16,8 @@ namespace Josi.Native {
     public bool Installed;
     public bool Running;
     public bool Stopped;
+    /// A development server run from source under this user (no services).
+    public bool Development;
     public string Version = "";
     public string Address = "http://localhost:8080";
     public string Detail = "";
@@ -24,7 +26,17 @@ namespace Josi.Native {
   public static class LocalServer {
     public const string InstallerAppId = "{2DEB2167-EEA2-4A06-A5B0-45D5198EA8C1}_is1";
     static readonly string[] Services = { "JosiDatabase", "JosiWeb", "JosiWorker", "JosiVoice", "JosiVoiceControl", "JosiProxy" };
-    static string DataRoot { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Josi CE Server"); } }
+    static string InstalledRoot { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Josi CE Server"); } }
+    /// JOSI_SERVER_DATA points at a development server's data folder
+    /// (scripts/windows/dev). Installed servers always use ProgramData.
+    static string DevelopmentRoot {
+      get {
+        var value = Environment.GetEnvironmentVariable("JOSI_SERVER_DATA");
+        if (string.IsNullOrEmpty(value) || !Path.IsPathRooted(value) || !File.Exists(Path.Combine(value, @"config\runtime.json"))) return null;
+        return Path.GetFullPath(value);
+      }
+    }
+    static string DataRoot { get { return DevelopmentRoot ?? InstalledRoot; } }
 
     public static ServerReceipt Read() {
       var receipt = new ServerReceipt();
@@ -33,6 +45,7 @@ namespace Josi.Native {
       try {
         var installed = all.Where(s => Services.Contains(s.ServiceName)).ToList();
         receipt.Installed = installed.Any(s => s.ServiceName == "JosiWeb");
+        if (!receipt.Installed && DevelopmentRoot != null) return ReadDevelopment(receipt);
         if (receipt.Installed) {
           var stopped = installed.Where(s => s.ServiceName != "JosiVoice" && s.ServiceName != "JosiVoiceControl" && s.Status != ServiceControllerStatus.Running).ToList();
           receipt.Running = stopped.Count == 0;
@@ -43,6 +56,21 @@ namespace Josi.Native {
       receipt.Version = InstalledVersion();
       var port = PublicPort();
       if (port > 0) receipt.Address = "http://localhost:" + port;
+      return receipt;
+    }
+    static ServerReceipt ReadDevelopment(ServerReceipt receipt) {
+      var settings = Wires.Parse(File.ReadAllText(Path.Combine(DevelopmentRoot, @"config\runtime.json")));
+      receipt.Installed = true; receipt.Development = true;
+      receipt.Version = settings["version"].Text;
+      var port = PublicPort();
+      receipt.Address = "http://localhost:" + port;
+      try {
+        using (var client = new System.Net.Sockets.TcpClient()) {
+          receipt.Running = client.ConnectAsync("127.0.0.1", port).Wait(500) && client.Connected;
+        }
+      } catch (Exception) { receipt.Running = false; }
+      receipt.Stopped = !receipt.Running;
+      receipt.Detail = "Development server · " + (receipt.Running ? "Running" : "Stopped");
       return receipt;
     }
     static string Label(string service) {
@@ -77,7 +105,25 @@ namespace Josi.Native {
       return 8080;
     }
 
+    /// Preferred handoff: first-run\bootstrap.json {schemaVersion, port, token},
+    /// readable only by the person who installed the server. Older installs
+    /// wrote the token into a private "Open Josi.html" redirect instead.
     public static string ReadSetupToken(int port) {
+      var bootstrap = Path.Combine(DataRoot, @"first-run\bootstrap.json");
+      if (File.Exists(bootstrap)) {
+        try {
+          var info = new FileInfo(bootstrap);
+          if (info.Length > 4096 || (info.Attributes & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException();
+          var value = Wires.Parse(File.ReadAllText(bootstrap));
+          if (value["schemaVersion"].Integer != 1 || value["port"].Integer != port || !Regex.IsMatch(value["token"].Text, "^[a-f0-9]{64}$"))
+            throw new JosiException("The setup handoff does not match this server.");
+          return value["token"].Text;
+        } catch (UnauthorizedAccessException) {
+          throw new JosiException("The first-run setup file for this PC is unavailable. Sign in to Windows as the person who installed Josi.");
+        } catch (InvalidDataException) {
+          throw new JosiException("The first-run setup file could not be read safely.");
+        }
+      }
       var path = Path.Combine(DataRoot, @"first-run\Open Josi.html");
       string document;
       try {

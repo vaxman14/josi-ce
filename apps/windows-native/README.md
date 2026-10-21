@@ -98,3 +98,32 @@ src/                 C# source + Theme.xaml + manifest
 test/                mock API + UI Automation driver
 QUESTIONS.md         open decisions for Roman
 ```
+
+## Development server on this PC
+
+Runs Josi CE from this checkout under your Windows account: PostgreSQL 16.15 (pinned,
+hash-verified) and the API/worker on `127.0.0.1` only, with no Windows services or
+elevation. Data, private secrets and logs live in `C:\Dev\josi-dev\data`.
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/windows/dev/New-DevServer.ps1
+```
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/windows/dev/Start-DevServer.ps1
+```
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/windows/dev/Open-DevApp.ps1
+```
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/windows/dev/Stop-DevServer.ps1
+```
+
+`New-DevServer.ps1` is one-time. It mirrors the installer: secrets owned by you and
+readable only by you, SYSTEM and Administrators; the same `initdb` options; the
+`josi` role created by a one-time bootstrap login that is then disabled. First-run
+setup uses `first-run\bootstrap.json` (`{schemaVersion, port, token}`, private to you);
+the app reads it when `JOSI_SERVER_DATA` points at the data folder, and falls back to
+the older `Open Josi.html` handoff for existing installs.
+
+Known dev limitation: Windows antivirus (AMSI) scanning is not wired up, so uploads
+that require a scan stay blocked.

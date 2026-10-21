@@ -59,7 +59,9 @@ namespace Josi.Native {
       Action<string, string, string> confirm = (operation, title, detail) => {
         if (Dialogs.Confirm(owner, title, detail, "Continue")) model.Run(() => model.Operate(operation));
       };
-      if (r.Installed) {
+      if (r.Development) {
+        Ui.Add(stack, Ui.Caption("This development server runs from source under your Windows account. Start and stop it with scripts/windows/dev/Start-DevServer.ps1 and Stop-DevServer.ps1."), 14);
+      } else if (r.Installed) {
         Ui.Add(stack, Ui.Wrap(
           Ui.Pill("Start", () => model.Run(() => model.Operate("start"))),
           Ui.Pill("Stop…", () => confirm("stop", "Stop the server on this PC?", "Connected devices will lose access until you start the server again.")),
