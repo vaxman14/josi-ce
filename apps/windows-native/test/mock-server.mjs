@@ -33,11 +33,16 @@ const memories = [{ id: randomUUID(), content: 'Roman prefers short, factual pro
 const providerCatalog = [
   { kind: 'openai_subscription', label: 'ChatGPT subscription', fields: [], baseUrlMode: 'none', external: true, residency: 'OpenAI', modelNoun: 'model' },
   { kind: 'anthropic_subscription', label: 'Claude subscription', fields: [], baseUrlMode: 'none', external: true, residency: 'Anthropic', modelNoun: 'model' },
-  { kind: 'anthropic_api', label: 'Anthropic API', baseUrlMode: 'none', external: true, residency: 'United States', docsUrl: 'https://console.anthropic.com/settings/keys', modelNoun: 'model',
+  { kind: 'anthropic', label: 'Anthropic API', baseUrlMode: 'none', external: true, residency: 'United States', docsUrl: 'https://console.anthropic.com/settings/keys', modelNoun: 'model',
     fields: [{ key: 'apiKey', label: 'API key', secret: true, required: true, placeholder: 'sk-ant-…', help: 'Create a key in the Anthropic Console.' }] },
   { kind: 'openai', label: 'OpenAI API', baseUrlMode: 'optional', defaultBaseUrl: 'https://api.openai.com/v1', external: true, residency: 'United States', docsUrl: 'https://platform.openai.com/api-keys', modelNoun: 'model',
     fields: [{ key: 'apiKey', label: 'API key', secret: true, required: true, placeholder: 'sk-…', help: null }] },
   { kind: 'ollama', label: 'Ollama', baseUrlMode: 'required', defaultBaseUrl: 'http://localhost:11434', external: false, residency: '', modelNoun: 'model', fields: [] },
+  ...['xAI', 'DeepSeek', 'Alibaba Qwen', 'Mistral', 'Moonshot (Kimi)', 'Zhipu GLM', 'OpenRouter', 'MiniMax', 'Cohere', 'AWS Bedrock', 'Azure AI', 'Google Vertex AI', 'Baidu ERNIE', 'Tencent Hunyuan']
+    .map((label, index) => ({ kind: 'extra_' + index, label, baseUrlMode: 'none', external: true, residency: 'Provider region', modelNoun: 'model',
+      fields: [{ key: 'apiKey', label: 'API key', secret: true, required: true }] })),
+  { kind: 'gemini', label: 'Google Gemini', baseUrlMode: 'none', external: true, residency: 'United States', modelNoun: 'model',
+    fields: [{ key: 'apiKey', label: 'API key', secret: true, required: true }] },
 ];
 const subscriptionOptions = [
   { id: 'chatgpt_subscription', provider: 'openai_subscription', available: true, label: 'Use my ChatGPT plan through the Codex CLI',
@@ -124,7 +129,7 @@ http.createServer(async (req, res) => {
     return send(res, 200, llm.codexLogin);
   }
   if (path === '/admin/llm/subscription/login' && method === 'GET') return send(res, 200, llm.codexLogin ?? { state: 'idle', challenge: null });
-  if (path === '/admin/llm/models' && method === 'POST') return send(res, 200, body.provider === 'anthropic_api'
+  if (path === '/admin/llm/models' && method === 'POST') return send(res, 200, body.provider === 'anthropic'
     ? { ok: true, models: [{ id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' }, { id: 'claude-opus-5-5', label: 'Claude Opus 5.5' }, { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' }], fromCatalog: true, allowsCustomModel: true }
     : { ok: true, models: [{ id: 'gpt-5.5', label: 'GPT-5.5' }, { id: 'gpt-5.5-mini', label: 'GPT-5.5 mini' }], fromCatalog: false, allowsCustomModel: true });
   if ((m = path.match(/^\/admin\/llm\/providers\/(primary|fallback)$/)) && method === 'PUT') {

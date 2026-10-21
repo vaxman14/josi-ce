@@ -420,6 +420,8 @@ namespace Josi.Native {
       footer.Children.Clear();
       if (!checkResult.IsNull) return;
       if (step > 0) footer.Children.Add(Spaced(Ui.Pill("Back", () => { step--; Render(); })));
+      // Choosing a provider already moves on; Continue only returns to a choice made before.
+      if (step == 0 && kind.Length == 0) return;
       if (step < 3) {
         var next = Ui.Pill("Continue", () => {
           step++;
@@ -448,38 +450,48 @@ namespace Josi.Native {
     }
 
     // ------------------------------------------------------------- 1 Choose
+    // Shown first; everything else is one click away under "More providers".
+    static readonly string[] Featured = { "openai_subscription", "anthropic_subscription", "openai", "anthropic", "gemini", "openai_compatible" };
     UIElement ChooseStep() {
       var stack = new StackPanel();
-      Ui.Add(stack, Ui.Title2(role == "fallback" ? "How should Josi answer when the primary model is unavailable?" : "How should Josi think?"), 0);
-      Ui.Add(stack, Ui.Secondary("Pick a subscription you already pay for, an API service, or a model running on your own network."), 6);
+      Ui.Add(stack, Ui.T(role == "fallback" ? "Choose a backup for when the primary model can't answer" : "Choose how Josi thinks", 18, FontWeights.SemiBold), 0);
       var subscriptions = catalog.Where(c => ModelText.Subscription(c["kind"].Text)).ToList();
-      var local = catalog.Where(c => !ModelText.Subscription(c["kind"].Text) && !c["external"].Flag).ToList();
-      var cloud = catalog.Where(c => !ModelText.Subscription(c["kind"].Text) && c["external"].Flag).ToList();
-      if (subscriptions.Count > 0) { Ui.Add(stack, Ui.Headline("Use a subscription you already have"), 22); Ui.Add(stack, Cards(subscriptions), 10); }
-      if (cloud.Count > 0) { Ui.Add(stack, Ui.Headline("API services"), 22); Ui.Add(stack, Cards(cloud), 10); }
-      if (local.Count > 0) { Ui.Add(stack, Ui.Headline("On your own computer or network"), 22); Ui.Add(stack, Cards(local), 10); }
+      var popular = catalog.Where(c => Featured.Contains(c["kind"].Text) && !ModelText.Subscription(c["kind"].Text) && c["external"].Flag).ToList();
+      var own = catalog.Where(c => !c["external"].Flag && !ModelText.Subscription(c["kind"].Text)).ToList();
+      var more = catalog.Where(c => !subscriptions.Contains(c) && !popular.Contains(c) && !own.Contains(c)).ToList();
+      if (subscriptions.Count > 0) { Ui.Add(stack, Ui.Caption("YOUR SUBSCRIPTIONS"), 14); Ui.Add(stack, Rows(subscriptions, 2), 6); }
+      if (popular.Count > 0) { Ui.Add(stack, Ui.Caption("API SERVICES"), 14); Ui.Add(stack, Rows(popular, 3), 6); }
+      if (own.Count > 0) { Ui.Add(stack, Ui.Caption("YOUR OWN HARDWARE"), 14); Ui.Add(stack, Rows(own, 2), 6); }
+      if (more.Count > 0)
+        Ui.Add(stack, new Disclosure("More providers (" + more.Count + ")", () => Rows(more, 3), more.Any(c => c["kind"].Text == kind)), 12);
       return stack;
     }
-    UIElement Cards(IEnumerable<Wire> entries) {
-      var wrap = new WrapPanel();
+    /// Compact provider rows; choosing one goes straight to Connect.
+    UIElement Rows(IEnumerable<Wire> entries, int columns) {
+      var grid = new UniformGrid { Columns = columns };
       foreach (var entry in entries) {
         var id = entry["kind"].Text; var selected = id == kind;
         var option = options.FirstOrDefault(o => o["provider"].Text == id);
         var available = option == null || option["available"].Flag;
-        var detail = ModelText.Subscription(id) ? (option == null ? "" : option["reason"].Text)
-          : entry["external"].Flag ? "Task content is sent to " + entry["label"].Text + (entry["residency"].Text.Length > 0 ? " · " + entry["residency"].Text : "")
-          : "Runs on hardware you control";
-        var text = Ui.Stack(6, Ui.T(entry["label"].Text, 15, FontWeights.SemiBold), Ui.T(detail, 12.5, null, Ui.Muted));
-        foreach (TextBlock t in text.Children.OfType<TextBlock>()) t.TextWrapping = TextWrapping.Wrap;
-        var card = new Button { Style = (Style)Ui.Resources["Plain"], Width = 300, MinHeight = 96, Margin = new Thickness(0, 0, 12, 12), Padding = new Thickness(0),
+        var detail = ModelText.Subscription(id) ? "Uses your " + ModelText.PlanName(id) + " plan"
+          : entry["external"].Flag ? (entry["residency"].Text.Length > 0 ? entry["residency"].Text : "Cloud service") : "Runs on hardware you control";
+        var title = Ui.T(entry["label"].Text, 14, FontWeights.SemiBold, selected ? Ui.Orange : Ui.Text);
+        title.TextWrapping = TextWrapping.NoWrap; title.TextTrimming = TextTrimming.CharacterEllipsis;
+        var sub = Ui.Caption(detail); sub.TextWrapping = TextWrapping.NoWrap; sub.TextTrimming = TextTrimming.CharacterEllipsis;
+        var row = new Button { Style = (Style)Ui.Resources["Plain"], Margin = new Thickness(0, 0, 8, 8), Padding = new Thickness(0),
           HorizontalContentAlignment = HorizontalAlignment.Stretch, IsEnabled = available,
-          Content = new Border { Background = selected ? Ui.OrangeFaint : Ui.Card, BorderBrush = selected ? Ui.Orange : Ui.Border, BorderThickness = new Thickness(selected ? 2 : 1),
-            CornerRadius = new CornerRadius(12), Padding = new Thickness(16), Child = text } };
-        Ui.Name(card, entry["label"].Text, available ? null : detail);
-        card.Click += delegate { if (kind != id) Reset(id, false); Render(); };
-        wrap.Children.Add(card);
+          Content = new Border { Background = selected ? Ui.OrangeFaint : Ui.Card, BorderBrush = selected ? Ui.Orange : Ui.Border,
+            BorderThickness = new Thickness(selected ? 2 : 1), CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 8, 12, 8),
+            Child = Ui.Stack(2, title, sub) } };
+        Ui.Name(row, entry["label"].Text, available ? detail : (option == null ? null : option["reason"].Text));
+        row.Click += delegate {
+          if (kind != id) Reset(id, false);
+          step = 1;
+          Render();
+        };
+        grid.Children.Add(row);
       }
-      return wrap;
+      return grid;
     }
 
     // ------------------------------------------------------------ 2 Connect

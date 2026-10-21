@@ -1,6 +1,6 @@
 ﻿# Drives the Models page and model setup window against test/mock-server.mjs.
 #   powershell -ExecutionPolicy Bypass -File test\drive-models.ps1 -Shots <folder>
-param([string]$Shots = (Join-Path $PSScriptRoot 'shots'), [int]$Port = 8788)
+param([string]$Shots = (Join-Path $PSScriptRoot 'shots'), [int]$Port = 8788, [string]$Exe = '')
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
 Add-Type @'
@@ -51,7 +51,7 @@ $app = $null
 try {
   Start-Sleep -Seconds 1
   $env:JOSI_TEST_NO_BROWSER = '1'; $env:JOSI_SERVER_DATA = ''
-  $app = Start-Process (Join-Path (Split-Path $PSScriptRoot) 'bin\Release\net8.0-windows10.0.19041.0\Josi.exe') -PassThru
+  if (!$Exe) { $Exe = Join-Path (Split-Path $PSScriptRoot) 'bin\Release\net8.0-windows10.0.19041.0\Josi.exe' }; $app = Start-Process $Exe -PassThru
   do { Start-Sleep -Milliseconds 300; $app.Refresh() } while ($app.MainWindowHandle -eq 0 -and !$app.HasExited)
   $main = $A::FromHandle($app.MainWindowHandle)
   TypeInto $main 'https://josi.example.com' "http://localhost:$Port"
@@ -77,11 +77,13 @@ try {
   [Drive.Mouse]::mouse_event(2, 0, 0, 0, [IntPtr]::Zero); [Drive.Mouse]::mouse_event(4, 0, 0, 0, [IntPtr]::Zero)
   $wizard = Window 'Fallback Model'
   Capture $wizard 'm04-choose'
-  Click $wizard 'Claude subscription'; Click $wizard 'Continue'
+  Click $wizard 'More providers (14)'
+  Capture $wizard 'm04b-more'
+  Click $wizard 'Claude subscription'
   Start-Sleep -Seconds 2
   Capture $wizard 'm05-claude-connect'
   Click $wizard '1  Choose'
-  Click $wizard 'Anthropic API'; Click $wizard 'Continue'
+  Click $wizard 'Anthropic API'
   (Find $wizard 'API key' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('sk-ant-test-key')
   Capture $wizard 'm06-api-connect'
   Click $wizard 'Continue'

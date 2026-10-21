@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 
 namespace Josi.Native {
   /// Themed modal windows. Recovery dialogs cannot be dismissed until the user
@@ -139,17 +140,62 @@ namespace Josi.Native {
       sheet.ShowDialog();
     }
 
-    /// Invitation or password reset from a one-time link for the connected server.
+    /// Asks the server to email a password-reset link. The server answers the
+    /// same way whether or not the account exists.
+    public static void ForgotPassword(Window owner, AppModel model, string identifierText) {
+      var sheet = new Sheet(owner, "Forgot your password?", 520);
+      var identifier = Ui.Input("Username or email", identifierText ?? "");
+      var note = Ui.Secondary("");
+      var api = model.Api;
+      Action request = () => {
+        var value = identifier.Text.Trim();
+        if (value.Length == 0 || value.Length > 254 || api == null) { note.Text = "Enter your username or email."; return; }
+        note.Text = "";
+        model.Run(async () => {
+          await api.Request("/auth/forgot-password", "POST", Wires.O("identifier", value));
+          note.Text = "If that account exists and this server can send email, a reset link is on its way. Open it, or paste it under \"Have an invitation or reset link?\" on the sign-in page.";
+        });
+      };
+      identifier.KeyDown += (s, e) => { if (e.Key == Key.Enter) request(); };
+      var send = Ui.Pill("Send Reset Link", request, true);
+      send.IsDefault = true;
+      sheet.Body(Ui.Stack(14, Ui.Title2("Forgot your password?"),
+        Ui.T("Enter the username or email for your Josi account and the server will email you a reset link."),
+        Ui.Field("Username or email", identifier), send, note,
+        Ui.Caption("This needs email delivery set up on the server. If it is not, an administrator can create a reset link for you in People."),
+        Ui.Spread(Ui.Link("I already have a reset link", () => { sheet.Close(); PasswordSetup(owner, model); }), Ui.Pill("Close", () => sheet.Close()))));
+      sheet.Loaded += delegate { identifier.Focus(); };
+      sheet.ShowDialog();
+    }
+
+    /// Sets a password from an invitation or reset link for the connected server.
     public static void PasswordSetup(Window owner, AppModel model) {
       var sheet = new Sheet(owner, "Invitation or password reset", 560);
       var input = Ui.Input("Paste the one-time link or code");
-      var identifier = Ui.Input("Username or email");
-      var password = Ui.Secret("New password"); var confirmation = Ui.Secret("Confirm new password");
+      var password = new NewPassword("New password");
       var note = Ui.Secondary("");
       var token = ""; var inspected = Wire.Null;
       var api = model.Api;
       var host = new ContentControl { Focusable = false };
       Action render = null;
+      Action save = null;
+      save = () => {
+        if (!password.Valid) return;
+        var secret = password.Password; password.Clear(); var selected = token;
+        model.Run(async () => {
+          var result = await api.Request("/auth/set-password", "POST", Wires.O("token", selected, "password", secret, "signIn", false));
+          token = ""; inspected = Wire.Null;
+          if (!result["passwordChanged"].Flag) {
+            // Older servers may have created a session. Close it instead
+            // of treating password recovery as an authenticator bypass.
+            await api.Request("/auth/logout", "POST", Wires.O());
+            await api.PrimeCsrf();
+            note.Text = "The server completed password recovery. Close this panel and sign in normally.";
+          } else note.Text = "Password saved. Close this panel and sign in with your new password.";
+          render();
+        });
+      };
+      password.Submitted += () => save();
       render = () => {
         if (inspected.IsNull) {
           host.Content = Ui.Stack(12, Ui.T("Paste the one-time link or code you received for this server."), input,
@@ -165,44 +211,22 @@ namespace Josi.Native {
                 });
               } catch (JosiException e) { note.Text = e.Message; }
             }, true),
-            Ui.Headline("Need a reset link?"), identifier,
-            Ui.Pill("Request Reset Email", () => {
-              var value = identifier.Text.Trim();
-              if (value.Length == 0 || value.Length > 254) return;
-              model.Run(async () => {
-                await api.Request("/auth/forgot-password", "POST", Wires.O("identifier", value));
-                note.Text = "If the account exists and email delivery is configured, a reset link is on its way.";
-              });
-            }),
-            Ui.Caption("Email delivery must be configured on the server. Your administrator can also issue a reset link in People."));
+            Ui.Link("Need a reset link? Request one", () => { sheet.Close(); ForgotPassword(owner, model, ""); }));
         } else {
-          host.Content = Ui.Stack(12, Ui.Headline("Set a password for " + inspected["username"].Text),
-            Ui.Field("New password — at least 12 characters", password), Ui.Field("Confirm new password", confirmation),
-            Ui.Pill("Save Password", () => {
-              var secret = password.Password;
-              if (secret != confirmation.Password || secret.Length < 12 || secret.Length > 1024) { note.Text = "Enter matching passwords of at least 12 characters."; return; }
-              password.Clear(); confirmation.Clear(); var selected = token;
-              model.Run(async () => {
-                var result = await api.Request("/auth/set-password", "POST", Wires.O("token", selected, "password", secret, "signIn", false));
-                token = ""; inspected = Wire.Null;
-                if (!result["passwordChanged"].Flag) {
-                  // Older servers may have created a session. Close it instead
-                  // of treating password recovery as an authenticator bypass.
-                  await api.Request("/auth/logout", "POST", Wires.O());
-                  await api.PrimeCsrf();
-                  note.Text = "The server completed password recovery. Close this panel and sign in normally.";
-                } else note.Text = "Password saved. Close this panel and sign in with your new password.";
-                render();
-              });
-            }, true),
+          var saveButton = Ui.Pill("Save Password", save, true);
+          saveButton.IsEnabled = password.Valid;
+          password.Changed += delegate { saveButton.IsEnabled = password.Valid; };
+          Ui.Detach(password);
+          host.Content = Ui.Stack(12, Ui.Headline("Set a password for " + inspected["username"].Text), password, saveButton,
             Ui.Caption("Saving ends existing sign-ins. Sign in normally afterward; any enabled authenticator is still required."),
             Ui.Pill("Use Another Link", () => { token = ""; inspected = Wire.Null; render(); }));
+          Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() => password.Focus()), System.Windows.Threading.DispatcherPriority.Background);
         }
       };
       render();
       sheet.Body(Ui.Stack(16, Ui.Title2("Invitation or password reset"), host, note, Ui.Spread(null, Ui.Pill("Close", () => sheet.Close()))));
       sheet.ShowDialog();
-      password.Clear(); confirmation.Clear();
+      password.Clear();
     }
     static string ParseToken(string value, JosiApi api) {
       const string pattern = "^[A-Za-z0-9_-]{43}$";

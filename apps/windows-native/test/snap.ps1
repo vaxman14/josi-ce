@@ -1,7 +1,7 @@
-# Test helper: opens Josi against the development server, optionally clicks
-# buttons by accessible name, and saves a screenshot. No text is typed.
+﻿# Test helper: opens Josi against the development server, optionally clicks
+# buttons by accessible name, optionally types into edit boxes, and saves a screenshot.
 #   powershell -File test\snap.ps1 -Out shot.png -Click 'Open Josi','Continue'
-param([Parameter(Mandatory)][string]$Out, [string[]]$Click = @(), [int]$Wait = 3, [switch]$Keep)
+param([Parameter(Mandatory)][string]$Out, [string[]]$Click = @(), [int]$Wait = 3, [switch]$Keep, [string[]]$Type = @())
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
 Add-Type @'
@@ -29,6 +29,7 @@ foreach ($name in $Click) {
   $found.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
   Start-Sleep -Seconds $Wait
 }
+foreach ($entry in $Type) { $name, $text = $entry -split '=', 2; $e = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition((New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $name)), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit))))); if ($e) { $e.SetFocus(); Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait($text) } else { Write-Host "not found: $name" } }
 Start-Sleep -Milliseconds 800
 $r = New-Object SnapWin+R; [SnapWin]::GetWindowRect($h, [ref]$r) | Out-Null
 $bmp = New-Object System.Drawing.Bitmap ($r.Ri - $r.L), ($r.B - $r.T)

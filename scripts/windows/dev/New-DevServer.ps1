@@ -89,5 +89,10 @@ $repo = Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Pare
 $env:JOSI_DEV_DATA = $data
 Push-Location $repo
 try { & node (Join-Path $PSScriptRoot 'dev-bootstrap.mjs') $data; if ($LASTEXITCODE) { throw 'Database provisioning failed' } }
-finally { Pop-Location }
+finally {
+    Pop-Location
+    # Provisioning ran the database as this script's child. Stop it so
+    # Start-DevServer.ps1 starts it independently of this session.
+    & (Join-Path $pg 'pg_ctl.exe') -D $cluster -m fast -w stop | Out-Null
+}
 Write-Host "Development server data created in $data. Start it with Start-DevServer.ps1."

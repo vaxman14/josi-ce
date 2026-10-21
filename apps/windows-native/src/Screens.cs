@@ -94,12 +94,12 @@ namespace Josi.Native {
   public sealed class LoginView : UserControl, IRefresh {
     readonly AppModel model; readonly Window owner;
     readonly TextBox identifier = Ui.Input("Username or email");
-    readonly PasswordBox password = Ui.Secret("Password");
+    readonly PasswordInput password = new PasswordInput("Password");
     readonly PasswordBox code = Ui.Secret("Verification code");
     string shownChallenge;
     public LoginView(AppModel model, Window owner) {
       this.model = model; this.owner = owner;
-      password.KeyDown += (s, e) => { if (e.Key == Key.Enter) Submit(); };
+      password.Submitted += Submit;
       code.KeyDown += (s, e) => { if (e.Key == Key.Enter) Submit(); };
       Refresh();
       Loaded += delegate { identifier.Focus(); };
@@ -112,7 +112,9 @@ namespace Josi.Native {
       if (model.MfaChallenge.Length == 0) {
         Ui.Add(stack, Ui.Field("Username or email", identifier), 22);
         Ui.Add(stack, Ui.Field("Password", password), 14);
-        Ui.Add(stack, Ui.Link("Invitation or password reset…", () => { password.Clear(); Dialogs.PasswordSetup(owner, model); }), 10);
+        Ui.Add(stack, Ui.Row(18,
+          Ui.Link("Forgot password?", () => { password.Clear(); Dialogs.ForgotPassword(owner, model, identifier.Text.Trim()); }),
+          Ui.Link("Have an invitation or reset link?", () => { password.Clear(); Dialogs.PasswordSetup(owner, model); })), 10);
       } else {
         Ui.Add(stack, Ui.T("Enter your verification or recovery code."), 22);
         Ui.Add(stack, code, 12);
@@ -144,6 +146,9 @@ namespace Josi.Native {
     string provider = "";
     List<Wire> discovered = new List<Wire>();
     CheckBox enabled, recoverySaved;
+    NewPassword ownerPassword;
+    PasswordInput resumePassword;
+    Button createOwner;
     public SetupView(AppModel model, Window owner) { this.model = model; this.owner = owner; Refresh(); }
     string Step { get { return model.SetupState["nextStep"].Text; } }
     Wire ProviderEntry { get { return model.SetupState["providerCatalog"].List.FirstOrDefault(p => p["kind"].Text == provider) ?? Wire.Null; } }
@@ -221,13 +226,30 @@ namespace Josi.Native {
           if (model.SetupState["ownerExists"].Flag) {
             list.Add(Ui.T("Sign in to resume your existing owner account."));
             list.Add(Field("Username or email", "identifier"));
-            list.Add(Field("Password", "password", true));
-            list.Add(Ui.Pill("Sign In and Continue", () => Submit(Wires.O("resumeOwner", true, "identifier", Value("identifier"), "password", Value("password"))), true));
+            resumePassword = resumePassword ?? new PasswordInput("Password");
+            Ui.Detach(resumePassword);
+            list.Add(Ui.Field("Password", resumePassword));
+            list.Add(Ui.Pill("Sign In and Continue", () => {
+              var secret = resumePassword.Password; resumePassword.Clear();
+              Submit(Wires.O("resumeOwner", true, "identifier", Value("identifier"), "password", secret));
+            }, true));
           } else {
             list.Add(Field("Your name", "displayName")); list.Add(Field("Email", "email")); list.Add(Field("Username", "username"));
-            list.Add(Field("Password — at least 12 characters", "password", true));
-            list.Add(Ui.Pill("Create Account", () => Submit(Wires.O("displayName", Value("displayName"), "email", Value("email"), "username", Value("username"),
-              "password", Value("password"), "timezone", IanaZone())), true));
+            if (ownerPassword == null) {
+              ownerPassword = new NewPassword("Password");
+              ownerPassword.Changed += delegate { if (createOwner != null) createOwner.IsEnabled = ownerPassword.Valid; };
+            }
+            Ui.Detach(ownerPassword);
+            list.Add(ownerPassword);
+            var create = Ui.Pill("Create Account", () => {
+              if (!ownerPassword.Valid) return;
+              var secret = ownerPassword.Password; ownerPassword.Clear();
+              Submit(Wires.O("displayName", Value("displayName"), "email", Value("email"), "username", Value("username"),
+                "password", secret, "timezone", IanaZone()));
+            }, true);
+            create.IsEnabled = ownerPassword.Valid;
+            createOwner = create;
+            list.Add(create);
           }
           break;
         case "domain":
@@ -306,7 +328,11 @@ namespace Josi.Native {
       if (setupModel == null) {
         setupModel = new ModelSetupPanel(model, owner, new ModelEndpoints(true), "primary", Wire.Null,
           model.SetupState["providerCatalog"].List, null, async body => { await model.SetupStep("llm", body); return false; });
-        setupModel.MinHeight = 420;
+        // A fixed height tied to the window: long steps scroll inside the
+        // panel and Back/Continue stay visible at its bottom.
+        Action fit = () => setupModel.Height = Math.Max(420, owner.ActualHeight - 400);
+        owner.SizeChanged += delegate { fit(); };
+        fit();
       }
       return new UIElement[] { setupModel };
     }

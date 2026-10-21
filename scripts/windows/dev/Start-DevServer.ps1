@@ -18,6 +18,9 @@ $settings = Get-Content -Raw (Join-Path $data 'config\runtime.json') | ConvertFr
 $cluster = Join-Path $data 'database'
 $cli = Join-Path $Root 'cli'
 $node = (Get-Command node).Source
+if (!(Test-Path (Join-Path $Root 'python\python.exe'))) {
+    Write-Warning "Upload scanning needs the pinned Python in $(Join-Path $Root 'python'); uploads that require a scan will be refused."
+}
 
 function Start-Independent([string]$CommandLine, [string]$Directory) {
     # Hidden console (SW_HIDE): there is no window to close, and so no console
@@ -58,6 +61,11 @@ function Get-RoleEnvironment([string]$Role) {
         JOSI_WORKER_HEARTBEAT_FILE = (Join-Path $data 'state\worker-heartbeat'); CODEX_HOME = (Join-Path $data 'codex')
         JOSI_VOICE_HELPER_TOKEN_FILE = (Join-Path $data 'secrets\voice-control-token'); JOSI_VOICE_HELPER_PORT = '18082'
         TEMP = (Join-Path $data "temp\$Role"); TMP = (Join-Path $data "temp\$Role")
+        # Upload scanning through Windows AMSI (the registered antivirus), as
+        # in the installed services: pinned private Python plus the adapter.
+        JOSI_PYTHON_EXE = (Join-Path $Root 'python\python.exe')
+        JOSI_SCANNER_ADAPTER = (Join-Path $repo 'services\scanner\windows_amsi.py')
+        JOSI_SCANNER_TEMP = (Join-Path $data 'temp\scanner')
         # Same private profile layout as the installed services.
         USERPROFILE = $profile; HOME = $profile
         APPDATA = (Join-Path $profile 'AppData\Roaming'); LOCALAPPDATA = (Join-Path $profile 'AppData\Local')
@@ -110,7 +118,7 @@ try {
     }
 } finally { Pop-Location }
 
-$deadline = (Get-Date).AddSeconds(30)
+$deadline = (Get-Date).AddSeconds(90)
 while ($true) {
     try { $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "$($settings.publicUrl)api/onboarding/state"; break }
     catch { if ((Get-Date) -gt $deadline) { throw "The API did not answer; see $(Join-Path $data 'logs\web.err.log')" }; Start-Sleep -Milliseconds 500 }
