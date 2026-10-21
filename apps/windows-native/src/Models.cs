@@ -81,7 +81,7 @@ namespace Josi.Native {
     Uri claudePage;
     readonly TextBox claudeCode = Ui.Input("Paste the code from Claude's page");
     readonly PasswordBox manualToken = Ui.Secret("Claude subscription token");
-    bool openedChallenge, manual;
+    bool openedChallenge, manual, submitting;
     public event Action<Wire> StatusChanged;
     public bool SignedIn { get { return status["signedIn"].Flag; } }
 
@@ -216,11 +216,13 @@ namespace Josi.Native {
       if (claude != null) {
         if (claudePage == null) return; // stage text shows progress
         Ui.Detach(claudeCode);
+        var send = Ui.Pill("Continue", SubmitClaudeCode, true);
+        send.IsEnabled = !submitting; claudeCode.IsReadOnly = submitting;
         var card = new Border { Background = Ui.Raised, CornerRadius = new CornerRadius(12), Padding = new Thickness(18), Child = Ui.Stack(10,
           Ui.T("1. Sign in to Claude on Anthropic's page in your browser and approve access.", 14),
           Ui.T("2. Anthropic then shows a code. Copy it and paste it here:", 14),
           claudeCode,
-          Ui.Row(10, Ui.Pill("Continue", SubmitClaudeCode, true), Ui.Pill("Open Claude's Page Again", () => ModelText.Open(claudePage)), Ui.Caption(claudePage.Host))) };
+          Ui.Row(10, send, Ui.Pill("Open Claude's Page Again", () => ModelText.Open(claudePage)), Ui.Caption(claudePage.Host))) };
         Ui.Add(stack, card, 12);
         Ui.Add(stack, Ui.Pill("Cancel Sign-In", () => { CancelClaude(); stage = ""; Render(); }), 10);
         return;
@@ -267,11 +269,24 @@ namespace Josi.Native {
       });
       Dispatcher.BeginInvoke(new Action(() => claudeCode.Focus()), DispatcherPriority.Background);
     }
-    void SubmitClaudeCode() {
-      if (claude == null) return;
-      try { claude.SubmitCode(claudeCode.Text); claudeCode.Clear(); stage = "Waiting for Claude to issue the token…"; error = ""; }
-      catch (JosiException e) { error = e.Message; }
-      Render();
+    async void SubmitClaudeCode() {
+      var session = claude;
+      if (session == null || submitting) return;
+      var code = claudeCode.Text;
+      submitting = true; error = ""; stage = "Sending the code to Claude…"; Render();
+      try {
+        await session.SubmitCode(code);
+        claudeCode.Clear();
+        stage = "Waiting for Claude to issue the token…"; Render();
+        // A valid code finishes within seconds; otherwise say what Claude Code showed.
+        var done = await Task.WhenAny(session.Result, Task.Delay(TimeSpan.FromSeconds(20)));
+        if (done != session.Result && claude == session) {
+          var reply = session.ReplySinceSubmit();
+          error = "Claude did not accept the code" + (reply.Length > 0 ? ": " + reply : ".") +
+            " Copy the whole code from Claude's page (use its Copy button) and paste it again, or open the page again for a new code.";
+        }
+      } catch (JosiException e) { error = e.Message; }
+      finally { submitting = false; if (claude == session) stage = ""; Render(); }
     }
     async Task Finish(ClaudeSetupToken session) {
       string token;

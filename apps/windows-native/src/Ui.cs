@@ -237,17 +237,26 @@ namespace Josi.Native {
     public static void Placeholder(TextBox box, string text, Brush fill = null) {
       System.Windows.Automation.AutomationProperties.SetName(box, text);
       var surface = fill ?? Raised;
-      var size = box.FontSize;
       Action update = () => {
-        if (box.Text.Length == 0) box.Background = new VisualBrush {
-          Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top, Visual = new Border {
-            Background = surface, Child = new TextBlock { Text = text, FontFamily = Font, FontSize = size, Foreground = Muted,
-              Margin = new Thickness(box.Padding.Left + 2, box.Padding.Top + 1, 1000, 1000) }
-          }
-        };
+        var size = box.FontSize;
+        if (box.Text.Length == 0) {
+          // The hint starts where typed text starts: border, padding, then the
+          // text view's own 2-pixel inset. A drawing anchored at the box's
+          // corner keeps that offset; a brush visual would lose its margin.
+          var hint = new FormattedText(text, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+            new Typeface(Font, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal), size, Muted,
+            VisualTreeHelper.GetDpi(box).PixelsPerDip);
+          var drawing = new DrawingGroup();
+          drawing.Children.Add(new GeometryDrawing(surface, null, new RectangleGeometry(new Rect(0, 0, 4000, 400))));
+          drawing.Children.Add(new GeometryDrawing(Muted, null, hint.BuildGeometry(
+            new Point(box.BorderThickness.Left + box.Padding.Left + 2, box.BorderThickness.Top + box.Padding.Top))));
+          box.Background = new DrawingBrush(drawing) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top };
+        }
         else box.Background = surface;
       };
       box.TextChanged += delegate { update(); };
+      // Padding and font size come from the theme once the box is on screen.
+      box.Loaded += delegate { update(); };
       update();
     }
     public static CheckBox Toggle(string text, bool value = false) {

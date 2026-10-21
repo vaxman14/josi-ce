@@ -103,7 +103,7 @@ namespace Josi.Native {
     readonly StringBuilder output = new StringBuilder();
     readonly TaskCompletionSource<Uri> link = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly TaskCompletionSource<string> token = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-    int disposed;
+    int disposed, submittedAt = -1;
 
     public Task<Uri> SignInPage { get { return link.Task; } }
     /// Completes with the token, or faults with the CLI's own reason.
@@ -173,12 +173,26 @@ namespace Josi.Native {
       return string.Join(" ", kept);
     }
 
-    /// Sends the code from Anthropic's page, as typed by the person.
-    public void SubmitCode(string code) {
+    /// Sends the code from Anthropic's page, as typed by the person. Claude
+    /// Code treats a burst of input as a paste, so Enter follows separately;
+    /// when it has turned on bracketed paste, the code is marked as one.
+    public async Task SubmitCode(string code) {
       var value = (code ?? "").Trim();
       if (value.Length == 0 || value.Length > 2048 || Regex.IsMatch(value, @"[\x00-\x1f]")) throw new JosiException("Paste the code shown on Claude's page.");
-      console.Write(value);
+      string all;
+      lock (output) { all = output.ToString(); submittedAt = output.Length; }
+      var bracketed = all.LastIndexOf("\x1b[?2004h", StringComparison.Ordinal) > all.LastIndexOf("\x1b[?2004l", StringComparison.Ordinal);
+      console.Write(bracketed ? "\x1b[200~" + value + "\x1b[201~" : value);
+      await Task.Delay(700);
       console.Write("\r");
+    }
+
+    /// What Claude Code has shown since the code was sent, without the token,
+    /// so a rejected code is explained instead of silently waiting.
+    public string ReplySinceSubmit() {
+      string text;
+      lock (output) text = submittedAt < 0 || submittedAt > output.Length ? "" : output.ToString(submittedAt, output.Length - submittedAt);
+      return LastLines(Ansi.Replace(text, ""));
     }
 
     static string PrivateFolder() {
