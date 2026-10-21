@@ -209,6 +209,7 @@ struct NativePermissionEditor: View {
                                     Text("Observe").tag("browser.observe")
                                     Text("Navigate").tag("browser.navigate")
                                     Text("Fill").tag("browser.fill")
+                                    Text("Click or scroll (may change site data)").tag("browser.click")
                                     Text("Submit").tag("browser.submit")
                                     Text("Download").tag("browser.download")
                                     Text("Upload").tag("browser.upload")

@@ -409,10 +409,12 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     catch (err) { console.error('native integration availability check failed', (err as Error).message); }
   }
   const workspaceNames = capabilities.toolCalling ? await workspaceToolNames(db,userId) : new Set<string>();
-  // The stdio harness still needs its authenticated service transport. Do not
-  // advertise an in-process runtime to a different process that cannot use it.
+  // ChatGPT proposes structured steps for execution in this process. Claude's
+  // stdio harness cannot access the native runtime and remains excluded.
+  const callerSubscription = stored.provider === 'openai_subscription' && !!args.automationRuntime
+    && !!args.durableTurnId && !!args.durableLeaseToken;
   const automationTools = capabilities.toolCalling && args.durableTurnId && args.durableLeaseToken
-    && !['openai_subscription', 'anthropic_subscription'].includes(stored.provider)
+    && stored.provider !== 'anthropic_subscription'
     ? await automationToolAvailability(args.automationRuntime, userId) : [];
   // `approve_task` is only meaningful when this owner already has a generic
   // task waiting on them. Offering it on an ordinary request lets a model
@@ -529,9 +531,13 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   // is the most clear-cut violation of the three (there is no receipt
   // whatsoever to be wrong about) so it is checked first, below.
   let narratedSearchGuardReprompted = false;
+  let checkpointGuardReprompted = false;
   let pendingCapture: { reservationId: string; toolCallId: string } | null = null;
 
-  for (let hop = 0; hop < (args.maxHops ?? HOP_LIMIT); hop++) {
+  // A subscription proposes one tool at a time. Allow enough steps to own the
+  // goal, connect, navigate, inspect a photo, fill its field and checkpoint.
+  const hopLimit = args.maxHops ?? (callerSubscription ? 12 : HOP_LIMIT);
+  for (let hop = 0; hop < hopLimit; hop++) {
     if (args.workGoalId) {
       await requireWorkContinuation(db, { ownerUserId: userId, threadId: args.threadId,
         durableTurnId: args.durableTurnId, durableLeaseToken: args.durableLeaseToken }, true);
@@ -580,7 +586,9 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       outcome = await chat(
         args.registry,
         {
-          messages: providerMessages, system: system + workContext, tools, maxTokens: 1024,
+          messages: providerMessages, system: system + workContext + (callerSubscription
+            ? `\nThis run has ${hopLimit - hop} model responses left. Save verified progress and the next step with checkpoint_goal before ending. When only two responses remain, finish the current description if its photo is attached, then checkpoint; do not begin another photo. Unfinished work is not complete.` : ''), tools, maxTokens: 1024,
+          ...(callerSubscription ? { toolExecution: 'caller' as const } : {}),
           // For providers that execute tools OUT of process (the subscription
           // CLI harness): who is asking travels with the request, so the MCP
           // server enforces the same step-up gate this loop enforces below.
@@ -633,6 +641,15 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     }
 
     if (!res.toolCalls.length) {
+      if (!checkpointGuardReprompted && hop + 1 < hopLimit
+        && (args.workGoalId || actions.some(action => action.tool === 'own_goal'))
+        && !actions.some(action => ['checkpoint_goal', 'verify_goal'].includes(action.tool)
+          && action.result && typeof action.result === 'object' && !('error' in action.result))) {
+        checkpointGuardReprompted = true;
+        messages.push({ role: 'assistant', content: res.text });
+        messages.push({ role: 'user', content: 'Before ending this work segment, save its exact current state with checkpoint_goal. The original request remains sufficient; do not ask the person to repeat it. If automation is unavailable, call get_automation_workspaces now and save its specific setup blocker as the question. Otherwise preserve the unfinished next step. Do not claim progress without evidence or repeat an uncertain action.' });
+        continue;
+      }
       // ---- narrated search/read with ZERO tool calls this turn ----------
       // Checked FIRST and separately from the two guards below: a reply that
       // confidently describes running a search and reports specific results

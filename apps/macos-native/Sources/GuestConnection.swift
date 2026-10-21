@@ -1,299 +1,180 @@
 import AppKit
 import SwiftUI
-import Virtualization
-import Darwin
+@preconcurrency import ApplicationServices
+import Security
+import UniformTypeIdentifiers
 
-/// Paired connection on this exact VZ device. The single-command path needs
-/// protected local participation and an injected current server authorizer.
-/// It cannot export observation contents or register an agent runtime.
-@MainActor final class NativeGuestConnection: NSObject, ObservableObject, @preconcurrency VZVirtioSocketListenerDelegate {
-    @Published private(set) var state = "Waiting for the companion inside the desktop."
-    @Published private(set) var paired = false
-    @Published private(set) var accessibility = false
-    @Published private(set) var screenCapture = false
-    @Published private(set) var supportsExecution = false
+/// Local desktop connection. The server chooses canonical targets and reserves
+/// every operation; browser/page messages never create their own authority.
+@MainActor final class NativeGuestConnection: ObservableObject {
+    @Published private(set) var state = "Connected to this Mac"
+    @Published private(set) var paired = true
+    @Published private(set) var accessibility = AXIsProcessTrusted()
+    @Published private(set) var screenCapture = CGPreflightScreenCaptureAccess()
     @Published private(set) var applicationCandidate: Wire = .null
     @Published private(set) var applicationReadiness = ""
     @Published private(set) var browserCandidate: Wire = .null
     @Published private(set) var browserConnected = false
-    private let device: VZVirtioSocketDevice
+    let supportsExecution = true
     private let context: [String: String]
     private let current: @MainActor () throws -> Int
     private let resolveApplication: @MainActor (Wire) async throws -> Wire
     private let resolveBrowser: @MainActor (Wire) async throws -> Wire
     private let consentProjection: @MainActor () throws -> Wire
-    private let listener = VZVirtioSocketListener()
-    private var connection: VZVirtioSocketConnection?
-    private var wire: GuestLinkWire?
-    private var task: Task<Void, Never>?
-    private var timer: Task<Void, Never>?
-    private var pending: CheckedContinuation<Bool, Never>?
-    private var alert: NSAlert?
-    private var closed = false
-    private var attempts = 0
-    private var applicationTask: Task<Void, Never>?
+    private let onStop: @MainActor () -> Void
+    private let pairedBinding: Wire
+    private var closed = false, refreshing = false, executing = false, revoking = false
     private var applicationPin: Wire = .null
     private var browserPin: Wire = .null
-    private var browserTask: Task<Void, Never>?
-    private var supportsBrowserProfiles = false
-    private var supportsBrowserInspection = false
-    private var supportsSafariInspection = false
-    private var supportsFirefoxInspection = false
-    private var supportsChromeDraft = false
-    private var supportsChromeNetwork = false
-    private var pairedBinding: Wire = .null
-    private var sentConsent: Wire = .null
-    private var execution: GuestPendingExecution?
-    private var executionTimeout: Task<Void, Never>?
-    private var usedReservations = Set<String>()
+    private var prepared: GuestBrowserProfiles.Prepared?
+    private var discovery: GuestSafariDiscovery?
+    private var browserSession: GuestBrowserSession?
+    private var executor: GuestExecutionAuthority?
+    private var issued = Set<String>()
+    private var selectionGeneration = 0
 
-    init(device: VZVirtioSocketDevice, context: [String: String], current: @escaping @MainActor () throws -> Int,
+    init(context: [String: String], current: @escaping @MainActor () throws -> Int,
          resolveApplication: @escaping @MainActor (Wire) async throws -> Wire,
          resolveBrowser: @escaping @MainActor (Wire) async throws -> Wire,
-         consentProjection: @escaping @MainActor () throws -> Wire) {
-        self.device = device; self.context = context; self.current = current; self.resolveApplication = resolveApplication
-        self.consentProjection = consentProjection
-        self.resolveBrowser = resolveBrowser
-        super.init()
-        listener.delegate = self
-        device.setSocketListener(listener, forPort: GuestLinkWire.port)
-    }
-    func listener(_ listener: VZVirtioSocketListener, shouldAcceptNewConnection connection: VZVirtioSocketConnection,
-                  from socketDevice: VZVirtioSocketDevice) -> Bool {
-        guard !closed, socketDevice === device, listener === self.listener, self.connection == nil, attempts < 3 else { return false }
-        do {
-            _ = try current()
-            let wire = try GuestLinkWire(descriptor: connection.fileDescriptor, host: true)
-            attempts += 1; self.connection = connection; self.wire = wire
-            state = "Verifying the guest connection…"
-            task = Task { await run(wire) }
-            return true
-        } catch { return false }
-    }
-    private func hostBoot() throws -> String {
-        var bytes = [CChar](repeating: 0, count: 128), size = 128
-        guard sysctlbyname("kern.bootsessionuuid", &bytes, &size, nil, 0) == 0, (1...128).contains(size) else { throw GuestLinkError.unavailable }
-        let value = String(decoding: bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self).lowercased()
-        guard UUID(uuidString: value)?.uuidString.lowercased() == value else { throw GuestLinkError.invalid }
-        return value
-    }
-    private func ask(_ code: String, expires: Int) async -> Bool {
-        guard let parent = NSApp.windows.first(where: { $0.title == "Josi" }), pending == nil, !closed else { return false }
-        let alert = NSAlert()
-        alert.messageText = "Compare the companion code"
-        alert.informativeText = "\(code)\n\nCheck that this exact code appears in Josi Companion inside your separate desktop.\n\nServer: \(context["serverOrigin"] ?? "")\nWorkspace: \(context["workspaceId"] ?? "")\n\nConnecting reports permission readiness only. It grants no computer or browser automation."
-        alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "The Codes Match")
-        self.alert = alert
-        parent.makeKeyAndOrderFront(nil)
-        timer = Task {
-            try? await Task.sleep(for: .milliseconds(max(1, expires - Int(Date().timeIntervalSince1970 * 1000))))
-            if !Task.isCancelled { cancelQuestion() }
-        }
-        return await withCheckedContinuation { continuation in
-            pending = continuation
-            alert.beginSheetModal(for: parent) { [weak self] result in
-                guard let self, let waiting = pending else { return }
-                pending = nil; self.alert = nil; timer?.cancel(); timer = nil
-                waiting.resume(returning: result == .alertSecondButtonReturn && !closed)
-            }
-        }
-    }
-    private func cancelQuestion() {
-        timer?.cancel(); timer = nil
-        let waiting = pending; pending = nil
-        if let alert { alert.window.sheetParent?.endSheet(alert.window); alert.window.orderOut(nil) }
-        alert = nil; waiting?.resume(returning: false)
-    }
-    private func run(_ link: GuestLinkWire) async {
-        do {
-            let guest = try await link.receiveHello()
-            guard !closed, Set(guest.keys) == ["version", "role", "key", "channel", "guestBoot", "hostBoot"],
-                  guest["hostBoot"] == (try hostBoot()), let boot = guest["guestBoot"],
-                  UUID(uuidString: boot)?.uuidString.lowercased() == boot else { throw GuestLinkError.invalid }
-            _ = try current()
-            let expiry = Int(Date().timeIntervalSince1970 * 1000) + 60_000
-            var host = context
-            host["version"] = "1"; host["role"] = "host"; host["key"] = link.publicKey
-            host["channel"] = guest["channel"]; host["hostBoot"] = guest["hostBoot"]; host["expiresAtMs"] = String(expiry)
-            try await link.sendHello(host)
-            let code = try await link.configure(guest: guest, host: host)
-            state = "Compare and accept the code in both native windows."
-            guard await ask(code, expires: expiry), !closed else { throw GuestLinkError.closed }
-            _ = try current()
-            guard Int(Date().timeIntervalSince1970 * 1000) < expiry else { throw GuestLinkError.expired }
-            try await link.send(["kind": "accept", "code": code])
-            let accepted = try await link.receive(seconds: max(1, min(60, (expiry - Int(Date().timeIntervalSince1970 * 1000)) / 1000)))
-            guard accepted == ["kind": "accept", "code": code], !closed else { throw GuestLinkError.invalid }
-            _ = try current()
-            pairedBinding = ["guestBootId": .string(boot), "guestChannelId": .string(guest["channel"]!)]
-            paired = true; state = "Companion connected. Automation is not enabled."
-            while !Task.isCancelled && !closed {
-                // Send renewed target leases before a queued page load. A
-                // stale browser pin must not shorten its usable window to 1s.
-                refreshApplicationPin(); refreshBrowserPin()
-                await applicationTask?.value; await browserTask?.value
-                let until = try current()
-                let pin = currentApplicationPin(until: until)
-                let encoded = pin == .null ? "" : String(decoding: try JSONEncoder().encode(pin), as: UTF8.self)
-                let consent = try consentProjection()
-                let consentJSON = consent == .null ? "" : String(decoding: try JSONEncoder().encode(consent), as: UTF8.self)
-                var pulse = ["kind": "pulse", "leaseUntilMs": String(until), "applicationPin": encoded]
-                if supportsBrowserProfiles {
-                    let browser = currentBrowserPin(until: until)
-                    pulse["browserPin"] = browser == .null ? "" : String(decoding: try JSONEncoder().encode(browser), as: UTF8.self)
-                }
-                if supportsExecution { pulse["consent"] = consentJSON }
-                else if consent != .null { throw GuestLinkError.invalid }
-                try await link.send(pulse)
-                sentConsent = consent
-                let reply = try await link.receive()
-                _ = try current()
-                let statusKeys: Set<String> = ["kind", "accessibility", "screenCapture", "executionEnabled", "applicationCandidate", "applicationReadiness"]
-                guard (Set(reply.keys) == statusKeys || Set(reply.keys) == statusKeys.union(["executionProtocol"])
-                    || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate"])
-                    || Set(reply.keys) == statusKeys.union(["executionProtocol", "browserCandidate", "browserConnection"])),
-                      reply["kind"] == "status", reply["executionEnabled"] == "no",
-                      reply["executionProtocol"] == nil || ["desktop-command.1", "desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? ""),
-                      ["yes", "no"].contains(reply["accessibility"] ?? ""),
-                      ["yes", "no"].contains(reply["screenCapture"] ?? ""), let candidate = reply["applicationCandidate"],
-                      candidate.utf8.count <= 2500 else { throw GuestLinkError.invalid }
-                accessibility = reply["accessibility"] == "yes"; screenCapture = reply["screenCapture"] == "yes"
-                supportsExecution = ["desktop-command.2", "desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
-                supportsBrowserInspection = ["desktop-command.3", "desktop-command.4", "desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
-                supportsSafariInspection = ["desktop-command.4", "desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
-                supportsFirefoxInspection = ["desktop-command.5", "desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
-                supportsChromeDraft = ["desktop-command.6", "desktop-command.7"].contains(reply["executionProtocol"] ?? "")
-                supportsChromeNetwork = reply["executionProtocol"] == "desktop-command.7"
-                supportsBrowserProfiles = reply["browserCandidate"] != nil
-                guard reply["browserConnection"] == nil || ["connected", "waiting"].contains(reply["browserConnection"] ?? "")
-                else { throw GuestLinkError.invalid }
-                browserConnected = reply["browserConnection"] == "connected"
-                state = consent == .null ? "Companion connected. Inspection is not approved."
-                    : supportsChromeDraft ? "Companion connected. Permitted Chrome drafts are available." : "Companion connected. Inspection is approved; input is unavailable."
-                if candidate.isEmpty { applicationCandidate = .null }
-                else {
-                    let value = try JSONDecoder().decode(Wire.self, from: Data(candidate.utf8))
-                    guard ProtectedWire.exact(value, ["schemaVersion", "candidateId", "guestBootId", "kind", "label", "bundlePath",
-                                                     "bundleId", "signingId", "teamId", "codeHash"]),
-                          value["schemaVersion"].text == "1", value["kind"].text == "application",
-                          ProtectedWire.uuid(value["candidateId"]), value["guestBootId"].text == guest["guestBoot"],
-                          ProtectedWire.text(value["label"], max: 96), ProtectedWire.text(value["bundlePath"], max: 768),
-                          ProtectedWire.text(value["bundleId"], max: 200), ProtectedWire.text(value["signingId"], max: 200),
-                          (value["teamId"] == .string("") || ProtectedWire.text(value["teamId"], max: 64)),
-                          ProtectedWire.matches(value["codeHash"], "^(?:[a-f0-9]{40}|[a-f0-9]{64})$")
-                    else { throw GuestLinkError.invalid }
-                    applicationCandidate = value
-                }
-                if let raw = reply["browserCandidate"], !raw.isEmpty {
-                    guard raw.utf8.count <= 3000 else { throw GuestLinkError.invalid }
-                    let value = try JSONDecoder().decode(Wire.self, from: Data(raw.utf8))
-                    guard NativeBrowserTargetWire.candidate(value, guestBoot: boot, workspace: identity["workspaceId"].text) else { throw GuestLinkError.invalid }
-                    browserCandidate = value
-                } else { browserCandidate = .null }
-                applicationReadiness = ""
-                guard let rawReadiness = reply["applicationReadiness"], rawReadiness.utf8.count <= 512 else { throw GuestLinkError.invalid }
-                if !rawReadiness.isEmpty {
-                    let value = try JSONDecoder().decode(Wire.self, from: Data(rawReadiness.utf8))
-                    guard pin != .null, ProtectedWire.exact(value, ["requestId", "applicationId", "installationRevision", "state"]),
-                          value["requestId"] == pin["requestId"],
-                          value["applicationId"] == pin["projection"]["application"]["applicationId"],
-                          value["installationRevision"].text == String(pin["projection"]["application"]["installationRevision"].integer),
-                          ["running", "background", "not_running", "ambiguous", "changed"].contains(value["state"].text)
-                    else { throw GuestLinkError.invalid }
-                    if pin["candidateId"] == applicationCandidate["candidateId"],
-                       pin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) {
-                        applicationReadiness = value["state"].text
-                    }
-                }
-                refreshApplicationPin()
-                refreshBrowserPin()
-                if let execution { try await runExecution(execution, link: link) }
-                try await Task.sleep(for: .seconds(2))
-            }
-        } catch {
-            if !closed { state = "Companion disconnected or could not be verified. Reconnect inside the desktop." }
-        }
-        cancelQuestion(); paired = false; pairedBinding = .null; accessibility = false; screenCapture = false; supportsExecution = false; applicationCandidate = .null
-        browserCandidate = .null
-        browserConnected = false
-        browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
-        supportsBrowserInspection = false
-        supportsSafariInspection = false
-        supportsFirefoxInspection = false; supportsChromeDraft = false; supportsChromeNetwork = false
-        applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
-        cancelExecution(); sentConsent = .null
-        link.interrupt(); connection?.close(); connection = nil; wire = nil; task = nil
-    }
-    private func currentApplicationPin(until: Int) -> Wire {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        guard applicationPin["candidateId"] == applicationCandidate["candidateId"],
-              applicationPin["projection"]["expiresAtMs"].integer > now,
-              applicationPin["projection"]["expiresAtMs"].integer <= until else { return .null }
-        return applicationPin
-    }
-    private func refreshApplicationPin() {
-        guard !closed, paired, applicationTask == nil, applicationCandidate != .null else { return }
-        if applicationPin["candidateId"] == applicationCandidate["candidateId"],
-           applicationPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) + 9000 { return }
-        let selected = applicationCandidate
-        applicationTask = Task {
-            defer { if !Task.isCancelled { applicationTask = nil } }
-            do {
-                _ = try current()
-                let projection = try await resolveApplication(selected)
-                guard !Task.isCancelled, !closed, paired, applicationCandidate == selected else { return }
-                let until = try current()
-                guard projection != .null else { applicationPin = .null; return }
-                guard projection["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
-                      projection["expiresAtMs"].integer <= until else { throw GuestLinkError.expired }
-                let pin: Wire = ["requestId": .string(UUID().uuidString.lowercased()),
-                                 "candidateId": selected["candidateId"], "projection": projection]
-                guard try JSONEncoder().encode(pin).count <= 4096 else { throw GuestLinkError.invalid }
-                applicationPin = pin
-            } catch {
-                if !Task.isCancelled { applicationPin = .null; applicationReadiness = "" }
-            }
-        }
-    }
-    private func currentBrowserPin(until: Int) -> Wire {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        guard browserCandidate != .null, browserPin["candidateId"] == browserCandidate["candidateId"],
-              browserPin["projection"]["expiresAtMs"].integer > now,
-              browserPin["projection"]["expiresAtMs"].integer <= until,
-              currentApplicationPin(until: until)["projection"]["application"]["applicationId"] == browserCandidate["applicationId"]
-        else { return .null }
-        return browserPin
-    }
-    private func refreshBrowserPin() {
-        guard !closed, paired, supportsBrowserProfiles, browserTask == nil, browserCandidate != .null,
-              applicationPin["projection"]["application"]["applicationId"] == browserCandidate["applicationId"],
-              applicationPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) else { return }
-        if browserPin["candidateId"] == browserCandidate["candidateId"],
-           browserPin["projection"]["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) + 9000 { return }
-        let selected = browserCandidate
-        browserTask = Task {
-            defer { if !Task.isCancelled { browserTask = nil } }
-            do {
-                _ = try current()
-                let projection = try await resolveBrowser(selected)
-                guard !Task.isCancelled, !closed, paired, browserCandidate == selected else { return }
-                let until = try current()
-                guard projection != .null else { browserPin = .null; return }
-                guard projection["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
-                      projection["expiresAtMs"].integer <= until else { throw GuestLinkError.expired }
-                let pin: Wire = ["candidateId": selected["candidateId"], "projection": projection]
-                guard try JSONEncoder().encode(pin).count <= 4096 else { throw GuestLinkError.invalid }
-                browserPin = pin
-            } catch { if !Task.isCancelled { browserPin = .null } }
+         consentProjection: @escaping @MainActor () throws -> Wire,
+         stopped: @escaping @MainActor () -> Void) throws {
+        try GuestEnvironment.signedApplication()
+        self.context = context; self.current = current; self.resolveApplication = resolveApplication
+        self.resolveBrowser = resolveBrowser; self.consentProjection = consentProjection; onStop = stopped
+        pairedBinding = ["guestBootId": .string(try GuestEnvironment.identity().guest),
+                         "guestChannelId": .string(UUID().uuidString.lowercased())]
+        if let path = UserDefaults.standard.string(forKey: "desktop.selectedApplication") {
+            Task { [weak self] in try? await self?.select(URL(fileURLWithPath: path)) }
         }
     }
     var identity: Wire {
-        .object(Dictionary(uniqueKeysWithValues: ["serverId", "userId", "deviceId", "workspaceId"].map {
-            ($0, .string(context[$0] ?? ""))
-        }))
+        .object(Dictionary(uniqueKeysWithValues: ["serverId", "userId", "deviceId", "workspaceId"].map { ($0, .string(context[$0] ?? "")) }))
     }
-    /// UI discovery only. The session endpoint must resolve the selected ID
-    /// from the current canonical Vault before sending a pin to the guest.
+    private func wire<T: Encodable>(_ value: T) throws -> Wire { try JSONDecoder().decode(Wire.self, from: JSONEncoder().encode(value)) }
+    private func json(_ value: Wire) throws -> String { String(decoding: try JSONEncoder().encode(value), as: UTF8.self) }
+    private func pin() throws -> GuestPinnedApplication {
+        _ = try current()
+        guard !closed, applicationPin != .null,
+              applicationPin["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) else { throw GuestLinkError.expired }
+        return try JSONDecoder().decode(GuestPinnedApplication.self, from: JSONEncoder().encode(applicationPin["application"]))
+    }
+    func selectApplication() async throws {
+        _ = try current()
+        revokeAutomation()
+        guard let parent = NSApp.keyWindow else { throw GuestLinkError.unavailable }
+        let panel = NSOpenPanel()
+        panel.title = "Choose an app on this Mac"
+        panel.message = "Register this app’s signing identity, then choose the actions Josi may perform. Selecting it grants no access."
+        panel.allowedContentTypes = [.applicationBundle]; panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        let response = await withCheckedContinuation { continuation in
+            panel.beginSheetModal(for: parent) { continuation.resume(returning: $0) }
+        }
+        guard response == .OK, let url = panel.url else { return }
+        try await select(url)
+    }
+    private func select(_ url: URL) async throws {
+        _ = try current(); selectionGeneration += 1
+        let generation = selectionGeneration
+        let value = try await Self.inspectApplication(url, boot: pairedBinding["guestBootId"].text)
+        _ = try current()
+        guard !closed, generation == selectionGeneration else { throw GuestLinkError.closed }
+        revokeAutomation(); discovery?.stop(); discovery = nil; prepared = nil
+        applicationPin = .null; browserPin = .null; browserCandidate = .null
+        applicationCandidate = .object(value.mapValues(Wire.string))
+        UserDefaults.standard.set(url.path, forKey: "desktop.selectedApplication")
+        try await refresh()
+    }
+    func requestAccessibility() {
+        _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+        accessibility = AXIsProcessTrusted()
+    }
+    func requestCapture() { _ = CGRequestScreenCaptureAccess(); screenCapture = CGPreflightScreenCaptureAccess() }
+    func showApplication() throws {
+        let app = try pin()
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleId)
+        guard running.count == 1 else { throw GuestLinkError.unavailable }
+        try GuestDesktopEngine.verifyApplication(running[0], pin: app)
+        running[0].activate(options: [])
+    }
+    func refresh() async throws {
+        _ = try current()
+        guard !closed, !refreshing else { return }
+        refreshing = true; defer { refreshing = false }
+        accessibility = AXIsProcessTrusted(); screenCapture = CGPreflightScreenCaptureAccess()
+        guard applicationCandidate != .null else { return }
+        let selected = applicationCandidate, generation = selectionGeneration
+        let projection = try await resolveApplication(selected)
+        _ = try current()
+        guard !closed, selected == applicationCandidate, generation == selectionGeneration else { throw GuestLinkError.closed }
+        applicationPin = projection
+        guard projection != .null else { applicationReadiness = "unregistered"; return }
+        let app = try pin(), apps = NSRunningApplication.runningApplications(withBundleIdentifier: app.bundleId)
+        if apps.count == 1 {
+            do { try GuestDesktopEngine.verifyApplication(apps[0], pin: app); applicationReadiness = "running" }
+            catch { applicationReadiness = "changed"; revokeAutomation() }
+        } else { applicationReadiness = apps.isEmpty ? "not_running" : "ambiguous"; revokeAutomation() }
+        if let family = GuestBrowserProfiles.families[app.bundleId] {
+            if prepared == nil, let profile = UserDefaults.standard.string(forKey: "desktop.browserInstance." + family) {
+                prepared = try GuestBrowserProfiles.prepare(app, profile: profile)
+                browserCandidate = try wire(prepared!.candidate)
+            }
+            if let prepared {
+                browserPin = try await resolveBrowser(browserCandidate)
+                _ = try current()
+                if browserPin != .null {
+                    let canonical = try GuestBrowserProjection.resolve(json(["candidateId": browserCandidate["candidateId"], "projection": browserPin]),
+                        prepared: prepared, identity: context, application: app, leaseUntil: current())
+                    if let canonical {
+                        discovery?.stop(); discovery = nil
+                        if browserSession?.available != true {
+                            browserSession = try GuestBrowserSession(canonical, current: { [weak self] in
+                                guard let self, !self.closed else { throw GuestLinkError.closed }; _ = try self.current()
+                            }, status: { [weak self] in self?.browserConnected = $0 }, stopped: { [weak self] in self?.takeover() })
+                        }
+                        try await browserSession?.renew(canonical)
+                        executor?.browserConnection(browserSession)
+                    }
+                }
+            }
+            if let discovery, discovery.available { try await discovery.renew(until: current()) }
+        }
+        let consent = try consentProjection()
+        if consent != .null {
+            if executor == nil {
+                executor = GuestExecutionAuthority(host: context, guestBoot: pairedBinding["guestBootId"].text,
+                    channel: pairedBinding["guestChannelId"].text, current: { [weak self] in
+                        guard let self, !self.closed, try self.consentProjection() != .null else { throw GuestLinkError.closed }
+                        _ = try self.current()
+                    }, stopped: { [weak self] in self?.takeover() })
+            }
+            executor?.browserConnection(browserSession)
+            try executor?.adopt(json(consent), leaseUntil: current())
+        }
+    }
+    func connectBrowser() async throws {
+        revokeAutomation()
+        let app = try pin()
+        guard GuestBrowserProfiles.families[app.bundleId] != nil else { throw GuestLinkError.invalid }
+        let setup = try GuestBrowserProfiles.prepare(app, profile: UUID().uuidString.lowercased())
+        guard try GuestBrowserProfiles.enableBridge(setup) else {
+            GuestBrowserProfiles.bridgeSettings()
+            throw JosiError(message: "Allow Josi’s browser connection in Login Items, then select Connect Browser again.")
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([setup.extensionFolder])
+        if prepared != nil, browserPin != .null { try await refresh(); state = "Open the Josi extension and attach the tab you want to use."; return }
+        discovery?.stop()
+        discovery = try GuestSafariDiscovery(pin: app, current: { [weak self] in
+            guard let self, !self.closed else { throw GuestLinkError.closed }; _ = try self.current()
+        }, found: { [weak self] value in
+            guard let self else { return }
+            self.prepared = value; self.browserCandidate = (try? self.wire(value.candidate)) ?? .null
+            UserDefaults.standard.set(value.candidate.nativeProfileId, forKey: "desktop.browserInstance." + value.candidate.family)
+            self.state = "Browser identified. Register it below, configure its sites, then attach your tab."
+        })
+        try await discovery?.renew(until: current())
+        state = "Install the packaged extension in your existing browser, then choose Attach This Tab."
+    }
     static func matchingApplications(_ candidate: Wire, identity: Wire, registry: Wire) -> [Wire] {
         guard candidate != .null, !registry["reconciliationRequired"].flag else { return [] }
         return registry["applications"].list.filter { target in
@@ -324,208 +205,102 @@ import Darwin
     func requireBrowserSelection(_ change: Wire, registry: Wire) throws {
         guard try browserRegistration(registry: registry) == change else { throw GuestLinkError.invalid }
     }
-    func consentBinding() throws -> Wire {
-        _ = try current()
-        guard !closed, paired, pairedBinding != .null else { throw GuestLinkError.closed }
-        return pairedBinding
-    }
+
+    func consentBinding() throws -> Wire { _ = try current(); guard !closed else { throw GuestLinkError.closed }; return pairedBinding }
     func controlSelection() throws -> Wire {
-        let until = try current(), pin = currentApplicationPin(until: until)
-        guard !closed, paired, supportsExecution, accessibility, applicationReadiness == "running",
-              pin != .null, pin["candidateId"] == applicationCandidate["candidateId"]
-        else { throw GuestLinkError.unavailable }
-        let app = pin["projection"]["application"]
-        var result: [String: Wire] = ["applicationId": app["applicationId"], "installationRevision": app["installationRevision"]]
-        if ["com.google.Chrome", "com.brave.Browser", "org.mozilla.firefox", "com.apple.Safari"].contains(app["bundleId"].text) {
-            let browser = currentBrowserPin(until: until)["projection"]["browser"]
-            guard browserConnected, supportsBrowserInspection, browser != .null, browser["candidate"]["applicationId"] == app["applicationId"],
-                  ["chrome", "brave", "safari", "firefox"].contains(browser["candidate"]["family"].text),
-                  browser["candidate"]["family"] != .string("safari") || supportsSafariInspection,
-                  browser["candidate"]["family"] != .string("firefox") || supportsFirefoxInspection else { throw GuestLinkError.unavailable }
-            result["browser"] = ["profileId": browser["profileId"], "family": browser["candidate"]["family"]]
-        }
-        return .object(result)
+        let app = try pin()
+        guard paired, applicationReadiness == "running" else { throw GuestLinkError.unavailable }
+        var value: [String: Wire] = ["applicationId": .string(app.applicationId.uuidString.lowercased()), "installationRevision": .number(Double(app.installationRevision))]
+        if GuestBrowserProfiles.families[app.bundleId] != nil {
+            guard browserConnected, browserPin["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000) else { throw GuestLinkError.unavailable }
+            value["browser"] = ["profileId": browserPin["browser"]["profileId"], "family": browserCandidate["family"]]
+        } else { guard accessibility else { throw GuestLinkError.unavailable } }
+        return .object(value)
     }
-    /// Internal server-bridge entry only. No renderer, tool or arbitrary JSON
-    /// endpoint may supply the authorizer. There is deliberately no default.
-    func execute(_ packet: Wire, network: NativeBrowserNetworkRelay? = nil,
-                 authorize: @escaping @MainActor (Wire) async throws -> Wire) async throws -> Wire {
-        _ = try current()
-        guard paired, supportsExecution, !closed, execution == nil, let link = wire,
+    func execute(_ packet: Wire, authorize: @escaping @MainActor (Wire) async throws -> Wire) async throws -> Wire {
+        _ = try controlSelection()
+        guard !executing, let executor, executor.approved,
               ProtectedWire.exact(packet, ["reservationId", "command", "commandJSON", "application"]),
-              ProtectedWire.uuid(packet["reservationId"]), usedReservations.count < 4096,
-              !usedReservations.contains(packet["reservationId"].text) else { throw GuestLinkError.unavailable }
+              ProtectedWire.uuid(packet["reservationId"]), !issued.contains(packet["reservationId"].text), issued.count < 4096,
+              try JSONDecoder().decode(Wire.self, from: Data(packet["commandJSON"].text.utf8)) == packet["command"],
+              packet["application"] == applicationPin["application"] else { throw GuestLinkError.invalid }
+        executing = true; issued.insert(packet["reservationId"].text); defer { executing = false }
         let consent = try consentProjection()
-        guard consent != .null, case .string(let commandJSON) = packet["commandJSON"], commandJSON.utf8.count <= 4096,
-              try JSONDecoder().decode(Wire.self, from: Data(commandJSON.utf8)) == packet["command"]
-        else { throw GuestLinkError.unavailable }
-        usedReservations.insert(packet["reservationId"].text)
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                let request = GuestPendingExecution(packet: packet, consent: consent, network: network, authorize: authorize, continuation: continuation)
-                execution = request
-                executionTimeout = Task { [weak self] in
-                    let now = Int(Date().timeIntervalSince1970 * 1000)
-                    try? await Task.sleep(for: .milliseconds(max(1, min(10_000, packet["command"]["expiresAtMs"].integer - now))))
-                    guard !Task.isCancelled, let self, self.execution === request else { return }
-                    self.cancelExecution(); link.interrupt()
-                }
-            }
-        } onCancel: {
-            Task { @MainActor [weak self] in self?.cancelExecution(); link.interrupt() }
-        }
+        guard consent != .null else { throw GuestLinkError.expired }
+        var box = "", publicKey = "", digest = "", count = 0, chunks = 0
+        let result = try await executor.execute(["kind": "execute", "reservationId": packet["reservationId"].text,
+            "command": packet["commandJSON"].text, "application": try json(packet["application"]),
+            "consentDigest": consent["authority"]["consent"]["digest"].text], authorize: { query in
+                _ = try self.current()
+                guard self.executor === executor, try self.consentProjection() != .null else { throw GuestLinkError.closed }
+                let value = try await authorize(.object(query.mapValues(Wire.string)))
+                guard case .object(let fields) = value, fields.values.allSatisfy({ if case .string = $0 { return true }; return false }) else { throw GuestLinkError.invalid }
+                return fields.mapValues(\.text)
+            }, projected: { chunk in
+                guard chunk["commandId"] == packet["command"]["id"].text, chunk["reservationId"] == packet["reservationId"].text,
+                      chunk["index"] == String(chunks), let total = Int(chunk["count"] ?? ""), (1...29).contains(total),
+                      let key = chunk["publicKey"], let hash = chunk["digest"], let piece = chunk["data"], piece.utf8.count <= 3072 else { throw GuestLinkError.invalid }
+                if chunks == 0 { count = total; publicKey = key; digest = hash }
+                guard total == count, key == publicKey, hash == digest, chunks < total else { throw GuestLinkError.invalid }
+                box += piece; chunks += 1
+                guard box.utf8.count <= 87420 else { throw GuestLinkError.invalid }
+            })
+        _ = try current()
+        guard self.executor === executor, try consentProjection() != .null else { throw GuestLinkError.closed }
+        var wire = result.mapValues(Wire.string)
+        if result["outcome"] == "projected" {
+            guard chunks > 0, chunks == count, ProtectedWire.digest(Data(box.utf8)) == digest else { throw GuestLinkError.invalid }
+            wire["projection"] = ["box": .string(box), "publicKey": .string(publicKey)]
+        } else { guard chunks == 0 else { throw GuestLinkError.invalid } }
+        return .object(wire)
     }
+    private func takeover() { guard !revoking, !closed else { return }; revokeAutomation(); onStop() }
     func revokeAutomation() {
-        if sentConsent != .null || execution != nil { wire?.interrupt() }
-        cancelExecution(); sentConsent = .null
-    }
-    private func cancelExecution() {
-        executionTimeout?.cancel(); executionTimeout = nil
-        let request = execution; execution = nil
-        request?.network?.stop()
-        request?.continuation.resume(throwing: GuestLinkError.closed)
-    }
-    private func requireExecution(_ request: GuestPendingExecution) throws {
-        let until = try current(), consent = try consentProjection(), c = request.packet["command"]
-        guard !closed, paired, execution === request, consent != .null, sentConsent != .null,
-              ["identity", "authority", "guestBootId", "guestChannelId", "generation", "expiresAtMs"]
-                .allSatisfy({ consent[$0] == request.consent[$0] && consent[$0] == sentConsent[$0] }),
-              c["workspaceId"] == identity["workspaceId"], c["generation"] == consent["generation"],
-              ProtectedWire.uuid(c["id"]), ProtectedWire.uuid(c["taskId"]), ProtectedWire.uuid(c["sessionId"]),
-              ProtectedWire.integer(c["expiresAtMs"]), c["expiresAtMs"].integer > Int(Date().timeIntervalSince1970 * 1000),
-              c["expiresAtMs"].integer <= until, c["expiresAtMs"].integer <= consent["leaseUntilMs"].integer,
-              ["observe", "project", "press", "focus", "click", "draft", "navigate"].contains(c["operation"].text),
-              currentApplicationPin(until: until)["projection"]["application"] == request.packet["application"],
-              c["appId"] == request.packet["application"]["applicationId"],
-              c["installationRevision"] == request.packet["application"]["installationRevision"]
-        else { throw GuestLinkError.expired }
-        if c["operation"] == .string("draft"), !supportsChromeDraft { throw GuestLinkError.unavailable }
-        if c["network"] != .null, !supportsChromeNetwork { throw GuestLinkError.unavailable }
-        if c["browser"] != .null {
-            let browser = currentBrowserPin(until: until)["projection"]["browser"]
-            guard browserConnected, supportsBrowserInspection, browser != .null, c["browser"]["profileId"] == browser["profileId"],
-                  c["browser"]["family"] == browser["candidate"]["family"] else { throw GuestLinkError.expired }
-        }
-    }
-    private func runExecution(_ request: GuestPendingExecution, link: GuestLinkWire) async throws {
-        try requireExecution(request)
-        let c = request.packet["command"], reservation = request.packet["reservationId"].text
-        let rawCommand = request.packet["commandJSON"].text
-        let rawApplication = String(decoding: try JSONEncoder().encode(request.packet["application"]), as: UTF8.self)
-        var outgoing = ["kind": "execute", "reservationId": reservation, "command": rawCommand, "application": rawApplication,
-                        "consentDigest": request.consent["authority"]["consent"]["digest"].text]
-        if let network = request.network { outgoing["networkSecret"] = network.encodedSecret; outgoing["networkChannel"] = network.channel }
-        try await link.send(outgoing)
-        var response = try await link.receive()
-        var authorized = false
-        if response["kind"] == "authorize" {
-            try requireExecution(request)
-            guard Set(response.keys) == ["kind", "commandId", "reservationId", "commandDigest", "target", "targetDigest", "consentDigest"],
-                  response["commandId"] == c["id"].text, response["reservationId"] == reservation,
-                  response["commandDigest"] == ProtectedWire.digest(Data(rawCommand.utf8)),
-                  response["consentDigest"] == request.consent["authority"]["consent"]["digest"].text,
-                  let targetJSON = response["target"], targetJSON.utf8.count <= 4096,
-                  response["targetDigest"] == ProtectedWire.digest(Data(targetJSON.utf8)) else { throw GuestLinkError.invalid }
-            let target = try JSONDecoder().decode(Wire.self, from: Data(targetJSON.utf8))
-            if c["browser"] != .null {
-                let browser = currentBrowserPin(until: try current())["projection"]["browser"]
-                guard ProtectedWire.exact(target, ["kind", "profileId", "nativeProfileId", "family", "extensionId", "extensionDigest",
-                    "processId", "launchedAtMs", "codeHash", "origin"]),
-                      target["kind"] == .string("browser"), target["profileId"] == browser["profileId"],
-                      ["nativeProfileId", "family", "extensionId", "extensionDigest"].allSatisfy({ target[$0] == browser["candidate"][$0] }),
-                      target["codeHash"] == request.packet["application"]["codeHash"], target["origin"] == c["browser"]["origin"],
-                      ProtectedWire.integer(target["processId"], positive: true), ProtectedWire.integer(target["launchedAtMs"], positive: true)
-                else { throw GuestLinkError.invalid }
-            } else {
-                guard ProtectedWire.exact(target, ["processId", "launchedAt", "bundleId", "executablePath", "windowTitle", "bounds"]),
-                  ProtectedWire.integer(target["processId"], positive: true), target["windowTitle"] == .string(""),
-                  target["bundleId"] == request.packet["application"]["bundleId"],
-                  target["executablePath"].text.hasPrefix(request.packet["application"]["bundlePath"].text + "/")
-                else { throw GuestLinkError.invalid }
-            }
-            let query = Wire.object(response.mapValues(Wire.string))
-            let permit = try await request.authorize(query)
-            try requireExecution(request)
-            guard ProtectedWire.exact(permit, ["kind", "commandId", "reservationId", "commandDigest", "targetDigest", "consentDigest", "expiresAtMs"]),
-                  permit["kind"] == .string("permit"), ["commandId", "reservationId", "commandDigest", "targetDigest", "consentDigest"]
-                    .allSatisfy({ permit[$0] == query[$0] }),
-                  case .string(let rawUntil) = permit["expiresAtMs"], let until = Int(rawUntil), String(until) == rawUntil,
-                  until > Int(Date().timeIntervalSince1970 * 1000), until == c["expiresAtMs"].integer,
-                  case .object(let fields) = permit else { throw GuestLinkError.invalid }
-            try await link.send(fields.mapValues(\.text))
-            authorized = true
-            response = try await link.receive()
-        }
-        var encrypted = "", recipient = "", contentDigest = "", chunkCount = 0, chunkIndex = 0
-        while response["kind"] == "projection" {
-            try requireExecution(request)
-            guard authorized, c["operation"] == .string("project"), chunkIndex < 29,
-                  Set(response.keys) == ["kind", "commandId", "reservationId", "index", "count", "publicKey", "digest", "data"],
-                  response["commandId"] == c["id"].text, response["reservationId"] == reservation,
-                  response["index"] == String(chunkIndex), let count = Int(response["count"] ?? ""), (1...29).contains(count),
-                  response["count"] == String(count), let piece = response["data"], !piece.isEmpty, piece.utf8.count <= 3072,
-                  let key = response["publicKey"], let raw = Data(base64Encoded: key), raw.count == 32,
-                  raw.base64EncodedString() == key, let digest = response["digest"],
-                  digest.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw GuestLinkError.invalid }
-            if chunkIndex == 0 { recipient = key; contentDigest = digest; chunkCount = count }
-            guard recipient == key, contentDigest == digest, chunkCount == count, chunkIndex < count,
-                  chunkIndex == count - 1 || piece.utf8.count == 3072 else { throw GuestLinkError.invalid }
-            encrypted += piece; chunkIndex += 1
-            guard encrypted.utf8.count <= 87_420 else { throw GuestLinkError.invalid }
-            response = try await link.receive()
-        }
-        guard Set(response.keys) == ["kind", "commandId", "reservationId", "outcome", "verificationRequired", "observationId", "windowId"],
-              response["kind"] == "result", response["commandId"] == c["id"].text, response["reservationId"] == reservation,
-              response["verificationRequired"] == "yes", ["observed", "projected", "inputIssued", "filled", "denied", "uncertain"].contains(response["outcome"] ?? "")
-        else { throw GuestLinkError.invalid }
-        if ["observed", "projected", "inputIssued", "filled"].contains(response["outcome"] ?? ""), !authorized { throw GuestLinkError.invalid }
-        if response["outcome"] == "observed" {
-            guard ["observe", "navigate"].contains(c["operation"].text), response["observationId"] == c["resultObservationId"].text,
-                  ProtectedWire.uuid(.string(response["windowId"] ?? "")) else { throw GuestLinkError.invalid }
-        } else if response["outcome"] == "projected" {
-            guard c["operation"] == .string("project"), chunkIndex > 0, chunkIndex == chunkCount,
-                  response["observationId"] == c["resultObservationId"].text, response["windowId"] == c["windowId"].text,
-                  let box = Data(base64Encoded: encrypted), box.base64EncodedString() == encrypted,
-                  ProtectedWire.digest(Data(encrypted.utf8)) == contentDigest else { throw GuestLinkError.invalid }
-        } else {
-            if response["outcome"] == "filled", c["operation"] != .string("draft") { throw GuestLinkError.invalid }
-            guard response["observationId"] == "", response["windowId"] == "",
-                  response["outcome"] != "inputIssued" || c["operation"] != .string("observe") else { throw GuestLinkError.invalid }
-        }
-        try requireExecution(request)
-        execution = nil; executionTimeout?.cancel(); executionTimeout = nil
-        request.network?.stop()
-        guard response["outcome"] == "projected" || chunkIndex == 0 else { throw GuestLinkError.invalid }
-        var result = response.mapValues(Wire.string)
-        if response["outcome"] == "projected" { result["projection"] = .object(["publicKey": .string(recipient), "box": .string(encrypted)]) }
-        request.continuation.resume(returning: .object(result))
-        if response["outcome"] == "uncertain" { revokeAutomation(); link.interrupt() }
+        guard !revoking else { return }
+        revoking = true; defer { revoking = false }
+        let previous = executor; executor = nil; previous?.stop()
+        browserSession?.stop(); browserSession = nil; browserConnected = false
     }
     func close() {
-        guard !closed else { return }
-        closed = true; cancelQuestion(); wire?.interrupt(); connection?.close()
-        cancelExecution(); sentConsent = .null
-        device.removeSocketListener(forPort: GuestLinkWire.port)
-        task?.cancel(); task = nil; wire = nil; connection = nil
-        applicationTask?.cancel(); applicationTask = nil; applicationPin = .null; applicationReadiness = ""
-        paired = false; pairedBinding = .null; supportsExecution = false; applicationCandidate = .null; browserCandidate = .null; state = "Companion disconnected."
-        browserConnected = false
-        browserTask?.cancel(); browserTask = nil; browserPin = .null; supportsBrowserProfiles = false
-        supportsBrowserInspection = false
-        supportsSafariInspection = false
-        supportsFirefoxInspection = false
+        guard !closed else { return }; closed = true; paired = false; selectionGeneration += 1
+        revokeAutomation(); discovery?.stop(); discovery = nil
+        applicationPin = .null; browserPin = .null; state = "Disconnected"
     }
-}
-
-@MainActor private final class GuestPendingExecution {
-    let packet: Wire
-    let consent: Wire
-    let network: NativeBrowserNetworkRelay?
-    let authorize: @MainActor (Wire) async throws -> Wire
-    let continuation: CheckedContinuation<Wire, Error>
-    init(packet: Wire, consent: Wire, network: NativeBrowserNetworkRelay?, authorize: @escaping @MainActor (Wire) async throws -> Wire,
-         continuation: CheckedContinuation<Wire, Error>) {
-        self.packet = packet; self.consent = consent; self.network = network; self.authorize = authorize; self.continuation = continuation
+    private nonisolated static func inspectApplication(_ selected: URL, boot: String) async throws -> [String: String] {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let url = selected.resolvingSymlinksInPath().standardizedFileURL
+                    guard url.isFileURL, url.pathExtension == "app", url.path.utf8.count <= 768,
+                          let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier,
+                          !["com.apple.systempreferences", "com.apple.systemsettings", "com.apple.securityagent", "com.apple.loginwindow", "com.apple.keychainaccess"].contains(identifier.lowercased()),
+                          !identifier.lowercased().hasPrefix("com.heyjosi."), !identifier.lowercased().hasPrefix("com.socalreceptionist.josi"),
+                          let executable = bundle.executableURL, executable.resolvingSymlinksInPath().path.hasPrefix(url.path + "/") else {
+                        throw GuestLinkError.invalid
+                    }
+                    var code: SecStaticCode?, requirement: SecRequirement?
+                    guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
+                          SecRequirementCreateWithString("anchor apple generic" as CFString, [], &requirement) == errSecSuccess, let requirement,
+                          SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSStrictValidate), requirement) == errSecSuccess else { throw GuestLinkError.invalid }
+                    var information: CFDictionary?
+                    guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+                          let info = information as? [String: Any], let signing = info[kSecCodeInfoIdentifier as String] as? String,
+                          let hash = info[kSecCodeInfoUnique as String] as? Data, [20, 32].contains(hash.count) else { throw GuestLinkError.invalid }
+                    let team = info[kSecCodeInfoTeamIdentifier as String] as? String ?? ""
+                    let label = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                        ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String ?? url.deletingPathExtension().lastPathComponent
+                    let value = ["schemaVersion": "1", "candidateId": UUID().uuidString.lowercased(), "guestBootId": boot,
+                                 "kind": "application", "label": label, "bundlePath": url.path, "bundleId": identifier,
+                                 "signingId": signing, "teamId": team, "codeHash": hash.map { String(format: "%02x", $0) }.joined()]
+                    for (name, limit) in [("label", 96), ("bundleId", 200), ("signingId", 200), ("teamId", 64), ("bundlePath", 768)] {
+                        guard let text = value[name], (name == "teamId" || !text.isEmpty), text.trimmingCharacters(in: .whitespacesAndNewlines) == text, text.utf8.count <= limit,
+                              text.range(of: "[\\x{0000}-\\x{001f}\\x{007f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]", options: .regularExpression) == nil else { throw GuestLinkError.invalid }
+                    }
+                    guard try GuestLinkWire.encode(value).count <= 2500 else { throw GuestLinkError.invalid }
+                    continuation.resume(returning: value)
+                } catch { continuation.resume(throwing: GuestLinkError.unavailable) }
+            }
+        }
     }
 }
 
@@ -533,45 +308,34 @@ struct NativeGuestConnectionView: View {
     @EnvironmentObject var model: JosiModel
     @ObservedObject var connection: NativeGuestConnection
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(connection.state).font(.caption)
-            if connection.paired {
-                Text("Guest Accessibility: \(connection.accessibility ? "ready" : "not enabled") · Screen capture: \(connection.screenCapture ? "ready" : "not enabled")")
-                    .font(.caption).foregroundStyle(.secondary)
-                let registered = model.automationSettings["targets"]
-                if let change = try? connection.registration(expected: registered["reference"]), registered != .null,
-                   !registered["reconciliationRequired"].flag {
-                    let candidate = change["candidate"]
-                    if !NativeGuestConnection.matchingApplications(candidate, identity: connection.identity, registry: registered).isEmpty {
-                        Text(candidate["label"].text + " is registered. Configure its permissions in Automation Settings.").font(.caption)
-                        Text(readinessText).font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text("Selected guest app: " + candidate["label"].text).font(.headline)
-                        Text(candidate["bundlePath"].text).font(.caption).textSelection(.enabled)
-                        Text("Saving registers the app in the Vault and closes this development desktop. Reopen it after configuring permissions.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        NativeProtectedChange(title: "Register This App…", change: change,
-                            checkSelection: { try connection.requireSelection(change) },
-                            requiredDevice: change["identity"]["deviceId"].text)
-                    }
+            HStack {
+                Button("Choose App…") { model.run { try await connection.selectApplication() } }
+                Button("Refresh Connection") { model.run { try await connection.refresh() } }
+            }.disabled(model.busy)
+            HStack {
+                Text("Accessibility: \(connection.accessibility ? "enabled" : "needed for app control")")
+                if !connection.accessibility { Button("Enable Accessibility…") { connection.requestAccessibility() } }
+                if !connection.screenCapture { Button("Enable Screen Capture…") { connection.requestCapture() } }
+            }.font(.caption)
+            let registry = model.automationSettings["targets"]
+            if let change = try? connection.registration(expected: registry["reference"]), registry != .null,
+               !registry["reconciliationRequired"].flag {
+                Text(change["candidate"]["label"].text).font(.headline)
+                if NativeGuestConnection.matchingApplications(change["candidate"], identity: connection.identity, registry: registry).isEmpty {
+                    Text("Register this app, then set its permissions below. Saving ends the current connection.").font(.caption)
+                    NativeProtectedChange(title: "Register This App…", change: change,
+                        checkSelection: { try connection.requireSelection(change) }, requiredDevice: change["identity"]["deviceId"].text)
                 } else {
-                    Text("Choose an app in Josi Companion to configure its permissions here.").font(.caption)
+                    Text("Registered · \(connection.applicationReadiness.replacingOccurrences(of: "_", with: " "))").font(.caption)
+                    if GuestBrowserProfiles.families[change["candidate"]["bundleId"].text] != nil {
+                        Button("Connect Browser Extension…") { model.run { try await connection.connectBrowser() } }.disabled(model.busy)
+                        Text("Use your existing browser. Load the extension from the folder Josi opens, then attach a tab using its toolbar button.").font(.caption)
+                        NativeBrowserRegistrationView(connection: connection)
+                    }
                 }
-                NativeBrowserRegistrationView(connection: connection)
-            } else {
-                Text("Inside the desktop, copy Josi Companion from the Josi Support disk into Applications, then open it and choose Connect to Josi.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-        }
-    }
-    private var readinessText: String {
-        switch connection.applicationReadiness {
-        case "running": return "The running app matches its saved identity."
-        case "not_running": return "Open this app inside the separate desktop when you are ready to use it."
-        case "background": return "Bring this app’s window to the front inside the separate desktop before approving inspection."
-        case "ambiguous": return "More than one copy is running. Leave only the intended copy open."
-        case "changed": return "This running app does not match its saved identity. Select and register the current installation."
-        default: return "Checking the selected app against its saved identity…"
         }
     }
 }

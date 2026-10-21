@@ -73,6 +73,9 @@ export interface RegistryOptions {
    * so no suite ever executes a program; unset in production, where the real
    * `spawn` is used. */
   codexRunner?: SpawnRunner;
+  /** Internal capture guards, installed only by chat(). Never client input. */
+  codexBeforeStart?: () => Promise<void>;
+  codexRequireCurrentAuthority?: () => Promise<void>;
 }
 
 export async function isLocalOnly(db: Db): Promise<boolean> {
@@ -175,12 +178,14 @@ function buildProviderClient(opts: RegistryOptions, stored: StoredProvider, secr
       model: stored.model,
       command: stored.subscription_command ?? null,
       timeoutMs: opts.timeoutMs,
+      beforeStart: opts.codexBeforeStart,
       runner: opts.codexRunner ?? (async request => {
         if (!opts.masterKey) throw new LlmError('Unlock the Vault before using the subscription login.', { needsReconfiguration: true });
         const store = await codexCredentialStoreForInstallation(opts.db, opts.masterKey);
         return vaultCodexRunner(store, async () => {
           await resolveModelCredentials(opts.db, opts.masterKey, stored);
           if (await isLocalOnly(opts.db)) throw new LocalOnlyViolation('Local-only mode stops subscription requests.');
+          await opts.codexRequireCurrentAuthority?.();
         })(request);
       }),
     });
@@ -360,8 +365,9 @@ export interface ChatOptions {
   /** Server-owned authorization immediately before dispatch. Never populated
    * from client JSON; no network or model work should occur inside this hook. */
   beforeDispatch?: () => Promise<void>;
-  /** An ephemeral automation capture may cross exactly one HTTP request.
-   * Check authority after endpoint resolution, immediately before fetch. */
+  /** An ephemeral capture authorizes one dispatch: one HTTP request, or one
+   * supervised ChatGPT inference invocation returning a proposed Josi step.
+   * No fallback, CLI MCP execution, session reuse or caller retry is allowed. */
   oneShotTransmission?: boolean;
 }
 
@@ -398,12 +404,25 @@ export async function chat(
 
   const runOne = async (stored: StoredProvider, role: 'primary' | 'fallback'): Promise<ChatOutcome> => {
     const oneShot = chatOpts.oneShotTransmission === true;
+    const subscriptionCapture = oneShot && stored.provider === 'openai_subscription' && request.toolExecution === 'caller';
     if (oneShot && (!expected || !chatOpts.beforeDispatch
-      || !['openai-chat', 'anthropic-messages', 'gemini', 'cohere-v2', 'azure-openai', 'bedrock-converse', 'hunyuan'].includes(describeProvider(stored.provider)?.wire ?? ''))) {
+      || !subscriptionCapture && !['openai-chat', 'anthropic-messages', 'gemini', 'cohere-v2', 'azure-openai', 'bedrock-converse', 'hunyuan'].includes(describeProvider(stored.provider)?.wire ?? ''))) {
       throw new LlmError('This provider transport cannot enforce one-request automation transmission.', { needsReconfiguration: true });
     }
     let sent = false;
-    const provider = await buildProvider(oneShot ? { ...opts, fetchImpl: async (url, init) => {
+    const requireSubscriptionAuthority = async () => {
+      requireExpected(await loadStoredProvider(opts.db, 'primary'));
+      if (await isLocalOnly(opts.db)) throw new LocalOnlyViolation('Local-only mode stops this transmission.');
+    };
+    const provider = await buildProvider(subscriptionCapture ? { ...opts,
+      codexRequireCurrentAuthority: requireSubscriptionAuthority,
+      codexBeforeStart: async () => {
+        if (sent) throw new LlmError('This captured observation cannot be dispatched again.');
+        sent = true;
+        await requireSubscriptionAuthority();
+        await chatOpts.beforeDispatch!();
+      },
+    } : oneShot ? { ...opts, fetchImpl: async (url, init) => {
       if (sent || init?.method !== 'POST' || init.redirect !== 'manual' || typeof init.body !== 'string' || init.signal?.aborted) {
         throw new LlmError('The bounded model request cannot be sent again.');
       }
@@ -423,6 +442,7 @@ export async function chat(
     }
     if (!oneShot) await chatOpts.beforeDispatch?.();
     const response = await provider.chat(request);
+    if (subscriptionCapture && !sent) throw new LlmError('The subscription did not confirm its authorized dispatch.');
     await meterCall(opts.db, stored, role, provider.external, response, chatOpts);
     return { response, usedRole: role, cap };
   };

@@ -298,16 +298,19 @@ final class ProtectedKeyProjection {
     func proveWorkspaceStorage(message: Data) async throws -> Data {
         try await proveBoundHost(message: message, domain: "storage")
     }
+    func proveCurrentDesktop(message: Data) async throws -> Data {
+        try await proveBoundHost(message: message, domain: "desktop")
+    }
     func proveAutomationConsent(message: Data) async throws -> Data {
         try await proveBoundHost(message: message, domain: "consent")
     }
     private func proveBoundHost(message: Data, domain: String) async throws -> Data {
         guard pending == nil, hostAuthentication == nil, !hostProofUsed else { throw ProtectedKeyError.busy }
-        let prefix = Data((domain == "storage" ? "josi-workspace-storage.1\n"
+        let prefix = Data((domain == "desktop" ? "josi-current-desktop.1\n" : domain == "storage" ? "josi-workspace-storage.1\n"
             : domain == "consent" ? "josi-automation-consent.1\n" : "josi-protected-host-auth.1\n").utf8)
         guard message.count <= 4096, message.starts(with: prefix),
               let fields = try JSONSerialization.jsonObject(with: message.dropFirst(prefix.count)) as? [Any],
-              fields.count == (domain == "storage" ? 15 : domain == "consent" ? 19 : 11) else { throw ProtectedKeyError.invalid }
+              fields.count == (["storage", "desktop"].contains(domain) ? 15 : domain == "consent" ? 19 : 11) else { throw ProtectedKeyError.invalid }
         func integer(_ value: Any) -> Int64? {
             guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
                   number.doubleValue.isFinite, number.doubleValue >= 0, number.doubleValue <= 9_007_199_254_740_991,
@@ -331,13 +334,13 @@ final class ProtectedKeyProjection {
               let epoch = integer(reference[3]), epoch > 0, let expectedFingerprint = digest(fields[8]),
               let issued = integer(fields[9]), let expires = integer(fields[10]),
               issued <= now, expires > now, expires > issued, expires - issued <= 60_000 else { throw ProtectedKeyError.invalid }
-        if domain == "storage" {
-            guard let operation = fields[11] as? String, ["provision", "open"].contains(operation),
+        if ["storage", "desktop"].contains(domain) {
+            guard let operation = fields[11] as? String, (domain == "desktop" ? operation == "connect" : ["provision", "open"].contains(operation)),
                   let workspace = fields[12] as? String, UUID(uuidString: workspace)?.uuidString.lowercased() == workspace,
                   let label = fields[13] as? String, !label.isEmpty, label.utf16.count <= 120,
                   label.trimmingCharacters(in: .whitespacesAndNewlines) == label,
                   label.range(of: "[\\x{0000}-\\x{001f}\\x{007f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]", options: .regularExpression) == nil,
-                  let capacity = integer(fields[14]), (64...512).contains(capacity) else { throw ProtectedKeyError.invalid }
+                  let capacity = integer(fields[14]), (domain == "desktop" ? capacity == 0 : (64...512).contains(capacity)) else { throw ProtectedKeyError.invalid }
         }
         if domain == "consent" {
             func uuid(_ value: Any) -> Bool {

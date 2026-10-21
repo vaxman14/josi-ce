@@ -1,10 +1,11 @@
 'use strict';
-if (typeof importScripts === 'function') importScripts('config.js', 'native-channel.js', 'network-guard.js');
+if (typeof importScripts === 'function') importScripts('config.js', 'native-channel.js');
 const browserApi = globalThis.browser ?? globalThis.chrome;
 const config = globalThis.JOSI_BROWSER_CONFIG;
 let nativeChannel = null;
+let attachedTabId = null;
 let workspace = null, pollTimer = null, pending = false, generation = 0;
-let status = 'Open an automation workspace in Josi to connect.';
+let status = 'Connect this Mac in Josi, then attach the tab you want to use.';
 let lastClock = Date.now();
 const seen = new Set();
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -20,12 +21,11 @@ function live() {
   return true;
 }
 function stop(message = 'Paused. Resume control in Josi.', disconnect = true) {
-  generation++; workspace = null; status = message;
+  generation++; workspace = null; attachedTabId = null; status = message;
   if (disconnect) { const previous = nativeChannel; nativeChannel = null; previous?.close(); }
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
   void browserApi.action.setBadgeText({ text: '' });
-  void globalThis.endJosiPageNetwork(browserApi).catch(() => {});
 }
 async function native(operation, payload = {}, sessionId = workspace?.sessionId) {
   const requestId = crypto.randomUUID();
@@ -40,14 +40,12 @@ async function native(operation, payload = {}, sessionId = workspace?.sessionId)
 }
 function acceptSession(value) {
   const now = Date.now();
-  if (!value || value.isolatedWorkspace !== true || value.family !== config.family
+  if (!value || value.currentDesktop !== true || value.family !== config.family
     || !['sessionId', 'workspaceId', 'profileId'].every(key => uuid(value[key]))
     || !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= now || value.expiresAt > now + 60000
     || !Array.isArray(value.origins) || value.origins.length > 128
     || value.origins.some(origin => webUrl(origin)?.origin !== origin)) throw new Error('invalid_workspace');
-  // This assertion is accepted ONLY from the registered native workspace
-  // host, whose P4/P6 implementation must attest the real browser process and
-  // isolated profile. Page messages and popup inputs can never supply it.
+  // Only the signed native host may supply session authority. A page cannot attach a tab or authorize itself.
   return Object.freeze({ sessionId: value.sessionId, workspaceId: value.workspaceId,
     profileId: value.profileId, family: value.family, expiresAt: value.expiresAt,
     origins: Object.freeze([...value.origins]) });
@@ -55,38 +53,43 @@ function acceptSession(value) {
 async function connect() {
   if (pending || workspace) return;
   pending = true; const epoch = ++generation;
-  status = 'Connecting to your Josi workspace…';
+  status = 'Attaching this tab to Josi…';
   nativeChannel?.close();
   const connection = globalThis.createJosiNativeChannel(browserApi, config.family, () => {
     if (nativeChannel === connection) stop('Connection interrupted. Reconnect from Josi; uncertain actions will not be repeated.');
   });
   nativeChannel = connection;
   try {
+    const tabs = await browserApi.tabs.query({ active: true, currentWindow: true });
+    if (tabs.length !== 1 || tabs[0].incognito || !webUrl(tabs[0].url)) throw new Error('unsupported_tab');
+    attachedTabId = tabs[0].id;
+    const origin = webUrl(tabs[0].url).origin;
+    // Site access is scoped to this attachment; never request all-site access.
+    if (!await browserApi.permissions.request({ origins: [origin + '/*'] })) throw new Error('site_permission_required');
+    const saved = await browserApi.storage.local.get('josiBrowserInstance');
+    const nativeProfileId = uuid(saved.josiBrowserInstance) ? saved.josiBrowserInstance : crypto.randomUUID();
+    if (!saved.josiBrowserInstance) await browserApi.storage.local.set({ josiBrowserInstance: nativeProfileId });
     const reply = await native('browser.hello', { family: config.family,
-      extensionId: config.family === 'safari' ? config.extensionId : browserApi.runtime.id }, null);
+      extensionId: config.family === 'safari' ? config.extensionId : browserApi.runtime.id, nativeProfileId, attachedTabId }, null);
     if (epoch !== generation) return;
-    if (config.family === 'safari' && reply?.profileDiscovered === true) {
-      stop('Profile identified. Confirm it in Josi Companion, then register it in Josi. No page access is enabled.');
+    if (reply?.profileDiscovered === true) {
+      stop('Browser identified. Register it in Josi and configure its sites, then attach this tab again.');
       return;
     }
     const verified = acceptSession(reply);
-    // Apply restrictions only after the native helper confirms the isolated
-    // guest/profile. An accidental install in a personal browser must not
-    // rewrite that browser's request rules.
-    await globalThis.requireJosiNetworkBoundary(browserApi);
     if (epoch !== generation) return;
     workspace = verified; seen.clear(); lastClock = Date.now();
-    status = workspace.origins.length ? 'Connected to an isolated Josi workspace.'
+    status = workspace.origins.length ? 'Tab attached. Josi can act only with current site and action permissions.'
       : 'Connected. Waiting for a permitted task; page access is not enabled.';
     await browserApi.action.setBadgeText({ text: 'J' });
     pollTimer = setTimeout(poll, 100);
-  } catch { if (epoch === generation) stop('No authorized Josi workspace is available. Open one in Josi first.'); }
+  } catch { if (epoch === generation) stop('No current Josi connection is available. Connect this Mac and browser in Josi first.'); }
   finally { pending = false; }
 }
 async function currentTab(tabId) {
-  if (!Number.isSafeInteger(tabId) || tabId < 0 || !live()) throw new Error('invalid_tab');
+  if (!Number.isSafeInteger(tabId) || tabId < 0 || tabId !== attachedTabId || !live()) throw new Error('invalid_tab');
   const tab = await browserApi.tabs.get(tabId);
-  if (!live() || tab.incognito) throw new Error('unsupported_tab');
+  if (!live() || tab.id !== attachedTabId || tab.incognito) throw new Error('unsupported_tab');
   if (tab.url !== 'about:blank' && !workspace.origins.includes(webUrl(tab.url)?.origin)) throw new Error('origin_not_granted');
   return tab;
 }
@@ -96,15 +99,17 @@ async function execute(command, epoch) {
     || !Number.isSafeInteger(command.expiresAt) || command.expiresAt <= Date.now()
     || command.expiresAt > workspace.expiresAt || seen.has(command.id) || seen.size >= 4096) throw new Error('invalid_command');
   seen.add(command.id);
-  if (!['tabs', 'inspect', 'observe', 'navigate', 'click', 'fill', 'draft', 'photo', 'openPage'].includes(command.kind)) throw new Error('unsupported_operation');
+  if (!['inspect', 'observe', 'navigate', 'click', 'fill', 'draft', 'photo', 'openPage', 'scroll'].includes(command.kind)) throw new Error('unsupported_operation');
   let tab;
   if (command.kind === 'inspect') {
     if (webUrl(command.origin)?.origin !== command.origin || !workspace.origins.includes(command.origin)
       || !Number.isSafeInteger(command.maxOutputBytes) || command.maxOutputBytes < 1024 || command.maxOutputBytes > 65536) throw new Error('invalid_inspection');
-    const active = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
-    if (active.length !== 1 || active[0].incognito || webUrl(active[0].url)?.origin !== command.origin) throw new Error('active_site_changed');
-    tab = await currentTab(active[0].id);
-  } else tab = ['tabs', 'openPage'].includes(command.kind) ? null : await currentTab(command.tabId);
+    tab = await currentTab(attachedTabId);
+    if (webUrl(tab.url)?.origin !== command.origin) throw new Error('attached_site_changed');
+  } else if (command.kind === 'openPage') {
+    tab = await browserApi.tabs.get(attachedTabId);
+    if (tab.incognito || !webUrl(tab.url)) throw new Error('unsupported_tab');
+  } else tab = await currentTab(command.tabId);
   const url = command.kind === 'navigate' ? webUrl(command.url) : null;
   if (command.kind === 'navigate' && (!url || !workspace.origins.includes(url.origin))) throw new Error('origin_not_granted');
   // Exact command plus locally obtained tab identity goes back through the
@@ -115,12 +120,11 @@ async function execute(command, epoch) {
     || authority?.sessionId !== workspace.sessionId || authority?.allowed !== true) throw new Error('authority_changed');
   if (command.kind === 'openPage') {
     const destination = webUrl(command.url);
-    if (config.family !== 'chrome' || !destination || destination.protocol !== 'https:'
-      || destination.origin !== command.origin || !workspace.origins.includes(destination.origin)
-      || authority.proxy?.origin !== destination.origin || authority.proxy.expiresAt !== command.expiresAt) throw new Error('invalid_page');
-    await globalThis.beginJosiPageNetwork(browserApi, authority.proxy);
-    try {
-      const opened = await browserApi.tabs.create({ url: destination.href, active: true });
+    if (!destination || destination.protocol !== 'https:' || destination.origin !== command.origin
+      || !workspace.origins.includes(destination.origin) || attachedTabId !== tab.id) throw new Error('invalid_page');
+    const fresh = await browserApi.tabs.get(attachedTabId);
+    if (!live() || epoch !== generation || fresh.url !== tab.url || fresh.windowId !== tab.windowId) throw new Error('target_changed');
+    const opened = await browserApi.tabs.update(attachedTabId, { url: destination.href });
       let loaded;
       while (live() && epoch === generation && Date.now() < command.expiresAt - 1000) {
         const current = await browserApi.tabs.get(opened.id);
@@ -135,14 +139,6 @@ async function execute(command, epoch) {
         expiresAt: command.expiresAt, maxOutputBytes: command.maxOutputBytes }, { frameId: 0 });
       if (result?.kind !== 'observation' || !bounded(result)) throw new Error('observation_unavailable');
       return { ...result, tabId: loaded.id, windowId: loaded.windowId };
-    } finally { delete authority.proxy; await globalThis.endJosiPageNetwork(browserApi); }
-  }
-  if (command.kind === 'tabs') {
-    const tabs = await browserApi.tabs.query({});
-    if (!live() || epoch !== generation) throw new Error('authority_changed');
-    return { kind: 'tabs', tabs: tabs.filter(item => !item.incognito && (item.url === 'about:blank' || workspace.origins.includes(webUrl(item.url)?.origin)))
-      .slice(0, 128).map(item => ({ tabId: item.id, windowId: item.windowId, title: String(item.title ?? '').slice(0, 200),
-        url: item.url === 'about:blank' ? item.url : webUrl(item.url).origin + webUrl(item.url).pathname })) };
   }
   const tabId = tab.id;
   const fresh = await currentTab(tabId);
@@ -157,28 +153,23 @@ async function execute(command, epoch) {
   const input = { version: 1, channel: 'josi-page', sessionId: workspace.sessionId, kind: command.kind === 'inspect' ? 'observe' : command.kind,
     observationId: command.observationId, elementId: command.elementId, expectedUrl: tab.url,
     expiresAt: command.expiresAt };
+  if (command.kind === 'scroll') input.deltaY = command.deltaY;
   if (command.kind === 'inspect' || command.kind === 'photo') input.maxOutputBytes = command.maxOutputBytes;
   if (command.kind === 'fill') {
-    if (!uuid(command.valueReference) || authority.valueReference !== command.valueReference
-      || typeof authority.value !== 'string' || authority.value.length > 16384) throw new Error('value_unavailable');
+    if (typeof authority.value !== 'string' || authority.value.length > 16384) throw new Error('value_unavailable');
     input.value = authority.value; // Ephemeral projection; never persist/log/echo.
   }
   if (command.kind === 'draft') {
-    if (config.family !== 'chrome' || typeof authority.draftText !== 'string'
+    if (typeof authority.draftText !== 'string'
       || new TextEncoder().encode(authority.draftText).length > 2048) throw new Error('draft_unavailable');
     input.value = authority.draftText;
   }
   try {
-    if (command.kind === 'photo') {
-      if (authority.proxy?.origin !== webUrl(tab.url)?.origin || authority.proxy.expiresAt !== command.expiresAt) throw new Error('photo_network_unavailable');
-      await globalThis.beginJosiPageNetwork(browserApi, authority.proxy);
-    }
     const result = await browserApi.tabs.sendMessage(tabId, input, { frameId: 0 });
     if (!result || !bounded(result) || result.kind === 'refused') throw new Error('invalid_page_response');
     return command.kind === 'inspect' || command.kind === 'photo' ? { ...result, tabId, windowId: tab.windowId } : result;
   } finally {
     delete input.value; delete authority.value; delete authority.draftText; delete authority.proxy;
-    if (command.kind === 'photo') await globalThis.endJosiPageNetwork(browserApi);
   }
 }
 async function poll() {
@@ -191,7 +182,7 @@ async function poll() {
       const renewed = acceptSession(reply.session);
       if (renewed.sessionId !== sessionId || renewed.profileId !== workspace.profileId || renewed.workspaceId !== workspace.workspaceId) throw new Error('workspace_changed');
       workspace = renewed;
-      status = workspace.origins.length ? 'Connected to an isolated Josi workspace.'
+      status = workspace.origins.length ? 'Tab attached. Josi can act only with current site and action permissions.'
         : 'Connected. Waiting for a permitted task; page access is not enabled.';
     }
     if (reply.command) {
@@ -213,7 +204,7 @@ browserApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (popup && message?.kind === 'status') { sendResponse({ connected: !!workspace, status, family: config.family }); return false; }
   if (popup && message?.kind === 'connect') { void connect().then(() => sendResponse({ connected: !!workspace, status })); return true; }
   const pageStop = message?.kind === 'local_input' && sender.id === browserApi.runtime.id && sender.frameId === 0
-    && sender.tab && workspace && message.sessionId === workspace.sessionId && workspace.origins.includes(webUrl(sender.url)?.origin);
+    && sender.tab && sender.tab.id === attachedTabId && workspace && message.sessionId === workspace.sessionId && workspace.origins.includes(webUrl(sender.url)?.origin);
   if ((popup && message?.kind === 'stop') || pageStop) {
     const previous = workspace?.sessionId, connection = nativeChannel;
     const notified = previous ? native('browser.stop', { reason: 'local_takeover' }, previous) : Promise.resolve();
@@ -223,4 +214,4 @@ browserApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   return false;
 });
-browserApi.tabs.onRemoved.addListener(() => { /* A removed tab fails currentTab before any later action. */ });
+browserApi.tabs.onRemoved.addListener(id => { if (id === attachedTabId) stop('Attached tab closed. Control stopped.'); });

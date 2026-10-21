@@ -1,6 +1,7 @@
 /** Private parent/guardian IPC. Never expose these envelopes through an API,
  * event, log, argv or task receipt. The credential fields travel only over the
  * inherited IPC pipe and are wrapped in Secret immediately on receipt. */
+export interface CodexPrivateFile { name: string; base64: string }
 export interface CodexGuardianStart {
   type: 'start';
   command: string;
@@ -8,6 +9,7 @@ export interface CodexGuardianStart {
   input: string;
   auth: string | null;
   timeoutMs: number;
+  privateFiles?: CodexPrivateFile[];
 }
 export type CodexGuardianInput = CodexGuardianStart | { type: 'renew' } | { type: 'stop' };
 export type CodexGuardianOutput =

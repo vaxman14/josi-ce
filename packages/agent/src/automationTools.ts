@@ -1,3 +1,4 @@
+import { automationBlockers, type AutomationBlockerCode } from '@josi-ce/core';
 import { AutomationRuntime, parseAutomationToolAction, listAutomationPresence, type Db, type AutomationExecutionContext } from '@josi-ce/core';
 import type { ToolExecutionContext } from './execute.js';
 import type { ToolSpec } from './tools.js';
@@ -10,7 +11,7 @@ const shape = (fields: Record<string, unknown>) => ({ type: 'object', properties
 const literal = (value: string) => ({ type: 'string', const: value });
 export const AUTOMATION_DISCOVERY_TOOL: ToolSpec = { def: {
   name: 'get_automation_workspaces',
-  description: 'Read the actual status of the owner’s separate Josi automation desktops and dedicated browsers. Ordinary client connections and personal browser windows are not automation workspaces. An unavailable service means no control is connected; never claim a browser opened or work ran from this discovery alone.',
+  description: 'Read the actual status of the owner’s connected Macs and explicitly attached browser tabs. A connection requires local owner approval. An unavailable service means no control is connected; never claim a browser opened or work ran from this discovery alone.',
   parameters: shape({}),
 }, actionClass: null };
 export const AUTOMATION_RECEIPT_TOOL: ToolSpec = { def: {
@@ -20,48 +21,64 @@ export const AUTOMATION_RECEIPT_TOOL: ToolSpec = { def: {
 }, actionClass: null };
 export const AUTOMATION_CONTROL_TOOLS: ToolSpec[] = [
   { def: { name: 'open_automation_browser',
-    description: 'Open an exact HTTPS page in the connected separate Chrome workspace and capture it. Requires current browser navigation, observation and public-network permissions for that exact site. Does not submit, publish or upload. Only the resulting capture, separately sent to the permitted model, shows what actually loaded. Use the existing task and control session; never retry an uncertain navigation.',
+    description: 'Open an exact HTTPS page in the attached browser tab and capture it. Requires current browser navigation and observation permissions for that exact site. Does not submit, publish or upload. Only the resulting capture, separately sent to the permitted model, shows what actually loaded. Use the existing task and control session; never retry an uncertain navigation.',
     parameters: shape({ task_id: id, workspace_id: id, control_session_id: id, url: { type: 'string', maxLength: 2048 } }) },
     actionClass: 'automation_control' },
   { def: { name: 'start_automation_task',
-    description: 'Attach a separate-desktop work task to the selected unfinished step of this conversation’s current goal. Call after owning and reviewing the goal and discovering a ready workspace. The same step retains one original task across turns; do not create replacement steps or tasks to evade an uncertain result or limit. This records work only and grants no browser, computer or transmission permission. Use its returned taskId for connection and operations.',
+    description: 'Attach a current-desktop work task to the selected unfinished step of this conversation’s current goal. Call after owning and reviewing the goal and discovering a ready workspace. The same step retains one original task across turns; do not create replacement steps or tasks to evade an uncertain result or limit. This records work only and grants no browser, computer or transmission permission. Use its returned taskId for connection and operations.',
     parameters: shape({ goal_id: id, revision: { type: 'integer', minimum: 1 }, step_id: id, workspace_id: id }) }, actionClass: 'automation_control' },
   { def: { name: 'connect_automation_workspace',
-    description: 'Request control of a discovered isolated workspace for an existing active task. Requires current device-owner consent, permission policy and durable turn. Cannot resume human takeover, widen access or authorize an action. The connection may be refused; report the exact next setup/permission instruction.',
+    description: 'Request control of a discovered desktop session for an existing active task. Requires current device-owner consent, permission policy and durable turn. Cannot resume human takeover, widen access or authorize an action. The connection may be refused; report the exact next setup/permission instruction.',
     parameters: shape({ task_id: id, workspace_id: id }) }, actionClass: 'automation_control' },
   { def: { name: 'observe_automation_workspace',
-    description: 'Capture an initial or refreshed observation of the locally selected permitted application or browser in a connected isolated workspace. Use null for previous_observation_id on its first capture; a refresh names the preceding observation returned for this control session. Requires current control and read permission. Returns a saved capture receipt and opaque observation reference. The next request may receive a separate, short-lived capture only when the exact current model has transmission permission. Only that separately supplied content supports claims about what was visible; the receipt alone does not. Capture never grants input permission or proves a business outcome.',
+    description: 'Capture an initial or refreshed observation of the locally selected permitted application or browser in a connected desktop session. Use null for previous_observation_id on its first capture; a refresh names the preceding observation returned for this control session. Requires current control and read permission. Returns a saved capture receipt and opaque observation reference. The next request may receive a separate, short-lived capture only when the exact current model has transmission permission. Only that separately supplied content supports claims about what was visible; the receipt alone does not. Capture never grants input permission or proves a business outcome.',
     parameters: shape({ task_id: id, workspace_id: id, control_session_id: id,
       previous_observation_id: { anyOf: [id, { type: 'null' }] },
       browser_origin: { anyOf: [{ type: 'string', maxLength: 2048, description: 'Exact browser site origin, for example https://example.com. Required for browser; null for desktop.' }, { type: 'null' }] },
       surface: { type: 'string', enum: ['browser', 'desktop'] } }) }, actionClass: 'automation_control' },
   { def: { name: 'browser_control',
-    description: 'Request one bounded browser operation using current native observation references. browser.photo reads an observed, already loaded same-site image in Chrome, runs local OCR, and supplies the image plus OCR to the next permitted vision-model request. Describe only visible details; do not invent brand, condition, size or authenticity. browser.draft writes a short non-secret description to an observed text area and verifies that field, without clicking or submitting. Use the native windowId as tabId and the original capture reservation as sourceReservationId. The site may autosave on input. Requires browser.observe or browser.fill permission respectively. A lost or uncertain receipt is never permission to retry. An input receipt does not verify the whole business outcome.',
+    description: 'Request one bounded browser operation using current native observation references. browser.photo reads an observed, already loaded same-site image in the attached tab, runs local OCR, and supplies the image plus OCR to the next permitted vision-model request. Describe only visible details; do not invent brand, condition, size or authenticity. browser.draft writes a short non-secret description to an observed text area and verifies that field, without clicking or submitting. Use the native windowId as tabId and the original capture reservation as sourceReservationId. The site may autosave on input. Clicks and fills require their exact site/action grant. Use a fresh observation after every input. A click may submit, send, delete or buy; follow the user’s intent and approval requirements before it. Never use UI input to grant Josi permissions, modify its rules or bypass an approval. A lost or uncertain receipt is never permission to retry. An input receipt does not verify the whole business outcome.',
     parameters: shape({ ...properties, action: { oneOf: [
-      shape({ kind: literal('browser.observe'), ...browser }),
       shape({ kind: literal('browser.photo'), ...browser, elementId: id, sourceReservationId: id }),
       shape({ kind: literal('browser.draft'), ...browser, elementId: id, sourceReservationId: id,
         text: { type: 'string', maxLength: 2048, description: 'Non-secret description for review. Never credentials or personal identifiers.' } }),
-      shape({ kind: literal('browser.navigate'), ...browser, url: { type: 'string', maxLength: 8192 } }),
-      shape({ kind: literal('browser.element'), ...browser, elementId: id, action: literal('click') }),
-      shape({ kind: literal('browser.element'), ...browser, elementId: id, action: literal('fill'), valueReference: id }),
+      shape({ kind: literal('browser.scroll'), ...browser, sourceReservationId: id, deltaY: { type: 'integer', minimum: -2000, maximum: 2000 } }),
+      shape({ kind: literal('browser.element'), ...browser, elementId: id, sourceReservationId: id, action: literal('click') }),
+      shape({ kind: literal('browser.element'), ...browser, elementId: id, sourceReservationId: id, action: literal('fill'), text: { type: 'string', maxLength: 2048 } }),
     ] } }) }, actionClass: 'automation_control' },
   { def: { name: 'computer_control',
-    description: 'Request one bounded native operation inside the separate Josi desktop using current observed app/window/element references. Never targets the user’s normal desktop. Unknown effects, changed targets, missing consent or permissions refuse input. Observation content needs its own authorized projection. Do not turn an input receipt into a completed goal.',
+    description: 'Request one bounded native operation on the user’s current Mac using current observed app/window/element references. Acts on real apps with their signed-in accounts; use only the selected app and requested action. Unknown effects, changed targets, missing consent or permissions refuse input. Observation content needs its own authorized projection. Do not turn an input receipt into a completed goal.',
     parameters: shape({ ...properties, action: { oneOf: [
-      shape({ kind: literal('desktop.observe'), ...desktop }),
-      shape({ kind: literal('desktop.element'), ...desktop, elementId: id, action: literal('press') }),
-      shape({ kind: literal('desktop.element'), ...desktop, elementId: id, action: literal('focus') }),
-      shape({ kind: literal('desktop.pointer'), ...desktop, action: literal('click'), x: { type: 'number', minimum: 0, maximum: 32768 }, y: { type: 'number', minimum: 0, maximum: 32768 } }),
+      shape({ kind: literal('desktop.element'), ...desktop, elementId: id, sourceReservationId: id, action: literal('press') }),
+      shape({ kind: literal('desktop.element'), ...desktop, elementId: id, sourceReservationId: id, action: literal('focus') }),
+      shape({ kind: literal('desktop.text'), ...desktop, sourceReservationId: id, text: { type: 'string', maxLength: 2048 } }),
+      shape({ kind: literal('desktop.key'), ...desktop, sourceReservationId: id, key: { type: 'string', enum: ['enter','tab','escape','backspace','delete','left','right','down','up','home','end','pageup','pagedown','shift+tab','command+a','command+s','command+z','command+shift+z','command+f'] } }),
+      shape({ kind: literal('desktop.scroll'), ...desktop, sourceReservationId: id, deltaY: { type: 'integer', minimum: -2000, maximum: 2000 } }),
+      shape({ kind: literal('desktop.pointer'), ...desktop, sourceReservationId: id, action: literal('click'), x: { type: 'number', minimum: 0, maximum: 32768 }, y: { type: 'number', minimum: 0, maximum: 32768 } }),
     ] } }) }, actionClass: 'automation_control' },
 ];
 export const AUTOMATION_TOOL_NAMES = new Set([AUTOMATION_DISCOVERY_TOOL, AUTOMATION_RECEIPT_TOOL, ...AUTOMATION_CONTROL_TOOLS].map(tool => tool.def.name));
 export async function automationDiscovery(runtime: AutomationRuntime | undefined, ownerUserId: string, db?: Db) {
-  if (!runtime) return { available: !!db, workspaces: db ? await listAutomationPresence(db, ownerUserId) : [],
-    controlAvailable: false, reason: 'These are recent isolated-desktop connection reports. Execution is not connected; no local consent or permission is granted by presence.' };
-  return { available: true, workspaces: await runtime.inventory(ownerUserId),
-    controlAvailable: runtime.actionAvailable, inspectionAvailable: runtime.observationAvailable,
-    reason: 'Discovery describes current connections. Every operation still requires its current target, consent and permission checks.' };
+  const blocked = (code: AutomationBlockerCode, workspaces: unknown[] = []) => ({ available: !!runtime,
+    workspaces, controlAvailable: false, inspectionAvailable: false,
+    blocker: { code, message: automationBlockers[code] }, reason: automationBlockers[code] });
+  try {
+    if (db) {
+      const [vault] = await db.query<{ locked: boolean; authority_reconciliation_required: boolean }>(
+        'select locked,authority_reconciliation_required from vault_state where id=true');
+      if (vault?.locked || vault?.authority_reconciliation_required) return blocked('vault_locked');
+    }
+    if (!runtime) return blocked('runtime_unavailable', db ? await listAutomationPresence(db, ownerUserId) : []);
+    const workspaces = await runtime.inventory(ownerUserId);
+    if (!workspaces.length) return blocked('no_workspaces');
+    if (!workspaces.some(item => item.state === 'ready')) {
+      const code = workspaces.some(item => item.state === 'needs_local_consent') ? 'local_consent_required'
+        : workspaces.some(item => item.state === 'paused') ? 'human_takeover' : 'device_offline';
+      return blocked(code, workspaces);
+    }
+    return { available: true, workspaces, controlAvailable: runtime.actionAvailable, inspectionAvailable: runtime.observationAvailable,
+      blocker: null, reason: 'Discovery describes current connections. Every operation still requires its current target, consent and permission checks.' };
+  } catch { return blocked('status_unavailable'); }
 }
 export async function automationToolAvailability(runtime: AutomationRuntime | undefined, ownerUserId: string): Promise<ToolSpec[]> {
   if (!runtime) return [];

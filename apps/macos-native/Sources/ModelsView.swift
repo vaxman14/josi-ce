@@ -90,8 +90,12 @@ struct NativeModelsView: View {
                 else {
                     Text(settings["providerCatalog"].list.first { $0["kind"] == saved["provider"] }?["label"].text ?? saved["provider"].text).font(.headline)
                     Text(saved["model"].text.isEmpty ? "Provider default model" : saved["model"].text)
-                    Text(saved["active"].flag ? "Active · Checked " + nativeDate(saved["probedAt"].text) : "Inactive · Run a capability check before use")
+                    Text(saved["active"].flag ? "Capability check passed · " + nativeDate(saved["probedAt"].text) : "Inactive · Run a capability check before use")
                         .foregroundStyle(saved["active"].flag ? Color.secondary : Color.orange)
+                    if saved["provider"].text.hasSuffix("_subscription") {
+                        Text("This is a saved test result. Open Change, then Check Status to check the current subscription connection.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     ForEach(Array(saved["probeSteps"].list.enumerated()), id: \.offset) { _, step in
                         Label(step["label"].text + ": " + step["detail"].text,
                               systemImage: step["passed"].flag ? "checkmark.circle" : "exclamationmark.circle").font(.caption)

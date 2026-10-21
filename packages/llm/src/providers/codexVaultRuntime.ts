@@ -6,7 +6,7 @@ import { performance } from 'node:perf_hooks';
 import { assertCapability, ClaudeCredentialStore, CodexCredentialStore, Secret, SubscriptionCredentialError,
   type SubscriptionCredentialAdministration, type SubscriptionCredentialReview } from '@josi-ce/core';
 import type { SpawnRunner } from './codexCli.js';
-import type { CodexGuardianInput, CodexGuardianOutput } from './codexVaultWire.js';
+import type { CodexGuardianInput, CodexGuardianOutput, CodexPrivateFile } from './codexVaultWire.js';
 import { requireCompatibleCodexHost } from './codexVaultCompatibility.js';
 import { requireCompatibleClaudeHost } from './claudeVaultCompatibility.js';
 import { validClaudeSubscriptionArgs } from './claudeVaultPolicy.js';
@@ -33,6 +33,8 @@ export interface VaultCodexStart {
   /** Login parser only; never send raw CLI output to a renderer or log. */
   onLoginOutput?: (text: string) => void;
   requireCurrentAuthority?: () => Promise<void>;
+  beforeStart?: () => Promise<void>;
+  privateFiles?: CodexPrivateFile[];
 }
 /** Resolve only an explicitly configured executable or the service PATH.
  * The guardian will not inherit a shell, personal HOME or credential env. */
@@ -140,9 +142,12 @@ async function startVaultSubscription(store: CodexCredentialStore | ClaudeCreden
       if (stopping || settled || finishing || !guardian.connected) return;
       send({ type: 'renew' });
       if (!started) {
+        await options.beforeStart?.();
+        if (stopping || settled || finishing || !guardian.connected) return;
         started = true;
         send({ type: 'start', command, args: options.args, input: options.input ?? '',
-          auth: projection?.reveal() ?? null, timeoutMs: options.timeoutMs });
+          auth: projection?.reveal() ?? null, timeoutMs: options.timeoutMs,
+          ...(options.privateFiles ? { privateFiles: options.privateFiles } : {}) });
       }
     } catch { stop(); }
     finally { polling = false; }
@@ -199,6 +204,8 @@ export function vaultCodexRunner(store: CodexCredentialStore, requireCurrentAuth
       operation: 'chat', command: request.command, args: request.args,
       input: request.input, timeoutMs: request.timeoutMs,
       requireCurrentAuthority,
+      beforeStart: request.beforeStart,
+      privateFiles: request.privateFiles,
     });
     const value = await run.result;
     return { code: value.code, stdout: value.stdout, stderr: value.stderr,

@@ -18,17 +18,14 @@ enum GuestBrowserError: Error { case unavailable, invalid, expired }
 }
 
 enum GuestBrowserBoundary {
-    static let service = "com.heyjosi.ce.guestbrowser"
-    static let ownerService = "com.heyjosi.ce.guestbrowser.control"
-    static let brokerIdentifier = "com.heyjosi.ce.guestbrowser-broker"
+    static let service = "com.heyjosi.ce.browser"
+    static let ownerService = "com.heyjosi.ce.browser.control"
+    static let brokerIdentifier = "com.heyjosi.ce.browser-broker"
     static let maximumBytes = 192 * 1024
     static func requirement(_ identifier: String) -> String {
         "anchor apple generic and identifier \"\(identifier)\" and certificate leaf[subject.OU] = \"LRH75YR6QW\""
     }
     static func isolatedBoot() throws -> (guest: String, host: String) {
-        var present: Int32 = 0, size = MemoryLayout<Int32>.size
-        guard sysctlbyname("kern.hv_vmm_present", &present, &size, nil, 0) == 0,
-              present == 1, size == MemoryLayout<Int32>.size else { throw GuestBrowserError.unavailable }
         func uuid(_ name: String) throws -> String {
             var size = 0
             guard sysctlbyname(name, nil, &size, nil, 0) == 0, (1...64).contains(size) else { throw GuestBrowserError.unavailable }
@@ -38,7 +35,8 @@ enum GuestBrowserBoundary {
             guard UUID(uuidString: value)?.uuidString.lowercased() == value else { throw GuestBrowserError.invalid }
             return value
         }
-        return (try uuid("kern.bootsessionuuid"), try uuid("kern.hvg.host_bootsessionuuid"))
+        let boot = try uuid("kern.bootsessionuuid")
+        return (boot, boot)
     }
     static func requireSelf(identifier: String, executable: String) throws {
         _ = try isolatedBoot()
@@ -55,8 +53,8 @@ enum GuestBrowserBoundary {
               let flags = value[kSecCodeInfoFlags as String] as? NSNumber, flags.uint32Value & 0x00010000 != 0
         else { throw GuestBrowserError.unavailable }
         var container: SecStaticCode?, containerRequirement: SecRequirement?
-        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: "/Applications/Josi Companion.app") as CFURL, [], &container) == errSecSuccess,
-              let container, SecRequirementCreateWithString(Self.requirement("com.heyjosi.ce.guestcompanion") as CFString, [], &containerRequirement) == errSecSuccess,
+        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: "/Applications/Josi.app") as CFURL, [], &container) == errSecSuccess,
+              let container, SecRequirementCreateWithString(Self.requirement("com.heyjosi.ce.unified") as CFString, [], &containerRequirement) == errSecSuccess,
               let containerRequirement, SecStaticCodeCheckValidity(container, SecCSFlags(rawValue: kSecCSStrictValidate), containerRequirement) == errSecSuccess
         else { throw GuestBrowserError.unavailable }
         let entitlements = value[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]

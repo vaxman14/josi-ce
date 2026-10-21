@@ -55,7 +55,7 @@ export class ProtectedChanges {
     this.enabled = isProtectedControlOrigin(origin);
   }
   private async server(tx: Db, identity: Readonly<ProtectedConfirmationIdentity>) {
-    const rows = await tx.query<{ installation_id: string }>('select installation_id from workspace limit 2 for share');
+    const rows = await tx.query<{ installation_id: string }>('select install_id as installation_id from install_identity where id=true for share');
     if (!this.enabled || identity.serverOrigin !== this.origin || rows.length !== 1 || !uuid(rows[0].installation_id)
       || identity.serverId !== rows[0].installation_id) throw new ProtectedChangeError(409, 'The enrolled device does not match this installation and its configured public origin.');
   }

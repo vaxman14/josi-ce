@@ -16,7 +16,7 @@ import { startAutomationWorkTask } from './workGoals.js';
 import { ISOLATED_AUTOMATION_TEMPLATE } from './tasks.js';
 
 export interface AutomationWorkspaceSummary {
-  identity: AutomationIdentity; label: string; isolated: true;
+  identity: AutomationIdentity; label: string; isolated: boolean;
   browserFamilies: Array<'chrome' | 'firefox' | 'safari' | 'brave'>;
   computerUse: boolean; state: 'ready' | 'paused' | 'needs_local_consent' | 'offline';
 }
@@ -86,7 +86,7 @@ export interface AutomationRuntimePorts extends AutomationReservationProofPort {
 export class AutomationRuntimeError extends Error {}
 const refusalMessages = {
   connection_refreshing: 'The desktop connection needs a fresh lease before this operation. No command was dispatched.',
-  device_offline: 'The automation device is offline. Reconnect the isolated workspace in Josi.',
+  device_offline: 'The automation device is offline. Reconnect the desktop session in Josi.',
   local_consent_required: 'The device owner must enable this workspace from its local Josi controls.',
   human_takeover: 'The device owner has control. Resume automation from the local Josi controls when ready.',
   permission_required: 'Current automation permissions do not cover this operation. Ask the administrator to review its exact scope.',
@@ -144,23 +144,43 @@ export function parseAutomationToolAction(value: unknown): AutomationAction {
         || Buffer.byteLength(action.text, 'utf8') > 2048 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(action.text)
         || refuseMemorySecret(action.text)) throw new AutomationRuntimeError('Use an observed text area and a short, non-secret draft.');
     } else if (action.kind === 'browser.element') {
-      keys.push('elementId', 'action');
+      keys.push('elementId', 'action', 'sourceReservationId');
+      if (!uuid(action.sourceReservationId)) throw new AutomationRuntimeError('Use the original observation receipt.');
       if (!uuid(action.elementId) || !['click', 'fill'].includes(action.action)) throw new AutomationRuntimeError('Use an observed browser element.');
       if (action.action === 'fill') {
-        keys.push('valueReference');
-        if (!uuid(action.valueReference)) throw new AutomationRuntimeError('Use an authorized value reference; do not send credentials as tool text.');
+        keys.push('text');
+        if (typeof action.text !== 'string' || Buffer.byteLength(action.text) > 2048 || refuseMemorySecret(action.text)) throw new AutomationRuntimeError('Use bounded non-secret text.');
       }
+    } else if (action.kind === 'browser.scroll') {
+      keys.push('sourceReservationId', 'deltaY');
+      if (!uuid(action.sourceReservationId) || !Number.isSafeInteger(action.deltaY) || Math.abs(action.deltaY) > 2000 || action.deltaY === 0) throw new AutomationRuntimeError('Use a bounded scroll and current observation.');
     } else if (action.kind !== 'browser.observe') throw new AutomationRuntimeError('That browser operation is not supported.');
   } else {
     if (!('appId' in action) || !uuid(action.appId) || !uuid(action.windowId)) throw new AutomationRuntimeError('Use the observed application and window references.');
     keys.push('appId', 'windowId');
     if (action.kind === 'desktop.element') {
-      keys.push('elementId', 'action');
+      keys.push('elementId', 'action', 'sourceReservationId');
+      if (!uuid(action.sourceReservationId)) throw new AutomationRuntimeError('Use the original observation receipt.');
       if (!uuid(action.elementId) || !['press', 'focus'].includes(action.action)) throw new AutomationRuntimeError('Use an observed desktop element.');
     } else if (action.kind === 'desktop.pointer') {
-      keys.push('x', 'y', 'action');
+      keys.push('x', 'y', 'action', 'sourceReservationId');
+      if (!uuid(action.sourceReservationId)) throw new AutomationRuntimeError('Use the original observation receipt.');
       if (action.action !== 'click' || !Number.isFinite(action.x) || !Number.isFinite(action.y)
         || action.x < 0 || action.y < 0 || action.x > 32768 || action.y > 32768) throw new AutomationRuntimeError('Choose a bounded position in the observed window.');
+    } else if (action.kind === 'desktop.text' || action.kind === 'desktop.key' || action.kind === 'desktop.scroll') {
+      keys.push('sourceReservationId');
+      if (!uuid(action.sourceReservationId)) throw new AutomationRuntimeError('Use the original observation receipt.');
+      if (action.kind === 'desktop.text') {
+        keys.push('text');
+        if (typeof action.text !== 'string' || !action.text || Buffer.byteLength(action.text) > 2048
+          || /[\u0000-\u001f\u007f]/u.test(action.text) || refuseMemorySecret(action.text)) throw new AutomationRuntimeError('Use bounded non-secret text.');
+      } else if (action.kind === 'desktop.key') {
+        keys.push('key');
+        if (!['enter','tab','escape','backspace','delete','left','right','down','up','home','end','pageup','pagedown','shift+tab','command+a','command+s','command+z','command+shift+z','command+f'].includes(action.key)) throw new AutomationRuntimeError('Use a supported app key.');
+      } else {
+        keys.push('deltaY');
+        if (!Number.isSafeInteger(action.deltaY) || Math.abs(action.deltaY) > 2000 || action.deltaY === 0) throw new AutomationRuntimeError('Use a bounded scroll.');
+      }
     } else if (action.kind !== 'desktop.observe') throw new AutomationRuntimeError('That desktop operation is not supported.');
   }
   if (!exact(action, keys)) throw new AutomationRuntimeError('Unexpected automation action fields.');
@@ -196,7 +216,7 @@ export class AutomationRuntime {
     finally { clearTimeout(timer); controller.abort(); }
     if (!Array.isArray(rows) || rows.length > 32 || rows.some(row => !exact(row,
       ['identity', 'label', 'isolated', 'browserFamilies', 'computerUse', 'state'])
-      || !isAutomationIdentity(row.identity) || row.identity.userId !== ownerUserId || row.isolated !== true
+      || !isAutomationIdentity(row.identity) || row.identity.userId !== ownerUserId || typeof row.isolated !== 'boolean'
       || typeof row.label !== 'string' || !row.label.trim() || row.label.length > 120 || refuseMemorySecret(row.label)
       || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(row.label)
       || typeof row.computerUse !== 'boolean' || !['ready', 'paused', 'needs_local_consent', 'offline'].includes(row.state)
@@ -269,7 +289,7 @@ export class AutomationRuntime {
   }
   async acquire(context: AutomationExecutionContext, taskId: string, workspaceId: string) {
     const bound = Object.freeze(structuredClone(context));
-    if (!uuid(workspaceId)) throw new AutomationRuntimeError('Choose a discovered isolated workspace.');
+    if (!uuid(workspaceId)) throw new AutomationRuntimeError('Choose a discovered desktop session.');
     const identity = await this.current(bound, taskId, true, workspaceId);
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10_000);
     try {
@@ -284,7 +304,7 @@ export class AutomationRuntime {
       return { ...structuredClone(result), status: 'connected' as const, executionPermissionGranted: false };
     } catch (error) {
       if (error instanceof AutomationRuntimeRefusal) throw error;
-      throw new AutomationRuntimeError('Current workspace control could not be established. Check the isolated device connection and its local consent.');
+      throw new AutomationRuntimeError('Current workspace control could not be established. Check the enrolled device connection and its local consent.');
     } finally { clearTimeout(timer); controller.abort(); }
   }
   async openBrowser(context: AutomationExecutionContext, input: AutomationBrowserOpenRequest) {
@@ -321,7 +341,7 @@ export class AutomationRuntime {
       || input.previousObservationId !== null && !uuid(input.previousObservationId)
       || !['browser', 'desktop'].includes(input.surface)
       || (input.surface === 'browser' ? !exactBrowserOrigin(input.browserOrigin) : input.browserOrigin !== undefined)) {
-      throw new AutomationRuntimeError('Choose a connected isolated workspace and current control session. Browser inspection also needs an exact site origin.');
+      throw new AutomationRuntimeError('Choose a connected desktop session and current control session. Browser inspection also needs an exact site origin.');
     }
     const bound = Object.freeze(structuredClone(context)), request = Object.freeze(structuredClone(input));
     return this.perform(bound, request.taskId, request.workspaceId, true, cardinalContentDigest(request), null,

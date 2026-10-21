@@ -3,7 +3,7 @@ import type { AutomationIdentity } from './automation.js';
 /** Shared vocabulary, not a list of installed executors. Adding a new effect
  * requires new semantics/tests; unknown effects must stop existing engines. */
 export const AUTOMATION_EFFECTS = [
-  'browser.navigate', 'browser.observe', 'browser.fill', 'browser.submit', 'browser.download', 'browser.upload',
+  'browser.navigate', 'browser.observe', 'browser.fill', 'browser.click', 'browser.submit', 'browser.download', 'browser.upload',
   'computer.observe', 'computer.interact', 'application.launch', 'application.close',
   'file.read', 'file.create', 'file.edit', 'file.rename', 'file.move', 'file.delete', 'file.import', 'file.export',
   'network.connect', 'execution.shell', 'execution.script', 'system.modify',

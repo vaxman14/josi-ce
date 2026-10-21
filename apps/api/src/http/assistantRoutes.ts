@@ -15,7 +15,6 @@ import { readFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Router, type Request, type Response } from 'express';
-import { listAutomationPresence } from '@josi-ce/core';
 import { BASELINE_CAPABILITIES } from '@josi-ce/protocol';
 import multer from 'multer';
 import {
@@ -31,7 +30,7 @@ import {
   changeWorkOutcome, workOutcomeHistory, retireWorkStep, WorkGoalError,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
-import { runAssistantTurn, type RecallLookup } from '@josi-ce/agent';
+import { runAssistantTurn, automationDiscovery, type RecallLookup } from '@josi-ce/agent';
 import type { LoadOptions } from '@josi-ce/core';
 import { loadMasterKey } from '@josi-ce/core';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
@@ -554,14 +553,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
   // ------------------------------------------------------------ tasks
   r.get('/automation/workspaces', handle(async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
-    try {
-      if (!ctx.automationRuntime) return res.json({ available: true, controlAvailable: false,
-        workspaces: await listAutomationPresence(db, req.user!.id),
-        reason: 'Recent separate-desktop connection reports. Automation execution is not connected yet.' });
-      return res.json({ available: true, controlAvailable: ctx.automationRuntime.actionAvailable,
-        inspectionAvailable: ctx.automationRuntime.observationAvailable, workspaces: await ctx.automationRuntime.inventory(req.user!.id) });
-    }
-    catch { return res.status(503).json({ available: false, error: 'Current automation connections could not be verified.' }); }
+    return res.json(await automationDiscovery(ctx.automationRuntime, req.user!.id, db));
   }));
   r.get('/work-goals/stream', asyncRoute(workProgressStream(db)));
   r.get('/work-goals', handle(async (req, res) => {

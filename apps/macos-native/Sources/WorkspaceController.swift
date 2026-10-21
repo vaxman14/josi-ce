@@ -1,11 +1,10 @@
 import AppKit
 import SwiftUI
-import Virtualization
 import Darwin
 
-/// Owns a local development desktop, not an automation grant. There is no
-/// guest executor yet; browser/computer tools remain unavailable.
-@MainActor final class NativeWorkspaceController: ObservableObject, WorkspaceMachineAuthority {
+/// Owns a short-lived connection to the current desktop. All effects require
+/// a current local consent generation and an exact server permission reservation.
+@MainActor final class NativeWorkspaceController: ObservableObject {
     @Published private(set) var state = "closed"
     @Published private(set) var progress = ""
     @Published private(set) var label = ""
@@ -19,17 +18,8 @@ import Darwin
     private var user: Wire = .null
     private var session: Wire = .null
     private var workspace: Wire = .null
-    private var projection: Wire = .null
-    private var projectionLease: ApprovalLease?
     private var leaseDeadline: ContinuousClock.Instant = .now
     private var previousWall = 0
-    private var machine: WorkspaceMachine?
-    private var installingMachine: VZVirtualMachine?
-    private var guardian: NativeWorkspaceGuardian?
-    private var root: URL?
-    private var volumeDevice: dev_t?
-    private var restore: URL?
-    private var attachmentAttempted = false
     private var busy = false
     private var lost = false
     private var heartbeat: Task<Void, Never>?
@@ -37,37 +27,20 @@ import Darwin
     private var serverControlActive = false
     private var watchdog: Task<Void, Never>?
     private var sleepObserver: NSObjectProtocol?
-    var requiresClosure: Bool { state != "closed" || attachmentAttempted }
+    var requiresClosure: Bool { state != "closed" }
 
-    func open(model: JosiModel, entry: Wire, restore: URL?) async throws {
-        guard !busy, !requiresClosure, let api = model.api, VZVirtualMachine.isSupported else { throw WorkspaceMachineError.busy }
+    func connect(model: JosiModel, projection: Wire) async throws {
+        guard !busy, !requiresClosure, let api = model.api,
+              projection["mode"].text == "current_desktop" else { throw approvalUnavailable() }
+        let entry = projection["workspace"]
         let id = try api.uuid(entry["workspaceId"].text)
-        busy = true; defer { busy = false }
         self.model = model; self.api = api; user = model.user["id"]; workspace = entry
-        label = entry["label"].text; state = "authenticating"; lost = false; self.restore = restore
+        label = entry["label"].text; lost = false; session = projection["openSession"]
         do {
-            let local = try await NativeWorkspaceImage.status(id)
-            guard local["state"].text == "image_ready", local["imageCreated"].flag, !local["mounted"].flag,
-                  local["capacityGiB"] == entry["capacityGiB"] else {
-                throw JosiError(message: "Prepare or repair this workspace’s encrypted storage before opening the desktop.")
-            }
-            let authorized = try await NativeWorkspaceProvision.authorize(model: model, request: [
-                "operation": "open", "deviceId": entry["identity"]["deviceId"], "workspaceId": entry["workspaceId"],
-                "label": entry["label"], "capacityGiB": entry["capacityGiB"],
-            ])
-            projection = authorized.projection; projectionLease = authorized.lease
-            session = projection["openSession"]
-            guard ProtectedWire.exact(session, ["sessionId", "expiresAtMs", "leaseUntilMs"]), ProtectedWire.uuid(session["sessionId"]) else {
-                throw approvalUnavailable()
-            }
+            guard ProtectedWire.exact(session, ["sessionId", "expiresAtMs", "leaseUntilMs"]),
+                  ProtectedWire.uuid(session["sessionId"]) else { throw approvalUnavailable() }
             try adoptLease(session)
-            startMonitoring()
-            let engine = WorkspaceMachine(authority: self)
-            engine.stateChanged = { [weak self] state in self?.state = state.rawValue }
-            machine = engine
-            try await engine.open(UUID(uuidString: id)!)
-            try current()
-            guest = NativeGuestConnection(device: try engine.socketDevice(), context: [
+            guest = try NativeGuestConnection(context: [
                 "serverOrigin": api.origin.absoluteString, "serverId": entry["identity"]["serverId"].text,
                 "userId": user.text, "deviceId": entry["identity"]["deviceId"].text, "workspaceId": id,
             ], current: { [weak self] in
@@ -82,20 +55,16 @@ import Darwin
             }, consentProjection: { [weak self] in
                 guard let self else { throw GuestLinkError.closed }
                 return try self.automationConsentProjection()
+            }, stopped: { [weak self] in
+                guard let self else { return }
+                self.stopAutomationLocally()
+                self.progress = "Control stopped. Approve again when you are ready."
+                Task { try? await self.stopAutomation() }
             })
-            try engine.show()
-            progress = "Separate development desktop · Web access requires a permitted Chrome task."
-            self.restore = nil
-        } catch {
-            lost = true; projection = .null; projectionLease = nil
-            // openWorkspace may have attached storage before producing a VM
-            // handle. This owner retains that separate handle for cleanup.
-            busy = false
-            do { try await close() } catch {
-                throw JosiError(message: "The desktop stopped but its storage still needs attention. Use Close Again; its files were retained.")
-            }
-            throw error
-        }
+            state = "running"
+            progress = "Connected to your current desktop. Select an app or attach a browser tab."
+            startMonitoring()
+        } catch { try? await close(); throw error }
     }
     private func applicationProjection(_ candidate: Wire) async throws -> Wire {
         try current()
@@ -109,7 +78,7 @@ import Darwin
         let selected = matches[0], id = try api.uuid(session["sessionId"].text)
         let applicationId = try api.uuid(selected["applicationId"].text)
         guard ProtectedWire.integer(selected["installationRevision"], positive: true) else { throw GuestLinkError.invalid }
-        let value = try await api.request("/admin/automation/storage/sessions/\(id)/application", method: "POST",
+        let value = try await api.request("/admin/automation/desktop/sessions/\(id)/application", method: "POST",
             body: ["applicationId": .string(applicationId), "installationRevision": selected["installationRevision"]])
         try current()
         let pin = value["application"]
@@ -136,7 +105,7 @@ import Darwin
         let matches = registry["browsers"].list.filter { NativeBrowserTargetWire.matches(candidate, $0, identity: identity) }
         guard matches.count == 1 else { return .null }
         let selected = matches[0], id = try api.uuid(session["sessionId"].text)
-        let value = try await api.request("/admin/automation/storage/sessions/\(id)/browser", method: "POST",
+        let value = try await api.request("/admin/automation/desktop/sessions/\(id)/browser", method: "POST",
             body: ["profileId": selected["profileId"], "family": candidate["family"]])
         try current()
         guard ProtectedWire.exact(value, ["schemaVersion", "sessionId", "identity", "reference", "browser", "expiresAtMs", "executionEnabled"]),
@@ -160,9 +129,8 @@ import Darwin
     private func current() throws {
         let now = Int(Date().timeIntervalSince1970 * 1000)
         guard !lost, let model, let api, model.api === api, model.user["id"] == user, model.isAdministrator,
-              !attachmentAttempted || guardian?.running == true,
               now >= previousWall, now < session["leaseUntilMs"].integer, ContinuousClock.now < leaseDeadline else {
-            throw JosiError(message: "The Vault or desktop connection ended. Reopen the workspace to continue.")
+            throw JosiError(message: "The Vault or desktop connection ended. Reconnect this Mac to continue.")
         }
         previousWall = now
     }
@@ -187,7 +155,7 @@ import Darwin
                         fields["control"] = .object(control)
                         body = .object(fields)
                     }
-                    let next = try await api.request("/admin/automation/storage/sessions/\(id)/renew", method: "POST",
+                    let next = try await api.request("/admin/automation/desktop/sessions/\(id)/renew", method: "POST",
                                                      body: body)
                     try current()
                     guard next["workspaceId"] == workspace["workspaceId"], next["executionEnabled"] == .bool(false) else { throw approvalUnavailable() }
@@ -205,7 +173,7 @@ import Darwin
                             else { serverControlActive = next["nativeControl"].flag }
                         } else { stopAutomationLocally() }
                     }
-                    try guardian?.renew()
+                    try await guest?.refresh()
                 } catch { if !Task.isCancelled { await connectionLost() }; return }
             }
         }
@@ -219,7 +187,7 @@ import Darwin
                         stopAutomationLocally()
                         if let api, ProtectedWire.uuid(session["sessionId"]) {
                             let id = session["sessionId"].text
-                            Task { _ = try? await api.request("/admin/automation/storage/sessions/\(id)/consent/stop", method: "POST", body: [:]) }
+                            Task { _ = try? await api.request("/admin/automation/desktop/sessions/\(id)/consent/stop", method: "POST", body: [:]) }
                         }
                     }
                 }
@@ -237,24 +205,13 @@ import Darwin
                     guard serverControlActive, localConsent != .null, let api, let guest else { continue }
                     try current()
                     let id = try api.uuid(session["sessionId"].text), generation = consentGeneration
-                    let base = "/admin/automation/storage/sessions/\(id)/commands"
+                    let base = "/admin/automation/desktop/sessions/\(id)/commands"
                     let response = try await api.request(base + "/next", method: "POST", body: [:])
                     try current()
                     guard generation == consentGeneration, localConsent != .null, self.guest === guest else { throw GuestLinkError.closed }
                     let packet = response["command"]
                     if packet == .null { continue }
-                    var network: NativeBrowserNetworkRelay?
-                    if packet["command"]["network"] != .null {
-                        guard let machine = self.machine, let sessionID = UUID(uuidString: id) else { throw GuestLinkError.closed }
-                        network = try NativeBrowserNetworkRelay(device: machine.socketDevice(), api: api, storageSession: sessionID, packet: packet,
-                            current: { [weak self, weak guest] in
-                                guard let self, let guest, self.guest === guest, guest.paired,
-                                      self.api === api, generation == self.consentGeneration, self.localConsent != .null else { throw GuestLinkError.closed }
-                                try self.current()
-                            })
-                    }
-                    defer { network?.stop() }
-                    let result = try await guest.execute(packet, network: network, authorize: { query in
+                    let result = try await guest.execute(packet, authorize: { query in
                         try self.current()
                         guard self.api === api, generation == self.consentGeneration,
                               self.localConsent != .null, self.guest === guest else { throw GuestLinkError.closed }
@@ -277,103 +234,26 @@ import Darwin
         }
     }
     private func connectionLost() async {
-        stopAutomationLocally()
-        lost = true; progress = "Closing the desktop because its Vault connection ended."
-        // Cleanup cancels both monitors. Run it in its own task so cancelling
-        // the calling heartbeat cannot cancel the required unmount operation.
-        if !busy { Task { @MainActor [weak self] in try? await self?.close() } }
-        // While mounting/installing/opening, the current-authority checks
-        // cancel that operation, whose failure path performs ordered cleanup.
-    }
-    func openWorkspace(_ id: UUID) async throws -> MountedAutomationWorkspace {
-        try current(); try projectionLease?.check()
-        guard projectionLease != nil, workspace["workspaceId"].text == id.uuidString.lowercased(),
-              ProtectedWire.matches(projection["imagePassword"], "^[A-Za-z0-9_-]{43}$") else { throw approvalUnavailable() }
-        state = "opening"; progress = "Opening the encrypted workspace…"
-        let guardProcess = NativeWorkspaceGuardian()
-        try await guardProcess.start(id.uuidString.lowercased())
-        guardian = guardProcess
-        try current()
-        attachmentAttempted = true
-        let response = try await NativeWorkspaceImage.run(["schemaVersion": .number(1), "operation": "attach",
-            "workspaceId": workspace["workspaceId"], "imagePassword": projection["imagePassword"]],
-            admission: { try self.current(); try self.projectionLease?.check() })
-        projection = .null; projectionLease = nil
-        let storage = try NativeWorkspaceImage.result(response, id: id.uuidString.lowercased())
-        guard storage["state"].text == "mounted", storage["mounted"].flag, storage["imageCreated"].flag,
-              ProtectedWire.integer(storage["volumeDevice"], positive: true), storage["volumeDevice"].integer <= Int(Int32.max) else {
-            throw WorkspaceMachineError.invalidWorkspace
-        }
-        guard let account = getpwuid(getuid()) else { throw WorkspaceMachineError.invalidWorkspace }
-        let home = String(cString: account.pointee.pw_dir)
-        let mount = URL(fileURLWithPath: home + "/Library/Application Support/Josi/Automation/" + id.uuidString.lowercased() + "/Mounted")
-        let device = dev_t(storage["volumeDevice"].integer)
-        root = mount; volumeDevice = device
-        try current()
-        return try await NativeWorkspaceInstaller.prepare(root: mount, id: id, device: device, capacity: workspace["capacityGiB"].integer,
-            restore: restore, current: { try self.current() }, retainMachine: { self.installingMachine = $0 },
-            progress: { self.progress = $0 })
-    }
-    func requireCurrent(_ workspace: MountedAutomationWorkspace) async throws {
-        try current()
-        guard workspace.workspaceId.uuidString.lowercased() == self.workspace["workspaceId"].text,
-              workspace.mountRoot == root, workspace.volumeDevice == volumeDevice else { throw WorkspaceMachineError.invalidWorkspace }
-        try NativeWorkspaceInstaller.mounted(workspace.mountRoot, device: workspace.volumeDevice)
-    }
-    func invalidateInput(workspaceId: UUID, reason: String) {
-        stopAutomationLocally()
-    }
-    func closeChannels(workspaceId: UUID) async throws {
-        guest?.close(); guest = nil
-    }
-    func closeWorkspace(_ workspace: MountedAutomationWorkspace) async throws {
-        guard workspace.workspaceId.uuidString.lowercased() == self.workspace["workspaceId"].text else { throw WorkspaceMachineError.invalidWorkspace }
-        try await detach()
-    }
-    private func detach() async throws {
-        guard attachmentAttempted else { return }
-        let id = workspace["workspaceId"].text
-        let response = try await NativeWorkspaceImage.run(["schemaVersion": .number(1), "operation": "detach", "workspaceId": .string(id)])
-        let storage = try NativeWorkspaceImage.result(response, id: id)
-        guard !storage["mounted"].flag, storage["state"].text == "image_ready" else { throw WorkspaceMachineError.needsRepair }
-        attachmentAttempted = false; root = nil; volumeDevice = nil
+        stopAutomationLocally(); lost = true
+        progress = "Disconnected because this desktop’s authority expired."
+        try? await close()
     }
     func close() async throws {
-        stopAutomationLocally()
-        guard !busy else { throw WorkspaceMachineError.busy }
-        busy = true; lost = true; defer { busy = false }
+        stopAutomationLocally(); lost = true
         heartbeat?.cancel(); heartbeat = nil; watchdog?.cancel(); watchdog = nil
         commandLoop?.cancel(); commandLoop = nil
         if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver); self.sleepObserver = nil }
-        projection = .null; projectionLease = nil
+        guest?.close(); guest = nil
         if let api, ProtectedWire.uuid(session["sessionId"]) {
             let id = session["sessionId"].text
-            Task { _ = try? await api.request("/admin/automation/storage/sessions/\(id)/close", method: "POST", body: [:]) }
+            Task { _ = try? await api.request("/admin/automation/desktop/sessions/\(id)/close", method: "POST", body: [:]) }
         }
-        do {
-            guest?.close(); guest = nil
-            if let vm = installingMachine, vm.state != .stopped && vm.state != .error { try await vm.stop() }
-            installingMachine = nil
-            if let machine { try await machine.authorityLost() }
-            try await detach()
-            guardian?.closed(); guardian = nil
-            machine = nil; api = nil; model = nil; session = .null; workspace = .null; restore = nil
-            state = "closed"; progress = "Desktop closed; encrypted storage is closed."
-        } catch {
-            state = "needs_repair"; progress = "The desktop or its encrypted storage needs attention. Use Close Again."
-            throw WorkspaceMachineError.needsRepair
-        }
+        api = nil; model = nil; session = .null; workspace = .null
+        state = "closed"; progress = "Disconnected. Your apps remain open."
     }
-    func show() throws { try current(); try machine?.show() }
-    func pause() async throws {
-        stopAutomationLocally()
-        if let api, ProtectedWire.uuid(session["sessionId"]) {
-            let id = session["sessionId"].text
-            Task { _ = try? await api.request("/admin/automation/storage/sessions/\(id)/consent/stop", method: "POST", body: [:]) }
-        }
-        try await machine?.pause()
-    }
-    func resume() async throws { try current(); try await machine?.resume() }
+    func show() throws { try current(); try guest?.showApplication() }
+    func pause() async throws { try await stopAutomation() }
+    func resume() async throws { try await approveAutomation() }
 
     private func stopAutomationLocally() {
         consentGeneration += 1; localConsent = .null; consentDeadline = .now
@@ -387,7 +267,7 @@ import Darwin
         try current()
         guard let api else { throw approvalUnavailable() }
         let id = try api.uuid(session["sessionId"].text)
-        _ = try await api.request("/admin/automation/storage/sessions/\(id)/consent/stop", method: "POST", body: [:])
+        _ = try await api.request("/admin/automation/desktop/sessions/\(id)/consent/stop", method: "POST", body: [:])
     }
     func approveAutomation() async throws {
         try current()
@@ -410,11 +290,12 @@ import Darwin
             localConsent = result
             consentLeaseUntil = min(session["leaseUntilMs"].integer, result["leaseUntilMs"].integer)
             consentDeadline = min(leaseDeadline, .now.advanced(by: .milliseconds(result["leaseUntilMs"].integer - now)))
+            try await guest.refresh()
         } catch {
             stopAutomationLocally()
             if let api, ProtectedWire.uuid(session["sessionId"]) {
                 let id = session["sessionId"].text
-                _ = try? await api.request("/admin/automation/storage/sessions/\(id)/consent/stop", method: "POST", body: [:])
+                _ = try? await api.request("/admin/automation/desktop/sessions/\(id)/consent/stop", method: "POST", body: [:])
             }
             throw error
         }

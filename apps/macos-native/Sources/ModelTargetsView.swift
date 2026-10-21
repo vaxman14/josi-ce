@@ -32,7 +32,7 @@ struct NativeModelTargetsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Button("Refresh Configured Models") { model.run { try await load() } }
                 if loaded && candidates.isEmpty {
-                    Text("No eligible model is available. Activate a tested chat model in Models. Subscription sign-ins still need their separate automation transport.")
+                    Text("No eligible model is available. Activate a tested model with an explicit model name in Models. ChatGPT subscriptions are supported; Claude subscriptions cannot receive automation captures yet.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if !candidates.isEmpty {

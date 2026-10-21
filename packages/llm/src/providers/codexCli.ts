@@ -39,16 +39,16 @@
 //     billed, estimated or metered against a currency cap. Usage rows record
 //     `subscription` as the charge basis and zero as the amount, because zero
 //     per-call is the true figure for a flat monthly fee.
-//   * Tool calling exists ONLY through the MCP harness (see `harness.ts`): the
-//     CLI's agent loop calls Josi's own tools over an MCP stdio server that
-//     enforces Josi's own step-up policy. When the harness is not present in
-//     the image, tools are refused exactly as before and the capability probe
-//     honestly finds `toolCalling: false`. Structured output is still not
-//     offered through this seam.
+//   * Ordinary tool calls use the MCP harness (see `harness.ts`). Native
+//     automation instead requests a structured proposal; Josi validates and
+//     executes that proposal through its in-process permission gates. The
+//     CLI never receives the native runtime or a browser-control capability.
 //   * It needs the binary present in the container or on the host, signed in,
 //     and it will not be either by default.
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { codexTurnSchema, parseCodexTurn, renderCodexTurn } from './codexTurn.js';
+import type { CodexPrivateFile } from './codexVaultWire.js';
 import { assertCapability, privateTemporaryDirectory, SubscriptionCredentialError, SubscriptionCredentialBusyError } from '@josi-ce/core';
 import {
   MCP_SERVER_NAME, openHarnessSession, readExecutedCalls, resolveMcpServerPath,
@@ -86,6 +86,10 @@ export type SpawnRunner = (args: {
   input: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
+  /** Run in the supervising parent immediately before the child starts. */
+  beforeStart?: () => Promise<void>;
+  /** In-memory assets materialized only in the supervised private CLI home. */
+  privateFiles?: CodexPrivateFile[];
 }) => Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; cancelled?: boolean }>;
 
 export interface CodexCliOptions {
@@ -98,6 +102,7 @@ export interface CodexCliOptions {
    * the environment and the image's known location"; explicit `null` disables
    * the harness (tests use this to assert the refusal path). */
   mcpServerPath?: string | null;
+  beforeStart?: () => Promise<void>;
 }
 
 const DEFAULT_TIMEOUT_MS = 180_000;
@@ -153,7 +158,7 @@ export function childEnvironment(parent: NodeJS.ProcessEnv = process.env): NodeJ
  * at the CLI is safe precisely because the approval that matters — Josi's
  * step-up policy — is enforced inside the server, where the CLI cannot reach.
  */
-export function codexArgs(model: string, harness?: HarnessSession | null, imagePaths: string[] = []): string[] {
+export function codexArgs(model: string, harness?: HarnessSession | null, imagePaths: string[] = [], schemaPath?: string): string[] {
   const mcp = harness
     ? [
       // process.execPath, not `node`: the CLI spawns the server itself and
@@ -175,6 +180,10 @@ export function codexArgs(model: string, harness?: HarnessSession | null, imageP
     '-c', 'features.shell_tool=false',
     '-c', 'features.view_image=false',
     '-c', 'features.multi_agent=false',
+    ...(schemaPath ? ['--ephemeral', '--output-schema', schemaPath,
+      '-c', 'web_search="disabled"', '-c', 'tools.update_plan.enabled=false',
+      '-c', 'tools.experimental_request_user_input.enabled=false',
+      '-c', 'features.apps=false', '-c', 'features.plugins=false'] : []),
     ...mcp,
     // An empty model means 'the plan's own default': the CLI chooses, exactly
     // as it does for its interactive users. Passing --model '' would instead
@@ -315,7 +324,8 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
       // prose back would report success having done nothing.
       const serverPath = opts.mcpServerPath === undefined ? resolveMcpServerPath() : opts.mcpServerPath;
       let harness: HarnessSession | null = null;
-      if (request.tools?.length) {
+      const callerTools = request.toolExecution === 'caller';
+      if (request.tools?.length && !callerTools) {
         if (!serverPath) {
           throw new LlmError(
             'The Codex CLI path cannot call tools on this installation — the Josi tool server is '
@@ -336,28 +346,37 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
       let imageDir: string | null = null;
       try {
         const imagePaths: string[] = [];
+        const privateFiles: CodexPrivateFile[] = [];
+        let schemaPath: string | undefined;
+        if (callerTools) {
+          schemaPath = 'josi-response.schema.json';
+          privateFiles.push({ name: schemaPath, base64: Buffer.from(JSON.stringify(codexTurnSchema(request))).toString('base64') });
+        }
         // Images belong to the current turn. Do not resend old attachments
         // from history on every later message: that wastes plan quota and can
         // make the model answer about yesterday's picture instead of today's.
         const images = request.messages.at(-1)?.images ?? [];
         if (images.length) {
-          imageDir = privateTemporaryDirectory('josi-codex-images-');
+          if (!callerTools) imageDir = privateTemporaryDirectory('josi-codex-images-');
           for (const [index, image] of images.entries()) {
             const extension = image.mediaType === 'image/jpeg' ? 'jpg'
               : image.mediaType === 'image/webp' ? 'webp'
               : image.mediaType === 'image/gif' ? 'gif'
               : 'png';
-            const path = join(imageDir, `attachment-${index}.${extension}`);
-            await writeFile(path, Buffer.from(image.base64, 'base64'), { mode: 0o600 });
+            const path = callerTools ? `josi-image-${index}.${extension}` : join(imageDir!, `attachment-${index}.${extension}`);
+            if (callerTools) privateFiles.push({ name: path, base64: image.base64 });
+            else await writeFile(path, Buffer.from(image.base64, 'base64'), { mode: 0o600 });
             imagePaths.push(path);
           }
         }
         result = await runner({
           command,
-          args: codexArgs(opts.model, harness, imagePaths),
-          input: renderPrompt(request),
+          args: codexArgs(opts.model, harness, imagePaths, schemaPath),
+          input: callerTools ? renderCodexTurn(request) : renderPrompt(request),
           env: childEnvironment(),
           timeoutMs,
+          beforeStart: opts.beforeStart,
+          ...(privateFiles.length ? { privateFiles } : {}),
         });
       } catch (err) {
         if (err instanceof LlmError) throw err;
@@ -409,12 +428,13 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
       if (!text) {
         throw new LlmError('The Codex CLI returned nothing Josi could read.', { retryable: true });
       }
+      const proposed = callerTools ? parseCodexTurn(text, request) : null;
 
       return {
-        text,
-        // Nothing PENDING, ever: on the harness path the CLI's own loop already
-        // ran the tools, and what ran is reported below as fact.
-        toolCalls: [],
+        text: proposed?.text ?? text,
+        // Caller-owned tools are proposals. Harness tools have already run
+        // and travel separately as executedToolCalls to prevent replay.
+        toolCalls: proposed?.toolCalls ?? [],
         ...(executedToolCalls?.length ? { executedToolCalls } : {}),
         // NOT GUESSED. The CLI reports no token counts, and inventing an
         // estimate here would put a fabricated number into the usage ledger and

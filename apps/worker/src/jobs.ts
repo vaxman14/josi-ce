@@ -58,6 +58,8 @@ export interface WorkerContext {
   /** Explicit seam: suites omit it, so tests can never contact Expo. */
   pushFetch?: typeof fetch;
   workerId?: string;
+  /** Fast queue polls leave housekeeping at its previous cadence. */
+  maintenance?: boolean;
 }
 
 export interface JobOutcome {
@@ -523,9 +525,11 @@ export async function processQueue(
   ctx: WorkerContext = {},
 ): Promise<JobOutcome> {
   ctx={...ctx,workerId};
-  await createStateStore(db, ctx.masterKey ?? null).purge();
-  await purgeGoogleLoginStates(db);
-  await tickSchedules(db);
+  if (ctx.maintenance !== false) {
+    await createStateStore(db, ctx.masterKey ?? null).purge();
+    await purgeGoogleLoginStates(db);
+    await tickSchedules(db);
+  }
   const jobs = await claimJobs(db, workerId, limit);
   let done = 0;
   let failed = 0;
@@ -542,7 +546,7 @@ export async function processQueue(
       failed++;
     }
   }
-  if(ctx.masterKey&&ctx.pushFetch){
+  if(ctx.masterKey&&ctx.pushFetch&&(ctx.maintenance !== false || jobs.length > 0)){
     await processPushBatch(db,ctx.masterKey,ctx.pushFetch);
     await processPushReceipts(db,ctx.pushFetch);
   }

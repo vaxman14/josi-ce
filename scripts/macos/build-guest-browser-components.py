@@ -14,8 +14,8 @@ import zipfile
 
 REPO = Path(__file__).resolve().parents[2]
 SOURCES = REPO / "apps/automation-macos/Sources"
-HELPERS = "/Applications/Josi Companion.app/Contents/Helpers"
-SAFARI_ID = "com.heyjosi.ce.guestcompanion.workspace-safari"
+HELPERS = "/Applications/Josi.app/Contents/Helpers"
+SAFARI_ID = "com.heyjosi.ce.unified.workspace-safari"
 
 
 def build(output, node):
@@ -48,8 +48,8 @@ def build(output, node):
     (output / "Firefox-signing.txt").write_text(
         "Firefox-signing-submission.zip is unsigned. Submit it to Mozilla for "
         "unlisted/self-distributed signing, then install the returned signed XPI "
-        "through Firefox's add-on manager inside the Josi guest profile. "
-        "Josi checks Firefox's active signed installation and every packaged code file. "
+        "through Firefox's add-on manager in your existing Firefox profile. "
+        "The extension attaches only the tab explicitly selected by its user. "
         "Rebuild/sign a matching version after extension code changes. "
         "No Mozilla signing or browser installation was performed by this builder.\n"
     )
@@ -58,10 +58,10 @@ def build(output, node):
             "-target", "arm64-apple-macos14.2", "-module-cache-path", output / "module-cache",
             "-o", output / executable, SOURCES / source, SOURCES / "GuestBrowserIPC.swift"])
 
-    name = "Josi Guest Browser"
+    name = "Josi Browser Control"
     generated = output / "SafariProject"
     run("safari-project", ["xcrun", "safari-web-extension-packager", resources / "safari",
-        "--project-location", generated, "--app-name", name, "--bundle-identifier", "com.heyjosi.ce.guestcompanion",
+        "--project-location", generated, "--app-name", name, "--bundle-identifier", "com.heyjosi.ce.unified",
         "--swift", "--macos-only", "--copy-resources", "--no-open", "--no-prompt"])
     project_root = generated / name
     extension = project_root / (name + " Extension")
@@ -90,20 +90,20 @@ def build(output, node):
     if info.get("CFBundleIdentifier") != SAFARI_ID or info.get("CFBundleExecutable") != "JosiWorkspaceSafari":
         raise ValueError("Safari output identity did not match")
     entitlements = {"com.apple.security.app-sandbox": True,
-                    "com.apple.security.temporary-exception.mach-lookup.global-name": ["com.heyjosi.ce.guestbrowser"]}
+                    "com.apple.security.temporary-exception.mach-lookup.global-name": ["com.heyjosi.ce.browser"]}
     (output / "Safari.entitlements").write_bytes(plistlib.dumps(entitlements))
-    (output / "com.heyjosi.ce.guestbrowser.plist").write_bytes(plistlib.dumps({
-        "Label": "com.heyjosi.ce.guestbrowser",
+    (output / "com.heyjosi.ce.browser.plist").write_bytes(plistlib.dumps({
+        "Label": "com.heyjosi.ce.browser",
         "BundleProgram": "Contents/Helpers/JosiBrowserBroker",
         "ProgramArguments": [HELPERS + "/JosiBrowserBroker"],
-        "MachServices": {"com.heyjosi.ce.guestbrowser": True, "com.heyjosi.ce.guestbrowser.control": True},
+        "MachServices": {"com.heyjosi.ce.browser": True, "com.heyjosi.ce.browser.control": True},
         "ProcessType": "Interactive", "LimitLoadToSessionType": "Aqua",
     }))
     identity = json.loads((resources / "BrowserDistribution.json").read_text())
     manifests = output / "NativeMessagingHosts"
     manifests.mkdir()
     for family in ["chrome", "brave", "firefox"]:
-        value = {"name": "com.heyjosi.workspace", "description": "Josi isolated browser workspace",
+        value = {"name": "com.heyjosi.browser", "description": "Josi isolated browser workspace",
                  "path": HELPERS + "/JosiBrowserHost", "type": "stdio"}
         value.update({"allowed_extensions": [identity[family]]} if family == "firefox"
                      else {"allowed_origins": [f"chrome-extension://{identity[family]}/"]})

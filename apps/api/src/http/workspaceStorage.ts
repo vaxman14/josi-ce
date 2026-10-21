@@ -43,7 +43,7 @@ export class WorkspaceStorage {
     if (rows.length !== 1) throw new ProtectedChangeError(403, 'Sign in as the administrator again.');
   }
   private async server(tx: Db, identity: Readonly<ProtectedConfirmationIdentity>) {
-    const rows = await tx.query<{ installation_id: string }>('select installation_id from workspace limit 2 for share');
+    const rows = await tx.query<{ installation_id: string }>('select install_id as installation_id from install_identity where id=true for share');
     if (!isProtectedControlOrigin(this.origin) || identity.serverOrigin !== this.origin || rows.length !== 1
       || rows[0].installation_id !== identity.serverId) throw new ProtectedChangeError(409, 'The enrolled Mac does not match this server.');
   }
@@ -58,7 +58,7 @@ export class WorkspaceStorage {
       verifyFreshAdministrator: denied, verifyEnrollmentConsent: denied, verifyProtectedRevocation: denied, verifyHostProjection: denied });
   }
   inventory(actor: string, session: string) {
-    return this.records(actor, session).workspaceStorage({ verifyRequest: denied }).inventory(actor);
+    return this.records(actor, session).workspaceStorage({ verifyRequest: denied }).inventory(actor).then(value => ({ ...value, workspaces: value.workspaces.filter(w => w.mode === 'current_desktop') }));
   }
   private forget(id: string) {
     const p = this.pending.get(id);
@@ -77,10 +77,10 @@ export class WorkspaceStorage {
     for (const p of this.pending.values()) { try { this.live(p); } catch { /* Pruned. */ } }
     this.pruneOpened();
     if (!exact(input, ['operation', 'deviceId', 'workspaceId', 'label', 'capacityGiB']) || !uuid(input.deviceId)
-      || !['provision', 'open'].includes(String(input.operation))) {
-      throw new ProtectedChangeError(400, 'Choose an enrolled Mac, workspace name and capacity.');
+      || input.operation !== 'connect' || input.capacityGiB !== 0) {
+      throw new ProtectedChangeError(400, 'Choose an enrolled Mac for current-desktop control.');
     }
-    if (input.operation === 'open' && [...this.opened.values()].some(s => s.actor === actor && s.identity.deviceId === input.deviceId)) {
+    if (input.operation === 'connect' && [...this.opened.values()].some(s => s.actor === actor && s.identity.deviceId === input.deviceId)) {
       throw new ProtectedChangeError(409, 'Close this Mac’s existing workspace session before opening another.');
     }
     if (this.preparing.has(actor) || [...this.pending.values()].some(p => p.actor === actor)) throw new ProtectedChangeError(409, 'Finish or cancel the current storage request first.');
@@ -97,7 +97,7 @@ export class WorkspaceStorage {
         ...device.identity, keyReference: inventory.reference, wrappingFingerprint: device.wrappingFingerprint,
         issuedAtMs: now, expiresAtMs: now + 60_000, operation: input.operation,
         workspaceId: input.workspaceId, label: input.label, capacityGiB: input.capacityGiB });
-      if (!challenge) throw new ProtectedChangeError(400, 'Use a clear name of up to 120 characters and capacity from 64 to 512 GiB.');
+      if (!challenge) throw new ProtectedChangeError(400, 'Use a clear desktop name of up to 120 characters; no disk allocation is required.');
       const timer = setTimeout(() => this.forget(challenge.id), 60_000); timer.unref();
       this.pending.set(challenge.id, { actor, session, challenge, deadline: performance.now() + 60_000, previousWall: now, busy: false, timer });
       return { challenge };
@@ -111,7 +111,7 @@ export class WorkspaceStorage {
   cancel(actor: string, session: string, id: string) {
     this.owned(actor, session, id); this.forget(id); return { cancelled: true };
   }
-  async authorize(actor: string, session: string, id: string, proof: unknown, operation: 'provision' | 'open') {
+  async authorize(actor: string, session: string, id: string, proof: unknown, operation: 'provision' | 'open' | 'connect') {
     const p = this.owned(actor, session, id); p.busy = true;
     try {
       if (p.challenge.operation !== operation) throw new ProtectedChangeError(403, 'Use the exact reviewed storage operation.');
@@ -136,7 +136,7 @@ export class WorkspaceStorage {
       } }).authorize(actor, p.challenge, proof);
       this.live(p);
       let opened: { sessionId: string; expiresAtMs: number; leaseUntilMs: number } | null = null;
-      if (operation === 'open') {
+      if (operation === 'open' || operation === 'connect') {
         this.pruneOpened();
         if (this.opened.size >= 32 || [...this.opened.values()].some(s => s.actor === actor && s.identity.deviceId === p.challenge.deviceId)) {
           throw new ProtectedChangeError(409, 'Close the existing workspace session first.');
@@ -151,7 +151,7 @@ export class WorkspaceStorage {
         try {
           await openAutomationPresence(this.db, { identity: { userId: actor, serverId: c.serverId,
             deviceId: c.deviceId, workspaceId: c.workspaceId }, storageSessionId: sessionId, authSessionId: session,
-            authorityEpoch: s.reference.epoch, label: c.label, leaseUntilMs: s.leaseUntil });
+            authorityEpoch: s.reference.epoch, label: c.label, leaseUntilMs: s.leaseUntil, isolated: operation !== 'connect' });
           this.openedLive(s);
         } catch (error) { this.opened.delete(sessionId); throw error; }
         opened = { sessionId, expiresAtMs: s.expires, leaseUntilMs: s.leaseUntil };
@@ -159,7 +159,7 @@ export class WorkspaceStorage {
       // This deliberate native-only projection must never reach logs/chat.
       // The typed Secret still redacts accidental serialization elsewhere.
       return { schemaVersion: 1, challengeId: id, workspace: result.workspace, expiresAtMs: p.challenge.expiresAtMs,
-        imagePassword: result.imagePassword.reveal(), executionEnabled: false, ...(opened ? { openSession: opened } : {}) };
+        ...(operation === 'connect' ? { mode: 'current_desktop' as const } : { imagePassword: result.imagePassword.reveal() }), executionEnabled: false, ...(opened ? { openSession: opened } : {}) };
     } finally { this.forget(id); }
   }
   private openedLive(s: OpenSession) {

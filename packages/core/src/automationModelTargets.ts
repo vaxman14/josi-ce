@@ -56,9 +56,9 @@ export async function currentAutomationModelCandidate(db: Db, role: 'primary' | 
   }>(`select role,provider,model,base_url,updated_at::text as updated_at,activated_at,probed_at,cap_chat,
       provider_config,subscription_command from llm_providers where role=$1 for share`, [role]);
   if (!row?.activated_at || !row.probed_at || row.cap_chat !== true) return null;
-  // Subscription transports cannot yet bind this in-process projection to
-  // their own provider hop. Do not offer a destination they cannot enforce.
-  if (['openai_subscription', 'anthropic_subscription'].includes(row.provider)) return null;
+  // ChatGPT captures use a supervised inference invocation, with Josi owning
+  // each proposed action. A named model is required for a stable destination.
+  if (row.provider === 'anthropic_subscription' || !row.model.trim()) return null;
   const routing = { role: row.role, provider: row.provider, model: row.model, baseUrl: row.base_url,
     configurationVersion: row.updated_at, providerConfig: row.provider_config, subscriptionCommand: row.subscription_command };
   if (Buffer.byteLength(JSON.stringify(routing), 'utf8') > 16 * 1024) throw new VaultRecordError('The saved model configuration is too large to register.');

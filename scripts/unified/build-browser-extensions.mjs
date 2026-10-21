@@ -15,16 +15,13 @@ for (const family of ['chrome', 'brave', 'firefox', 'safari']) {
   })});\n`, { flag: 'wx' });
   const manifest = {
     ...(['chrome', 'brave'].includes(family) ? { key: identity.chromiumPublicKey } : {}),
-    manifest_version: 3, name: 'Josi Workspace', version: '0.7.0',
-    description: 'Browser control inside your separate Josi automation workspace.',
-    permissions: ['nativeMessaging', 'tabs', 'scripting', 'declarativeNetRequest',
-      ...(family === 'chrome' ? ['webRequest', 'webRequestAuthProvider'] : [])], host_permissions: ['https://*/*', 'http://*/*'],
-    // The verified guest connection enables this before polling for work.
-    // A package mistakenly loaded into a personal profile changes no rules.
-    declarative_net_request: { rule_resources: [{ id: 'josi_network_boundary', enabled: false, path: 'network-rules.json' }] },
-    action: { default_popup: 'popup.html', default_title: 'Josi workspace' },
+    manifest_version: 3, name: 'Josi Browser Control', version: '0.8.0',
+    description: 'Control an explicitly attached tab in your existing browser with Josi permissions.',
+    permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage'],
+    optional_host_permissions: ['https://*/*', 'http://*/*'],
+    action: { default_popup: 'popup.html', default_title: 'Attach this tab to Josi' },
     background: ['chrome', 'brave'].includes(family) ? { service_worker: 'background.js' }
-      : { scripts: ['config.js', 'native-channel.js', 'network-guard.js', 'background.js'], persistent: false },
+      : { scripts: ['config.js', 'native-channel.js', 'background.js'], persistent: false },
     content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'; base-uri 'none'" },
     ...(family === 'firefox' ? { browser_specific_settings: { gecko: { id: identity.firefoxId, strict_min_version: '128.0',
       data_collection_permissions: { required: ['websiteContent', 'websiteActivity', 'browsingActivity'] } } } } : {}),

@@ -6,9 +6,9 @@ import Darwin
 /// Browser-spawned stdio entry point. It cannot launch apps, select a profile,
 /// discover a server address, grant authority or interpret page instructions.
 @main enum JosiGuestBrowserHost {
-    private static let helper = "/Applications/Josi Companion.app/Contents/Helpers/JosiBrowserHost"
-    private static let identifier = "com.heyjosi.ce.guestbrowser-host"
-    private static let configuration = "/Applications/Josi Companion.app/Contents/Resources/BrowserDistribution.json"
+    private static let helper = "/Applications/Josi.app/Contents/Helpers/JosiBrowserHost"
+    private static let identifier = "com.heyjosi.ce.browser-host"
+    private static let configuration = "/Applications/Josi.app/Contents/Resources/BrowserDistribution.json"
     static func main() {
         do {
             signal(SIGPIPE, SIG_IGN)
@@ -18,6 +18,7 @@ import Darwin
             let client = GuestBrowserClient(), parent = getppid()
             let original = try peer(parent: parent)
             var seen = Set<String>()
+            var profile: String?
             for _ in 0..<16384 {
                 let header = try readExactly(4)
                 let count = header.enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << UInt32(8 * $1.offset) }
@@ -27,7 +28,16 @@ import Darwin
                       let id = request["requestId"] as? String, !seen.contains(id) else { throw GuestBrowserError.invalid }
                 seen.insert(id)
                 let completion = BlockingReply()
-                client.exchange(data, peer: original) { completion.finish($0) }
+                if request["operation"] as? String == "browser.hello" {
+                    guard profile == nil, let payload = request["payload"] as? [String: Any],
+                          let id = payload["nativeProfileId"] as? String,
+                          UUID(uuidString: id)?.uuidString.lowercased() == id else { throw GuestBrowserError.invalid }
+                    profile = id
+                }
+                guard let profile, var bound = try JSONSerialization.jsonObject(with: original) as? [String: Any] else { throw GuestBrowserError.invalid }
+                bound["profileId"] = profile
+                let peerData = try JSONSerialization.data(withJSONObject: bound, options: [.sortedKeys, .withoutEscapingSlashes])
+                client.exchange(data, peer: peerData) { completion.finish($0) }
                 let response = try completion.wait()
                 var length = UInt32(response.count).littleEndian
                 try withUnsafeBytes(of: &length) { try writeAll(Data($0)) }
@@ -69,27 +79,6 @@ import Darwin
             offset += count
         }
     }
-    private static func arguments(_ pid: pid_t) throws -> [String] {
-        var mib = [CTL_KERN, KERN_PROCARGS2, pid], size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size >= 4, size <= 256 * 1024 else { throw GuestBrowserError.unavailable }
-        var data = Data(count: size)
-        defer { data.resetBytes(in: 0..<data.count) }
-        guard data.withUnsafeMutableBytes({ sysctl(&mib, 3, $0.baseAddress, &size, nil, 0) }) == 0 else { throw GuestBrowserError.unavailable }
-        let argc = data.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
-        guard (1...256).contains(argc) else { throw GuestBrowserError.invalid }
-        var offset = 4
-        while offset < size && data[offset] != 0 { offset += 1 } // kernel executable path
-        while offset < size && data[offset] == 0 { offset += 1 }
-        var result: [String] = []
-        for _ in 0..<argc {
-            let start = offset
-            while offset < size && data[offset] != 0 { offset += 1 }
-            guard offset < size, offset - start <= 8192,
-                  let argument = String(data: data.subdata(in: start..<offset), encoding: .utf8) else { throw GuestBrowserError.invalid }
-            result.append(argument); offset += 1
-        }
-        return result // Environment entries are never decoded or returned.
-    }
     private static func peer(parent: pid_t) throws -> Data {
         let boot = try GuestBrowserBoundary.isolatedBoot()
         guard parent > 1, let app = NSRunningApplication(processIdentifier: parent),
@@ -120,35 +109,10 @@ import Darwin
         } else {
             guard own.count == 2, own[1] == "chrome-extension://\(extensionId)/" else { throw GuestBrowserError.invalid }
         }
-        let args = try arguments(parent)
-        let profiles: [String]
-        if family == "firefox" {
-            guard !args.contains("-P"), args.contains("-no-remote") || args.contains("--no-remote") else { throw GuestBrowserError.invalid }
-            profiles = args.indices.filter { ["-profile", "--profile"].contains(args[$0]) }.map { index in
-                index + 1 < args.count ? args[index + 1] : ""
-            }
-        } else {
-            guard args.filter({ $0.hasPrefix("--profile-directory") }).allSatisfy({ $0 == "--profile-directory=Default" }) else { throw GuestBrowserError.invalid }
-            profiles = args.filter { $0.hasPrefix("--user-data-dir=") }.map { String($0.dropFirst("--user-data-dir=".count)) }
-        }
-        guard profiles.count == 1, let passwd = getpwuid(geteuid()), let home = passwd.pointee.pw_dir else { throw GuestBrowserError.invalid }
-        let root = URL(fileURLWithPath: String(cString: home)).appendingPathComponent("Library/Application Support/Josi Workspace/Profiles").resolvingSymlinksInPath()
-        let profile = URL(fileURLWithPath: profiles[0])
-        let parts = profile.pathComponents, rootParts = root.pathComponents
-        guard profile.path == profile.standardizedFileURL.path, profile.path == profile.resolvingSymlinksInPath().path,
-              parts.count == rootParts.count + 2, Array(parts.prefix(rootParts.count)) == rootParts,
-              let workspace = parts.dropFirst(rootParts.count).first, let id = parts.last,
-              UUID(uuidString: workspace)?.uuidString.lowercased() == workspace,
-              UUID(uuidString: id)?.uuidString.lowercased() == id else { throw GuestBrowserError.invalid }
-        for directory in [root, profile.deletingLastPathComponent(), profile] {
-            var info = stat()
-            guard lstat(directory.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
-                  info.st_uid == geteuid(), info.st_mode & 0o077 == 0 else { throw GuestBrowserError.invalid }
-        }
         return try JSONSerialization.data(withJSONObject: [
             "kind": "browser-process", "family": family, "extensionId": extensionId,
-            "guestBootId": boot.guest, "hostBootId": boot.host, "workspaceId": workspace, "profileId": id,
-            "profilePath": profile.path, "processId": parent, "launchedAtMs": Int64(launched.timeIntervalSince1970 * 1000),
+            "guestBootId": boot.guest, "hostBootId": boot.host,
+            "profilePath": NSNull(), "processId": parent, "launchedAtMs": Int64(launched.timeIntervalSince1970 * 1000),
             "bundleId": bundle, "bundlePath": path, "signingId": signing, "teamId": team,
             "codeHash": hash.map { String(format: "%02x", $0) }.joined(),
         ], options: [.sortedKeys, .withoutEscapingSlashes])

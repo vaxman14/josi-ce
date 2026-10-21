@@ -36,10 +36,14 @@ export type AutomationAction =
   | { kind: 'browser.observe'; browserProfileId: string; tabId: string }
   | { kind: 'browser.navigate'; browserProfileId: string; tabId: string; url: string }
   | { kind: 'browser.element'; browserProfileId: string; tabId: string; elementId: string;
-      action: 'click' | 'fill'; valueReference?: string }
+      action: 'click' | 'fill'; sourceReservationId: string; text?: string; valueReference?: string }
   | { kind: 'desktop.observe'; appId: string; windowId: string }
-  | { kind: 'desktop.element'; appId: string; windowId: string; elementId: string; action: 'press' | 'focus' }
-  | { kind: 'desktop.pointer'; appId: string; windowId: string; x: number; y: number; action: 'click' };
+  | { kind: 'desktop.element'; appId: string; windowId: string; elementId: string; sourceReservationId: string; action: 'press' | 'focus' }
+  | { kind: 'desktop.pointer'; appId: string; windowId: string; x: number; y: number; sourceReservationId: string; action: 'click' }
+  | { kind: 'desktop.text'; appId: string; windowId: string; sourceReservationId: string; text: string }
+  | { kind: 'desktop.key'; appId: string; windowId: string; sourceReservationId: string; key: string }
+  | { kind: 'desktop.scroll'; appId: string; windowId: string; sourceReservationId: string; deltaY: number }
+  | { kind: 'browser.scroll'; browserProfileId: string; tabId: string; sourceReservationId: string; deltaY: number };
 export interface ActionProposal extends AutomationIdentity {
   version: 1;
   id: string;

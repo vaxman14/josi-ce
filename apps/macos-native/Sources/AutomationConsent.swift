@@ -44,7 +44,7 @@ extension ProtectedWire {
         guard model.isAdministrator, NativeProtectedApproval.available, let api = model.api,
               let parent = NSApp.keyWindow else { throw approvalUnavailable() }
         let user = model.user["id"], sessionID = try api.uuid(session["sessionId"].text)
-        let base = "/admin/automation/storage/sessions/\(sessionID)/consent"
+        let base = "/admin/automation/desktop/sessions/\(sessionID)/consent"
         func valid() throws {
             guard model.api === api, model.user["id"] == user, parent.isVisible, !Task.isCancelled else { throw approvalUnavailable() }
             try current()
@@ -68,8 +68,8 @@ extension ProtectedWire {
         presentation["purpose"] = "automation.consent"
         presentation["presentation"] = [
             "wording": .string("Allow Josi to work in \(workspace["label"].text)"),
-            "meaning": .string("Josi may use this separate desktop under your current permissions and Cardinal Rules. Each action must still pass those rules.\nThis approval ends when the desktop or connection closes, the rules change, or this development session expires."),
-            "advisory": .array(["Use Stop Automation at any time. Your personal desktop is outside this approval.",
+            "meaning": .string("Josi may operate your current desktop under your current permissions and Cardinal Rules. Each action must still pass those rules.\nThis approval ends when the desktop or connection closes, the rules change, or this session expires."),
+            "advisory": .array(["Use Stop Automation, ⌘⇧Esc, or your keyboard or mouse to take over. This controls real apps and their signed-in accounts.",
                                "This does not add permissions or change permanent rules."]),
         ]
         let window = NativeApprovalWindow(challenge: .object(presentation), lease: lease, cancelAuthentication: { key.cancel() })
@@ -79,6 +79,7 @@ extension ProtectedWire {
         try await key.start()
         let signed = try await key.request("proveAutomationConsent", fields: ["message": .string(message.base64EncodedString())])
         let signature = try ProtectedWire.signature(signed, host: true)
+        try await window.returnFromAuthentication()
         try valid(); try window.current()
         submitted = true; window.phase = "saving"
         do {
@@ -118,16 +119,16 @@ struct NativeAutomationConsentControls: View {
     @ObservedObject var guest: NativeGuestConnection
     var body: some View {
         if desktop.localConsent != .null {
-            Text("Desktop approval is active. Josi can inspect permitted apps. Input commands are not connected yet.")
+            Text("Control is approved for this session. Each action must pass your app, site and action permissions.")
                 .font(.caption).foregroundStyle(.secondary)
         } else if guest.paired && guest.supportsExecution {
             Button("Approve This Desktop for Automation…") { model.run { try await desktop.approveAutomation() } }
-                .disabled(model.busy || desktop.state != "running" || !guest.accessibility || guest.applicationReadiness != "running")
-            if !guest.accessibility || guest.applicationReadiness != "running" {
-                Text("Enable guest Accessibility and open the selected registered app before approving inspection.").font(.caption)
+                .disabled(model.busy || desktop.state != "running" || (!guest.accessibility && !guest.browserConnected) || guest.applicationReadiness != "running")
+            if (!guest.accessibility && !guest.browserConnected) || guest.applicationReadiness != "running" {
+                Text("Enable Accessibility for Josi and open the selected registered app before approving control.").font(.caption)
             }
         } else if guest.paired {
-            Text("Update Josi Companion from this app’s support disk before approving automation.").font(.caption)
+            Text("Select an app or attach a browser tab before approving automation.").font(.caption)
         }
     }
 }

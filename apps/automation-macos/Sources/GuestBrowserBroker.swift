@@ -9,7 +9,7 @@ import Darwin
     static func main() {
         do {
             try GuestBrowserBoundary.requireSelf(identifier: GuestBrowserBoundary.brokerIdentifier,
-                executable: "/Applications/Josi Companion.app/Contents/Helpers/JosiBrowserBroker")
+                executable: "/Applications/Josi.app/Contents/Helpers/JosiBrowserBroker")
             let broker = BrowserBroker()
             broker.start()
             withExtendedLifetime(broker) { RunLoop.current.run() }
@@ -29,10 +29,10 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
     private var requests = Set<String>(), retiredConnections = Set<String>()
     private var outstanding = false
     func start() {
-        ownerListener.setConnectionCodeSigningRequirement(GuestBrowserBoundary.requirement("com.heyjosi.ce.guestcompanion"))
+        ownerListener.setConnectionCodeSigningRequirement(GuestBrowserBoundary.requirement("com.heyjosi.ce.unified"))
         peerListener.setConnectionCodeSigningRequirement(
-            "(" + GuestBrowserBoundary.requirement("com.heyjosi.ce.guestbrowser-host") + ") or ("
-                + GuestBrowserBoundary.requirement("com.heyjosi.ce.guestcompanion.workspace-safari") + ")")
+            "(" + GuestBrowserBoundary.requirement("com.heyjosi.ce.browser-host") + ") or ("
+                + GuestBrowserBoundary.requirement("com.heyjosi.ce.unified.workspace-safari") + ")")
         ownerListener.delegate = self; peerListener.delegate = self
         ownerListener.resume(); peerListener.resume()
     }
@@ -90,14 +90,14 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
             do {
                 guard self.owner.map(ObjectIdentifier.init) == key, data.count <= 8192,
                       let next = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw GuestBrowserError.invalid }
-                let discovery = next["mode"] as? String == "safari-profile-discovery"
+                let discovery = next["mode"] as? String == "browser-profile-discovery"
                 let fields: Set<String> = ["workspaceId", "profileId", "family", "guestBootId", "hostBootId", "connectionId", "generation", "leaseUntilMs"]
                 guard Set(next.keys) == (discovery ? fields.union(["mode"]) : fields),
                       ["workspaceId", "guestBootId", "hostBootId"].allSatisfy({ key in
                           guard let id = next[key] as? String else { return false }
                           return UUID(uuidString: id)?.uuidString.lowercased() == id
                       }), let family = next["family"] as? String, ["chrome", "brave", "firefox", "safari"].contains(family),
-                      discovery ? family == "safari" && next["profileId"] is NSNull
+                      discovery ? next["profileId"] is NSNull
                         : (next["profileId"] as? String).map { UUID(uuidString: $0)?.uuidString.lowercased() == $0 } == true,
                       let digest = next["connectionId"] as? String, UUID(uuidString: digest)?.uuidString.lowercased() == digest,
                       let generation = next["generation"] as? NSNumber, CFGetTypeID(generation) != CFBooleanGetTypeID(),
@@ -132,14 +132,12 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
                       self.requests.count < 16384, let id = request["requestId"] as? String, !self.requests.contains(id),
                       peer.count <= 8192, let source = try JSONSerialization.jsonObject(with: peer) as? [String: Any],
                       ["family", "guestBootId", "hostBootId"].allSatisfy({ source[$0] as? String == authority[$0] as? String }),
-                      source["family"] as? String == "safari" || source["workspaceId"] as? String == authority["workspaceId"] as? String,
                       !self.outstanding || request["operation"] as? String == "browser.stop", let owner = self.owner
                 else { throw GuestBrowserError.unavailable }
-                if authority["mode"] as? String == "safari-profile-discovery" {
+                if authority["mode"] as? String == "browser-profile-discovery" {
                     // Discovery may return a profile candidate only. There is
                     // no session, poll, page read, action or model projection.
-                    guard source["family"] as? String == "safari",
-                          request["operation"] as? String == "browser.hello", request["sessionId"] is NSNull
+                    guard request["operation"] as? String == "browser.hello", request["sessionId"] is NSNull
                     else { throw GuestBrowserError.unavailable }
                 } else {
                     guard source["profileId"] as? String == authority["profileId"] as? String else { throw GuestBrowserError.invalid }

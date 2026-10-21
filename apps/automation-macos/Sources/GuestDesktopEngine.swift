@@ -1,5 +1,5 @@
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 import Carbon
 import CryptoKit
 import ScreenCaptureKit
@@ -8,7 +8,7 @@ import Security
 enum GuestDesktopError: Error { case unavailable, stale, denied, busy, unsupported, uncertain }
 
 struct GuestDesktopCommand: Codable, Equatable {
-    enum Operation: String, Codable { case observe, project, capture, press, focus, click, text, key, draft, navigate }
+    enum Operation: String, Codable { case observe, project, capture, press, focus, click, text, key, scroll, draft, navigate }
     let id: UUID
     let workspaceId: UUID
     let appId: UUID
@@ -29,6 +29,9 @@ struct GuestDesktopCommand: Codable, Equatable {
     let y: Double?
     let valueReference: UUID?
     let key: String?
+    let deltaY: Int?
+    struct Input: Codable, Equatable { let sourceReservationId: UUID; let text: String? }
+    let input: Input?
     struct Projection: Codable, Equatable {
         struct Reference: Codable, Equatable { let recordId: UUID; let version: Int; let digest: String; let epoch: Int }
         let sourceReservationId: UUID; let recipientPublicKey: String; let configurationId: UUID
@@ -105,12 +108,12 @@ struct GuestDesktopReceipt: Codable {
     let observation: GuestDesktopObservation?
 }
 
-/// Implemented by the authenticated guest-channel boundary, not by a renderer
+/// Implemented by the authenticated local desktop boundary, not by a renderer
 /// or model. No default implementation, plaintext config token or host-desktop
 /// fallback. Local consent and current canonical Vault authority are required.
 @MainActor
 protocol GuestDesktopAuthority: AnyObject {
-    /// Verify this process belongs to the enrolled isolated guest and this
+    /// Verify this process belongs to the enrolled current desktop and this
     /// exact workspace/session/generation is still current. Must fail closed.
     func requireCurrentGuest(_ command: GuestDesktopCommand) async throws
     /// Resolve this exact app/revision from current canonical Vault authority.
@@ -129,8 +132,8 @@ protocol GuestDesktopAuthority: AnyObject {
     func stopped(reason: String)
 }
 
-/// Guest-only native operations. This library has no listener/CLI entry point:
-/// the signed guest app must supply verified authority before using it.
+/// Current-desktop native operations. This library has no listener/CLI entry point:
+/// the signed Josi app must supply verified authority before using it.
 @MainActor
 final class GuestDesktopEngine {
     private let authority: GuestDesktopAuthority
@@ -164,13 +167,13 @@ final class GuestDesktopEngine {
     init(authority: GuestDesktopAuthority) {
         self.authority = authority
         // A monitor failure does not grant input authority. check() requires it.
-        inputMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+        inputMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]) { [weak self] event in
             // Generated input is marked by this process. All other observed
             // input is treated as takeover, including input from another app.
             guard event.cgEvent?.getIntegerValueField(.eventSourceUserData) != self?.eventMarker else { return }
             MainActor.assumeIsolated { self?.takeOver() }
         }
-        localInputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+        localInputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]) { [weak self] event in
             if event.cgEvent?.getIntegerValueField(.eventSourceUserData) != self?.eventMarker {
                 MainActor.assumeIsolated { self?.takeOver() }
             }
@@ -258,7 +261,8 @@ final class GuestDesktopEngine {
     }
 
     private func frontWindow(_ pin: GuestPinnedApplication, includeTitle: Bool = true) throws -> (GuestDesktopTarget, AXUIElement) {
-        guard let app = NSWorkspace.shared.frontmostApplication, !app.isTerminated,
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: pin.bundleId)
+        guard apps.count == 1, let app = apps.first, !app.isTerminated,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               let bundle = app.bundleIdentifier, !Self.blockedApps.contains(bundle.lowercased()),
               !bundle.lowercased().hasPrefix("com.heyjosi."), !bundle.lowercased().hasPrefix("com.socalreceptionist.josi"),
@@ -445,16 +449,23 @@ final class GuestDesktopEngine {
                 }
                 return GuestDesktopReceipt(commandId: command.id, outcome: .observed, verificationRequired: true, observation: observation)
             }
-            guard command.operation != .capture, command.resultObservationId == nil, command.maxOutputBytes == nil else { throw GuestDesktopError.unsupported }
+            guard command.operation != .capture, command.input != nil, command.maxOutputBytes == 65536 else { throw GuestDesktopError.unsupported }
             let observation = try saved(command)
             var projected: String?
             try await authority.authorize(command, target: observation.target)
             if command.operation == .text {
-                guard let reference = command.valueReference else { throw GuestDesktopError.unsupported }
-                projected = try await authority.projectText(reference, for: command)
+                guard let value = command.input?.text else { throw GuestDesktopError.unsupported }
+                projected = value
             }
             defer { projected = nil }
             try check(command, epoch: epoch)
+            _ = try fresh(command, pin: pin)
+            guard let app = NSRunningApplication(processIdentifier: observation.target.processId) else { throw GuestDesktopError.stale }
+            try Self.verifyApplication(app, pin: pin)
+            app.activate(options: [])
+            try await Task.sleep(for: .milliseconds(80))
+            try check(command, epoch: epoch)
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { throw GuestDesktopError.stale }
             let (_, current) = try fresh(command, pin: pin)
             let targetElement = command.elementId.flatMap { elements[$0] }
             // Consume the snapshot before the first native call. A timeout is
@@ -490,11 +501,12 @@ final class GuestDesktopEngine {
                 guard command.elementId == nil, command.x == nil, command.y == nil, !IsSecureEventInputEnabled(),
                       let source = CGEventSource(stateID: .privateState) else { throw GuestDesktopError.denied }
                 let keyCodes: [String: CGKeyCode] = ["enter": 36, "tab": 48, "escape": 53, "backspace": 51,
-                    "left": 123, "right": 124, "down": 125, "up": 126]
+                    "left": 123, "right": 124, "down": 125, "up": 126, "delete": 117, "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
+                    "shift+tab": 48, "command+a": 0, "command+s": 1, "command+z": 6, "command+shift+z": 6, "command+f": 3]
                 let code: CGKeyCode
                 var units: [UniChar] = []
                 if command.operation == .text {
-                    guard command.key == nil, let projected, !projected.isEmpty, projected.utf16.count <= 256,
+                    guard command.key == nil, let projected, !projected.isEmpty, projected.utf8.count <= 2048,
                           !projected.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { throw GuestDesktopError.unsupported }
                     code = 0; units = Array(projected.utf16)
                 } else {
@@ -504,6 +516,12 @@ final class GuestDesktopEngine {
                 defer { units = Array(repeating: 0, count: units.count) }
                 guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
                       let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else { throw GuestDesktopError.unavailable }
+                if let key = command.key {
+                    var flags: CGEventFlags = []
+                    if key.contains("command+") { flags.insert(.maskCommand) }
+                    if key.contains("shift+") { flags.insert(.maskShift) }
+                    down.flags = flags; up.flags = flags
+                }
                 if !units.isEmpty {
                     units.withUnsafeBufferPointer {
                         down.keyboardSetUnicodeString(stringLength: $0.count, unicodeString: $0.baseAddress)
@@ -515,6 +533,15 @@ final class GuestDesktopEngine {
                 // Process-directed input avoids typing into a newly focused
                 // unrelated process. The window/field still needs verification.
                 down.postToPid(observation.target.processId); up.postToPid(observation.target.processId)
+            case .scroll:
+                guard let delta = command.deltaY, delta != 0, abs(delta) <= 2000,
+                      let source = CGEventSource(stateID: .privateState),
+                      let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 1,
+                          wheel1: Int32(-delta), wheel2: 0, wheel3: 0) else { throw GuestDesktopError.unsupported }
+                event.location = CGPoint(x: observation.target.bounds.midX, y: observation.target.bounds.midY)
+                event.setIntegerValueField(.eventSourceUserData, value: eventMarker)
+                try check(command, epoch: epoch); dispatched = true
+                event.postToPid(observation.target.processId)
             default: throw GuestDesktopError.unsupported
             }
             return denied(.inputIssued)

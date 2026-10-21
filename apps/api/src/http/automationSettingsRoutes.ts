@@ -182,54 +182,58 @@ export function automationSettingsRoutes(context: Context): Router {
     const parsed = validateAutomationPermissionPolicy(req.body?.policy);
     return res.json({ validation: parsed, permanent: false, executionEnabled: false });
   }));
-  r.get('/storage', nativeHandle(async (req, res) => res.json(await storage.inventory(req.user!.id, req.user!.session_id))));
-  r.post('/storage/prepare', nativeHandle(async (req, res) => res.status(201).json(
+  r.get('/desktop', nativeHandle(async (req, res) => res.json(await storage.inventory(req.user!.id, req.user!.session_id))));
+  r.post('/desktop/prepare', nativeHandle(async (req, res) => res.status(201).json(
     await storage.prepare(req.user!.id, req.user!.session_id, req.body),
   )));
-  r.post('/storage/:id/provision', nativeHandle(async (req, res) => res.json(
-    await storage.authorize(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.proof, 'provision'),
+  r.post('/desktop/:id/connect', nativeHandle(async (req, res) => res.json(
+    await storage.authorize(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.proof, 'connect'),
   )));
-  r.post('/storage/:id/open', nativeHandle(async (req, res) => res.json(
-    await storage.authorize(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.proof, 'open'),
-  )));
-  r.post('/storage/sessions/:id/renew', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/renew', nativeHandle(async (req, res) => res.json(
     await storage.renew(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.presence, req.body?.control),
   )));
-  r.post('/storage/sessions/:id/application', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/application', nativeHandle(async (req, res) => res.json(
     await storage.application(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));
-  r.post('/storage/sessions/:id/browser', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/browser', nativeHandle(async (req, res) => res.json(
     await storage.browser(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));
-  r.post('/storage/sessions/:id/consent/prepare', nativeHandle(async (req, res) => res.status(201).json(
+  r.post('/desktop/sessions/:id/consent/prepare', nativeHandle(async (req, res) => res.status(201).json(
     await storage.prepareConsent(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));
-  r.post('/storage/sessions/:id/consent/authorize', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/consent/authorize', nativeHandle(async (req, res) => res.json(
     await storage.authorizeConsent(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));
-  r.post('/storage/sessions/:id/consent/cancel', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/consent/cancel', nativeHandle(async (req, res) => res.json(
     storage.cancelConsent(req.user!.id, req.user!.session_id, param(req, 'id'), req.body?.challengeId),
   )));
-  r.post('/storage/sessions/:id/consent/stop', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/consent/stop', nativeHandle(async (req, res) => res.json(
     await storage.stopConsent(req.user!.id, req.user!.session_id, param(req, 'id')),
   )));
-  r.post('/storage/sessions/:id/commands/next', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/commands/next', nativeHandle(async (req, res) => res.json(
     await storage.nextNativeCommand(req.user!.id, req.user!.session_id, param(req, 'id')),
   )));
-  r.post('/storage/sessions/:id/commands/permit', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/commands/permit', nativeHandle(async (req, res) => res.json(
     await storage.permitNativeCommand(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));
-  r.post('/storage/sessions/:id/network/permit', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/network/permit', nativeHandle(async (req, res) => res.json(
     await storage.permitNativeNetwork(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));
-  r.post('/storage/sessions/:id/commands/result', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/commands/result', nativeHandle(async (req, res) => res.json(
     await storage.reportNativeCommand(req.user!.id, req.user!.session_id, param(req, 'id'), req.body),
   )));
-  r.post('/storage/sessions/:id/close', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/sessions/:id/close', nativeHandle(async (req, res) => res.json(
     await storage.close(req.user!.id, req.user!.session_id, param(req, 'id')),
   )));
-  r.post('/storage/:id/cancel', nativeHandle(async (req, res) => res.json(
+  r.post('/desktop/:id/cancel', nativeHandle(async (req, res) => res.json(
     storage.cancel(req.user!.id, req.user!.session_id, param(req, 'id')),
+  )));
+  // VM provisioning is retired. Preserve its Vault entries and files without granting host control.
+  r.all('/storage{/*path}', nativeHandle(async (_req, res) => { res.status(410).json({ error: 'VM desktops have been retired. Connect this Mac in Automation.' }); }));
+  // Device enrollment must remain inspectable even when an unrelated policy
+  // or application-target record prevents the combined settings read.
+  r.get('/devices', nativeHandle(async (req, res) => res.json(
+    await vaultRecords(db, master()).protectedDevices(noDeviceMutation).inventory(req.user!.id),
   )));
   r.get('/devices/enroll/pending', nativeHandle(async (req, res) => res.json({
     requests: await enrollments.list(req.user!.id, req.user!.session_id),

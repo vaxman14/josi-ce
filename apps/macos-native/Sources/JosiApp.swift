@@ -50,6 +50,7 @@ import SwiftUI
                 }
         }
         .defaultSize(width: 1160, height: 800)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Server Controls…") { model.section = "server" }
@@ -89,7 +90,9 @@ struct RootView: View {
                     Spacer()
                 }.padding(.horizontal, 16).padding(.vertical, 9).background(.bar)
             }
-        }.sheet(isPresented: Binding(get: { model.vaultRecovery != .null || model.mfaRecovery != .null }, set: { _ in })) {
+        }.background(JosiTheme.background).foregroundStyle(JosiTheme.text)
+        .tint(JosiTheme.orange).preferredColorScheme(.dark).groupBoxStyle(JosiGroupBoxStyle())
+        .sheet(isPresented: Binding(get: { model.vaultRecovery != .null || model.mfaRecovery != .null }, set: { _ in })) {
             if model.mfaRecovery != .null { NativeMfaRecovery().environmentObject(model) }
             else { NativeVaultRecovery().environmentObject(model) }
         }
@@ -101,8 +104,6 @@ struct JosiHeading: View {
     var subtitle: String
     var body: some View {
         HStack(spacing: 16) {
-            Image(nsImage: NSImage(named: "Josi") ?? NSImage())
-                .resizable().scaledToFit().frame(width: 68, height: 68)
             VStack(alignment: .leading, spacing: 5) {
                 Text(title).font(.largeTitle.bold())
                 Text(subtitle).foregroundStyle(.secondary)
@@ -244,17 +245,19 @@ struct LoginView: View {
 
 struct WorkspaceView: View {
     @EnvironmentObject var model: JosiModel
+    private var initials: String { String(model.signedInName.split(separator: " ").prefix(2).compactMap(\.first)) }
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                HStack {
-                    Text("Josi").font(.title.bold())
+                HStack(spacing: 10) {
+                    JosiMark(size: 38)
+                    Text("Josi").font(.system(size: 25, weight: .semibold)).fixedSize()
                     Spacer()
-                    Button { model.run { try await model.newThread() } } label: { Image(systemName: "square.and.pencil") }
-                        .help("New conversation").disabled(model.busy)
-                }.padding(18)
-                List {
-                    Section {
+                    Button { model.run { try await model.newThread() } } label: { Image(systemName: "square.and.pencil").font(.title3) }
+                        .buttonStyle(.plain).help("New conversation").accessibilityLabel("New conversation").disabled(model.busy)
+                }.padding(.horizontal, 18).padding(.top, 28).padding(.bottom, 18)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 3) {
                         nav("Conversations", icon: "bubble.left.and.bubble.right", section: "chat")
                         nav("Task Manager", icon: "checklist", section: "tasks")
                         nav("Memory", icon: "brain.head.profile", section: "memory")
@@ -262,51 +265,57 @@ struct WorkspaceView: View {
                         nav("Vault", icon: "lock.shield", section: "vault")
                         nav("Your Settings", icon: "person.crop.circle", section: "account")
                         nav("Messaging Apps", icon: "paperplane", section: "channels")
-                        if model.isAdministrator { nav("Models", icon: "brain", section: "models") }
+                        if model.isAdministrator { nav("Models", icon: "square.3.layers.3d", section: "models") }
                         if model.isAdministrator { nav("People", icon: "person.2", section: "people") }
                         if model.isAdministrator { nav("Email Delivery", icon: "envelope", section: "mail-settings") }
                         if model.isAdministrator { nav("Backups", icon: "externaldrive.badge.timemachine", section: "backups") }
-                        nav("Server", icon: "externaldrive.connected.to.line.below", section: "server")
-                    }
-                    Section("Recent conversations") {
+                        nav("Server", icon: "server.rack", section: "server")
+                        Divider().padding(.vertical, 12)
+                        Text("Recent conversations").font(.caption).foregroundStyle(JosiTheme.muted).padding(.horizontal, 12).padding(.bottom, 5)
                         ForEach(model.threads, id: \.identifier) { thread in
-                            Button {
-                                model.run { try await model.selectThread(thread.identifier) }
-                            } label: {
-                                HStack {
-                                    Image(systemName: model.selectedThread == thread.identifier ? "bubble.left.fill" : "bubble.left")
-                                    Text(thread["title"].text.isEmpty ? "Conversation" : thread["title"].text).lineLimit(2)
-                                }.foregroundStyle(model.selectedThread == thread.identifier ? Color.accentColor : Color.primary)
-                            }.buttonStyle(.plain).padding(.vertical, 3)
+                            Button { model.run { try await model.selectThread(thread.identifier) } } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "bubble.left").frame(width: 22)
+                                    Text(thread["title"].text.isEmpty ? "Conversation" : thread["title"].text).lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }.font(.callout).padding(.horizontal, 12).padding(.vertical, 9)
+                                    .foregroundStyle(model.selectedThread == thread.identifier ? JosiTheme.text : JosiTheme.muted)
+                            }.buttonStyle(.plain).disabled(model.busy)
                         }
+                    }.padding(.horizontal, 12)
+                }
+                Divider()
+                HStack(spacing: 10) {
+                    Text(initials).font(.callout.bold()).frame(width: 36, height: 36).background(JosiTheme.raised, in: Circle())
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(model.signedInName).font(.callout.weight(.semibold)).lineLimit(1)
+                        Text(model.address.contains("localhost") ? "Local server" : model.address).font(.caption).foregroundStyle(JosiTheme.muted).lineLimit(1)
                     }
-                }.listStyle(.sidebar)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(model.signedInName).font(.headline)
-                    Text(model.address).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    Button("Sign Out") { model.run { try await model.signOut() } }.disabled(model.busy)
-                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            }.navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
+                    Spacer(minLength: 0)
+                    Button { model.run { try await model.signOut() } } label: { Image(systemName: "rectangle.portrait.and.arrow.right") }
+                        .buttonStyle(.plain).help("Sign out").accessibilityLabel("Sign out").disabled(model.busy)
+                }.padding(16)
+            }.frame(minWidth: 250, maxWidth: 250).background(JosiTheme.sidebar).navigationSplitViewColumnWidth(250)
+                .toolbar(removing: .sidebarToggle)
         } detail: {
-            switch model.section {
-            case "tasks": TaskManagerView()
-            case "memory": NativeMemoryView()
-            case "server": ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    if model.isAdministrator { NativeServerHealth() }
-                    ServerControls()
-                }.padding(30)
-            }
-            case "automation": AutomationView()
-            case "vault": NativeVaultView()
-            case "account": NativeAccountView()
-            case "channels": NativeChannelsView()
-            case "backups": if model.isAdministrator { NativeBackupsView() }
-            case "models": if model.isAdministrator { NativeModelsView() }
-            case "people": if model.isAdministrator { NativePeopleView() }
-            case "mail-settings": if model.isAdministrator { NativeMailSettingsView() }
-            default: ChatView()
-            }
+            Group {
+                switch model.section {
+                case "tasks": TaskManagerView()
+                case "memory": NativeMemoryView()
+                case "server": ScrollView { VStack(alignment: .leading, spacing: 28) {
+                    if model.isAdministrator { NativeServerHealth() }; ServerControls()
+                }.padding(30) }
+                case "automation": AutomationView()
+                case "vault": NativeVaultView()
+                case "account": NativeAccountView()
+                case "channels": NativeChannelsView()
+                case "backups": if model.isAdministrator { NativeBackupsView() }
+                case "models": if model.isAdministrator { NativeModelsView() }
+                case "people": if model.isAdministrator { NativePeopleView() }
+                case "mail-settings": if model.isAdministrator { NativeMailSettingsView() }
+                default: ChatView()
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).background(JosiTheme.background)
         }
     }
     private func nav(_ title: String, icon: String, section: String) -> some View {
@@ -314,62 +323,57 @@ struct WorkspaceView: View {
             model.section = section
             if section == "automation" { model.run { try await model.loadAutomation() } }
             else if section == "server" { model.refreshLocal() }
-            else if ["vault", "backups", "models", "account", "channels", "memory", "people", "mail-settings"].contains(section) { /* These views load their own scoped status. */ }
-            else { model.run { try await model.reloadWorkspace() } }
-        } label: { Label(title, systemImage: icon).foregroundStyle(model.section == section ? Color.accentColor : Color.primary) }
-            .buttonStyle(.plain).disabled(model.busy)
+            else if ["chat", "tasks"].contains(section) { model.run { try await model.reloadWorkspace() } }
+        } label: {
+            HStack(spacing: 12) { Image(systemName: icon).font(.system(size: 18)).frame(width: 23); Text(title).lineLimit(1); Spacer(minLength: 0) }
+                .font(.system(size: 14, weight: model.section == section ? .medium : .regular))
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .foregroundStyle(model.section == section ? JosiTheme.orange : JosiTheme.muted)
+                .background(model.section == section ? JosiTheme.orange.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).disabled(model.busy)
     }
 }
 
-struct ChatView: View {
+/// Durable submission returns before the model runs. A failed receipt is a
+/// terminal result, even though the original POST succeeded and saved a message.
+struct ChatTurnFailure: View {
     @EnvironmentObject var model: JosiModel
-    var body: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 22) {
-                        if model.messages.isEmpty {
-                            ContentUnavailableView("What would you like to get done?", systemImage: "bubble.left.and.bubble.right",
-                                                   description: Text("Start a conversation. Josi’s progress will appear here as it works."))
-                                .padding(.top, 70)
-                        }
-                        ForEach(model.messages, id: \.identifier) { message in
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text(message["direction"].text == "in" ? "You" : "Josi")
-                                    .font(.caption.bold()).foregroundStyle(.secondary)
-                                Text(message["body"].text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                            }.padding(16).background(message["direction"].text == "in" ? Color.accentColor.opacity(0.07) : Color.clear,
-                                                       in: RoundedRectangle(cornerRadius: 14))
-                                .id(message.identifier)
-                        }
-                        ForEach(model.chatGoals, id: \.identifier) { GoalCard(goal: $0, compact: true) }
-                        if model.turns.contains(where: { ["queued", "running"].contains($0["status"].text) }) {
-                            HStack { ProgressView().controlSize(.small); Text("Josi is working…").foregroundStyle(.secondary) }
-                        }
-                        Color.clear.frame(height: 1).id("latest")
-                    }.padding(24).frame(maxWidth: 920).frame(maxWidth: .infinity)
-                }
-                .onChange(of: model.messages.last?.identifier) { _, _ in withAnimation { proxy.scrollTo("latest", anchor: .bottom) } }
-            }
-            Divider()
-            VStack(alignment: .leading, spacing: 10) {
-                TextEditor(text: $model.draft).font(.body).frame(minHeight: 65, maxHeight: 140)
-                    .scrollContentBackground(.hidden).padding(7)
-                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
-                    .disabled(model.pendingMessage)
-                HStack {
-                    if model.pendingMessage {
-                        Text("Delivery is unconfirmed. Retry uses the same message ID.").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text(model.progressConnection + " · Work continues on the server when this window closes.").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(model.pendingMessage ? "Retry Delivery" : "Send") { model.run { try await model.send() } }
-                        .buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command)
-                        .disabled(model.busy || (!model.pendingMessage && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                }
-            }.padding(18)
+    let turn: Wire
+    private var code: String { turn["error"]["code"].text }
+    private var modelFailure: Bool {
+        ["no_model", "not_probed", "cannot_chat", "capped", "provider_error"].contains(code)
+    }
+    private var detail: String {
+        switch code {
+        case "no_model": "No model is configured for this server."
+        case "not_probed": "The saved model must pass its capability check before it can answer."
+        case "cannot_chat": "The saved model did not pass its basic reply check."
+        case "capped": "The model cannot run with its current connection or usage settings. Check the subscription or API connection and the model limits."
+        case "provider_error": "The model provider could not complete this reply. Check its connection and run the model capability check."
+        case "session_expired": "Your sign-in expired before this message could run. Sign in again to continue."
+        case "worker_interrupted": "The server stopped before this reply finished."
+        case "effect_outcome_unknown", "effect_then_provider_error":
+            "Josi could not finish the reply after starting an action. Review the task’s saved actions before asking it to continue."
+        case "restricted": "The current permissions do not allow Josi to answer this request."
+        default: "The server could not finish this reply. Check server health for more information."
         }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Josi couldn’t reply", systemImage: "exclamationmark.triangle").font(.headline)
+            Text(detail).textSelection(.enabled)
+            if model.isAdministrator {
+                Button(modelFailure ? "Open Models" : "Open Server") {
+                    model.section = modelFailure ? "models" : "server"
+                    if !modelFailure { model.refreshLocal() }
+                }.disabled(model.busy)
+            } else if modelFailure {
+                Text("Ask your server administrator to check Models.")
+            }
+        }.foregroundStyle(.orange).padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -379,6 +383,10 @@ struct GoalCard: View {
     var compact = false
     @State private var instruction = ""
     @State private var cancelling = false
+    private var setupBlocked: Bool { goal["activity"].text == "Automation needs setup" }
+    private var recovery: Bool { setupBlocked || goal["activity"].text == "Progress needs recovery"
+        || goal["continuation"]["text"].text == "The last segment did not save a next step or verified result. What should Josi try next?" }
+
     private var visibleSteps: [Wire] {
         guard compact else { return goal["steps"].list }
         let required = goal["steps"].list.filter { $0["state"].text != "skipped" }
@@ -395,8 +403,9 @@ struct GoalCard: View {
                 HStack {
                     Text(goal["title"].text).font(.headline)
                     Spacer()
-                    Text(goal["state"].text.replacingOccurrences(of: "_", with: " ")).font(.caption).foregroundStyle(.secondary)
+                    JosiStatusBadge(state: goal["state"].text)
                 }
+                ProgressView(value: Double(goal["verifiedSteps"].integer), total: Double(max(1, goal["totalSteps"].integer))).tint(JosiTheme.orange)
                 Text("\(goal["verifiedSteps"].integer)/\(goal["totalSteps"].integer) verified")
                     .font(.subheadline.bold())
                 if !goal["activity"].text.isEmpty { Text(goal["activity"].text).foregroundStyle(.secondary) }
@@ -432,7 +441,10 @@ struct GoalCard: View {
                 if goal["retiredSteps"].integer > 0 {
                     Text("\(goal["retiredSteps"].integer) retired steps retained in history.").font(.caption).foregroundStyle(.secondary)
                 }
-                if goal["continuation"]["kind"].text == "question" { Text(goal["continuation"]["text"].text).font(.callout.bold()) }
+                if goal["continuation"]["kind"].text == "question" {
+                    Text(recovery && !setupBlocked ? "Josi stopped before saving the next step. Your original request is still saved. Continue to recheck the task." : goal["continuation"]["text"].text).font(.callout.weight(.medium))
+                    if setupBlocked || recovery { Button("Open Automation") { model.section = "automation"; model.run { try await model.loadAutomation() } } }
+                }
                 if goal["continuation"]["kind"].text == "wait" {
                     Text(goal["continuation"]["reason"].text).foregroundStyle(.secondary)
                     Text("Next check: " + nativeDate(goal["continuation"]["wakeAt"].text)).font(.caption).foregroundStyle(.secondary)
@@ -451,11 +463,11 @@ struct GoalCard: View {
                         }
                     }
                     NativeWorkDetails(goal: goal)
-                    TextField("Instructions for Josi", text: $instruction).textFieldStyle(.roundedBorder)
+                    TextField(recovery ? "Additional instructions (optional)" : "Instructions for Josi", text: $instruction).textFieldStyle(.roundedBorder)
                     HStack {
                         if goal["state"].text != "completed" && goal["state"].text != "cancelled" {
                             Button("Pause") { control("pause") }
-                            Button("Continue") { control("resume") }.disabled(instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button(setupBlocked ? "Check Connection & Continue" : "Continue") { control("resume") }.disabled(!recovery && instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             Button("Cancel Work…", role: .destructive) { cancelling = true }
                         }
                         if goal["state"].text == "verifying" { Button("Confirm Complete") { control("confirm") } }
@@ -471,12 +483,26 @@ struct GoalCard: View {
             Button("Cancel Work", role: .destructive) { control("cancel") }
         } message: { Text("Completed actions remain completed. This stops further work on the goal.") }
     }
-    private func control(_ action: String) { model.run { try await model.control(goal, action: action, instruction: instruction) } }
+    private func control(_ action: String) {
+        let text = action == "resume" && recovery && instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Recheck the current automation connection and saved action receipts, then continue the original task within existing permissions. Preserve completed work and inspect any uncertain result before further actions." : instruction
+        model.run { try await model.control(goal, action: action, instruction: text) }
+    }
 }
 
 struct TaskManagerView: View {
     @EnvironmentObject var model: JosiModel
     @State private var filter = "active"
+    private var failedRuns: [Wire] { model.taskRuns.filter { $0["status"].text == "failed" } }
+    private var visibleRuns: [Wire] {
+        model.taskRuns.filter { run in
+            switch filter {
+            case "attention": return run["status"].text == "failed"
+            case "history": return ["completed", "failed"].contains(run["status"].text)
+            default: return ["queued", "running"].contains(run["status"].text)
+            }
+        }
+    }
     private var visible: [Wire] {
         model.goals.filter { goal in
             let state = goal["state"].text
@@ -486,6 +512,14 @@ struct TaskManagerView: View {
             default: return !["completed", "cancelled"].contains(state)
             }
         }
+    }
+    private func filterButton(_ label: String, value: String) -> some View {
+        Button { filter = value } label: {
+            Text(label).font(.callout.weight(.medium)).frame(maxWidth: .infinity).padding(.vertical, 10)
+                .foregroundStyle(filter == value ? JosiTheme.orange : JosiTheme.muted)
+                .background(filter == value ? JosiTheme.orange.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(filter == value ? JosiTheme.orange.opacity(0.5) : Color.clear))
+        }.buttonStyle(.plain)
     }
     private var standaloneTasks: [Wire] {
         let linked = Set(model.goals.flatMap { $0["steps"].list.map { $0["taskId"].text } })
@@ -505,13 +539,35 @@ struct TaskManagerView: View {
                 JosiHeading(title: "Task Manager", subtitle: "What Josi is working on, and what needs your attention.")
                 NativeTaskDesktopViewer(desktop: model.desktop)
                 NativeAutomationConnections()
-                Picker("Work", selection: $filter) {
-                    Text("Active").tag("active"); Text("Needs You / Waiting").tag("attention"); Text("History").tag("history")
-                }.pickerStyle(.segmented)
-                if visible.isEmpty && standaloneTasks.isEmpty {
+                HStack(spacing: 3) {
+                    filterButton("Active", value: "active")
+                    filterButton("Needs You / Waiting", value: "attention")
+                    filterButton("History", value: "history")
+                }.padding(4).background(JosiTheme.raised.opacity(0.5), in: RoundedRectangle(cornerRadius: 11)).frame(maxWidth: 620)
+                if filter == "active" && !failedRuns.isEmpty {
+                    Button("\(failedRuns.count) failed conversation request(s) — Review") { filter = "attention" }
+                        .foregroundStyle(.orange)
+                }
+                if visible.isEmpty && standaloneTasks.isEmpty && visibleRuns.isEmpty {
                     Text("No work in this view.").foregroundStyle(.secondary)
                 }
                 ForEach(visible, id: \.identifier) { GoalCard(goal: $0) }
+                if !visibleRuns.isEmpty {
+                    Text("Conversation requests").font(.title2.bold())
+                    ForEach(visibleRuns, id: \.identifier) { run in
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(run["thread_title"].text.isEmpty ? "Conversation" : run["thread_title"].text).font(.headline)
+                                Text(run["status"].text.capitalized + " · " + nativeDate(run["updated_at"].text)).foregroundStyle(.secondary)
+                                if run["status"].text == "failed" {
+                                    ChatTurnFailure(turn: ["error": ["code": run["error_code"], "retryable": run["error_retryable"]]])
+                                }
+                                Button("Open Conversation") { model.run { try await model.selectThread(run["thread_id"].text) } }
+                                    .disabled(model.busy)
+                            }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
                 if !standaloneTasks.isEmpty {
                     Text("Other tasks").font(.title2.bold())
                     ForEach(standaloneTasks, id: \.identifier) { task in
@@ -543,17 +599,35 @@ struct AutomationView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 JosiHeading(title: "Automation", subtitle: "Separate desktops, connected devices and current authority.")
-                if model.automation["available"].flag {
-                    ForEach(Array(model.automation["workspaces"].list.enumerated()), id: \.offset) { _, workspace in
-                        GroupBox { VStack(alignment: .leading) { Text(workspace["label"].text).font(.headline); Text(workspace["state"].text) }.frame(maxWidth: .infinity, alignment: .leading).padding(8) }
+                if model.automationLoading { ProgressView("Checking automation and Vault settings…") }
+                if !model.automationError.isEmpty {
+                    GroupBox("Connection check needs attention") {
+                        Text(model.automationError).foregroundStyle(JosiTheme.orange).textSelection(.enabled)
+                        HStack { Button("Open Vault") { model.section = "vault" }; Button("Check Server") { model.section = "server" } }
                     }
-                    if model.automation["workspaces"].list.isEmpty { Text("No automation desktop is connected to your account.") }
-                } else { Text("Automation control is not connected on this server yet. Your other Josi work can continue.").foregroundStyle(.secondary) }
+                }
+                if model.automation != .null {
+                    if !model.automation["blocker"]["message"].text.isEmpty {
+                        GroupBox("Before Josi can use the browser") {
+                            Text(model.automation["blocker"]["message"].text).textSelection(.enabled)
+                            if model.automation["blocker"]["code"].text == "vault_locked" { Button("Open Vault") { model.section = "vault" } }
+                            Text("Your task and original instructions stay saved in Task Manager.").font(.caption).foregroundStyle(JosiTheme.muted)
+                        }
+                    }
+                    ForEach(Array(model.automation["workspaces"].list.enumerated()), id: \.offset) { _, workspace in
+                        GroupBox { VStack(alignment: .leading, spacing: 6) {
+                            Text(workspace["label"].text).font(.headline)
+                            Text(workspace["state"].text.replacingOccurrences(of: "_", with: " ").capitalized)
+                        }.frame(maxWidth: .infinity, alignment: .leading) }
+                    }
+                } else if !model.automationLoading && model.automationError.isEmpty {
+                    Text("Refresh to check the automation connection.").foregroundStyle(JosiTheme.muted)
+                }
                 if model.isAdministrator {
                     NativeWorkspaceStorageView(desktop: model.desktop)
                     NativeAuthoritySettings()
                 }
-                Button("Refresh") { model.run { try await model.loadAutomation() } }.disabled(model.busy)
+                Button("Refresh Automation") { model.run { try await model.loadAutomation() } }.disabled(model.busy)
             }.padding(30)
         }
     }

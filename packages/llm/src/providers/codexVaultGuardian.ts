@@ -129,6 +129,14 @@ function validStart(value: CodexGuardianStart): boolean {
     && (consumer === 'claude' ? value.auth !== null && validClaudeSubscriptionArgs(value.args)
       : !value.args.some(a => /cli_auth_credentials_store|forced_login_method|chatgpt_base_url|model_provider|openai_base_url|api_key|auth\.json/i.test(a)))
     && typeof value.input === 'string' && Buffer.byteLength(value.input) <= MAX_INPUT
+    && (value.privateFiles === undefined || consumer === 'codex' && Array.isArray(value.privateFiles)
+      && value.privateFiles.length <= 11
+      && new Set(value.privateFiles.map(file => file?.name)).size === value.privateFiles.length
+      && value.privateFiles.every(file => file && typeof file.name === 'string'
+        && /^josi-(response\.schema\.json|image-\d+\.(png|jpg|webp|gif))$/.test(file.name)
+        && typeof file.base64 === 'string' && file.base64.length <= 8 * 1024 * 1024
+        && Buffer.from(file.base64, 'base64').toString('base64') === file.base64)
+      && value.privateFiles.reduce((size, file) => size + file.base64.length, 0) <= 24 * 1024 * 1024)
     && (value.auth === null || typeof value.auth === 'string' && Buffer.byteLength(value.auth) <= 64 * 1024)
     && Number.isSafeInteger(value.timeoutMs) && value.timeoutMs > 0 && value.timeoutMs <= 15 * 60_000;
 }
@@ -152,6 +160,16 @@ async function start(value: CodexGuardianStart) {
     }
     value.auth = null;
     await mkdir(join(directory, 'work'), { mode: 0o700 });
+    // Captures and schemas live with the supervised process group. Parent
+    // death still removes them after consumer closure; no parent temp cache.
+    for (const asset of value.privateFiles ?? []) {
+      const bytes = Buffer.from(asset.base64, 'base64');
+      const file = await open(join(directory, 'work', asset.name),
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      try { await file.writeFile(bytes); }
+      finally { bytes.fill(0); await file.close(); asset.base64 = ''; }
+    }
+    value.privateFiles = undefined;
     if (cancelled || !process.connected || !await privateDirectoryStillCurrent()) throw new Error();
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH, LANG: 'en_US.UTF-8', NO_COLOR: '1', CI: '1',

@@ -3,7 +3,7 @@
 // MV3 worker alive. Safari uses its containing app's native request handler.
 // A lost connection never reconnects or replays an outstanding operation.
 globalThis.createJosiNativeChannel = function createJosiNativeChannel(api, family, disconnected) {
-  const host = family === 'safari' ? 'com.heyjosi.ce.guestcompanion' : 'com.heyjosi.workspace';
+  const host = family === 'safari' ? 'com.heyjosi.ce.unified' : 'com.heyjosi.browser';
   const pending = new Map();
   let port = null, closed = false, closing = false;
   const bounded = value => {

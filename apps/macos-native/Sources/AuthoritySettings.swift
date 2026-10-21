@@ -19,7 +19,7 @@ struct NativeAuthoritySettings: View {
                 Text("Permissions").tag("permissions")
                 Text("Devices").tag("devices")
             }.pickerStyle(.segmented).disabled(model.busy)
-            if model.automationSettings == .null {
+            if model.automationSettings == .null && tab != "devices" {
                 Text("Current Vault settings are unavailable. Refresh before making a change.").foregroundStyle(.orange)
             } else if tab == "rules" {
                 Text(model.automationCatalog["guidance"].text.isEmpty
@@ -137,9 +137,20 @@ struct NativeAuthoritySettings: View {
                     }
                 }
             } else {
-                let devices = model.automationSettings["devices"]
+                let devices = model.automationDevices
+                HStack {
+                    Button("Refresh Saved Devices") { model.run { try await model.loadAutomationDevices() } }
+                        .disabled(model.busy || model.automationDevicesLoading)
+                    if model.automationDevicesLoading { ProgressView().controlSize(.small); Text("Reading saved devices…") }
+                }
+                if !model.automationDevicesError.isEmpty {
+                    Text(model.automationDevicesError).foregroundStyle(.orange)
+                    if devices != .null { Text("Showing the last verified list. Refresh before making changes.").font(.caption).foregroundStyle(.secondary) }
+                } else if devices == .null && !model.automationDevicesLoading {
+                    Text("Saved devices have not been loaded. Refresh Saved Devices to check this account.").foregroundStyle(.secondary)
+                }
                 if devices["reconciliationRequired"].flag { Text("Vault recovery must be reconciled before devices can approve changes.").foregroundStyle(.orange) }
-                if devices["devices"].list.isEmpty { Text("No protected confirmation devices are enrolled.") }
+                if model.automationDevicesReady && devices["devices"].list.isEmpty { Text("No protected confirmation devices are enrolled for this account.") }
                 ForEach(Array(devices["devices"].list.enumerated()), id: \.offset) { _, device in
                     GroupBox(device["label"].text) {
                         VStack(alignment: .leading, spacing: 8) {

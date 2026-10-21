@@ -76,3 +76,5 @@ export { type AutomationTargetRegistration, type AutomationApplicationTarget, ty
 export { listAutomationModelCandidates, type AutomationModelCandidate, type AutomationModelTarget } from './automationModelTargets.js';
 
 export * from './automationBrowserTargets.js';
+
+export * from './automationBlockers.js';

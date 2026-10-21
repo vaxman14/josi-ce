@@ -144,6 +144,16 @@ enum ProtectedWire {
         guard now >= previousWall, now < expires, ContinuousClock.now < deadline, !Task.isCancelled else { throw approvalUnavailable() }
         previousWall = now
     }
+    /// Touch ID may finish before AppKit restores the protected sheet. Wait
+    /// for that handoff without extending the original approval or activating
+    /// a background app. Closing the review or cancelling still ends the wait.
+    func waitUntilReady(_ ready: () throws -> Bool) async throws {
+        while true {
+            try check()
+            if try ready() { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
 }
 
 /// Main-app-only bounded pipe to the existing signed key host. Private signing
@@ -272,6 +282,15 @@ enum ProtectedWire {
         try lease.check()
         guard !cancelled, panel?.isVisible == true, NSApp.isActive else { throw approvalUnavailable() }
     }
+    func returnFromAuthentication() async throws {
+        phase = "returning-to-review"
+        try await lease.waitUntilReady {
+            guard !cancelled, panel != nil else { throw approvalUnavailable() }
+            return panel?.isVisible == true && NSApp.isActive
+        }
+        try current()
+        phase = "authenticating"
+    }
     func cancel() {
         cancelled = true
         cancelAuthentication()
@@ -311,7 +330,8 @@ struct ProtectedApprovalView: View {
                     Button("Approve This Exact Change") { review.approve() }.buttonStyle(.borderedProminent)
                 } else {
                     ProgressView().controlSize(.small)
-                    Text(review.phase == "saving" ? "Saving to the Vault…" : review.phase == "awaiting-server"
+                    Text(review.phase == "returning-to-review" ? "Return to Josi to finish this approval…"
+                         : review.phase == "saving" ? "Saving to the Vault…" : review.phase == "awaiting-server"
                          ? "Waiting for approval on the server Mac…" : "Waiting for Mac authentication…")
                 }
             }
@@ -394,6 +414,7 @@ struct ProtectedApprovalView: View {
             let payload: [String: Wire] = ["message": .string(message.base64EncodedString()), "material": material]
             let authenticated = try await port.request("authenticate", fields: payload)
             guard ProtectedWire.exact(authenticated, ["authenticated"]), authenticated["authenticated"].flag else { throw approvalUnavailable() }
+            try await window.returnFromAuthentication()
             try projectionLease.check(); try await current()
             let signature = try ProtectedWire.signature(await port.request("sign", fields: payload))
             try projectionLease.check(); try await current()
@@ -429,14 +450,14 @@ struct NativeProtectedChange: View {
     @State private var mfa = ""
     @State private var result = ""
     private var devices: [Wire] {
-        model.automationSettings["devices"]["devices"].list.filter {
+        model.automationDevices["devices"].list.filter {
             $0["revokedAt"] == .null && $0["identity"]["serverOrigin"].text == model.api?.origin.absoluteString
                 && (requiredDevice == nil || $0["identity"]["deviceId"].text == requiredDevice)
         }
     }
     private var ready: Bool {
         model.isAdministrator && NativeProtectedApproval.available && !devices.isEmpty
-            && !model.automationSettings["devices"]["reconciliationRequired"].flag
+            && model.automationDevicesReady && !model.automationDevices["reconciliationRequired"].flag
             && model.automationCatalog["capabilities"]["permanentChanges"].flag
     }
     var body: some View {

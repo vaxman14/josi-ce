@@ -35,7 +35,7 @@ export interface NativeControlState {
 /** Only bounded initial/refreshed AX observation is classified here. Generic
  * clicks have unknown business effects and cannot be manufactured as reads. */
 export interface NativeObservationPayload {
-  purpose: 'josi-native-observation' | 'josi-native-projection' | 'josi-native-draft' | 'josi-native-navigation'; schemaVersion: 1;
+  purpose: 'josi-native-observation' | 'josi-native-projection' | 'josi-native-draft' | 'josi-native-navigation' | 'josi-native-input'; schemaVersion: 1;
   storageSessionId: string; consent: VaultRecordReference; targetReference: VaultRecordReference;
   guestBootId: string; guestChannelId: string;
   application: NativeApplicationPin;
@@ -43,9 +43,11 @@ export interface NativeObservationPayload {
   command: {
     id: string; workspaceId: string; appId: string; installationRevision: number;
     taskId: string; sessionId: string; generation: number; expiresAtMs: number;
-    operation: 'observe' | 'project' | 'draft' | 'navigate'; observationId: string | null; resultObservationId: string; maxOutputBytes: number;
+    operation: 'observe' | 'project' | 'draft' | 'navigate' | 'press' | 'focus' | 'click' | 'text' | 'key' | 'scroll'; observationId: string | null; resultObservationId: string; maxOutputBytes: number;
     windowId?: string;
     elementId?: string;
+    x?: number; y?: number; key?: string; deltaY?: number;
+    input?: { sourceReservationId: string; text?: string };
     draft?: { sourceReservationId: string; text: string };
     photo?: { sourceReservationId: string; elementId: string };
     url?: string;
@@ -175,10 +177,7 @@ export class NativeAutomationTransport {
         ? await c.browser(request.identity, request.browser.profileId, request.browser.family, request.applicationId) : null;
       if (browser && !sameRef(browser.reference, target.reference)
         || isBrowserApplication(target.application.bundleId) && !browser) throw unavailable();
-      if (browser && (browser.browser.family === 'firefox'
-        ? browser.browser.distribution !== 'store-signed'
-        : !['chrome', 'brave', 'safari'].includes(browser.browser.family)
-          || browser.browser.distribution !== 'unpacked-development')) throw unavailable();
+      if (browser && (browser.browser.profilePath !== null || !['chrome', 'brave', 'firefox', 'safari'].includes(browser.browser.family))) throw unavailable();
       const now = Date.now();
       if (request.leaseUntilMs <= now || request.leaseUntilMs > now + 10_000 || request.leaseUntilMs > consent.consentUntilMs) throw unavailable();
       const [row] = await c.tx.query<ControlRow>('select * from automation_native_controls where storage_session_id=$1 for update', [request.storageSessionId]);
@@ -250,61 +249,85 @@ export class NativeAutomationTransport {
     try {
       const p = JSON.parse(context.payload.reveal()) as NativeObservationPayload, command = p.command;
       const navigating = p.purpose === 'josi-native-navigation';
-      const loadingPhoto = !!command.photo && !!command.network && command.operation === 'observe';
-      const effects = navigating || loadingPhoto ? context.effects.filter(effect => effect.action === 'browser.observe') : context.effects;
+      const loadingPhoto = false;
+      const input = p.purpose === 'josi-native-input';
+      if (command.network) throw unavailable();
+      const effects = navigating || input ? context.effects.filter(effect => ['browser.observe','computer.observe'].includes(effect.action)) : context.effects;
       if (!exact(p, ['purpose', 'schemaVersion', 'storageSessionId', 'consent', 'targetReference', 'guestBootId', 'guestChannelId', 'application', 'command', ...(p.browser ? ['browser'] : [])])
-        || !['josi-native-observation', 'josi-native-projection', 'josi-native-draft', 'josi-native-navigation'].includes(p.purpose) || p.schemaVersion !== 1
+        || !['josi-native-observation', 'josi-native-projection', 'josi-native-draft', 'josi-native-navigation', 'josi-native-input'].includes(p.purpose) || p.schemaVersion !== 1
         || !exact(command, ['id', 'workspaceId', 'appId', 'installationRevision', 'taskId', 'sessionId', 'generation',
           'expiresAtMs', 'operation', 'observationId', 'resultObservationId', 'maxOutputBytes',
           ...(p.browser ? ['browser'] : []),
           ...(p.purpose === 'josi-native-projection' ? ['windowId', 'projection'] : []),
           ...(p.purpose === 'josi-native-draft' ? ['windowId', 'elementId', 'draft'] : []),
-          ...(navigating ? ['url', 'network'] : []),
+          ...(navigating ? ['url'] : []),
+          ...(input ? ['windowId', 'input', ...(['elementId','x','y','key','deltaY'] as const).filter(k => command[k] !== undefined)] : []),
           ...(loadingPhoto ? ['network'] : []),
           ...(command.photo ? ['photo', 'windowId'] : [])])
         || ![p.storageSessionId, p.guestBootId, p.guestChannelId, command.id, command.workspaceId, command.appId,
           command.taskId, command.sessionId, command.resultObservationId].every(uuid)
         || command.observationId !== null && !uuid(command.observationId)
-        || command.operation !== (navigating ? 'navigate' : p.purpose === 'josi-native-projection' ? 'project' : p.purpose === 'josi-native-draft' ? 'draft' : 'observe')
+        || !input && command.operation !== (navigating ? 'navigate' : p.purpose === 'josi-native-projection' ? 'project' : p.purpose === 'josi-native-draft' ? 'draft' : 'observe')
         || command.taskId !== context.taskId || command.workspaceId !== context.identity.workspaceId
         || command.expiresAtMs !== context.expiresAtMs || !integer(command.generation)
         || !integer(command.maxOutputBytes) || command.maxOutputBytes < (command.operation === 'draft' ? 1 : 1024)
         || command.maxOutputBytes > 64 * 1024
         || effects.length !== 1 || effects[0].bytes !== command.maxOutputBytes) throw unavailable();
       const effect = effects[0], projection = command.projection;
-      if (command.photo && (command.operation !== 'observe' || !p.browser || p.browser.family !== 'chrome'
+      if (command.photo && (command.operation !== 'observe' || !p.browser
         || !exact(command.photo, ['sourceReservationId', 'elementId'])
         || ![command.photo.sourceReservationId, command.photo.elementId, command.windowId, command.observationId].every(uuid))) throw unavailable();
       if (p.browser && (!command.browser || !exact(command.browser, ['profileId', 'family', 'origin'])
         || command.browser.profileId !== p.browser.profileId || command.browser.family !== p.browser.family
         || !exactBrowserOrigin(command.browser.origin))) throw unavailable();
-      if (navigating || loadingPhoto) {
-        const r = command.network, nav = context.effects.find(e => e.action === 'browser.navigate');
-        const network = context.effects.find(e => e.action === 'network.connect');
-        if (!p.browser || p.browser.family !== 'chrome' || context.effects.length !== (navigating ? 3 : 2) || !network
-          || !r || !exact(r, ['id', 'workspaceId', 'taskId', 'origin', 'networkClass', 'maximumBytes', 'expiresAtMs'])
-          || r.id !== command.id || r.workspaceId !== command.workspaceId || r.taskId !== command.taskId
-          || r.expiresAtMs !== command.expiresAtMs || r.origin !== command.browser?.origin
-          || r.networkClass !== 'public' || !integer(r.maximumBytes) || r.maximumBytes < 1 || r.maximumBytes > 16_777_216
-          || network.target.kind !== 'network' || !exact(network.target, ['kind', 'origin', 'networkClass'])
-          || network.target.origin !== r.origin || network.target.networkClass !== r.networkClass || network.bytes !== r.maximumBytes) throw unavailable();
-        if (navigating) {
-          if (!nav || !command.url || command.url.length > 2048 || refuseMemorySecret(command.url)
-            || /[\u0000-\u0020\u007f]/u.test(command.url) || command.observationId !== null
-            || JSON.stringify(nav.target) !== JSON.stringify(effect.target) || nav.bytes !== Buffer.byteLength(command.url)) throw unavailable();
-          const url = new URL(command.url);
-          if (url.protocol !== 'https:' || url.username || url.password || url.origin !== r.origin) throw unavailable();
-        } else if (!r.origin.startsWith('https://')) throw unavailable();
+      if (navigating) {
+        const nav = context.effects.find(e => e.action === 'browser.navigate');
+        if (!p.browser || !nav || context.effects.length !== 2 || !command.url || command.url.length > 2048
+          || refuseMemorySecret(command.url) || /[\u0000-\u0020\u007f]/u.test(command.url) || command.observationId !== null
+          || JSON.stringify(nav.target) !== JSON.stringify(effect.target) || nav.bytes !== Buffer.byteLength(command.url)) throw unavailable();
+        const url = new URL(command.url);
+        if (url.protocol !== 'https:' || url.username || url.password || url.origin !== command.browser?.origin) throw unavailable();
       }
-      if (command.operation === 'draft') {
+      if (input) {
+        const value = command.input;
+        const interactive = context.effects.filter(e => !['browser.observe', 'computer.observe'].includes(e.action));
+        if (!value || !exact(value, ['sourceReservationId', ...(command.operation === 'text' ? ['text'] : [])])
+          || ![value.sourceReservationId, command.observationId, command.windowId].every(uuid)
+          || !['press','focus','click','text','key','scroll'].includes(command.operation)
+          || context.effects.length !== 2 || interactive.length !== 1 || command.maxOutputBytes !== 65536) throw unavailable();
+        const action = interactive[0];
+        const keys = ['elementId','x','y','key','deltaY'].filter(k => Object.hasOwn(command, k)).sort().join(',');
+        const expected = command.operation === 'press' || command.operation === 'focus' ? 'elementId'
+          : command.operation === 'click' ? p.browser ? 'elementId' : 'x,y'
+          : command.operation === 'text' ? p.browser ? 'elementId' : ''
+          : command.operation === 'key' ? 'key' : 'deltaY';
+        if (keys !== expected || command.elementId !== undefined && !uuid(command.elementId)
+          || JSON.stringify(action.target) !== JSON.stringify(effect.target)
+          || action.bytes !== (command.operation === 'text' ? Buffer.byteLength(value.text ?? '') : 1)) throw unavailable();
+        if (command.operation === 'text' && (typeof value.text !== 'string' || Buffer.byteLength(value.text) > 2048
+          || !p.browser && (!value.text || /[\u0000-\u001f\u007f]/u.test(value.text)) || refuseMemorySecret(value.text))) throw unavailable();
+        if (command.x !== undefined && (!Number.isFinite(command.x) || !Number.isFinite(command.y)
+          || command.x < 0 || command.x > 32768 || command.y! < 0 || command.y! > 32768)) throw unavailable();
+        if (command.operation === 'scroll' && (!Number.isSafeInteger(command.deltaY) || !command.deltaY || Math.abs(command.deltaY) > 2000)) throw unavailable();
+        if (command.operation === 'key' && !['enter','tab','escape','backspace','delete','left','right','down','up','home','end','pageup','pagedown','shift+tab','command+a','command+s','command+z','command+shift+z','command+f'].includes(command.key ?? '')) throw unavailable();
+        if (p.browser) {
+          if (!['click','text','scroll'].includes(command.operation) || effect.action !== 'browser.observe'
+            || action.action !== (command.operation === 'text' ? 'browser.fill' : 'browser.click')
+            || effect.target.kind !== 'browser' || !exact(effect.target, ['kind','browser','profileId','origin'])
+            || effect.target.browser !== p.browser.family || effect.target.profileId !== p.browser.profileId
+            || effect.target.origin !== command.browser!.origin) throw unavailable();
+        } else if (isBrowserApplication(p.application.bundleId) || effect.action !== 'computer.observe' || action.action !== 'computer.interact'
+          || effect.target.kind !== 'application' || !exact(effect.target, ['kind','applicationId','installationRevision'])
+          || effect.target.applicationId !== command.appId || effect.target.installationRevision !== command.installationRevision) throw unavailable();
+      } else if (command.operation === 'draft') {
         const draft = command.draft;
-        if (!p.browser || p.browser.family !== 'chrome' || !draft || !exact(draft, ['sourceReservationId', 'text'])
+        if (!p.browser || !draft || !exact(draft, ['sourceReservationId', 'text'])
           || ![command.windowId, command.elementId, command.observationId, draft.sourceReservationId].every(uuid)
           || typeof draft.text !== 'string' || !draft.text.trim() || Buffer.byteLength(draft.text) > 2048
           || refuseMemorySecret(draft.text) || command.maxOutputBytes !== Buffer.byteLength(draft.text)
           || effect.action !== 'browser.fill' || effect.target.kind !== 'browser'
           || !exact(effect.target, ['kind', 'browser', 'profileId', 'origin'])
-          || effect.target.browser !== 'chrome' || effect.target.profileId !== p.browser.profileId
+          || effect.target.browser !== p.browser.family || effect.target.profileId !== p.browser.profileId
           || effect.target.origin !== command.browser!.origin) throw unavailable();
       } else if (command.operation === 'observe' || navigating) {
         if (p.browser) {
@@ -350,13 +373,13 @@ export class NativeAutomationTransport {
         || source.payload.command.sessionId !== p.command.sessionId || source.payload.command.generation !== p.command.generation
         || !sameRef(source.payload.consent, p.consent) || JSON.stringify(source.payload.application) !== JSON.stringify(p.application)) throw unavailable();
     }
-    if (p.command.operation === 'draft' || p.command.photo) {
-      const source = await this.result(context.identity.userId, (p.command.draft ?? p.command.photo)!.sourceReservationId, c.tx);
+    if (p.command.operation === 'draft' || p.command.photo || p.command.input) {
+      const source = await this.result(context.identity.userId, (p.command.draft ?? p.command.photo ?? p.command.input)!.sourceReservationId, c.tx);
       if (!source || !['observe', 'navigate'].includes(source.payload.command.operation) || source.result?.outcome !== 'succeeded'
         || source.result.observationId !== p.command.observationId || source.result.windowId !== p.command.windowId
         || source.storageSessionId !== p.storageSessionId || source.payload.command.taskId !== context.taskId
         || source.payload.command.sessionId !== p.command.sessionId || source.payload.command.generation !== p.command.generation
-        || !sameRef(source.payload.consent, p.consent)
+        || !sameRef(source.payload.consent, p.consent) || JSON.stringify(source.payload.application) !== JSON.stringify(p.application)
         || JSON.stringify(source.payload.command.browser) !== JSON.stringify(p.command.browser)) throw unavailable();
     }
     return { p, control };
@@ -467,12 +490,12 @@ export class NativeAutomationTransport {
         || receipt.commandId !== d.payload.command.id || !sameRef(d.payload.consent, control.consent)
         || Date.now() >= d.payload.command.expiresAtMs) throw unavailable();
       let result: NonNullable<NativeDelivery['result']>;
-      if (receipt.outcome === 'filled') {
-        if (d.state !== 'permitted' || d.payload.command.operation !== 'draft'
+      if (receipt.outcome === 'filled' || receipt.outcome === 'inputIssued') {
+        if (d.state !== 'permitted' || (receipt.outcome === 'filled' ? d.payload.command.operation !== 'draft' : d.payload.purpose !== 'josi-native-input')
           || receipt.observationId !== '' || receipt.windowId !== '') throw unavailable();
         result = { outcome: 'succeeded', evidenceId: randomUUID(), observationId: null, windowId: null };
       } else if (receipt.outcome === 'observed' || projected) {
-        if (d.payload.command.operation === 'draft') throw unavailable();
+        if (!['observe','navigate','project'].includes(d.payload.command.operation)) throw unavailable();
         if (projected !== (d.payload.command.operation === 'project')) throw unavailable();
         if (projected) {
           if (!validNativeProjectionEnvelope(receipt.projection) || receipt.windowId !== d.payload.command.windowId) throw unavailable();

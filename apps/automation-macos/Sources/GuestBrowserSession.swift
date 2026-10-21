@@ -16,6 +16,7 @@ import Foundation
     private var deadline: ContinuousClock.Instant = .now
     private var lastWall = Int64(Date().timeIntervalSince1970 * 1000)
     private var ended = false, connected = false, renewing = false
+    private var attachedTab: Int?
     private var source: Data?
     private var safariProcess: (pid: Int32, launched: Int64)?
     private var requests = Set<String>()
@@ -125,14 +126,14 @@ import Foundation
             return verified
         }
         guard data.count <= 8192, let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(value.keys) == ["kind", "family", "extensionId", "guestBootId", "hostBootId", "workspaceId", "profileId",
+              Set(value.keys) == ["kind", "family", "extensionId", "guestBootId", "hostBootId", "profileId",
                                  "profilePath", "processId", "launchedAtMs", "bundleId", "bundlePath", "signingId", "teamId", "codeHash"]
         else { throw GuestLinkError.invalid }
         let p = canonical.prepared, c = p.candidate, pin = p.application
         guard value["kind"] as? String == "browser-process", value["family"] as? String == c.family,
               value["extensionId"] as? String == c.extensionId, value["guestBootId"] as? String == c.guestBootId,
-              value["hostBootId"] as? String == hostBoot, value["workspaceId"] as? String == pin.workspaceId.uuidString.lowercased(),
-              value["profileId"] as? String == c.nativeProfileId, value["profilePath"] as? String == c.profilePath,
+              value["hostBootId"] as? String == hostBoot,
+              value["profileId"] as? String == c.nativeProfileId, value["profilePath"] is NSNull,
               value["bundleId"] as? String == pin.bundleId, value["bundlePath"] as? String == pin.bundlePath,
               value["signingId"] as? String == pin.signingId, value["teamId"] as? String == pin.teamId,
               value["codeHash"] as? String == pin.codeHash,
@@ -150,7 +151,7 @@ import Foundation
               Set(value.keys) == ["kind", "family", "profileId", "guestBootId", "hostBootId", "extensionId"],
               value["kind"] as? String == "safari-profile", value["family"] as? String == "safari",
               value["guestBootId"] as? String == guest, value["hostBootId"] as? String == host,
-              value["extensionId"] as? String == "com.heyjosi.ce.guestcompanion.workspace-safari",
+              value["extensionId"] as? String == "com.heyjosi.ce.unified.workspace-safari",
               let actual = value["profileId"] as? String, UUID(uuidString: actual)?.uuidString.lowercased() == actual,
               profile == nil || profile == actual, pin.bundleId == "com.apple.Safari" else { throw GuestLinkError.invalid }
         let apps = NSRunningApplication.runningApplications(withBundleIdentifier: pin.bundleId)
@@ -161,7 +162,7 @@ import Foundation
     private func session() -> [String: Any] {
         ["sessionId": sessionId, "workspaceId": canonical.prepared.application.workspaceId.uuidString.lowercased(),
          "profileId": canonical.profileId.uuidString.lowercased(), "family": canonical.prepared.candidate.family,
-         "isolatedWorkspace": true, "origins": flight?.original.browser.map { [$0.origin] } ?? [],
+         "currentDesktop": true, "origins": flight?.original.browser.map { [$0.origin] } ?? [],
          "expiresAt": canonical.expiresAtMs]
     }
     private func current(_ command: GuestDesktopCommand) throws {
@@ -194,7 +195,7 @@ import Foundation
             "origin": browser.origin]
         return String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
     }
-    func observe(_ command: GuestDesktopCommand, proxy: GuestBrowserProxy? = nil,
+    func observe(_ command: GuestDesktopCommand,
                  authorize: @escaping @MainActor (String) async throws -> Void) async throws -> (UUID, UUID) {
         try current(command)
         guard [.observe, .navigate].contains(command.operation), let browser = command.browser, let resultId = command.resultObservationId,
@@ -207,7 +208,7 @@ import Foundation
         }
         var photoSource: (observation: String, tab: Int, window: Int)?
         if command.photo != nil {
-            guard browser.family == "chrome", let inputSource, command.windowId == captureWindow,
+            guard let inputSource, command.windowId == captureWindow,
                   command.observationId != nil, ContinuousClock.now < inputDeadline else { throw GuestDesktopError.stale }
             photoSource = inputSource
         }
@@ -221,11 +222,11 @@ import Foundation
             wire["elementId"] = photo.elementId.uuidString.lowercased(); wire["maxOutputBytes"] = limit - 26_000
         }
         if command.operation == .navigate {
-            guard browser.family == "chrome", proxy != nil, let url = command.url, Self.site(url) == browser.origin,
+            guard let url = command.url, Self.site(url) == browser.origin,
                   URLComponents(string: url)?.scheme == "https" else { throw GuestDesktopError.denied }
             wire["kind"] = "openPage"; wire["url"] = url
         }
-        let result = try await dispatch(command, wire: wire, proxyPassword: proxy?.password, authorize: authorize)
+        let result = try await dispatch(command, wire: wire, authorize: authorize)
         try current(command)
         guard var page = try JSONSerialization.jsonObject(with: result) as? [String: Any] else { throw GuestDesktopError.denied }
         if command.photo != nil {
@@ -255,10 +256,9 @@ import Foundation
         }
         return (resultId, window)
     }
-    private func dispatch(_ command: GuestDesktopCommand, wire: [String: Any], proxyPassword: String? = nil,
-                          authorize: @escaping @MainActor (String) async throws -> Void) async throws -> Data {
+    private func dispatch(_ command: GuestDesktopCommand, wire: [String: Any], authorize: @escaping @MainActor (String) async throws -> Void) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
-            let pending = BrowserInspectionFlight(original: command, wire: wire, proxyPassword: proxyPassword, authorize: authorize, completion: continuation)
+            let pending = BrowserInspectionFlight(original: command, wire: wire, authorize: authorize, completion: continuation)
             flight = pending
             pending.timeout = Task { [weak self, weak pending] in
                 let now = Int64(Date().timeIntervalSince1970 * 1000)
@@ -270,7 +270,7 @@ import Foundation
     }
     func draft(_ command: GuestDesktopCommand, authorize: @escaping @MainActor (String) async throws -> Void) async throws {
         try current(command)
-        guard command.operation == .draft, command.browser?.family == "chrome", let draft = command.draft,
+        guard command.operation == .draft, let draft = command.draft,
               !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, draft.text.utf8.count <= 2048,
               command.maxOutputBytes == draft.text.utf8.count,
               let lastCapture, let input = inputSource, ContinuousClock.now < inputDeadline, flight == nil,
@@ -284,6 +284,24 @@ import Foundation
             "profileId": canonical.profileId.uuidString.lowercased(), "kind": "draft", "tabId": input.tab,
             "observationId": input.observation, "elementId": element.uuidString.lowercased(),
             "expiresAt": min(command.expiresAtMs, canonical.expiresAtMs)]
+        _ = try await dispatch(command, wire: wire, authorize: authorize)
+        try current(command)
+    }
+    func input(_ command: GuestDesktopCommand, authorize: @escaping @MainActor (String) async throws -> Void) async throws {
+        try current(command)
+        guard [.click, .text, .scroll].contains(command.operation), let payload = command.input,
+              let lastCapture, let input = inputSource, ContinuousClock.now < inputDeadline, flight == nil,
+              command.observationId == lastCapture.resultObservationId, command.windowId == captureWindow,
+              command.browser == lastCapture.browser, command.taskId == lastCapture.taskId,
+              command.sessionId == lastCapture.sessionId, command.generation == lastCapture.generation,
+              !usedCommands.contains(command.id), usedCommands.count < 4096 else { throw GuestDesktopError.stale }
+        if command.operation == .text { guard let text = payload.text, text.utf8.count <= 2048 else { throw GuestDesktopError.denied } }
+        usedCommands.insert(command.id); inputSource = nil
+        var wire: [String: Any] = ["id": command.id.uuidString.lowercased(), "sessionId": sessionId,
+            "profileId": canonical.profileId.uuidString.lowercased(), "kind": command.operation == .text ? "fill" : command.operation.rawValue,
+            "tabId": input.tab, "observationId": input.observation, "expiresAt": min(command.expiresAtMs, canonical.expiresAtMs)]
+        if let element = command.elementId { wire["elementId"] = element.uuidString.lowercased() }
+        if let delta = command.deltaY { guard delta != 0, abs(delta) <= 2000 else { throw GuestDesktopError.denied }; wire["deltaY"] = delta }
         _ = try await dispatch(command, wire: wire, authorize: authorize)
         try current(command)
     }
@@ -320,10 +338,12 @@ import Foundation
         let output: [String: Any]
         switch operation {
         case "browser.hello":
-            guard !connected, request["sessionId"] is NSNull, Set(payload.keys) == ["family", "extensionId"],
+            guard !connected, request["sessionId"] is NSNull, Set(payload.keys) == ["family", "extensionId", "nativeProfileId", "attachedTabId"],
                   payload["family"] as? String == canonical.prepared.candidate.family,
-                  payload["extensionId"] as? String == canonical.prepared.candidate.extensionId else { throw GuestLinkError.invalid }
-            connected = true; source = verified; notify(true); output = session()
+                  payload["extensionId"] as? String == canonical.prepared.candidate.extensionId,
+                  (payload["nativeProfileId"] as? String == canonical.prepared.candidate.nativeProfileId || canonical.prepared.candidate.family == "safari"),
+                  let tab = payload["attachedTabId"] as? Int, tab >= 0 else { throw GuestLinkError.invalid }
+            attachedTab = tab; connected = true; source = verified; notify(true); output = session()
         case "browser.poll":
             guard connected, request["sessionId"] as? String == sessionId, payload.isEmpty else { throw GuestLinkError.invalid }
             let command: Any = flight?.delivered == false ? flight!.wire : NSNull()
@@ -336,10 +356,10 @@ import Foundation
                   NSDictionary(dictionary: command).isEqual(to: pending.wire) else { throw GuestDesktopError.denied }
             var tab = -1, window = -1
             if pending.original.operation == .navigate {
-                guard payload["actual"] is NSNull, pending.proxyPassword != nil else { throw GuestDesktopError.denied }
+                guard let actual = payload["actual"] as? [String: Any], let attached = actual["tabId"] as? Int, attached == attachedTab else { throw GuestDesktopError.denied }
             } else {
                 guard let actual = payload["actual"] as? [String: Any], Set(actual.keys) == ["tabId", "windowId", "url"],
-                      let actualTab = actual["tabId"] as? Int, actualTab >= 0, let actualWindow = actual["windowId"] as? Int, actualWindow >= 0,
+                      let actualTab = actual["tabId"] as? Int, actualTab == attachedTab, let actualWindow = actual["windowId"] as? Int, actualWindow >= 0,
                       let url = actual["url"] as? String, url.utf8.count <= 8192,
                       Self.site(url) == pending.original.browser?.origin else { throw GuestDesktopError.denied }
                 tab = actualTab; window = actualWindow
@@ -352,15 +372,23 @@ import Foundation
                 pending.authorized = true; pending.actual = (tab, window)
                 var permitted: [String: Any] = ["commandId": pending.original.id.uuidString.lowercased(), "sessionId": sessionId, "allowed": true]
                 if pending.original.operation == .draft { permitted["draftText"] = pending.original.draft?.text }
-                if let password = pending.proxyPassword, let origin = pending.original.browser?.origin {
-                    permitted["proxy"] = ["host": "127.0.0.1", "port": Int(GuestBrowserProxy.port), "username": "josi",
-                        "password": password, "origin": origin, "expiresAt": pending.wire["expiresAt"]!]
-                }
+                if pending.original.operation == .text { permitted["value"] = pending.original.input?.text }
                 output = permitted
             } catch { stop(); throw error }
         case "browser.receipt":
             guard connected, request["sessionId"] as? String == sessionId, let pending = flight, pending.delivered,
                   payload["commandId"] as? String == pending.original.id.uuidString.lowercased() else { throw GuestDesktopError.denied }
+            if pending.original.input != nil {
+                guard pending.authorized, payload["outcome"] as? String == "observed_or_issued",
+                      Set(payload.keys) == ["commandId", "outcome", "result"],
+                      let result = payload["result"] as? [String: Any], Set(result.keys) == ["kind", "verificationRequired"],
+                      result["kind"] as? String == "input_issued", result["verificationRequired"] as? Bool == true else {
+                    stop(); throw GuestDesktopError.uncertain
+                }
+                try current(pending.original)
+                flight = nil; pending.timeout?.cancel(); pending.completion.resume(returning: Data())
+                output = ["recorded": true, "verificationRequired": true]; break
+            }
             if pending.original.operation == .draft {
                 guard pending.authorized, payload["outcome"] as? String == "observed_or_issued",
                       Set(payload.keys) == ["commandId", "outcome", "result"],
@@ -387,7 +415,7 @@ import Foundation
                       guard let id = element["id"] as? String else { return false }
                       return UUID(uuidString: id) != nil
                   }), let resultTab = result["tabId"] as? Int, let resultWindow = result["windowId"] as? Int,
-                  resultTab >= 0, resultWindow >= 0,
+                  resultTab == attachedTab, resultWindow >= 0,
                   pending.original.operation == .navigate || (resultTab == pending.actual?.0 && resultWindow == pending.actual?.1)
             else { stop(); throw GuestDesktopError.uncertain }
             if pending.original.photo != nil {
@@ -438,7 +466,7 @@ import Foundation
          found: @escaping @MainActor (GuestBrowserProfiles.Prepared) -> Void) throws {
         try GuestEnvironment.signedApplication()
         boot = try GuestEnvironment.identity()
-        guard pin.bundleId == "com.apple.Safari" else { throw GuestLinkError.invalid }
+        guard GuestBrowserProfiles.families[pin.bundleId] != nil else { throw GuestLinkError.invalid }
         self.pin = pin; requireCurrent = current; self.found = found
         connection.remoteObjectInterface = NSXPCInterface(with: GuestBrowserOwner.self)
         connection.exportedInterface = NSXPCInterface(with: GuestBrowserOwnerCallback.self)
@@ -466,8 +494,8 @@ import Foundation
         renewing = true
         defer { renewing = false }
         let body = try JSONSerialization.data(withJSONObject: [
-            "mode": "safari-profile-discovery", "workspaceId": pin.workspaceId.uuidString.lowercased(),
-            "profileId": NSNull(), "family": "safari", "guestBootId": boot.guest, "hostBootId": boot.host,
+            "mode": "browser-profile-discovery", "workspaceId": pin.workspaceId.uuidString.lowercased(),
+            "profileId": NSNull(), "family": GuestBrowserProfiles.families[pin.bundleId]!, "guestBootId": boot.guest, "hostBootId": boot.host,
             "connectionId": scope, "generation": 0, "leaseUntilMs": until,
         ])
         let accepted = await withCheckedContinuation { continuation in
@@ -496,15 +524,27 @@ import Foundation
         let request = try GuestBrowserBoundary.request(data)
         guard request["operation"] as? String == "browser.hello", request["sessionId"] is NSNull,
               let id = request["requestId"] as? String, !requests.contains(id), requests.count < 64,
-              let payload = request["payload"] as? [String: Any], Set(payload.keys) == ["family", "extensionId"],
-              payload["family"] as? String == "safari",
-              payload["extensionId"] as? String == "com.heyjosi.ce.guestcompanion.workspace-safari"
+              let payload = request["payload"] as? [String: Any], Set(payload.keys) == ["family", "extensionId", "nativeProfileId", "attachedTabId"],
+              payload["family"] as? String == GuestBrowserProfiles.families[pin.bundleId]
         else { throw GuestLinkError.invalid }
         requests.insert(id)
-        let verified = try GuestBrowserSession.safariPeer(peer, pin: pin, profile: selected, guest: boot.guest, host: boot.host)
-        guard let value = try JSONSerialization.jsonObject(with: verified) as? [String: Any],
-              let profile = value["profileId"] as? String else { throw GuestLinkError.invalid }
-        let prepared = try GuestBrowserProfiles.prepareSafari(pin, profile: profile)
+        guard let value = try JSONSerialization.jsonObject(with: peer) as? [String: Any],
+              let profile = value["profileId"] as? String, UUID(uuidString: profile)?.uuidString.lowercased() == profile,
+              selected == nil || selected == profile,
+              value["guestBootId"] as? String == boot.guest, value["hostBootId"] as? String == boot.host else { throw GuestLinkError.invalid }
+        let prepared = try GuestBrowserProfiles.prepare(pin, profile: profile)
+        guard payload["extensionId"] as? String == prepared.candidate.extensionId,
+              value["extensionId"] as? String == prepared.candidate.extensionId else { throw GuestLinkError.invalid }
+        if pin.bundleId == "com.apple.Safari" {
+            _ = try GuestBrowserSession.safariPeer(peer, pin: pin, profile: selected, guest: boot.guest, host: boot.host)
+        } else {
+            guard value["kind"] as? String == "browser-process", value["family"] as? String == prepared.candidate.family,
+                  value["bundleId"] as? String == pin.bundleId, value["bundlePath"] as? String == pin.bundlePath,
+                  value["codeHash"] as? String == pin.codeHash, let pid = value["processId"] as? Int32,
+                  let app = NSRunningApplication(processIdentifier: pid), let date = app.launchDate,
+                  value["launchedAtMs"] as? Int64 == Int64(date.timeIntervalSince1970 * 1000) else { throw GuestLinkError.invalid }
+            try GuestDesktopEngine.verifyApplication(app, pin: pin)
+        }
         try current()
         if selected == nil { selected = profile; found(prepared) }
         return try JSONSerialization.data(withJSONObject: [
@@ -532,16 +572,15 @@ private final class BrowserSessionCallback: NSObject, GuestBrowserOwnerCallback,
 }
 @MainActor private final class BrowserInspectionFlight {
     let original: GuestDesktopCommand, wire: [String: Any]
-    let proxyPassword: String?
     let authorize: @MainActor (String) async throws -> Void
     let completion: CheckedContinuation<Data, Error>
     var delivered = false, authorizing = false, authorized = false
     var actual: (Int, Int)?
     var timeout: Task<Void, Never>?
-    init(original: GuestDesktopCommand, wire: [String: Any], proxyPassword: String?,
+    init(original: GuestDesktopCommand, wire: [String: Any],
          authorize: @escaping @MainActor (String) async throws -> Void,
          completion: CheckedContinuation<Data, Error>) {
-        self.original = original; self.wire = wire; self.proxyPassword = proxyPassword; self.authorize = authorize; self.completion = completion
+        self.original = original; self.wire = wire; self.authorize = authorize; self.completion = completion
     }
 }
 private final class BrowserSessionResponse: @unchecked Sendable {

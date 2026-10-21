@@ -12,9 +12,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { open, rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { startWorkerPolling } from './polling.js';
 
 const HEARTBEAT_FILE = process.env.JOSI_WORKER_HEARTBEAT_FILE ?? join(tmpdir(), 'worker-alive');
-const TICK_MS = 30_000;
 // Installer-owned absolute configuration; user requests never select executables.
 const scanner = process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
   ? nativeScanner({
@@ -35,7 +35,6 @@ try {
   process.exit(1);
 }
 
-let running = true;
 const automationRuntime = masterKey ? createNativeInspectionRuntime(db, masterKey) : undefined;
 
 /** The container healthcheck reads this file's mtime. A worker that is wedged
@@ -52,11 +51,8 @@ const WORKER_ID = `worker-${process.pid}`;
 
 let lastCleanup = 0;
 let lastAntivirusProbe = 0;
-let ticking = false;
-async function tick(): Promise<void> {
-  if (ticking) return;
-  ticking = true;
-  try {
+let storageAvailable = false;
+async function tick(maintenance: boolean): Promise<void> {
   if (scanner && Date.now() - lastAntivirusProbe > 5 * 60_000) {
     const result = await scanner.scanStatus(Buffer.from('Josi antivirus availability check.'));
     const status = result === 'clean' ? 'available' : result === 'unavailable' ? 'unavailable' : 'error';
@@ -68,31 +64,29 @@ async function tick(): Promise<void> {
     lastAntivirusProbe = Date.now();
     if (status !== 'available') console.warn(`josi-ce worker: Windows antivirus scanning ${status}; required file scans remain blocked.`);
   }
-  const storage = await probeAttachmentStorage();
-  if (!storage.ok) { console.error(`josi-ce worker: ${storage.code}: ${storage.message}`); return; }
+  if (maintenance) {
+    const storage = await probeAttachmentStorage();
+    storageAvailable = storage.ok;
+    if (!storage.ok) console.error(`josi-ce worker: ${storage.code}: ${storage.message}`);
+  }
+  if (!storageAvailable) return;
   if (Date.now() - lastCleanup > 3600000) {
     await cleanupAttachments(db); lastCleanup = Date.now();
   }
-  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey, pushFetch: fetch, scanner, automationRuntime });
+  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey, pushFetch: fetch, scanner, automationRuntime, maintenance });
   if (outcome.claimed) {
     console.log(`josi-ce worker: ${outcome.done} done, ${outcome.failed} failed`);
   }
   heartbeat();
-  } finally { ticking = false; }
 }
 
 heartbeat();
-await tick().catch((err) => console.error('josi-ce worker: first tick failed', err?.message));
-
-const timer = setInterval(() => {
-  if (!running) return;
-  void tick().catch((err) => console.error('josi-ce worker: tick failed', err?.message));
-}, TICK_MS);
+const stopPolling = startWorkerPolling(tick, error =>
+  console.error('josi-ce worker: tick failed', error instanceof Error ? error.message : 'unknown error'));
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`josi-ce worker: ${signal} received, shutting down`);
-  running = false;
-  clearInterval(timer);
+  stopPolling();
   scanner?.close();
   await close().catch(() => undefined);
   process.exit(0);

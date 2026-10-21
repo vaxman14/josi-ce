@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
 import { json } from './db.js';
+import { automationBlockerFromReceipts } from './automationBlockers.js';
 import { addMessage } from './conversations.js';
 import { workDependenciesSatisfied, type WorkGoalStep } from './workPlan.js';
 import { workBudgetReason, type WorkBudgetRow } from './workBudget.js';
@@ -37,7 +38,7 @@ const BACKGROUND_DENIED = new Set(['own_goal', 'approve_task', 'cancel_task', 'u
   'update_reminder', 'cancel_reminder', 'propose_work_lesson']);
 // These adapters have their own original-task reservation journal and current
 // selected-step check. They cannot use the one-intent-per-step legacy fence.
-const AUTOMATION_TOOLS = new Set(['start_automation_task', 'connect_automation_workspace', 'observe_automation_workspace', 'browser_control', 'computer_control']);
+const AUTOMATION_TOOLS = new Set(['start_automation_task', 'connect_automation_workspace', 'open_automation_browser', 'observe_automation_workspace', 'browser_control', 'computer_control']);
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) =>
   item && typeof item === 'object' && !Array.isArray(item)
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
@@ -189,8 +190,8 @@ export async function settleWorkContinuation(db: Db, turnId: string): Promise<vo
     if (!bound?.work_goal_id) return;
     const [goal] = await tx.query<WorkBudgetRow & { id: string; owner_user_id: string; thread_id: string; revision: number; state: string; control_generation: number }>(
       'select id,owner_user_id,thread_id,revision,state,control_generation,automatic_run_limit,automatic_runs_used,automatic_deadline from work_goals where id=$1 for update', [bound.work_goal_id]);
-    const [turn] = await tx.query<{ status: string; error_code: string | null; work_control_generation: number; work_goal_revision: number }>(
-      'select status,error_code,work_control_generation,work_goal_revision from assistant_turns where id=$1', [turnId]);
+    const [turn] = await tx.query<{ status: string; error_code: string | null; tool_receipts: unknown; work_control_generation: number; work_goal_revision: number }>(
+      'select status,error_code,tool_receipts,work_control_generation,work_goal_revision from assistant_turns where id=$1', [turnId]);
     if (!goal || !turn || goal.control_generation !== turn.work_control_generation
       || !['planning', 'working', 'waiting'].includes(goal.state) || !['failed', 'completed'].includes(turn.status)) return;
     const [steered] = await tx.query(`select 1 from assistant_turns t join messages m on m.thread_id=t.thread_id
@@ -200,16 +201,18 @@ export async function settleWorkContinuation(db: Db, turnId: string): Promise<vo
       await tx.query(`update work_goals set continuation_ready_at=now()+interval '30 seconds' where id=$1`, [goal.id]);
       return;
     }
-    const question = workBudgetReason(goal) ?? (turn.status === 'failed'
+    const blocker = automationBlockerFromReceipts(turn.tool_receipts);
+    const question = workBudgetReason(goal) ?? blocker?.message ?? (turn.status === 'failed'
       ? turn.error_code === 'session_expired' ? 'Sign in again, then use Resume with instructions to continue this work.'
         : 'The last work segment did not finish reliably. Should Josi inspect the existing results, change the approach, or stop?'
-      : 'The last segment did not save a next step or verified result. What should Josi try next?');
+      : 'Josi stopped before saving its next step. Your original request is still saved. Use Continue to inspect the saved activity and resume the same task.');
     const continuation = { kind: 'question', questionId: randomUUID(), text: question };
+    const activity = blocker ? 'Automation needs setup' : workBudgetReason(goal) || turn.status === 'failed' ? 'Work needs attention' : 'Progress needs recovery';
     const [saved] = await tx.query<{ revision: number }>(`update work_goals set revision=revision+1,state='needs_instruction',
-      continuation=$2,continuation_ready_at=null,activity='Work needs your instructions',updated_at=now()
-      where id=$1 returning revision`, [goal.id, json(continuation)]);
+      continuation=$2,continuation_ready_at=null,activity=$3,updated_at=now()
+      where id=$1 returning revision`, [goal.id, json(continuation), activity]);
     await tx.query(`insert into work_goal_events(id,goal_id,owner_user_id,sequence,kind,summary)
-      values($1,$2,$3,$4,'instruction.requested','Work needs your instructions')`, [randomUUID(), goal.id, goal.owner_user_id, saved.revision]);
+      values($1,$2,$3,$4,'instruction.requested',$5)`, [randomUUID(), goal.id, goal.owner_user_id, saved.revision, activity]);
     await addMessage(tx, { threadId: goal.thread_id, direction: 'out', body: question,
       meta: { work_goal_id: goal.id, work_goal_revision: saved.revision, progress_notice: true } });
   });

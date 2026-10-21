@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import LocalAuthentication
 import Darwin
+import OSLog
 
 extension ProtectedWire {
     static func consent(_ value: Wire, identity: Wire) throws -> Data {
@@ -185,11 +186,13 @@ private final class ConsentSocket: @unchecked Sendable {
 }
 
 @MainActor enum NativeDeviceEnrollment {
+    private static let log = Logger(subsystem: "com.heyjosi.ce.unified", category: "Enrollment")
     static func run(model: JosiModel, label: String = "", password: String = "", mfa: String = "", reviewID: String? = nil) async throws -> String {
         guard NativeProtectedApproval.available, model.isAdministrator, let api = model.api, let parent = NSApp.keyWindow else { throw approvalUnavailable() }
         let user = model.user["id"].text
         var attempt: String?
         var commitSent = false
+        var stage = EnrollmentStage.begin
         var port: NativeKeyPort?
         var local: LocalDeviceConsent?
         var window: NativeApprovalWindow?
@@ -208,6 +211,7 @@ private final class ConsentSocket: @unchecked Sendable {
             var challenge: Wire
             var material: Wire = .null
             if let reviewID {
+                stage = .connectReview
                 attempt = try api.uuid(reviewID)
                 let review = try await api.request("/admin/automation/devices/enroll/\(reviewID)/review")
                 try connected(); try identity(review["identity"])
@@ -230,23 +234,27 @@ private final class ConsentSocket: @unchecked Sendable {
                     alert.beginSheetModal(for: parent) { continuation.resume(returning: $0 == .alertSecondButtonReturn) }
                 }
                 guard accepted else { throw approvalUnavailable() }; try connected()
+                stage = .createKey
                 let key = NativeKeyPort(identity: begin["identity"]); port = key
                 try await key.start()
                 let created = try await key.request("create", fields: [:])
                 guard ProtectedWire.exact(created, ["material"]) else { throw approvalUnavailable() }
                 material = try ProtectedWire.signingMaterial(created["material"], identity: begin["identity"])
                 try connected()
+                stage = .prepare
                 let prepared = try await api.request("/admin/automation/devices/enroll/\(id)/prepare", method: "POST",
                     body: ["material": material, "password": .string(password), "mfaCode": .string(mfa)])
                 try connected(); challenge = prepared["challenge"]
                 let message = try ProtectedWire.consent(challenge, identity: begin["identity"])
                 guard challenge["id"].text == id, challenge["enrollmentId"] == begin["enrollmentId"],
                       ProtectedWire.digest(message) == prepared["challengeDigest"].text else { throw approvalUnavailable() }
+                stage = .connectReview
                 local = try await LocalDeviceConsent.open(["id": .string(id), "identity": begin["identity"],
                     "challengeDigest": prepared["challengeDigest"], "expiresAtMs": challenge["expiresAtMs"]])
                 if let local, local.challenge != challenge { throw approvalUnavailable() }
             }
             guard let id = attempt else { throw approvalUnavailable() }
+            stage = .review
             let lease = try ApprovalLease(challenge)
             let review = NativeApprovalWindow(challenge: challenge, lease: lease, cancelAuthentication: {
                 port?.cancel(); local?.close(); context.invalidate()
@@ -255,25 +263,34 @@ private final class ConsentSocket: @unchecked Sendable {
             try connected(); try review.current()
             var possession = ""
             if reviewID == nil {
+                stage = .authenticate
                 guard let port else { throw approvalUnavailable() }
                 let fields: [String: Wire] = ["commandDigest": challenge["requestDigest"], "material": material,
                                               "attemptId": .string(id), "expiresAtMs": challenge["expiresAtMs"]]
                 let authenticated = try await port.request("authenticateEnrollment", fields: fields)
                 guard ProtectedWire.exact(authenticated, ["authenticated"]), authenticated["authenticated"].flag else { throw approvalUnavailable() }
+                stage = .returnToReview
+                try await review.returnFromAuthentication()
                 try connected(); try review.current()
+                stage = .sign
                 possession = try ProtectedWire.signature(await port.request("signEnrollment", fields: fields))
                 port.cancel(); material = .null
             } else {
+                stage = .authenticate
                 guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil),
                       try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
                         localizedReason: "Approve the exact Josi device enrollment you reviewed on this server Mac.")
                 else { throw approvalUnavailable() }
+                stage = .returnToReview
+                try await review.returnFromAuthentication()
             }
             try connected(); try review.current()
+            stage = .approveServer
             _ = try await api.request("/admin/automation/devices/enroll/\(id)/" + (reviewID == nil ? "status" : "review"))
             try connected(); try review.current()
             if let local { try await local.approve(challenge) }
             if reviewID != nil { return "Local approval sent. The target Mac must finish enrollment before its key is trusted." }
+            stage = .waitServer
             review.phase = "awaiting-server"
             while true {
                 try connected(); try review.current()
@@ -283,18 +300,23 @@ private final class ConsentSocket: @unchecked Sendable {
                 guard status["state"].text == "waiting" else { throw approvalUnavailable() }
                 try await Task.sleep(for: .seconds(1))
             }
-            review.phase = "saving"; commitSent = true
+            review.phase = "saving"; commitSent = true; stage = .commit
             let result = try await api.request("/admin/automation/devices/enroll/\(id)/commit", method: "POST",
                                                body: ["possessionSignature": .string(possession)])
             try connected()
             guard result["enrolled"].flag, result["deviceId"] == challenge["deviceId"], result["enrollmentId"] == challenge["enrollmentId"] else { throw approvalUnavailable() }
-            return "Device enrollment saved to the Vault. Automation permissions are managed separately."
+            guard NativeDeviceInventory.confirms(result["inventory"], enrollment: challenge["enrollmentId"],
+                                                identity: ProtectedWire.identity(challenge)) else { throw approvalUnavailable() }
+            try model.adoptAutomationDevices(result["inventory"])
+            return "Device enrollment saved and verified in the Vault. This Mac is now listed under Devices and Enrolled Mac. Automation permissions are managed separately."
         } catch {
+            // Stage and HTTP status only: no identity, credentials, key
+            // material, request/response body or native error description.
+            log.error("Enrollment stopped at \(stage.rawValue, privacy: .public); HTTP status \((error as? JosiError)?.status ?? 0, privacy: .public)")
             if reviewID == nil, !commitSent, let attempt, model.api === api {
                 _ = try? await api.request("/admin/automation/devices/enroll/\(attempt)/cancel", method: "POST", body: [:])
             }
-            if commitSent { throw JosiError(message: "The final enrollment response was not confirmed. Refresh devices before starting a new enrollment; it may already be saved.") }
-            throw JosiError(message: "Enrollment did not finish. Confirm that the server Mac approved this request, then start a fresh attempt. No automation access was granted.")
+            throw stage.failure(error)
         }
     }
 }
@@ -309,7 +331,7 @@ struct NativeDeviceEnrollmentView: View {
     private var ready: Bool {
         NativeProtectedApproval.available && model.isAdministrator
             && model.automationCatalog["capabilities"]["deviceEnrollment"].flag
-            && !model.automationSettings["devices"]["reconciliationRequired"].flag
+            && model.automationDevicesReady && !model.automationDevices["reconciliationRequired"].flag
     }
     var body: some View {
         GroupBox("Enroll this Mac") {
@@ -317,10 +339,11 @@ struct NativeDeviceEnrollmentView: View {
                 Text("Create a protected confirmation device for this server and administrator. Review it here and on the Mac running the server.")
                 if !ready {
                     Text(!NativeProtectedApproval.provisioned ? "Protected enrollment is unavailable in this build. Install a build with protected-device signing configured."
+                         : !model.automationDevicesReady ? "Refresh Saved Devices before enrolling another Mac."
                          : "Use Touch ID and a server that supports enrollment.").font(.caption).foregroundStyle(.secondary)
                 }
                 TextField("A name for this Mac", text: $label)
-                SecureField("Administrator password", text: $password)
+                SecureField("Josi administrator password", text: $password)
                 SecureField("Authenticator code, if enabled", text: $mfa)
                 Button("Enroll This Mac…") {
                     let name = label, secret = password, code = mfa
@@ -333,7 +356,7 @@ struct NativeDeviceEnrollmentView: View {
                     }
                 }.disabled(!ready || model.busy || label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
                 Divider()
-                Button("Refresh Requests for This Server Mac") {
+                Button("Refresh Pending Enrollment Requests") {
                     guard let api = model.api else { return }
                     model.run {
                         let value = try await api.request("/admin/automation/devices/enroll/pending")

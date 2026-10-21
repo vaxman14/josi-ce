@@ -2,7 +2,7 @@ import type { AutomationIdentity } from '@josi-ce/protocol';
 import type { AutomationApplicationTarget } from './automationTargets.js';
 
 export interface AutomationBrowserCandidate {
-  schemaVersion: '1'; kind: 'browser'; candidateId: string; guestBootId: string; label: string;
+  schemaVersion: '1' | '2'; kind: 'browser'; candidateId: string; guestBootId: string; label: string;
   family: 'chrome' | 'brave' | 'firefox' | 'safari';
   applicationId: string; installationRevision: 1;
   /** Physical guest profile; deliberately distinct from the grantable ID. */
@@ -26,12 +26,15 @@ export function isAutomationBrowserCandidate(value: unknown): value is Automatio
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const v = value as AutomationBrowserCandidate;
   if (Object.keys(v).length !== fields.length || !fields.every(k => Object.hasOwn(v, k))
-    || v.schemaVersion !== '1' || v.kind !== 'browser' || ![v.candidateId, v.guestBootId, v.applicationId, v.nativeProfileId].every(uuid)
+    || !['1', '2'].includes(v.schemaVersion) || v.kind !== 'browser' || ![v.candidateId, v.guestBootId, v.applicationId, v.nativeProfileId].every(uuid)
     || !text(v.label, 96) || !Object.hasOwn(bundles, v.family) || v.installationRevision !== 1
     || !text(v.extensionVersion, 64) || !/^[0-9]+(?:\.[0-9]+){1,3}$/.test(v.extensionVersion)
     || typeof v.extensionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(v.extensionDigest)
     || !['unpacked-development', 'store-signed'].includes(v.distribution)) return false;
-  if (v.family === 'safari') return v.profilePath === null && v.extensionId === 'com.heyjosi.ce.guestcompanion.workspace-safari';
+  if (v.family === 'safari') return v.profilePath === null && v.extensionId === (v.schemaVersion === '2' ? 'com.heyjosi.ce.unified.workspace-safari' : 'com.heyjosi.ce.guestcompanion.workspace-safari');
+  if (v.schemaVersion === '2') return v.profilePath === null && (['chrome', 'brave'].includes(v.family)
+    ? typeof v.extensionId === 'string' && /^[a-p]{32}$/.test(v.extensionId)
+    : text(v.extensionId, 128) && /^[a-zA-Z0-9@{}_.-]+$/.test(v.extensionId));
   if (!text(v.profilePath, 1024) || !v.profilePath.startsWith('/Users/')
     || v.profilePath.split('/').some((part, i) => i > 0 && (!part || part === '.' || part === '..'))
     || !v.profilePath.endsWith('/' + v.nativeProfileId)) return false;
@@ -42,7 +45,7 @@ export function isAutomationBrowserCandidate(value: unknown): value is Automatio
 export function browserApplication(target: AutomationBrowserTarget, applications: AutomationApplicationTarget[]): AutomationApplicationTarget | null {
   const c = target.candidate, identity = target.identity;
   if (!isAutomationBrowserCandidate(c)) return null;
-  if (c.family !== 'safari') {
+  if (c.schemaVersion === '1' && c.family !== 'safari') {
     const suffix = `/Library/Application Support/Josi Workspace/Profiles/${identity.workspaceId}/${c.nativeProfileId}`;
     if (!c.profilePath?.endsWith(suffix) || c.profilePath.slice('/Users/'.length, -suffix.length).includes('/')) return null;
   }
@@ -54,7 +57,7 @@ export function browserApplication(target: AutomationBrowserTarget, applications
 export function describeAutomationBrowser(target: AutomationBrowserTarget, application: AutomationApplicationTarget): string {
   const c = target.candidate, app = application.candidate;
   return `Browser registration: ${target.profileId}, revision ${target.profileRevision}\nFamily: ${c.family}\nProfile: ${c.label}\n`
-    + `Guest profile identity: ${c.nativeProfileId}\nGuest profile location: ${c.profilePath ?? 'Safari OS profile; no caller-supplied folder'}\n`
+    + `Browser instance: ${c.nativeProfileId}\nProfile location: ${c.profilePath ?? 'Existing browser; no profile access'}\n`
     + `Application registration: ${c.applicationId}, revision ${c.installationRevision}\nBrowser app: ${app.bundlePath}\n`
     + `Bundle: ${app.bundleId}\nSigning identifier: ${app.signingId}\nSigning team: ${app.teamId || '(no team identifier)'}\nApp code hash: ${app.codeHash}\n`
     + `Extension: ${c.extensionId}\nExtension version: ${c.extensionVersion}\nExtension fingerprint: ${c.extensionDigest}\nDistribution: ${c.distribution}`;

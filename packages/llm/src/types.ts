@@ -131,6 +131,9 @@ export interface ChatRequest {
   system?: string;
   tools?: ToolDefinition[];
   toolContext?: ToolContext;
+  /** Server-selected subscription mode: return tool proposals to Josi’s
+   * existing loop instead of executing them in the CLI’s MCP process. */
+  toolExecution?: 'caller';
   /** Ask for a JSON object back. Providers differ wildly in how well they
    * honour this, which is exactly why the probe checks it. */
   jsonMode?: boolean;

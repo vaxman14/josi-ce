@@ -30,10 +30,10 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
   };
   const reservations = records.automationReservations(proofs);
   return new AutomationRuntime(db, master, {
-    ...proofs, actionsAvailable: true, computerActionsAvailable: false, actionBrowserFamilies: ['chrome'],
+    ...proofs, actionsAvailable: true, computerActionsAvailable: true, actionBrowserFamilies: ['chrome', 'brave', 'firefox', 'safari'],
     prepareBrowserOpen: async (context, request, signal) => {
       const c = await transport.current(context.ownerUserId, request.workspaceId);
-      if (signal.aborted || c.browser?.family !== 'chrome' || c.holder?.taskId !== request.taskId
+      if (signal.aborted || !c.browser || c.holder?.taskId !== request.taskId
         || c.holder.controlSessionId !== request.controlSessionId) throw new AutomationRuntimeRefusal('local_consent_required');
       const expiresAtMs = c.leaseUntilMs - 500, origin = new URL(request.url).origin;
       if (expiresAtMs - Date.now() < 6000) throw new AutomationRuntimeRefusal('connection_refreshing');
@@ -45,14 +45,11 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
           installationRevision: c.application.installationRevision, taskId: request.taskId, sessionId: request.controlSessionId,
           generation: c.generation, expiresAtMs, operation: 'navigate', url: request.url,
           observationId: null, resultObservationId: observationId, maxOutputBytes: 65536,
-          browser: { profileId: c.browser.profileId, family: 'chrome', origin },
-          network: { id, workspaceId: c.identity.workspaceId, taskId: request.taskId, origin,
-            networkClass: 'public', maximumBytes: 16_777_216, expiresAtMs } } };
-      const target = { kind: 'browser' as const, browser: 'chrome' as const, profileId: c.browser.profileId, origin };
+          browser: { profileId: c.browser.profileId, family: c.browser.family, origin } } };
+      const target = { kind: 'browser' as const, browser: c.browser.family, profileId: c.browser.profileId, origin };
       return { identity: c.identity, observationId, intentDigest: cardinalContentDigest(request), effectCoverage: 'verified' as const,
         effects: [{ action: 'browser.navigate' as const, target, bytes: Buffer.byteLength(request.url) },
-          { action: 'browser.observe' as const, target, bytes: 65536 },
-          { action: 'network.connect' as const, target: { kind: 'network' as const, origin, networkClass: 'public' as const }, bytes: 16_777_216 }],
+          { action: 'browser.observe' as const, target, bytes: 65536 }],
         expected: { permissions: c.permissions, cardinal: c.cardinal }, expiresAtMs,
         payload: new Secret(JSON.stringify(payload)), dispatchProof: { phase: 'prepared', commandId: id } };
     },
@@ -79,6 +76,53 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
     },
     prepare: async (context, request, signal): Promise<PreparedAutomationOperation> => {
       const action = request.action;
+      if (['browser.element','browser.scroll','desktop.element','desktop.pointer','desktop.text','desktop.key','desktop.scroll'].includes(action.kind)) {
+        if (!('sourceReservationId' in action)) throw new AutomationRuntimeRefusal('unclassified_effect');
+        const source = await transport.result(context.ownerUserId, action.sourceReservationId);
+        const c = await transport.current(context.ownerUserId, request.workspaceId);
+        const window = 'tabId' in action ? action.tabId : 'windowId' in action ? action.windowId : null;
+        const previous = source?.payload.command;
+        if (signal.aborted || !source || !previous || !['observe','navigate'].includes(previous.operation)
+          || source.result?.outcome !== 'succeeded' || source.result.observationId !== request.observationId
+          || source.result.windowId !== window || previous.taskId !== request.taskId
+          || previous.workspaceId !== request.workspaceId || previous.generation !== c.generation
+          || c.holder?.taskId !== request.taskId || c.holder.controlSessionId !== previous.sessionId
+          || JSON.stringify(source.payload.application) !== JSON.stringify(c.application)
+          || ('browserProfileId' in action ? !c.browser || action.browserProfileId !== c.browser.profileId
+              : c.browser || !('appId' in action) || action.appId !== c.application.applicationId)) throw new AutomationRuntimeRefusal('target_changed');
+        const expiresAtMs = c.leaseUntilMs - 500;
+        if (expiresAtMs - Date.now() < 4000) throw new AutomationRuntimeRefusal('connection_refreshing');
+        const operation = action.kind === 'desktop.element' ? action.action : action.kind === 'desktop.pointer' ? 'click'
+          : action.kind === 'browser.element' ? action.action === 'fill' ? 'text' : 'click'
+          : action.kind.endsWith('.scroll') ? 'scroll' : action.kind === 'desktop.text' ? 'text' : 'key';
+        const input = { sourceReservationId: action.sourceReservationId, ...('text' in action ? { text: action.text } : {}) };
+        const command: NativeObservationPayload['command'] = {
+          id: randomUUID(), workspaceId: request.workspaceId, appId: c.application.applicationId,
+          installationRevision: c.application.installationRevision, taskId: request.taskId, sessionId: c.holder.controlSessionId,
+          generation: c.generation, expiresAtMs, operation, input, observationId: request.observationId,
+          windowId: window!, resultObservationId: randomUUID(), maxOutputBytes: 65536,
+          ...(previous.browser ? { browser: previous.browser } : {}),
+          ...('elementId' in action ? { elementId: action.elementId } : {}),
+          ...('x' in action ? { x: action.x, y: action.y } : {}),
+          ...('key' in action ? { key: action.key } : {}),
+          ...('deltaY' in action ? { deltaY: action.deltaY } : {}),
+        };
+        const payload: NativeObservationPayload = { purpose: 'josi-native-input', schemaVersion: 1,
+          storageSessionId: c.storageSessionId, consent: c.consent, targetReference: c.targetReference,
+          guestBootId: c.guestBootId, guestChannelId: c.guestChannelId, application: c.application,
+          ...(c.browser ? { browser: c.browser } : {}), command };
+        const bytes = 'text' in action ? Buffer.byteLength(action.text ?? '') : 1;
+        const target = c.browser ? { kind: 'browser' as const, browser: c.browser.family, profileId: c.browser.profileId, origin: command.browser!.origin }
+          : { kind: 'application' as const, applicationId: c.application.applicationId, installationRevision: c.application.installationRevision };
+        const h = cardinalContentDigest({ purpose: 'native-input.1', taskId: request.taskId, observationId: request.observationId });
+        const effectIdentity = `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+        return { identity: c.identity, observationId: request.observationId, effectIdentity,
+          intentDigest: automationIntentDigest(request), effectCoverage: 'verified',
+          effects: [{ action: c.browser ? operation === 'text' ? 'browser.fill' : 'browser.click' : 'computer.interact', target, bytes },
+            { action: c.browser ? 'browser.observe' : 'computer.observe', target, bytes: 65536 }],
+          expected: { permissions: c.permissions, cardinal: c.cardinal }, expiresAtMs,
+          payload: new Secret(JSON.stringify(payload)), dispatchProof: { phase: 'prepared', commandId: command.id } };
+      }
       if (action.kind !== 'browser.draft' && action.kind !== 'browser.photo') throw new AutomationRuntimeRefusal('unclassified_effect');
       const source = await transport.result(context.ownerUserId, action.sourceReservationId);
       const c = await transport.current(context.ownerUserId, request.workspaceId);
@@ -86,7 +130,7 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
         || source.result?.outcome !== 'succeeded' || source.result.observationId !== request.observationId
         || source.result.windowId !== action.tabId || source.payload.command.taskId !== request.taskId
         || source.payload.command.workspaceId !== request.workspaceId
-        || !c.browser || c.browser.family !== 'chrome' || action.browserProfileId !== c.browser.profileId
+        || !c.browser || action.browserProfileId !== c.browser.profileId
         || c.holder?.taskId !== request.taskId || c.holder.controlSessionId !== source.payload.command.sessionId
         || !source.payload.command.browser) throw new AutomationRuntimeRefusal('target_changed');
       const expiresAtMs = c.leaseUntilMs - 500;
@@ -100,10 +144,6 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
             ? { maxOutputBytes: 65536, photo: { sourceReservationId: action.sourceReservationId, elementId: action.elementId } }
             : { elementId: action.elementId, maxOutputBytes: Buffer.byteLength(action.text),
               draft: { sourceReservationId: action.sourceReservationId, text: action.text } }) } };
-      if (action.kind === 'browser.photo') payload.command.network = {
-        id: payload.command.id, workspaceId: request.workspaceId, taskId: request.taskId,
-        origin: payload.command.browser!.origin, networkClass: 'public', maximumBytes: 4 * 1024 * 1024, expiresAtMs,
-      };
       // One input attempt for this capture, including after timeout/restart.
       const h = cardinalContentDigest({ purpose: 'native-browser-input.1', taskId: request.taskId, observationId: request.observationId });
       const effectIdentity = `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
@@ -111,7 +151,7 @@ export function createNativeInspectionRuntime(db: Db, master: MasterKey): Automa
         effectIdentity: action.kind === 'browser.photo' ? payload.command.resultObservationId : effectIdentity,
         intentDigest: automationIntentDigest(request), effectCoverage: 'verified',
         effects: [{ action: action.kind === 'browser.photo' ? 'browser.observe' : 'browser.fill',
-          target: { kind: 'browser', browser: 'chrome', profileId: c.browser.profileId,
+          target: { kind: 'browser', browser: c.browser.family, profileId: c.browser.profileId,
           origin: payload.command.browser!.origin }, bytes: payload.command.maxOutputBytes },
           ...(payload.command.network ? [{ action: 'network.connect' as const,
             target: { kind: 'network' as const, origin: payload.command.network.origin, networkClass: 'public' as const },

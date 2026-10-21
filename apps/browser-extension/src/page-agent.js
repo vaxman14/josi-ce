@@ -27,6 +27,7 @@
   }
   addEventListener('pointerdown', stopForHuman, true);
   addEventListener('keydown', stopForHuman, true);
+  addEventListener('wheel', stopForHuman, true);
   api.runtime.onMessage.addListener((request, sender, respond) => {
     if (sender.id !== api.runtime.id || sender.tab || request?.channel !== 'josi-page' || request.version !== 1) return false;
     void (async () => {
@@ -117,6 +118,12 @@
       }
       if (!observation || request.observationId !== observation.id || observation.revision !== revision
         || observation.url !== location.href) throw new Error('observation_changed');
+      if (request.kind === 'scroll') {
+        if (!Number.isSafeInteger(request.deltaY) || !request.deltaY || Math.abs(request.deltaY) > 2000) throw new Error('invalid_scroll');
+        observation = null; elements.clear();
+        scrollBy({ top: request.deltaY, behavior: 'instant' });
+        return { kind: 'input_issued', verificationRequired: true };
+      }
       const target = elements.get(request.elementId), element = target?.element;
       if (!element?.isConnected || !visible(element) || element.matches(':disabled,[aria-disabled="true"]')) throw new Error('element_changed');
       const rect = element.getBoundingClientRect();
@@ -143,7 +150,7 @@
       } else if (request.kind === 'fill') {
         if (typeof request.value !== 'string' || request.value.length > 16384
           || !(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
-          || (element instanceof HTMLInputElement && !['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(element.type))
+          || (element instanceof HTMLInputElement && !['text', 'search', 'email', 'url', 'tel', 'number'].includes(element.type))
           || element.readOnly) throw new Error('unsupported_field');
         const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, request.value);

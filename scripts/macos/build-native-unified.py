@@ -22,7 +22,8 @@ APP_ID = 'com.heyjosi.ce.unified'
 APP_IDENTITY = 'Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
 INSTALLER_IDENTITY = 'Developer ID Installer: Socal Receptionist LLC (LRH75YR6QW)'
 KEYCHAIN = '/Users/roman/Library/Keychains/login.keychain-db'
-VERSION = '0.7.0-native.16'
+VERSION = '0.7.0-native.20'
+PACKAGE_VERSION = '0.7.0.21'
 PROTECTED_ID = 'com.heyjosi.ce.protected-key'
 SIGNING_CERTIFICATE_SHA1 = '0bdc050694b41330db6833e440a4a8e6f466abdb'
 
@@ -136,9 +137,11 @@ def build(args):
                                 '-target', 'arm64-apple-macos14.2', '-module-cache-path', output / 'module-cache',
                                 '-o', executables / 'Josi', *sorted(source.glob('*.swift')),
                                 REPO / 'packaging/macos/NativeAuthorization.swift',
-                                REPO / 'apps/automation-macos/Sources/WorkspaceMachine.swift',
-                                REPO / 'apps/automation-macos/Sources/GuestLinkWire.swift'])
-    (output / 'native-app-entitlements.plist').write_bytes(plistlib.dumps({'com.apple.security.virtualization': True}))
+                                *[REPO / 'apps/automation-macos/Sources' / name for name in (
+                                    'GuestLinkWire.swift', 'CurrentDesktopEnvironment.swift', 'GuestDesktopEngine.swift',
+                                    'GuestExecutionAuthority.swift', 'GuestBrowserIPC.swift', 'GuestBrowserProfiles.swift',
+                                    'GuestBrowserProjection.swift', 'GuestBrowserSession.swift', 'GuestPhotoReader.swift')]])
+    (output / 'native-app-entitlements.plist').write_bytes(plistlib.dumps({'com.apple.security.device.audio-input': True}))
     copy_file(REPO / 'packaging/macos/Josi.png', resources / 'Josi.png')
     icons = output / 'Josi.iconset'; icons.mkdir()
     for size in (16, 32, 128, 256, 512):
@@ -150,9 +153,12 @@ def build(args):
     info = {
         'CFBundleIdentifier': APP_ID, 'CFBundleName': 'Josi', 'CFBundleDisplayName': 'Josi',
         'CFBundleExecutable': 'Josi', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.7.0',
-        'CFBundleVersion': '20261020.16', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
+        'CFBundleVersion': '20261021.21', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
+        'NSMicrophoneUsageDescription': 'Josi uses your microphone only when you start dictation or voice chat. Audio is processed by Voice Box on your Josi server.',
         'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
+        'NSAccessibilityUsageDescription': 'Josi controls only the apps you select and approve for this desktop session.',
+        'NSScreenCaptureUsageDescription': 'Josi captures permitted app windows during an approved desktop task.',
         'JosiNativeClientProtocol': 1, 'JosiProtectedHostProtocol': 1,
         'JosiProtectedKeyProvisioned': bool(profile),
         'NSSystemAdministrationUsageDescription': 'Josi manages its local server when you request installation, updates or service changes.',
@@ -163,6 +169,8 @@ def build(args):
         copy_file(REPO / name, resources / name)
     print('Bundling the current offline server runtime', flush=True)
     runtime = resources / 'runtime'; tree(runtime_input, runtime)
+    for retired in ('automation-workspace.py', 'automation-workspace-guardian.py'):
+        (runtime / 'app/native' / retired).unlink(missing_ok=True)
     baseline_version = json.loads((runtime / 'app/package.json').read_text())['version']
     for group in ('packages', 'apps'):
         for package in (REPO / group).iterdir():
@@ -207,89 +215,22 @@ def build(args):
         copy_file(profile, key_bundle / 'Contents/embedded.provisionprofile')
         (output / 'protected-key-entitlements.plist').write_bytes(plistlib.dumps(key_entitlements))
     copy_file(native_build / 'JosiDeviceConsentHost', helpers / 'JosiDeviceConsentHost')
-    support = output / 'guest-support'; support.mkdir()
     chrome_info = None
-    if args.chrome_app:
-        chrome = args.chrome_app.resolve(strict=True)
-        if chrome.name != 'Google Chrome.app' or not chrome.is_dir() or args.chrome_app.is_symlink():
-            raise ValueError('Choose the installed Google Chrome.app, never its profile or user-data folder')
-        requirement = '=anchor apple generic and identifier "com.google.Chrome" and certificate leaf[subject.OU] = "EQHXZ8M8AV"'
-        copied_chrome = support / 'Google Chrome.app'
-        tree(chrome, copied_chrome)
-        # copytree may propagate directory Finder metadata. Strip only the
-        # private copy's signing-incompatible metadata; never alter the source
-        # or follow bundle symlinks to other files.
-        for attribute in ('com.apple.FinderInfo', 'com.apple.ResourceFork'):
-            # Apple's Python does not expose os.listxattr. -s acts on links
-            # themselves; absent attributes are harmless. The strict Google
-            # signature check below remains the mandatory success criterion.
-            subprocess.run(['/usr/bin/xattr', '-drs', attribute, str(copied_chrome)],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        run('verify-support-chrome', ['/usr/bin/codesign', '--verify', '--deep', '--strict', '-R', requirement, copied_chrome])
-        chrome_info = plistlib.loads((copied_chrome / 'Contents/Info.plist').read_bytes()).get('CFBundleShortVersionString')
-        (support / 'Chrome test copy.txt').write_text(
-            'Google Chrome ' + str(chrome_info) + '\n'
-            'Unmodified Google-signed application supplied from this Mac for its separate test desktop. '
-            'No personal browser profile or login data is included. Chrome retains its own license and notices.\n')
-    companion = support / 'Josi Companion.app'
-    (companion / 'Contents/MacOS').mkdir(parents=True)
-    (companion / 'Contents/Resources').mkdir()
-    run('compile-guest-companion', ['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-O',
-        '-target', 'arm64-apple-macos14.2', '-module-cache-path', output / 'module-cache',
-        '-o', companion / 'Contents/MacOS/JosiCompanion',
-        REPO / 'apps/automation-macos/Sources/GuestCompanionApp.swift',
-        REPO / 'apps/automation-macos/Sources/GuestDesktopEngine.swift',
-        REPO / 'apps/automation-macos/Sources/GuestExecutionAuthority.swift',
-        REPO / 'apps/automation-macos/Sources/GuestApplicationReadiness.swift',
-        REPO / 'apps/automation-macos/Sources/GuestBrowserProfiles.swift',
-        REPO / 'apps/automation-macos/Sources/GuestBrowserProjection.swift',
-        REPO / 'apps/automation-macos/Sources/GuestBrowserIPC.swift',
-        REPO / 'apps/automation-macos/Sources/GuestBrowserSession.swift',
-        REPO / 'apps/automation-macos/Sources/GuestPhotoReader.swift',
-        REPO / 'apps/automation-macos/Sources/GuestBrowserProxy.swift',
-        REPO / 'apps/automation-macos/Sources/GuestChromeInstall.swift',
-        REPO / 'apps/automation-macos/Sources/GuestLinkWire.swift'])
     browser_build = output / 'guest-browser-components'
     run('build-guest-browser-components', [sys.executable, '-B', REPO / 'scripts/macos/build-guest-browser-components.py',
         '--output', browser_build, '--node', runtime / 'node/bin/node'], timeout=600)
-    guest_resources = companion / 'Contents/Resources'
+    guest_resources = resources
     tree(browser_build / 'BrowserExtensions', guest_resources / 'BrowserExtensions')
     copy_file(browser_build / 'BrowserExtensions/BrowserDistribution.json', guest_resources / 'BrowserDistribution.json')
     tree(browser_build / 'NativeMessagingHosts', guest_resources / 'NativeMessagingHosts')
-    guest_helpers = companion / 'Contents/Helpers'; guest_helpers.mkdir()
+    guest_helpers = helpers
     for name in ('JosiBrowserHost', 'JosiBrowserBroker'):
         copy_file(browser_build / name, guest_helpers / name)
-    (companion / 'Contents/PlugIns').mkdir()
-    safari_extension = companion / 'Contents/PlugIns/Josi Workspace.appex'
+    (app / 'Contents/PlugIns').mkdir()
+    safari_extension = app / 'Contents/PlugIns/Josi Workspace.appex'
     tree(browser_build / 'Josi Workspace.appex', safari_extension)
-    guest_agents = companion / 'Contents/Library/LaunchAgents'; guest_agents.mkdir(parents=True)
-    copy_file(browser_build / 'com.heyjosi.ce.guestbrowser.plist', guest_agents / 'com.heyjosi.ce.guestbrowser.plist')
-    (companion / 'Contents/Info.plist').write_bytes(plistlib.dumps({
-        'CFBundleIdentifier': 'com.heyjosi.ce.guestcompanion', 'CFBundleName': 'Josi Companion',
-        'CFBundleDisplayName': 'Josi Companion', 'CFBundleExecutable': 'JosiCompanion',
-        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.7.0',
-        'CFBundleVersion': info['CFBundleVersion'], 'LSMinimumSystemVersion': '14.2',
-        'CFBundleIconFile': 'Josi.icns', 'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
-        'NSHumanReadableCopyright': info['NSHumanReadableCopyright'],
-    }))
-    for name in ('Josi.icns', 'LICENSE', 'NOTICE'):
-        copy_file(resources / name, companion / 'Contents/Resources' / name)
-    (support / 'Read Me.txt').write_text(
-        'Josi development desktop support\n\n'
-        'Inside the separate desktop, copy Josi Companion.app to Applications and open it. '
-        'Choose Connect to Josi and compare the code in both native windows.\n'
-        'Locally approved app inspection and capture sharing require current server permissions. '
-        'Use the matching host and companion from this installer (desktop-command.7). '
-        'This test build targets Chrome. If supplied, use Install Chrome in This Desktop to copy the Google-signed app from this disk. '
-        'Register the browser app, prepare its separate profile, register that profile, '
-        'then enable the connection and load the packaged extension through the browser’s extension setup page. '
-        'Inspection of the active tab needs an exact site grant; model sharing needs a separate transmission grant. '
-        'Grant exact-site Navigate, Observe, Fill and public Network permissions, plus transmission to your registered vision model. '
-        'Chrome can load a permitted HTTPS page, read a photo with OCR, and fill an empty description box for review. '
-        'General clicks, submitting and publishing are not part of this test. '
-        'Do not install this companion on your personal desktop. It requires the isolated guest environment.\n'
-        'This disk is read-only and contains no credentials or host files.\n')
-
+    guest_agents = app / 'Contents/Library/LaunchAgents'; guest_agents.mkdir(parents=True)
+    copy_file(browser_build / 'com.heyjosi.ce.browser.plist', guest_agents / 'com.heyjosi.ce.browser.plist')
     uninstaller = output / 'payload/Applications/Uninstall Josi.app'
     ur = uninstaller / 'Contents/Resources'; ur.mkdir(parents=True)
     um = uninstaller / 'Contents/MacOS'; um.mkdir()
@@ -331,14 +272,10 @@ def build(args):
         sign('sign-JosiProtectedKeyHost', key_bundle, PROTECTED_ID,
              output / 'protected-key-entitlements.plist' if profile else None)
         sign('sign-JosiDeviceConsentHost', helpers / 'JosiDeviceConsentHost', 'com.heyjosi.ce.device-consent')
-        sign('sign-guest-browser-host', guest_helpers / 'JosiBrowserHost', 'com.heyjosi.ce.guestbrowser-host')
-        sign('sign-guest-browser-broker', guest_helpers / 'JosiBrowserBroker', 'com.heyjosi.ce.guestbrowser-broker')
-        sign('sign-guest-safari-extension', safari_extension, 'com.heyjosi.ce.guestcompanion.workspace-safari',
+        sign('sign-guest-browser-host', guest_helpers / 'JosiBrowserHost', 'com.heyjosi.ce.browser-host')
+        sign('sign-guest-browser-broker', guest_helpers / 'JosiBrowserBroker', 'com.heyjosi.ce.browser-broker')
+        sign('sign-guest-safari-extension', safari_extension, 'com.heyjosi.ce.unified.workspace-safari',
              browser_build / 'Safari.entitlements')
-        sign('sign-guest-companion', companion, 'com.heyjosi.ce.guestcompanion')
-        run('verify-guest-companion', ['/usr/bin/codesign', '--verify', '--deep', '--strict', companion])
-    run('create-guest-support-image', ['/usr/bin/hdiutil', 'makehybrid', '-hfs',
-        '-hfs-volume-name', 'Josi Support', '-o', resources / 'JosiSupport.iso', support])
     run('runtime-inventory', [sys.executable, '-B', REPO / 'scripts/macos/inventory.py', runtime, '--hash-only'])
     run('uninstaller-inventory', [sys.executable, '-B', REPO / 'scripts/macos/inventory.py', minimal, '--hash-only'])
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
@@ -372,10 +309,10 @@ def build(args):
         postinstall.write_text('#!/bin/sh\nset -eu\nexec "/Applications/Josi.app/Contents/Resources/runtime/python/bin/python3.11" -I -B "/Applications/Josi.app/Contents/Resources/runtime/app/native/unified-postinstall.py"\n')
         postinstall.chmod(0o755)
         run('build-component', ['/usr/bin/pkgbuild', '--root', output / 'payload', '--component-plist', components,
-                                '--identifier', APP_ID + '.pkg', '--version', '0.7.0.17', '--install-location', '/',
+                                '--identifier', APP_ID + '.pkg', '--version', PACKAGE_VERSION, '--install-location', '/',
                                 '--scripts', scripts, output / 'application.pkg'])
         distribution = output / 'Distribution.xml'
-        distribution.write_text('''<?xml version="1.0" encoding="utf-8"?>
+        distribution.write_text(f'''<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
  <title>Josi</title>
  <options customize="never" require-scripts="true" hostArchitectures="arm64" rootVolumeOnly="true"/>
@@ -383,7 +320,7 @@ def build(args):
  <allowed-os-versions><os-version min="14.2"/></allowed-os-versions>
  <choices-outline><line choice="josi"/></choices-outline>
  <choice id="josi" title="Josi" visible="false" start_selected="true" start_enabled="false"><pkg-ref id="com.heyjosi.ce.unified.pkg"/></choice>
- <pkg-ref id="com.heyjosi.ce.unified.pkg" version="0.7.0.17" onConclusion="none">application.pkg</pkg-ref>
+ <pkg-ref id="com.heyjosi.ce.unified.pkg" version="{PACKAGE_VERSION}" onConclusion="none">application.pkg</pkg-ref>
 </installer-gui-script>
 ''')
         package = output / 'Install Josi.pkg'
@@ -421,7 +358,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--sign', action='store_true')
     parser.add_argument('--package', action='store_true')
-    parser.add_argument('--chrome-app', type=Path, help='Optional owner-supplied Google-signed Chrome application for this local test desktop; no profile is copied')
+    parser.add_argument('--chrome-app', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--protected-profile', type=Path,
                         help='Apple-issued Socal Developer ID provisioning profile for the private biometric key helper')
     build(parser.parse_args())

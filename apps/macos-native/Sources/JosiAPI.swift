@@ -218,6 +218,53 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         }
         return value
     }
+    private func mediaResponse(_ request: URLRequest, mime: String? = nil) async throws -> Data {
+        let (bytes, response) = try await session.bytes(for: request)
+        defer { bytes.task.cancel() }
+        guard !closed, let http = response as? HTTPURLResponse, response.url == request.url else { throw CancellationError() }
+        var data = Data()
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard !closed, data.count < 4 * 1024 * 1024 else { throw JosiError(message: "The media response was interrupted or too large.") }
+            data.append(byte)
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let error = (try? JSONDecoder().decode(Wire.self, from: data))?["error"].text ?? ""
+            throw JosiError(message: error.isEmpty ? "The server could not process this media." : String(error.prefix(600)), status: http.statusCode)
+        }
+        if let mime, !(response.mimeType?.hasPrefix(mime) ?? false) { throw JosiError(message: "The server did not return voice audio.") }
+        return data
+    }
+    func voiceAudio(_ route: String, body: Wire) async throws -> Data {
+        guard !closed, ["/voice/speech", "/admin/voice-box/preview"].contains(route),
+              let url = URL(string: origin.absoluteString + "/api" + route) else { throw CancellationError() }
+        if csrf == nil { try await primeCSRF() }
+        var request = URLRequest(url: url); request.httpMethod = "POST"
+        request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
+        request.setValue(csrf, forHTTPHeaderField: "x-josi-csrf")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        return try await mediaResponse(request, mime: "audio/")
+    }
+    func uploadAttachment(_ file: URL, thread: String) async throws -> Wire {
+        let id = try uuid(thread)
+        guard !closed, file.isFileURL, let url = URL(string: origin.absoluteString + "/api/assistant/threads/\(id)/attachments") else { throw CancellationError() }
+        let access = file.startAccessingSecurityScopedResource(); defer { if access { file.stopAccessingSecurityScopedResource() } }
+        let properties = try file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard properties.isRegularFile == true, let size = properties.fileSize, size <= 20 * 1024 * 1024 else { throw JosiError(message: "Choose a file of up to 20 MB.") }
+        let content = try Data(contentsOf: file)
+        guard content.count <= 20 * 1024 * 1024 else { throw JosiError(message: "The selected file is too large.") }
+        let filename = file.lastPathComponent.replacingOccurrences(of: "\"", with: "_").replacingOccurrences(of: "\r", with: "_").replacingOccurrences(of: "\n", with: "_")
+        let boundary = "Josi-" + UUID().uuidString
+        var body = Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8)
+        body.append(content); body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        if csrf == nil { try await primeCSRF() }
+        var request = URLRequest(url: url); request.httpMethod = "POST"; request.httpBody = body
+        request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
+        request.setValue(csrf, forHTTPHeaderField: "x-josi-csrf")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        return try JSONDecoder().decode(Wire.self, from: await mediaResponse(request))["attachment"]
+    }
     func localSetupHandoff() async throws {
         guard origin.host == "localhost" else { throw JosiError(message: "Initial setup must be opened on the server Mac.") }
         let handoff = try NativeFiles.json("/Library/Application Support/Josi CE Server/handoff/\(getuid())/bootstrap.json",

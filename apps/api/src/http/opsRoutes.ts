@@ -893,7 +893,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     handle(async (_req, res) => {
       if (!ctx.telemetrySender) return res.json({ sent: false, reason: 'no sender configured' });
       const [{ id }] = await db.query<{ id: string }>(
-        `select installation_id as id from workspace limit 1`,
+        `select install_id as id from install_identity where id=true`,
       ).catch(() => [{ id: '00000000-0000-4000-8000-000000000000' }]);
       const out = await sendTelemetry(db, {
         facts: { installationId: id, version: process.env.JOSI_VERSION ?? '0.1.0' },

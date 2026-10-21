@@ -239,7 +239,7 @@ export class VaultRecordStore {
             if (!head || !workspaceStorageContains(await this.open(tx, key, head, state), identity)) {
               throw new VaultRecordError('The selected target does not belong to a prepared workspace for this identity.');
             }
-            const rows = await tx.query<{ installation_id: string }>('select installation_id from workspace limit 2 for share');
+            const rows = await tx.query<{ installation_id: string }>('select install_id as installation_id from install_identity where id=true for share');
             if (rows.length !== 1 || rows[0].installation_id !== identity.serverId) throw new VaultRecordError('This workspace belongs to another server.');
           },
           write: async value => {

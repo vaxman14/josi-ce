@@ -43,7 +43,7 @@ export class DeviceEnrollments {
     } catch { return false; }
   }
   private async installation(tx: Db) {
-    const rows = await tx.query<{ installation_id: string }>('select installation_id from workspace limit 2 for share');
+    const rows = await tx.query<{ installation_id: string }>('select install_id as installation_id from install_identity where id=true for share');
     if (!isProtectedControlOrigin(this.origin) || rows.length !== 1 || !uuid(rows[0].installation_id)) {
       throw new ProtectedChangeError(409, 'Configure this server’s HTTPS or loopback origin before enrolling a device.');
     }
@@ -205,7 +205,18 @@ export class DeviceEnrollments {
         },
       });
       const inventory = await store.enroll({ ...entry.enrollment, material: entry.material!, possessionSignature, consentProof: undefined });
-      return { enrolled: true as const, deviceId: entry.identity.deviceId, enrollmentId: entry.enrollment.enrollmentId, reference: inventory.reference };
+      // Read through the same canonical inventory used by the device picker
+      // after the write transaction commits. Do not acknowledge an enrollment
+      // based only on an in-transaction result that the client cannot display.
+      const confirmed = await entry.records.protectedDevices(this.authority()).inventory(actor);
+      const saved = confirmed.devices.find(device => device.enrollmentId === entry.enrollment.enrollmentId
+        && device.identity.deviceId === entry.identity.deviceId && device.revokedAt === null);
+      if (!saved || !confirmed.reference || !inventory.reference
+        || confirmed.reference.version < inventory.reference.version) {
+        throw new ProtectedChangeError(409, 'The enrollment was saved, but the current device list could not confirm it. Refresh Saved Devices before starting another enrollment.');
+      }
+      return { enrolled: true as const, deviceId: entry.identity.deviceId, enrollmentId: entry.enrollment.enrollmentId,
+        reference: confirmed.reference, inventory: confirmed };
     } finally {
       // Even a lost commit result or a rollback discards this transient attempt.
       // Never retry a commit automatically or silently replace a hardware root.

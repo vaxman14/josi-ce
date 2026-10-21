@@ -1,0 +1,14 @@
+Current desktop replacement — authorized October 20, 2026
+
+The owner explicitly rejected the VM architecture. This supersedes U05/U06 and all prior instructions requiring an isolated guest or forbidding operation on the personal desktop. Build automation on the current logged-in macOS session and browser extensions attached to the user’s existing browser. No VM provisioning, macOS restore image, separate browser profile, disk capacity setup or guest Companion is part of the new active feature.
+
+Keep current Vault authority, enrolled-device proofs, explicit local approval, scoped applications/sites/actions, expiry, revocation, stop/takeover, one-task ownership, stale-target checks, replay protection and durable outcome tracking. New desktop identities and new consent must not inherit old VM grants. Browser credentials stay in the user’s browser; no profile copy or new credential database. Old VM files and old signed installers remain preserved; do not delete user data.
+
+Implementation checkpoints
+1. Replace VM storage provisioning with a hardware-authenticated current-desktop session.
+2. Connect local native observation/input to the existing reservation/permission transport; add truthful action capabilities and immediate stop controls.
+3. Connect native messaging extensions to existing Chrome/Brave/Firefox/Safari sessions and explicitly attached tabs, with per-operation bounds and origin checks.
+4. Replace the Automation screen with current-Mac connection, app/tab selection, permissions, and visible session controls.
+5. Remove VM/guest components from the active package graph. Build, test, sign, inspect the new installer. Physical permission and desktop acceptance remains distinct from compiled/fixture validation.
+
+Preexisting working-tree changes are recorded in Diagnostics/current-desktop-rebuild-20261020/preexisting-changes.patch and preexisting-status.txt. Do not discard them.

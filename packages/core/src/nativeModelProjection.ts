@@ -38,7 +38,7 @@ export async function prepareNativeModelProjection(db: Db, master: MasterKey, tr
     throw new Error('Register the current primary model for this workspace and grant its exact model-transmission permission.');
   }
   const model = matching[0];
-  if (['vertex_ai', 'ernie', 'openai_subscription', 'anthropic_subscription'].includes(model.candidate.providerId)) {
+  if (['vertex_ai', 'ernie', 'anthropic_subscription'].includes(model.candidate.providerId)) {
     throw new Error('This model needs a separate authenticated transport before it can receive desktop captures.');
   }
   const expiresAtMs = Math.min(control.leaseUntilMs - 500, source.command.expiresAtMs + 10_000);
