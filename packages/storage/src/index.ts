@@ -26,6 +26,11 @@ export {
   type ExtractedSegment,
 } from './extract.js';
 export {
+  AUDIO_EXTENSIONS, MAX_MEDIA_SECONDS, MEDIA_PROCESSING, MEDIA_TRANSCRIPT, MediaUnavailable, PCM_RATE, TRANSCRIBE_CHUNK_SECONDS,
+  VIDEO_EXTENSIONS, clock, extractFrames, extractPcm, isAudio, isVideo, mediaDuration, mediaToolsAvailable, transcriptText, withMediaFile,
+  type TranscriptSegment, type VideoFrame,
+} from './media.js';
+export {
   ChatImageError, MAX_CHAT_IMAGE_BYTES, isHeic, normalizeChatImage,
   type NormalizedChatImage,
 } from './chatImages.js';

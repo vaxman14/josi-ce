@@ -62,6 +62,10 @@ try {
     JOSI_VOICE_HELPER_PORT: '18082',
     JOSI_PYTHON_EXE: join(program, 'python/python.exe'),
     JOSI_SCANNER_ADAPTER: join(program, 'app/services/scanner/windows_amsi.py'),
+    // Pinned ffmpeg (packaging/windows/ffmpeg.lock.json): video frames and
+    // soundtracks for attachments. Absent until the installer ships it, in which
+    // case audio and video stay 'analysis unavailable'.
+    JOSI_FFMPEG_EXE: join(program, 'ffmpeg/ffmpeg.exe'), JOSI_FFPROBE_EXE: join(program, 'ffmpeg/ffprobe.exe'),
     JOSI_SCANNER_TEMP: join(data, 'temp/scanner'),
   });
   process.chdir(join(program, 'app'));

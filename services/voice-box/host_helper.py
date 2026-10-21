@@ -244,7 +244,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Transfer-Encoding'):
                 raise ValueError('Chunked requests are not supported')
             length = int(self.headers.get('Content-Length', '0'))
-            if not 0 <= length <= 100000:
+            if not 0 <= length <= (1400000 if self.path == '/transcribe' else 100000):
                 raise ValueError('Request is too large')
             self.connection.settimeout(10)
             body = json.loads(self.rfile.read(length)) if length else {}
@@ -254,10 +254,10 @@ class Handler(BaseHTTPRequestHandler):
             elif self.command == 'POST' and self.path.startswith('/operation/'):
                 manager.start(self.path.removeprefix('/operation/'), body)
                 result = {'accepted': True}
-            elif self.command == 'POST' and self.path in ('/session', '/audio', '/close', '/speech'):
+            elif self.command == 'POST' and self.path in ('/session', '/audio', '/close', '/speech', '/transcribe'):
                 if not manager.state['verified'] or manager.state['phase'] != 'ready':
                     raise ValueError('Voice Box is not ready')
-                status, content_type, data = manager.gateway('POST', self.path, body)
+                status, content_type, data = manager.gateway('POST', self.path, body, timeout=180 if self.path == '/transcribe' else 45)
                 self.reply(status, data, content_type)
                 return
             else:

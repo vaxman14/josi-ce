@@ -31,6 +31,10 @@ from runtime_config import runtime_config
 
 RATE = 16000
 MAX_SAMPLES = 15 * RATE
+FILE_CHUNK_SECONDS = 30
+FILE_CHUNK_B64 = (FILE_CHUNK_SECONDS * RATE * 2 + 2) // 3 * 4
+MAX_REQUEST = 50000
+MAX_FILE_REQUEST = FILE_CHUNK_B64 + 1024
 
 
 class Engine:
@@ -71,7 +75,29 @@ class Engine:
     def speech(self, text):
         return self.tts.speech(text)
 
+    def transcribe_file(self, body):
+        """One piece (at most 30 s) of an attachment's soundtrack, for Josi's
+        media analysis. Timed segments, so frames and words can be matched."""
+        if set(body) != {'pcm'} or not isinstance(body['pcm'], str) or len(body['pcm']) > FILE_CHUNK_B64:
+            raise ValueError('Invalid transcription request')
+        pcm = base64.b64decode(body['pcm'], validate=True)
+        if not 320 <= len(pcm) <= FILE_CHUNK_SECONDS * RATE * 2 or len(pcm) % 2:
+            raise ValueError('Expected mono PCM16 at 16 kHz, at most 30 seconds')
+        audio = np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768
+        # Live conversation comes first: wait for it rather than interleave.
+        if not self.lock.acquire(timeout=120):
+            return 429, {'error': 'Voice Box is busy; try again shortly'}
+        try:
+            segments, _ = self.model.transcribe(audio, language='en', beam_size=1,
+                                                condition_on_previous_text=False, vad_filter=True)
+            return 200, {'segments': [{'start': round(s.start, 2), 'end': round(s.end, 2), 'text': s.text.strip()}
+                                      for s in segments if s.no_speech_prob < 0.6 and s.text.strip()]}
+        finally:
+            self.lock.release()
+
     def request(self, path, body):
+        if path == '/transcribe':
+            return self.transcribe_file(body)
         if path == '/speech':
             if set(body) != {'text'} or not isinstance(body['text'], str) or not 1 <= len(body['text']) <= 600:
                 raise ValueError('Invalid speech text')
@@ -179,9 +205,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            if self.command != 'POST' or self.headers.get('Transfer-Encoding') or not 0 < length <= 50000:
+            limit = MAX_FILE_REQUEST if self.path == '/transcribe' else MAX_REQUEST
+            if self.command != 'POST' or self.headers.get('Transfer-Encoding') or not 0 < length <= limit:
                 raise ValueError('Invalid request')
-            self.connection.settimeout(10)
+            self.connection.settimeout(10 if self.path != '/transcribe' else 30)
             body = json.loads(self.rfile.read(length))
             if not isinstance(body, dict):
                 raise ValueError('Invalid request')

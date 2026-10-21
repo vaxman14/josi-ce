@@ -38,7 +38,10 @@ import {
   ChatImageError, IMAGE_MEDIA_TYPES, extractRichSegments, AttachmentError,
   attachmentFailure, attachmentRoot, normalizeChatImage, validateAttachment,
   writeAttachment, writeAttachmentFromFile, readAttachment, removeAttachment, maxAttachmentLimit,
+  MEDIA_PROCESSING, isAudio, isVideo, mediaToolsAvailable,
 } from '@josi-ce/storage';
+import { settleInterruptedMedia, transcribeAttachmentLater } from './mediaTranscription.js';
+import type { VoiceHelper } from './voiceBoxRoutes.js';
 import { asyncRoute, param } from './async.js';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
 import { workProgressStream } from './workProgressStream.js';
@@ -58,6 +61,8 @@ export interface AssistantRoutesCtx {
   customApiFetch?: typeof fetch;
   outboundResolve?: (hostname: string) => Promise<string[]>;
   recall?: RecallLookup;
+  /** Voice Box, for transcribing audio and video attachments. */
+  voiceHelper?: VoiceHelper;
 }
 
 class RouteError extends Error {
@@ -130,6 +135,7 @@ function presentMessage<T extends { meta: Record<string, unknown> }>(message: T)
 }
 
 export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
+  void settleInterruptedMedia(ctx.db);
   const r = Router();
   const { db } = ctx;
   r.use(requireAuth);
@@ -257,6 +263,10 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         let extractedText:string|null=null;
         let analysisStatus:'available'|'unavailable'=analysis.status;
         let analysisCode:string|null=analysis.code??null;
+        // Audio and video: transcribed in the background by Voice Box once the
+        // bytes are stored; video frames are taken when a turn needs them.
+        const media=(isAudio(extension)||isVideo(extension))&&!!ctx.voiceHelper&&mediaToolsAvailable();
+        if(media){analysisStatus='unavailable';analysisCode=MEDIA_PROCESSING;finalAnalysis={status:'unavailable',code:MEDIA_PROCESSING,reason:'Stored safely. Josi is transcribing this recording.'};}
         if (analysis.status==='available' && analysis.kind==='text') {
           try {
             const segments=await extractRichSegments({extension,bytes});
@@ -269,6 +279,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         }
         await db.query(`update chat_attachments set storage_state='ready',extracted_text=$2,analysis_status=$3,analysis_code=$4 where id=$1`,
           [id,extractedText,analysisStatus,analysisCode]);
+        if(media)transcribeAttachmentLater(db,ctx.voiceHelper!,id,extension,bytes);
       } catch (error) {
         await db.query(`delete from chat_attachments where id=$1 and storage_state='pending'`, [id]);
         await removeAttachment(id, uploadDir).catch(() => undefined);

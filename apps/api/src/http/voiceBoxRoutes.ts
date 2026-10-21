@@ -32,7 +32,7 @@ export function voiceHelper(socketPath?: string): VoiceHelper {
       res.on('end', () => resolve({ status: res.statusCode ?? 503,
         type: res.headers['content-type'] ?? 'application/json', data: Buffer.concat(chunks) }));
     });
-    req.setTimeout(50_000, () => req.destroy(new Error('voice timeout')));
+    req.setTimeout(path === '/transcribe' ? 190_000 : 50_000, () => req.destroy(new Error('voice timeout')));
     req.on('error', reject);
     req.end(encoded);
   });
@@ -45,14 +45,15 @@ export function nativeVoiceHelper(config: { port: number; tokenFile: string }): 
   return async (path, body) => {
     if (!Number.isInteger(config.port) || config.port < 1024 || config.port > 65535
       || !isAbsolute(config.tokenFile)
-      || !/^\/(status|session|audio|close|speech|operation\/(install|update|restart|uninstall|rollback|settings))$/.test(path)) {
+      || !/^\/(status|session|audio|close|speech|transcribe|operation\/(install|update|restart|uninstall|rollback|settings))$/.test(path)) {
       throw new Error('Invalid private voice configuration');
     }
     const token = (process.platform === 'win32' ? readWindowsSecret(config.tokenFile, 'voice-control').toString('ascii')
       : process.platform === 'darwin' && process.env.JOSI_NATIVE_RUNTIME === '1' ? readMacSecret(config.tokenFile).toString('ascii') : await readFile(config.tokenFile, 'ascii')).trim();
     if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Private voice credential unavailable');
     const encoded = body === undefined ? undefined : JSON.stringify(body);
-    if (encoded && Buffer.byteLength(encoded) > 100000) throw new Error('Voice request too large');
+    // Attachment transcription sends up to 30 s of PCM per request.
+    if (encoded && Buffer.byteLength(encoded) > (path === '/transcribe' ? 1_400_000 : 100000)) throw new Error('Voice request too large');
     return new Promise((resolve, reject) => {
       const req = request({ hostname: '127.0.0.1', port: config.port, path,
         method: encoded === undefined ? 'GET' : 'POST', agent: false,
@@ -70,7 +71,7 @@ export function nativeVoiceHelper(config: { port: number; tokenFile: string }): 
         res.on('end', () => resolve({ status: res.statusCode ?? 503,
           type: res.headers['content-type'] ?? 'application/json', data: Buffer.concat(chunks) }));
       });
-      const timer = setTimeout(() => req.destroy(new Error('Voice timeout')), 50_000);
+      const timer = setTimeout(() => req.destroy(new Error('Voice timeout')), path === '/transcribe' ? 190_000 : 50_000);
       req.on('close', () => clearTimeout(timer));
       req.on('error', () => reject(new Error('Private voice service unavailable')));
       req.end(encoded);

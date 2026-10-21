@@ -66,6 +66,8 @@ function Get-RoleEnvironment([string]$Role) {
         JOSI_PYTHON_EXE = (Join-Path $Root 'python\python.exe')
         JOSI_SCANNER_ADAPTER = (Join-Path $repo 'services\scanner\windows_amsi.py')
         JOSI_SCANNER_TEMP = (Join-Path $data 'temp\scanner')
+        # Pinned ffmpeg (Get-Ffmpeg.ps1): video frames and soundtracks for attachments.
+        JOSI_FFMPEG_EXE = (Join-Path $Root 'ffmpeg\ffmpeg.exe'); JOSI_FFPROBE_EXE = (Join-Path $Root 'ffmpeg\ffprobe.exe')
         # Same private profile layout as the installed services.
         USERPROFILE = $profile; HOME = $profile
         APPDATA = (Join-Path $profile 'AppData\Roaming'); LOCALAPPDATA = (Join-Path $profile 'AppData\Local')

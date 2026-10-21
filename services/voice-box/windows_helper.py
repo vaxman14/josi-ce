@@ -258,7 +258,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Transfer-Encoding') or len(lengths) > 1:
                 raise ValueError('Ambiguous framing')
             length = int(lengths[0]) if lengths else 0
-            if not 0 <= length <= 100000:
+            # Attachment transcription carries up to 30 s of PCM per request.
+            if not 0 <= length <= (1400000 if self.path == '/transcribe' else 100000):
                 raise ValueError('Request is too large')
             raw = self.rfile.read(length)
             if len(raw) != length:
@@ -271,10 +272,10 @@ class Handler(BaseHTTPRequestHandler):
             elif self.command == 'POST' and self.path.startswith('/operation/'):
                 manager.start(self.path.removeprefix('/operation/'), body)
                 self.reply(200, b'{"accepted":true}')
-            elif self.command == 'POST' and self.path in ('/session', '/audio', '/close', '/speech'):
+            elif self.command == 'POST' and self.path in ('/session', '/audio', '/close', '/speech', '/transcribe'):
                 if not manager.state['verified'] or manager.state['phase'] != 'ready':
                     raise ValueError('Voice is not ready')
-                code, content_type, data = manager.gateway('POST', self.path, body)
+                code, content_type, data = manager.gateway('POST', self.path, body, timeout=180 if self.path == '/transcribe' else 45)
                 self.reply(code, data, content_type)
             else:
                 self.reply(404, b'{"error":"Unknown operation"}')

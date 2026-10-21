@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "component": "ffmpeg",
+  "purpose": "Video frames and audio extraction for chat attachments (frames for vision models; audio for Voice Box transcription).",
+  "version": "9.0.2",
+  "build": "Gyan.dev essentials build (LGPL/GPL notices in the archive)",
+  "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip",
+  "size": 114768076,
+  "sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba",
+  "sha256Sources": [
+    "https://api.github.com/repos/GyanD/codexffmpeg/releases/tags/9.0.2 (asset digest)",
+    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256"
+  ],
+  "files": ["bin/ffmpeg.exe", "bin/ffprobe.exe", "LICENSE"]
+}

@@ -185,7 +185,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   // Before the routes, after CSRF: an unconfigured installation refuses
   // everything except the wizard, and a configured one refuses the wizard.
   api.use(setupGate(db, cfg.setupTokenSha256, cfg.cookieSecure));
-  const voiceBox = voiceBoxRoutes(cfg.voiceBoxHelper ?? voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET));
+  const voice = cfg.voiceBoxHelper ?? voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET);
+  const voiceBox = voiceBoxRoutes(voice);
   api.use('/admin/voice-box', voiceBox.admin);
   api.use('/voice', voiceBox.voice);
 
@@ -237,7 +238,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
     automationRuntime: cfg.automationRuntime,
     codexRunner: cfg.codexRunner, connectorFetch: cfg.connectorFetch,
-    customApiFetch: cfg.customApiFetch, outboundResolve: cfg.outboundResolve,
+    customApiFetch: cfg.customApiFetch, outboundResolve: cfg.outboundResolve, voiceHelper: voice,
   }));
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({

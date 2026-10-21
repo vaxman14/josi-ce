@@ -33,7 +33,7 @@ import {
 } from '@josi-ce/channels';
 import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
 import { effectiveTimeContext, formatCalendarRange, runAssistantTurn } from '@josi-ce/agent';
-import { IMAGE_MEDIA_TYPES, readAttachment, type Scanner } from '@josi-ce/storage';
+import { IMAGE_MEDIA_TYPES, MEDIA_PROCESSING, MEDIA_TRANSCRIPT, clock, extractFrames, isAudio, isVideo, mediaToolsAvailable, readAttachment, withMediaFile, type Scanner } from '@josi-ce/storage';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import { extname } from 'node:path';
 import { purgeGoogleLoginStates } from '@josi-ce/auth';
@@ -103,12 +103,37 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
         const preceding=await db.query<{direction:'in'|'out';body:string;meta:Record<string,unknown>}>(`select direction,body,meta from messages where thread_id=$1 and id<>$2
           and ($4::boolean or created_at<=$3) order by created_at desc,id desc limit 40`,[turn.thread_id,inbound.id,inbound.created_at,!!turn.work_goal_id]);
         const history=preceding.reverse().map(m=>({role:m.direction==='in'?('user' as const):('assistant' as const),content:durableHistoryContent(m)}));
-        const attachments=turn.attachment_ids.length?await db.query<{id:string;filename:string;extracted_text:string|null;analysis_status:string;analysis_code:string|null}>(`select id,filename,extracted_text,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 and storage_state='ready' order by id`,[turn.attachment_ids,turn.owner_user_id,turn.thread_id]):[];
-        const mediaType=(name:string)=>IMAGE_MEDIA_TYPES[extname(name).replace(/^\./,'').toLowerCase()];
-        const textAttachments=attachments.filter(a=>!mediaType(a.filename));
-        const context=textAttachments.map(a=>a.extracted_text?`Attached file ${a.filename}:\n${a.extracted_text}`:a.analysis_status==='unavailable'?`Attached file ${a.filename}; analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`:`Attached file ${a.filename}; no readable text was extracted.`).join('\n\n');
+        const loadAttachments=()=>turn.attachment_ids.length?db.query<{id:string;filename:string;extracted_text:string|null;analysis_status:string;analysis_code:string|null}>(`select id,filename,extracted_text,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 and storage_state='ready' order by id`,[turn.attachment_ids,turn.owner_user_id,turn.thread_id]):Promise.resolve([]);
+        let attachments=await loadAttachments();
+        // A recording uploaded moments ago may still be transcribing: wait a
+        // little for it rather than answer without what was said.
+        for(const until=Date.now()+120_000;attachments.some(a=>a.analysis_code===MEDIA_PROCESSING)&&Date.now()<until;attachments=await loadAttachments())await new Promise(r=>setTimeout(r,3000));
+        const extension=(name:string)=>extname(name).replace(/^\./,'').toLowerCase();
+        const mediaType=(name:string)=>IMAGE_MEDIA_TYPES[extension(name)];
         const provider=await loadStoredProvider(db,'primary');
-        const images=capabilitiesOf(provider)?.vision===true?await Promise.all(attachments.filter(a=>mediaType(a.filename)).map(async a=>({mediaType:mediaType(a.filename),base64:(await readAttachment(a.id)).toString('base64')}))):undefined;
+        const vision=capabilitiesOf(provider)?.vision===true;
+        const pictures:{mediaType:string;base64:string}[]=[];
+        if(vision)for(const a of attachments.filter(a=>mediaType(a.filename)))pictures.push({mediaType:mediaType(a.filename),base64:(await readAttachment(a.id)).toString('base64')});
+        const said=(a:{filename:string;extracted_text:string|null;analysis_code:string|null})=>a.analysis_code===MEDIA_TRANSCRIPT&&a.extracted_text?`\nTranscript of what is said (timestamps m:ss):\n${a.extracted_text}`
+          :a.analysis_code===MEDIA_PROCESSING?' Its transcript is still being made, so what is said is not available yet.'
+          :a.analysis_code==='media_no_speech'?' Nothing is said in it.':` What is said in it could not be transcribed (${a.analysis_code??'analysis_unavailable'}).`;
+        const parts:string[]=[];
+        for(const a of attachments.filter(a=>!mediaType(a.filename))){
+          const ext=extension(a.filename);
+          if(isVideo(ext)){
+            // Frames only for a model that passed the image check; at most ten
+            // images per turn in all.
+            let frames:{atSeconds:number;jpeg:Buffer}[]=[];
+            const room=Math.min(8,10-pictures.length);
+            if(vision&&room>0&&mediaToolsAvailable()){try{const bytes=await readAttachment(a.id);frames=await withMediaFile(bytes,ext,p=>extractFrames(p,room));}catch{frames=[];}}
+            for(const f of frames)pictures.push({mediaType:'image/jpeg',base64:f.jpeg.toString('base64')});
+            parts.push(`Attached video ${a.filename}.`+(frames.length?` ${frames.length} still frames from it are attached as images, in time order, taken at ${frames.map(f=>clock(f.atSeconds)).join(', ')}.`
+              :vision?' Its frames could not be read.':' This model cannot see images, so only what is said in it is available.')+said(a));
+          }else if(isAudio(ext))parts.push(`Attached recording ${a.filename}.`+said(a));
+          else parts.push(a.extracted_text?`Attached file ${a.filename}:\n${a.extracted_text}`:a.analysis_status==='unavailable'?`Attached file ${a.filename}; analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`:`Attached file ${a.filename}; no readable text was extracted.`);
+        }
+        const context=parts.join('\n\n');
+        const images=vision?pictures.slice(0,10):undefined;
         const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},userId:turn.owner_user_id,threadId:turn.thread_id,history,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,automationRuntime:ctx.automationRuntime,workGoalId:turn.work_goal_id??undefined,originalRequestAt:turn.work_goal_id?new Date(inbound.created_at):undefined,replyToMessageId:turn.reply_to_message_id,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.work_goal_id?`work-goal:${turn.work_goal_id}`:turn.accepted_session_id});
         if(await durableTurnHasIncompleteEffects(db,turnId)){await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:'effect_outcome_unknown',retryable:false});return;}
         if(result.mediaRequest)await db.query(`update messages set meta=meta||$2 where id=$1 and thread_id=$3`,[inbound.id,json({media_request:result.mediaRequest}),turn.thread_id]);
