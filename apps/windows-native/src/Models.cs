@@ -333,7 +333,8 @@ namespace Josi.Native {
       step = kind.Length > 0 ? Math.Min(startStep, 3) : 0;
       search.TextChanged += delegate { if (step == 2) RenderStep(); };
       custom.TextChanged += delegate { chosenModel = custom.Text.Trim(); planDefault = false; UpdateFooter(); };
-      external.Click += delegate { UpdateFooter(); };
+      external.Checked += delegate { UpdateFooter(); };
+      external.Unchecked += delegate { UpdateFooter(); };
       var layout = new DockPanel();
       rail.Margin = new Thickness(0, 0, 0, 18);
       footer.Margin = new Thickness(0, 18, 0, 0);
@@ -601,7 +602,8 @@ namespace Josi.Native {
       Ui.Add(stack, ModelText.Steps(checkResult["result"]["steps"].List), 10);
       if (checkResult["result"]["fatal"].Text.Length > 0) Ui.Add(stack, Ui.Copyable(checkResult["result"]["fatal"].Text, 13.5, Ui.Orange), 10);
       Ui.Add(stack, Ui.Row(10, passed ? null : Ui.Pill("Change Settings", () => { checkResult = Wire.Null; step = 1; Render(); }),
-        Ui.Pill("Done", () => { var window = Window.GetWindow(this); if (window != null && window != owner) window.Close(); }, passed)), 18);
+        // Only the separate setup window closes; first-run setup embeds this panel in the main window.
+        Ui.Pill("Done", () => { var window = Window.GetWindow(this) as ModelSetupWindow; if (window != null) window.Close(); }, passed)), 18);
       return stack;
     }
     void SaveAndCheck() {
@@ -652,7 +654,10 @@ namespace Josi.Native {
     readonly Dictionary<string, Wire> subscriptions = new Dictionary<string, Wire>();
     readonly TextBox cost = Ui.Input("No cap"), tokens = Ui.Input("No cap");
     readonly CheckBox localOnly = Ui.Toggle("Only use models running on your own computer or network");
-    public ModelsView(AppModel model, Window owner) : base(model, owner) { localOnly.Click += delegate { Render(); }; }
+    public ModelsView(AppModel model, Window owner) : base(model, owner) {
+      localOnly.Checked += delegate { if (IsLoaded) Render(); };
+      localOnly.Unchecked += delegate { if (IsLoaded) Render(); };
+    }
     protected override double PageWidth() { return 1100; }
     protected override async Task Load() {
       if (!model.IsAdministrator) return;
@@ -782,8 +787,12 @@ namespace Josi.Native {
       return box;
     }
     void Edit(string role, int startStep) {
-      var window = new ModelSetupWindow(owner, model, role, settings[role], settings["providerCatalog"].List, settings["subscriptionOptions"].List, startStep);
-      window.ShowDialog();
+      try {
+        var window = new ModelSetupWindow(owner, model, role, settings[role], settings["providerCatalog"].List, settings["subscriptionOptions"].List, startStep);
+        window.ShowDialog();
+      } catch (Exception e) {
+        model.Error = "The model setup window could not open: " + e.GetType().Name + ": " + e.Message; model.Notify();
+      }
       StartLoad();
     }
     void Probe(string role) {

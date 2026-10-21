@@ -1,4 +1,4 @@
-# Drives the Models page and model setup window against test/mock-server.mjs.
+﻿# Drives the Models page and model setup window against test/mock-server.mjs.
 #   powershell -ExecutionPolicy Bypass -File test\drive-models.ps1 -Shots <folder>
 param([string]$Shots = (Join-Path $PSScriptRoot 'shots'), [int]$Port = 8788)
 $ErrorActionPreference = 'Stop'
@@ -8,7 +8,8 @@ using System; using System.Runtime.InteropServices;
 public static class DriveWin { [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Ri, B; }
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);
 [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
-[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); }
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t); }
 '@
 New-Item -ItemType Directory -Force $Shots | Out-Null
 $A = [System.Windows.Automation.AutomationElement]; $T = [System.Windows.Automation.TreeScope]; $C = [System.Windows.Automation.ControlType]
@@ -35,8 +36,12 @@ function TypeInto($root, [string]$name, [string]$text) { (Find $root $name $C::E
 function Window([string]$title) {
   $deadline = (Get-Date).AddSeconds(12)
   while ((Get-Date) -lt $deadline) {
-    $found = $A::RootElement.FindFirst($T::Children, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $title)))
-    if ($found) { return $found }; Start-Sleep -Milliseconds 250
+    # The modal window owns keyboard focus once it opens; walk up to its window.
+    $element = $A::FocusedElement
+    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    while ($element -and $element.Current.ControlType -ne $C::Window) { $element = $walker.GetParent($element) }
+    if ($element -and $element.Current.Name -eq $title) { return $element }
+    Start-Sleep -Milliseconds 250
   }
   throw "Window not found: $title"
 }
@@ -63,7 +68,13 @@ try {
   Start-Sleep -Seconds 9
   Capture $main 'm03-chatgpt-connected'
 
-  Click $main 'Add a Fallback…'
+  $add = Find $main 'Add a Fallback…' $C::Button
+  Write-Host ("add button: enabled=" + $add.Current.IsEnabled + " offscreen=" + $add.Current.IsOffscreen + " rect=" + $add.Current.BoundingRectangle)
+  Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, IntPtr e);' -Name Mouse -Namespace Drive
+  [DriveWin]::SetForegroundWindow($app.MainWindowHandle) | Out-Null; Start-Sleep -Milliseconds 400
+  $r = $add.Current.BoundingRectangle
+  [Drive.Mouse]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)); Start-Sleep -Milliseconds 200
+  [Drive.Mouse]::mouse_event(2, 0, 0, 0, [IntPtr]::Zero); [Drive.Mouse]::mouse_event(4, 0, 0, 0, [IntPtr]::Zero)
   $wizard = Window 'Fallback Model'
   Capture $wizard 'm04-choose'
   Click $wizard 'Claude subscription'; Click $wizard 'Continue'
