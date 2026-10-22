@@ -32,7 +32,8 @@ import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk, deliverTelegramWorkProgress,
 } from '@josi-ce/channels';
 import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
-import { effectiveTimeContext, formatCalendarRange, runAssistantTurn } from '@josi-ce/agent';
+import { effectiveTimeContext, formatCalendarRange, runAssistantTurn, conversationHistory, createRecall, summarizeThread,
+  recordTurnInsights, learnFromTurn, reviewInsights, ALL_TOOLS } from '@josi-ce/agent';
 import { IMAGE_MEDIA_TYPES, MEDIA_PROCESSING, MEDIA_TRANSCRIPT, clock, extractFrames, isAudio, isVideo, mediaToolsAvailable, readAttachment, withMediaFile, type Scanner } from '@josi-ce/storage';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import { extname } from 'node:path';
@@ -69,22 +70,10 @@ export interface JobOutcome {
 }
 
 const DURABLE_CALENDAR_CONTINUITY_TOOLS = new Set(['query_calendar', 'get_event', 'draft_calendar_event']);
-/** Which tools an earlier turn ran and whether each worked, without their
- * content, so "try again" or "keep going" has something to refer to. */
-function toolSummary(receipts: unknown): string {
-  if (!Array.isArray(receipts) || !receipts.length) return '';
-  const lines = receipts.slice(0, 40).map((entry) => {
-    const r = entry as { tool?: unknown; result?: { ok?: unknown; code?: unknown; error?: unknown } };
-    const ok = r.result?.ok !== false;
-    const code = typeof r.result?.code === 'string' ? r.result.code : typeof r.result?.error === 'string' ? r.result.error : '';
-    return `${String(r.tool ?? 'tool')}: ${ok ? 'done' : `did not complete${code ? ` (${code})` : ''}`}`;
-  });
-  return `\n\n[Tools Josi used in this turn: ${lines.join('; ')}. Results are not repeated here; run a tool again for current content.]`;
-}
-function durableHistoryContent(message: { direction: 'in' | 'out'; body: string; meta: Record<string, unknown>; tool_receipts?: unknown }): string {
-  const body = message.direction === 'out' ? message.body + toolSummary(message.tool_receipts) : message.body;
-  if (message.direction !== 'out' || !Array.isArray(message.meta?.calendar_receipts) || !message.meta.calendar_receipts.length) return body;
-  return `${body}\n\n[Verified calendar receipts from this prior turn. Preserve the named event, event_id, source_id, account, and calendar in follow-up actions; do not transfer a requested edit to another event.]\n${JSON.stringify(message.meta.calendar_receipts).slice(0, 12_000)}`;
+/** Queue a background job unless the same one is already waiting. */
+async function enqueueOnce(db: Db, kind: string, payload: Record<string, unknown>, key: string, value: string) {
+  const [waiting] = await db.query(`select 1 from job_queue where kind=$1 and status in ('queued','running') and payload->>$2=$3 limit 1`, [kind, key, value]);
+  if (!waiting) await enqueue(db, { kind, payload });
 }
 
 /** Job kinds this worker understands. An unknown kind fails the job rather
@@ -113,11 +102,12 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       try{
         const [inbound]=await db.query<{id:string;body:string;created_at:string}>(`select id,body,created_at from messages where id=$1 and thread_id=$2 and direction='in'`,[turn.inbound_message_id,turn.thread_id]);
         if(!inbound)throw new Error('durable inbound message is unavailable');
-        const preceding=await db.query<{direction:'in'|'out';body:string;meta:Record<string,unknown>;tool_receipts:unknown}>(`select m.direction,m.body,m.meta,t.tool_receipts from messages m
-          left join assistant_turns t on m.direction='out' and t.id::text=m.meta->>'turn_id' and t.thread_id=m.thread_id
-          where m.thread_id=$1 and m.id<>$2
-          and ($4::boolean or m.created_at<=$3) order by m.created_at desc,m.id desc limit 40`,[turn.thread_id,inbound.id,inbound.created_at,!!turn.work_goal_id]);
-        const history=preceding.reverse().map(m=>({role:m.direction==='in'?('user' as const):('assistant' as const),content:durableHistoryContent(m)}));
+        // History by size with a running summary of what no longer fits, and
+        // recall over the owner's earlier conversations.
+        const past=await conversationHistory(db,{threadId:turn.thread_id,excludeMessageId:inbound.id,before:turn.work_goal_id?null:inbound.created_at});
+        const history=past.history;
+        if(past.needsSummary)await enqueueOnce(db,'thread.summarize',{threadId:turn.thread_id},'threadId',turn.thread_id);
+        const recall=createRecall(db,{ownerUserId:turn.owner_user_id,threadId:turn.thread_id,windowStart:past.windowStart});
         const loadAttachments=()=>turn.attachment_ids.length?db.query<{id:string;filename:string;extracted_text:string|null;analysis_status:string;analysis_code:string|null}>(`select id,filename,extracted_text,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 and storage_state='ready' order by id`,[turn.attachment_ids,turn.owner_user_id,turn.thread_id]):Promise.resolve([]);
         let attachments=await loadAttachments();
         // A recording uploaded moments ago may still be transcribing: wait a
@@ -149,7 +139,7 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
         }
         const context=parts.join('\n\n');
         const images=vision?pictures.slice(0,10):undefined;
-        const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},userId:turn.owner_user_id,threadId:turn.thread_id,history,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,automationRuntime:ctx.automationRuntime,workGoalId:turn.work_goal_id??undefined,originalRequestAt:turn.work_goal_id?new Date(inbound.created_at):undefined,replyToMessageId:turn.reply_to_message_id,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.work_goal_id?`work-goal:${turn.work_goal_id}`:turn.accepted_session_id});
+        const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},userId:turn.owner_user_id,threadId:turn.thread_id,history,recall:recall.lookup,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,automationRuntime:ctx.automationRuntime,workGoalId:turn.work_goal_id??undefined,originalRequestAt:turn.work_goal_id?new Date(inbound.created_at):undefined,replyToMessageId:turn.reply_to_message_id,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.work_goal_id?`work-goal:${turn.work_goal_id}`:turn.accepted_session_id});
         if(await durableTurnHasIncompleteEffects(db,turnId)){await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:'effect_outcome_unknown',retryable:false});return;}
         if(result.mediaRequest)await db.query(`update messages set meta=meta||$2 where id=$1 and thread_id=$3`,[inbound.id,json({media_request:result.mediaRequest}),turn.thread_id]);
         if(result.refusal){const crossed=await durableTurnHasEffects(db,turnId);await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:crossed?'effect_then_provider_error':result.refusal.reason,retryable:!turn.work_goal_id&&!crossed&&result.refusal.retryable===true});return;}
@@ -167,8 +157,44 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
         if(result.retry)replyMeta.retry=result.retry;
         if(result.mediaResult)replyMeta.media_result=result.mediaResult;
         await completeDurableTurn(db,{turnId,leaseToken:turn.lease_token,reply:result.reply,toolReceipts:result.actions,replyMeta,approvalNeeded,presentedTaskIds:taskIds});
+        // Memory upkeep is best effort and never changes the reply: what the
+        // turn knew (shown under the reply), insights from what it did, and a
+        // background pass that learns facts and corrections.
+        try{
+          await db.query(`insert into turn_context(turn_id,owner_user_id,context) values($1,$2,$3) on conflict(turn_id) do update set context=excluded.context`,
+            [turnId,turn.owner_user_id,json({memories:result.memoriesUsed??[],recalled:recall.found,summaryUsed:past.summaryUsed,skills:result.knew?.skills??[],rules:result.knew?.rules??[],historyMessages:history.length})]);
+          await recordTurnInsights(db,{ownerUserId:turn.owner_user_id,threadId:turn.thread_id,turnId,reply:result.reply,actions:result.actions});
+          if(!turn.work_goal_id)await enqueue(db,{kind:'memory.learn',payload:{turnId}});
+          const [open]=await db.query<{n:number}>(`select count(*)::int as n from assistant_insights where proposal_id is null`);
+          if((open?.n??0)>=3)await enqueueOnce(db,'improvement.review',{scope:'all'},'scope','all');
+        }catch(err){console.error('memory upkeep failed',(err as Error).message);}
       }catch{const crossed=await durableTurnHasEffects(db,turnId);await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:crossed?'effect_outcome_unknown':'turn_execution_failed',retryable:!turn.work_goal_id&&!crossed});}
       finally{clearInterval(leaseHeartbeat);await settleWorkContinuation(db,turnId);}
+      return;
+    }
+
+    case 'thread.summarize': {
+      const threadId=String((job.payload as {threadId?:unknown}).threadId??'');
+      if(!threadId||!ctx.masterKey)return;
+      await summarizeThread(db,{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},threadId);
+      return;
+    }
+
+    case 'memory.learn': {
+      // Reads the turn's own messages here rather than carrying them in the queue.
+      const turnId=String((job.payload as {turnId?:unknown}).turnId??'');
+      if(!turnId||!ctx.masterKey)return;
+      const [row]=await db.query<{owner_user_id:string;thread_id:string;inbound:string;reply:string|null;at:string}>(`select t.owner_user_id,t.thread_id,i.body as inbound,o.body as reply,i.created_at as at
+        from assistant_turns t join messages i on i.id=t.inbound_message_id left join messages o on o.id=t.assistant_message_id where t.id=$1 and t.status='completed'`,[turnId]);
+      if(!row)return;
+      const [previous]=await db.query<{body:string}>(`select body from messages where thread_id=$1 and direction='out' and created_at<$2 order by created_at desc limit 1`,[row.thread_id,row.at]);
+      await learnFromTurn(db,{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},{ownerUserId:row.owner_user_id,threadId:row.thread_id,turnId,userMessage:row.inbound,previousReply:previous?.body??'',reply:row.reply??''});
+      return;
+    }
+
+    case 'improvement.review': {
+      if(!ctx.masterKey)return;
+      await reviewInsights(db,{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},ALL_TOOLS.map(t=>t.def.name));
       return;
     }
 

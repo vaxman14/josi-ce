@@ -95,6 +95,12 @@ const TRANSIENT = [
   /\?\s*$/,
 ];
 
+/** The same refusals for a fact proposed by any other learner (the model
+ * pass after a turn): sensitive categories and credentials, never. */
+export function refusesAsMemory(text: string): boolean {
+  return SENSITIVE.some((re) => re.test(text)) || !!refuseSecret(text);
+}
+
 export const MAX_CANDIDATES_PER_TURN = 2;
 export const MAX_CANDIDATE_LENGTH = 200;
 

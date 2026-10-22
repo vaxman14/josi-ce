@@ -45,6 +45,7 @@ import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
 import { doctorRoutes, type DoctorHelper } from './http/doctorRoutes.js';
 import { pcControlRoutes } from './http/pcControlRoutes.js';
+import { improvementRoutes, turnContextRoutes } from './http/improvementRoutes.js';
 
 export interface AppConfig {
   /** Injected only by tests; production derives the native Windows boundary. */
@@ -234,6 +235,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/llm', llmRoutes({ db, masterKey: cfg.masterKeyCheck, codexRunner: cfg.codexRunner }));
   // Mounted before /admin so the more specific prefix wins; both are behind
   // requireSuperAdmin either way.
+  api.use('/assistant/turn-context', turnContextRoutes(db));
   api.use('/assistant', assistantRoutes({
     db, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
     automationRuntime: cfg.automationRuntime,
@@ -280,6 +282,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     llmFetch: cfg.llmFetch, llmResolve: cfg.llmResolve, codexRunner: cfg.codexRunner,
     releaseFetch: cfg.releaseFetch,
   }));
+  api.use('/admin/improvements', improvementRoutes(db));
   api.use('/admin/pc-control', pcControlRoutes({db,masterKey:cfg.masterKeyCheck,
     windows:cfg.nativeWindowsPermissions ?? (process.platform==='win32' && process.env.JOSI_NATIVE_RUNTIME==='1')}));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));

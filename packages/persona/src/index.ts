@@ -22,7 +22,7 @@ export {
 } from './profiles.js';
 export {
   MAX_CANDIDATES_PER_TURN, MAX_CANDIDATE_LENGTH, extractDurableFacts,
-  provenanceFor, type Candidate,
+  provenanceFor, refusesAsMemory, type Candidate,
 } from './extract.js';
 export {
   DEFAULT_PRESET, SOUL_PRESETS, presetContent, type Preset,

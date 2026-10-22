@@ -41,6 +41,7 @@ import {
 import { isMutatingTool, runDurableEffect } from './durableEffects.js';
 import { automationToolAvailability } from './automationTools.js';
 import { pcBrowserToolAvailability, PC_BROWSER_PROMPT, takeToolImages } from './pcBrowserTools.js';
+import { loadGuidance, announceProposals } from './improvementEngine.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
   CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsArtifactCompletion,
@@ -85,6 +86,9 @@ export interface AgentTurnResult {
   /** Which memories shaped this turn, so a person can see why it said what it
    * did rather than being quietly profiled. */
   memoriesUsed?: Array<{ id: string; content: string }>;
+  /** What else shaped this turn: approved skills and memory rules. Callers
+   * add the summary and recalled snippets they supplied. */
+  knew?: { skills: Array<{ key: string; version: number; name: string }>; rules: string[] };
   /** What the turn proposed to remember, and what became of it. */
   learned?: LearnOutcome;
   /** True when `args.images` had at least one entry and the active model was
@@ -468,6 +472,24 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '')
     + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : '');
 
+  // Approved skills and memory rules, and long work kept as a goal. Best
+  // effort: missing guidance costs polish, never the turn.
+  let knew: NonNullable<AgentTurnResult['knew']> = { skills: [], rules: [] };
+  let guidance = '';
+  try {
+    const loaded = await loadGuidance(db, args.inbound);
+    knew = { skills: loaded.skills, rules: loaded.rules };
+    guidance = loaded.text;
+    const announcement = await announceProposals(db, userId);
+    if (announcement) guidance += `${guidance ? '\n\n' : ''}${announcement}`;
+  } catch (err) {
+    console.error('guidance unavailable for this turn', (err as Error).message);
+  }
+  if (offeredToolNames.has('own_goal') && offeredToolNames.has('checkpoint_goal')) {
+    guidance += `${guidance ? '\n\n' : ''}Long tasks: when a request means many repeated steps (for example more than five items, photos or pages), own it as a work goal with own_goal before starting, `
+      + 'and save progress with checkpoint_goal after every few items (what is done, what is next). Then "keep going" or "try again" resumes from the saved place, even in a later conversation.';
+  }
+
   // The person's own layers, in the order the plan fixes. A failure here costs
   // personality, never the turn: an assistant that refuses to answer because a
   // profile could not be read is worse than one that answers plainly.
@@ -500,6 +522,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   } catch (err) {
     console.error('personalization unavailable for this turn', (err as Error).message);
   }
+  if (guidance) system += `\n\n${guidance}`;
   if (args.workGoalId) system += `\n\nThis is a server-scheduled continuation of goal ${args.workGoalId}. The last user message below is its ORIGINAL request, not a fresh instruction or approval. Read that goal and its current checkpoint before acting. Continue the saved next step within existing permissions; do not recreate the goal, approve a pending action, or repeat a completed/uncertain effect. Each step has one consequential intent across all continuations. Save meaningful progress and an exact next step, timed wait or precise question with checkpoint_goal before ending. A reply is not completion. If one step needs approval, secure reauthentication, missing information or outcome evidence, record its precise blocker and continue only declared independent work. If no independent step is available, save the exact question and stop. An uncertain external effect permits read-only inspection, never another effect or an invented success receipt.`;
 
   // The request stays where it belongs: one user message, not repeated in the
@@ -546,9 +569,9 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         durableTurnId: args.durableTurnId, durableLeaseToken: args.durableLeaseToken }, true);
       const goal = (await listWorkGoals(db, userId, { threadId: args.threadId })).find(value => value.goalId === args.workGoalId);
       if (!goal) throw new Error('The original work record is unavailable.');
-      if (goal.continuation?.kind === 'question') return { reply: goal.continuation.text, actions, memoriesUsed };
+      if (goal.continuation?.kind === 'question') return { reply: goal.continuation.text, actions, memoriesUsed, knew };
       if (goal.continuation?.kind === 'wait') return {
-        reply: `${goal.continuation.reason}\nJosi will check again at ${goal.continuation.wakeAt}.`, actions, memoriesUsed };
+        reply: `${goal.continuation.reason}\nJosi will check again at ${goal.continuation.wakeAt}.`, actions, memoriesUsed, knew };
     }
     let outcome;
     let projection: AutomationModelProjection | null = null, providerSucceeded = false;
@@ -684,7 +707,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         });
         const learnedOnFabrication = args.workGoalId ? undefined : await learnFromTurn(db, { userId, inbound: args.inbound });
         return {
-          reply: NARRATED_SEARCH_GUARD_FALLBACK, actions, memoriesUsed, learned: learnedOnFabrication,
+          reply: NARRATED_SEARCH_GUARD_FALLBACK, actions, memoriesUsed, knew, learned: learnedOnFabrication,
           imagesDroppedNoVision, retry,
         };
       }
@@ -783,7 +806,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         !!result&&typeof result==='object'&&['needs_reauth','locked_out'].includes(String((result as {error?:unknown}).error)));
       if(secureReauth)reply=secureReauth.message
         ?? 'Use the protected reauthentication control in Settings to continue. Never send your password in chat.';
-      return { reply, actions, memoriesUsed, learned, imagesDroppedNoVision, retry };
+      return { reply, actions, memoriesUsed, knew, learned, imagesDroppedNoVision, retry };
     }
 
     const toolResults: ToolResult[] = [];

@@ -104,6 +104,7 @@ namespace Josi.Native {
         Item("Backups", Glyph.Backups, "backups");
         Item("Voice Box", Glyph.Speaker, "voice-box");
         Item("PC Control", Glyph.Desktop, "pc-control");
+        Item("Improvements", Glyph.Chart, "improvements");
         Item("Workspace", Glyph.Settings, "workspace");
         Item("Network", Glyph.Globe, "network");
         Item("Maintenance", Glyph.Repair, "maintenance");
@@ -205,6 +206,7 @@ namespace Josi.Native {
         case "storage": view = model.IsAdministrator ? new StorageAdminView(model, owner) : null; break;
         case "voice-box": view = model.IsAdministrator ? new VoiceBoxView(model, owner) : null; break;
         case "pc-control": view = model.IsAdministrator ? new PcControlView(model, owner) : null; break;
+        case "improvements": view = model.IsAdministrator ? new ImprovementsView(model, owner) : null; break;
         case "workspace": view = model.IsAdministrator ? new WorkspaceSettingsView(model, owner) : null; break;
         case "network": view = model.IsAdministrator ? new NetworkView(model, owner) : null; break;
         case "maintenance": view = model.IsAdministrator ? new MaintenanceView(model, owner) : null; break;

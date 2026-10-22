@@ -166,13 +166,43 @@ namespace Josi.Native {
       }, 14);
       var read = Ui.IconButton(voice.Speaking ? Glyph.Stop : Glyph.Speaker, "Read aloud", () => voice.ToggleSpeak(message["body"].Text), 14);
       read.IsEnabled = voice.Available;
-      var column2 = Ui.Stack(12, Ui.T("Josi", 13.5, FontWeights.SemiBold), text, Ui.Row(10, copy, read));
+      var turn = model.Turns.FirstOrDefault(t => t["assistant_message_id"].Text == message.Id);
+      var knew = Ui.IconButton(Glyph.List, "What Josi knew", () => ShowKnew(turn == null ? "" : turn.Id), 14);
+      knew.IsEnabled = turn != null; knew.ToolTip = "What Josi knew for this reply";
+      var column2 = Ui.Stack(12, Ui.T("Josi", 13.5, FontWeights.SemiBold), text, Ui.Row(10, copy, read, knew));
       var grid = new Grid();
       grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
       grid.ColumnDefinitions.Add(new ColumnDefinition());
       var markElement = Ui.JosiMark(34); markElement.VerticalAlignment = VerticalAlignment.Top; markElement.Margin = new Thickness(0, 0, 15, 0);
       grid.Children.Add(markElement); Grid.SetColumn(column2, 1); grid.Children.Add(column2);
       return grid;
+    }
+
+    /// What a reply was given: memories, snippets recalled from earlier
+    /// conversations, the summary of older messages, skills and memory rules.
+    async void ShowKnew(string turnId) {
+      var api = model.Api; if (api == null || turnId.Length == 0) return;
+      Wire context;
+      try { context = (await api.Request("/assistant/turn-context/" + api.Uuid(turnId)))["context"]; }
+      catch (JosiException e) { Dialogs.Message(owner, "What Josi knew", e.Message); return; }
+      var sheet = new Dialogs.Sheet(owner, "Josi", 600);
+      var stack = Ui.Stack(12, Ui.T("What Josi knew for this reply", 17, FontWeights.SemiBold));
+      Action<string, IEnumerable<string>, string> section = (title, items, empty) => {
+        var list = items.Where(i => i.Length > 0).ToList();
+        stack.Children.Add(Ui.T(title, 14, FontWeights.SemiBold));
+        if (list.Count == 0) stack.Children.Add(Ui.Caption(empty));
+        foreach (var item in list) stack.Children.Add(Ui.Copyable("• " + item, 13.5));
+      };
+      section("Memories", context["memories"].List.Select(m => m["content"].Text), "No saved memories matched.");
+      section("From earlier conversations", context["recalled"].List.Select(r => r["at"].Text + (r["title"].Text.Length > 0 ? " · " + r["title"].Text : "") + " · " + r["snippet"].Text), "Nothing recalled.");
+      section("Approved skills", context["skills"].List.Select(s => s["name"].Text + " (version " + s["version"].Integer + ")"), "No skill applied.");
+      section("Memory rules", context["rules"].List.Select(r => r.Text), "No memory rules.");
+      stack.Children.Add(Ui.Caption(context["historyMessages"].Integer + " earlier messages of this conversation were included"
+        + (context["summaryUsed"].Flag ? ", plus Josi's notes on the older part." : ".")));
+      var close = Ui.Pill("Close", () => sheet.Close(), true); close.IsDefault = true;
+      stack.Children.Add(Ui.Spread(null, close));
+      sheet.Body(stack);
+      sheet.ShowDialog();
     }
 
     static ControlTemplate selectableTemplate;
