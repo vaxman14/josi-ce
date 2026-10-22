@@ -69,9 +69,22 @@ export interface JobOutcome {
 }
 
 const DURABLE_CALENDAR_CONTINUITY_TOOLS = new Set(['query_calendar', 'get_event', 'draft_calendar_event']);
-function durableHistoryContent(message: { direction: 'in' | 'out'; body: string; meta: Record<string, unknown> }): string {
-  if (message.direction !== 'out' || !Array.isArray(message.meta?.calendar_receipts) || !message.meta.calendar_receipts.length) return message.body;
-  return `${message.body}\n\n[Verified calendar receipts from this prior turn. Preserve the named event, event_id, source_id, account, and calendar in follow-up actions; do not transfer a requested edit to another event.]\n${JSON.stringify(message.meta.calendar_receipts).slice(0, 12_000)}`;
+/** Which tools an earlier turn ran and whether each worked, without their
+ * content, so "try again" or "keep going" has something to refer to. */
+function toolSummary(receipts: unknown): string {
+  if (!Array.isArray(receipts) || !receipts.length) return '';
+  const lines = receipts.slice(0, 40).map((entry) => {
+    const r = entry as { tool?: unknown; result?: { ok?: unknown; code?: unknown; error?: unknown } };
+    const ok = r.result?.ok !== false;
+    const code = typeof r.result?.code === 'string' ? r.result.code : typeof r.result?.error === 'string' ? r.result.error : '';
+    return `${String(r.tool ?? 'tool')}: ${ok ? 'done' : `did not complete${code ? ` (${code})` : ''}`}`;
+  });
+  return `\n\n[Tools Josi used in this turn: ${lines.join('; ')}. Results are not repeated here; run a tool again for current content.]`;
+}
+function durableHistoryContent(message: { direction: 'in' | 'out'; body: string; meta: Record<string, unknown>; tool_receipts?: unknown }): string {
+  const body = message.direction === 'out' ? message.body + toolSummary(message.tool_receipts) : message.body;
+  if (message.direction !== 'out' || !Array.isArray(message.meta?.calendar_receipts) || !message.meta.calendar_receipts.length) return body;
+  return `${body}\n\n[Verified calendar receipts from this prior turn. Preserve the named event, event_id, source_id, account, and calendar in follow-up actions; do not transfer a requested edit to another event.]\n${JSON.stringify(message.meta.calendar_receipts).slice(0, 12_000)}`;
 }
 
 /** Job kinds this worker understands. An unknown kind fails the job rather
@@ -100,8 +113,10 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       try{
         const [inbound]=await db.query<{id:string;body:string;created_at:string}>(`select id,body,created_at from messages where id=$1 and thread_id=$2 and direction='in'`,[turn.inbound_message_id,turn.thread_id]);
         if(!inbound)throw new Error('durable inbound message is unavailable');
-        const preceding=await db.query<{direction:'in'|'out';body:string;meta:Record<string,unknown>}>(`select direction,body,meta from messages where thread_id=$1 and id<>$2
-          and ($4::boolean or created_at<=$3) order by created_at desc,id desc limit 40`,[turn.thread_id,inbound.id,inbound.created_at,!!turn.work_goal_id]);
+        const preceding=await db.query<{direction:'in'|'out';body:string;meta:Record<string,unknown>;tool_receipts:unknown}>(`select m.direction,m.body,m.meta,t.tool_receipts from messages m
+          left join assistant_turns t on m.direction='out' and t.id::text=m.meta->>'turn_id' and t.thread_id=m.thread_id
+          where m.thread_id=$1 and m.id<>$2
+          and ($4::boolean or m.created_at<=$3) order by m.created_at desc,m.id desc limit 40`,[turn.thread_id,inbound.id,inbound.created_at,!!turn.work_goal_id]);
         const history=preceding.reverse().map(m=>({role:m.direction==='in'?('user' as const):('assistant' as const),content:durableHistoryContent(m)}));
         const loadAttachments=()=>turn.attachment_ids.length?db.query<{id:string;filename:string;extracted_text:string|null;analysis_status:string;analysis_code:string|null}>(`select id,filename,extracted_text,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 and storage_state='ready' order by id`,[turn.attachment_ids,turn.owner_user_id,turn.thread_id]):Promise.resolve([]);
         let attachments=await loadAttachments();
