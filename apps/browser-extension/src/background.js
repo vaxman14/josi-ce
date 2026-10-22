@@ -172,10 +172,45 @@ async function execute(command, epoch) {
   try {
     const result = await browserApi.tabs.sendMessage(tabId, input, { frameId: 0 });
     if (!result || !bounded(result) || result.kind === 'refused') throw new Error('invalid_page_response');
+    if (command.kind === 'photo' && result.photo?.screenshot === true) result.photo = await screenshot(tab, result.photo, epoch, command);
     return command.kind === 'inspect' || command.kind === 'photo' ? { ...result, tabId, windowId: tab.windowId } : result;
   } finally {
     delete input.value; delete authority.value; delete authority.draftText; delete authority.proxy;
   }
+}
+// A picture from another site cannot be read as pixels, so take a screenshot
+// of the attached tab and keep only the picture's area. Chrome allows this
+// through activeTab, granted when you click the Josi icon on that tab; the tab
+// must be the one showing in its window.
+async function screenshot(tab, shown, epoch, command) {
+  const current = await browserApi.tabs.get(tab.id);
+  if (!current.active || current.url !== tab.url) throw new Error('tab_not_showing');
+  const a = shown.area;
+  if (!a || ![a.x, a.y, a.width, a.height, a.viewportWidth, a.viewportHeight].every(Number.isFinite)
+    || a.width < 8 || a.height < 8 || a.viewportWidth < 1 || a.viewportHeight < 1) throw new Error('photo_unavailable');
+  const dataUrl = await browserApi.tabs.captureVisibleTab(current.windowId, { format: 'png' });
+  if (!live() || epoch !== generation || Date.now() >= command.expiresAt) throw new Error('authority_changed');
+  const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  // The capture is in device pixels; the page measured CSS pixels.
+  const ratio = bitmap.width / a.viewportWidth;
+  const left = Math.max(0, Math.round(a.x * ratio)), top = Math.max(0, Math.round(a.y * ratio));
+  const width = Math.min(bitmap.width - left, Math.round(a.width * ratio)), height = Math.min(bitmap.height - top, Math.round(a.height * ratio));
+  if (width < 8 || height < 8) throw new Error('photo_not_visible');
+  const scale = Math.min(1, 768 / Math.max(width, height));
+  const canvas = new OffscreenCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
+  const context = canvas.getContext('2d');
+  context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, left, top, width, height, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  for (const quality of [0.8, 0.6, 0.4, 0.25]) {
+    const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg', quality })).arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const base64 = btoa(binary);
+    if (base64.length <= 32768) return { mediaType: 'image/jpeg', base64, width: canvas.width, height: canvas.height,
+      alt: shown.alt, untrustedContent: true, fromScreenshot: true };
+  }
+  throw new Error('photo_budget');
 }
 async function poll() {
   if (pending || !live()) return;

@@ -43,7 +43,9 @@
         const image = elements.get(request.elementId)?.element;
         if (!(image instanceof HTMLImageElement) || !image.isConnected || !visible(image)) throw new Error('photo_unavailable');
         const expectedSource = image.currentSrc || image.src;
-        if (new URL(expectedSource).origin !== location.origin) throw new Error('photo_unavailable');
+        // Pictures from another site (an image server) cannot be read as
+        // pixels here; the background takes a screenshot of the shown area.
+        const crossSite = new URL(expectedSource).origin !== location.origin;
         image.scrollIntoView({ block: 'center', behavior: 'instant' });
         if (!image.complete || !image.naturalWidth) {
           image.loading = 'eager';
@@ -58,8 +60,14 @@
         if (stopped || session !== request.sessionId || Date.now() >= request.expiresAt || location.href !== request.expectedUrl) throw new Error('photo_changed');
         if (mutations.takeRecords().length) revision++;
         const photoBounds = image.getBoundingClientRect(); photoCenter = photoBounds.y + photoBounds.height / 2;
+        if (crossSite) {
+          photo = { screenshot: true, alt: String(image.alt || '').slice(0, 300), untrustedContent: true,
+            area: { x: photoBounds.x, y: photoBounds.y, width: photoBounds.width, height: photoBounds.height,
+              viewportWidth: innerWidth, viewportHeight: innerHeight } };
+        }
         // Read already loaded pixels only. Drawing a cross-origin image fails
         // closed; this is not a fetch proxy or a path to arbitrary local files.
+        if (!crossSite) {
         const canvas = document.createElement('canvas');
         const scale = Math.min(1, 768 / Math.max(image.naturalWidth, image.naturalHeight));
         canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -75,6 +83,7 @@
         if (!jpeg || jpeg.length > 32768) throw new Error('photo_budget');
         photo = { mediaType: 'image/jpeg', base64: jpeg, width: canvas.width, height: canvas.height,
           alt: String(image.alt || '').slice(0, 300), untrustedContent: true };
+        }
       }
       if (request.kind === 'observe' || request.kind === 'photo') {
         elements = new Map(); const nodes = [];
