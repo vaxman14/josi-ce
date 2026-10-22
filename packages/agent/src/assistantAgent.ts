@@ -40,7 +40,7 @@ import {
 } from '@josi-ce/persona';
 import { isMutatingTool, runDurableEffect } from './durableEffects.js';
 import { automationToolAvailability } from './automationTools.js';
-import { pcBrowserToolAvailability, PC_BROWSER_PROMPT } from './pcBrowserTools.js';
+import { pcBrowserToolAvailability, PC_BROWSER_PROMPT, takeToolImages } from './pcBrowserTools.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
   CLAIM_GUARD_FALLBACK, CLAIM_GUARD_REPROMPT, claimsArtifactCompletion,
@@ -816,6 +816,10 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
           pendingCapture = { reservationId: capture.reservation.id, toolCallId: call.id };
         }
       }
+      // This loop sends tool results as text only; a captured picture is
+      // dropped with a note rather than pasted in as base64.
+      const pictures = takeToolImages(result);
+      if (pictures.images.length) result = { ...(pictures.result as Record<string, unknown>), photoNotShown: 'This model connection cannot receive pictures from tools.' };
       actions.push({ tool: call.name, result });
       retry = retryTargetFor(call.name, call.input);
       toolResults.push({ toolCallId: call.id, name: call.name, content: JSON.stringify(result) });

@@ -149,7 +149,21 @@ namespace Josi.Native {
         return column;
       }
       var text = Markdown(message["body"].Text);
-      var copy = Ui.IconButton(Glyph.Copy, "Copy message", () => { try { Clipboard.SetText(message["body"].Text); } catch (Exception) { } }, 14);
+      Button copy = null;
+      copy = Ui.IconButton(Glyph.Copy, "Copy message", () => {
+        // The clipboard can be briefly held by another app; try a few times
+        // and say so either way.
+        var done = false;
+        for (var attempt = 0; attempt < 5 && !done; attempt++) {
+          try { Clipboard.SetDataObject(message["body"].Text, true); done = true; }
+          catch (System.Runtime.InteropServices.ExternalException) { System.Threading.Thread.Sleep(40); }
+        }
+        copy.ToolTip = done ? "Copied" : "Could not copy. Select the text and press Ctrl+C.";
+        copy.Content = Ui.Icon(done ? Glyph.Approve : Glyph.Copy, 14);
+        var reset = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
+        reset.Tick += delegate { reset.Stop(); copy.Content = Ui.Icon(Glyph.Copy, 14); copy.ToolTip = "Copy message"; };
+        reset.Start();
+      }, 14);
       var read = Ui.IconButton(voice.Speaking ? Glyph.Stop : Glyph.Speaker, "Read aloud", () => voice.ToggleSpeak(message["body"].Text), 14);
       read.IsEnabled = voice.Available;
       var column2 = Ui.Stack(12, Ui.T("Josi", 13.5, FontWeights.SemiBold), text, Ui.Row(10, copy, read));
@@ -161,10 +175,20 @@ namespace Josi.Native {
       return grid;
     }
 
+    static ControlTemplate selectableTemplate;
     /// Inline Markdown as the Mac's Text(.init) renders it: bold, italic, code
-    /// and HTTPS links. Selection and copy remain available via the copy button.
-    public static TextBlock Markdown(string source) {
-      var block = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 15, Foreground = Ui.Text, LineHeight = 23, FontFamily = Ui.Font };
+    /// and HTTPS links, in a read-only box so any part can be selected and copied.
+    public static RichTextBox Markdown(string source) {
+      var block = new Paragraph { Margin = new Thickness(0), LineHeight = 23 };
+      if (selectableTemplate == null)
+        selectableTemplate = (ControlTemplate)System.Windows.Markup.XamlReader.Parse("<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='RichTextBox'><ScrollViewer x:Name='PART_ContentHost' Focusable='False' HorizontalScrollBarVisibility='Disabled' VerticalScrollBarVisibility='Disabled'/></ControlTemplate>");
+      var box = new RichTextBox { IsReadOnly = true, IsDocumentEnabled = true, Background = Brushes.Transparent, BorderThickness = new Thickness(0),
+        Padding = new Thickness(0), FontSize = 15, Foreground = Ui.Text, FontFamily = Ui.Font, Template = selectableTemplate,
+        Document = new FlowDocument(block) { PagePadding = new Thickness(0), FontSize = 15, FontFamily = Ui.Font, Foreground = Ui.Text } };
+      Fill(block, source);
+      return box;
+    }
+    static void Fill(Paragraph block, string source) {
       var pattern = new Regex(@"(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\(https?://[^)\s]+\)|\*[^*\n]+\*|_[^_\n]+_)");
       var index = 0;
       foreach (Match match in pattern.Matches(source ?? "")) {
@@ -185,7 +209,16 @@ namespace Josi.Native {
         index = match.Index + match.Length;
       }
       if (index < (source ?? "").Length) block.Inlines.Add(new Run(source.Substring(index)));
-      return block;
+      // A FlowDocument run shows "\n" as a space; keep the reply's line breaks.
+      foreach (var run in block.Inlines.OfType<Run>().Where(r => r.Text.Contains("\n")).ToList()) {
+        var lines = run.Text.Replace("\r\n", "\n").Split('\n'); var at = (Inline)run;
+        for (var i = 0; i < lines.Length; i++) {
+          if (i > 0) { var br = new LineBreak(); block.Inlines.InsertAfter(at, br); at = br; }
+          var piece = new Run(lines[i]) { FontFamily = run.FontFamily, Background = run.Background };
+          block.Inlines.InsertAfter(at, piece); at = piece;
+        }
+        block.Inlines.Remove(run);
+      }
     }
 
     void RenderComposer() {

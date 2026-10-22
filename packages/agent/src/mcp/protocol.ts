@@ -29,6 +29,9 @@ export interface McpToolOutcome {
   text: string;
   /** True only for genuine execution failures. */
   isError?: boolean;
+  /** Pictures the tool captured (a browser photo), sent to the model as MCP
+   * image content beside the text. */
+  images?: { data: string; mimeType: string }[];
 }
 
 export type McpToolExecutor = (
@@ -103,7 +106,8 @@ export async function handleMcpMessage(core: McpCore, raw: unknown): Promise<obj
     return {
       jsonrpc: '2.0',
       id,
-      result: { content: [{ type: 'text', text: outcome.text }], isError: outcome.isError === true },
+      result: { content: [{ type: 'text', text: outcome.text },
+        ...(outcome.images ?? []).map(image => ({ type: 'image', data: image.data, mimeType: image.mimeType }))], isError: outcome.isError === true },
     };
   }
 

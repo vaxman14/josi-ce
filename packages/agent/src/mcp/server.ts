@@ -31,6 +31,7 @@ import type { HarnessContext } from '@josi-ce/llm';
 import { executeAssistantTool } from '../execute.js';
 import { isMutatingTool, runDurableEffect } from '../durableEffects.js';
 import { ALL_TOOLS } from '../tools.js';
+import { takeToolImages } from '../pcBrowserTools.js';
 import { handleMcpMessage, type McpCore, type McpToolDescriptor, type McpToolOutcome } from './protocol.js';
 
 type McpHarnessContext = Omit<HarnessContext, 'workspaceEnabled' | 'workspaceMode'>
@@ -93,11 +94,13 @@ export function buildCore(ctx: McpHarnessContext, connect: () => Promise<Db>): M
   };
 
   const execute = async (name: string, input: Record<string, unknown>, callId: string): Promise<McpToolOutcome> => {
-    const completed = (result: unknown): McpToolOutcome => {
+    const completed = (raw: unknown): McpToolOutcome => {
+      // Captured pictures go to the model as images, never into the record.
+      const { result, images } = takeToolImages(raw);
       // The private ephemeral file is the ground truth consumed by approval,
       // presentation and fabrication guards. Vendor prose is not evidence.
       appendFileSync(ctx.callsPath, `${JSON.stringify({ id: callId, name, input, result })}\n`, { mode: 0o600 });
-      return { text: JSON.stringify(result) };
+      return { text: JSON.stringify(result), ...(images.length ? { images } : {}) };
     };
     if (name === 'josi_health') {
       return completed({ ok: true, echo: input.message ?? null });

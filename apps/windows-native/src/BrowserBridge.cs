@@ -250,10 +250,12 @@ namespace Josi.Native {
           // The approved site must still be the one in the attached tab.
           if (OriginOf(link.Url) != target) return refuse("attached_site_changed");
           if (kind == "read") { command["kind"] = "inspect"; command["origin"] = target; command["maxOutputBytes"] = ObservationBytes; }
-          else if (kind == "click" || kind == "fill") {
+          else if (kind == "click" || kind == "fill" || kind == "photo") {
             command["kind"] = kind; command["tabId"] = link.TabId;
             command["observationId"] = payload["observationId"].Text; command["elementId"] = payload["elementId"].Text;
             if (kind == "fill") pending.Value = payload["text"].Text;
+            // A photo comes back with a fresh read of the page; leave room for both.
+            if (kind == "photo") command["maxOutputBytes"] = 65536;
           } else return refuse("unsupported_operation");
         }
         pending.Command = command;
