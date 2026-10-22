@@ -492,7 +492,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   }
   if (offeredToolNames.has('own_goal') && offeredToolNames.has('checkpoint_goal')) {
     guidance += `${guidance ? '\n\n' : ''}Long tasks: when a request means many repeated steps (for example more than five items, photos or pages), own it as a work goal with own_goal before starting, `
-      + 'and save progress with checkpoint_goal after every few items (what is done, what is next). Then "keep going" or "try again" resumes from the saved place, even in a later conversation.';
+      + 'and save progress with checkpoint_goal after every few items (what is done, what is next). Then "keep going" or "try again" resumes from the saved place, even in a later conversation. '
+      + 'For photos on a page: view one, then put its description in your reply while proposing the next view in the same response; checkpoint once per five photos, not after each; keep the plan as it is unless a step is truly impossible.';
   }
 
   // The person's own layers, in the order the plan fixes. A failure here costs
@@ -619,7 +620,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         args.registry,
         {
           messages: providerMessages, system: system + workContext + (callerSubscription
-            ? `\nThis run has ${hopLimit - hop} model responses left. Save verified progress and the next step with checkpoint_goal before ending. When only two responses remain, finish the current description if its photo is attached, then checkpoint; do not begin another photo. Unfinished work is not complete.` : ''), tools, maxTokens: 1024,
+            ? `\nThis run has ${hopLimit - hop} model responses left. Each response can carry one tool call, so spend them on the work: describe the attached photo in reply and propose the next view in the same response. Save verified progress and the next step with checkpoint_goal before ending. When only two responses remain, finish the current description if its photo is attached, then checkpoint; do not begin another photo. Unfinished work is not complete.` : ''), tools, maxTokens: 1024,
           ...(callerSubscription ? { toolExecution: 'caller' as const } : {}),
           // For providers that execute tools OUT of process (the subscription
           // CLI harness): who is asking travels with the request, so the MCP
@@ -694,6 +695,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       // files" reply out, 6ms later, meta empty.
       // A model that answered with nothing gets one more chance to answer in
       // words; a saved empty bubble tells the person nothing.
+      if (!res.text.trim()) console.warn(`josi-ce: empty model reply (hop ${hop + 1} of ${hopLimit}, ${actions.length} tool results so far, goal ${args.workGoalId ?? 'none'})`);
       if (!res.text.trim() && !emptyReplyReprompted && hop + 1 < hopLimit) {
         emptyReplyReprompted = true;
         messages.push({ role: 'assistant', content: res.text });

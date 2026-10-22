@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  beginDurableToolEffect, completeDurableToolEffect,
+  beginDurableToolEffect, completeDurableToolEffect, WorkGoalError,
   type Db,
 } from '@josi-ce/core';
 
@@ -39,7 +39,19 @@ export async function runDurableEffect<T>(
   const effectKey=createHash('sha256').update(`${name}\n${canonical(input)}`).digest('hex');
   const reserved=await beginDurableToolEffect(db,{turnId:ctx.turnId,leaseToken:ctx.leaseToken,effectKey,toolName:name});
   if(reserved.state==='completed')return reserved.receipt as T;
-  const receipt=await run();
+  let receipt:T;
+  try{ receipt=await run(); }
+  catch(error){
+    // A refusal the tool itself decided (a work-goal rule, a 4xx-style
+    // status) means nothing happened. Record it as this effect's receipt so
+    // the turn can finish instead of ending as "outcome unknown" over a
+    // checkpoint the model simply got wrong. Anything else may have reached
+    // the outside world and stays `started`, which is the ambiguous case.
+    if(!(error instanceof WorkGoalError)&&!(typeof (error as {status?:unknown}).status==='number'&&(error as {status:number}).status<500))throw error;
+    const refusal={ok:false,error:'refused',message:(error as Error).message};
+    await completeDurableToolEffect(db,{turnId:ctx.turnId,leaseToken:ctx.leaseToken,effectKey,receipt:refusal});
+    throw error;
+  }
   if(!await completeDurableToolEffect(db,{turnId:ctx.turnId,leaseToken:ctx.leaseToken,effectKey,receipt})){
     throw new Error('durable turn lease was lost before its tool receipt was committed');
   }
