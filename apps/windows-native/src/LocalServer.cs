@@ -145,7 +145,7 @@ namespace Josi.Native {
     public static Task Operate(string operation) {
       string script;
       var forward = string.Join(",", Services.Select(s => "'" + s + "'"));
-      var reverse = string.Join(",", Services.Reverse().Select(s => "'" + s + "'"));
+      var reverse = string.Join(",", Enumerable.Reverse(Services).Select(s => "'" + s + "'"));
       switch (operation) {
         case "start": script = "$ErrorActionPreference='Stop';foreach($n in @(" + forward + ")){if(Get-Service -Name $n -ErrorAction SilentlyContinue){Start-Service -Name $n}}"; break;
         case "stop": script = "$ErrorActionPreference='Stop';foreach($n in @(" + reverse + ")){if(Get-Service -Name $n -ErrorAction SilentlyContinue){Stop-Service -Name $n -Force}}"; break;
