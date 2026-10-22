@@ -15,6 +15,7 @@ import { WORKFLOW_TOOLS } from './workflowTools.js';
 import { DEVELOPER_INTEGRATION_TOOLS, OBSIDIAN_TOOLS } from './developerIntegrationTools.js';
 import { PC_BROWSER_TOOLS } from './pcBrowserTools.js';
 import { SETTINGS_CHANGE_TOOLS } from './settingsChangeTools.js';
+import { PC_DESKTOP_TOOLS } from './pcDesktopTools.js';
 
 /** Everything the assistant can do that changes something.
  *
@@ -233,6 +234,7 @@ export const ALL_TOOLS: ToolSpec[] = [
   ...DEVELOPER_INTEGRATION_TOOLS,
   ...OBSIDIAN_TOOLS,
   ...PC_BROWSER_TOOLS,
+  ...PC_DESKTOP_TOOLS,
 ];
 
 /** Names that map to the step-up gate. The gate keys on the tool name, so

@@ -34,6 +34,7 @@ import { executeAutomationTool, AUTOMATION_TOOL_NAMES } from './automationTools.
 import { executePcBrowserTool, PC_BROWSER_TOOL_NAMES } from './pcBrowserTools.js';
 import { executeMemoryTool, MEMORY_TOOL_NAMES } from './memoryEngine.js';
 import { executeSettingsChangeTool, SETTINGS_CHANGE_TOOL_NAMES } from './settingsChangeTools.js';
+import { executePcDesktopTool, PC_DESKTOP_TOOL_NAMES } from './pcDesktopTools.js';
 
 async function actionSummary(db:Db,userId:string,domain:string,operation:string,slots:Record<string,unknown>):Promise<string>{
   if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}${Array.isArray(slots.cc) && slots.cc.length ? `\nCc: ${slots.cc.join(', ')}` : ''}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
@@ -91,6 +92,7 @@ export async function executeAssistantTool(
   const { userId } = ctx;
   if (AUTOMATION_TOOL_NAMES.has(name)) return executeAutomationTool(ctx, name, input, db);
   if (PC_BROWSER_TOOL_NAMES.has(name)) return executePcBrowserTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input);
+  if (PC_DESKTOP_TOOL_NAMES.has(name)) return executePcDesktopTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input);
   if (MEMORY_TOOL_NAMES.has(name)) return executeMemoryTool(db, userId, ctx.threadId, name, input);
   if (SETTINGS_CHANGE_TOOL_NAMES.has(name)) return executeSettingsChangeTool(db, userId, name, input);
   if (WORK_GOAL_TOOL_NAMES.has(name)) return executeWorkGoalTool(db, ctx, name, input);

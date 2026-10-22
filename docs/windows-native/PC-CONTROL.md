@@ -6,9 +6,19 @@ The native Windows owner has **PC control permissions** under Administration,
 at `/admin/pc-control`. The master switch **Allow Josi to control this PC** defaults
 off. Turning it on grants no scope. This phase implements persistent encrypted
 permissions, human decisions, an activity log and a transactional execution broker.
-It does **not** ship a desktop automation executor or bundle/execute a desktop
-installer. The UI explicitly reports that control is unavailable until the separate
-Windows desktop client is connected. Nothing in this phase controls Roman's PC.
+Since October 22 the Windows app is the executor for both browser work (through
+the Josi browser extension) and desktop work (through Windows UI Automation,
+screenshots and injected input), see `apps/windows-native/src/DesktopExecutor.cs`
+and `packages/agent/src/pcDesktopTools.ts`. Every operation is still an exact
+PC Control request decided here: the read-only action `desktop.view` covers
+listing windows, reading a window's controls and screenshots; `app.launch`,
+`app.control` and `app.close` cover opening, clicking, typing, keys and closing,
+each scoped to the exact executable the window belongs to, re-checked by the
+executor before it touches the window. **Full control** (`full_control` on
+`pc_control_settings`) is the owner's standing grant for everyday actions; the
+actions outside it always ask. A real mouse or keyboard event cancels the
+running action and blocks desktop work for 20 seconds; the app shows who is in
+control with Pause and Stop.
 
 The current identity is the local hosting PC, fixed by trusted server code. Only
 the installation owner's authenticated session can manage it. HTTP requests cannot

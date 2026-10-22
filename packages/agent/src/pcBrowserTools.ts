@@ -75,7 +75,9 @@ function compact(result: unknown) {
     elements: (photo ? elements.filter(e => e.role === 'img' || e.role === 'textarea') : elements).map(e => ({ id: e.id, role: e.role, name: e.name,
       ...(e.inputType ? { inputType: e.inputType } : {}), ...(e.disabled ? { disabled: true } : {}) })) };
 }
-async function settle(control: PcControl, owner: string, requestId: string, waitMs: number) {
+/** Waits for a PC Control request to finish, or reports that it is waiting
+ * for the owner. Shared with the desktop tools. */
+export async function settle(control: PcControl, owner: string, requestId: string, waitMs: number) {
   const deadline = Date.now() + waitMs;
   for (;;) {
     const outcome = await control.outcome(owner, requestId);

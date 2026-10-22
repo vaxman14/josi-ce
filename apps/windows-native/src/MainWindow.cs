@@ -70,8 +70,41 @@ namespace Josi.Native {
     readonly ContentControl content = new ContentControl { Focusable = false };
     readonly Border errorBar = new Border();
     readonly Border busyBar = new Border();
+    readonly Border controlBar = new Border { Visibility = Visibility.Collapsed };
+    readonly System.Windows.Threading.DispatcherTimer controlTick = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
     Screen? shown;
     WorkspaceView workspace;
+
+    /// Who is in control of this desktop: Josi working (with Pause and Stop),
+    /// paused, or you after touching the mouse or keyboard (with a countdown
+    /// and Resume). Hidden when nothing is happening.
+    void RenderControlBar() {
+      var executor = DesktopExecutor.Current;
+      var left = executor.TakenOverSecondsLeft;
+      var show = executor.Busy || executor.Paused || left > 0;
+      controlTick.IsEnabled = show;
+      if (!show) { controlBar.Visibility = Visibility.Collapsed; controlBar.Child = null; return; }
+      UIElement status; var actions = Ui.Wrap();
+      if (executor.Paused) {
+        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Orange), Ui.T("Josi is paused on this PC.", 13.5, FontWeights.Medium));
+        actions.Children.Add(Ui.Pill("Resume", executor.Resume, true));
+      } else if (left > 0) {
+        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Orange), Ui.T("You took over. Josi waits " + left + " s before using this PC again.", 13.5, FontWeights.Medium));
+        actions.Children.Add(Ui.Pill("Let Josi Continue", executor.Resume));
+        actions.Children.Add(Ui.Pill("Pause Josi", executor.Pause));
+      } else {
+        status = Ui.Working("Josi is using this PC: " + executor.Activity + ". Move the mouse or type to take over.", true, 20);
+        actions.Children.Add(Ui.Pill("Pause", executor.Pause));
+      }
+      actions.Children.Add(Ui.Danger("Stop Josi", () => {
+        executor.Pause();
+        Model.Run(async () => { var api = Model.Api; if (api != null) await api.Request("/admin/pc-control/stop", "POST", Wires.O()); });
+      }));
+      controlBar.Child = Ui.Spread(status, actions);
+      controlBar.Padding = new Thickness(16, 8, 16, 8); controlBar.Background = Ui.OrangeFaint;
+      controlBar.BorderBrush = Ui.Orange; controlBar.BorderThickness = new Thickness(0, 0, 0, 1);
+      controlBar.Visibility = Visibility.Visible;
+    }
 
     public MainWindow() {
       Title = "Josi";
@@ -85,9 +118,12 @@ namespace Josi.Native {
         if (stream != null) Icon = System.Windows.Media.Imaging.BitmapFrame.Create(stream, System.Windows.Media.Imaging.BitmapCreateOptions.None, System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
 
       var dock = new DockPanel { LastChildFill = true };
-      DockPanel.SetDock(busyBar, Dock.Bottom); DockPanel.SetDock(errorBar, Dock.Bottom);
-      dock.Children.Add(busyBar); dock.Children.Add(errorBar); dock.Children.Add(content);
+      DockPanel.SetDock(busyBar, Dock.Bottom); DockPanel.SetDock(errorBar, Dock.Bottom); DockPanel.SetDock(controlBar, Dock.Top);
+      dock.Children.Add(controlBar); dock.Children.Add(busyBar); dock.Children.Add(errorBar); dock.Children.Add(content);
       Content = dock;
+      DesktopExecutor.Current.Start(Dispatcher);
+      DesktopExecutor.Current.Changed += RenderControlBar;
+      controlTick.Tick += delegate { RenderControlBar(); };
 
       Model.Attach(this);
       Model.Changed += Render;

@@ -42,6 +42,7 @@ import { isMutatingTool, runDurableEffect } from './durableEffects.js';
 import { automationToolAvailability } from './automationTools.js';
 import { pcBrowserToolAvailability, PC_BROWSER_PROMPT, takeToolImages } from './pcBrowserTools.js';
 import { SETTINGS_CHANGE_PROMPT } from './settingsChangeTools.js';
+import { pcDesktopToolAvailability, PC_DESKTOP_PROMPT } from './pcDesktopTools.js';
 import { loadGuidance, announceProposals } from './improvementEngine.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
@@ -423,6 +424,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     && stored.provider !== 'anthropic_subscription'
     ? await automationToolAvailability(args.automationRuntime, userId) : [];
   const pcBrowserTools = capabilities.toolCalling ? await pcBrowserToolAvailability(db, userId, args.registry.masterKey) : [];
+  const pcDesktopTools = capabilities.toolCalling ? await pcDesktopToolAvailability(db, userId, args.registry.masterKey) : [];
   // `approve_task` is only meaningful when this owner already has a generic
   // task waiting on them. Offering it on an ordinary request lets a model
   // confuse "please create this calendar event" with approval of an unrelated
@@ -437,7 +439,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     && (t.def.name !== 'approve_task' || !!approvableTask)
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
   let tools = capabilities.toolCalling
-    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools, ...pcBrowserTools].map((t) => t.def)
+    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools, ...pcBrowserTools, ...pcDesktopTools].map((t) => t.def)
     : undefined;
   if (args.workGoalId) {
     const humanTools = new Set(['own_goal', 'approve_task', 'cancel_task', 'update_task_slots',
@@ -472,6 +474,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     temporalContext: temporal.prompt,
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '')
     + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : '')
+    + (pcDesktopTools.length ? `\n\n${PC_DESKTOP_PROMPT}` : '')
     + (capabilities.toolCalling ? `\n\n${SETTINGS_CHANGE_PROMPT}` : '');
 
   // Approved skills and memory rules, and long work kept as a goal. Best

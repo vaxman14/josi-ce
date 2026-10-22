@@ -195,8 +195,9 @@ namespace Josi.Native {
 
     // ------------------------------------------- server: PC Control executor
     /// Every second while you are signed in as the administrator: report the
-    /// attached tab, tell you about requests waiting for your approval, and
-    /// run approved work. Nothing runs without an attached tab.
+    /// attached tab (or that Josi is open on this desktop), tell you about
+    /// requests waiting for your approval, and run approved work: browser
+    /// work goes to the extension, desktop work to the desktop executor.
     async void Execute(AppModel model) {
       string lastPresence = null; var presenceAt = DateTime.MinValue; var checkedAt = DateTime.MinValue;
       var announced = new HashSet<string>();
@@ -209,22 +210,25 @@ namespace Josi.Native {
           lock (gate) {
             live = Live();
             presence = live ? Wires.O("connected", true, "browser", Wires.O("family", link.Browser.ToLowerInvariant(), "application", link.Application,
-              "profile", link.Profile, "origin", OriginOf(link.Url), "title", link.Title)) : Wires.O("connected", false);
+              "profile", link.Profile, "origin", OriginOf(link.Url), "title", link.Title))
+              // No tab attached: Josi is still open on this desktop, so desktop work can run.
+              : Wires.O("connected", true, "browser", Wires.O("family", "desktop", "application", Environment.ProcessPath ?? "", "profile", "Default", "origin", null, "title", null));
           }
           var json = Wires.Serialize(presence);
-          if (json != lastPresence || live && (DateTime.UtcNow - presenceAt).TotalSeconds >= 10) {
+          if (json != lastPresence || (DateTime.UtcNow - presenceAt).TotalSeconds >= 10) {
             await api.Request("/admin/pc-control/executor/presence", "PUT", presence);
             lastPresence = json; presenceAt = DateTime.UtcNow;
           }
-          if (!live) continue;
           if ((DateTime.UtcNow - checkedAt).TotalSeconds >= 4) {
             checkedAt = DateTime.UtcNow;
             foreach (var q in (await api.Request("/admin/pc-control"))["requests"].List)
-              if (announced.Add(q.Id) && !model.Active) Notifications.Show("Josi is asking to use your browser", q["description"].Text + ". Approve it in Josi under PC Control.");
+              if (announced.Add(q.Id) && !model.Active) Notifications.Show("Josi is asking for permission", q["description"].Text + ". Approve it in Josi under PC Control.");
           }
+          // Paused, or you took over: approved work waits rather than runs.
+          if (DesktopExecutor.Current.Blocked) continue;
           var next = (await api.Request("/admin/pc-control/executor/next", "POST", Wires.O()))["request"];
           if (next.IsNull) continue;
-          var outcome = await Dispatch(next);
+          var outcome = next["payload"]["kind"].Text.StartsWith("desktop.", StringComparison.Ordinal) ? await DesktopExecutor.Current.Run(next) : await Dispatch(next);
           await api.Request("/admin/pc-control/executor/" + api.Uuid(next.Id) + "/result", "POST", Wires.O("ok", outcome.Item1, "result", outcome.Item2));
         } catch (JosiException) { }
         catch (Exception e) when (e is IOException || e is TaskCanceledException || e is System.Net.Http.HttpRequestException) { }

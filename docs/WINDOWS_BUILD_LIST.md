@@ -10,10 +10,18 @@ Built in the Windows app, compiled, and opened on the test server (39 sections, 
 
 Server changes made for the app: connections started from the app finish through `josi://connections/callback` with the same session (`connectorRoutes.ts`), and approval history (`GET /api/assistant/approvals/history`).
 
+## Build status (October 22, on the new PC)
+
+- **27 Desktop control** is built: the Josi app is the executor for desktop work. The assistant has `desktop_list_windows`, `desktop_read_window` (Windows UI Automation, controls with ids), `desktop_screenshot` (sent to the model as an image), `desktop_click`, `desktop_type`, `desktop_keys`, `desktop_launch` and `desktop_close_window` (`packages/agent/src/pcDesktopTools.ts`, `apps/windows-native/src/DesktopExecutor.cs`). Every call is a PC Control request scoped to the exact program (new read-only action `desktop.view`; actions use `app.launch`, `app.control`, `app.close`). A banner at the top of the window shows who is in control with Pause and Stop; any real mouse or keyboard input cancels the current action and keeps Josi off the desktop for 20 seconds. Verified on this PC from the real tool path: list, read and screenshot. Clicking and typing are built and not yet tried by Roman.
+- **Full control** under PC Control: one standing grant for everyday browser, folder, application and desktop actions; purchases, deleting, credentials, installs, security settings, commands and elevation still ask (`PC_FULL_CONTROL_ACTIONS`). Password once to turn on; the emergency stop clears it. Migration 0102.
+- **Settings changes by talking to Josi**: `list_josi_settings` and `propose_josi_setting_change` prepare an exact change; a popup (and the Approvals page) asks the person to make it live; their own app applies it with its own session. Administrator settings wait for the super-admin, who can deny anything and can make member changes wait for them. A sensitive change applied by a member is emailed to every super-admin at once when system mail works. Migration 0103, `apps/api/src/http/settingsChangeRoutes.ts`.
+- **Live model-check progress** (`GET .../probe/progress`), a shared animated working indicator for every wait, and real failure codes from the browser extension with a 72 KB photo budget.
+- Layout: one left-aligned content column and one spacing rhythm for every section.
+
 Still open:
 - **4 Google sign-in live test**: needs Google registered under Connectors, which needs a public HTTPS address.
 - **16 Streaming replies**: the server does not stream replies to any client yet; the app now checks every second while a reply is written. True streaming is a server change.
-- **27 Desktop + Chrome** and **29 Windows Hello approvals**: need Roman's test page. Windows Hello also needs the server's protected-confirmation enrollment (currently Mac-only) ported to Windows.
+- **27 Chrome acceptance** on Roman's page and the screenshot-driven desktop path for programs UI Automation cannot read; **29 Windows Hello approvals** need the server's protected-confirmation enrollment (currently Mac-only) ported to Windows.
 - **34 full installer build**: needs the pinned runtimes and helper builds rebuilt on this PC, then the installer compiled.
 - **35 signing**: needs Roman's Azure Trusted Signing sign-in.
 - Family and Companion apps show "coming soon", matching the web app, where those features are not released.

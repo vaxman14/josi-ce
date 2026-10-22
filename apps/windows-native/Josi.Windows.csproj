@@ -33,6 +33,8 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+    <!-- Screenshots for desktop control: GDI capture and JPEG encoding. -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
   </ItemGroup>
   <!-- The application icon is derived from the approved 512 px master on every build. -->
   <Target Name="JosiIcon" BeforeTargets="PrepareForBuild" Inputs="assets\icon-512.png" Outputs="obj\Josi.ico">

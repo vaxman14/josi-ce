@@ -28,6 +28,7 @@ export const PC_ACTIONS = [
   ['software.install','Installing software','system',true,false],
   ['software.uninstall','Uninstalling software','system',true,false],
   ['system.settings','Changing system settings','system',true,false],
+  ['desktop.view','Seeing open windows, their controls and screenshots','system',false,true],
   ['secret.access','Credential or secret access','secret',true,true],
   ['security.settings','Security-setting changes','system',true,false],
   ['administrator.elevate','Administrator elevation (Windows UAC still required)','system',true,false],
@@ -86,7 +87,7 @@ const readOnly = (r:PcRequirement) => PC_ACTIONS.find(s=>s[0]===r.action)![4];
  * commands and elevation are deliberately outside it and still ask. An exact
  * "Never" scope still wins. */
 export const PC_FULL_CONTROL_ACTIONS:readonly PcAction[] = ['browser.view','browser.fill','browser.submit','browser.download','browser.upload',
-  'explorer.view','folder.read','folder.write','file.rename','file.move','app.launch','app.control','app.close'];
+  'desktop.view','explorer.view','folder.read','folder.write','file.rename','file.move','app.launch','app.control','app.close'];
 export const PC_FULL_CONTROL_ASKS:readonly PcAction[] = PC_ACTIONS.map(s=>s[0]).filter(a=>!PC_FULL_CONTROL_ACTIONS.includes(a));
 const fullControlCovers = (r:PcRequirement) => PC_FULL_CONTROL_ACTIONS.includes(r.action);
 type Settings = {enabled:boolean;epoch:number|string;full_control:boolean};
@@ -342,7 +343,9 @@ const PRESENCE_TTL=30_000;
 export type PcBrowserPresence={family:string;application:string;profile:string;origin:string|null;title:string|null};
 function normalizePresence(p:PcBrowserPresence):PcBrowserPresence {
   if(!p||typeof p!=='object')fail('Invalid browser connection.');
-  const family=['chrome','brave','edge'].includes(p.family)?p.family:fail('Unsupported browser.');
+  // 'desktop': the Josi app is open on this PC with no browser tab attached;
+  // desktop tools are available, browser tools are not.
+  const family=['chrome','brave','edge','desktop'].includes(p.family)?p.family:fail('Unsupported browser.');
   let origin:string|null=null;
   if(p.origin!==null&&p.origin!==undefined){
     try{const url=new URL(text(p.origin,2048));if(!['http:','https:'].includes(url.protocol)||url.username||url.password)fail('');origin=url.origin;}

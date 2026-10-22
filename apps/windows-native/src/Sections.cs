@@ -523,8 +523,12 @@ namespace Josi.Native {
       Ui.Add(page, Ui.CardBox("This PC",
         Ui.Row(10, Ui.Icon(Glyph.Desktop, 20, Ui.Text), Ui.Headline(Environment.MachineName + " · " + Environment.UserName)),
         Ui.T("Josi works in your current Windows session and in browser tabs you explicitly attach. It does not create a separate desktop, virtual machine or browser profile, and your browser sign-ins stay in your browser."),
-        Ui.T("Desktop and browser control are not available in this version of the Windows app yet. Chat, Task Manager, Memory and settings work without them.", 14, FontWeights.Medium, Ui.Orange),
-        Ui.Caption("When control is available, you will choose the exact apps and tabs, and Josi will show who is in control with Pause, Take over, Resume and Stop. Moving your mouse or typing will stop Josi immediately.")), 20);
+        model.IsAdministrator
+          ? Ui.T("Desktop control is ready while this app is open: Josi can list windows, read a program's controls, take screenshots, click, type, press keys and open programs, within the permissions under PC Control (or Full control). " +
+              (BrowserBridge.Current.Attached ? "A " + BrowserBridge.Current.AttachedBrowser + " tab is attached, so browser control is ready too." : "Attach a tab with the Josi browser extension for browser control."), 14)
+          : Ui.T("Desktop and browser control on this PC are run by the administrator's Josi app.", 14),
+        Ui.Caption("Who is in control is always shown at the top of the window, with Pause and Stop. Moving your mouse or typing stops Josi immediately for 20 seconds; Josi reads a window again before every next step rather than assuming its last action worked."),
+        model.IsAdministrator ? Ui.Pill("Open PC Control", () => model.Section = "pc-control") : null), 20);
 
       var rooms = automation["workspaces"].List;
       if (rooms.Count > 0) {
