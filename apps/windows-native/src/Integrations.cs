@@ -134,11 +134,19 @@ namespace Josi.Native {
       Ui.Add(page, Ui.CardBox("Available integrations", catalog, Ui.Caption("Custom REST APIs are managed under Custom APIs.")), 0);
       Ui.Add(page, Obsidian(), 0);
       if (view.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "Integrations have not loaded."), 0); return page; }
-      foreach (var row in view["services"].List) Ui.Add(page, Service(row), 0);
+      // The per-service rows live in one card with dividers, instead of a
+      // loose column of chevrons.
+      var services = Ui.Stack(0, Ui.Caption("Open a service to decide who may connect it and see who has."));
+      foreach (var row in view["services"].List) {
+        services.Children.Add(Ui.Divider());
+        var service = Service(row); service.Margin = new Thickness(0, 4, 0, 4);
+        services.Children.Add(service);
+      }
+      Ui.Add(page, Ui.CardBox("Who may connect each service", services), 0);
       Ui.Add(page, Note(), 0);
       return page;
     }
-    UIElement Service(Wire row) {
+    FrameworkElement Service(Wire row) {
       var s = row["service"].Text; var people = view["people"].List;
       var attention = row["connections"].List.Any(c => c["lastCheckOk"].IsBool && !c["lastCheckOk"].Flag);
       return new Disclosure(row["label"].Text + " · " + Modes.First(m => m.Key == row["mode"].Text).Value + (attention ? " · needs attention" : ""), () => {

@@ -285,9 +285,9 @@ namespace Josi.Native {
       }
       Ui.Add(page, Ui.CardBox("Synced accounts", sync), 0);
       Ui.Detach(search);
-      Ui.Add(page, search, 0);
       var shown = contacts.Where(c => (c["name"].Text + " " + c["email"].Text + " " + c["phone"].Text).IndexOf(search.Text, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-      if (shown.Count == 0) Ui.Add(page, Ui.Secondary(contacts.Count == 0 ? "No contacts yet." : "Nothing matches."), 0);
+      Ui.Add(page, Ui.Stack(10, Ui.Title2("Your contacts" + (contacts.Count > 0 ? " · " + contacts.Count : "")), search,
+        shown.Count == 0 ? Ui.Secondary(contacts.Count == 0 ? "No contacts yet. Add one above, or connect Google or Microsoft under Connections." : "Nothing matches.") : null), 30);
       foreach (var c in shown) {
         var source = c["source"].Text;
         Ui.Add(page, Ui.CardBox(null, Ui.Spread(Ui.T(c["name"].Text.Length > 0 ? c["name"].Text : "Unnamed", 14, FontWeights.Medium),

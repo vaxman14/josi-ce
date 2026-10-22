@@ -69,7 +69,7 @@ namespace Josi.Native {
         else foreach (var connection in accounts) Ui.Add(page, ProviderCard(view, connection), 0);
       }
       if (developer != null && developer.Count > 0) {
-        Ui.Add(page, Ui.Heading("Developer services", "Your own accounts, connected with a token you create. Nobody else here can see the token, and disconnecting removes it."), 12);
+        Ui.Add(page, Ui.Stack(6, Ui.Title2("Developer services"), Ui.Secondary("Your own accounts, connected with a token you create. Nobody else here can see the token, and disconnecting removes it.")), 30);
         foreach (var row in developer) Ui.Add(page, DeveloperCard(row), 0);
       }
       if (documents != null && documents.Count > 0) {

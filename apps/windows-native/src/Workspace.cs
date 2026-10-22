@@ -222,7 +222,7 @@ namespace Josi.Native {
   static class ComingSoonPage {
     /// A section the product has not released yet: said plainly, nothing to press.
     public static UIElement Build(string title, string detail, string more) {
-      return Ui.Scroll(Ui.Stack(20, Ui.Row(10, Ui.Title2(title), ModelText.Pill("Coming soon", false)), Ui.CardBox(null, Ui.Secondary(detail), Ui.Caption(more))), 900, 30);
+      return Ui.Scroll(Ui.Stack(20, Ui.Row(10, Ui.Title2(title), ModelText.Pill("Coming soon", false)), Ui.CardBox(null, Ui.Secondary(detail), Ui.Caption(more))), Ui.PageWidth, 30);
     }
   }
 }

@@ -36,30 +36,35 @@ namespace Josi.Native {
     public ServerControls(AppModel model, Window owner, bool compact) {
       var r = model.Receipt;
       var stack = new StackPanel();
-      if (!compact) {
-        Ui.Add(stack, Ui.Heading("Server on this PC", "Manage local hosting without leaving Josi."), 0);
-        Ui.Add(stack, Ui.T(r.Installed ? r.Address + " · " + (r.Version.Length == 0 ? "version unknown" : r.Version) + " · " + r.Detail : "Local server is not installed."), 14);
-      }
       Action<string, string, string> confirm = (operation, title, detail) => {
         if (Dialogs.Confirm(owner, title, detail, "Continue")) model.Run(() => model.Operate(operation));
       };
-      if (r.Development) {
-        Ui.Add(stack, Ui.Caption("This development server runs from source under your Windows account. Start and stop it with scripts/windows/dev/Start-DevServer.ps1 and Stop-DevServer.ps1."), 14);
-      } else if (r.Installed) {
-        Ui.Add(stack, Ui.Wrap(
-          Ui.Pill("Start", () => model.Run(() => model.Operate("start"))),
-          Ui.Pill("Stop…", () => confirm("stop", "Stop the server on this PC?", "Connected devices will lose access until you start the server again.")),
-          Ui.Pill("Restart…", () => confirm("restart", "Restart the server on this PC?", "Connected devices lose access briefly. Keep the app open until the operation finishes."))), 14);
-        Ui.Add(stack, Ui.Wrap(Ui.Pill("Update or Repair Server…", () => ChooseInstaller(model, owner))), 0);
+      // One row of controls, grouped: lifecycle, then maintenance, then status.
+      var buttons = Ui.Wrap();
+      if (r.Installed && !r.Development) {
+        buttons.Children.Add(Ui.Pill("Start", () => model.Run(() => model.Operate("start"))));
+        buttons.Children.Add(Ui.Pill("Stop…", () => confirm("stop", "Stop the server on this PC?", "Connected devices will lose access until you start the server again.")));
+        buttons.Children.Add(Ui.Pill("Restart…", () => confirm("restart", "Restart the server on this PC?", "Connected devices lose access briefly. Keep the app open until the operation finishes.")));
+        buttons.Children.Add(Ui.Pill("Update or Repair Server…", () => ChooseInstaller(model, owner)));
       }
-      Ui.Add(stack, Ui.Pill("Refresh Status", model.RefreshLocal), r.Installed ? 0 : 14);
-      if (!compact) {
-        Ui.Add(stack, Ui.Secondary("Updates use the existing recovery-copy and migration process of the Josi CE installer. Windows will ask for administrator approval."), 14);
-        Ui.Add(stack, Ui.Pill("Open Installed Apps to Uninstall…", () => {
-          try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:appsfeatures") { UseShellExecute = true }); }
-          catch (Exception) { model.Error = "Windows Settings could not be opened."; model.Notify(); }
-        }), 14);
-        Ui.Add(stack, Ui.Caption("Uninstalling keeps your retained data and recovery files unless the installer explicitly asks otherwise."), 6);
+      buttons.Children.Add(Ui.Pill("Refresh Status", model.RefreshLocal));
+      var status = Ui.T(r.Installed ? r.Address + " · " + (r.Version.Length == 0 ? "version unknown" : r.Version) + " · " + r.Detail : "Local server is not installed.");
+      if (compact) {
+        Ui.Add(stack, status, 0);
+        if (r.Development) Ui.Add(stack, Ui.Caption("This development server runs from source under your Windows account. Start and stop it with scripts/windows/dev/Start-DevServer.ps1 and Stop-DevServer.ps1."), 10);
+        Ui.Add(stack, buttons, 12);
+      } else {
+        var items = new List<UIElement> { status };
+        if (r.Development) items.Add(Ui.Caption("This development server runs from source under your Windows account. Start and stop it with scripts/windows/dev/Start-DevServer.ps1 and Stop-DevServer.ps1."));
+        items.Add(buttons);
+        if (r.Installed && !r.Development) items.Add(Ui.Caption("Updates use the existing recovery-copy and migration process of the Josi CE installer. Windows will ask for administrator approval."));
+        Ui.Add(stack, Ui.CardBox("Server on this PC", items.ToArray()), 0);
+        Ui.Add(stack, Ui.CardBox("Remove Josi from this PC",
+          Ui.Caption("Uninstalling keeps your retained data and recovery files unless the installer explicitly asks otherwise."),
+          Ui.Pill("Open Installed Apps to Uninstall…", () => {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:appsfeatures") { UseShellExecute = true }); }
+            catch (Exception) { model.Error = "Windows Settings could not be opened."; model.Notify(); }
+          })), Ui.PageSpacing);
       }
       stack.IsEnabled = !model.Busy;
       Content = stack;

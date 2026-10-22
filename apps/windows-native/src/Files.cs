@@ -31,7 +31,7 @@ namespace Josi.Native {
       poll.Tick += async delegate { await PollRun(); };
     }
     protected override void OnLeave() { poll.Stop(); }
-    protected override double PageWidth() { return 1000; }
+    protected override double PageWidth() { return Ui.PageWidth; }
 
     protected override async Task Load() {
       var api = Api; var stamp = Stamp;

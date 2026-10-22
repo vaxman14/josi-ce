@@ -105,8 +105,8 @@ namespace Josi.Native {
       var page = Page(Ui.HeadingWith("Getting Started", null, Ui.Pill("Refresh", StartLoad)));
       if (data.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "The checklist has not loaded."), 0); return page; }
       var done = data["progress"]["done"].Integer; var total = data["progress"]["total"].Integer;
-      Ui.Add(page, Ui.Secondary("Josi is installed. These are the things only you can do: " + done + " of " + total + " settled."), 0);
-      Ui.Add(page, new ProgressBar { Height = 6, Maximum = Math.Max(1, total), Value = done }, 0);
+      Ui.Add(page, Ui.Stack(10, Ui.Secondary("Josi is installed. These are the things only you can do: " + done + " of " + total + " settled."),
+        new ProgressBar { Height = 6, Maximum = Math.Max(1, total), Value = done }), 0);
       var reminders = data["reminders"].List;
       if (reminders.Count > 0) Ui.Add(page, Ui.CardBox("Do these before you rely on this installation", reminders.Select(r => (UIElement)Ui.T("• " + r["label"].Text)).ToArray()), 0);
       foreach (var g in new[] { new[] { "critical", "Protect this installation" }, new[] { "important", "Finish essential setup" }, new[] { "optional", "Optional capabilities" } }) {
@@ -115,11 +115,13 @@ namespace Josi.Native {
         var settled = items.Count(i => i["state"].Text == "done" || i["state"].Text == "dismissed" || i["state"].Text == "unavailable");
         var attention = items.Any(i => i["state"].Text == "failed" || (g[0] == "critical" && i["state"].Text == "outstanding"));
         Ui.Add(page, new Disclosure(g[1] + " · " + settled + " of " + items.Count + " settled" + (attention ? " · needs attention" : ""), () => {
-          var list = Ui.Stack(14);
+          var list = Ui.Stack(0);
           foreach (var item in items) {
             var key = item["key"].Text; var state = item["state"].Text; var section = Section(item["href"].Text);
-            var row = Ui.Stack(3, Ui.Spread(Ui.T(item["label"].Text, 14, FontWeights.Medium), ModelText.Pill(state == "done" ? "Done" : state == "outstanding" ? "To do" : state == "failed" ? "Not working" : state == "dismissed" ? "Put aside" : "Not available here", state == "done")),
+            if (list.Children.Count > 0) list.Children.Add(Ui.Divider());
+            var row = Ui.Stack(6, Ui.Spread(Ui.T(item["label"].Text, 14.5, FontWeights.SemiBold), ModelText.Pill(state == "done" ? "Done" : state == "outstanding" ? "To do" : state == "failed" ? "Not working" : state == "dismissed" ? "Put aside" : "Not available here", state == "done")),
               Ui.Caption(item["why"].Text));
+            row.Margin = new Thickness(0, 10, 0, 10);
             if (item["href"].Text.Length == 0 && (state == "outstanding" || state == "failed") && item["insteadOfScreen"].Text.Length > 0) row.Children.Add(Ui.Caption(item["insteadOfScreen"].Text));
             if (item["detail"].Text.Length > 0) row.Children.Add(Ui.Caption(item["detail"].Text));
             var actions = Ui.Wrap();
@@ -129,10 +131,10 @@ namespace Josi.Native {
             }
             if (item["dismissible"].Flag && state == "outstanding") actions.Children.Add(Ui.Pill("Skip", () => Perform(async (api, stamp) => await api.Request("/admin/launch-checklist/dismiss/" + Uri.EscapeDataString(key), "POST", Wires.O()))));
             if (state == "dismissed") actions.Children.Add(Ui.Pill("Put It Back on the List", () => Perform(async (api, stamp) => await api.Request("/admin/launch-checklist/restore/" + Uri.EscapeDataString(key), "POST", Wires.O()))));
-            row.Children.Add(actions);
+            if (actions.Children.Count > 0) { actions.Margin = new Thickness(0, 4, 0, 0); row.Children.Add(actions); }
             list.Children.Add(row);
           }
-          return list;
+          return Ui.CardBox(null, list);
         }, attention), 0);
       }
       Ui.Add(page, Ui.Caption("You can come back to this from the sidebar at any time. Nothing here expires."), 0);

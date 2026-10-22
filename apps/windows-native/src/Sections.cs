@@ -52,7 +52,7 @@ namespace Josi.Native {
       var target = scroll;
       Dispatcher.BeginInvoke(new Action(() => target.ScrollToVerticalOffset(offset)), DispatcherPriority.Loaded);
     }
-    protected virtual double PageWidth() { return 900; }
+    protected virtual double PageWidth() { return Ui.PageWidth; }
     /// Run a server change through the shared busy/error handling, then reload.
     protected void Perform(Func<JosiApi, int, Task> action, bool reload = true) {
       if (api == null || model.Busy || loading) return;
@@ -65,7 +65,7 @@ namespace Josi.Native {
       });
     }
     protected FrameworkElement Note() { return note.Length == 0 ? null : (FrameworkElement)Ui.Secondary(note); }
-    protected static StackPanel Page(params UIElement[] children) { return Ui.Stack(20, children); }
+    protected static StackPanel Page(params UIElement[] children) { var page = Ui.Stack(Ui.PageSpacing, children); page.Tag = Ui.PageSpacingTag; return page; }
   }
 
   public sealed class MemoryView : SectionView {
@@ -77,7 +77,6 @@ namespace Josi.Native {
     public MemoryView(AppModel model, Window owner) : base(model, owner) {
       added.TextChanged += delegate { if (addButton != null) addButton.IsEnabled = added.Text.Trim().Length > 0 && added.Text.Length <= 2000; };
     }
-    protected override double PageWidth() { return double.PositiveInfinity; }
     protected override async Task Load() {
       var api = Api; var stamp = Stamp;
       var saved = await api.Request("/persona/memories");
@@ -91,7 +90,7 @@ namespace Josi.Native {
       if (previous.Length == 0 || mode == previous) mode = value;
     }
     protected override UIElement Build() {
-      var page = Page(Ui.Heading("Memory", "Review what Josi remembers and the lessons it proposes."),
+      var page = Page(Ui.HeadingWith("Memory", "Review what Josi remembers and the lessons it proposes.", Ui.Pill("Refresh", StartLoad)),
         Ui.Secondary("Memories help future work. They cannot change permissions or Cardinal Rules. Keep credentials in the Vault."),
         loading ? Ui.Caption("Loading…") : null, Note());
       var picker = Ui.Choice(Ui.Options("manual", "Review suggestions", "automatic", "Remember conversation facts automatically", "off", "Do not learn new memories"), mode);
@@ -128,7 +127,6 @@ namespace Josi.Native {
       Ui.Add(page, add, 10);
       if (memories.Count == 0 && !loading) Ui.Add(page, Ui.Secondary("No saved memories."), 12);
       foreach (var item in memories) Ui.Add(page, Saved(item), 12);
-      Ui.Add(page, Ui.Pill("Refresh", StartLoad), 20);
       return page;
     }
     static void Detach(FrameworkElement element) { var panel = element.Parent as Panel; if (panel != null) panel.Children.Remove(element); }
@@ -471,7 +469,7 @@ namespace Josi.Native {
       }
     }
     protected override UIElement Build() {
-      var page = Page();
+      var page = Page(Ui.Heading("Server", model.IsAdministrator ? "Health of the server you are connected to, and the server on this PC." : "The server on this PC."));
       if (model.IsAdministrator) {
         var checks = diagnosis["checks"].List;
         var ordered = checks.Where(c => c["state"].Text == "fail").Concat(checks.Where(c => c["state"].Text == "warn")).Concat(checks.Where(c => c["state"].Text != "fail" && c["state"].Text != "warn"));
@@ -496,7 +494,7 @@ namespace Josi.Native {
         items.Add(Ui.Caption("Local service changes use the controls below."));
         Ui.Add(page, Ui.CardBox("Connected server health", items.ToArray()), 0);
       }
-      Ui.Add(page, new ServerControls(model, owner, false), 28);
+      Ui.Add(page, new ServerControls(model, owner, false), 10);
       return page;
     }
   }
@@ -537,7 +535,7 @@ namespace Josi.Native {
       var refresh = Ui.Pill("Refresh Automation", () => model.Run(() => model.LoadAutomation()));
       refresh.IsEnabled = !model.Busy;
       Ui.Add(page, refresh, 20);
-      Content = Ui.Scroll(page, double.PositiveInfinity, 30);
+      Content = Ui.Scroll(page, Ui.PageWidth, 30);
     }
     UIElement Authority() {
       var settings = model.AutomationSettings;

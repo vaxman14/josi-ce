@@ -94,6 +94,11 @@ namespace Josi.Native {
       return icon;
     }
 
+    /// Vertical rhythm of a section page: the gap between its top-level blocks.
+    public const double PageSpacing = 18;
+    public static readonly object PageSpacingTag = "page";
+    /// The content column every section shares: one left edge, one width.
+    public const double PageWidth = 1040;
     public static StackPanel Stack(double spacing, params UIElement[] children) {
       var panel = new StackPanel();
       foreach (var child in children) Add(panel, child, spacing);
@@ -121,6 +126,9 @@ namespace Josi.Native {
         else baseMargins.Add(element, element.Margin);
       }
       if (element != null && panel.Children.Count > 0) {
+        // A section page keeps one rhythm between its blocks whatever each
+        // call passed, so headings, cards and lists never touch.
+        if (PageSpacingTag.Equals(panel.Tag) && spacing < PageSpacing) spacing = PageSpacing;
         var margin = element.Margin;
         var horizontal = panel is StackPanel && ((StackPanel)panel).Orientation == Orientation.Horizontal;
         element.Margin = horizontal ? new Thickness(margin.Left + spacing, margin.Top, margin.Right, margin.Bottom)
@@ -174,10 +182,15 @@ namespace Josi.Native {
     }
 
     public static FrameworkElement Heading(string title, string subtitle) {
-      return Stack(5, T(title, 30, FontWeights.Bold), subtitle == null ? null : Secondary(subtitle));
+      return Stack(6, T(title, 30, FontWeights.Bold), subtitle == null ? null : Secondary(subtitle));
     }
+    /// Title with an action on the right, kept level with the title even when
+    /// the subtitle wraps to several lines.
     public static FrameworkElement HeadingWith(string title, string subtitle, UIElement right) {
-      return Spread(Heading(title, subtitle), right);
+      var grid = Spread(Heading(title, subtitle), right);
+      var element = right as FrameworkElement;
+      if (element != null) { element.VerticalAlignment = VerticalAlignment.Top; element.Margin = new Thickness(16, 4, 0, 0); }
+      return grid;
     }
 
     public static Button Pill(string text, Action click, bool prominent = false) {
@@ -304,7 +317,9 @@ namespace Josi.Native {
     }
     public static ScrollViewer Scroll(UIElement content, double maxWidth = double.PositiveInfinity, double padding = 30) {
       var element = content as FrameworkElement;
-      if (element != null) { element.Margin = new Thickness(padding); element.MaxWidth = maxWidth; element.HorizontalAlignment = double.IsInfinity(maxWidth) ? HorizontalAlignment.Stretch : HorizontalAlignment.Center; }
+      // One left edge for every section, so moving between tabs does not shift
+      // the content column; wide pages (calendar, chat) still stretch.
+      if (element != null) { element.Margin = new Thickness(padding + 6, padding, padding, padding); element.MaxWidth = maxWidth; element.HorizontalAlignment = double.IsInfinity(maxWidth) ? HorizontalAlignment.Stretch : HorizontalAlignment.Left; }
       return new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Focusable = false };
     }
 

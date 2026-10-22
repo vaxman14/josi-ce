@@ -106,13 +106,18 @@ namespace Josi.Native {
       var page = Page(Ui.HeadingWith("Audit Log", "Sign-ins, approvals, connections, settings changes and other recorded events.", Ui.Pill("Refresh", StartLoad)));
       Ui.Detach(filter);
       Ui.Add(page, Ui.Row(10, filter, Ui.Pill("Filter", StartLoad)), 0); filter.Width = 360;
-      if (events.Count == 0) Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "No events."), 0);
-      var list = Ui.Stack(8);
+      if (events.Count == 0) { Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "No events."), 0); return page; }
+      // One row per event with a divider between rows; the record's details
+      // stay small and quiet under the event name instead of a wall of JSON.
+      var list = Ui.Stack(0);
       foreach (var e in events) {
         var payload = e["payload"].IsNull ? "" : e["payload"].Json;
-        list.Children.Add(Ui.Stack(2, Ui.Spread(Ui.T(e["kind"].Text, 13.5, FontWeights.Medium), Ui.Caption(Wires.Date(e["created_at"].Text))),
+        if (list.Children.Count > 0) list.Children.Add(Ui.Divider());
+        var row = Ui.Stack(3, Ui.Spread(Ui.T(e["kind"].Text, 14, FontWeights.Medium), Ui.Caption(Wires.Date(e["created_at"].Text))),
           Ui.Caption(Wires.Capitalize(e["actor"].Text) + (e["actor_username"].Text.Length > 0 ? " · " + e["actor_username"].Text : "") + (e["subject_type"].Text.Length > 0 ? " · " + e["subject_type"].Text : "")),
-          payload.Length > 2 && payload != "{}" ? Ui.Copyable(payload, 12, Ui.Muted, true) : null));
+          payload.Length > 2 && payload != "{}" ? Ui.Copyable(payload, 11.5, Ui.Muted, true) : null);
+        row.Margin = new Thickness(0, 8, 0, 8);
+        list.Children.Add(row);
       }
       Ui.Add(page, Ui.CardBox(null, list), 0);
       return page;

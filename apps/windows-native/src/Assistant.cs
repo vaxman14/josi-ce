@@ -98,7 +98,11 @@ namespace Josi.Native {
           if (relaxing && !Dialogs.Confirm(owner, "Loosen “" + label + "”?", "This lets Josi act without asking first, for anyone who chooses that for themselves. It is recorded against your account." + (high ? " This is a high-impact action: Josi still asks before each one." : ""), "Loosen")) { Render(); return; }
           Perform(async (api, stamp) => await api.Request("/admin/assistant/approval-policy/" + Uri.EscapeDataString(key), "PUT", Wires.O("maxLevel", level, "confirmRelaxation", relaxing)));
         };
-        list.Children.Add(Ui.Stack(4, Ui.Row(8, Ui.T(label, 14, FontWeights.Medium), high ? ModelText.Pill("High impact", false) : null), Ui.Caption(cls["description"].Text), pick,
+        // Each class is its own block: a divider above, room between the
+        // caption and the choice, and the choice a fixed width so the column lines up.
+        pick.Width = 320; pick.HorizontalAlignment = HorizontalAlignment.Left;
+        list.Children.Add(Ui.Divider());
+        list.Children.Add(Ui.Stack(8, Ui.Row(10, Ui.T(label, 14.5, FontWeights.SemiBold), high ? ModelText.Pill("High impact", false) : null), Ui.Caption(cls["description"].Text), pick,
           high ? Ui.Caption("Josi asks before each individual action in this class whatever this is set to.") : null));
       }
       Ui.Add(page, Ui.CardBox("What is the loosest anyone may choose?", list), 0);
