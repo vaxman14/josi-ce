@@ -63,7 +63,12 @@ for (const file of files) {
 await writeFile(join(reports, 'source-inventory.json'), JSON.stringify(sourceInventory, null, 2) + '\n');
 console.log('Building an isolated source snapshot with locked dependencies.');
 await run(node, [npm, 'ci', '--ignore-scripts', '--no-audit', '--no-fund'], source, 'dependencies');
-await run(node, ['scripts/stamp-edition.mjs', '--edition', 'ce', '--build-id', `${revision.slice(0, 12)}.native.${version}`], source, 'stamp');
+// The publisher's licence verification key is stamped into the Windows build
+// exactly as the release image stamps it, so licensed modules (Parental
+// Controls) can be activated on a Windows installation too. It is a public
+// key; the signing key never leaves the publisher.
+const licenceKey = (await readFile(join(repo, 'publisher/licence-verification-key.b64'), 'utf8')).trim();
+await run(node, ['scripts/stamp-edition.mjs', '--edition', 'ce', '--build-id', `${revision.slice(0, 12)}.native.${version}`, '--licence-key', licenceKey], source, 'stamp');
 await run(node, ['node_modules/typescript/bin/tsc', '-b', '--force'], source, 'typescript');
 await run(node, ['node_modules/typescript/bin/tsc', '--noEmit', '-p', 'apps/web/tsconfig.json'], source, 'web-types');
 await run(node, ['../../scripts/sync-offline-help.mjs'], join(source, 'apps/web'), 'offline-help');
