@@ -10,6 +10,7 @@ using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace Josi.Native {
   /// Small builders over the shared theme so every screen matches the Mac app:
@@ -319,28 +320,66 @@ namespace Josi.Native {
       return new Border { Background = OrangeFaint, CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 5, 10, 5), Child = row, VerticalAlignment = VerticalAlignment.Center };
     }
 
-    /// The animated J thinking indicator; still when Windows animations are off.
-    public static FrameworkElement Thinking() {
-      var markElement = JosiMark(38);
-      var rotate = new RotateTransform(0, 19, 19);
+    /// The J mark, gently rocking and bobbing; still when Windows animations are off.
+    public static FrameworkElement AnimatedMark(double size) {
+      var markElement = JosiMark(size);
+      var rotate = new RotateTransform(0, size / 2, size / 2);
       var move = new TranslateTransform();
       var group = new TransformGroup(); group.Children.Add(rotate); group.Children.Add(move);
       markElement.RenderTransform = group;
       if (SystemParameters.ClientAreaAnimation) {
         var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+        var lift = Math.Max(2, size / 9.5);
         var spin = new DoubleAnimation(-9, 9, TimeSpan.FromSeconds(0.52)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = ease };
-        var bob = new DoubleAnimation(2, -4, TimeSpan.FromSeconds(0.52)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = ease };
+        var bob = new DoubleAnimation(lift / 2, -lift, TimeSpan.FromSeconds(0.52)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = ease };
         rotate.BeginAnimation(RotateTransform.AngleProperty, spin);
         move.BeginAnimation(TranslateTransform.YProperty, bob);
       }
-      var row = Row(14, markElement, T("Josi is thinking…", 14, null, Muted));
+      return markElement;
+    }
+    /// The animated J thinking indicator in the chat.
+    public static FrameworkElement Thinking() {
+      var row = Row(14, AnimatedMark(38), T("Josi is thinking…", 14, null, Muted));
       row.Margin = new Thickness(0, 12, 0, 12);
       System.Windows.Automation.AutomationProperties.SetName(row, "Josi is thinking");
       return row;
     }
+    /// A small animated J with a sentence, for any wait: "Checking…",
+    /// "Waiting for your approval…". With `elapsed`, a seconds counter shows
+    /// the wait is alive rather than stuck.
+    public static WorkingIndicator Working(string text, bool elapsed = false, double size = 22) {
+      return new WorkingIndicator(text, elapsed, size);
+    }
 
     public static bool Confirm(Window owner, string title, string detail, string action) {
       return Dialogs.Confirm(owner, title, detail, action);
+    }
+  }
+
+  public sealed class WorkingIndicator : UserControl {
+    readonly TextBlock label, clock;
+    readonly DispatcherTimer timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+    readonly DateTime started = DateTime.UtcNow;
+    public WorkingIndicator(string text, bool elapsed, double size) {
+      label = Ui.T(text, 13.5, null, Ui.Muted);
+      clock = Ui.T("", 12, null, Ui.Muted);
+      clock.VerticalAlignment = VerticalAlignment.Center;
+      Focusable = false;
+      Content = Ui.Row(10, Ui.AnimatedMark(size), label, elapsed ? clock : null);
+      System.Windows.Automation.AutomationProperties.SetName(this, text);
+      if (elapsed) {
+        timer.Tick += delegate { Tick(); };
+        Loaded += delegate { Tick(); timer.Start(); };
+        Unloaded += delegate { timer.Stop(); };
+      }
+    }
+    void Tick() {
+      var seconds = (int)(DateTime.UtcNow - started).TotalSeconds;
+      clock.Text = seconds < 60 ? seconds + " s" : (seconds / 60) + " min " + (seconds % 60) + " s";
+    }
+    public string Text {
+      get { return label.Text; }
+      set { label.Text = value; System.Windows.Automation.AutomationProperties.SetName(this, value); }
     }
   }
 

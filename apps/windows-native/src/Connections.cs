@@ -108,7 +108,9 @@ namespace Josi.Native {
         if (OAuth.Contains(provider)) actions.Children.Add(Ui.Pill("Add Another " + name + " Account", () => StartOAuth(provider, null)));
         items.Add(actions);
       } else if (!view["available"].Flag && provider != "nextcloud") {
-        items.Add(Ui.Caption("Not set up on this installation. An administrator has to register " + name + " application credentials under Connectors before anyone can connect an account."));
+        items.Add(model.IsAdministrator
+          ? Ui.Caption("Not set up yet. Register " + name + "'s application credentials under Connectors (in Administration), then anyone here can connect their account.")
+          : Ui.Caption("Not set up on this installation. An administrator has to register " + name + " application credentials under Connectors before anyone can connect an account."));
       } else if (provider == "nextcloud") {
         items.Add(Ui.Caption("Connecting starts read-only. In your Nextcloud account, go to Settings → Security → Devices & sessions and create an app password for Josi. Do not use your regular Nextcloud password."));
         items.Add(F("Server address", nextcloudServer)); items.Add(F("Username", nextcloudUser)); items.Add(F("App password", nextcloudPassword));
@@ -187,7 +189,9 @@ namespace Josi.Native {
           Ui.Pill("Check It Still Works", () => Perform(async (api, stamp) => await api.Request("/connections/developer/" + Uri.EscapeDataString(service) + "/check", "POST", Wires.O()))),
           Ui.Pill("Disconnect…", () => { if (Dialogs.Confirm(owner, "Disconnect " + row["label"].Text + "?", "The saved token is removed.", "Disconnect")) Perform(async (api, stamp) => await api.Request("/connections/developer/" + Uri.EscapeDataString(service), "DELETE", null)); })));
       } else if (!row["allowed"].Flag) {
-        items.Add(Ui.Caption("An administrator has not made this available. " + (row["note"].Text.Length > 0 ? row["note"].Text : "Ask your administrator if you need it.")));
+        items.Add(Ui.Caption(model.IsAdministrator
+          ? "Switched off for members. Turn it on under Connectors (in Administration) → Member permissions." + (row["note"].Text.Length > 0 ? " " + row["note"].Text : "")
+          : "An administrator has not made this available. " + (row["note"].Text.Length > 0 ? row["note"].Text : "Ask your administrator if you need it.")));
       } else {
         if (row["usernameLabel"].Text.Length > 0) items.Add(F(row["usernameLabel"].Text, Detail(service, "username")));
         if (row["emailLabel"].Text.Length > 0) items.Add(F(row["emailLabel"].Text, Detail(service, "email")));

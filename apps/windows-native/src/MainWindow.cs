@@ -145,11 +145,14 @@ namespace Josi.Native {
         System.Windows.Automation.AutomationProperties.SetLiveSetting(errorBar, System.Windows.Automation.AutomationLiveSetting.Assertive);
       } else errorBar.Visibility = Visibility.Collapsed;
       if (Model.Busy) {
-        var bar = new ProgressBar { IsIndeterminate = true, Width = 90, Height = 4 };
-        busyBar.Child = Ui.Row(12, bar, Ui.T(Model.Activity.Length == 0 ? "Working…" : Model.Activity, 13));
+        // One live indicator for every wait: the J, the sentence, and a clock
+        // so a long request reads as working rather than stuck.
+        var working = busyBar.Child as WorkingIndicator;
+        if (working == null) { working = Ui.Working(Model.Activity.Length == 0 ? "Working…" : Model.Activity, true, 20); busyBar.Child = working; }
+        else working.Text = Model.Activity.Length == 0 ? "Working…" : Model.Activity;
         busyBar.Padding = new Thickness(16, 9, 16, 9); busyBar.Background = Ui.Sidebar;
         busyBar.Visibility = Visibility.Visible;
-      } else busyBar.Visibility = Visibility.Collapsed;
+      } else { busyBar.Visibility = Visibility.Collapsed; busyBar.Child = null; }
     }
 
     protected override void OnClosing(CancelEventArgs e) {

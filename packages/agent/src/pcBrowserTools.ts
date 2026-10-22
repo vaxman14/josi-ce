@@ -17,7 +17,7 @@ export const PC_BROWSER_TOOLS: ToolSpec[] = [
     description: `Open an exact HTTPS address in the attached tab and read the page that loads. Needs "Browser viewing" permission for the destination site, or the owner's approval. Does not submit anything. ${UNTRUSTED}`,
     parameters: shape({ url: { type: 'string', maxLength: 2048 } }) }, actionClass: null },
   { def: { name: 'browser_click',
-    description: 'Click one element from the latest read of the attached tab. A click can submit, send, delete or buy, so the owner approves every click in Josi. Read the page again afterwards; the receipt alone does not prove what happened.',
+    description: 'Click one element from the latest read of the attached tab. A click can submit, send, delete or buy, so the owner approves each click in Josi unless they turned on Full control. Read the page again afterwards; the receipt alone does not prove what happened.',
     parameters: shape({ observation_id: id, element_id: id }) }, actionClass: 'automation_control' },
   { def: { name: 'browser_fill',
     description: 'Type text into one field from the latest read of the attached tab, without submitting. Needs "Browser form filling" permission for the site, or the owner\'s approval. Never enter passwords, payment details or identity numbers.',

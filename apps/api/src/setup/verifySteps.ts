@@ -17,6 +17,11 @@ import {
 import { classifySmtpError, loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
 import { ENDPOINTS, loadClient, NoClientError } from '@josi-ce/connectors';
 import { VaultLockedError, type Db, type MasterKey } from '@josi-ce/core';
+import { trackProbe } from '../http/probeProgress.js';
+
+/** The first-run model check is tracked under this key; the setup router's
+ * progress route reads it. */
+export const SETUP_PROBE_KEY = 'setup:primary';
 
 export interface VerifyOutcome {
   status: 'passed' | 'failed';
@@ -49,7 +54,13 @@ export async function verifyLlm(
     return failed(category, err instanceof Error ? err.message : 'The model provider could not be prepared.');
   }
 
-  const probe = await probeProvider(meteredProvider(opts.db, stored, 'primary', provider, { purpose: 'probe' }));
+  const track = trackProbe(SETUP_PROBE_KEY);
+  let probe: ProbeResult;
+  try {
+    probe = await probeProvider(meteredProvider(opts.db, stored, 'primary', provider, { purpose: 'probe' }), { onProgress: track.onProgress });
+  } finally {
+    track.done();
+  }
   const who = stored.model || "your plan's model";
   if (!probe.capabilities.chat) {
     const category = probe.fatalCategory ?? 'provider_outage';

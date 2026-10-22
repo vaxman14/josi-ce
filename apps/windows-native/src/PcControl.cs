@@ -44,16 +44,25 @@ namespace Josi.Native {
     protected override UIElement Build() {
       var page = Page(Ui.HeadingWith("PC Control", null, Ui.Pill("Refresh", StartLoad)));
       if (state.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading PC permissions…" : "PC permissions have not loaded."), 0); return page; }
-      var enabled = state["enabled"].Flag;
+      var enabled = state["enabled"].Flag; var full = state["fullControl"].Flag;
       var master = Ui.Toggle("Allow Josi to control this PC", enabled);
       master.Click += delegate { var on = master.IsChecked == true; Perform(async (api, stamp) => await api.Request("/admin/pc-control/enabled", "PUT", Wires.O("enabled", on))); };
       Ui.Add(page, Ui.CardBox(null, Ui.Secondary(state["availability"].Text), master,
         Ui.Caption("Off by default. Turning this on grants no browser, folder or application access by itself. These permissions apply only to this PC and your account."),
         Ui.Danger("Stop Control and Revoke Temporary Access", () => { if (Dialogs.Confirm(owner, "Stop PC control now?", "Disables control, cancels active actions and revokes pending approvals and task or temporary grants. Completed changes cannot be undone. Permanent scope choices stay saved.", "Stop")) Perform(async (api, stamp) => await api.Request("/admin/pc-control/stop", "POST", Wires.O())); }),
         state["uac"].Text.Length > 0 ? Ui.Caption(state["uac"].Text) : null), 0);
-      Ui.Add(page, BrowserCard(enabled), 0);
+      Ui.Add(page, FullControlCard(enabled, full), 0);
+      Ui.Add(page, BrowserCard(enabled, full), 0);
       var spec = state["catalog"].List.FirstOrDefault(c => c["action"].Text == action) ?? Wire.Null; var kind = spec["kind"].Text;
       foreach (var c in new Control[] { actionPick, target, application, profile, expires, taskPick }) Ui.Detach(c);
+      // A browser scope is almost always the attached tab: fill it in instead of
+      // showing the values as grey hints that the form then rejects as empty.
+      var attached = BrowserBridge.Current;
+      if (kind == "browser" && attached.Attached) {
+        if (target.Text.Trim().Length == 0) target.Text = attached.AttachedOrigin;
+        if (application.Text.Trim().Length == 0) application.Text = attached.AttachedApplication;
+        if (profile.Text.Trim().Length == 0) profile.Text = attached.AttachedProfile;
+      }
       var form = new List<UIElement> { Ui.Caption("Each browser executable, profile and origin needs its own permission. Folder choices apply to that exact folder; application choices to that exact executable. No wildcard or inherited grants."),
         Ui.Field("Action", actionPick) };
       if (!spec.IsNull) form.Add(Ui.Caption(spec["access"].Text + (spec["highRisk"].Flag ? " · Each exact action needs separate approval in every mode." : "")));
@@ -102,9 +111,32 @@ namespace Josi.Native {
       Ui.Add(page, Note(), 0);
       return page;
     }
+    /// One switch instead of a permission per site: everyday actions in allowed
+    /// browsers, folders and applications stop asking. The server lists what
+    /// it covers and what still asks, so this card never promises more.
+    UIElement FullControlCard(bool enabled, bool full) {
+      var toggle = Ui.Toggle("Full control: let Josi work without asking before each everyday action", full);
+      toggle.IsEnabled = enabled;
+      toggle.Click += delegate {
+        var on = toggle.IsChecked == true;
+        if (!on) { Perform(async (api, stamp) => await api.Request("/admin/pc-control/full-control", "PUT", Wires.O("enabled", false))); return; }
+        var password = Dialogs.AskPassword(owner, "Turn on full control?",
+          "Josi will read, type and click on any site in your allowed browsers, and work in folders and applications, without asking first. "
+          + "Purchases and payments, deleting, passwords and payment details, credential access, installs, security changes and administrator prompts still ask. "
+          + "Confirm your account password to turn this on.", "Turn On");
+        if (password == null) { toggle.IsChecked = false; return; }
+        Perform(async (api, stamp) => await api.Request("/admin/pc-control/full-control", "PUT", Wires.O("enabled", true, "password", password)));
+      };
+      var covers = string.Join(", ", state["fullControlCovers"].List.Select(c => c.Text.ToLowerInvariant()));
+      var asks = string.Join(", ", state["fullControlAsks"].List.Select(c => c.Text.ToLowerInvariant()));
+      return Ui.CardBox("Full control", toggle,
+        full ? Ui.T("On. Josi acts without asking for: " + covers + ".", 13.5, null, Ui.Green) : Ui.Caption("Off. Josi asks before each action unless an exact scope below allows it."),
+        Ui.Caption("Always asks, even with full control: " + asks + ". A scope set to Never stays blocked. Windows UAC prompts are never answered by Josi."),
+        enabled ? null : Ui.Caption("Turn on \"Allow Josi to control this PC\" first."));
+    }
     /// The browser extension: browsers you allowed, the attached tab, and a
     /// shortcut to let Josi read the attached site without asking each time.
-    UIElement BrowserCard(bool enabled) {
+    UIElement BrowserCard(bool enabled, bool full) {
       var bridge = BrowserBridge.Current; var items = new List<UIElement>();
       var asked = bridge.Discovered;
       if (asked != null) items.Add(Ui.Stack(6, Ui.T(asked.Browser + " asked to connect to Josi", 14, FontWeights.Medium),
@@ -129,7 +161,9 @@ namespace Josi.Native {
         }
         items.Add(list);
       }
-      items.Add(Ui.Caption("Reading a page asks first unless you allowed that site. Every click asks, with your password. Josi never types passwords or payment details."));
+      items.Add(Ui.Caption(full
+        ? "Full control is on: Josi reads, types and clicks in this browser without asking. Purchases, deleting, passwords and payment details still ask."
+        : "Reading a page asks first unless you allowed that site. Every click asks, with your password. Josi never types passwords or payment details."));
       return Ui.CardBox("Browser", items.ToArray());
     }
     void Save() {

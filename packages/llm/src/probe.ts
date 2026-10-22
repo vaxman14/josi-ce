@@ -48,9 +48,20 @@ const PROBE_TOOL = {
   },
 };
 
+/** Where the probe is right now: the question being asked and what it has
+ * recorded so far. Reported, not inferred, so a client can show which check
+ * is running instead of a blank wait. */
+export interface ProbeProgress {
+  current: ProbeStep['id'] | null;
+  steps: ProbeStep[];
+}
+
 export interface ProbeOptions {
   /** Injected in tests. */
   now?: () => Date;
+  /** Called before each question starts and once more when the probe ends
+   * (`current` null). A listener that throws never fails the probe. */
+  onProgress?: (progress: ProbeProgress) => void;
 }
 
 export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = {}): Promise<ProbeResult> {
@@ -65,8 +76,12 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
   };
 
   const ask = async (request: ChatRequest) => provider.chat(request);
+  const report = (current: ProbeStep['id'] | null) => {
+    try { opts.onProgress?.({ current, steps: steps.map((step) => ({ ...step })) }); } catch { /* a listener never fails the probe */ }
+  };
 
   // ---- 1. chat -----------------------------------------------------------
+  report('chat');
   // Everything else is meaningless if the model cannot answer at all, so a
   // failure here is fatal and the remaining probes are skipped rather than run
   // and reported as separate failures.
@@ -86,11 +101,13 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
       detail: passed ? 'The model answered.' : 'The model returned an empty reply.',
     });
     if (!passed) {
+      report(null);
       return { capabilities, steps, probedAt: now().toISOString() };
     }
   } catch (err) {
     const message = err instanceof LlmError ? err.message : 'the model could not be reached';
     steps.push({ id: 'chat', label: 'Basic reply', passed: false, detail: message });
+    report(null);
     return {
       capabilities, steps, fatal: message,
       fatalCategory: err instanceof LlmError ? err.category : 'unknown',
@@ -102,6 +119,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
   // ---- 2. structured output ----------------------------------------------
   // Judged by parsing what came back, not by whether the request was accepted.
   // Plenty of endpoints accept `response_format` and then return prose.
+  report('structuredOutput');
   try {
     const res = await ask({
       messages: [{
@@ -141,6 +159,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
   }
 
   // ---- 3. tool calling ----------------------------------------------------
+  report('toolCalling');
   try {
     const res = await ask({
       // Imperative on purpose. "Record the number 7" alone reads, to some
@@ -190,6 +209,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
   // HTTP adapter) and an honest, quiet failure for the ones that do not yet
   // (the OpenAI-compatible adapter, and both CLI subscription harnesses, which
   // flatten every message to text before it ever reaches the model).
+  report('vision');
   try {
     const res = await ask({
       messages: [{
@@ -201,6 +221,10 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
       temperature: 0,
     });
     const passed = /\bred\b/i.test(res.text);
+    // Development aid: the stored step says only pass/fail. With this switch
+    // the server log shows the first words of the answer so a failed check
+    // can be told apart ("I cannot see images" vs. a wrong colour).
+    if (process.env.JOSI_PROBE_DEBUG) console.log(`probe vision answer (${res.latencyMs} ms): ${JSON.stringify(res.text.slice(0, 200))}`);
     capabilities.vision = passed;
     steps.push({
       id: 'vision',
@@ -213,6 +237,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
           + 'pictures with it — it will say plainly that it cannot see them.',
     });
   } catch (err) {
+    if (process.env.JOSI_PROBE_DEBUG) console.log(`probe vision error: ${err instanceof Error ? err.message : String(err)}`);
     steps.push({
       id: 'vision',
       label: 'Image understanding',
@@ -226,6 +251,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
   // money and take minutes. This asks whether a working minimum survives the
   // round trip, which is the question that matters for "will Josi function".
   const MINIMUM_USEFUL_TOKENS = 8000;
+  report('context');
   try {
     // ~4 characters per token is rough but adequate; the check is "does a
     // prompt of roughly this size come back at all", not an exact measurement.
@@ -254,5 +280,6 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
     steps.push({ id: 'context', label: 'Usable context', passed: false, detail: message });
   }
 
+  report(null);
   return { capabilities, steps, probedAt: now().toISOString() };
 }

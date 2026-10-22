@@ -39,6 +39,17 @@ export function pcControlRoutes(ctx:Ctx):Router {
     if(service)await service.stop(req.user!.id);else await disablePcControl(ctx.db,req.user!.id,PC);
     return res.json({ok:true,enabled:false,note:'Control disabled and temporary/task access revoked. Already completed changes cannot be undone.'});
   }));
+  // Turning full control ON is a standing grant for everyday actions, so it
+  // takes the account password once; turning it off never does.
+  r.put('/full-control',handle(async(req,res)=>{
+    if(typeof req.body?.enabled!=='boolean')throw new PcControlError(400,'Choose on or off.');
+    if(req.body.enabled){
+      const [u]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
+      if(!await verifyPassword(u?.password_hash??null,typeof req.body?.password==='string'?req.body.password:''))throw new PcControlError(401,'Confirm your account password to turn on full control.');
+    }
+    await control().setFullControl(req.user!.id,req.body.enabled);
+    return res.json({ok:true,fullControl:req.body.enabled});
+  }));
   r.put('/policies',handle(async(req,res)=>res.json(await control().savePolicy(req.user!.id,req.body as PcPolicy))));
   r.delete('/policies/:id',handle(async(req,res)=>{await control().revoke(req.user!.id,param(req,'id'));return res.json({ok:true});}));
   r.post('/requests/:id/decision',handle(async(req,res)=>{

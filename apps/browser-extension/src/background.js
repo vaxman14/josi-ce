@@ -13,6 +13,7 @@ const seen = new Set();
 const windowsHost = /^Win/.test(globalThis.navigator?.platform ?? '');
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const bounded = value => new TextEncoder().encode(JSON.stringify(value)).length <= 192 * 1024;
+const PHOTO_BASE64_LIMIT = 98304;
 function webUrl(value) {
   try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url : null; }
   catch { return null; }
@@ -196,21 +197,37 @@ async function screenshot(tab, shown, epoch, command) {
   const left = Math.max(0, Math.round(a.x * ratio)), top = Math.max(0, Math.round(a.y * ratio));
   const width = Math.min(bitmap.width - left, Math.round(a.width * ratio)), height = Math.min(bitmap.height - top, Math.round(a.height * ratio));
   if (width < 8 || height < 8) throw new Error('photo_not_visible');
-  const scale = Math.min(1, 768 / Math.max(width, height));
-  const canvas = new OffscreenCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
-  const context = canvas.getContext('2d');
-  context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(bitmap, left, top, width, height, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  for (const quality of [0.8, 0.6, 0.4, 0.25]) {
-    const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg', quality })).arrayBuffer());
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    const base64 = btoa(binary);
-    if (base64.length <= 32768) return { mediaType: 'image/jpeg', base64, width: canvas.width, height: canvas.height,
-      alt: shown.alt, untrustedContent: true, fromScreenshot: true };
+  for (const longest of [768, 512]) {
+    const scale = Math.min(1, longest / Math.max(width, height));
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
+    const context = canvas.getContext('2d');
+    context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, left, top, width, height, 0, 0, canvas.width, canvas.height);
+    for (const quality of [0.8, 0.6, 0.4, 0.25]) {
+      const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg', quality })).arrayBuffer());
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      const base64 = btoa(binary);
+      if (base64.length <= PHOTO_BASE64_LIMIT) {
+        bitmap.close();
+        return { mediaType: 'image/jpeg', base64, width: canvas.width, height: canvas.height,
+          alt: shown.alt, untrustedContent: true, fromScreenshot: true };
+      }
+    }
   }
+  bitmap.close();
   throw new Error('photo_budget');
+}
+// Failure codes are this extension's own constants (photo_budget,
+// tab_not_showing, ...), never page content. Chrome's own error text is
+// classified, not forwarded.
+function failureCode(error) {
+  const message = error instanceof Error ? error.message : '';
+  if (/^[a-z][a-z0-9_]{2,40}$/.test(message)) return message;
+  if (/activeTab|<all_urls>|permission/i.test(message)) return 'screenshot_permission';
+  if (/Receiving end does not exist|message port closed|Could not establish connection/i.test(message)) return 'page_agent_missing';
+  if (/No tab with id|cannot be scripted|chrome:\/\//i.test(message)) return 'tab_unavailable';
+  return 'command_not_verified';
 }
 async function poll() {
   if (pending || !live()) return;
@@ -233,7 +250,7 @@ async function poll() {
     if (reply.command) {
       let result;
       try { result = { outcome: 'observed_or_issued', result: await execute(reply.command, epoch) }; }
-      catch { result = { outcome: 'uncertain_or_denied', code: 'command_not_verified', verificationRequired: true }; }
+      catch (error) { result = { outcome: 'uncertain_or_denied', code: failureCode(error), verificationRequired: true }; }
       // The host must reconcile a lost response; this extension never retries
       // a command or converts a click into proof of business completion.
       await native('browser.receipt', { commandId: reply.command.id, ...result }, sessionId);

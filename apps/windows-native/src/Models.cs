@@ -19,6 +19,8 @@ namespace Josi.Native {
     public string Discover { get { return Setup ? "/setup/models" : "/admin/llm/models"; } }
     public string Codex { get { return Setup ? "/setup/subscription" : "/admin/llm/subscription"; } }
     public string Claude { get { return Codex + "/claude"; } }
+    /// Where the running capability check reports which question it is on.
+    public string ProbeProgress(string role) { return Setup ? "/setup/models/probe-progress" : "/admin/llm/providers/" + role + "/probe/progress"; }
     public async Task<Wire> Status(JosiApi api, string provider) {
       if (Setup) {
         var all = await api.Request("/setup/subscription");
@@ -36,8 +38,8 @@ namespace Josi.Native {
       return new Border { Background = Ui.Raised, CornerRadius = new CornerRadius(11), Padding = new Thickness(9, 3, 9, 3), Margin = new Thickness(0, 0, 6, 6),
         Child = Ui.T(text, 12, FontWeights.Medium, brush) };
     }
-    public static UIElement Pill(string text, bool good) {
-      var color = good ? Ui.Green : Ui.Orange;
+    public static UIElement Pill(string text, bool good) { return Pill(text, good ? Ui.Green : Ui.Orange); }
+    public static UIElement Pill(string text, Brush color) {
       return new Border { Background = Ui.OrangeFaint, CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 5, 10, 5), VerticalAlignment = VerticalAlignment.Center,
         Child = Ui.Row(6, new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = color }, Ui.T(text, 12, FontWeights.SemiBold, color)) };
     }
@@ -106,29 +108,34 @@ namespace Josi.Native {
     string Base { get { return Claude ? endpoints.Claude : endpoints.Codex; } }
     object Expected { get { var c = status["credential"]; return c.IsNull ? null : Wires.O("itemId", c["itemId"], "revision", c["revision"]); } }
 
+    bool refreshing;
     public async Task Refresh() {
       var api = model.Api; if (api == null) return;
+      refreshing = true; error = ""; Render();
       try {
         status = await endpoints.Status(api, provider);
         if (model.Api != api) return;
         var handler = StatusChanged; if (handler != null) handler(status);
       } catch (JosiException e) { error = e.Message; }
+      finally { refreshing = false; }
       Render();
     }
 
     void Render() {
       var stack = new StackPanel();
       var name = ModelText.PlanName(provider);
-      if (status.IsNull) Ui.Add(stack, Ui.Caption("Checking your " + name + " connection…"), 0);
+      if (status.IsNull) Ui.Add(stack, Ui.Working("Checking your " + name + " connection…", true), 0);
       else {
-        Ui.Add(stack, Ui.Row(10, ModelText.Pill(SignedIn ? name + " connected" : "Not connected", SignedIn),
+        Ui.Add(stack, Ui.Row(10, refreshing ? ModelText.Pill("Checking…", Ui.Muted) : ModelText.Pill(SignedIn ? name + " connected" : "Not connected", SignedIn),
           status["busy"].Flag ? ModelText.Pill("In use", false) : null), 0);
         if (status["detail"].Text.Length > 0) Ui.Add(stack, Ui.Caption(status["detail"].Text), 8);
-        if (!status["installed"].Flag)
+        if (!status["installed"].Flag) {
           Ui.Add(stack, Ui.T("The server does not have the pinned " + (Claude ? "Claude Code" : "Codex") + " program it needs for this subscription.", 13.5, null, Ui.Orange), 8);
+          Ui.Add(stack, Ui.Pill("Check Again", () => { var _ = Refresh(); }), 8);
+        }
       }
       if (Claude) RenderClaude(stack); else RenderChatGpt(stack);
-      if (stage.Length > 0) Ui.Add(stack, Ui.Row(8, new ProgressBar { IsIndeterminate = true, Width = 60, Height = 4 }, Ui.Caption(stage)), 10);
+      if (stage.Length > 0) Ui.Add(stack, Ui.Working(stage, true), 10);
       if (error.Length > 0) Ui.Add(stack, Ui.Copyable(error, 13.5, Ui.Orange), 10);
       if (!endpoints.Setup && SignedIn && stage.Length == 0 && claude == null && !LoginActive) {
         var signOut = Ui.Danger("Sign Out of " + name + "…", () => {
@@ -155,6 +162,12 @@ namespace Josi.Native {
     }
     void RenderChatGpt(StackPanel stack) {
       var challenge = login["challenge"];
+      if (login["state"].Text == "verifying") {
+        // The code was accepted on OpenAI's page; the server is finishing the
+        // sign-in and saving it in the Vault. The code is no longer useful.
+        Ui.Add(stack, Ui.Working("You approved it on OpenAI's page. Finishing the sign-in and saving it in the server's Vault…", true), 12);
+        return;
+      }
       if (LoginActive && challenge["userCode"].Text.Length > 0) {
         Uri page;
         Uri.TryCreate(challenge["verificationUrl"].Text, UriKind.Absolute, out page);
@@ -166,7 +179,8 @@ namespace Josi.Native {
           Ui.T("2. Enter this one-time code there:", 14),
           Ui.Row(12, code, Ui.PillIcon(Glyph.Copy, "Copy", () => { try { Clipboard.SetText(challenge["userCode"].Text); } catch (Exception) { } })),
           valid ? (UIElement)Ui.Row(10, Ui.Pill("Open OpenAI's Page Again", () => ModelText.Open(page)), Ui.Caption(page.Host)) : Ui.T("The sign-in page address was not from OpenAI; it was not opened.", 13, null, Ui.Orange),
-          login["expiresAt"].Text.Length > 0 ? Ui.Caption("Expires " + Wires.Date(login["expiresAt"].Text) + ". Josi finishes automatically after you approve.") : null) };
+          login["expiresAt"].Text.Length > 0 ? Ui.Caption("Expires " + Wires.Date(login["expiresAt"].Text) + ". Josi finishes automatically after you approve.") : null,
+          Ui.Working("Waiting for your approval on OpenAI's page…", true)) };
         Ui.Add(stack, card, 12);
         Ui.Add(stack, Ui.Pill("Cancel Sign-In", () => Act(Base + "/login/cancel", Wires.O(), "Sign-in cancelled.")), 10);
         return;
@@ -350,7 +364,15 @@ namespace Josi.Native {
     List<Wire> discovered = new List<Wire>();
     SubscriptionSignIn signIn;
     Wire checkResult = Wire.Null;
+    // The check in flight: what the server has reported so far, polled once
+    // a second. `sawRunning` separates this run from a stale earlier report.
+    bool checking, sawRunning;
+    Wire progress = Wire.Null;
+    readonly DispatcherTimer progressPoll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
     static readonly string[] StepNames = { "Choose", "Connect", "Model", "Review and check" };
+    static readonly string[][] CheckSteps = {
+      new[] { "chat", "Basic reply" }, new[] { "structuredOutput", "Structured output" }, new[] { "toolCalling", "Tool calling" },
+      new[] { "vision", "Image understanding" }, new[] { "context", "Usable context" } };
 
     /// save: performs the save (and capability check where the caller does);
     /// returns true when the panel should show its finished state.
@@ -374,8 +396,21 @@ namespace Josi.Native {
       // The footer buttons wait while the app is busy; a sign-in that finishes
       // during a request must enable them once that request ends.
       Loaded += delegate { model.Changed += FollowBusy; FollowBusy(); };
-      Unloaded += delegate { model.Changed -= FollowBusy; };
+      Unloaded += delegate { model.Changed -= FollowBusy; progressPoll.Stop(); };
+      progressPoll.Tick += async delegate { await PollProgress(); };
       Render();
+    }
+    async Task PollProgress() {
+      var api = model.Api;
+      if (api == null || !checking) { progressPoll.Stop(); return; }
+      try {
+        var next = await api.Request(endpoints.ProbeProgress(role));
+        if (!checking) return;
+        if (next["running"].Flag) sawRunning = true;
+        // An older report from before this run is not this run's progress.
+        if (sawRunning) progress = next;
+        if (step == 3) RenderStep();
+      } catch (JosiException) { progressPoll.Stop(); /* an older server: the generic indicator stays */ }
     }
     bool footerBusy;
     void FollowBusy() {
@@ -433,7 +468,7 @@ namespace Josi.Native {
         var i = index; var current = i == step; var reachable = i < step || (i == step);
         var label = Ui.T((i + 1) + "  " + StepNames[i], 13.5, current ? FontWeights.SemiBold : FontWeights.Normal, current ? Ui.Orange : i < step ? Ui.Text : Ui.Muted);
         var button = new Button { Content = label, Style = (Style)Ui.Resources["Plain"], Padding = new Thickness(10, 6, 10, 6), Margin = new Thickness(0, 0, 6, 0),
-          Background = current ? Ui.OrangeSoft : Brushes.Transparent, IsEnabled = reachable && checkResult.IsNull };
+          Background = current ? Ui.OrangeSoft : Brushes.Transparent, IsEnabled = reachable && checkResult.IsNull && !checking };
         button.Click += delegate { if (i < step) { step = i; Render(); } };
         rail.Children.Add(button);
       }
@@ -443,7 +478,7 @@ namespace Josi.Native {
 
     void UpdateFooter() {
       footer.Children.Clear();
-      if (!checkResult.IsNull) return;
+      if (!checkResult.IsNull || checking) return;
       if (step > 0) footer.Children.Add(Spaced(Ui.Pill("Back", () => { step--; Render(); })));
       // Choosing a provider already moves on; Continue only returns to a choice made before.
       if (step == 0 && kind.Length == 0) return;
@@ -583,7 +618,7 @@ namespace Josi.Native {
         var planRow = Row("Use my plan's default (recommended)", "The subscription picks its current default model.", planDefault, () => { planDefault = true; chosenModel = ""; RenderStep(); UpdateFooter(); });
         Ui.Add(stack, planRow, 14);
       }
-      if (discovering) { Ui.Add(stack, Ui.Row(8, new ProgressBar { IsIndeterminate = true, Width = 60, Height = 4 }, Ui.Caption("Asking the provider which models you can use…")), 14); return stack; }
+      if (discovering) { Ui.Add(stack, Ui.Working("Asking the provider which models you can use…", true), 14); return stack; }
       if (discoveryMessage.Length > 0) Ui.Add(stack, Ui.Caption(discoveryMessage), 10);
       if (discovered.Count > 0) {
         Ui.Detach(search);
@@ -619,6 +654,7 @@ namespace Josi.Native {
     UIElement ReviewStep() {
       var entry = Entry; var stack = new StackPanel();
       if (!checkResult.IsNull) return Finished();
+      if (checking) return Checking();
       Ui.Add(stack, Ui.Title2("Review and check"), 0);
       var modelName = IsSubscription && planDefault ? "Plan default" : chosenModel;
       Ui.Add(stack, Ui.CardBox(null,
@@ -658,12 +694,43 @@ namespace Josi.Native {
         endpoints.Setup ? null : Ui.Pill("Done", () => { var window = Window.GetWindow(this) as ModelSetupWindow; if (window != null) window.Close(); }, passed)), 18);
       return stack;
     }
+    /// Shown while the server saves the settings and runs the five checks:
+    /// which question it is on, what passed so far, and a live clock.
+    UIElement Checking() {
+      var stack = new StackPanel();
+      Ui.Add(stack, Ui.Title2("Checking the model"), 0);
+      var current = progress["current"].Text; var done = progress["steps"].List;
+      var phase = !sawRunning ? "Saving your settings and starting the check…"
+        : current.Length == 0 ? "Finishing up…"
+        : "Checking " + (CheckSteps.FirstOrDefault(s => s[0] == current) ?? new[] { current, current })[1].ToLowerInvariant() + "…";
+      Ui.Add(stack, Ui.Working(phase, true, 30), 14);
+      var list = new StackPanel();
+      foreach (var known in CheckSteps) {
+        var result = done.FirstOrDefault(s => s["id"].Text == known[0]);
+        UIElement icon; Brush color; string note;
+        if (result != null) { var passed = result["passed"].Flag; icon = Ui.Icon(passed ? Glyph.Check : Glyph.Warning, 13, passed ? Ui.Green : Ui.Orange); color = Ui.Text; note = result["detail"].Text; }
+        else if (sawRunning && known[0] == current) { icon = Ui.Icon(Glyph.Circle, 13, Ui.Orange); color = Ui.Text; note = "Asking the model now…"; }
+        else { icon = Ui.Icon(Glyph.Circle, 13, Ui.Muted); color = Ui.Muted; note = ""; }
+        Ui.Add(list, Ui.Row(8, icon, Ui.T(known[1], 13.5, FontWeights.Medium, color)), 6);
+        if (note.Length > 0) { var detail = Ui.Caption(note); detail.Margin = new Thickness(21, 2, 0, 0); Ui.Add(list, detail, 0); }
+      }
+      Ui.Add(stack, list, 4);
+      Ui.Add(stack, Ui.Caption("Five small requests go to the model, one after another. This usually takes 20 seconds to a minute; a slow provider can take longer. Nothing is stuck while the clock is moving."), 14);
+      return stack;
+    }
     void SaveAndCheck() {
       var body = Body();
       foreach (var control in fields.Values) { var secret = control as PasswordBox; if (secret != null) secret.Clear(); }
+      checking = true; sawRunning = false; progress = Wire.Null;
+      Render();
+      progressPoll.Start();
       model.Run(async () => {
-        var finished = await save(body);
-        if (!finished) return;
+        try { await save(body); }
+        finally {
+          progressPoll.Stop(); checking = false;
+          // ShowResult already drew the result; otherwise return to the review.
+          if (checkResult.IsNull) Render();
+        }
       });
     }
     /// Admin path result: shows the capability check in place.

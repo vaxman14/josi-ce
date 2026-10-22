@@ -45,7 +45,8 @@ import { UserError, createUser, verifyPassword } from '@josi-ce/auth';
 import { asyncRoute, param } from '../http/async.js';
 import { blockingFailures, runHostChecks } from './hostChecks.js';
 import { STEP_DESCRIPTORS, SETUP_STEPS, canSubmit, nextStep, type SetupStep } from './steps.js';
-import { assertModelIsOffered, verifyLlm, verifyOAuthClient, verifySmtp, type VerifyOutcome } from './verifySteps.js';
+import { assertModelIsOffered, verifyLlm, verifyOAuthClient, verifySmtp, SETUP_PROBE_KEY, type VerifyOutcome } from './verifySteps.js';
+import { probeProgress } from '../http/probeProgress.js';
 
 export interface SetupRoutesCtx {
   db: Db;
@@ -227,6 +228,13 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
       const checks = await runHostChecks(db, { masterKey: ctx.masterKey });
       return res.json({ checks, blocking: blockingFailures(checks).map((c) => c.id) });
     }),
+  );
+
+  /** Where the model check started by /verify/llm is right now, so the app can
+   * show which of the five questions is being asked. */
+  r.get(
+    '/models/probe-progress',
+    asyncRoute(async (_req, res) => res.json(probeProgress(SETUP_PROBE_KEY))),
   );
 
   /** One endpoint per step. The step name is in the PATH, never in the body,

@@ -57,6 +57,22 @@ namespace Josi.Native {
       sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), Ui.Secondary(detail), Ui.Spread(null, ok)));
       sheet.ShowDialog();
     }
+    /// Asks for the account password once, for a change the server protects
+    /// with it. Returns null when cancelled; the box is cleared either way.
+    public static string AskPassword(Window owner, string title, string detail, string action) {
+      var sheet = new Sheet(owner, "Josi", 520);
+      string result = null;
+      var box = Ui.Secret("Your account password");
+      var go = Ui.Pill(action, () => { if (box.Password.Length == 0) return; result = box.Password; box.Clear(); sheet.Close(); }, true);
+      go.IsDefault = true;
+      var cancel = Ui.Pill("Cancel", () => { box.Clear(); sheet.Close(); });
+      cancel.IsCancel = true;
+      sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), detail == null ? null : Ui.Copyable(detail, 14, Ui.Muted),
+        Ui.Field("Confirm your account password", box), Ui.Spread(null, Ui.Row(8, cancel, go))));
+      sheet.Loaded += delegate { box.Focus(); };
+      sheet.ShowDialog();
+      return result;
+    }
 
     /// Writes a private file (current user only) beside the destination, then moves it into place.
     public static void WritePrivate(string destination, string text) {

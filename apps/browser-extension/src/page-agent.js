@@ -13,6 +13,9 @@
   addEventListener('resize', () => { revision++; }, true);
   addEventListener('input', () => { revision++; }, true);
   addEventListener('change', () => { revision++; }, true);
+  // One photo may use up to 72 KB of JPEG (96 KB as base64); a photo reply
+  // including the fresh page read stays under the host's frame size.
+  const PHOTO_BASE64_LIMIT = 98304, OUTPUT_LIMIT = 163840;
   const visible = element => {
     const rect = element.getBoundingClientRect(), style = getComputedStyle(element);
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
@@ -68,20 +71,27 @@
         // Read already loaded pixels only. Drawing a cross-origin image fails
         // closed; this is not a fetch proxy or a path to arbitrary local files.
         if (!crossSite) {
-        const canvas = document.createElement('canvas');
-        const scale = Math.min(1, 768 / Math.max(image.naturalWidth, image.naturalHeight));
-        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-        const context = canvas.getContext('2d');
-        context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        let jpeg = '';
-        for (const quality of [0.8, 0.6, 0.4, 0.25]) {
-          jpeg = canvas.toDataURL('image/jpeg', quality).split(',')[1];
-          if (jpeg.length <= 32768) break;
+        // A listing photo at 768 px rarely fits 24 KB; try two sizes and
+        // four qualities against the photo budget (72 KB of JPEG) so a real
+        // picture reaches the model instead of a budget failure.
+        let jpeg = '', width = 0, height = 0;
+        for (const longest of [768, 512]) {
+          const canvas = document.createElement('canvas');
+          const scale = Math.min(1, longest / Math.max(image.naturalWidth, image.naturalHeight));
+          canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+          const context = canvas.getContext('2d');
+          context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          for (const quality of [0.8, 0.6, 0.4, 0.25]) {
+            jpeg = canvas.toDataURL('image/jpeg', quality).split(',')[1];
+            width = canvas.width; height = canvas.height;
+            if (jpeg.length <= PHOTO_BASE64_LIMIT) break;
+          }
+          if (jpeg.length <= PHOTO_BASE64_LIMIT) break;
         }
-        if (!jpeg || jpeg.length > 32768) throw new Error('photo_budget');
-        photo = { mediaType: 'image/jpeg', base64: jpeg, width: canvas.width, height: canvas.height,
+        if (!jpeg || jpeg.length > PHOTO_BASE64_LIMIT) throw new Error('photo_budget');
+        photo = { mediaType: 'image/jpeg', base64: jpeg, width, height,
           alt: String(image.alt || '').slice(0, 300), untrustedContent: true };
         }
       }
@@ -111,7 +121,7 @@
           viewport: { width: innerWidth, height: innerHeight } };
         if (photo) result.photo = photo;
         if (request.maxOutputBytes !== undefined) {
-          if (!Number.isSafeInteger(request.maxOutputBytes) || request.maxOutputBytes < 1024 || request.maxOutputBytes > 65536) throw new Error('invalid_budget');
+          if (!Number.isSafeInteger(request.maxOutputBytes) || request.maxOutputBytes < 1024 || request.maxOutputBytes > OUTPUT_LIMIT) throw new Error('invalid_budget');
           const size = () => new TextEncoder().encode(JSON.stringify(result)).length;
           // Leave room for native tab identifiers. Trimming is explicit in the
           // result and never expands the server-reserved output ceiling.

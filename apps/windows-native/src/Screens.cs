@@ -20,7 +20,7 @@ namespace Josi.Native {
         Ui.Secondary(r.Installed ? "Your existing server is available here. Its accounts and data stay with it."
                                  : "Set up a server here, or restore the data retained by your previous installation."),
         r.Installed ? Ui.Caption("Version " + (r.Version.Length == 0 ? "unknown" : r.Version) + " · " + r.Detail) : null,
-        r.Installed ? Ui.Pill("Open Josi", () => model.Run(() => model.Connect(r.Address, true)), true)
+        r.Installed ? Ui.Pill("Open Josi", () => model.Run(async () => { model.Activity = "Connecting to the server on this PC…"; try { await model.Connect(r.Address, true); } finally { model.Activity = ""; } }), true)
                     : Ui.Pill("Set Up on This PC…", () => ServerControls.ChooseInstaller(model, owner), true),
         new ServerControls(model, owner, true));
       var brand = Ui.Row(14, Ui.JosiMark(52), Ui.Stack(2, Ui.T("Josi", 28, FontWeights.SemiBold), Ui.Caption("Your assistant, on your own server.")));
@@ -106,8 +106,7 @@ namespace Josi.Native {
           Ui.Link("Forgot password?", () => { password.Clear(); Dialogs.ForgotPassword(owner, model, identifier.Text.Trim()); }),
           Ui.Link("Have an invitation or reset link?", () => { password.Clear(); Dialogs.PasswordSetup(owner, model); })), 10);
         if (model.GoogleWaiting) {
-          Ui.Add(stack, Ui.Row(10, new ProgressBar { IsIndeterminate = true, Width = 60, Height = 4 },
-            Ui.Caption("Finish signing in with Google in your browser.")), 22);
+          Ui.Add(stack, Ui.Working("Finish signing in with Google in your browser.", true), 22);
           Ui.Add(stack, Ui.Row(14, Ui.Caption("Josi continues when Google sends you back."), Ui.Link("Cancel", model.CancelGoogle)), 6);
         } else if (model.GoogleSignIn) {
           var google = Ui.Pill("Sign in with Google", () => model.Run(() => model.StartGoogle()));
@@ -131,10 +130,10 @@ namespace Josi.Native {
     void Submit() {
       if (model.MfaChallenge.Length == 0) {
         var name = identifier.Text; var secret = password.Password; password.Clear();
-        model.Run(() => model.SignIn(name, secret));
+        model.Run(async () => { model.Activity = "Signing in to " + model.Address + "…"; try { await model.SignIn(name, secret); } finally { model.Activity = ""; } });
       } else {
         var value = code.Password; code.Clear();
-        model.Run(() => model.VerifyMfa(value));
+        model.Run(async () => { model.Activity = "Checking your code…"; try { await model.VerifyMfa(value); } finally { model.Activity = ""; } });
       }
     }
   }

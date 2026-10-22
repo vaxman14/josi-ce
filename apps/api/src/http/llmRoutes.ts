@@ -26,6 +26,7 @@ import {
 } from '@josi-ce/llm';
 import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
+import { probeProgress, trackProbe } from './probeProgress.js';
 import { claudeSubscriptionRouter } from './claudeSubscriptionRoutes.js';
 import { codexSubscriptionRouter } from './codexSubscriptionRoutes.js';
 import { assertMetadataOnly, requireAuth, requireSuperAdmin } from './authz.js';
@@ -519,6 +520,17 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
     }),
   );
 
+  /** Where the probe started by the POST below is right now, so the app can
+   * show which check is running. A view of this process's memory only. */
+  r.get(
+    '/providers/:role/probe/progress',
+    handle(async (req, res) => {
+      const role = param(req, 'role');
+      if (role !== 'primary' && role !== 'fallback') throw new RouteError(404, 'no such provider slot');
+      return res.json(probeProgress(role));
+    }),
+  );
+
   /** Run the capability probe and store what it observed.
    *
    * This is the ONLY thing that sets `activated_at`. Nothing is inferred from
@@ -536,6 +548,7 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
 
       let result;
       let preparedVersion: string | undefined;
+      const track = trackProbe(role);
       try {
         const provider = await buildProvider(
           {
@@ -550,12 +563,14 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         preparedVersion = provider.configurationVersion;
         // Metered. Probing a hosted provider is four real requests on a real
         // invoice; leaving them out of the usage report would understate spend.
-        result = await probeProvider(meteredProvider(db, stored, role, provider, { purpose: 'probe' }));
+        result = await probeProvider(meteredProvider(db, stored, role, provider, { purpose: 'probe' }), { onProgress: track.onProgress });
       } catch (err) {
         // A refusal (Local-only, missing acknowledgment, unusable key) is not a
         // failed probe — nothing was asked. Say which it was.
         const message = err instanceof LlmError || err instanceof VaultError ? err.message : 'the probe could not run';
         return res.status(err instanceof VaultLockedError ? 423 : 409).json({ error: message });
+      } finally {
+        track.done();
       }
 
       const updated = await db.query<{ role: string }>(

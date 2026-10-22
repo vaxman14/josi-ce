@@ -254,8 +254,9 @@ namespace Josi.Native {
             command["kind"] = kind; command["tabId"] = link.TabId;
             command["observationId"] = payload["observationId"].Text; command["elementId"] = payload["elementId"].Text;
             if (kind == "fill") pending.Value = payload["text"].Text;
-            // A photo comes back with a fresh read of the page; leave room for both.
-            if (kind == "photo") command["maxOutputBytes"] = 65536;
+            // A photo comes back with a fresh read of the page; leave room for
+            // both (a 72 KB JPEG plus the trimmed read) under the host frame size.
+            if (kind == "photo") command["maxOutputBytes"] = 163840;
           } else return refuse("unsupported_operation");
         }
         pending.Command = command;

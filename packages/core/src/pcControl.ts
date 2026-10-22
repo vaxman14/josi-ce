@@ -80,7 +80,16 @@ function canonical(value:unknown,depth=0):string {
 }
 const highRisk = (r:PcRequirement) => PC_ACTIONS.find(s=>s[0]===r.action)![3];
 const readOnly = (r:PcRequirement) => PC_ACTIONS.find(s=>s[0]===r.action)![4];
-type Settings = {enabled:boolean;epoch:number|string};
+/** Full control: the owner's standing grant for everyday actions on this PC,
+ * in any allowed browser, folder or application, so they are not asked before
+ * each one. Money, deleting, credentials, installs, security settings,
+ * commands and elevation are deliberately outside it and still ask. An exact
+ * "Never" scope still wins. */
+export const PC_FULL_CONTROL_ACTIONS:readonly PcAction[] = ['browser.view','browser.fill','browser.submit','browser.download','browser.upload',
+  'explorer.view','folder.read','folder.write','file.rename','file.move','app.launch','app.control','app.close'];
+export const PC_FULL_CONTROL_ASKS:readonly PcAction[] = PC_ACTIONS.map(s=>s[0]).filter(a=>!PC_FULL_CONTROL_ACTIONS.includes(a));
+const fullControlCovers = (r:PcRequirement) => PC_FULL_CONTROL_ACTIONS.includes(r.action);
+type Settings = {enabled:boolean;epoch:number|string;full_control:boolean};
 type RequestRow = {id:string;state:string;epoch:number|string;request_enc:string;request_hash:string;expires_at:string;human_approved:boolean};
 type Bound<T> = {owner:string;pc:string;value:T};
 const ASK_TTL=10*60*1000;
@@ -94,7 +103,7 @@ export async function disablePcControl(db:Db,owner:string,pcId:string){
   await db.transaction(async tx=>{
     await tx.query(`insert into pc_control_settings(owner_user_id,pc_id) values($1,$2) on conflict do nothing`,[owner,pcId]);
     await tx.query(`select epoch from pc_control_settings where owner_user_id=$1 and pc_id=$2 for update`,[owner,pcId]);
-    await tx.query(`update pc_control_settings set enabled=false,epoch=epoch+1 where owner_user_id=$1 and pc_id=$2`,[owner,pcId]);
+    await tx.query(`update pc_control_settings set enabled=false,full_control=false,epoch=epoch+1 where owner_user_id=$1 and pc_id=$2`,[owner,pcId]);
     await tx.query(`update pc_control_requests set state='revoked' where owner_user_id=$1 and pc_id=$2 and state in ('pending','approved')`,[owner,pcId]);
     await tx.query(`delete from pc_control_policies where owner_user_id=$1 and pc_id=$2 and mode in ('task','temporary')`,[owner,pcId]);
     // This nonsensitive event must be recordable even with a missing key.
@@ -123,7 +132,7 @@ export class PcControl {
     if(!this.db.transaction)throw new PcControlError(503,'Transactional permission storage is unavailable.');
     return this.db.transaction(async db=>{
       await db.query(`insert into pc_control_settings(owner_user_id,pc_id) values($1,$2) on conflict do nothing`,[owner,this.pcId]);
-      const [s]=await db.query<Settings>(`select enabled,epoch from pc_control_settings where owner_user_id=$1 and pc_id=$2 for update`,[owner,this.pcId]);
+      const [s]=await db.query<Settings>(`select enabled,epoch,full_control from pc_control_settings where owner_user_id=$1 and pc_id=$2 for update`,[owner,this.pcId]);
       return fn(db,s);
     });
   }
@@ -145,6 +154,18 @@ export class PcControl {
   async stop(owner:string){
     this.cancel(owner);
     await disablePcControl(this.db,owner,this.pcId);
+  }
+  /** Full control is a standing grant, so turning it on or off re-decides
+   * everything already prepared: nothing approved under the old rules runs. */
+  async setFullControl(owner:string,on:boolean){
+    if(typeof on!=='boolean')fail('Choose on or off.');
+    this.cancel(owner);
+    return this.locked(owner,async(db,s)=>{
+      if(on&&!s.enabled)throw new PcControlError(409,'Turn on "Allow Josi to control this PC" first.');
+      await this.invalidate(db,owner);
+      await db.query(`update pc_control_settings set full_control=$3 where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId,on]);
+      await this.log(db,owner,on?'Full control turned on: everyday browser, folder and application actions no longer ask':'Full control turned off: exact scopes apply again');
+    });
   }
   private async liveTask(db:Db,owner:string,taskId?:string){
     if(!taskId||!uuid(taskId))return false;
@@ -188,12 +209,16 @@ export class PcControl {
   private async verdict(db:Db,owner:string,s:Settings,plan:PcPlan):Promise<'denied'|'pending'|'approved'> {
     if(!s.enabled)return 'denied';
     if(plan.taskId && !await this.liveTask(db,owner,plan.taskId))return 'denied';
-    let ask=plan.requirements.some(highRisk);
+    // Under full control an everyday action is granted even when high-risk
+    // (a click can submit); actions outside full control keep asking.
+    const covered=(r:PcRequirement)=>s.full_control&&fullControlCovers(r);
+    let ask=plan.requirements.some(r=>highRisk(r)&&!covered(r));
     for(const requirement of plan.requirements){
       const [row]=await db.query<{policy_enc:string}>(`select policy_enc from pc_control_policies where owner_user_id=$1 and pc_id=$2 and scope_hash=$3`,[owner,this.pcId,this.hash(owner,requirement)]);
       const p=row?this.unpack<PcPolicy>(owner,row.policy_enc):undefined;
       if(p && this.hash(owner,{action:p.action,scope:p.scope})!==this.hash(owner,requirement))throw new PcControlError(409,'Permission integrity check failed.');
       if(p?.mode==='never')return 'denied';
+      if(covered(requirement))continue;
       if(!p||p.mode==='ask'||(p.mode==='task'&&p.taskId!==plan.taskId)||
         (['temporary','task'].includes(p.mode)&&Date.parse(p.expiresAt??'')<=this.now()))ask=true;
     }
@@ -261,7 +286,10 @@ export class PcControl {
       const requests=await db.query<RequestRow>(`select * from pc_control_requests where owner_user_id=$1 and pc_id=$2 and state='pending' and expires_at>$3 order by created_at desc limit 100`,[owner,this.pcId,new Date(this.now()).toISOString()]);
       const logs=await db.query<{id:string;created_at:string;kind:string;detail_enc:string|null}>(`select id,created_at,kind,detail_enc from pc_control_activity where owner_user_id=$1 and pc_id=$2 order by created_at desc,id desc limit 100`,[owner,this.pcId]);
       const tasks=await db.query<{id:string;name:string;created_at:string}>(`select t.id,tt.name,t.created_at from tasks t join task_templates tt on tt.key=t.template_key where t.owner_user_id=$1 and t.state not in ('confirmed','failed','cancelled','closed') order by t.created_at desc limit 100`,[owner]);
-      return {enabled:s.enabled,pcId:this.pcId,catalog:PC_ACTIONS.map(([action,label,kind,risk,read])=>({action,label,kind,highRisk:risk,access:read?'Read-only':'Read/write'})),
+      const label=(a:PcAction)=>PC_ACTIONS.find(x=>x[0]===a)![1];
+      return {enabled:s.enabled,fullControl:s.full_control,pcId:this.pcId,
+        fullControlCovers:PC_FULL_CONTROL_ACTIONS.map(label),fullControlAsks:PC_FULL_CONTROL_ASKS.map(label),
+        catalog:PC_ACTIONS.map(([action,label,kind,risk,read])=>({action,label,kind,highRisk:risk,access:read?'Read-only':'Read/write'})),
         tasks,policies:await Promise.all(policies.map(async p=>{const value=this.unpack<PcPolicy>(owner,p.policy_enc);return{id:p.id,...value,active:value.mode==='temporary'?Date.parse(value.expiresAt??'')>this.now():value.mode==='task'?Date.parse(value.expiresAt??'')>this.now()&&await this.liveTask(db,owner,value.taskId):true};})),
         requests:requests.map(row=>{const {payload,...visible}=this.unpack<PcPlan>(owner,row.request_enc);return{id:row.id,...visible,expiresAt:row.expires_at,highRisk:visible.requirements.some(highRisk),access:visible.requirements.every(readOnly)?'Read-only':'Read/write'};}),
         activity:logs.map(row=>({id:row.id,at:row.created_at,...(row.detail_enc?this.unpack<Record<string,unknown>>(owner,row.detail_enc):{kind:row.kind})}))};

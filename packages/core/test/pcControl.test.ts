@@ -22,6 +22,26 @@ describe('Windows exact PC scope authorization',()=>{
     expect((await control.propose(owner,plan())).state).toBe('denied');
     await enable();expect((await control.propose(owner,plan(requirement('folder.write',folder)))).state).toBe('pending');
   });
+  it('full control grants everyday actions on any scope but not money, deleting or secrets, and Never still wins',async()=>{
+    await enable();
+    await expect(control.setFullControl(owner,true)).resolves.toBeUndefined();
+    const click=requirement('browser.submit',{...browser,target:'https://anywhere.test'});
+    expect((await control.propose(owner,plan(click))).state).toBe('approved');
+    expect((await control.propose(owner,plan(requirement('browser.fill',browser)))).state).toBe('approved');
+    expect((await control.propose(owner,plan(requirement('folder.write',{kind:'folder',target:'C:\\Anything'})))).state).toBe('approved');
+    expect((await control.propose(owner,plan(requirement('browser.purchase',browser)))).state).toBe('pending');
+    expect((await control.propose(owner,plan(requirement('file.delete',folder)))).state).toBe('pending');
+    expect((await control.propose(owner,plan(requirement('secret.access',{kind:'secret',target:'vault:item'})))).state).toBe('pending');
+    await allow(requirement('browser.view',browser),'never');
+    expect((await control.propose(owner,plan(requirement('browser.view',browser)))).state).toBe('denied');
+    expect((await control.snapshot(owner)).fullControl).toBe(true);
+    await control.setFullControl(owner,false);
+    expect((await control.propose(owner,plan(click))).state).toBe('pending');
+    await control.setFullControl(owner,true);await control.stop(owner);
+    expect((await control.snapshot(owner)).fullControl).toBe(false);
+    const disabled=new PcControl(db,key,'pc-three',()=>clock);
+    await expect(disabled.setFullControl(owner,true)).rejects.toThrow(/Allow Josi to control this PC/);
+  });
   it('matches browser executable, profile AND exact origin independently',async()=>{
     const view=requirement('browser.view',browser);await allow(view);await enable();
     expect((await control.propose(owner,plan(view))).state).toBe('approved');
