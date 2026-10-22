@@ -26,8 +26,11 @@ export const PC_DESKTOP_TOOLS: ToolSpec[] = [
     description: 'Click one control from the latest read of a window. The owner\'s permission for that program decides; read the window again afterwards to see what happened, the receipt alone proves nothing.',
     parameters: shape({ observation_id: id, element_id: id }) }, actionClass: 'automation_control' },
   { def: { name: 'desktop_type',
-    description: 'Type text into one control from the latest read of a window, without pressing Enter. Never type passwords, payment details or identity numbers.',
-    parameters: shape({ observation_id: id, element_id: id, text: { type: 'string', maxLength: 4096 } }) }, actionClass: 'automation_control' },
+    description: 'Type text into one control from the latest read of a window, without pressing Enter. Leave element_id out to type into whatever control has the focus, for example after desktop_click_point. Never type passwords, payment details or identity numbers.',
+    parameters: shape({ observation_id: id, element_id: id, text: { type: 'string', maxLength: 4096 } }, ['observation_id', 'text']) }, actionClass: 'automation_control' },
+  { def: { name: 'desktop_click_point',
+    description: 'Click a point in the latest desktop_screenshot of a window, for programs whose controls UI Automation cannot read. x and y are pixels in that screenshot (its width and height were given). Josi re-checks the window is still there and belongs to the same program before clicking.',
+    parameters: shape({ observation_id: id, x: { type: 'integer', minimum: 0, maximum: 8192 }, y: { type: 'integer', minimum: 0, maximum: 8192 } }) }, actionClass: 'automation_control' },
   { def: { name: 'desktop_keys',
     description: 'Press a key or shortcut in the window of the latest read, for example "enter", "tab", "escape", "ctrl+s", "ctrl+shift+n", "alt+f4". Shortcuts can save, send or close, so the owner\'s permission for that program decides.',
     parameters: shape({ observation_id: id, keys: { type: 'string', maxLength: 64 } }) }, actionClass: 'automation_control' },
@@ -42,6 +45,7 @@ export const PC_DESKTOP_TOOLS: ToolSpec[] = [
     parameters: shape({ request_id: id }) }, actionClass: null },
 ];
 export const PC_DESKTOP_PROMPT = 'The Josi app is open on this PC, so you can use its programs: desktop_list_windows, then desktop_read_window for controls with ids, desktop_screenshot to look, desktop_click, desktop_type and desktop_keys to act, desktop_launch to open a program. '
+  + 'When a window\'s read shows nothing useful, take a desktop_screenshot of that window and use desktop_click_point with pixel positions in that picture. '
   + 'Each action is checked against the owner\'s PC Control permissions; if one waits for approval, tell them to approve it in Josi under PC Control. If the owner moves the mouse or types, Josi stops: wait and read again instead of repeating. '
   + 'Read the window again after acting and describe what actually changed; never report an action as done because you sent it.';
 export const PC_DESKTOP_TOOL_NAMES = new Set(PC_DESKTOP_TOOLS.map((tool) => tool.def.name));
@@ -66,9 +70,11 @@ const windowId = (value: unknown) => typeof value === 'string' && /^[0-9]{1,20}$
  * result, so an action is scoped to the exact executable the owner saw. */
 async function observed(control: PcControl, owner: string, observationId: string) {
   const outcome = await control.outcome(owner, observationId);
-  const result = (outcome?.result as { ok?: boolean; result?: { kind?: string; windowId?: string; application?: string } } | null)?.result;
-  if (outcome?.state !== 'succeeded' || result?.kind !== 'desktop_observation' || !windowsPath(result.application) || !windowId(result.windowId)) return null;
-  return { windowId: result.windowId!, application: result.application! };
+  const result = (outcome?.result as { ok?: boolean; result?: { kind?: string; windowId?: string; application?: string; width?: number; height?: number; originX?: number; originY?: number; scale?: number } } | null)?.result;
+  if (outcome?.state !== 'succeeded' || !result || !['desktop_observation', 'desktop_screenshot'].includes(result.kind ?? '')
+    || !windowsPath(result.application) || !windowId(result.windowId)) return null;
+  return { windowId: result.windowId!, application: result.application!, screenshot: result.kind === 'desktop_screenshot'
+    ? { width: Number(result.width), height: Number(result.height), originX: Number(result.originX), originY: Number(result.originY), scale: Number(result.scale) } : null };
 }
 
 export async function executePcDesktopTool(db: Db, owner: string, key: MasterKey | null, name: string, input: Record<string, unknown>) {
@@ -92,12 +98,19 @@ export async function executePcDesktopTool(db: Db, owner: string, key: MasterKey
       if (!application) return { ok: false, code: 'invalid_application', message: 'Give the exact .exe path of the program.' };
       action = 'app.launch'; scope = { kind: 'application', target: application };
       description = `Open ${application}`; payload = { kind: 'desktop.launch', application };
-    } else if (name === 'desktop_click' || name === 'desktop_type' || name === 'desktop_keys' || name === 'desktop_close_window') {
+    } else if (name === 'desktop_click' || name === 'desktop_type' || name === 'desktop_keys' || name === 'desktop_close_window' || name === 'desktop_click_point') {
       const prior = await observed(control, owner, String(input.observation_id ?? ''));
-      if (!prior) return { ok: false, code: 'observation_unknown', message: 'Read the window first with desktop_read_window and use that observation_id.' };
+      if (!prior) return { ok: false, code: 'observation_unknown', message: 'Read the window first with desktop_read_window (or picture it with desktop_screenshot) and use that observation_id.' };
       scope = { kind: 'application', target: prior.application };
       const program = prior.application.split('\\').pop();
-      if (name === 'desktop_close_window') {
+      if (name === 'desktop_click_point') {
+        const shot = prior.screenshot;
+        if (!shot || !(shot.width > 0)) return { ok: false, code: 'not_a_screenshot', message: 'desktop_click_point needs the observation_id of a desktop_screenshot of one window.' };
+        const x = Number(input.x), y = Number(input.y);
+        if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= shot.width || y >= shot.height) return { ok: false, code: 'point_outside', message: `Give x and y inside the ${shot.width} by ${shot.height} screenshot.` };
+        action = 'app.control'; description = `Click a point in a window of ${program}`;
+        payload = { kind: 'desktop.clickpoint', windowId: prior.windowId, observationId: input.observation_id, x, y, originX: shot.originX, originY: shot.originY, scale: shot.scale };
+      } else if (name === 'desktop_close_window') {
         action = 'app.close'; description = `Close a window of ${program}`; payload = { kind: 'desktop.close', windowId: prior.windowId, observationId: input.observation_id };
       } else {
         action = 'app.control';
@@ -108,8 +121,8 @@ export async function executePcDesktopTool(db: Db, owner: string, key: MasterKey
         } else if (name === 'desktop_type') {
           const text = String(input.text ?? '');
           if (!text.length || text.length > 4096) return { ok: false, code: 'invalid_text', message: 'Provide up to 4096 characters.' };
-          description = `Type ${text.length} characters into a control of ${program}`;
-          payload = { kind: 'desktop.type', windowId: prior.windowId, observationId: input.observation_id, elementId: String(input.element_id), text };
+          description = `Type ${text.length} characters into ${input.element_id ? 'a control of ' : 'the focused control of '}${program}`;
+          payload = { kind: 'desktop.type', windowId: prior.windowId, observationId: input.observation_id, elementId: input.element_id ? String(input.element_id) : '', text };
         } else {
           description = `Click one control of ${program}`;
           payload = { kind: 'desktop.click', windowId: prior.windowId, observationId: input.observation_id, elementId: String(input.element_id) };

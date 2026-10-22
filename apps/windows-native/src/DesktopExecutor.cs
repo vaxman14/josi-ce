@@ -177,16 +177,37 @@ namespace Josi.Native {
         Thread.Sleep(800);
         return ok(Wires.O("kind", "desktop_closed", "windowId", payload["windowId"].Text, "stillOpen", IsWindow(handle), "untrustedContent", true));
       }
-      Observation observation; AutomationElement element = null;
-      lock (gate) observations.TryGetValue(payload["observationId"].Text, out observation);
-      if (observation == null || observation.Window != handle) return refuse("observation_changed");
-      if (kind != "desktop.keys" && !observation.Elements.TryGetValue(payload["elementId"].Text, out element)) return refuse("element_unknown");
-      Foreground(handle);
-      cancel.ThrowIfCancellationRequested();
       string method;
-      if (kind == "desktop.click") method = Click(element);
-      else if (kind == "desktop.type") method = TypeText(element, payload["text"].Text, cancel);
-      else method = Keys(payload["keys"].Text, cancel);
+      if (kind == "desktop.clickpoint") {
+        // A point in a screenshot of this window: mapped back through the
+        // picture's scale and origin, and only clicked if the window still sits
+        // where it was pictured and the program under the point is the same one.
+        Rect now; GetWindowRect(handle, out now);
+        var scale = payload["scale"].IsNumber ? Convert.ToDouble(payload["scale"].Raw) : 1.0;
+        if (scale <= 0 || now.Left != payload["originX"].Integer || now.Top != payload["originY"].Integer) return refuse("window_moved");
+        var screenX = (int)Math.Round(now.Left + payload["x"].Integer / scale); var screenY = (int)Math.Round(now.Top + payload["y"].Integer / scale);
+        if (screenX < now.Left || screenY < now.Top || screenX >= now.Right || screenY >= now.Bottom) return refuse("point_outside");
+        Foreground(handle);
+        cancel.ThrowIfCancellationRequested();
+        var under = WindowFromPoint(new Point(screenX, screenY));
+        if (under == IntPtr.Zero || !string.Equals(ApplicationOf(GetAncestor(under, 2)), owner, StringComparison.OrdinalIgnoreCase)) return refuse("another_program_under_point");
+        MouseClick(screenX, screenY);
+        method = "point";
+      } else {
+        Observation observation; AutomationElement element = null;
+        lock (gate) observations.TryGetValue(payload["observationId"].Text, out observation);
+        // Keys and focused typing may follow a screenshot (no element ids); the
+        // server already tied that observation id to this window and program.
+        if (observation != null && observation.Window != handle) return refuse("observation_changed");
+        var needsElement = kind == "desktop.click" || (kind == "desktop.type" && payload["elementId"].Text.Length > 0);
+        if (needsElement && observation == null) return refuse("observation_changed");
+        if (needsElement && !observation.Elements.TryGetValue(payload["elementId"].Text, out element)) return refuse("element_unknown");
+        Foreground(handle);
+        cancel.ThrowIfCancellationRequested();
+        if (kind == "desktop.click") method = Click(element);
+        else if (kind == "desktop.type") method = element == null ? TypeKeystrokes(payload["text"].Text, cancel) : TypeText(element, payload["text"].Text, cancel);
+        else method = Keys(payload["keys"].Text, cancel);
+      }
       Thread.Sleep(350);
       cancel.ThrowIfCancellationRequested();
       // A fresh read of the same window rides back, so the next step does not
@@ -300,6 +321,10 @@ namespace Josi.Native {
         if (!rect.IsEmpty) MouseClick((int)(rect.X + rect.Width / 2), (int)(rect.Y + rect.Height / 2));
       }
       Thread.Sleep(80);
+      return TypeKeystrokes(text, cancel);
+    }
+    /// Types into whatever has the keyboard focus, one character at a time.
+    static string TypeKeystrokes(string text, CancellationToken cancel) {
       foreach (var character in text) {
         cancel.ThrowIfCancellationRequested();
         if (character == '\n') { KeyTap(0x0D, 0); continue; }
@@ -356,10 +381,17 @@ namespace Josi.Native {
                 var parameters = new EncoderParameters(1); parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
                 small.Save(stream, encoder, parameters);
                 var base64 = Convert.ToBase64String(stream.ToArray());
-                if (base64.Length <= ScreenshotBase64Limit)
-                  return Wires.O("kind", "desktop_screenshot", "windowId", window == IntPtr.Zero ? "" : window.ToInt64().ToString(), "title", window == IntPtr.Zero ? "Whole screen" : Title(window),
-                    "width", small.Width, "height", small.Height, "untrustedContent", true, "shown", "The picture is attached as an image.",
+                if (base64.Length <= ScreenshotBase64Limit) {
+                  // Geometry travels with the picture so a later click at a point in
+                  // it can be mapped back to the screen and re-checked.
+                  var result = Wires.O("kind", "desktop_screenshot", "windowId", window == IntPtr.Zero ? "" : window.ToInt64().ToString(), "title", window == IntPtr.Zero ? "Whole screen" : Title(window),
+                    "width", small.Width, "height", small.Height, "originX", area.Left, "originY", area.Top, "scale", (double)small.Width / area.Width,
+                    "untrustedContent", true, "shown", "The picture is attached as an image.",
                     "__images", new List<object> { Wires.O("data", base64, "mimeType", "image/jpeg") });
+                  var application = window == IntPtr.Zero ? null : ApplicationOf(window);
+                  if (application != null) result["application"] = application;
+                  return result;
+                }
               }
             }
           }
@@ -406,6 +438,8 @@ namespace Josi.Native {
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr handle, uint flags);
     [DllImport("user32.dll")] static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SetWindowsHookEx(int id, HookProc callback, IntPtr module, uint thread);
     [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hook);

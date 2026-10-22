@@ -14,7 +14,12 @@ PC Control request decided here: the read-only action `desktop.view` covers
 listing windows, reading a window's controls and screenshots; `app.launch`,
 `app.control` and `app.close` cover opening, clicking, typing, keys and closing,
 each scoped to the exact executable the window belongs to, re-checked by the
-executor before it touches the window. **Full control** (`full_control` on
+executor before it touches the window. Programs whose controls UI Automation
+cannot read take the picture path: `desktop_screenshot` of one window returns
+the picture with its origin and scale, `desktop_click_point` maps a pixel in it
+back to the screen and clicks only if the window has not moved and the program
+under that point is still the same one, and `desktop_type` without an element
+id types into whatever then has the focus. **Full control** (`full_control` on
 `pc_control_settings`) is the owner's standing grant for everyday actions; the
 actions outside it always ask. A real mouse or keyboard event cancels the
 running action and blocks desktop work for 20 seconds; the app shows who is in
