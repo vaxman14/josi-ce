@@ -26,6 +26,10 @@ Still open:
 - **35 signing**: needs Roman's Azure Trusted Signing sign-in.
 - Family and Companion apps show "coming soon", matching the web app, where those features are not released.
 
+Agreed with Roman on October 22, to start after the current testing round:
+- **36 Dedicated server option**: the Josi server on its own machine (LAN or a public HTTPS address), the app and PC Control connecting to it from the PCs. Needs: the PC tools offered by a server that is not itself the Windows native runtime (today `pcBrowserToolAvailability` and `pcDesktopToolAvailability` return nothing unless the server runs on Windows with `JOSI_NATIVE_RUNTIME=1`); a per-device identity instead of the single fixed `local-windows-host` so two PCs on one account do not collide; the Network page finished on Windows (item 13: LAN, domain, reverse proxy, HTTPS, port). The extension itself needs no change: it only ever talks to the Josi app on the same PC over native messaging.
+- **37 Extension on other browsers and in the stores**: the build already produces Chrome, Brave, Firefox and Safari packages (`scripts/unified/build-browser-extensions.mjs`), but only the unpacked Chrome build has been loaded. Test Brave, Firefox and Edge (Edge loads the Chrome build) with the native host registration for each; Safari needs its containing macOS app. Then publish: Chrome Web Store, Edge Add-ons, Firefox Add-ons, App Store for Safari. Publisher accounts and the one-time fees are Roman's.
+
 ## Full build list
 
 Everything still to do for the Windows app, in build order. It combines the missing and partial features below with the remaining plan items. Each item ends when it works against the development server and its click-through test passes.
