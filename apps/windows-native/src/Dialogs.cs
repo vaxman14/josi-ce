@@ -57,6 +57,29 @@ namespace Josi.Native {
       sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), Ui.Secondary(detail), Ui.Spread(null, ok)));
       sheet.ShowDialog();
     }
+    /// A settings change Josi prepared in conversation: what will change, in
+    /// the words the person will be held to, with Approve and Decline.
+    public static void SettingsChange(Window owner, AppModel model, Wire proposal) {
+      var sheet = new Sheet(owner, "Josi", 560);
+      var administrator = proposal["scope"].Text == "administrator";
+      var approve = Ui.Pill(administrator ? "Approve and Apply" : "Approve", () => {
+        sheet.Close();
+        model.Run(async () => { var note = await model.DecideSettingsChange(proposal, true); if (note.Length > 0) Notifications.Show("Settings change", note); });
+      }, true);
+      var decline = Ui.Pill("Decline", () => { sheet.Close(); model.Run(async () => { await model.DecideSettingsChange(proposal, false); }); });
+      var later = Ui.Pill("Decide Later", () => sheet.Close());
+      later.IsCancel = true;
+      sheet.Body(Ui.Stack(14,
+        Ui.Row(10, Ui.JosiMark(28), Ui.T("Josi proposes a settings change", 17, FontWeights.SemiBold)),
+        Ui.T(proposal["title"].Text, 15, FontWeights.SemiBold),
+        Ui.Copyable(proposal["summary"].Text, 14),
+        Ui.Caption((administrator ? "An administrator setting for this installation." : "Your own setting.")
+          + (proposal["sensitive"].Flag ? " This is a sensitive change; the administrator is told by email when a member makes one." : "")
+          + " Nothing changes until you approve. You can also find it under Approvals."),
+        Ui.Spread(later, Ui.Row(8, decline, approve))));
+      sheet.Loaded += delegate { approve.Focus(); };
+      sheet.ShowDialog();
+    }
     /// Asks for the account password once, for a change the server protects
     /// with it. Returns null when cancelled; the box is cleared either way.
     public static string AskPassword(Window owner, string title, string detail, string action) {

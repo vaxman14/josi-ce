@@ -11,20 +11,48 @@ namespace Josi.Native {
   /// email, a calendar change) and requests to a connected API, where
   /// approving is the sending. Plus your approval history.
   public sealed class ApprovalsView : SectionView {
-    List<Wire> approvals = new List<Wire>(), calls = new List<Wire>(), history = new List<Wire>();
+    List<Wire> approvals = new List<Wire>(), calls = new List<Wire>(), history = new List<Wire>(), changes = new List<Wire>(), changeHistory = new List<Wire>();
+    Wire changeList = Wire.Null;
     public ApprovalsView(AppModel model, Window owner) : base(model, owner) { }
     protected override async Task Load() {
       var api = Api; var stamp = Stamp;
       var a = await api.Request("/assistant/approvals");
       Wire c; try { c = await api.Request("/custom-apis/pending"); } catch (JosiException) { c = Wire.Null; }
       Wire h; try { h = await api.Request("/assistant/approvals/history"); } catch (JosiException) { h = Wire.Null; }
+      Wire s; try { s = await api.Request("/settings-changes"); } catch (JosiException) { s = Wire.Null; }
+      Wire sh; try { sh = await api.Request("/settings-changes/history"); } catch (JosiException) { sh = Wire.Null; }
       if (!Current(stamp)) return;
       approvals = a["approvals"].List; calls = c["pending"].List; history = h["approvals"].List;
+      changeList = s; changes = s["proposals"].List; changeHistory = sh["proposals"].List;
     }
     protected override UIElement Build() {
       var page = Page(Ui.HeadingWith("Approvals", null, Ui.Pill("Refresh", StartLoad)));
-      if (approvals.Count == 0 && calls.Count == 0)
+      if (approvals.Count == 0 && calls.Count == 0 && changes.Count == 0)
         Ui.Add(page, Ui.Secondary("Nothing to approve. When Josi wants to do something on your behalf that it should ask about first, it appears here."), 0);
+      if (changes.Count > 0) {
+        Ui.Add(page, Ui.Stack(6, Ui.Title2("Settings changes Josi prepared"), Ui.Secondary("Asked for in conversation. Nothing changes until it is approved here or in the popup.")), 0);
+        foreach (var p in changes) {
+          var proposal = p; var id = p.Id; var administrator = p["scope"].Text == "administrator";
+          var items = new List<UIElement> {
+            Ui.Row(10, ModelText.Pill(p["state"].Text == "approved" ? "Approved, applying" : administrator ? "Administrator setting" : p["mine"].Flag ? "Your setting" : p["proposer"].Text + "'s setting", p["state"].Text == "approved" ? Ui.Green : Ui.Orange),
+              p["sensitive"].Flag ? ModelText.Pill("Sensitive", Ui.Muted) : null),
+            Ui.Copyable(p["summary"].Text),
+            Ui.Caption("Proposed " + Wires.Date(p["createdAt"].Text) + (p["mine"].Flag ? "" : " by " + p["proposer"].Text) + " · expires " + Wires.Date(p["expiresAt"].Text)) };
+          var actions = Ui.Wrap();
+          if (p["canApprove"].Flag) actions.Children.Add(Ui.Pill(administrator || p["mine"].Flag ? "Approve and Apply" : "Approve", () => Perform(async (api, stamp) => { note = await model.DecideSettingsChange(proposal, true); }), true));
+          if (p["canDeny"].Flag) actions.Children.Add(Ui.Pill("Decline", () => Perform(async (api, stamp) => { note = await model.DecideSettingsChange(proposal, false); })));
+          if (!p["canApprove"].Flag && p["state"].Text == "proposed") items.Add(Ui.Caption(administrator ? "Waiting for the super-admin." : "Waiting for the super-admin's consent; your Josi applies it after that."));
+          items.Add(actions);
+          Ui.Add(page, Ui.CardBox(p["title"].Text, items.ToArray()), 0);
+        }
+      }
+      if (!changeList.IsNull && changeList["superAdmin"].Flag) {
+        var waitForMe = changeList["policy"].Text == "super_admin";
+        var toggle = Ui.Toggle("Settings changes by members wait for me before their Josi applies them", waitForMe);
+        toggle.Click += delegate { var on = toggle.IsChecked == true; Perform(async (api, stamp) => { await api.Request("/settings-changes/policy", "PUT", Wires.O("memberSettingsChanges", on ? "super_admin" : "self")); note = on ? "Member changes now wait for you." : "Members approve their own changes again."; }); };
+        Ui.Add(page, Ui.CardBox("Members' settings changes", toggle,
+          Ui.Caption("Off: each person approves changes to their own settings; you are emailed at once when a member applies a sensitive one. On: every member change waits for your approval first. Administrator settings always wait for you.")), 0);
+      }
       if (calls.Count > 0) {
         Ui.Add(page, Ui.Heading("Requests to a connected API", "These have not happened. Approving one sends it immediately, exactly as described."), 0);
         foreach (var call in calls) {
@@ -60,6 +88,20 @@ namespace Josi.Native {
         foreach (var h in history)
           list.Children.Add(Ui.Stack(2, Ui.Spread(Ui.T(Wires.Words(h["action"].Text), 14, FontWeights.Medium), ModelText.Pill(Wires.Words(h["status"].Text), h["status"].Text == "approved")),
             Ui.Caption(Wires.Date(h["decided_at"].Text.Length > 0 ? h["decided_at"].Text : h["created_at"].Text)), Ui.Copyable(h["summary"].Text, 13, Ui.Muted)));
+        return list;
+      }), 0);
+      Ui.Add(page, new Disclosure("Settings changes history (" + changeHistory.Count + ")", () => {
+        var list = Ui.Stack(0);
+        if (changeHistory.Count == 0) list.Children.Add(Ui.Caption("No settings changes decided yet."));
+        foreach (var h in changeHistory) {
+          if (list.Children.Count > 0) list.Children.Add(Ui.Divider());
+          var good = h["state"].Text == "applied";
+          var row = Ui.Stack(3, Ui.Spread(Ui.T(h["title"].Text, 14, FontWeights.Medium), ModelText.Pill(Wires.Words(h["state"].Text), good ? Ui.Green : h["state"].Text == "failed" ? Ui.Orange : Ui.Muted)),
+            Ui.Caption((h["mine"].Flag ? "You" : h["proposer"].Text) + " · " + Wires.Date(h["appliedAt"].Text.Length > 0 ? h["appliedAt"].Text : h["approvedAt"].Text.Length > 0 ? h["approvedAt"].Text : h["createdAt"].Text)),
+            Ui.Copyable(h["summary"].Text, 13, Ui.Muted), h["error"].Text.Length > 0 ? Ui.T(h["error"].Text, 12.5, null, Ui.Orange) : null);
+          row.Margin = new Thickness(0, 8, 0, 8);
+          list.Children.Add(row);
+        }
         return list;
       }), 0);
       Ui.Add(page, Note(), 0);

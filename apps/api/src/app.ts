@@ -45,6 +45,7 @@ import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
 import { doctorRoutes, type DoctorHelper } from './http/doctorRoutes.js';
 import { pcControlRoutes } from './http/pcControlRoutes.js';
+import { settingsChangeRoutes } from './http/settingsChangeRoutes.js';
 import { improvementRoutes, turnContextRoutes } from './http/improvementRoutes.js';
 
 export interface AppConfig {
@@ -283,6 +284,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     releaseFetch: cfg.releaseFetch,
   }));
   api.use('/admin/improvements', improvementRoutes(db));
+  api.use('/settings-changes', settingsChangeRoutes({ db, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport }));
   api.use('/admin/pc-control', pcControlRoutes({db,masterKey:cfg.masterKeyCheck,
     windows:cfg.nativeWindowsPermissions ?? (process.platform==='win32' && process.env.JOSI_NATIVE_RUNTIME==='1')}));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));

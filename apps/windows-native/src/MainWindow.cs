@@ -91,6 +91,10 @@ namespace Josi.Native {
 
       Model.Attach(this);
       Model.Changed += Render;
+      // A settings change Josi prepared: ask here, in front of whatever is open.
+      Model.SettingsChangeProposed += proposal => Dispatcher.BeginInvoke(new Action(() => {
+        if (Model.Screen == Screen.Workspace) Dialogs.SettingsChange(this, Model, proposal);
+      }), System.Windows.Threading.DispatcherPriority.Background);
       InputBindings.Add(new KeyBinding(new Command(() => {
         if (Model.Screen == Screen.Workspace && !Model.Busy) Model.Run(() => Model.NewThread());
       }), Key.N, ModifierKeys.Control));

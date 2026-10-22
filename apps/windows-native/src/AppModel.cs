@@ -300,6 +300,53 @@ namespace Josi.Native {
       Section = "chat";
       Run(async () => { foreach (var path in files) await AttachFile(path); });
     }
+    // ------------------------------------------ settings changes by talking
+    /// Raised on the UI thread with a proposal this person can make live; the
+    /// window shows the approval popup.
+    public event Action<Wire> SettingsChangeProposed;
+    public void OfferSettingsChange(Wire proposal) {
+      var handler = SettingsChangeProposed;
+      if (handler != null) handler(proposal);
+      else Notifications.Show("Josi proposes a settings change", proposal["title"].Text + ": approve it under Approvals.");
+    }
+    /// Approve or deny; approving a change this app applies performs it now.
+    public async Task<string> DecideSettingsChange(Wire proposal, bool approve) {
+      var api = Api; if (api == null) return "";
+      var result = await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/decide", "POST", Wires.O("approve", approve));
+      if (!approve) return "Declined. Nothing changed.";
+      if (result["apply"].IsNull) return "Approved. It is applied by " + (proposal["scope"].Text == "administrator" ? "the administrator's" : proposal["proposer"].Text + "'s") + " Josi.";
+      return await ApplySettingsChange(proposal, result["apply"]);
+    }
+    /// Performs the stored request with this app's own session, so the
+    /// setting's own route decides. A route that needs the account password
+    /// gets it from the person, once, through the usual dialog.
+    public async Task<string> ApplySettingsChange(Wire proposal, Wire apply) {
+      var api = Api; if (api == null) return "";
+      var path = apply["path"].Text; var method = apply["method"].Text;
+      var body = apply["body"].IsNull ? Wires.O() : apply["body"].Raw;
+      string error = null;
+      try { await api.Request(path, method, method == "DELETE" ? null : body); }
+      catch (JosiException e) {
+        if (e.Status == 401 && e.Message.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 && window != null) {
+          var password = Dialogs.AskPassword(window, "Confirm to apply: " + proposal["title"].Text, proposal["summary"].Text + "\n\nThis setting asks for your account password.", "Apply");
+          if (password == null) error = "Not applied: the password prompt was cancelled.";
+          else {
+            try {
+              var withPassword = Wires.O("password", password);
+              var map = body as IDictionary<string, object>;
+              if (map != null) foreach (var pair in map) withPassword[pair.Key] = pair.Value;
+              await api.Request(path, method, withPassword);
+            } catch (JosiException again) { error = again.Message; }
+          }
+        } else error = e.Message;
+      }
+      try { await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/applied", "POST", error == null ? Wires.O("ok", true) : Wires.O("ok", false, "error", error)); }
+      catch (JosiException) { }
+      if (error == null) { Notifications.Show("Applied", proposal["title"].Text); return "Applied: " + proposal["title"].Text + "."; }
+      Error = "Not applied: " + error; Notify();
+      return "Not applied: " + error;
+    }
+
     /// Called on the poll timer: background notifications, at most every 30
     /// seconds, and "reply finished" when Josi is not the active window.
     async Task Watch() {

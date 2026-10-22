@@ -14,6 +14,7 @@ import { DATA_TOOLS } from './dataTools.js';
 import { WORKFLOW_TOOLS } from './workflowTools.js';
 import { DEVELOPER_INTEGRATION_TOOLS, OBSIDIAN_TOOLS } from './developerIntegrationTools.js';
 import { PC_BROWSER_TOOLS } from './pcBrowserTools.js';
+import { SETTINGS_CHANGE_TOOLS } from './settingsChangeTools.js';
 
 /** Everything the assistant can do that changes something.
  *
@@ -35,6 +36,7 @@ export const TASK_TOOLS: ToolSpec[] = [
   ...WORK_GOAL_TOOLS,
   ...MEMORY_TOOLS,
   ...WORKSPACE_TOOLS,
+  ...SETTINGS_CHANGE_TOOLS,
   { def: { name: 'get_provider_status', description: 'Read current owner-scoped connection, capability, mapped storage, index/queue and contact-sync metadata. Use for connectivity or available-file claims. Treat the receipt, observation time, account metadata and identifiers as internal grounding evidence: never show them to the person. Summarize useful status with a human-facing provider/source name. Connection status is not proof of provider reachability or indexed files.', parameters: { type: 'object', properties: {}, additionalProperties: false } }, actionClass: null },
   {
     def: {

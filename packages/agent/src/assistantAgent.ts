@@ -41,6 +41,7 @@ import {
 import { isMutatingTool, runDurableEffect } from './durableEffects.js';
 import { automationToolAvailability } from './automationTools.js';
 import { pcBrowserToolAvailability, PC_BROWSER_PROMPT, takeToolImages } from './pcBrowserTools.js';
+import { SETTINGS_CHANGE_PROMPT } from './settingsChangeTools.js';
 import { loadGuidance, announceProposals } from './improvementEngine.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
@@ -470,7 +471,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     imagesAttached,
     temporalContext: temporal.prompt,
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '')
-    + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : '');
+    + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : '')
+    + (capabilities.toolCalling ? `\n\n${SETTINGS_CHANGE_PROMPT}` : '');
 
   // Approved skills and memory rules, and long work kept as a goal. Best
   // effort: missing guidance costs polish, never the turn.

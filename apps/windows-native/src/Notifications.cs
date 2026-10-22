@@ -52,11 +52,11 @@ namespace Josi.Native {
   /// approvals and reminders delivered since the last look. What is already
   /// there at sign-in is not announced.
   sealed class NotificationWatcher {
-    readonly HashSet<string> approvals = new HashSet<string>(), reminders = new HashSet<string>();
+    readonly HashSet<string> approvals = new HashSet<string>(), reminders = new HashSet<string>(), proposals = new HashSet<string>(), applying = new HashSet<string>();
     bool seeded; string owner = "";
     public async Task Check(AppModel model) {
       var api = model.Api; if (api == null || model.Screen != Screen.Workspace) return;
-      if (owner != model.User["id"].Text) { owner = model.User["id"].Text; seeded = false; approvals.Clear(); reminders.Clear(); }
+      if (owner != model.User["id"].Text) { owner = model.User["id"].Text; seeded = false; approvals.Clear(); reminders.Clear(); proposals.Clear(); applying.Clear(); }
       try {
         var a = (await api.Request("/assistant/approvals"))["approvals"].List;
         var r = (await api.Request("/assistant/reminders"))["recent"].List.Where(x => x["status"].Text == "delivered").ToList();
@@ -64,6 +64,25 @@ namespace Josi.Native {
         foreach (var item in r) if (reminders.Add(item.Id) && seeded) Notifications.Show("Reminder", item["body"].Text);
         seeded = true;
       } catch (JosiException) { }
+      await CheckSettingsChanges(model, api);
+    }
+    /// Settings changes Josi prepared in conversation: a popup asks the person
+    /// who can make it live; one approved for this person's own app is applied
+    /// now; an administrator hears about other people's proposals as a toast.
+    async Task CheckSettingsChanges(AppModel model, JosiApi api) {
+      Wire list;
+      try { list = await api.Request("/settings-changes"); } catch (JosiException) { return; }
+      if (model.Api != api) return;
+      foreach (var item in list["proposals"].List) {
+        var id = item.Id;
+        if (item["state"].Text == "approved" && !item["apply"].IsNull) {
+          if (applying.Add(id)) await model.ApplySettingsChange(item, item["apply"]);
+          continue;
+        }
+        if (item["state"].Text != "proposed" || !proposals.Add(id)) continue;
+        if (item["canApprove"].Flag) model.OfferSettingsChange(item);
+        else if (!item["mine"].Flag) Notifications.Show("Settings change proposed", item["proposer"].Text + ": " + item["title"].Text);
+      }
     }
   }
 
