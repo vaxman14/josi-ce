@@ -99,6 +99,7 @@ namespace Josi.Native {
         Item("Custom APIs", Glyph.Code, "custom-apis");
         Item("Workflow Providers", Glyph.Flow, "workflow-providers");
         Item("Approval Policy", Glyph.Shield, "policy");
+        Item("Parental Controls", Glyph.Home, "parental");
         Item("Storage", Glyph.Folder, "storage");
         Item("Email Delivery", Glyph.Mail, "mail-settings");
         Item("Backups", Glyph.Backups, "backups");
@@ -194,7 +195,8 @@ namespace Josi.Native {
         case "migration": view = new MigrationView(model, owner); break;
         case "connections": view = new ConnectionsView(model, owner); break;
         case "usage": view = new UsageView(model, owner); break;
-        case "family": view = ComingSoonPage.Build("Family", "Parental Controls are being redesigned. No supervision, schedules, limits, monitoring or child-safety enforcement are active today. The future feature is intended to let parents or guardians create and manage child profiles, set age-appropriate rules and schedules, and review relevant Josi activity, keeping parental authority separate from ordinary administration.", "Suggest features at roman@socalreceptionist.com."); break;
+        case "family": view = new FamilyView(model, owner); break;
+        case "parental": view = model.IsAdministrator ? new ParentalControlsView(model, owner) : null; break;
         case "apps": view = ComingSoonPage.Build("Companion Apps", "There is no iPhone or Android build of Josi yet. When one exists it will be linked here.", "Signing in will use your email address and normal Josi password. A small directory service tells the app which installation owns your address; it never receives your password or anything else from this installation. Your administrator adds your address to the approved list first."); break;
         case "overview": view = model.IsAdministrator ? new OverviewView(model, owner) : null; break;
         case "checklist": view = model.IsAdministrator ? new ChecklistView(model, owner) : null; break;

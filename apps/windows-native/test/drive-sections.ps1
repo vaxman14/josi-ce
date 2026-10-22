@@ -38,7 +38,7 @@ $app = $null
 $data = & (Join-Path $PSScriptRoot 'mock-local.ps1') -Port $Port; $env:JOSI_SERVER_DATA = $data; $env:JOSI_TEST_NO_BROWSER = '1'; $env:JOSI_TEST_INSTANCE = [Guid]::NewGuid().ToString('N')
 $sections = 'Approvals','Calendar','Contacts','Files','Reminders','Memory','Personalization','Email Templates','Workflows','Automation','Migrate',
   'Connections','Vault','Messaging Apps','Usage','Your Settings','Family','Companion Apps','Overview','Getting Started','Models','People','Connectors',
-  'Integrations','Custom APIs','Workflow Providers','Approval Policy','Storage','Email Delivery','Backups','Voice Box','PC Control','Workspace','Network',
+  'Integrations','Custom APIs','Workflow Providers','Approval Policy','Parental Controls','Storage','Email Delivery','Backups','Voice Box','PC Control','Workspace','Network',
   'Maintenance','Audit Log','Server','Task Manager','Conversations'
 try {
   Start-Sleep -Seconds 1
