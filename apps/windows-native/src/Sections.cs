@@ -514,7 +514,11 @@ namespace Josi.Native {
           Ui.Row(8, Ui.Pill("Open Vault", () => model.Section = "vault"), Ui.Pill("Check Server", () => model.Section = "server"))), 20);
       var automation = model.Automation;
       if (!automation.IsNull) {
-        if (automation["blocker"]["message"].Text.Length > 0)
+        // Blockers about the retired separate desktop do not apply on this PC,
+        // where desktop and browser control run through this app.
+        var code = automation["blocker"]["code"].Text;
+        var retired = code == "no_workspaces" || code == "device_offline" || code == "local_consent_required" || code == "connection_refreshing" || code == "runtime_unavailable" || code == "human_takeover";
+        if (automation["blocker"]["message"].Text.Length > 0 && !retired)
           Ui.Add(page, Ui.CardBox("Before Josi can use the browser", Ui.Copyable(automation["blocker"]["message"].Text),
             automation["blocker"]["code"].Text == "vault_locked" ? Ui.Pill("Open Vault", () => model.Section = "vault") : null,
             Ui.Caption("Your task and original instructions stay saved in Task Manager.")), 20);

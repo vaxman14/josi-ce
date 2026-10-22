@@ -4,7 +4,7 @@ export const automationBlockers = {
   vault_locked: 'Open Vault and unlock it, then return to Automation. Josi needs the saved device and permission settings before it can connect to the separate desktop.',
   status_unavailable: 'Josi could not read the automation status. Open Automation and refresh to see the connection error. Your original instructions are saved; you do not need to rewrite them.',
   runtime_unavailable: 'The server has no automation control connection. Open Server and check its health, then open Automation to connect the separate desktop.',
-  no_workspaces: 'No separate automation desktop is connected to this account. Open Automation, select your enrolled Mac and open the existing desktop, or complete its setup if none exists.',
+  no_workspaces: 'No automation desktop is connected to this account. On a Windows PC, desktop and browser control run through the Josi app and PC Control; on a Mac, open Automation and open the existing desktop, or complete its setup if none exists.',
   device_offline: 'The separate automation desktop is offline. Open Automation and open that desktop, then connect Josi Companion inside it.',
   human_takeover: 'Automation is paused while you control the separate desktop. Resume automation from its local Josi controls when you are ready.',
   local_consent_required: 'Open Automation, show the separate desktop and connect Josi Companion. Select Chrome and enable automation from the local controls for this workspace.',
