@@ -23,7 +23,7 @@ export const PC_BROWSER_TOOLS: ToolSpec[] = [
     description: 'Type text into one field from the latest read of the attached tab, without submitting. Needs "Browser form filling" permission for the site, or the owner\'s approval. Never enter passwords, payment details or identity numbers.',
     parameters: shape({ observation_id: id, element_id: id, text: { type: 'string', maxLength: 2048 } }) }, actionClass: 'automation_control' },
   { def: { name: 'browser_view_photo',
-    description: `Look at one picture on the attached page: pass an img element from the latest read. You receive the image itself to describe, plus a fresh read of the page whose element ids replace the old ones; use those for the next photo. Only already loaded pictures from the same site. Describe only what is visible. Same permission as reading the page. ${UNTRUSTED}`,
+    description: `Look at one picture on the attached page: pass an img element from the latest read. You receive the image itself to describe, plus a fresh read of the page whose element ids replace the old ones; use those for the next photo. Describe only what is visible in the image you receive; if no image arrives, say you could not see it and never guess. Same permission as reading the page. ${UNTRUSTED}`,
     parameters: shape({ observation_id: id, element_id: id }) }, actionClass: null },
   { def: { name: 'browser_check_request',
     description: 'Check a browser request that was waiting for the owner\'s approval, and get its result once it ran. Never resend the request instead.',
@@ -69,7 +69,10 @@ function compact(result: unknown) {
     ? { photo: { width: photo.width, height: photo.height, alt: photo.alt, shown: 'The picture is attached as an image.' },
       [IMAGES]: [{ data: photo.base64, mimeType: 'image/jpeg' }] } : {};
   return { ...pictured, observationId: r.observationId, title: r.title, url: r.url, partial: r.partial, untrustedContent: true,
-    text: r.text, elements: elements.map(e => ({ id: e.id, role: e.role, name: e.name,
+    // After a photo only the fresh element ids matter; the page text was in the read.
+    ...(photo ? {} : { text: r.text }),
+    // After a photo, the next picture and the description boxes are what count.
+    elements: (photo ? elements.filter(e => e.role === 'img' || e.role === 'textarea') : elements).map(e => ({ id: e.id, role: e.role, name: e.name,
       ...(e.inputType ? { inputType: e.inputType } : {}), ...(e.disabled ? { disabled: true } : {}) })) };
 }
 async function settle(control: PcControl, owner: string, requestId: string, waitMs: number) {
@@ -80,7 +83,11 @@ async function settle(control: PcControl, owner: string, requestId: string, wait
     const done = ['succeeded', 'failed', 'interrupted'].includes(outcome.state);
     if (done && outcome.result !== null || ['denied', 'revoked', 'expired'].includes(outcome.state)) {
       const reported = outcome.result as { ok?: boolean; result?: unknown; code?: string } | null;
-      if (outcome.state === 'succeeded') return { ok: true, requestId, result: compact(reported?.result) };
+      if (outcome.state === 'succeeded') {
+        // Pictures ride at the top level, where the tool server looks for them.
+        const { result, images } = takeToolImages(compact(reported?.result));
+        return { ok: true, requestId, result, ...(images.length ? { [IMAGES]: images } : {}) };
+      }
       return { ok: false, requestId, state: outcome.state,
         code: outcome.state === 'denied' ? 'owner_denied' : outcome.state === 'expired' ? 'approval_expired'
           : outcome.state === 'revoked' ? 'control_stopped' : (reported?.result as { code?: string } | undefined)?.code ?? reported?.code ?? 'not_verified',
