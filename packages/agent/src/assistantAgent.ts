@@ -574,6 +574,12 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   let narratedSearchGuardReprompted = false;
   let checkpointGuardReprompted = false;
   let emptyReplyReprompted = false;
+  let invalidStepReprompted = false;
+  // In the one-step subscription mode the model's `reply` beside a tool
+  // proposal is written for the person (a photo's description while the next
+  // view is requested). Kept here so a segment that ends at its limit, or in a
+  // provider error, still hands over what was written along the way.
+  const interim: string[] = [];
   let pendingCapture: { reservationId: string; toolCallId: string } | null = null;
 
   // A subscription proposes one tool at a time. Allow enough steps to own the
@@ -652,8 +658,18 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     } catch (err) {
       // Caps, Local-only, a dead provider. The message from the registry is
       // written for a person; it is relayed, not reinterpreted.
+      console.error(`josi-ce: model call failed (hop ${hop + 1} of ${hopLimit}, ${actions.length} tool results, goal ${args.workGoalId ?? 'none'}): ${(err as Error).message}`);
+      // A malformed step from the one-step subscription mode (bad JSON, a tool
+      // name or arguments off the schema) is the model's mistake, not an
+      // outage: say so once and let it propose again, rather than ending the
+      // segment with everything done so far marked as a provider failure.
+      if ((err as Error).message.includes('invalid work step') && !invalidStepReprompted && hop + 1 < hopLimit) {
+        invalidStepReprompted = true;
+        messages.push({ role: 'user', content: 'Your last response was not a valid work step: the JSON did not have exactly the fields reply and tool, or the tool name or its arguments did not match the offered tool\'s schema. Propose the step again exactly as required, or set tool to null and reply in words.' });
+        continue;
+      }
       return {
-        reply: '', actions,
+        reply: interim.join('\n\n'), actions,
         refusal: {
           reason: (err as { needsReconfiguration?: boolean }).needsReconfiguration ? 'capped' : 'provider_error',
           message: capture ? 'The captured desktop content could not be delivered with current model permission. Check the task receipt and automation settings before continuing.' : (err as Error).message,
@@ -715,6 +731,9 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         continue;
       }
       let reply = res.text.trim() ? res.text : 'I could not put a reply together for that. Please ask again, in different words if it helps.';
+      // What the one-step mode wrote for the person along the way comes first,
+      // unless the closing reply already repeats it.
+      if (interim.length) reply = [...interim.filter(text => !reply.includes(text)), reply].join('\n\n');
       const dataReceiptsThisTurn: DataToolReceipt[] = actions
         .filter((a) => DATA_CLAIM_TOOLS.has(a.tool))
         .map((a) => ({ tool: a.tool, result: a.result }));
@@ -885,6 +904,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       toolResults.push({ toolCallId: call.id, name: call.name, content: JSON.stringify(result) });
     }
 
+    if (callerSubscription && res.text.trim()) interim.push(res.text.trim());
     messages.push({ role: 'assistant', content: res.text, toolCalls: res.toolCalls });
     messages.push({ role: 'user', content: '', toolResults });
     // Provider adapters emit tool results separately from image-bearing user
@@ -901,8 +921,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     subjectId: args.threadId,
   });
   return {
-    reply: args.workGoalId ? 'This work segment reached its limit. Josi will use the saved checkpoint to continue or ask for the missing instructions.'
-      : 'This reply reached its work limit. Any saved goal keeps its next step; otherwise, tell me which part to tackle next.',
+    reply: (interim.length ? interim.join('\n\n') + '\n\n' : '') + (args.workGoalId ? 'This work segment reached its limit. Josi will use the saved checkpoint to continue or ask for the missing instructions.'
+      : 'This reply reached its work limit. Any saved goal keeps its next step; otherwise, tell me which part to tackle next.'),
     actions, imagesDroppedNoVision, retry,
   };
 }

@@ -538,7 +538,13 @@ export async function checkpointWorkGoal(db: Db, args: { ownerUserId: string; go
       }
     }
     row.activity = activity; row.checkpoint = checkpoint;
-    const independent = ['question', 'wait'].includes(String(next.kind)) && args.stepId !== undefined ? readyWorkSteps(row.steps)[0] : null;
+    // While a step waits on the person, only a step never started yet counts
+    // as independent work. A step already worked on and left unverified would
+    // simply run again, segment after segment (October 22: ten photos
+    // described, then the page re-read and the photos re-viewed in a loop
+    // while "review the descriptions" waited on the owner).
+    const independent = ['question', 'wait'].includes(String(next.kind)) && args.stepId !== undefined
+      ? readyWorkSteps(row.steps).find(step => step.state === 'pending' && step.id !== args.stepId) ?? null : null;
     if (independent) {
       row.state = 'working'; row.continuation = { kind: 'action', stepId: independent.id };
       row.activity = `${activity} · Continuing independent work`;

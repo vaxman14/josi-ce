@@ -51,7 +51,9 @@ async function addInsight(db: Db, args: { ownerUserId: string; kind: InsightKind
   const [repeat] = await db.query<{ id: string }>(`select id from assistant_insights where owner_user_id=$1 and kind=$2 and summary=$3
     and created_at > now() - interval '1 day' limit 1`, [args.ownerUserId, args.kind, summary]);
   if (repeat) {
-    await db.query(`update assistant_insights set evidence=jsonb_set(evidence,'{repeats}',to_jsonb(coalesce((evidence->>'repeats')::int,1)+1)) where id=$1`, [repeat.id]);
+    // Older rows may hold a scalar here; jsonb_set cannot set a path in one.
+    await db.query(`update assistant_insights set evidence=jsonb_set(case when jsonb_typeof(evidence)='object' then evidence else '{}'::jsonb end,'{repeats}',
+      to_jsonb(coalesce((case when jsonb_typeof(evidence)='object' then evidence->>'repeats' end)::int,1)+1)) where id=$1`, [repeat.id]);
     return false;
   }
   await db.query(`insert into assistant_insights(owner_user_id,kind,summary,evidence,thread_id,turn_id) values($1,$2,$3,$4,$5,$6)`,
