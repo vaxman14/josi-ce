@@ -33,6 +33,33 @@ namespace Josi.Native {
   static class ModelText {
     public static bool Subscription(string kind) { return kind == "openai_subscription" || kind == "anthropic_subscription"; }
     public static string PlanName(string kind) { return kind == "anthropic_subscription" ? "Claude" : "ChatGPT"; }
+    public static readonly string[][] CheckSteps = {
+      new[] { "chat", "Basic reply" }, new[] { "structuredOutput", "Structured output" }, new[] { "toolCalling", "Tool calling" },
+      new[] { "vision", "Image understanding" }, new[] { "context", "Usable context" } };
+    /// The live capability-check view shared by the setup wizard and the
+    /// Models page: the five checks filled in as the server reports them.
+    public static UIElement Checking(Wire progress, bool sawRunning, string startingPhase) {
+      var stack = new StackPanel();
+      Ui.Add(stack, Ui.Title2("Checking the model"), 0);
+      var current = progress["current"].Text; var done = progress["steps"].List;
+      var phase = !sawRunning ? startingPhase
+        : current.Length == 0 ? "Finishing up…"
+        : "Checking " + (CheckSteps.FirstOrDefault(s => s[0] == current) ?? new[] { current, current })[1].ToLowerInvariant() + "…";
+      Ui.Add(stack, Ui.Working(phase, true, 30), 14);
+      var list = new StackPanel();
+      foreach (var known in CheckSteps) {
+        var result = done.FirstOrDefault(s => s["id"].Text == known[0]);
+        UIElement icon; Brush color; string note;
+        if (result != null) { var passed = result["passed"].Flag; icon = Ui.Icon(passed ? Glyph.Check : Glyph.Warning, 13, passed ? Ui.Green : Ui.Orange); color = Ui.Text; note = result["detail"].Text; }
+        else if (sawRunning && known[0] == current) { icon = Ui.Icon(Glyph.Circle, 13, Ui.Orange); color = Ui.Text; note = "Asking the model now…"; }
+        else { icon = Ui.Icon(Glyph.Circle, 13, Ui.Muted); color = Ui.Muted; note = ""; }
+        Ui.Add(list, Ui.Row(8, icon, Ui.T(known[1], 13.5, FontWeights.Medium, color)), 6);
+        if (note.Length > 0) { var detail = Ui.Caption(note); detail.Margin = new Thickness(21, 2, 0, 0); Ui.Add(list, detail, 0); }
+      }
+      Ui.Add(stack, list, 4);
+      Ui.Add(stack, Ui.Caption("Five small requests go to the model, one after another. This usually takes 20 seconds to a minute; a slow provider can take longer. Nothing is stuck while the clock is moving."), 14);
+      return stack;
+    }
     public static Wire Entry(IEnumerable<Wire> catalog, string kind) { return catalog.FirstOrDefault(c => c["kind"].Text == kind) ?? Wire.Null; }
     public static UIElement Chip(string text, Brush brush) {
       return new Border { Background = Ui.Raised, CornerRadius = new CornerRadius(11), Padding = new Thickness(9, 3, 9, 3), Margin = new Thickness(0, 0, 6, 6),
@@ -370,9 +397,7 @@ namespace Josi.Native {
     Wire progress = Wire.Null;
     readonly DispatcherTimer progressPoll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
     static readonly string[] StepNames = { "Choose", "Connect", "Model", "Review and check" };
-    static readonly string[][] CheckSteps = {
-      new[] { "chat", "Basic reply" }, new[] { "structuredOutput", "Structured output" }, new[] { "toolCalling", "Tool calling" },
-      new[] { "vision", "Image understanding" }, new[] { "context", "Usable context" } };
+    static string[][] CheckSteps { get { return ModelText.CheckSteps; } }
 
     /// save: performs the save (and capability check where the caller does);
     /// returns true when the panel should show its finished state.
@@ -696,28 +721,7 @@ namespace Josi.Native {
     }
     /// Shown while the server saves the settings and runs the five checks:
     /// which question it is on, what passed so far, and a live clock.
-    UIElement Checking() {
-      var stack = new StackPanel();
-      Ui.Add(stack, Ui.Title2("Checking the model"), 0);
-      var current = progress["current"].Text; var done = progress["steps"].List;
-      var phase = !sawRunning ? "Saving your settings and starting the check…"
-        : current.Length == 0 ? "Finishing up…"
-        : "Checking " + (CheckSteps.FirstOrDefault(s => s[0] == current) ?? new[] { current, current })[1].ToLowerInvariant() + "…";
-      Ui.Add(stack, Ui.Working(phase, true, 30), 14);
-      var list = new StackPanel();
-      foreach (var known in CheckSteps) {
-        var result = done.FirstOrDefault(s => s["id"].Text == known[0]);
-        UIElement icon; Brush color; string note;
-        if (result != null) { var passed = result["passed"].Flag; icon = Ui.Icon(passed ? Glyph.Check : Glyph.Warning, 13, passed ? Ui.Green : Ui.Orange); color = Ui.Text; note = result["detail"].Text; }
-        else if (sawRunning && known[0] == current) { icon = Ui.Icon(Glyph.Circle, 13, Ui.Orange); color = Ui.Text; note = "Asking the model now…"; }
-        else { icon = Ui.Icon(Glyph.Circle, 13, Ui.Muted); color = Ui.Muted; note = ""; }
-        Ui.Add(list, Ui.Row(8, icon, Ui.T(known[1], 13.5, FontWeights.Medium, color)), 6);
-        if (note.Length > 0) { var detail = Ui.Caption(note); detail.Margin = new Thickness(21, 2, 0, 0); Ui.Add(list, detail, 0); }
-      }
-      Ui.Add(stack, list, 4);
-      Ui.Add(stack, Ui.Caption("Five small requests go to the model, one after another. This usually takes 20 seconds to a minute; a slow provider can take longer. Nothing is stuck while the clock is moving."), 14);
-      return stack;
-    }
+    UIElement Checking() { return ModelText.Checking(progress, sawRunning, "Saving your settings and starting the check…"); }
     void SaveAndCheck() {
       var body = Body();
       foreach (var control in fields.Values) { var secret = control as PasswordBox; if (secret != null) secret.Clear(); }
@@ -773,9 +777,31 @@ namespace Josi.Native {
     readonly Dictionary<string, Wire> subscriptions = new Dictionary<string, Wire>();
     readonly TextBox cost = Ui.Input("No cap"), tokens = Ui.Input("No cap");
     readonly CheckBox localOnly = Ui.Toggle("Only use models running on your own computer or network");
+    // "Check Again" on the page: the same live view as the wizard, drawn into
+    // the model's card and refreshed in place once a second, no page rebuild.
+    string checkingRole; Wire checkProgress = Wire.Null; bool checkSawRunning; StackPanel checkHost;
+    readonly DispatcherTimer checkPoll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
     public ModelsView(AppModel model, Window owner) : base(model, owner) {
       localOnly.Checked += delegate { if (IsLoaded) Render(); };
       localOnly.Unchecked += delegate { if (IsLoaded) Render(); };
+      checkPoll.Tick += async delegate { await PollCheck(); };
+      Unloaded += delegate { checkPoll.Stop(); };
+    }
+    async Task PollCheck() {
+      var api = model.Api; var role = checkingRole;
+      if (api == null || role == null) { checkPoll.Stop(); return; }
+      try {
+        var next = await api.Request("/admin/llm/providers/" + role + "/probe/progress");
+        if (checkingRole != role) return;
+        if (next["running"].Flag) checkSawRunning = true;
+        if (checkSawRunning) checkProgress = next;
+        FillCheckHost();
+      } catch (JosiException) { checkPoll.Stop(); }
+    }
+    void FillCheckHost() {
+      if (checkHost == null) return;
+      checkHost.Children.Clear();
+      checkHost.Children.Add(ModelText.Checking(checkProgress, checkSawRunning, "Starting the check…"));
     }
     protected override double PageWidth() { return 1100; }
     protected override async Task Load() {
@@ -887,6 +913,11 @@ namespace Josi.Native {
       else items.Add(Ui.Caption("Runs on a model you host."));
       items.Add(ModelText.Capabilities(saved["capabilities"]));
       if (saved["probedAt"].Text.Length > 0) items.Add(Ui.Caption("Last checked " + Wires.Date(saved["probedAt"].Text)));
+      if (role == checkingRole) {
+        checkHost = new StackPanel(); FillCheckHost();
+        items.Add(checkHost);
+        return Card(title, items);
+      }
       var steps = saved["probeSteps"].List;
       if (steps.Count > 0) items.Add(new Disclosure("Check details", () => ModelText.Steps(steps)));
       var actions = Ui.Wrap(
@@ -916,12 +947,15 @@ namespace Josi.Native {
     }
     void Probe(string role) {
       if (!Dialogs.Confirm(owner, "Run a capability check?", "Josi sends a few small test requests to this model and uses its API billing or subscription quota. A passing check turns the model on.", "Run Check")) return;
+      if (Api == null || model.Busy || loading) return;
+      checkingRole = role; checkSawRunning = false; checkProgress = Wire.Null;
+      Render();
+      checkPoll.Start();
       Perform(async (api, stamp) => {
-        model.Activity = "Running the capability check…"; model.Notify();
         try {
           var result = await api.Request("/admin/llm/providers/" + role + "/probe", "POST", Wires.O());
           if (Current(stamp)) note = result["provider"]["active"].Flag ? "The model passed its capability check." : "The model did not pass. Open Check details for the reason.";
-        } finally { model.Activity = ""; }
+        } finally { checkPoll.Stop(); checkingRole = null; checkHost = null; }
       });
     }
     void Request(string path, string method, object body, string done) {
