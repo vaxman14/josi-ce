@@ -171,7 +171,13 @@ async function startVaultSubscription(store: CodexCredentialStore | ClaudeCreden
           auth: projection?.reveal() ?? null, timeoutMs: options.timeoutMs,
           ...(options.privateFiles ? { privateFiles: options.privateFiles } : {}) });
       }
-    } catch { stop(); }
+    } catch (error) {
+      // The reason is written for an operator (a lease check or the authority
+      // callback), never credential material; without it a cancelled run is
+      // an unfalsifiable "permission or login became unavailable".
+      console.error(`josi-ce: subscription run stopped: ${error instanceof Error ? error.message : 'unknown reason'}`);
+      stop();
+    }
     finally { polling = false; }
   };
   guardian.on('message', (value: CodexGuardianOutput) => {

@@ -250,10 +250,14 @@ async function start(value: CodexGuardianStart) {
     void finish();
   }
 }
+// The parent renews about once a second, and each renewal is several database
+// round trips. Fifteen seconds tolerates a slow second (a cold database right
+// after a restart) without letting a dead parent keep the login for long.
+const AUTHORITY_WINDOW_MS = 15_000;
 const watchdog = setInterval(() => {
   const mono = performance.now(), wall = Date.now();
-  if (mono - authorityMono > 5_000 || wall - authorityWall > 5_000 || wall < authorityWall
-    || !started && mono - operationMono > 5_000) stop();
+  if (mono - authorityMono > AUTHORITY_WINDOW_MS || wall - authorityWall > AUTHORITY_WINDOW_MS || wall < authorityWall
+    || !started && mono - operationMono > AUTHORITY_WINDOW_MS) stop();
   if (started && (mono - operationMono > duration || wall - operationWall > duration || wall < operationWall)) {
     timedOut = true; stop();
   }
