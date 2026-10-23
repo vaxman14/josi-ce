@@ -441,6 +441,15 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   let tools = capabilities.toolCalling
     ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools, ...pcBrowserTools, ...pcDesktopTools].map((t) => t.def)
     : undefined;
+  // On a PC where Josi's own PC Control is live, the browser and the desktop
+  // are reached through those tools. The automation-workspace tools describe
+  // a different runtime with no desktop here; offered alongside, a model
+  // mistakes the attached tab for a workspace and reports "not connected".
+  if (pcBrowserTools.length || pcDesktopTools.length) {
+    const workspaceTools = new Set(['get_automation_workspaces', 'connect_automation_workspace', 'start_automation_task',
+      'open_automation_browser', 'observe_automation_workspace', 'browser_control', 'computer_control']);
+    tools = tools?.filter(tool => !workspaceTools.has(tool.name));
+  }
   if (args.workGoalId) {
     const humanTools = new Set(['own_goal', 'approve_task', 'cancel_task', 'update_task_slots',
       'update_reminder', 'cancel_reminder', 'propose_work_lesson']);
@@ -680,7 +689,10 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
           && action.result && typeof action.result === 'object' && !('error' in action.result))) {
         checkpointGuardReprompted = true;
         messages.push({ role: 'assistant', content: res.text });
-        messages.push({ role: 'user', content: 'Before ending this work segment, save its exact current state with checkpoint_goal. The original request remains sufficient; do not ask the person to repeat it. If automation is unavailable, call get_automation_workspaces now and save its specific setup blocker as the question. Otherwise preserve the unfinished next step. Do not claim progress without evidence or repeat an uncertain action.' });
+        messages.push({ role: 'user', content: 'Before ending this work segment, save its exact current state with checkpoint_goal. The original request remains sufficient; do not ask the person to repeat it. '
+          + (offeredToolNames.has('get_automation_workspaces') ? 'If automation is unavailable, call get_automation_workspaces now and save its specific setup blocker as the question. Otherwise preserve the unfinished next step. '
+            : offeredToolNames.has('browser_read_page') ? 'The attached browser tab is read with browser_read_page; preserve the unfinished next step. ' : 'Preserve the unfinished next step. ')
+          + 'Do not claim progress without evidence or repeat an uncertain action.' });
         continue;
       }
       // ---- narrated search/read with ZERO tool calls this turn ----------

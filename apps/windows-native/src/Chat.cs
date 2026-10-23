@@ -15,6 +15,9 @@ namespace Josi.Native {
     readonly TextBlock modelName = Ui.Caption("");
     readonly StackPanel messages = new StackPanel { MaxWidth = 900, Margin = new Thickness(28) };
     readonly ScrollViewer scroller;
+    // Work in progress sits beside the conversation, never under the composer.
+    readonly StackPanel goalPanel = new StackPanel { Width = 380, Margin = new Thickness(0, 20, 24, 12) };
+    readonly ScrollViewer goalScroller;
     readonly TextBox editor;
     readonly WrapPanel attachments = new WrapPanel();
     readonly TextBlock partial = Ui.T("", 13.5, null, Ui.Muted);
@@ -35,6 +38,11 @@ namespace Josi.Native {
       header.Margin = new Thickness(28, 24, 28, 18);
       var rule = new Border { Height = 1, Background = Ui.Border, Margin = new Thickness(24, 0, 24, 0) };
       scroller = new ScrollViewer { Content = messages, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+      goalScroller = new ScrollViewer { Content = goalPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false, Visibility = Visibility.Collapsed };
+      var body = new Grid();
+      body.ColumnDefinitions.Add(new ColumnDefinition());
+      body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+      body.Children.Add(scroller); Grid.SetColumn(goalScroller, 1); body.Children.Add(goalScroller);
 
       editor = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 44, MaxHeight = 140,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = Brushes.Transparent, BorderThickness = new Thickness(0),
@@ -58,7 +66,7 @@ namespace Josi.Native {
       var dock = new DockPanel();
       DockPanel.SetDock(header, Dock.Top); DockPanel.SetDock(rule, Dock.Top);
       DockPanel.SetDock(hint, Dock.Bottom); DockPanel.SetDock(composer, Dock.Bottom);
-      dock.Children.Add(header); dock.Children.Add(rule); dock.Children.Add(hint); dock.Children.Add(composer); dock.Children.Add(scroller);
+      dock.Children.Add(header); dock.Children.Add(rule); dock.Children.Add(hint); dock.Children.Add(composer); dock.Children.Add(body);
       Content = dock;
       Loaded += delegate { if (!loadedModel) { loadedModel = true; LoadModelName(); } editor.Focus(); };
     }
@@ -130,7 +138,9 @@ namespace Josi.Native {
         foreach (var turn in model.Turns.Where(t => t["status"].Text == "failed" && t["inbound_message_id"].Text == message.Id))
           Ui.Add(messages, new ChatTurnFailure(model, turn), 12);
       }
-      foreach (var goal in goals) Ui.Add(messages, new GoalCard(model, owner, goal, true), 20);
+      goalPanel.Children.Clear();
+      foreach (var goal in goals) Ui.Add(goalPanel, new GoalCard(model, owner, goal, true), 16);
+      goalScroller.Visibility = goals.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
       foreach (var turn in model.Turns.Where(t => t["status"].Text == "failed" && !model.Messages.Any(m => m.Id == t["inbound_message_id"].Text)))
         Ui.Add(messages, new ChatTurnFailure(model, turn), 12);
       if (Thinking) Ui.Add(messages, Ui.Thinking(), 20);
