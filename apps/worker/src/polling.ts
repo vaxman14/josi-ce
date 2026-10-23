@@ -3,19 +3,23 @@
 export function startWorkerPolling(
   tick: (maintenance: boolean) => Promise<void>,
   onError: (error: unknown) => void,
-): () => void {
-  let stopped = false, running = false, lastMaintenance: number | null = null;
+): () => Promise<void> {
+  let stopped = false, current: Promise<void> | null = null, lastMaintenance: number | null = null;
   const run = async () => {
-    if (stopped || running) return;
-    running = true;
+    if (stopped || current) return;
     const now = performance.now();
     const maintenance = lastMaintenance === null || now - lastMaintenance >= 30_000;
     if (maintenance) lastMaintenance = now;
-    try { await tick(maintenance); }
-    catch (error) { onError(error); }
-    finally { running = false; }
+    current = (async () => {
+      try { await tick(maintenance); }
+      catch (error) { onError(error); }
+      finally { current = null; }
+    })();
+    await current;
   };
   const timer = setInterval(() => { void run(); }, 1_000);
   void run();
-  return () => { stopped = true; clearInterval(timer); };
+  // Stopping drains: the pass in flight (a model call holding a subscription
+  // login lease, a durable turn) finishes before the caller exits.
+  return () => { stopped = true; clearInterval(timer); return current ?? Promise.resolve(); };
 }

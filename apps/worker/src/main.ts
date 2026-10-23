@@ -7,7 +7,7 @@
 import { connectFromEnv, loadMasterKey, resolveDataPath, createNativeInspectionRuntime } from '@josi-ce/core';
 import { cleanupAttachments, probeAttachmentStorage, nativeScanner } from '@josi-ce/storage';
 import { processQueue } from './jobs.js';
-import { writeFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { open, rename } from 'node:fs/promises';
@@ -48,11 +48,19 @@ function heartbeat(): void {
 }
 
 const WORKER_ID = `worker-${process.pid}`;
+// Windows has no signal a service stop can send a console process, so a stop
+// request is a file beside the heartbeat. Seen between passes, it drains the
+// pass in flight and exits; a stale one from an earlier stop is cleared here.
+const STOP_FILE = resolveDataPath('/data/state/worker.stop');
+try { rmSync(STOP_FILE, { force: true }); } catch { /* best effort */ }
+let stopping = false;
 
 let lastCleanup = 0;
 let lastAntivirusProbe = 0;
 let storageAvailable = false;
 async function tick(maintenance: boolean): Promise<void> {
+  if (!stopping && existsSync(STOP_FILE)) { void shutdown('stop request'); return; }
+  if (stopping) return;
   if (scanner && Date.now() - lastAntivirusProbe > 5 * 60_000) {
     const result = await scanner.scanStatus(Buffer.from('Josi antivirus availability check.'));
     const status = result === 'clean' ? 'available' : result === 'unavailable' ? 'unavailable' : 'error';
@@ -85,8 +93,13 @@ const stopPolling = startWorkerPolling(tick, error =>
   console.error('josi-ce worker: tick failed', error instanceof Error ? error.message : 'unknown error'));
 
 async function shutdown(signal: string): Promise<void> {
+  if (stopping) return;
+  stopping = true;
   console.log(`josi-ce worker: ${signal} received, shutting down`);
-  stopPolling();
+  // Finish the pass in flight (bounded: a model call is capped at three
+  // minutes) so a subscription login lease is written back, never stranded.
+  await Promise.race([stopPolling(), new Promise<void>(resolve => setTimeout(resolve, 200_000).unref())]);
+  try { rmSync(STOP_FILE, { force: true }); } catch { /* best effort */ }
   scanner?.close();
   await close().catch(() => undefined);
   process.exit(0);
