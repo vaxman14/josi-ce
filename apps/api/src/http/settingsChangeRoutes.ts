@@ -56,7 +56,16 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
   /** Whether this user is the one whose app applies the change. */
   const applier = (row: Row, user: { id: string; role: string }) =>
     row.scope === 'administrator' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
-  const change = (row: Row) => ({ method: row.method, path: row.path, body: row.body });
+  // The stored body is JSON text; the app sends it on as the request body, so
+  // it must travel as an object. As text it would arrive double-encoded and
+  // the setting's route would reject it with a 400 (the October 22 memory
+  // learning proposal "failed" exactly this way).
+  const change = (row: Row) => {
+    let body: unknown = null;
+    if (typeof row.body === 'string') { try { body = JSON.parse(row.body); } catch { body = null; } }
+    else body = row.body ?? null;
+    return { method: row.method, path: row.path, body };
+  };
   const dto = (row: Row, user: { id: string; role: string }, rule: Policy) => ({
     id: row.id, proposer: row.proposer, mine: row.proposer_user_id === user.id, scope: row.scope, area: row.area, sensitive: row.sensitive,
     title: row.title, summary: row.summary, state: row.state, createdAt: row.created_at, expiresAt: row.expires_at,

@@ -5,7 +5,7 @@
 // The person makes it live from the app: their own client performs the
 // request with their own session, so every route's own checks (role, password
 // step-up, ownership) still run, and the proposal is the receipt either way.
-import type { Db } from '@josi-ce/core';
+import { json, type Db } from '@josi-ce/core';
 import type { ToolSpec } from './tools.js';
 
 export interface SettingsArea {
@@ -130,8 +130,10 @@ export async function executeSettingsChangeTool(db: Db, userId: string, name: st
   try { path = buildPath(area, params); } catch (error) { return { ok: false, code: 'bad_params', message: (error as Error).message }; }
   const [row] = await db.query<{ id: string }>(
     `insert into settings_change_proposals(proposer_user_id, scope, area, sensitive, title, summary, method, path, body)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb) returning id`,
-    [userId, area.scope, area.area, area.sensitive, area.title, summary, area.method, path, encoded]);
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+    // json(), not the encoded text: a text parameter cast to jsonb lands as a
+    // JSON string scalar, and the app would send it on double-encoded.
+    [userId, area.scope, area.area, area.sensitive, area.title, summary, area.method, path, json(body)]);
   return { ok: true, proposalId: row.id, scope: area.scope, state: 'proposed',
     message: area.scope === 'administrator'
       ? 'Prepared. It waits for the super-admin\'s approval under Approvals in the Josi app; nothing has changed yet.'

@@ -729,7 +729,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         emptyReplyReprompted = true;
         messages.push({ role: 'assistant', content: res.text });
         messages.push({ role: 'user', content: offeredToolNames.size
-          ? 'Your reply was empty. If the request needs a tool, propose that tool call now in this response. Otherwise answer the person in words: what you can see or do, or what is missing.'
+          ? 'Your reply was empty. If the request needs a tool, propose that tool call now in this response. Otherwise answer the person in words: what you can see or do, or what is missing. If you cannot or will not continue, say exactly why in reply.'
           : 'Your reply was empty. Answer the person in words: say what you can see or do, or what is missing.' });
         continue;
       }
