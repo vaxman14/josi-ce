@@ -11,7 +11,7 @@
 // sensitive change applied by a member is emailed to every super-admin at
 // once when mail is set up.
 import { Router, type Request, type Response } from 'express';
-import { loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
+import { addMessage, loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
@@ -21,10 +21,10 @@ type Policy = 'self' | 'super_admin';
 interface Row {
   id: string; proposer_user_id: string; proposer: string; scope: 'personal' | 'administrator'; area: string; sensitive: boolean; title: string; summary: string;
   method: string; path: string; body: unknown; state: string; approved_by: string | null; approved_at: string | null; applied_by: string | null;
-  applied_at: string | null; error: string | null; expires_at: string; created_at: string;
+  applied_at: string | null; error: string | null; expires_at: string; created_at: string; thread_id: string | null;
 }
 const COLUMNS = `p.id, p.proposer_user_id, u.username as proposer, p.scope, p.area, p.sensitive, p.title, p.summary, p.method, p.path, p.body, p.state,
-  p.approved_by, p.approved_at, p.applied_by, p.applied_at, p.error, p.expires_at, p.created_at`;
+  p.approved_by, p.approved_at, p.applied_by, p.applied_at, p.error, p.expires_at, p.created_at, p.thread_id`;
 
 export function settingsChangeRoutes(ctx: Ctx): Router {
   const { db } = ctx;
@@ -54,6 +54,14 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
   }
   const visible = (row: Row, user: { id: string; role: string }) => row.proposer_user_id === user.id || user.role === 'super_admin';
   /** Whether this user is the one whose app applies the change. */
+  // The outcome goes back into the conversation that prepared the change, so
+  // the thread says what happened instead of "waiting for approval" forever.
+  // Best effort: the proposal record is the receipt either way.
+  const tell = async (row: Row, body: string) => {
+    if (!row.thread_id) return;
+    try { await addMessage(db, { threadId: row.thread_id, direction: 'out', body, meta: { settings_change: row.id } }); }
+    catch { /* the thread may be gone */ }
+  };
   const applier = (row: Row, user: { id: string; role: string }) =>
     row.scope === 'administrator' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
   // The stored body is JSON text; the app sends it on as the request body, so
@@ -109,6 +117,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     if (!req.body.approve) {
       if (!['proposed', 'approved'].includes(row.state)) throw fail(409, `That proposal is already ${row.state}.`);
       await db.query(`update settings_change_proposals set state = 'denied', approved_by = $2, approved_at = now() where id = $1`, [row.id, user.id]);
+      await tell(row, `Not changed: this was declined. ${row.summary}`);
       return res.json({ ok: true, state: 'denied' });
     }
     if (row.state !== 'proposed') throw fail(409, `That proposal is already ${row.state}.`);
@@ -130,6 +139,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     const error = typeof req.body?.error === 'string' ? req.body.error.slice(0, 500) : null;
     await db.query(`update settings_change_proposals set state = $2, applied_by = $3, applied_at = now(), error = $4 where id = $1`,
       [row.id, ok ? 'applied' : 'failed', user.id, ok ? null : error ?? 'The change could not be applied.']);
+    await tell(row, ok ? `Done: this change is now live. ${row.summary}` : `Not applied: ${error ?? 'the change could not be applied.'} ${row.summary}`);
     let notified = false;
     if (ok && row.sensitive && user.role !== 'super_admin') {
       notified = await notifySuperAdmins(ctx, db, row, user);

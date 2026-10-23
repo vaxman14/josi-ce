@@ -23,8 +23,16 @@ namespace Josi.Native {
     readonly JosiApi api;
     protected SectionView(AppModel model, Window owner) {
       this.model = model; this.owner = owner; ownerId = model.User["id"].Text; api = model.Api;
-      Unloaded += delegate { generation++; OnLeave(); };
-      Loaded += delegate { Render(); StartLoad(); };
+      Unloaded += delegate { generation++; model.Changed -= SyncEnabled; OnLeave(); };
+      Loaded += delegate { model.Changed += SyncEnabled; Render(); StartLoad(); };
+    }
+    /// The page follows the busy flag as it changes. Render() sets it once, and
+    /// a save finishes its last Render while the app is still busy, so without
+    /// this a settings page stayed greyed out after every save until something
+    /// else happened to redraw it.
+    void SyncEnabled() {
+      var page = scroll == null ? null : scroll.Content as FrameworkElement;
+      if (page != null) page.IsEnabled = !model.Busy && !loading;
     }
     protected virtual void OnLeave() { }
     protected bool Current(int stamp) { return model.Api == api && api != null && model.User["id"].Text == ownerId && generation == stamp && IsLoaded; }

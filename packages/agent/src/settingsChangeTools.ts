@@ -97,7 +97,9 @@ export const SETTINGS_CHANGE_TOOLS: ToolSpec[] = [
 ];
 export const SETTINGS_CHANGE_TOOL_NAMES = new Set(SETTINGS_CHANGE_TOOLS.map((t) => t.def.name));
 export const SETTINGS_CHANGE_PROMPT = 'When the person asks to change a Josi setting (approvals, permissions, PC control, models, workspace, accounts), look it up with list_josi_settings and prepare it with propose_josi_setting_change. '
-  + 'The change takes effect only after they approve it in the Josi app, so tell them it is waiting for their approval (or the administrator\'s) and never say it is done.';
+  + 'The change takes effect only after they approve it in the Josi app, so tell them it is waiting for their approval (or the administrator\'s) and never say it is done. '
+  + 'Preparing a setting change is one quick step: never turn it into a work goal and never use own_goal, checkpoint_goal or revise_goal_plan for it. Call list_josi_settings, then propose_josi_setting_change, then answer in one short sentence. '
+  + 'Once the person approves, the app applies it and a note saying so is added to this conversation; if asked later what changed, rely on those notes, not on an earlier "waiting" message.';
 
 /** Fills the path template from the model's params; a missing or malformed
  * parameter refuses the proposal rather than guessing a path. */
@@ -111,7 +113,7 @@ export function buildPath(area: SettingsArea, params: Record<string, unknown>): 
   return path;
 }
 
-export async function executeSettingsChangeTool(db: Db, userId: string, name: string, input: Record<string, unknown>) {
+export async function executeSettingsChangeTool(db: Db, userId: string, name: string, input: Record<string, unknown>, threadId: string | null = null) {
   if (name === 'list_josi_settings') {
     return { settings: SETTINGS_AREAS.map(({ area, title, scope, sensitive, params, fields }) => ({ area, title, scope, sensitive, params: params ?? [], fields })),
       note: 'Personal settings change only the person asking. Administrator settings wait for the super-admin. Every change is approved in the Josi app before it applies.' };
@@ -129,11 +131,11 @@ export async function executeSettingsChangeTool(db: Db, userId: string, name: st
   let path: string;
   try { path = buildPath(area, params); } catch (error) { return { ok: false, code: 'bad_params', message: (error as Error).message }; }
   const [row] = await db.query<{ id: string }>(
-    `insert into settings_change_proposals(proposer_user_id, scope, area, sensitive, title, summary, method, path, body)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
+    `insert into settings_change_proposals(proposer_user_id, scope, area, sensitive, title, summary, method, path, body, thread_id)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
     // json(), not the encoded text: a text parameter cast to jsonb lands as a
     // JSON string scalar, and the app would send it on double-encoded.
-    [userId, area.scope, area.area, area.sensitive, area.title, summary, area.method, path, json(body)]);
+    [userId, area.scope, area.area, area.sensitive, area.title, summary, area.method, path, json(body), threadId]);
   return { ok: true, proposalId: row.id, scope: area.scope, state: 'proposed',
     message: area.scope === 'administrator'
       ? 'Prepared. It waits for the super-admin\'s approval under Approvals in the Josi app; nothing has changed yet.'

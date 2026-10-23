@@ -592,7 +592,12 @@ export async function verifyWorkGoal(db: Db, args: { ownerUserId: string; goalId
 export async function controlWorkGoal(db: Db, args: { ownerUserId: string; goalId: string; revision: unknown;
   action: 'pause' | 'resume' | 'cancel' | 'confirm'; instruction?: unknown }): Promise<WorkGoalSnapshot> {
   return transaction(db, async tx => {
-    const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
+    const row = await owned(tx, args.ownerUserId, args.goalId, true);
+    // Stopping always wins. A running goal moves every few seconds, so the
+    // revision on the person's screen is often already stale when they press
+    // Pause or Cancel; refusing would leave the work running against their
+    // wish. Resuming and confirming still need the exact revision they saw.
+    if (args.action !== 'pause' && args.action !== 'cancel') current(row, args.revision);
     if (args.action === 'pause') { row.state = 'paused'; row.continuation = { kind: 'user_paused' }; row.activity = 'Paused by you'; }
     else if (args.action === 'cancel') { row.state = 'cancelled'; row.continuation = null; row.activity = 'Cancelled by you'; }
     else if (args.action === 'confirm') {

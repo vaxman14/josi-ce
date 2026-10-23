@@ -203,7 +203,33 @@ namespace Josi.Native {
       public CheckBox Clear = Ui.Toggle("Clear the saved password");
       public bool PasswordSet;
       public string Original = "";
+      // The port and the connection security must agree, and the commonest
+      // way to break mail delivery is that they do not (587 with TLS never
+      // connects: that port speaks plain text first and upgrades). Typing the
+      // port picks the matching security; any mismatch is said out loud.
+      public readonly TextBlock Hint = Ui.Caption("");
+      bool loading;
+      public Draft() {
+        Hint.Foreground = Ui.Orange; Hint.TextWrapping = TextWrapping.Wrap; Hint.Visibility = Visibility.Collapsed;
+        Port.TextChanged += delegate {
+          if (loading) return;
+          var wanted = Port.Text.Trim() == "465" ? "tls" : Port.Text.Trim() == "587" ? "starttls" : null;
+          if (wanted != null && Ui.Selected(Security) != wanted)
+            foreach (ComboBoxItem item in Security.Items) if ((string)item.Tag == wanted) Security.SelectedItem = item;
+          UpdateHint();
+        };
+        Security.SelectionChanged += delegate { UpdateHint(); };
+      }
+      public void UpdateHint() {
+        var port = Port.Text.Trim(); var security = Ui.Selected(Security);
+        string text = null;
+        if (port == "587" && security == "tls") text = "Port 587 starts in plain text and then upgrades, so choose STARTTLS. With TLS here the server cannot connect.";
+        else if (port == "465" && security == "starttls") text = "Port 465 is encrypted from the first byte, so choose TLS. With STARTTLS here the server cannot connect.";
+        else if (security == "none" && (port == "587" || port == "465")) text = "No encryption on a mail submission port: most providers refuse it. Choose STARTTLS (587) or TLS (465).";
+        Hint.Text = text ?? ""; Hint.Visibility = text == null ? Visibility.Collapsed : Visibility.Visible;
+      }
       public void Apply(Wire value, bool communications) {
+        loading = true;
         Copy.IsChecked = communications && (value.IsNull || value["copyFromSystem"].Flag);
         Host.Text = value["host"].Text; Username.Text = value["username"].Text;
         Port.Text = value["port"].IsNull ? "587" : value["port"].Integer.ToString(CultureInfo.InvariantCulture);
@@ -212,6 +238,7 @@ namespace Josi.Native {
         PasswordSet = value["passwordSet"].Flag;
         FromName.Text = value.IsNull ? "Josi" : value["fromName"].Text; FromAddress.Text = value["fromAddress"].Text;
         Password.Clear(); Clear.IsChecked = false;
+        loading = false; UpdateHint();
         Original = Snapshot();
       }
       public string Snapshot() {
@@ -296,6 +323,7 @@ namespace Josi.Native {
       }
       if (draft.Copy.IsChecked != true || !communicationProfile) {
         items.Add(F("SMTP server", draft.Host)); items.Add(F("Port", draft.Port)); items.Add(F("Connection security", draft.Security));
+        items.Add(D(draft.Hint));
         items.Add(F("Username", draft.Username));
         items.Add(F(draft.PasswordSet ? "Replacement password; blank keeps saved password" : "Password", draft.Password));
         items.Add(D(draft.Clear));

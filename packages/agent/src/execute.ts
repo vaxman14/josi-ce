@@ -94,7 +94,7 @@ export async function executeAssistantTool(
   if (PC_BROWSER_TOOL_NAMES.has(name)) return executePcBrowserTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input);
   if (PC_DESKTOP_TOOL_NAMES.has(name)) return executePcDesktopTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input);
   if (MEMORY_TOOL_NAMES.has(name)) return executeMemoryTool(db, userId, ctx.threadId, name, input);
-  if (SETTINGS_CHANGE_TOOL_NAMES.has(name)) return executeSettingsChangeTool(db, userId, name, input);
+  if (SETTINGS_CHANGE_TOOL_NAMES.has(name)) return executeSettingsChangeTool(db, userId, name, input, ctx.threadId);
   if (WORK_GOAL_TOOL_NAMES.has(name)) return executeWorkGoalTool(db, ctx, name, input);
   if (WORKSPACE_TOOLS.some(t=>t.def.name===name)) return executeWorkspaceTool(db,userId,name,input);
   if (name === 'get_provider_status') return providerStatus(db, userId);

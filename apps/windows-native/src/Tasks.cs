@@ -67,10 +67,18 @@ namespace Josi.Native {
 
   public sealed class GoalCard : UserControl {
     readonly AppModel model; readonly Window owner; readonly Wire goal; readonly bool compact;
+    WrapPanel liveControls;
     public GoalCard(AppModel model, Window owner, Wire goal, bool compact) {
       this.model = model; this.owner = owner; this.goal = goal; this.compact = compact;
       Content = Build();
+      // The buttons follow the busy flag as it changes, not as it was when the
+      // card was drawn: a card built during a brief busy moment (opening the
+      // section) otherwise stays greyed out until the goal's content changes,
+      // and a parked goal's Pause and Cancel never come back.
+      Loaded += delegate { model.Changed += SyncEnabled; SyncEnabled(); };
+      Unloaded += delegate { model.Changed -= SyncEnabled; };
     }
+    void SyncEnabled() { if (liveControls != null) liveControls.IsEnabled = !model.Busy; }
     bool SetupBlocked { get { return goal["activity"].Text == "Automation needs setup"; } }
     bool Recovery {
       get {
@@ -164,7 +172,7 @@ namespace Josi.Native {
           })));
         }
         if (state == "verifying") controls.Children.Add(Spaced(Ui.Pill("Confirm Complete", () => Control("confirm", ""), true)));
-        controls.IsEnabled = !model.Busy;
+        controls.IsEnabled = !model.Busy; liveControls = controls;
         Ui.Add(stack, controls, 10);
         var thread = goal["threadId"].Text;
         Ui.Add(stack, Ui.Pill("Continue in Chat", () => model.Run(() => model.SelectThread(thread))), 4);
@@ -186,10 +194,14 @@ namespace Josi.Native {
   /// Finished criteria, work notes, owner corrections, limits, outcome edits and history.
   public sealed class WorkDetails : UserControl {
     readonly AppModel model; readonly Window owner; readonly Wire goal;
+    StackPanel liveStack;
     public WorkDetails(AppModel model, Window owner, Wire goal) {
       this.model = model; this.owner = owner; this.goal = goal;
       Content = new Disclosure("Work details", Build);
+      Loaded += delegate { model.Changed += SyncEnabled; SyncEnabled(); };
+      Unloaded += delegate { model.Changed -= SyncEnabled; };
     }
+    void SyncEnabled() { if (liveStack != null) liveStack.IsEnabled = !model.Busy; }
     static List<object> Lines(string text) {
       return text.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).Select(l => (object)l).ToList();
     }
@@ -221,7 +233,7 @@ namespace Josi.Native {
       }
       foreach (var kind in new[] { new[] { "events", "Activity history" }, new[] { "plans", "Plan history" }, new[] { "outcomes", "Outcome history" } })
         Ui.Add(stack, new WorkHistory(model, goal, kind[0], kind[1]), 6);
-      stack.IsEnabled = !model.Busy;
+      stack.IsEnabled = !model.Busy; liveStack = stack;
       return stack;
     }
     void Change(string endpoint, Dictionary<string, object> fields) {

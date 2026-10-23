@@ -169,6 +169,23 @@ export interface TurnArgs {
 
 const HOP_LIMIT = 6;
 
+/** What to tell the person when the model could not put words together: the
+ * honest account of what did run, never a blank apology that hides it. */
+function emptyFallback(actions: Array<{ tool: string; result: unknown }>): string {
+  if (!actions.length) return 'I could not put a reply together for that. Please ask again, in different words if it helps.';
+  const human = (tool: string) => tool.replace(/_/g, ' ');
+  const counts = new Map<string, { n: number; failed: number }>();
+  for (const a of actions) {
+    const entry = counts.get(a.tool) ?? { n: 0, failed: 0 };
+    entry.n++;
+    const result = a.result as { ok?: unknown; error?: unknown; code?: unknown } | null;
+    if (result && typeof result === 'object' && (result.ok === false || 'error' in result)) entry.failed++;
+    counts.set(a.tool, entry);
+  }
+  const parts = [...counts].map(([tool, c]) => `${human(tool)}${c.n > 1 ? ` x${c.n}` : ''}${c.failed ? ` (${c.failed} failed)` : ''}`);
+  return `I ran ${parts.join(', ')}, but I could not write up the result. Ask me to continue and I will pick up from where it stopped, or ask what you want to know about it.`;
+}
+
 function systemPrompt(args: {
   capabilities: Capabilities;
   templateNames: string[];
@@ -573,7 +590,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   // whatsoever to be wrong about) so it is checked first, below.
   let narratedSearchGuardReprompted = false;
   let checkpointGuardReprompted = false;
-  let emptyReplyReprompted = false;
+  let emptyReplies = 0;
   let invalidStepReprompted = false;
   let promisedActionReprompted = false;
   // In the one-step subscription mode the model's `reply` beside a tool
@@ -725,26 +742,39 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       // A model that answered with nothing gets one more chance to answer in
       // words; a saved empty bubble tells the person nothing.
       if (!res.text.trim()) console.warn(`josi-ce: empty model reply (hop ${hop + 1} of ${hopLimit}, ${actions.length} tool results so far, goal ${args.workGoalId ?? 'none'})`);
-      if (!res.text.trim() && !emptyReplyReprompted && hop + 1 < hopLimit) {
-        emptyReplyReprompted = true;
+      // Up to three nudges per segment, each saying what is expected given
+      // what has already run. One-step subscription models often end a step
+      // with {"reply":"","tool":null} part way through a multi-step job;
+      // giving up on the first one used to throw away work that was going well.
+      if (!res.text.trim() && emptyReplies < 3 && hop + 1 < hopLimit) {
+        emptyReplies++;
         messages.push({ role: 'assistant', content: res.text });
-        messages.push({ role: 'user', content: offeredToolNames.size
-          ? 'Your reply was empty. If the request needs a tool, propose that tool call now in this response. Otherwise answer the person in words: what you can see or do, or what is missing. If you cannot or will not continue, say exactly why in reply.'
-          : 'Your reply was empty. Answer the person in words: say what you can see or do, or what is missing.' });
+        messages.push({ role: 'user', content: !offeredToolNames.size
+          ? 'Your reply was empty. Answer the person in words: say what you can see or do, or what is missing.'
+          : actions.length
+            ? `Your last response was empty. ${actions.length} tool result${actions.length === 1 ? '' : 's'} came back above. If the request is not finished, propose the next tool call now, in this response. If it is finished, or cannot be finished, reply in words: what you did, what you saw, and what is left or blocked. Never answer with an empty reply.`
+            : 'Your reply was empty. If the request needs a tool, propose that tool call now in this response. Otherwise answer the person in words: what you can see or do, or what is missing. If you cannot or will not continue, say exactly why in reply.' });
         continue;
       }
       // A promise instead of an action ("I'll inspect five photos") with no
       // tool run this turn ends the turn with nothing done and nothing
       // shown. Once: do it now. If it still only promises, the words stand.
-      if (!actions.length && offeredToolNames.size && !promisedActionReprompted && hop + 1 < hopLimit
-        && res.text.trim().length < 400
-        && /\b(?:i['’]ll|i will|i am going to|i['’]m going to|let me|i can now|now i['’]ll|i['’]m ready to|i am ready to|ready to|next,? i|about to|i['’]m about to|first,? i)\b/i.test(res.text)) {
+      // With no tool run yet, a promise anywhere in a short reply counts. After
+      // some tools have run (a lookup, say), only a reply that OPENS with the
+      // promise counts, so a finished answer that ends "I'll let you know if
+      // anything changes" is left alone.
+      const futureWords = /\b(?:i['’]ll|i will|i am going to|i['’]m going to|let me|i can now|now i['’]ll|i['’]m ready to|i am ready to|ready to|next,? i|about to|i['’]m about to|first,? i)\b/i;
+      const opensWithPromise = /^\s*(?:i['’]ll|i will|i am going to|i['’]m going to|let me|now i['’]ll|next,? i|first,? i|i['’]m (?:resuming|continuing|picking up)|i am (?:resuming|continuing))\b/i;
+      if (offeredToolNames.size && !promisedActionReprompted && hop + 1 < hopLimit && res.text.trim().length < 400
+        && (actions.length ? opensWithPromise.test(res.text) : futureWords.test(res.text))) {
         promisedActionReprompted = true;
         messages.push({ role: 'assistant', content: res.text });
-        messages.push({ role: 'user', content: 'You described what you are about to do, but no tool ran. Do it now: propose the first tool call in this response instead of describing it. If it cannot be done, say exactly why.' });
+        messages.push({ role: 'user', content: actions.length
+          ? 'You described the next thing you will do, but did not propose it. Do it now: propose the next tool call in this response instead of describing it. If it cannot be done, say exactly why.'
+          : 'You described what you are about to do, but no tool ran. Do it now: propose the first tool call in this response instead of describing it. If it cannot be done, say exactly why.' });
         continue;
       }
-      let reply = res.text.trim() ? res.text : 'I could not put a reply together for that. Please ask again, in different words if it helps.';
+      let reply = res.text.trim() ? res.text : emptyFallback(actions);
       // What the one-step mode wrote for the person along the way comes first,
       // unless the closing reply already repeats it.
       if (interim.length) reply = [...interim.filter(text => !reply.includes(text)), reply].join('\n\n');
