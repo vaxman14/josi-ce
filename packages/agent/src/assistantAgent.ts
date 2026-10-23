@@ -737,7 +737,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       // tool run this turn ends the turn with nothing done and nothing
       // shown. Once: do it now. If it still only promises, the words stand.
       if (!actions.length && offeredToolNames.size && !promisedActionReprompted && hop + 1 < hopLimit
-        && /^\s*(?:i['’]ll|i will|i am going to|i'm going to|let me|i can now|now i['’]ll)\b/i.test(res.text)) {
+        && res.text.trim().length < 400
+        && /\b(?:i['’]ll|i will|i am going to|i['’]m going to|let me|i can now|now i['’]ll|i['’]m ready to|i am ready to|ready to|next,? i|about to|i['’]m about to|first,? i)\b/i.test(res.text)) {
         promisedActionReprompted = true;
         messages.push({ role: 'assistant', content: res.text });
         messages.push({ role: 'user', content: 'You described what you are about to do, but no tool ran. Do it now: propose the first tool call in this response instead of describing it. If it cannot be done, say exactly why.' });
