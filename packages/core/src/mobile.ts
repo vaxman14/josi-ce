@@ -99,7 +99,10 @@ export async function listTaskRunsFor(db:Db,args:{ownerUserId:string;limit?:numb
     where t.owner_user_id=$1 order by t.updated_at desc,t.id desc limit $2`,
   [args.ownerUserId,Math.min(200,Math.max(1,args.limit??100))]);
 }
-export async function claimDurableTurn(db:Db,turnId:string,leaseSeconds=300):Promise<(DurableTurn&{lease_token:string})|null>{
+// Three minutes against a one-minute heartbeat: a dead worker's turn is
+// reclaimed after two missed beats instead of leaving "Josi is thinking" on
+// screen for ten.
+export async function claimDurableTurn(db:Db,turnId:string,leaseSeconds=180):Promise<(DurableTurn&{lease_token:string})|null>{
   const token=randomUUID();
   // An expired running lease is an ambiguous provider boundary: the old
   // process may have reached a model or tool immediately before dying. Never
@@ -125,7 +128,7 @@ export async function claimDurableTurn(db:Db,turnId:string,leaseSeconds=300):Pro
   return row??null;
 }
 export async function renewDurableTurnLease(db:Db,args:{turnId:string;leaseToken:string;leaseSeconds?:number}):Promise<boolean>{
-  const rows=await db.query(`update assistant_turns set lease_expires_at=now()+($3*interval '1 second') where id=$1 and status='running' and lease_token=$2 returning id`,[args.turnId,args.leaseToken,args.leaseSeconds??300]);
+  const rows=await db.query(`update assistant_turns set lease_expires_at=now()+($3*interval '1 second') where id=$1 and status='running' and lease_token=$2 returning id`,[args.turnId,args.leaseToken,args.leaseSeconds??180]);
   return !!rows.length;
 }
 const GENERIC_PUSH_BODY='Open Josi to view this update.';

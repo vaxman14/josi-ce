@@ -33,7 +33,7 @@ export async function claimJobs(db: Db, workerId: string, limit = 5): Promise<Jo
      where id in (
        select id from job_queue
        where ((status = 'queued' and run_at <= now())
-          or (status = 'running' and kind = 'assistant.turn' and locked_at < now() - interval '10 minutes'
+          or (status = 'running' and kind = 'assistant.turn' and locked_at < now() - interval '3 minutes'
             and exists(select 1 from assistant_turns stale where stale.id::text=job_queue.payload->>'turnId'
               and (stale.status='queued' or (stale.status='running' and stale.lease_expires_at<now())))))
          and (kind <> 'assistant.turn' or not exists (
