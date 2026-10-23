@@ -98,6 +98,19 @@ try {
         foreach ($pair in $saved.GetEnumerator()) { [Environment]::SetEnvironmentVariable($pair.Key, $pair.Value) }
     }
 
+    # Development only: a plain `tsc -b` resets the licence verification key
+    # to null (the source keeps the CE default), so the Parental Controls page
+    # would say the build cannot check licences. Stamp the compiled file from
+    # the publisher key, the way Build-Application.mjs stamps a release.
+    $keyFile = Join-Path $repo 'publisher\licence-verification-key.b64'
+    $stamp = Join-Path $repo 'packages\core\dist\buildStamp.js'
+    if ((Test-Path $keyFile) -and (Test-Path $stamp)) {
+        $key = (Get-Content $keyFile -Raw).Trim()
+        $text = [IO.File]::ReadAllText($stamp)
+        $stamped = $text -replace 'export const BUILD_LICENCE_PUBLIC_KEY = null;', ('export const BUILD_LICENCE_PUBLIC_KEY = ''' + $key + ''';')
+        if ($stamped -ne $text) { [IO.File]::WriteAllText($stamp, $stamped); Write-Host 'licence key stamped into the development build' }
+    }
+
     foreach ($role in 'web', 'worker') {
         $pidFile = Join-Path $data "state\$role.pid"
         if (Test-Path $pidFile) {

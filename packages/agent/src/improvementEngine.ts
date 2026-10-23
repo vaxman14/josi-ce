@@ -15,7 +15,7 @@
 // never add tools, grant permissions or override safety rules, approvals or
 // PC Control, and they are refused if they contain anything secret-like.
 import type { Db } from '@josi-ce/core';
-import { appendEvent } from '@josi-ce/core';
+import { appendEvent, json } from '@josi-ce/core';
 import { chat, type RegistryOptions } from '@josi-ce/llm';
 import { refusesAsMemory, suggestMemory } from '@josi-ce/persona';
 import { recallTerms } from './memoryEngine.js';
@@ -57,7 +57,9 @@ async function addInsight(db: Db, args: { ownerUserId: string; kind: InsightKind
     return false;
   }
   await db.query(`insert into assistant_insights(owner_user_id,kind,summary,evidence,thread_id,turn_id) values($1,$2,$3,$4,$5,$6)`,
-    [args.ownerUserId, args.kind, summary, JSON.stringify(args.evidence ?? {}), args.threadId ?? null, args.turnId ?? null]);
+    // json(), not JSON.stringify: a string parameter lands in jsonb as a JSON
+    // string scalar, which later breaks jsonb_set and jsonb_array_length.
+    [args.ownerUserId, args.kind, summary, json(args.evidence ?? {}), args.threadId ?? null, args.turnId ?? null]);
   return true;
 }
 
@@ -232,7 +234,7 @@ export async function reviewInsights(db: Db, registry: RegistryOptions, toolName
     const draft = validateProposal(raw, tools, ids);
     if (!draft) continue;
     const [row] = await db.query<{ id: string }>(`insert into improvement_proposals(title,problem,change_kind,change,evidence,risk) values($1,$2,$3,$4,$5,$6) returning id`,
-      [draft.title, draft.problem, draft.change.kind, JSON.stringify(draft.change), JSON.stringify(draft.insightIds), draft.risk]);
+      [draft.title, draft.problem, draft.change.kind, json(draft.change), json(draft.insightIds), draft.risk]);
     await db.query('update assistant_insights set proposal_id=$1 where id=any($2::uuid[])', [row.id, draft.insightIds]);
     proposed++;
   }
@@ -318,7 +320,8 @@ export async function disableRule(db: Db, args: { adminId: string; ruleId: strin
 
 /** Everything the Improvements screen shows. */
 export async function improvementsOverview(db: Db) {
-  const proposals = await db.query(`select id, title, problem, change_kind, change, risk, state, decided_at, created_at, jsonb_array_length(evidence) as evidence_count
+  const proposals = await db.query(`select id, title, problem, change_kind, change, risk, state, decided_at, created_at,
+      case when jsonb_typeof(evidence)='array' then jsonb_array_length(evidence) else 0 end as evidence_count
     from improvement_proposals order by (state='proposed') desc, created_at desc limit 100`);
   const skills = await db.query(`select skill_key, version, name, when_to_use, steps, tools, active, created_at from assistant_skills order by skill_key, version desc`);
   const rules = await db.query(`select id, rule, active, created_at, deactivated_at from memory_rules order by created_at desc`);
