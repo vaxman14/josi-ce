@@ -575,6 +575,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   let checkpointGuardReprompted = false;
   let emptyReplyReprompted = false;
   let invalidStepReprompted = false;
+  let promisedActionReprompted = false;
   // In the one-step subscription mode the model's `reply` beside a tool
   // proposal is written for the person (a photo's description while the next
   // view is requested). Kept here so a segment that ends at its limit, or in a
@@ -727,7 +728,19 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       if (!res.text.trim() && !emptyReplyReprompted && hop + 1 < hopLimit) {
         emptyReplyReprompted = true;
         messages.push({ role: 'assistant', content: res.text });
-        messages.push({ role: 'user', content: 'Your reply was empty. Answer the person in words: say what you can see or do, or what is missing.' });
+        messages.push({ role: 'user', content: offeredToolNames.size
+          ? 'Your reply was empty. If the request needs a tool, propose that tool call now in this response. Otherwise answer the person in words: what you can see or do, or what is missing.'
+          : 'Your reply was empty. Answer the person in words: say what you can see or do, or what is missing.' });
+        continue;
+      }
+      // A promise instead of an action ("I'll inspect five photos") with no
+      // tool run this turn ends the turn with nothing done and nothing
+      // shown. Once: do it now. If it still only promises, the words stand.
+      if (!actions.length && offeredToolNames.size && !promisedActionReprompted && hop + 1 < hopLimit
+        && /^\s*(?:i['’]ll|i will|i am going to|i'm going to|let me|i can now|now i['’]ll)\b/i.test(res.text)) {
+        promisedActionReprompted = true;
+        messages.push({ role: 'assistant', content: res.text });
+        messages.push({ role: 'user', content: 'You described what you are about to do, but no tool ran. Do it now: propose the first tool call in this response instead of describing it. If it cannot be done, say exactly why.' });
         continue;
       }
       let reply = res.text.trim() ? res.text : 'I could not put a reply together for that. Please ask again, in different words if it helps.';

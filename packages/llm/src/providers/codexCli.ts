@@ -429,6 +429,11 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
         throw new LlmError('The Codex CLI returned nothing Josi could read.', { retryable: true });
       }
       const proposed = callerTools ? parseCodexTurn(text, request) : null;
+      // A step with nothing in it is the model's output, not a secret: its
+      // head goes to the log so "empty reply" stops being unexplainable.
+      if (proposed && !proposed.text.trim() && !proposed.toolCalls.length) {
+        console.warn(`josi-ce: subscription step had no reply and no tool; raw head: ${text.slice(0, 300).replace(/\s+/g, ' ')}`);
+      }
 
       return {
         text: proposed?.text ?? text,
