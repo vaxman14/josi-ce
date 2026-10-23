@@ -6,6 +6,7 @@ import { VaultDeviceLogin, vaultCodexLoginStatus } from '@josi-ce/llm';
 import { canSubmit } from '../setup/steps.js';
 import { asyncRoute } from './async.js';
 import { requireSuperAdmin } from './authz.js';
+import { confirmNativeCodexConsumerStopped } from './nativeConsumerEvidence.js';
 
 interface Context { db: Db; masterKey?: LoadOptions | false }
 interface Live { login: VaultDeviceLogin; caller: string }
@@ -56,8 +57,11 @@ export function codexSubscriptionRouter(context: Context, setup = false): Router
     requireAdministrator: tx => currentAuthority(req)(tx),
     async requireConsumerStopped(_tx, review) {
       const login = controller(req);
-      if (!login) throw new SubscriptionCredentialError('The previous subscription consumer cannot be confirmed stopped.');
-      login.requireStopped(review.leaseId);
+      if (login) { login.requireStopped(review.leaseId); return; }
+      // No login controller here: the run was in the worker, or in an API
+      // process since restarted. On the Windows native runtime this host's
+      // process list is the evidence; elsewhere this refuses as before.
+      await confirmNativeCodexConsumerStopped();
     },
   });
   const handle = (work: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
