@@ -11,7 +11,7 @@
 //      ceiling exists until an administrator deliberately creates one.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CollapsibleCard, ErrorNote } from '@/components/ui';
+import { Badge, Button, Card, CollapsibleCard, ErrorNote, Working } from '@/components/ui';
 
 interface PolicyClass {
   key: string;
@@ -113,10 +113,10 @@ export function AdminPolicy() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Approval policy</h1>
+    <div className="page">
+      <h1 className="page-title">Approval policy</h1>
 
-      {state === 'loading' ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {state === 'loading' ? <Working text="Loading…" /> : null}
 
       {state === 'error' ? (
         <Card>

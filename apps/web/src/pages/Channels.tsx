@@ -26,8 +26,8 @@ export function Channels() {
       setInstruction(result.instruction);
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not create a link code'); }
   }
-  return <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-    <div><h1 className="text-xl font-semibold tracking-tight">Channels</h1><p className="text-sm text-muted-foreground">Ways to reach the same private Josi workspace from another app.</p></div>
+  return <div className="page">
+    <div><h1 className="page-title">Channels</h1><p className="text-sm text-muted-foreground">Ways to reach the same private Josi workspace from another app.</p></div>
     {error ? <ErrorNote>{error}</ErrorNote> : null}
     {instruction ? <Card><CardTitle>One-time link code</CardTitle><p className="break-all text-sm">{instruction}</p><p className="mt-2 text-xs text-muted-foreground">Expires in 10 minutes and works once.</p></Card> : null}
     <Card><details><summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden"><span><CardTitle>Telegram</CardTitle><span className="text-sm text-muted-foreground">Link your own Telegram chat.</span></span><span aria-hidden className="text-muted-foreground">⌄</span></summary><div className="mt-3 border-t border-border pt-3"><Link to="/app/channels/telegram" className="inline-flex min-h-11 items-center text-sm underline">Set up Telegram</Link></div></details></Card>

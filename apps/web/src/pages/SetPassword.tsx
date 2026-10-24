@@ -16,7 +16,7 @@ export function SetPassword() {
     catch (e) { setError(e instanceof Error ? e.message : 'Could not set password'); }
   }
   return <div className="flex min-h-full items-center justify-center p-4"><Card className="w-full max-w-sm">
-    <h1 className="mb-1 text-lg font-semibold">Choose a new password</h1><p className="mb-4 text-sm text-muted-foreground">{label}</p>
+    <h1 className="page-title mb-1">Choose a new password</h1><p className="mb-4 text-sm text-muted-foreground">{label}</p>
     <form onSubmit={submit} className="space-y-3"><div className="flex gap-2">
       <Input type={show ? 'text' : 'password'} minLength={12} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
       <Button type="button" variant="secondary" onClick={() => setShow((v) => !v)}>{show ? 'Hide' : 'Show'}</Button>

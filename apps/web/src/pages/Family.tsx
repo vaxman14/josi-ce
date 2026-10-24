@@ -13,7 +13,7 @@
 // not.
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, Copyable, Empty, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, Copyable, Empty, ErrorNote, Input, Working } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 
 interface Honesty { scope: string; notDevice: string; minutes: string; admin: string }
@@ -67,8 +67,8 @@ export function Family() {
 
 function FamilyComingSoon() {
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4" aria-disabled="true">
-      <h1 className="text-xl font-semibold tracking-tight">Family <Badge tone="muted">Coming Soon</Badge></h1>
+    <div className="page" aria-disabled="true">
+      <h1 className="page-title">Family <Badge tone="muted">Coming Soon</Badge></h1>
       <Card className="opacity-75">
         <CardTitle>Parental Controls are being redesigned</CardTitle>
         <p className="text-sm text-muted-foreground">No supervision, schedules, limits, monitoring, or child-safety enforcement are active here today.</p>
@@ -101,8 +101,8 @@ function FamilyImplementation() {
 
   if (absent) {
     return (
-      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-        <h1 className="text-xl font-semibold tracking-tight">Family <Badge tone="danger">BETA</Badge></h1>
+      <div className="page">
+        <h1 className="page-title">Family <Badge tone="danger">BETA</Badge></h1>
         <BetaWarning />
         <Empty title="Parental Controls is not part of this installation">
           It is a paid module. Until somebody activates a licence for it, nothing here exists:
@@ -114,11 +114,11 @@ function FamilyImplementation() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Family <Badge tone="danger">BETA</Badge></h1>
+    <div className="page">
+      <h1 className="page-title">Family <Badge tone="danger">BETA</Badge></h1>
       <BetaWarning />
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {!overview ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!overview ? <Working text="Loading…" /> : null}
       {overview?.role === 'child' && overview.child
         ? <ChildView child={overview.child} honesty={overview.honesty} />
         : null}
@@ -616,7 +616,7 @@ function Conversations({ childUserId }: { childUserId: string }) {
         That is the deal this feature makes with both of you.
       </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {!list ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!list ? <Working text="Loading…" /> : null}
       {list && !list.length ? <p className="text-sm text-muted-foreground">Nothing here yet.</p> : null}
       <ul className="space-y-1">
         {(list ?? []).map((conversation) => (
@@ -660,7 +660,7 @@ function UsagePanel({ childUserId }: { childUserId: string }) {
   }, [childUserId]);
 
   if (error) return <ErrorNote>{error}</ErrorNote>;
-  if (!usage) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (!usage) return <Working text="Loading…" />;
 
   const busiest = Math.max(1, ...usage.days.map((d) => d.minutes));
   return (

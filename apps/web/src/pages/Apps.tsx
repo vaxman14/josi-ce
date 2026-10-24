@@ -7,8 +7,8 @@ import { Card, CardTitle, NotYet } from '@/components/ui';
 
 export function Apps() {
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Companion apps</h1>
+    <div className="page">
+      <h1 className="page-title">Companion apps</h1>
 
       <NotYet title="Coming soon">
         There is no iPhone or Android build of Josi yet. When one exists it will be linked here — until

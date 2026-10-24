@@ -39,7 +39,7 @@ function dayLabel(at: Date): string {
   if (at.toDateString() === yesterday.toDateString()) return 'Yesterday';
   return at.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: at.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
 }
-import { ErrorNote } from '@/components/ui';
+import { ErrorNote, Working } from '@/components/ui';
 
 const talkCache = new Map<string, { thread: Thread; messages: Message[] }>();
 
@@ -238,7 +238,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       // rendered at the TOP of the screen with the history invisible (round-2
       // item 25). data-viewport-managed opts out of the global focus helper.
       data-viewport-managed
-      className="mx-auto flex w-full min-w-0 max-w-3xl flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_20%,hsl(var(--secondary)/0.18),transparent_52%)] lg:rounded-2xl lg:border lg:border-border lg:bg-card"
+      className="flex w-full min-w-0 max-w-[var(--page-width)] flex-col overflow-hidden lg:rounded-3xl lg:border lg:border-border lg:bg-card"
       style={{ height: '100%' }}
     >
       <section ref={transcript} onScroll={event => {
@@ -246,7 +246,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       }} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6" aria-live="polite">
         {backgroundOffline ? <p className="text-xs text-muted-foreground" role="status">Chat updates are offline. Showing the last saved conversation.</p> : null}
         {messages.length >= 200 ? <p className="text-xs text-muted-foreground">Showing the most recent 200 messages.</p> : null}
-        {loading ? <p className="text-sm text-muted-foreground">Opening…</p> : null}
+        {loading ? <Working text="Opening…" /> : null}
         {!loading && messages.length === 0 ? (
           <div className="mx-auto mt-10 max-w-sm text-center">
             <h2 className="text-lg font-semibold">What are we doing?</h2>
@@ -272,7 +272,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
               <div className={`flex items-start gap-3 ${mine ? 'justify-end' : 'justify-start'}`}>
                 {!mine ? <img src="/brand/josi-mark.png" alt="" width={40} height={40} className="mt-1 h-10 w-10 shrink-0 rounded-full" /> : null}
                 <div className={`flex max-w-[82%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
-                <div className={`whitespace-pre-wrap break-words rounded-[1.65rem] px-4 py-3 text-base leading-6 ${mine ? 'rounded-br-lg bg-primary text-primary-foreground' : 'rounded-bl-lg bg-secondary text-secondary-foreground'}`}>
+                <div className={`whitespace-pre-wrap break-words rounded-[1.4rem] px-4 py-3 text-[0.95rem] leading-6 ${mine ? 'rounded-br-md bg-primary/90 text-primary-foreground' : 'rounded-bl-md border border-border bg-[hsl(var(--sidebar))] text-foreground'}`}>
                   {message.meta?.attachments?.length ? (
                     <div className="mb-1 space-y-1 text-xs opacity-80">
                       {message.meta.attachments.map((attachment) => attachment.contentType.startsWith('image/') ? (
@@ -296,7 +296,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
           );
         })}
         {thread ? <ChatWorkProgress key={thread.id} threadId={thread.id} /> : null}
-        {sending ? <p className="text-sm text-muted-foreground">Josi is working…</p> : null}
+        {sending ? <Working text="Josi is thinking…" elapsed size={34} className="py-2" /> : null}
         <div ref={end} />
       </section>
 
@@ -304,7 +304,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         <form
           onSubmit={(event) => { event.preventDefault(); void send(); }}
-          className="talk-composer flex min-h-14 w-full min-w-0 max-w-full items-center gap-0.5 overflow-hidden rounded-[1.75rem] border border-border bg-secondary/25 p-1.5 shadow-lg backdrop-blur"
+          className="talk-composer flex min-h-14 w-full min-w-0 max-w-full items-center gap-0.5 overflow-hidden rounded-[1.75rem] border border-border bg-[hsl(var(--sidebar))] p-1.5 shadow-lg"
         >
           <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-secondary text-secondary-foreground hover:bg-secondary/80" aria-label="Attach pictures or files">
             <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

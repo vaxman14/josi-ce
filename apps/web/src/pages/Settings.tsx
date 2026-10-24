@@ -50,8 +50,8 @@ export function Settings() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+    <div className="page">
+      <h1 className="page-title">Settings</h1>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
       <CollapsibleCard

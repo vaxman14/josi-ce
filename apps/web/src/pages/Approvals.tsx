@@ -109,8 +109,8 @@ export function Approvals() {
   const nothing = approvals.length === 0 && calls.length === 0;
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Approvals</h1>
+    <div className="page">
+      <h1 className="page-title">Approvals</h1>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {notice ? <p role="status" className="text-sm text-emerald-300">{notice}</p> : null}
 

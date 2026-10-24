@@ -193,9 +193,9 @@ export function Tasks() {
   const empty = visibleTasks.length === 0 && visibleRuns.length === 0 && visibleReminders.length === 0;
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-4xl space-y-4">
+    <div className="page">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Tasks</h1>
+        <h1 className="page-title">Tasks</h1>
         <p className="mt-1 text-sm text-muted-foreground">Everything Josi is doing, waiting on, or has scheduled for you.</p>
       </div>
 
@@ -332,7 +332,7 @@ export function Tasks() {
         </div>
       )}
 
-      <details className="rounded-lg border border-border bg-card p-4">
+      <details className="rounded-2xl border border-border bg-card p-5">
         <summary className="min-h-11 cursor-pointer py-2 text-sm font-medium">Create a task manually</summary>
         <form onSubmit={create} className="mt-3 space-y-3 border-t border-border pt-4">
           <CardTitle>New background task</CardTitle>

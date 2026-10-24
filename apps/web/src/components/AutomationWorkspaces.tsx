@@ -35,7 +35,7 @@ export function AutomationWorkspaces() {
       : !status ? <p className="mt-3 text-sm text-muted-foreground">Loading connections…</p>
         : !status.available ? <p className="mt-3 text-sm">Automation control is not available on this server yet. Your other Josi work can continue.</p>
           : !status.workspaces.length ? <p className="mt-3 text-sm">No automation desktop is connected to your account.</p>
-            : <ul className="mt-3 space-y-3">{status.workspaces.map(workspace => <li key={workspace.identity.workspaceId} className="rounded-lg border border-border p-3">
+            : <ul className="mt-3 space-y-3">{status.workspaces.map(workspace => <li key={workspace.identity.workspaceId} className="rounded-xl border border-border p-3">
               <p className="font-medium">{workspace.label}</p>
               <p className="mt-1 text-sm">{workspace.state === 'needs_local_consent' && status.controlAvailable === false
                 ? 'Companion connected · automation not enabled' : labels[workspace.state]}</p>

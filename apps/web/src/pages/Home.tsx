@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, type Approval, type LlmStatus, type Task } from '@/lib/api';
-import { Badge, Card, CardTitle, Empty } from '@/components/ui';
+import { Badge, Card, CardTitle, Empty, Page } from '@/components/ui';
 import { plain } from '@/lib/plainLanguage';
 import { watchApprovals, type ApprovalSnapshot } from '@/lib/approvalRefresh';
 import { useAuth } from '@/lib/auth';
@@ -25,10 +25,7 @@ export function Home() {
   ), []);
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">
-        Hello{user?.display_name ? `, ${user.display_name}` : ''}
-      </h1>
+    <Page title={`Hello${user?.display_name ? `, ${user.display_name}` : ''}`} subtitle="What is waiting for you, and where to start.">
 
       {/* Honest about whether Josi can do anything at all right now. */}
       {status && !status.ready ? (
@@ -40,7 +37,7 @@ export function Home() {
         </Card>
       ) : null}
 
-      <Link className="flex min-h-11 items-center rounded-md px-2 text-sm underline" to="/app/email/templates">Email / Templates</Link>
+      <Link className="link inline-flex min-h-11 items-center text-sm" to="/app/email/templates">Email / Templates</Link>
       <div className="grid gap-3 sm:grid-cols-2">
         <Card>
           <CardTitle>Waiting on you</CardTitle>
@@ -87,12 +84,12 @@ export function Home() {
           <span className="block">Start by telling Josi what you need.</span>
           <Link
             to="/app/talk"
-            className="mt-3 inline-flex min-h-11 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+            className="mt-3 inline-flex min-h-11 items-center rounded-full bg-primary px-5 text-sm font-medium text-primary-foreground"
           >
             Talk to Josi
           </Link>
         </Empty>
       ) : null}
-    </div>
+    </Page>
   );
 }

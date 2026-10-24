@@ -11,7 +11,7 @@ import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 // A toggle labelled only "Send email" is not consent.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Input, NotYet } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Input, NotYet, Working } from '@/components/ui';
 import { CloudFolders } from '@/components/CloudFolders';
 import { plain } from '@/lib/plainLanguage';
 
@@ -166,14 +166,14 @@ export function Connections() {
   }) ?? null, [providers]);
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Connections</h1>
+    <div className="page">
+      <h1 className="page-title">Connections</h1>
       <p className="text-sm text-muted-foreground">
         Your own account, connected by you. An administrator can see whether a connection is working and
         can disconnect it, but cannot read what is inside it.
       </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {!cards ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!cards ? <Working text="Loading…" /> : null}
 
       {cards?.map((view) => (
         <CollapsibleCard

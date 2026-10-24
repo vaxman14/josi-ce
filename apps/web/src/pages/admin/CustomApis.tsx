@@ -22,7 +22,7 @@ import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 // reason the allowlist below exists.
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, ErrorNote, Input, Working } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 
 interface EndpointView {
@@ -111,8 +111,8 @@ export function AdminCustomApis() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Custom API</h1>
+    <div className="page">
+      <h1 className="page-title">Custom API</h1>
       <p className="text-sm text-muted-foreground">
         Connect an external service Josi does not know about — a booking system, a CRM, something
         written in-house — and then say, one action at a time, exactly what Josi may ask it. Josi
@@ -131,7 +131,7 @@ export function AdminCustomApis() {
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {notice ? <p role="status" className="text-sm text-emerald-300">{notice}</p> : null}
-      {!connections ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!connections ? <Working text="Loading…" /> : null}
 
       {connections?.length === 0 && !adding ? (
         <Card>
@@ -517,7 +517,7 @@ function ConnectionForm({
 
         <Field label="How it authenticates" hint="Josi does not offer OAuth here; see the help page for why.">
           <select
-            className="min-h-11 w-full rounded-md border border-border bg-card px-3 text-sm"
+            className="min-h-11 w-full rounded-xl border border-border bg-card px-3 text-sm"
             value={authKind}
             onChange={(e) => setAuthKind(e.target.value)}
           >
@@ -641,7 +641,7 @@ function EndpointForm({
         </Field>
         <Field label="Method">
           <select
-            className="min-h-11 w-full rounded-md border border-border bg-card px-3 text-sm"
+            className="min-h-11 w-full rounded-xl border border-border bg-card px-3 text-sm"
             value={method}
             onChange={(e) => setMethod(e.target.value)}
           >
@@ -709,7 +709,7 @@ function ImportPanel({
       </p>
       {localError ? <ErrorNote>{localError}</ErrorNote> : null}
       <textarea
-        className="h-40 w-full rounded-md border border-border bg-card p-2 font-mono text-xs"
+        className="h-40 w-full rounded-xl border border-border bg-card p-2 font-mono text-xs"
         value={specText}
         onChange={(e) => setSpecText(e.target.value)}
         placeholder='{"openapi": "3.0.0", "paths": { ... }}'

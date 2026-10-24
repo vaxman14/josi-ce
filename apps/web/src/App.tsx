@@ -32,12 +32,11 @@ import { AdminModel } from '@/pages/admin/Model';
 import { AdminPolicy } from '@/pages/admin/Policy';
 import { AdminPcControl } from '@/pages/admin/PcControl';
 import { AdminStorage } from '@/pages/admin/Storage';
-import { AdminConnectors } from '@/pages/admin/Connectors';
+import { AdminConnectorsHub } from '@/pages/admin/ConnectorsHub';
 import { AdminWorkflows } from '@/pages/admin/Workflows';
 import { AdminWorkspace } from '@/pages/admin/Workspace';
 import { AdminTelegram } from '@/pages/admin/Telegram';
 import { AdminBackups } from '@/pages/admin/Backups';
-import { AdminDeveloperServices } from '@/pages/admin/DeveloperServices';
 import { AdminCustomApis } from '@/pages/admin/CustomApis';
 import { AdminParentalControls } from '@/pages/admin/ParentalControls';
 import { AdminLaunchChecklist } from '@/pages/admin/LaunchChecklist';
@@ -175,7 +174,7 @@ export function App() {
         <Route path="policy" element={<AdminPolicy />} />
         <Route path="pc-control" element={<AdminPcControl />} />
         <Route path="storage" element={<AdminStorage />} />
-        <Route path="connectors" element={<AdminConnectors />} />
+        <Route path="connectors" element={<AdminConnectorsHub />} />
         <Route path="workflows" element={<AdminWorkflows />} />
         <Route path="channels" element={<AdminChannels />} />
         <Route path="workspace" element={<AdminWorkspace />} />
@@ -184,8 +183,9 @@ export function App() {
         <Route path="vault" element={<AdminVault />} />
         <Route path="automation" element={<AdminAutomation />} />
         <Route path="network" element={<AdminNetwork />} />
-        <Route path="developer-services" element={<Navigate to="/admin/integrations" replace />} />
-        <Route path="integrations" element={<AdminDeveloperServices />} />
+        {/* Connectors and Integrations are one page since October 2026 (item 41). */}
+        <Route path="developer-services" element={<Navigate to="/admin/connectors?view=developer" replace />} />
+        <Route path="integrations" element={<Navigate to="/admin/connectors?view=developer" replace />} />
         <Route path="custom-apis" element={<AdminCustomApis />} />
         <Route path="parental-controls" element={<AdminParentalControls />} />
         <Route path="launch" element={<AdminLaunchChecklist />} />

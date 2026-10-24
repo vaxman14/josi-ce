@@ -16,7 +16,7 @@ export function ForgotPassword() {
     finally { setBusy(false); }
   }
   return <div className="flex min-h-full items-center justify-center p-4"><Card className="w-full max-w-sm">
-    <h1 className="mb-1 text-lg font-semibold">Reset password</h1>
+    <h1 className="page-title mb-1">Reset password</h1>
     <p className="mb-4 text-sm text-muted-foreground">Enter your username or email.</p>
     <form onSubmit={submit} className="space-y-3">
       <Input autoComplete="username" value={identifier} onChange={(e) => setIdentifier(e.target.value)} required />

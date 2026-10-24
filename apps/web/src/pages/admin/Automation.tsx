@@ -67,8 +67,8 @@ export function AdminAutomation() {
     }
     setSelected(draft); setEditing(true);
   }
-  return <div className="mx-auto w-full max-w-4xl space-y-5">
-    <div><h1 className="text-xl font-semibold">Automation and Cardinal Rules</h1>
+  return <div className="page">
+    <div><h1 className="page-title">Automation and Cardinal Rules</h1>
       <p className="mt-1 text-sm text-muted-foreground">The Vault holds the authoritative rules and permissions. Only the super administrator can change them.</p></div>
     {error ? <ErrorNote>{error}</ErrorNote> : null}
     <div className="flex flex-wrap gap-2">
@@ -88,7 +88,7 @@ export function AdminAutomation() {
         <span className="text-xs text-muted-foreground">{settings?.rules ? `Vault version ${settings.rules.reference.version}` : settings ? 'No policy saved' : 'Vault state unavailable'}</span></div>
         {settings?.rules?.reconciliationRequired || settings?.rules && !settings.rules.enforcementCurrent
           ? <ErrorNote>These rules need recovery reconciliation or revalidation before automation can continue.</ErrorNote> : null}
-        <div className="space-y-3">{settings?.rules?.document.rules.map(entry => <div key={entry.ruleId} className="rounded-lg border border-border p-3">
+        <div className="space-y-3">{settings?.rules?.document.rules.map(entry => <div key={entry.ruleId} className="rounded-xl border border-border p-3">
           <p className="font-medium">{entry.definition.label}</p><p className="mt-1 whitespace-pre-wrap text-sm">{entry.definition.wording}</p>
           <p className="mt-2 text-xs text-muted-foreground">{entry.definition.restriction.kind === 'deny' ? 'Block matching actions' : `Stop matching actions at ${entry.definition.restriction.seconds} seconds of the original task`}. Missing facts: {entry.definition.onUnavailable}.</p>
           <NativeProtectedChange title="Retire this rule" change={{ kind: 'cardinal.retire', ruleId: entry.ruleId, policy: settings.rules!.reference }}
@@ -98,7 +98,7 @@ export function AdminAutomation() {
       </Card>
       <Card><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>Drafts in the Vault</CardTitle>
         <Button variant="secondary" disabled={!catalog} onClick={() => { setSelected(null); setEditing(true); }}>New rule</Button></div>
-        <ul className="mt-3 space-y-2">{settings?.drafts.map(draft => <li key={draft.reference.recordId} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3">
+        <ul className="mt-3 space-y-2">{settings?.drafts.map(draft => <li key={draft.reference.recordId} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border p-3">
           <div><p className="text-sm font-medium">{typeof (draft.document.draft as CardinalRule)?.label === 'string' ? (draft.document.draft as CardinalRule).label : 'Rule draft'}</p>
             <p className="text-xs text-muted-foreground">Version {draft.reference.version} · {draft.document.tested?.review.status === 'available' ? 'Saved model advice' : draft.document.tested ? 'Model review needs attention' : 'Review pending'}</p></div>
           <Button variant="secondary" onClick={() => choose(draft)}>Open draft</Button>
@@ -120,7 +120,7 @@ function ProtectedDevicesView({ devices, enabled, revocationEnabled, refreshed }
     {devices?.reconciliationRequired ? <ErrorNote>Vault recovery must be reconciled before a device can approve another change.</ErrorNote> : null}
     {!devices ? <p className="mt-3 text-sm text-muted-foreground">The device inventory is unavailable.</p>
       : !devices.devices.length ? <p className="mt-3 text-sm text-muted-foreground">You have no enrolled confirmation devices.</p>
-      : <ul className="mt-4 space-y-3">{devices.devices.map(device => <li key={device.enrollmentId} className="rounded-lg border border-border p-3">
+      : <ul className="mt-4 space-y-3">{devices.devices.map(device => <li key={device.enrollmentId} className="rounded-xl border border-border p-3">
         <p className="font-medium">{device.label} <span className="ml-2 text-xs text-muted-foreground">{device.revokedAt ? 'Revoked' : 'Enrolled'}</span></p>
         <p className="mt-1 break-all text-sm">{device.identity.serverOrigin}</p>
         <p className="mt-1 text-xs text-muted-foreground">Enrolled {new Date(device.enrolledAt).toLocaleString()}</p>
@@ -189,14 +189,14 @@ function RuleEditor({ catalog, selected, saved, settings, refreshed }: { catalog
     <fieldset disabled={busy} className="space-y-4">
       <label className="block text-sm">Rule name<Input maxLength={120} value={label} onChange={event => setLabel(event.target.value)} /></label>
       <label className="block text-sm">Your wording<textarea rows={3} maxLength={4000} value={wording} onChange={event => setWording(event.target.value)} className={`${fieldClass} py-2`} /></label>
-      <fieldset className="rounded-lg border border-border p-3"><legend className="px-1 text-sm font-medium">Actions covered</legend>
+      <fieldset className="rounded-xl border border-border p-3"><legend className="px-1 text-sm font-medium">Actions covered</legend>
         <label className="flex min-h-10 items-center gap-2 text-sm"><input type="checkbox" checked={allActions} onChange={event => setAllActions(event.target.checked)} />Every supported action</label>
         {!allActions ? <div className="grid gap-x-4 sm:grid-cols-2">{catalog.actions.map(action => <label key={action} className="flex min-h-10 items-center gap-2 text-sm">
           <input type="checkbox" checked={actions.includes(action)} onChange={event => setActions(current => event.target.checked ? [...current, action] : current.filter(value => value !== action))} />
           {action.replaceAll('.', ' · ')}
         </label>)}</div> : null}
       </fieldset>
-      <fieldset className="rounded-lg border border-border p-3"><legend className="px-1 text-sm font-medium">Where this rule applies</legend>
+      <fieldset className="rounded-xl border border-border p-3"><legend className="px-1 text-sm font-medium">Where this rule applies</legend>
         <div className="space-y-3">{catalog.scopeKeys.map(key => <div key={key}>
           <label className="block text-sm">{scopeLabels[key]}
             <select className={fieldClass} value={scopes[key] === '*' ? '*' : scopes[key] ? 'selected' : ''}
@@ -218,13 +218,13 @@ function RuleEditor({ catalog, selected, saved, settings, refreshed }: { catalog
       </select></label>
       <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => void run('check')}>Test validity</Button>
         <Button variant="secondary" disabled={busy || !selected || !unchanged} onClick={() => void run('preview')}>Preview model review</Button></div>
-      {report ? <div className="rounded-lg border border-border p-3 text-sm">
+      {report ? <div className="rounded-xl border border-border p-3 text-sm">
         <p className="font-medium">{report.status === 'passed' ? 'Structured checks passed' : 'This rule needs changes'}</p>
         <ul className="mt-2 list-disc pl-5">{report.issues.map((issue, index) => <li key={index}>{issue.message}</li>)}</ul>
         {check?.meaning ? <p className="mt-2 whitespace-pre-wrap">{check.meaning}</p> : null}
         <p className="mt-2 text-xs text-muted-foreground">{report.cases.filter(item => item.passed).length}/{report.cases.length} simulations passed. Model advice and permanent approval are separate.</p>
       </div> : null}
-      {selected?.document.tested?.review.status === 'available' ? <div className="rounded-lg border border-border p-3 text-sm">
+      {selected?.document.tested?.review.status === 'available' ? <div className="rounded-xl border border-border p-3 text-sm">
         <p className="font-medium">Saved model advice · {selected.document.tested.review.assessment.clarity === 'clear' ? 'Meaning appears clear' : 'Clarification suggested'}</p>
         <p>{selected.document.tested.review.assessment.summary}</p>
         <ul className="mt-2 list-disc pl-5">{selected.document.tested.review.assessment.concerns.map((value, index) => <li key={index}>{value}</li>)}</ul>
@@ -237,7 +237,7 @@ function RuleEditor({ catalog, selected, saved, settings, refreshed }: { catalog
       </div> : null}
       {selected?.document.tested && selected.document.tested.review.status !== 'available'
         ? <ErrorNote>{selected.document.tested.review.message} Preview and explicitly request another review when ready.</ErrorNote> : null}
-      {preview ? <div className="space-y-2 rounded-lg border border-border p-3 text-sm">
+      {preview ? <div className="space-y-2 rounded-xl border border-border p-3 text-sm">
         <p className="font-medium">Exact content for the model</p>
         <p>{preview.reviewer ? `${preview.reviewer.providerId} · ${preview.reviewer.model || 'Configured default model'}${preview.reviewer.external ? ' · External provider' : ''}` : 'No activated model is available.'}</p>
         <p className="whitespace-pre-wrap">{preview.input.wording}</p><p className="whitespace-pre-wrap">{preview.input.structuredMeaning}</p>
@@ -288,7 +288,7 @@ function PermissionsView({ settings }: { settings: Settings | null }) {
       <dl className="my-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">{Object.entries(policy.identity).map(([key, value]) =>
         <div key={key}><dt>{scopeLabels[key] ?? key}</dt><dd className="break-all">{value}</dd></div>)}</dl>
       <p className="text-sm">Without a matching rule: {policy.unmatched === 'deny' ? 'Deny' : 'Ask for instructions'}</p>
-      <ul className="mt-3 space-y-3">{policy.rules.map(rule => <li key={rule.id} className="rounded-lg border border-border p-3 text-sm">
+      <ul className="mt-3 space-y-3">{policy.rules.map(rule => <li key={rule.id} className="rounded-xl border border-border p-3 text-sm">
         <p className="font-medium">{rule.action.replaceAll('.', ' · ')}</p><p className="mt-1 break-words">{scopeDescription(rule.scope)}</p>
         <p className="mt-1">{rule.mode.kind === 'until' ? `Allowed until ${new Date(rule.mode.expiresAt).toLocaleString()}`
           : rule.mode.kind === 'task' ? `Only task ${rule.mode.taskId}` : rule.mode.kind === 'standing' ? 'Standing grant' : rule.mode.kind === 'ask' ? 'Ask each time' : 'Denied'}</p>

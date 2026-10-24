@@ -12,7 +12,7 @@
 // never a disabled button that looks pressable.
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Copyable } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Copyable, Working } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 import {
   ProviderForm, type ProviderCatalogEntry, type SubscriptionInfo,
@@ -86,12 +86,12 @@ export function AdminModel() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-5">
+    <div className="page">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Model</h1>
+        <h1 className="page-title">Model</h1>
         <p className="mt-1 text-sm text-muted-foreground">Choose what Josi uses to respond.</p>
       </div>
-      {!data ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!data ? <Working text="Loading…" /> : null}
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {data ? <>
         <Card className="space-y-4 p-5 sm:p-6">

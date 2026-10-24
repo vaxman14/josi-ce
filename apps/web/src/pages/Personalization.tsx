@@ -209,9 +209,9 @@ export function Personalization() {
   const current = profiles[tab];
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6 p-4">
+    <div className="page">
       <div>
-        <h1 className="text-xl font-semibold">Personalization</h1>
+        <h1 className="page-title">Personalization</h1>
         {schema && (
           // The one sentence somebody most needs before they start typing.
           <p className="mt-2 text-sm text-muted-foreground">{schema.boundary}</p>

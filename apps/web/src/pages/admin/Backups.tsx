@@ -141,8 +141,8 @@ export function AdminBackups() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Backups</h1>
+    <div className="page">
+      <h1 className="page-title">Backups</h1>
       <p className="text-sm text-muted-foreground">
         A full backup is what a restore reads. A portable export is your data in a form you can take
         elsewhere, and deliberately carries no recovery copies.

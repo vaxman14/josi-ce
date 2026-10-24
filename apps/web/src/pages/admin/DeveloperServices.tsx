@@ -16,7 +16,7 @@ import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
-import { Badge, Button, CollapsibleCard, Empty, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, CollapsibleCard, Empty, ErrorNote, Input, Working } from '@/components/ui';
 
 type Mode = 'not_allowed' | 'everyone' | 'specific_users';
 
@@ -78,7 +78,7 @@ const MODE_LABEL: Record<Mode, string> = {
   specific_users: 'Allowed for specific people',
 };
 
-export function AdminDeveloperServices() {
+export function AdminDeveloperServices({ embedded = false }: { embedded?: boolean } = {}) {
   const [view, setView] = useState<AdminView | null>(null);
   const [error, setError] = useState('');
 
@@ -93,8 +93,8 @@ export function AdminDeveloperServices() {
   useEffect(() => { void load().catch(()=>undefined); }, [load]);
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Integrations</h1>
+    <div className={embedded ? 'contents' : 'page'}>
+      {embedded ? null : <h1 className="page-title">Developer services</h1>}
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
         More integrations are coming soon. Have a special request?{' '}
         <a className="underline" href="mailto:roman@socalreceptionist.com">Email us at roman@socalreceptionist.com</a>.
@@ -104,7 +104,7 @@ export function AdminDeveloperServices() {
         Workspace, with their own token. What you decide here is who is permitted to do that.
         You never enter a credential for anybody, and you cannot see one.
       </p>
-      <div className="rounded-lg border border-border p-3">
+      <div className="rounded-xl border border-border p-3">
         <p className="font-medium">Custom API</p>
         <p className="mt-1 text-sm text-muted-foreground">Connect a REST API through an explicit endpoint allowlist. Read actions can run directly; write and delete actions require approval.</p>
         <Link className="mt-2 inline-block text-sm underline" to="/admin/custom-apis">Manage Custom APIs</Link>
@@ -112,7 +112,7 @@ export function AdminDeveloperServices() {
 
       <div className="grid gap-3 sm:grid-cols-2">
         {INTEGRATION_CATALOG.map(([category, services]) => (
-          <section key={category} className="rounded-lg border border-border p-3">
+          <section key={category} className="rounded-xl border border-border p-3">
             <h2 className="text-sm font-medium">{category}</h2>
             <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
               {services.map(([service, status]) => (
@@ -127,7 +127,7 @@ export function AdminDeveloperServices() {
       </div>
       <ObsidianVaults />
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!view ? <Working text="Loading…" /> : null}
 
       {(view?.services ?? []).map((row) => (
         <ServiceCard key={row.service} row={row} people={view!.people} onSaved={load} />

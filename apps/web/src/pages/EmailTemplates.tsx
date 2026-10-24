@@ -56,8 +56,8 @@ export function EmailTemplates() {
       setDraft(r);
     } catch(e){setError(e instanceof Error?e.message:'Could not prepare.');}finally{setBusy(false);}
   }
-  return <div className="mx-auto w-full max-w-6xl space-y-5">
-    <div><p className="text-sm text-muted-foreground">Email</p><h1 className="text-xl font-semibold">Templates</h1><p className="mt-1 text-sm text-muted-foreground">Private reusable messages, with a simple layout that works on desktop and mobile.</p></div>
+  return <div className="page max-w-none">
+    <div><p className="text-sm text-muted-foreground">Email</p><h1 className="page-title">Templates</h1><p className="mt-1 text-sm text-muted-foreground">Private reusable messages, with a simple layout that works on desktop and mobile.</p></div>
     {error&&<ErrorNote>{error}</ErrorNote>}{notice&&<p role="status">{notice}</p>}
     <div className="flex flex-wrap items-center gap-2">
       <label className="text-sm" htmlFor="template-picker">Saved template</label>

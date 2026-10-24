@@ -238,9 +238,9 @@ export function AdminDiagnostics() {
   const installerUpdates = update?.job.applyMode === 'installer';
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
+    <div className="page">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">System checkup</h1>
+        <h1 className="page-title">System checkup</h1>
         <p className="mt-1 text-sm text-muted-foreground">{nativeMac ? 'Josi Doctor checks your Mac installation and explains anything that needs attention. Service repairs use the signed Josi installer with your approval.' : 'Josi Doctor checks this installation, explains problems plainly, and can repair a limited set of safe problems after you approve the exact plan.'}</p>
       </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}

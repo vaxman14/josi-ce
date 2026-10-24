@@ -14,8 +14,8 @@ export function Vault() {
   useEffect(()=>{void load();},[load]);
   async function unlock(){setBusy(true);try{await api.post('/vault/unlock',{password});setPassword('');await load();}catch(e){setError(e instanceof Error?e.message:'Could not unlock the Vault.');}finally{setBusy(false);}}
   async function save(){setBusy(true);try{await api.post('/vault/items',form);setForm({...form,label:'',value:''});await load();}catch(e){setError(e instanceof Error?e.message:'Could not save the credential.');}finally{setBusy(false);}}
-  return <div className="mx-auto w-full max-w-3xl space-y-4">
-    <div><h1 className="text-xl font-semibold">Vault</h1><p className="text-sm text-muted-foreground">Your encrypted credentials. Values are never shown again after they are saved.</p></div>
+  return <div className="page">
+    <div><h1 className="page-title">Vault</h1><p className="text-sm text-muted-foreground">Your encrypted credentials. Values are never shown again after they are saved.</p></div>
     {error?<ErrorNote>{error}</ErrorNote>:null}
     {view?.status.locked?<Card><CardTitle>Master Vault locked</CardTitle><p className="text-sm text-muted-foreground">Credential-dependent work is unavailable until an administrator unlocks it.</p></Card>:null}
     {!view?.box.unlocked?<Card><CardTitle>Unlock for five minutes</CardTitle><p className="mb-3 text-sm text-muted-foreground">Re-enter your login password. This authorizes access; it is not an encryption key and is not retained.</p><div className="flex gap-2"><Input aria-label="Password" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/><Button disabled={busy||!password} onClick={()=>void unlock()}>Unlock</Button></div></Card>:<>

@@ -29,7 +29,7 @@ export function WorkOutcome({ goal, refresh }: { goal: WorkGoalSnapshot; refresh
   }
   return <div className="mt-3 space-y-3">
     {!ended ? <button type="button" disabled={busy} onClick={edit} className="min-h-10 rounded-md border border-border px-3 text-xs">Change requested outcome</button> : null}
-    {editing && !ended ? <form onSubmit={event => { event.preventDefault(); void save(); }} className="space-y-3 rounded-lg border border-border p-3">
+    {editing && !ended ? <form onSubmit={event => { event.preventDefault(); void save(); }} className="space-y-3 rounded-xl border border-border p-3">
       <p className="text-xs text-muted-foreground">Completed work and original steps stay saved. Josi must review the updated plan before new actions. Actions already sent may still finish. This change adds no permissions.</p>
       {revision !== goal.revision ? <div className="space-y-2">
         <p className="text-sm text-muted-foreground">Work changed while you were editing. Review the current result above; your edit is still here.</p>
@@ -77,7 +77,7 @@ function OutcomeHistory({ goal }: { goal: WorkGoalSnapshot }) {
   return <details onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="cursor-pointer text-sm text-muted-foreground">Outcome history · Version {goal.outcomeRevision}</summary>
     {open ? <div className="mt-3 space-y-3" aria-busy={busy}>
-      {records.map(record => <details key={record.outcome_revision} className="rounded-lg border border-border p-3">
+      {records.map(record => <details key={record.outcome_revision} className="rounded-xl border border-border p-3">
         <summary className="cursor-pointer text-sm">Version {record.outcome_revision} · {record.outcome}</summary>
         <p className="mt-2 text-xs text-muted-foreground">{record.source === 'owner_edit' ? 'Changed by you' : record.source === 'existing_record' ? 'Retained from existing work' : 'Recorded from the original request'} · {new Date(record.created_at).toLocaleString()}</p>
         <p className="mt-2 text-sm">{record.reason}</p>

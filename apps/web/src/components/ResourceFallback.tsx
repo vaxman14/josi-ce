@@ -6,13 +6,13 @@
 // redirect — rendered as a page loading forever. useResource names every
 // outcome; this renders the ones that are not `ready`, so a page only has to
 // write its happy path.
-import { Button, Card, CardTitle, ErrorNote } from '@/components/ui';
+import { Button, Card, CardTitle, ErrorNote, Working } from '@/components/ui';
 import type { Resource } from '@/lib/useResource';
 
 export function ResourceFallback<T>({ resource }: { resource: Resource<T> }) {
   switch (resource.state) {
     case 'loading':
-      return <p className="text-sm text-muted-foreground">Loading…</p>;
+      return <Working text="Loading…" />;
 
     case 'unauthorized':
       return (

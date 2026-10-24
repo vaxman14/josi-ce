@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { plain, plainDetail } from '@/lib/plainLanguage';
-import { Badge, Button, Card, CardTitle, ErrorNote } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, ErrorNote, Working } from '@/components/ui';
 
 type StorageProvider = 'google' | 'microsoft' | 'dropbox' | 'box' | 'nextcloud';
 
@@ -109,7 +109,7 @@ export function CloudFolders({
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {notice ? <p className="mb-2 text-sm text-muted-foreground">{notice}</p> : null}
 
-      {mappings === null ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {mappings === null ? <Working text="Loading…" /> : null}
       {mappings?.length === 0 && !adding ? (
         <p className="mb-2 text-sm text-muted-foreground">
           No folders yet. Choose one and Josi will read it, index the text it can
@@ -311,7 +311,7 @@ function FolderPicker({
       <p className="mb-2 text-sm text-muted-foreground">
         {path.length ? displayPath : `The top of your ${STORAGE_LABEL[provider]}. Pick a folder — Josi maps one folder at a time, never the whole drive.`}
       </p>
-      {folders === null ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {folders === null ? <Working text="Loading…" /> : null}
       {folders?.length === 0 ? (
         <p className="text-sm text-muted-foreground">No folders inside this one.</p>
       ) : null}

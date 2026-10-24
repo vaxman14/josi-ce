@@ -72,7 +72,7 @@ export function DeviceEnrollment({ enabled, vaultReady, refreshed }: {
     <p className="text-sm text-muted-foreground">Approve the exact device in Josi on the Mac running this server. When enrolling a remote Mac, compare the device identity and both fingerprints in its enrollment window.</p>
     {!enabled ? <p className="text-xs text-muted-foreground">This server needs the installed macOS consent helper before it can enroll devices.</p>
       : !hasNative ? <p className="text-xs text-muted-foreground">Use the installed Josi Mac app for device enrollment.</p> : null}
-    {open ? <form className="space-y-3 rounded-lg border border-border p-3" onSubmit={event => { event.preventDefault(); void action(); }}>
+    {open ? <form className="space-y-3 rounded-xl border border-border p-3" onSubmit={event => { event.preventDefault(); void action(); }}>
       <fieldset disabled={busy} className="space-y-3">
         <label className="block text-sm">Name this Mac<Input required maxLength={120} value={label} onChange={event => setLabel(event.target.value)} autoComplete="off" /></label>
         <label className="block text-sm">Administrator password<Input required type="password" maxLength={4096} value={password} autoComplete="current-password" onChange={event => setPassword(event.target.value)} /></label>
@@ -84,7 +84,7 @@ export function DeviceEnrollment({ enabled, vaultReady, refreshed }: {
       <h3 className="font-medium">Pending device enrollments</h3>
       {pendingError ? <ErrorNote>{pendingError}</ErrorNote> : null}
       {!pending.length ? <p className="text-sm text-muted-foreground">No pending enrollment is available for this administrator.</p> : null}
-      {pending.map(item => <div key={item.id} className="space-y-2 rounded-lg border border-border p-3">
+      {pending.map(item => <div key={item.id} className="space-y-2 rounded-xl border border-border p-3">
         <p className="font-medium">{item.label}</p>
         <p className="break-all text-xs text-muted-foreground">Device: {item.identity.deviceId}</p>
         <p className="text-xs text-muted-foreground">{item.state === 'approved' ? 'Server approval received; waiting for the target Mac.' : item.state === 'waiting' ? 'Waiting for approval on the server Mac.' : 'This local review has ended.'} Expires {new Date(item.expiresAtMs).toLocaleTimeString()}.</p>

@@ -56,8 +56,8 @@ export function AdminOverview() {
   const recommendations = checks.filter((item) => item.state !== 'working')
     .filter((item) => item.state !== 'unconfigured' || ['AI model', 'Security and setup'].includes(item.label))
     .sort((a, b) => priority[a.state] - priority[b.state]);
-  return <div className="mx-auto w-full min-w-0 max-w-4xl space-y-4">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-xl font-semibold tracking-tight">Overview</h1><p className="mt-1 text-sm text-muted-foreground">Installation readiness, activity, and problems that need action.</p></div><Button variant="secondary" disabled={loading} onClick={() => void runChecks()}>{loading ? 'Checking…' : 'Check again'}</Button></div>
+  return <div className="page">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="page-title">Overview</h1><p className="mt-1 text-sm text-muted-foreground">Installation readiness, activity, and problems that need action.</p></div><Button variant="secondary" disabled={loading} onClick={() => void runChecks()}>{loading ? 'Checking…' : 'Check again'}</Button></div>
     {checkedAt ? <p className="text-xs text-muted-foreground">Last checked {checkedAt.toLocaleString()}</p> : null}{error ? <ErrorNote>{error}</ErrorNote> : null}
     {assistantResource.state !== 'ready' ? <ResourceFallback resource={assistantResource} /> : null}
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Conversations', data?.counts.threads], ['Messages', data?.counts.messages], ['Tasks', data?.counts.tasks], ['Open', data?.counts.openTasks]].map(([label, value]) => <Card key={String(label)}><p className="text-xs text-muted-foreground">{label}</p><p className="text-2xl font-semibold tabular-nums">{value ?? '—'}</p></Card>)}</div>

@@ -145,7 +145,7 @@ export function AdminWorkflows() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Native workflow providers</h1>
+        <h1 className="page-title">Native workflow providers</h1>
         <p className="text-sm text-muted-foreground">
           Zapier uses its official MCP connection token. Make uses its API token
           and team/organization identity. n8n uses its public API plus a

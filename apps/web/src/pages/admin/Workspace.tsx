@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useResource } from '@/lib/useResource';
-import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { Button, Card, CardTitle, ErrorNote, Input, Working } from '@/components/ui';
 
 interface Workspace { name: string; timezone: string }
 
@@ -48,13 +48,13 @@ export function AdminWorkspace() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
+    <div className="page">
       {/* The heading does not wait on a fetch: a page whose title appears only
           after a successful request has nothing to show when one fails. */}
-      <h1 className="text-xl font-semibold tracking-tight">Workspace</h1>
+      <h1 className="page-title">Workspace</h1>
 
       {resource.state === 'loading' ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <Working text="Loading…" />
       ) : null}
 
       {resource.state === 'empty' ? (

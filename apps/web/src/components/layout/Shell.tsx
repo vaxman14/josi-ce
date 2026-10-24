@@ -5,6 +5,11 @@
 // is a bottom bar, because a hamburger that covers the content is worse than a
 // row of targets a thumb can actually reach.
 //
+// Item 40 (October 2026): the same shell as the Windows app. A dark sidebar
+// with the mark, the person, and the sections in the app's groups ("Your
+// assistant", "Server"); pages in one left-aligned column; the phone keeps its
+// bottom bar and gets the same grouped list in More, for administrators too.
+//
 // Nothing here is a permission check. The admin links are hidden from members
 // because showing them would be noise, and every one of those routes is refused
 // server-side regardless.
@@ -14,12 +19,13 @@ import { useAuth } from '@/lib/auth';
 import { api, type LlmStatus } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { PwaPrompts } from '@/lib/pwa';
-import { Button } from '@/components/ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { HELP_URL, LIVE_HELP_URL, LegalLinks } from '@/components/LegalLinks';
 import { PHONE_MORE_LABELS, PHONE_PRIMARY_LABELS, routeMatches } from './mobileNavigation';
 
-const MEMBER_NAV = [
+interface NavItem { to: string; label: string; end?: boolean; group?: string }
+
+const MEMBER_NAV: NavItem[] = [
   { to: '/app', label: 'Home', end: true },
   { to: '/app/talk', label: 'Talk' },
   { to: '/app/tasks', label: 'Tasks' },
@@ -31,7 +37,7 @@ const MEMBER_NAV = [
   { to: '/app/connections', label: 'Connections' },
   { to: '/app/workspace', label: 'Local Workspace' },
   { to: '/app/workflows', label: 'Workflows' },
-  { to: '/app/vault', label: 'Vault' },
+  { to: '/app/vault', label: 'Vault', group: 'Your assistant' },
   { to: '/app/usage', label: 'Usage' },
   { to: '/app/personalization', label: 'Personalization' },
   { to: '/app/channels', label: 'Channels' },
@@ -39,50 +45,81 @@ const MEMBER_NAV = [
   { to: '/app/apps', label: 'Apps' },
 ];
 
-const FAMILY_NAV: { to: string; label: string; end?: boolean } = {
-  to: '/app/family', label: 'Family (Coming Soon)',
-};
+const FAMILY_NAV: NavItem = { to: '/app/family', label: 'Family (Coming Soon)' };
 
-const ADMIN_NAV = [
+const ADMIN_NAV: NavItem[] = [
   { to: '/admin', label: 'Overview', end: true },
   { to: '/admin/diagnostics', label: 'System checkup' },
   // First for as long as it matters. An administrator who dismissed the
   // first-run redirect still has to be able to find the thing they dismissed.
   { to: '/admin/launch', label: 'Getting started' },
   { to: '/admin/people', label: 'People' },
-  { to: '/admin/model', label: 'Model' },
+  { to: '/admin/model', label: 'Model', group: 'Assistant' },
   { to: '/admin/voice-box', label: 'Voice Box' },
   { to: '/admin/policy', label: 'Policy' },
   { to: '/admin/pc-control', label: 'PC control permissions' },
   { to: '/admin/automation', label: 'Automation & Cardinal Rules' },
-  { to: '/admin/storage', label: 'Storage' },
+  { to: '/admin/storage', label: 'Storage', group: 'Connections' },
   { to: '/admin/connectors', label: 'Connectors' },
   { to: '/admin/workflows', label: 'Workflows' },
   { to: '/admin/channels', label: 'Channels' },
-  { to: '/admin/backups', label: 'Backups' },
+  { to: '/admin/backups', label: 'Backups', group: 'Server' },
   { to: '/admin/vault', label: 'Master Vault' },
-  { to: '/admin/integrations', label: 'Integrations' },
   { to: '/admin/network', label: 'Network & address' },
-  { to: '/admin/parental-controls', label: 'Parental controls (Coming Soon)' },
   { to: '/admin/workspace', label: 'Workspace' },
+  { to: '/admin/parental-controls', label: 'Parental controls (Coming Soon)' },
 ];
 
 /** The four destinations a member reaches directly from the phone bar. */
 const PHONE_NAV = MEMBER_NAV.filter((i) => PHONE_PRIMARY_LABELS.includes(i.label as (typeof PHONE_PRIMARY_LABELS)[number]));
 
 /** Member destinations that remain available from the phone's More sheet. */
-const PHONE_MORE_NAV = [
+const PHONE_MORE_NAV: NavItem[] = [
   ...PHONE_MORE_LABELS.slice(0, -1).map((label) => MEMBER_NAV.find((item) => item.label === label)),
   { ...FAMILY_NAV, label: 'Family' },
-].filter((item): item is { to: string; label: string; end?: boolean } => item !== undefined);
+].filter((item): item is NavItem => item !== undefined);
+
+/** The administrator's phone bar: the first three, and More for the rest. */
+const ADMIN_PHONE_NAV = ADMIN_NAV.slice(0, 3);
+const ADMIN_PHONE_MORE_NAV = ADMIN_NAV.slice(3);
 
 function PhoneNavIcon({ label }: { label: string }) {
   const common = 'h-6 w-6';
-  if (label === 'Home') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z" /></svg>;
+  if (label === 'Home' || label === 'Overview') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z" /></svg>;
   if (label === 'Talk') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="currentColor"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v7a3.5 3.5 0 0 1-3.5 3.5H10l-4.8 4a.75.75 0 0 1-1.2-.58V16.5A3.5 3.5 0 0 1 2 13.34V5.5Z" /></svg>;
   if (label === 'Calendar') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></svg>;
-  if (label === 'Contacts') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M17 8h4M17 12h4M17 16h3"/></svg>;
+  if (label === 'Contacts' || label === 'Getting started') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M17 8h4M17 12h4M17 16h3"/></svg>;
+  if (label === 'System checkup') return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>;
   return <svg aria-hidden viewBox="0 0 24 24" className={common} fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>;
+}
+
+function Initials({ name }: { name: string }) {
+  const letters = name.trim().split(/\s+/).map(part => part[0] ?? '').join('').slice(0, 2).toUpperCase() || '?';
+  return <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-semibold text-primary">{letters}</span>;
+}
+
+/** The sidebar's list: groups as small uppercase captions, items as pills. */
+function NavList({ items, onPick, columns = false }: { items: NavItem[]; onPick?: () => void; columns?: boolean }) {
+  return (
+    <ul className={cn('space-y-0.5', columns && 'grid grid-cols-1 gap-x-2 gap-y-0.5 space-y-0 min-[360px]:grid-cols-2')}>
+      {items.map((item) => (
+        <li key={item.to} className={cn(item.group && columns && 'min-[360px]:col-span-2')}>
+          {item.group ? <p className="mb-1 mt-4 px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{item.group}</p> : null}
+          <NavLink
+            to={item.to}
+            end={item.end}
+            onClick={onPick}
+            className={({ isActive }) => cn(
+              'flex min-h-11 items-center rounded-xl px-3 text-sm font-medium transition-colors',
+              isActive ? 'bg-primary/15 text-primary' : 'text-foreground/90 hover:bg-secondary',
+            )}
+          >
+            {item.label}
+          </NavLink>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function Shell() {
@@ -100,7 +137,7 @@ export function Shell() {
     void api.get<LlmStatus>('/llm/status').then(setStatus).catch(() => setStatus(null));
   }, [location.pathname]);
 
-  useEffect(() => setMoreOpen(false), [location.pathname]);
+  useEffect(() => { setMoreOpen(false); setTalkMenuOpen(false); }, [location.pathname]);
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -146,10 +183,17 @@ export function Shell() {
   const isTalk = location.pathname === '/app/talk';
   const memberNav = [...MEMBER_NAV, FAMILY_NAV];
   const nav = isAdminArea ? ADMIN_NAV : memberNav;
+  const phoneNav = isAdminArea ? ADMIN_PHONE_NAV : PHONE_NAV;
+  const phoneMore = isAdminArea ? ADMIN_PHONE_MORE_NAV : PHONE_MORE_NAV;
+  const moreCurrent = phoneMore.some((item) => routeMatches(location.pathname, item.to));
+  const name = user?.display_name || user?.username || '';
+  const doSignOut = () => void signOut().then(() => navigate('/login', { replace: true }));
 
   return (
     <div className={`flex h-dvh w-full max-w-full flex-col overflow-hidden ${isTalk ? 'overflow-y-hidden' : ''}`}>
-      <header className={`z-30 flex min-w-0 shrink-0 items-center gap-3 border-b border-border bg-card px-3 pt-[max(0.5rem,env(safe-area-inset-top))] ${isTalk ? 'h-[4.75rem] pb-2' : 'sticky top-0 py-2'}`}>
+      {/* The phone header. On a wide screen the sidebar carries the brand and
+          the person, and this bar keeps only what has no other home. */}
+      <header className={`z-30 flex min-w-0 shrink-0 items-center gap-3 border-b border-border bg-[hsl(var(--sidebar))] px-3 pt-[max(0.5rem,env(safe-area-inset-top))] lg:hidden ${isTalk ? 'h-[4.75rem] pb-2' : 'sticky top-0 py-2'}`}>
         <Link to="/app" className="flex min-h-11 min-w-0 shrink items-center gap-2" aria-label="Josi home">
           <img src="/brand/josi-mark.png" alt="" width={40} height={40} className={`${isTalk ? 'h-10 w-10 rounded-full' : 'h-8 w-8 rounded-lg'} shrink-0`} />
           <span className={`truncate font-semibold tracking-tight ${isTalk ? 'text-xl' : 'text-base'}`}>Josi</span>
@@ -172,56 +216,64 @@ export function Shell() {
             href={HELP_URL}
             target="_blank"
             rel="noreferrer noopener"
-            className={`inline-flex min-h-11 items-center rounded-md px-3 font-medium hover:bg-secondary ${isTalk ? 'text-base' : 'text-sm'}`}
+            className={`inline-flex min-h-11 items-center rounded-full px-3 font-medium hover:bg-secondary ${isTalk ? 'text-base' : 'text-sm'}`}
           >
             Help
           </a>
-          <a href={LIVE_HELP_URL} target="_blank" rel="noreferrer noopener" className="hidden min-h-11 items-center rounded-md px-3 text-sm font-medium hover:bg-secondary sm:inline-flex">Live Help chat</a>
           {user?.role === 'super_admin' ? (
             <Link
               to={isAdminArea ? '/app' : '/admin'}
-              className={`inline-flex min-h-11 items-center rounded-md px-3 font-medium hover:bg-secondary ${isTalk ? 'text-base' : 'text-sm'}`}
+              className={`inline-flex min-h-11 items-center rounded-full px-3 font-medium hover:bg-secondary ${isTalk ? 'text-base' : 'text-sm'}`}
             >
               {isAdminArea ? 'Workspace' : 'Admin'}
             </Link>
           ) : null}
-          {isTalk ? (
-            <>
-              <Button variant="ghost" className="h-11 w-11 rounded-full px-0 text-2xl leading-none" aria-label="Conversation menu" onClick={() => setTalkMenuOpen((open) => !open)}>•••</Button>
-              {talkMenuOpen ? <div className="absolute right-0 top-full z-50 w-40 rounded-xl border border-border bg-card p-1 shadow-xl"><button type="button" className="min-h-11 w-full rounded-lg px-3 text-left text-sm hover:bg-secondary" onClick={() => void signOut().then(() => navigate('/login', { replace: true }))}>Sign out</button></div> : null}
-            </>
-          ) : <Button variant="ghost" onClick={() => void signOut().then(() => navigate('/login', { replace: true }))}>Sign out</Button>}
+          <button type="button" className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-secondary" aria-label="Account menu" aria-expanded={talkMenuOpen} onClick={() => setTalkMenuOpen((open) => !open)}>
+            <Initials name={name} />
+          </button>
+          {talkMenuOpen ? <div className="absolute right-0 top-full z-50 w-48 rounded-2xl border border-border bg-card p-1 shadow-xl">
+            <p className="truncate px-3 py-2 text-sm font-medium">{name}</p>
+            <a href={LIVE_HELP_URL} target="_blank" rel="noreferrer noopener" className="flex min-h-11 items-center rounded-xl px-3 text-sm hover:bg-secondary">Live Help chat</a>
+            <button type="button" className="min-h-11 w-full rounded-xl px-3 text-left text-sm hover:bg-secondary" onClick={doSignOut}>Sign out</button>
+          </div> : null}
         </div>
       </header>
 
       <div className="flex min-h-0 w-full max-w-full flex-1 overflow-hidden">
+        {/* The sidebar, as in the Windows app: brand, the person, sections. */}
         <nav
           aria-label="Main"
-          className="hidden h-full w-56 shrink-0 overflow-y-auto overscroll-contain border-r border-border p-3 lg:block"
+          className="hidden h-full w-64 shrink-0 flex-col overflow-y-auto overscroll-contain border-r border-border bg-[hsl(var(--sidebar))] px-3 pb-3 pt-4 lg:flex"
         >
-          <ul className="space-y-1">
-            {nav.map((item) => (
-              <li key={item.to}>
-                <NavLink
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex min-h-11 items-center rounded-md px-3 text-sm font-medium',
-                      isActive ? 'bg-primary/15 text-primary' : 'hover:bg-secondary',
-                    )
-                  }
-                >
-                  {item.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
+          <Link to="/app" className="mb-3 flex min-h-11 items-center gap-3 rounded-xl px-2" aria-label="Josi home">
+            <img src="/brand/josi-mark.png" alt="" width={36} height={36} className="h-9 w-9 shrink-0 rounded-xl" />
+            <span className="text-lg font-semibold tracking-tight">Josi</span>
+            {status?.localOnly ? <span className="ml-auto rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-medium text-emerald-300" title="Only self-hosted models are permitted on this installation.">Local-only</span> : null}
+          </Link>
+          <div className="mb-3 flex items-center gap-3 rounded-2xl border border-border bg-card px-3 py-2.5">
+            <Initials name={name} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{name}</p>
+              <p className="truncate text-xs text-muted-foreground">{isAdminArea ? 'Administration' : user?.role === 'super_admin' ? 'Administrator' : 'Member'}</p>
+            </div>
+            <button type="button" className="min-h-9 rounded-full px-2.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground" onClick={doSignOut}>Sign out</button>
+          </div>
+          {user?.role === 'super_admin' ? (
+            <Link to={isAdminArea ? '/app' : '/admin'} className="mb-2 flex min-h-11 items-center justify-between rounded-xl border border-border px-3 text-sm font-medium hover:bg-secondary">
+              {isAdminArea ? 'Back to the workspace' : 'Administration'}
+              <span aria-hidden className="text-muted-foreground">›</span>
+            </Link>
+          ) : null}
+          <NavList items={nav} />
+          <div className="mt-auto pt-4">
+            <a href={HELP_URL} target="_blank" rel="noreferrer noopener" className="flex min-h-11 items-center rounded-xl px-3 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground">Help</a>
+            <a href={LIVE_HELP_URL} target="_blank" rel="noreferrer noopener" className="flex min-h-11 items-center rounded-xl px-3 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground">Live Help chat</a>
+          </div>
         </nav>
 
         {/* min-w-0 is what stops a long word or a wide table from pushing the
             whole page sideways. Without it flex children refuse to shrink. */}
-        <main className={`min-h-0 w-full min-w-0 flex-1 overflow-y-auto overscroll-contain ${isTalk ? 'p-0 pb-[5.25rem] lg:p-5' : 'p-3 pb-24 sm:p-5 lg:pb-5'}`}>
+        <main className={`min-h-0 w-full min-w-0 flex-1 overflow-y-auto overscroll-contain ${isTalk ? 'p-0 pb-[5.25rem] lg:p-6' : 'p-4 pb-24 sm:p-6 lg:px-8 lg:py-7 lg:pb-7'}`}>
           {/* Keyed on the path so a failure on one page does not wedge every
               page behind it. */}
           <ErrorBoundary key={location.pathname}>
@@ -232,9 +284,9 @@ export function Shell() {
 
       <nav
         aria-label="Primary"
-        className="fixed inset-x-0 bottom-0 z-30 flex overflow-x-auto border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-[hsl(var(--sidebar))]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
       >
-        {(isAdminArea ? ADMIN_NAV : PHONE_NAV).map((item) => (
+        {phoneNav.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -243,38 +295,35 @@ export function Shell() {
               cn(
                 // min-h-14 keeps the target well over 44px even with the label.
                 'relative flex min-h-[4.75rem] flex-1 flex-col items-center justify-center gap-1 px-1 text-[11px] font-medium',
-                isAdminArea && 'min-w-24 flex-none',
                 isActive ? 'text-primary' : 'text-muted-foreground',
               )
             }
           >
-            {!isAdminArea ? <PhoneNavIcon label={item.label} /> : null}
-            {item.label}
-            {!isAdminArea ? <span className={`absolute bottom-1.5 h-1 w-8 rounded-full ${location.pathname === item.to ? 'bg-primary' : 'bg-transparent'}`} /> : null}
+            <PhoneNavIcon label={item.label} />
+            <span className="max-w-full truncate">{item.label}</span>
+            <span className={`absolute bottom-1.5 h-1 w-8 rounded-full ${location.pathname === item.to ? 'bg-primary' : 'bg-transparent'}`} />
           </NavLink>
         ))}
-        {!isAdminArea ? (
-          <button
-            ref={moreTrigger}
-            type="button"
-            aria-haspopup="dialog"
-            aria-expanded={moreOpen}
-            aria-controls="phone-more-navigation"
-            aria-current={PHONE_MORE_NAV.some((item) => routeMatches(location.pathname, item.to)) ? 'page' : undefined}
-            className={cn(
-              'relative flex min-h-[4.75rem] flex-1 flex-col items-center justify-center gap-1 px-1 text-[11px] font-medium',
-              PHONE_MORE_NAV.some((item) => routeMatches(location.pathname, item.to)) ? 'text-primary' : 'text-muted-foreground',
-            )}
-            onClick={() => setMoreOpen(true)}
-          >
-            <PhoneNavIcon label="More" />
-            More
-            <span className={`absolute bottom-1.5 h-1 w-8 rounded-full ${PHONE_MORE_NAV.some((item) => routeMatches(location.pathname, item.to)) ? 'bg-primary' : 'bg-transparent'}`} />
-          </button>
-        ) : null}
+        <button
+          ref={moreTrigger}
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={moreOpen}
+          aria-controls="phone-more-navigation"
+          aria-current={moreCurrent ? 'page' : undefined}
+          className={cn(
+            'relative flex min-h-[4.75rem] flex-1 flex-col items-center justify-center gap-1 px-1 text-[11px] font-medium',
+            moreCurrent ? 'text-primary' : 'text-muted-foreground',
+          )}
+          onClick={() => setMoreOpen(true)}
+        >
+          <PhoneNavIcon label="More" />
+          More
+          <span className={`absolute bottom-1.5 h-1 w-8 rounded-full ${moreCurrent ? 'bg-primary' : 'bg-transparent'}`} />
+        </button>
       </nav>
 
-      {moreOpen && !isAdminArea ? (
+      {moreOpen ? (
         <div
           className="fixed inset-0 z-40 flex items-end bg-black/60 lg:hidden"
           onClick={(event) => {
@@ -287,27 +336,14 @@ export function Shell() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="phone-more-title"
-            className="max-h-[min(80dvh,44rem)] w-full overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-card px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl"
+            className="max-h-[min(84dvh,46rem)] w-full overflow-y-auto overscroll-contain rounded-t-3xl border-t border-border bg-[hsl(var(--sidebar))] px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl"
           >
             <div className="mb-2 flex min-h-11 items-center justify-between gap-3 px-1">
-              <h2 id="phone-more-title" className="text-lg font-semibold">More</h2>
+              <h2 id="phone-more-title" className="text-lg font-semibold">{isAdminArea ? 'Administration' : 'More'}</h2>
               <button type="button" className="flex h-11 w-11 items-center justify-center rounded-full text-2xl hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary" aria-label="Close more navigation" onClick={() => setMoreOpen(false)}>×</button>
             </div>
             <nav aria-label="More destinations">
-              <ul className="grid grid-cols-1 gap-1 min-[360px]:grid-cols-2">
-                {PHONE_MORE_NAV.map((item) => (
-                  <li key={item.to}>
-                    <NavLink
-                      to={item.to}
-                      end={item.end}
-                      className={({ isActive }) => cn('flex min-h-11 items-center rounded-lg px-3 text-sm font-medium', isActive ? 'bg-primary/15 text-primary' : 'hover:bg-secondary')}
-                      onClick={() => setMoreOpen(false)}
-                    >
-                      {item.label}
-                    </NavLink>
-                  </li>
-                ))}
-              </ul>
+              <NavList items={phoneMore} columns onPick={() => setMoreOpen(false)} />
             </nav>
           </div>
         </div>
@@ -317,7 +353,7 @@ export function Shell() {
           nothing offers to install an app to somebody looking at a login form,
           and an update prompt is only meaningful to somebody using the app. */}
       <PwaPrompts />
-      <LegalLinks className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] right-2 z-20 hidden gap-3 rounded-md border border-border bg-card/95 px-3 py-2 text-xs text-muted-foreground shadow-sm lg:flex lg:bottom-2 [&_a]:underline" />
+      <LegalLinks className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] right-2 z-20 hidden gap-3 rounded-full border border-border bg-card/95 px-3 py-2 text-xs text-muted-foreground shadow-sm lg:flex lg:bottom-2 [&_a]:underline" />
     </div>
   );
 }

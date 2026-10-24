@@ -22,8 +22,8 @@ export function AdminNetwork() {
     } finally { setBusy(false); }
   }
 
-  return <div className="mx-auto max-w-3xl space-y-4">
-    <div><h1 className="text-2xl font-semibold">Network &amp; address</h1><p className="text-sm text-muted-foreground">Change LAN, public-domain, reverse-proxy, and port settings without reinstalling Josi.</p></div>
+  return <div className="page">
+    <div><h1 className="page-title">Network &amp; address</h1><p className="text-sm text-muted-foreground">Change LAN, public-domain, reverse-proxy, and port settings without reinstalling Josi.</p></div>
     {error ? <ErrorNote>{error}</ErrorNote> : null}
     <Card>
       <CardTitle>Open protected maintenance</CardTitle>

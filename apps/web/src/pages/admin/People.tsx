@@ -98,8 +98,8 @@ export function AdminPeople() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">People</h1>
+    <div className="page">
+      <h1 className="page-title">People</h1>
 
       <Card>
         <CardTitle>Add someone</CardTitle>

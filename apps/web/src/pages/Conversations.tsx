@@ -20,8 +20,8 @@ export function Conversations() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Conversations</h1>
+    <div className="page">
+      <h1 className="page-title">Conversations</h1>
       <p className="text-sm text-muted-foreground">
         Private to you. Nobody else in this workspace sees them, including an administrator.
       </p>

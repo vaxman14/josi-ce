@@ -29,8 +29,8 @@ export function AdminPcControl(){
     ...(['browser','command'].includes(spec.kind)?{application}:{}),...(spec.kind==='browser'?{profile}:{})},mode,
     ...(mode==='task'?{taskId}:{}),...(mode==='temporary'?{expiresAt:expires?new Date(expires).toISOString():''}:{})}));}
   const inputClass='min-h-11 w-full rounded-md border border-input bg-background px-3';
-  return <div className="mx-auto max-w-4xl space-y-6">
-    <h1 className="text-xl font-semibold">PC control permissions</h1>
+  return <div className="page">
+    <h1 className="page-title">PC control permissions</h1>
     {error?<ErrorNote>{error}</ErrorNote>:null}
     <section className="space-y-3 rounded-lg border p-4">
       <p role="status">{state?.availability??'Loading PC permissions…'}</p>

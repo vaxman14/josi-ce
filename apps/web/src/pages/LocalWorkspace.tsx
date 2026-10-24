@@ -22,14 +22,14 @@ export function LocalWorkspace() {
  useEffect(()=>{setPreview('');setPending(null);void refresh();},[id,path]);
  const full=(n:string)=>[path,n].filter(Boolean).join('/');
  async function propose(change:Change){setError('');try{const x=await api.post<{approval:{id:string}}>(`/workspace/${id}/change`,change);setPending({id:x.approval.id,change});}catch(e){setError((e as Error).message);}}
- return <main className="mx-auto w-full max-w-5xl space-y-4 p-4 sm:p-6"><h1 className="text-2xl font-semibold">Local Workspace</h1>
+ return <main className="mx-auto w-full max-w-5xl space-y-4 p-4 sm:p-6"><h1 className="page-title">Local Workspace</h1>
  <p>Browse folders you explicitly connected. Files are never instructions to grant access. {available?.nativeWorkspace?'Use Josi Server on your Mac to change the selected folder.':<><Link className="underline" to="/app/connections">Manage folder access</Link>.</>}</p>
  {error&&<p role="alert" className="text-destructive">{error}</p>}{receipt&&<p role="status">Completed. Receipt: {receipt}</p>}
  <label className="block">Connected folder<select className="ml-2 rounded border bg-background p-2" value={id} onChange={e=>{setId(e.target.value);setPath('');setEntries([]);}}><option value="">Choose a folder</option>{mappings.map(m=><option key={m.id} value={m.id}>{m.display_path}</option>)}</select></label>
  <button className="underline" disabled={loadingFolders||connecting} onClick={()=>void loadFolders()}>{loadingFolders?'Checking folders…':'Refresh folders'}</button>
  {!loadingFolders&&!mappings.length&&<>
   <p>{available?.nativeWorkspace?.status==='unavailable'?`Josi cannot currently read the folder selected in Josi Server (${available.nativeWorkspace.label}). Review the selected folder and macOS access in Josi Server, then refresh folders.`:available?.nativeWorkspace?.status==='paused'?'This folder connection is paused. Review its access settings before reconnecting.':'No local folders connected.'}</p>
-  {(available?.nativeWorkspace&&['revoked','awaiting_mapping'].includes(available.nativeWorkspace.status))||(available?.capability.may_map_local&&available.roots.length>0&&available.nativeWorkspace?.status!=='paused')?<div className="space-y-3 rounded-lg border border-border p-4">
+  {(available?.nativeWorkspace&&['revoked','awaiting_mapping'].includes(available.nativeWorkspace.status))||(available?.capability.may_map_local&&available.roots.length>0&&available.nativeWorkspace?.status!=='paused')?<div className="space-y-3 rounded-2xl border border-border p-4">
    {available?.nativeWorkspace?<p>Selected folder: {available.nativeWorkspace.label}</p>:<label className="block">Available folder<select className="ml-2 rounded border bg-background p-2" value={rootToConnect} onChange={event=>setRootToConnect(event.target.value)}>{available?.roots.map(root=><option key={root.id} value={root.id}>{root.label}</option>)}</select></label>}
    <p>Connect this folder, everything inside it, and subfolders added in future. Files are read when you ask; connecting does not enable indexing or grant write access.</p>
    <button className="rounded bg-primary px-4 py-2 text-primary-foreground" disabled={connecting||(!rootToConnect&&!available?.nativeWorkspace)} onClick={()=>void connectFolder()}>{connecting?'Connecting…':'Connect folder'}</button>

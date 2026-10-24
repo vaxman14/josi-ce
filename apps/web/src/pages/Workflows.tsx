@@ -78,7 +78,7 @@ export function Workflows() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Automation workflows</h1>
+        <h1 className="page-title">Automation workflows</h1>
         <p className="text-sm text-muted-foreground">
           Native Zapier, n8n, and Make workflows discovered by an administrator.
           Every run waits for your approval.

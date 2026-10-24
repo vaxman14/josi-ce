@@ -15,7 +15,7 @@ export function AdminChannels() {
   const current = channels.find((c) => c.provider === selected);
   const fields = selected === 'whatsapp' ? [['appSecret','Meta app secret'],['accessToken','Permanent access token'],['phoneNumberId','Phone number ID'],['webhookSecret','Webhook verify token (enter the same value in Meta)']] : [['signingSecret','Signing secret'],['botToken','Bot token']];
   async function run(fn: () => Promise<unknown>, ok: string) { setBusy(true); setError(''); setNotice(''); try { await fn(); setNotice(ok); await load(); } catch(e) { setError(e instanceof Error ? e.message : 'That did not work'); } finally { setBusy(false); } }
-  return <div className="mx-auto max-w-3xl space-y-4"><div><h1 className="text-xl font-semibold">Messaging channels</h1><p className="text-sm text-muted-foreground">Credentials are encrypted and never returned after saving.</p></div>{error ? <ErrorNote>{error}</ErrorNote> : null}{notice ? <p className="text-sm text-emerald-300">{notice}</p> : null}
+  return <div className="page"><div><h1 className="page-title">Messaging channels</h1><p className="text-sm text-muted-foreground">Credentials are encrypted and never returned after saving.</p></div>{error ? <ErrorNote>{error}</ErrorNote> : null}{notice ? <p className="text-sm text-emerald-300">{notice}</p> : null}
     <div className="flex flex-wrap gap-2">
       <Link className="inline-flex min-h-11 items-center justify-center rounded-md bg-secondary px-4 text-sm font-medium hover:bg-secondary/80" to="/admin/telegram">Telegram</Link>
       {(['whatsapp','slack'] as Provider[]).map((p) => <Button key={p} aria-pressed={selected === p} variant={selected === p ? 'primary' : 'secondary'} onClick={() => { setSelected(p); setForm({}); }}>{label(p)}</Button>)}

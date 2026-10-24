@@ -3,25 +3,31 @@
 @tailwind utilities;
 
 /* The official Josi palette: deep navy, orange/gold. Locked on 2026-08-30 and
-   not a self-hoster's to replace — see the branding note in the README. */
+   not a self-hoster's to replace — see the branding note in the README.
+   Item 40 (October 2026): the exact values of the Windows app's Theme.xaml,
+   so the web app and the desktop app are one product. */
 @layer base {
   :root {
-    --background: 222 47% 8%;
-    --foreground: 210 40% 96%;
-    --card: 222 44% 11%;
-    --card-foreground: 210 40% 96%;
-    --primary: 28 92% 54%;          /* Josi orange */
-    --primary-foreground: 222 47% 8%;
-    --secondary: 222 32% 18%;
-    --secondary-foreground: 210 40% 96%;
-    --muted: 222 30% 16%;
-    --muted-foreground: 215 20% 68%;
+    --background: 221 46% 8%;        /* #0B111E */
+    --foreground: 38 83% 95%;        /* #FDF6EA */
+    --sidebar: 219 41% 13%;          /* #141E30 */
+    --card: 222 43% 11%;             /* #101728 */
+    --card-foreground: 38 83% 95%;
+    --primary: 28 92% 54%;           /* #F6831E Josi orange */
+    --primary-foreground: 221 46% 8%;
+    --secondary: 222 33% 18%;        /* #1F283D raised */
+    --secondary-foreground: 38 83% 95%;
+    --muted: 222 33% 18%;
+    --muted-foreground: 215 20% 68%; /* #9DABBE */
     --destructive: 0 72% 55%;
     --destructive-foreground: 210 40% 98%;
-    --border: 222 28% 20%;
-    --input: 222 28% 22%;
+    --border: 223 27% 20%;           /* #252D41 */
+    --input: 219 41% 13%;
     --ring: 28 92% 54%;
-    --radius: 0.75rem;
+    --radius: 0.875rem;
+    /* The desktop app's rhythm: one left-aligned column, 1040 wide, 18 apart. */
+    --page-width: 65rem;
+    --page-gap: 1.125rem;
   }
 
   * { @apply border-border; }
@@ -41,6 +47,32 @@
   button, a[role='button'], [type='submit'] { touch-action: manipulation; }
 
   :focus-visible { @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background; }
+
+  /* Thin, quiet scrollbars like the desktop app's. */
+  * { scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
+}
+
+@layer components {
+  /* One page: a left-aligned column with the desktop app's width and spacing. */
+  .page { @apply flex w-full min-w-0 flex-col; max-width: var(--page-width); gap: var(--page-gap); }
+  .page-title { @apply text-[1.65rem] font-bold leading-tight tracking-tight sm:text-[1.875rem]; }
+  .page-subtitle { @apply text-sm text-muted-foreground sm:text-[0.95rem]; }
+  .headline { @apply text-[0.95rem] font-semibold; }
+  .caption { @apply text-xs leading-relaxed text-muted-foreground; }
+  /* The working indicator: the mark spins slowly and bobs, as in the app. */
+  .josi-working-mark { animation: josi-spin 2.4s linear infinite, josi-bob 1.3s ease-in-out infinite alternate; transform-origin: 50% 50%; }
+  @keyframes josi-spin { from { rotate: 0deg; } to { rotate: 360deg; } }
+  @keyframes josi-bob { from { translate: 0 -2px; } to { translate: 0 2px; } }
+  @media (prefers-reduced-motion: reduce) { .josi-working-mark { animation: none; } }
+  /* Links in text: orange, underlined on hover only. */
+  .link { @apply text-primary underline-offset-2 hover:underline; }
+  /* A segmented control (the Connectors hub, settings tabs). */
+  .segments { @apply inline-flex max-w-full gap-1 overflow-x-auto rounded-full border border-border bg-card p-1; }
+  .segment { @apply inline-flex min-h-10 shrink-0 items-center rounded-full px-4 text-sm font-medium text-muted-foreground; }
+  .segment-on { @apply bg-secondary text-foreground; }
+}
+
+@layer base {
 
   /* The textarea already has a visible caret and sits inside a bordered
      composer.  Ringing its full rounded parent made an orange rectangle flash

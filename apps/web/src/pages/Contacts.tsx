@@ -32,8 +32,8 @@ export function Contacts() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Contacts</h1>
+    <div className="page">
+      <h1 className="page-title">Contacts</h1>
       <p className="text-sm text-muted-foreground">Private to you, like your conversations.</p>
 
       <Card>

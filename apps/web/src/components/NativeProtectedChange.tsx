@@ -58,7 +58,7 @@ export function NativeProtectedChange({ title, change, devices, enabled, refresh
     {!hasNative ? <p className="text-xs text-muted-foreground">Open this server in the installed Josi Mac app for protected approval.</p>
       : !enrolled.length ? <p className="text-xs text-muted-foreground">An enrolled confirmation device for this server is required.</p>
       : !enabled ? <p className="text-xs text-muted-foreground">This server does not support the native approval flow yet.</p> : null}
-    {open ? <form onSubmit={event => { event.preventDefault(); void submit(); }} className="space-y-3 rounded-lg border border-border p-3">
+    {open ? <form onSubmit={event => { event.preventDefault(); void submit(); }} className="space-y-3 rounded-xl border border-border p-3">
       <p className="text-sm text-muted-foreground">Verify your administrator account, then review the exact change in Josi’s separate confirmation window. Device authentication alone does not approve the change.</p>
       <fieldset disabled={busy} className="space-y-3">
         <label className="block text-sm">Confirmation device

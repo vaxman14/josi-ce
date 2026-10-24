@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
-import { Badge, Button, Card, CardTitle, Copyable, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, Copyable, ErrorNote, Input, Working } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 
 type OAuthProvider = 'google' | 'microsoft' | 'dropbox' | 'box';
@@ -142,7 +142,7 @@ function OAuthClientForm({
   );
 }
 
-export function AdminConnectors() {
+export function AdminConnectors({ embedded = false }: { embedded?: boolean } = {}) {
   const [view, setView] = useState<AdminView | null>(null);
   const [health, setHealth] = useState<HealthRow[]>([]);
   const [error, setError] = useState('');
@@ -202,14 +202,14 @@ export function AdminConnectors() {
   }
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Connectors</h1>
+    <div className={embedded ? 'contents' : 'page'}>
+      {embedded ? null : <h1 className="page-title">Connectors</h1>}
       <p className="text-sm text-muted-foreground">
         Register this installation's provider applications here. People connect their own accounts from
         Workspace → Connections; administrators can configure access and see health, but never account contents.
       </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!view ? <Working text="Loading…" /> : null}
 
       {/* A LAN-only installation is told the requirement and where to fix it,
           rather than being shown credential fields whose result Google and

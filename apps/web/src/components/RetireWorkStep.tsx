@@ -24,7 +24,7 @@ export function RetireWorkStep({ goal, refresh }: { goal: WorkGoalSnapshot; refr
   }
   return <div className="mt-3 text-sm">
     <button disabled={busy || goal.totalSteps <= 1} className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50" onClick={edit}>Retire obsolete step</button>
-    {open ? <form className="mt-3 space-y-3 rounded-lg border border-border p-3" onSubmit={event => { event.preventDefault(); void save(); }}>
+    {open ? <form className="mt-3 space-y-3 rounded-xl border border-border p-3" onSubmit={event => { event.preventDefault(); void save(); }}>
       <p className="text-xs text-muted-foreground">Only you can retire a step. Its history stays saved, but it stops counting as required work. Josi must review the remaining plan. An unresolved action or a task that is still open must be resolved first.</p>
       {revision !== goal.revision ? <div className="space-y-2 text-xs text-muted-foreground">
         <p>The work changed. Review the current steps above; your selection and reason remain here.</p>

@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, CollapsibleCard, Copyable, ErrorNote, Input } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, Copyable, ErrorNote, Input, Working } from '@/components/ui';
 
 type LicenceState =
   | 'unverifiable_build' | 'none' | 'active' | 'expired' | 'wrong_installation' | 'invalid';
@@ -59,8 +59,8 @@ const STATE_LABEL: Record<LicenceState, string> = {
 
 export function AdminParentalControls() {
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4" aria-disabled="true">
-      <h1 className="text-xl font-semibold tracking-tight">Parental controls <Badge tone="muted">Coming Soon</Badge></h1>
+    <div className="page" aria-disabled="true">
+      <h1 className="page-title">Parental controls <Badge tone="muted">Coming Soon</Badge></h1>
       <Card className="opacity-75">
         <CardTitle>Disabled while we redesign it</CardTitle>
         <p className="text-sm text-muted-foreground">No supervision, schedules, limits, monitoring, or child-safety enforcement are available or active in this build.</p>
@@ -121,8 +121,8 @@ function AdminParentalControlsImplementation() {
   const licensed = view?.state === 'active';
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Parental controls <Badge tone="danger">BETA</Badge></h1>
+    <div className="page">
+      <h1 className="page-title">Parental controls <Badge tone="danger">BETA</Badge></h1>
       <div role="alert" className="rounded-md border border-amber-500/60 bg-amber-500/10 p-3 text-sm">
         <p className="font-semibold text-amber-200">BETA — experimental and not suitable as a safety control.</p>
         <p className="mt-1 text-amber-100/90">
@@ -136,7 +136,7 @@ function AdminParentalControlsImplementation() {
         managed.
       </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {!view ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+      {!view ? <Working text="Loading…" /> : null}
 
       {view ? (
         <Card>

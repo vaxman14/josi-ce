@@ -3,12 +3,14 @@
 // The engine uses shadcn/Radix, which is excellent and is ~15 dependencies.
 // CE targets a Raspberry Pi and ships to strangers, so every dependency is
 // weight in the image and surface in the supply chain. These cover what the
-// nine pages actually use.
+// pages actually use.
 //
-// The 44px rule lives HERE, in the components, not in each call site: an iOS
-// tap target smaller than 44x44 is the accessibility failure the acceptance
-// criteria name, and it is not something to remember page by page.
-import { useState } from 'react';
+// Item 40 (October 2026): the same look as the Windows app. Pills for buttons,
+// quiet rounded cards, one left-aligned page column, the working indicator
+// with its clock. The 44px rule lives HERE, in the components, not in each
+// call site: an iOS tap target smaller than 44x44 is the accessibility failure
+// the acceptance criteria name, and it is not something to remember page by page.
+import { useEffect, useState } from 'react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
@@ -21,10 +23,10 @@ export function Button({
       className={cn(
         // min-h-11 is 44px. Not negotiable and not overridable by a caller
         // passing a smaller height, because it comes first in the class list.
-        'inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium',
+        'inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-medium',
         'transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-        variant === 'primary' && 'bg-primary text-primary-foreground hover:opacity-90',
-        variant === 'secondary' && 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+        variant === 'primary' && 'bg-primary text-primary-foreground hover:bg-primary/90',
+        variant === 'secondary' && 'border border-border bg-secondary text-secondary-foreground hover:bg-secondary/70',
         variant === 'ghost' && 'text-foreground hover:bg-secondary',
         variant === 'danger' && 'bg-destructive text-destructive-foreground hover:opacity-90',
         className,
@@ -42,7 +44,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
       className={cn(
         // text-base is load-bearing on iOS: anything smaller makes Safari zoom
         // the page when the field takes focus, which reads as a layout bug.
-        'min-h-11 w-full min-w-0 rounded-md border border-input bg-background px-3 text-base',
+        'min-h-11 w-full min-w-0 rounded-xl border border-border bg-[hsl(var(--input))] px-3.5 text-base',
         'placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm',
         className,
       )}
@@ -52,12 +54,71 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn('min-w-0 rounded-lg border border-border bg-card p-4', className)}>{children}</div>
+    <div className={cn('min-w-0 rounded-2xl border border-border bg-card p-5', className)}>{children}</div>
   );
 }
 
 export function CardTitle({ children }: { children: ReactNode }) {
-  return <h2 className="mb-1 text-base font-semibold tracking-tight">{children}</h2>;
+  return <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">{children}</h2>;
+}
+
+/** One page: the title row (with an optional action on the right), a line of
+ * explanation, and the content in the desktop app's column. */
+export function Page({ title, subtitle, action, children, className }: {
+  title: ReactNode; subtitle?: ReactNode; action?: ReactNode; children?: ReactNode; className?: string;
+}) {
+  return (
+    <div className={cn('page', className)}>
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="page-title">{title}</h1>
+          {subtitle ? <p className="page-subtitle mt-1">{subtitle}</p> : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function Caption({ children, className }: { children: ReactNode; className?: string }) {
+  return <p className={cn('caption', className)}>{children}</p>;
+}
+
+/** The small animated mark with a sentence, for any wait: "Checking…",
+ * "Josi is thinking…". With `elapsed`, a seconds counter shows the wait is
+ * alive rather than stuck. */
+export function Working({ text, elapsed = false, size = 22, className }: { text: string; elapsed?: boolean; size?: number; className?: string }) {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!elapsed) return;
+    const started = Date.now();
+    const timer = window.setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [elapsed]);
+  return (
+    <div role="status" className={cn('flex items-center gap-3 text-sm text-muted-foreground', className)}>
+      <img src="/brand/josi-mark.png" alt="" width={size} height={size} style={{ width: size, height: size }} className="josi-working-mark shrink-0 rounded-md" />
+      <span className="min-w-0">{text}</span>
+      {elapsed && seconds > 0 ? <span className="tabular-nums text-xs">{seconds} s</span> : null}
+    </div>
+  );
+}
+
+/** A segmented choice: one of a few views of the same page. */
+export function Segmented<T extends string>({ value, options, onChange, label }: {
+  value: T; options: Array<{ value: T; label: string }>; onChange: (value: T) => void; label: string;
+}) {
+  return (
+    <div role="tablist" aria-label={label} className="segments">
+      {options.map(option => (
+        <button key={option.value} type="button" role="tab" aria-selected={option.value === value}
+          className={cn('segment', option.value === value && 'segment-on')} onClick={() => onChange(option.value)}>
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /** A compact settings section using the same native disclosure pattern as
@@ -87,7 +148,7 @@ export function CollapsibleCard({
       <details open={open ?? (defaultOpen || undefined)} onToggle={event => onOpenChange?.(event.currentTarget.open)} className="group">
         <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
           <span className="min-w-0">
-            <span className="block text-base font-semibold tracking-tight">{title}</span>
+            <span className="block text-[0.95rem] font-semibold tracking-tight">{title}</span>
             {summary ? <span className="mt-0.5 block text-sm text-muted-foreground">{summary}</span> : null}
           </span>
           <span className="flex shrink-0 items-center gap-2">
@@ -107,7 +168,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+        'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
         tone === 'muted' && 'bg-secondary text-secondary-foreground',
         tone === 'primary' && 'bg-primary/20 text-primary',
         tone === 'danger' && 'bg-destructive/20 text-destructive',
@@ -123,7 +184,7 @@ export function Badge({
  * the difference between "nothing yet" and "something is broken". */
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="rounded-lg border border-dashed border-border p-6 text-center">
+    <div className="rounded-2xl border border-dashed border-border p-6 text-center">
       <p className="text-sm font-medium">{title}</p>
       {children ? <p className="mx-auto mt-1 max-w-prose text-sm text-muted-foreground">{children}</p> : null}
     </div>
@@ -131,7 +192,7 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 }
 
 export function ErrorNote({ children }: { children: ReactNode }) {
-  return <p role="alert" className="text-sm text-destructive">{children}</p>;
+  return <p role="alert" className="text-sm text-primary">{children}</p>;
 }
 
 /** What a feature says when it is genuinely not built yet.
@@ -141,7 +202,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
  * e2e suite asserts that pages carrying this contain no enabled action. */
 export function NotYet({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-border bg-secondary/40 p-4" data-not-built="true">
+    <div className="rounded-2xl border border-border bg-secondary/40 p-4" data-not-built="true">
       <p className="text-sm font-semibold">{title}</p>
       <p className="mt-1 text-sm text-muted-foreground">{children}</p>
     </div>
@@ -162,7 +223,7 @@ export function Copyable({ label, value }: { label: string; value: string }) {
     <div className="mb-3">
       <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
       <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 break-all rounded bg-secondary px-2 py-1.5 text-xs">{value}</code>
+        <code className="min-w-0 flex-1 break-all rounded-lg bg-secondary px-2.5 py-1.5 text-xs">{value}</code>
         <Button
           type="button"
           variant="secondary"

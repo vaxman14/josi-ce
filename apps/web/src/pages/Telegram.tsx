@@ -83,8 +83,8 @@ export function Telegram() {
 
   if (!status) {
     return (
-      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-        <h1 className="text-xl font-semibold tracking-tight">Telegram</h1>
+      <div className="page">
+        <h1 className="page-title">Telegram</h1>
         {error ? <ErrorNote>{error}</ErrorNote> : null}
       </div>
     );
@@ -93,8 +93,8 @@ export function Telegram() {
   const active = status.links.filter((l) => l.status === 'active');
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Telegram</h1>
+    <div className="page">
+      <h1 className="page-title">Telegram</h1>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
       {!status.channel.enabled ? (

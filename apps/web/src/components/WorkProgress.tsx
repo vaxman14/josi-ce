@@ -67,7 +67,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     {!compact ? <details className="mt-3 text-sm"><summary className="cursor-pointer text-muted-foreground">Outcome and saved work</summary>
       <p className="mt-3 font-medium">Finished means</p><ul className="mt-1 list-disc space-y-1 pl-5">{goal.criteria.map((criterion, index) => <li key={index}>{criterion}</li>)}</ul>
       {goal.outcomeRevision ? <WorkOutcome goal={goal} refresh={refresh} /> : null}
-      {goal.ownerCheckpoint ? <div className="mt-3 rounded-lg border border-border p-3">
+      {goal.ownerCheckpoint ? <div className="mt-3 rounded-xl border border-border p-3">
         <p className="font-medium">Your saved correction</p>
         <p className="mt-1 text-xs text-muted-foreground">Josi cannot replace this with its own notes. {goal.ownerCheckpointAt ? `Saved ${new Date(goal.ownerCheckpointAt).toLocaleString()}.` : ''}</p>
         <CheckpointNotes checkpoint={goal.ownerCheckpoint} />
@@ -206,7 +206,7 @@ function WorkPlans({ goal }: { goal: WorkGoalSnapshot }) {
     {open ? <div className="mt-3 space-y-3" aria-busy={busy}>
       <p className="text-xs text-muted-foreground">Changes retain original steps and receipts. Revising the plan does not change permissions or the required outcome.</p>
       {error ? <p role="alert" className="text-destructive">{error}</p> : null}
-      {plans.map(plan => <details key={plan.plan_revision} className="rounded-lg border border-border p-3">
+      {plans.map(plan => <details key={plan.plan_revision} className="rounded-xl border border-border p-3">
         <summary className="cursor-pointer">Version {plan.plan_revision} · {plan.reason}</summary>
         <p className="mt-2 text-xs text-muted-foreground">{new Date(plan.created_at).toLocaleString()}{plan.outcome_revision ? ` · Outcome version ${plan.outcome_revision}` : ''}</p>
         <ol className="mt-2 list-decimal space-y-2 pl-5">{plan.steps.map(step => <li key={step.id} className="break-words">

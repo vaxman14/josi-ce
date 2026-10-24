@@ -91,8 +91,8 @@ export function AdminLaunchChecklist() {
 
   if (failedToLoad) {
     return (
-      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-        <h1 className="text-xl font-semibold tracking-tight">Getting started</h1>
+      <div className="page">
+        <h1 className="page-title">Getting started</h1>
         <Card>
           <ErrorNote>{error}</ErrorNote>
           <Button className="mt-3" onClick={() => void load()}>Try again</Button>
@@ -111,14 +111,14 @@ export function AdminLaunchChecklist() {
   ].map((group) => ({ ...group, items: data.items.filter((item) => item.severity === group.severity) }));
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
+    <div className="page">
       <div>
         {/* An explicit exit, at the top. This page had no completion action at
             all — a person read it and then… nothing. Reading it already marks
             it seen (the POST above), so "Done" is honest: it will not come
             back uninvited, and it stays reachable from the admin menu. */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold tracking-tight">Getting started</h1>
+          <h1 className="page-title">Getting started</h1>
           <Button type="button" onClick={() => navigate('/app')}>Done — go to my dashboard</Button>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">

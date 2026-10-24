@@ -34,7 +34,7 @@ export function WorkLimits({ goal, refresh }: { goal: WorkGoalSnapshot; refresh:
     finally { setBusy(false); }
   }
   const changed = revision !== goal.revision;
-  return <section className="mt-3 rounded-lg border border-border p-3 text-sm">
+  return <section className="mt-3 rounded-xl border border-border p-3 text-sm">
     <h4 className="font-medium">Work limits</h4>
     <p className="mt-1">{saved.runsUsed} background runs used
       {saved.runLimit == null ? ' · No goal-specific run limit' : ` · Total allowed: ${saved.runLimit}`}.</p>

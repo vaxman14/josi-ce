@@ -15,8 +15,8 @@ export function Usage() {
   if (resource.state !== 'ready' || !resource.data) {
     // The heading renders even while the numbers are still coming.
     return (
-      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-        <h1 className="text-xl font-semibold tracking-tight">Usage</h1>
+      <div className="page">
+        <h1 className="page-title">Usage</h1>
         <ResourceFallback resource={resource} />
       </div>
     );
@@ -24,8 +24,8 @@ export function Usage() {
   const { usage, cap } = resource.data;
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-3xl space-y-4">
-      <h1 className="text-xl font-semibold tracking-tight">Usage</h1>
+    <div className="page">
+      <h1 className="page-title">Usage</h1>
       <p className="text-sm text-muted-foreground">Your own usage this month ({usage.month}).</p>
 
       <div className="grid gap-3 sm:grid-cols-3">
