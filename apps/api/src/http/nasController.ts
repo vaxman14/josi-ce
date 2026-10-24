@@ -18,6 +18,11 @@ export interface NasController {
   configure(plan: NasSharePlan): Promise<NasMountStatus>;
   status(): Promise<NasMountStatus | null>;
   remove(expectedRevision?: string): Promise<void>;
+  /** Where the share lands on this server: the path backups are written to.
+   * Absent on the helper-mounted kind, which always lands at /mnt/josi-nas. */
+  mountPath?(plan: { host: string; share: string; folder: string }): string;
+  /** Hand the share its credentials again, before it is used after a restart. */
+  reconnect?(plan: Omit<NasSharePlan, 'folder'>): Promise<void>;
 }
 
 /** Narrow Unix-socket client. The API never receives Docker authority; the

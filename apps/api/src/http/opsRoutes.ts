@@ -30,6 +30,7 @@ import { randomUUID } from 'node:crypto';
 import { normalize } from 'node:path';
 import { asyncRoute, param } from './async.js';
 import type { NasController } from './nasController.js';
+import { NasShareError } from './nasWindows.js';
 
 export interface OpsRoutesCtx {
   db: Db;
@@ -77,8 +78,16 @@ function requireDestinationKey(ctx: OpsRoutesCtx): MasterKey {
   }
 }
 
-async function requireCurrentNasMount(ctx: OpsRoutesCtx, row: DestinationRow): Promise<void> {
+async function requireCurrentNasMount(ctx: OpsRoutesCtx, row: DestinationRow, credentials?: Record<string, string>): Promise<void> {
   if (!ctx.nasController) throw new RouteError(503, 'the restricted storage controller is unavailable');
+  // A Windows server holds no mount across restarts, only the receipt; it is
+  // handed the share's credentials again before anything is read or written.
+  if (ctx.nasController.reconnect && row.share_host && row.share_name) {
+    try {
+      await ctx.nasController.reconnect({ protocol: row.share_protocol ?? 'smb', host: row.share_host, share: row.share_name,
+        username: credentials?.username || undefined, password: credentials?.password || undefined });
+    } catch (err) { throw new RouteError(409, err instanceof Error ? err.message : 'the NAS could not be reached'); }
+  }
   const mounted = await ctx.nasController.status();
   if (!mounted || mounted.configurationRevision !== row.configuration_revision || mounted.mountedPath !== row.bucket)
     throw new RouteError(409, 'The mounted NAS does not match the saved destination. Reapply the destination before using it.');
@@ -99,7 +108,7 @@ function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
         res.status(409).json({ error: err.message });
         return;
       }
-      if (err instanceof UnsafeEndpointError) {
+      if (err instanceof UnsafeEndpointError || err instanceof NasShareError) {
         res.status(400).json({ error: err.message });
         return;
       }
@@ -380,7 +389,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           const archive = await ctx.backupWriter.read(backup.stored_path);
           await db.query(`update backups set progress_percent = 70, progress_phase = 'uploading off-site copy', progress_step = 4 where id = $1`, [backup.id]);
           if (destination.kind === 'nas') {
-            await requireCurrentNasMount(ctx, prepared.row);
+            await requireCurrentNasMount(ctx, prepared.row, credentials);
             const { writeFile } = await import('node:fs/promises');
             await writeFile(`${destination.bucket}/${backup.id}.zip${encryptionKey ? '.enc' : ''}`,
               encryptionKey ? encryptBackupContents(archive, encryptionKey) : archive, { mode: 0o600 });
@@ -620,9 +629,9 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         const share = str(body.shareName, 255);
         if (!host || !share) throw new RouteError(400, 'enter the NAS address and share name');
         if (!ctx.nasController) throw new RouteError(503, 'the restricted storage controller is unavailable');
-        const folder = str(body.folder, 500).replace(/^\/+|\/+$/g, '');
+        const folder = str(body.folder, 500).replace(/^[\\/]+|[\\/]+$/g, '');
         if (folder.includes('..')) throw new RouteError(400, 'the NAS folder is invalid');
-        bucket = '/mnt/josi-nas' + (folder ? `/${folder}` : '');
+        bucket = ctx.nasController.mountPath ? ctx.nasController.mountPath({ host, share, folder }) : '/mnt/josi-nas' + (folder ? `/${folder}` : '');
       }
       const accountId = str(body.accountId, 128) || null;
       if (kind === 'r2' && !accountId) {
@@ -672,8 +681,9 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
             folder: str(body.folder, 500), username: current.credentials.username, password: current.credentials.password, readOnly: false,
             configurationRevision: plan.revision });
           if (mounted.mountedPath !== bucket || mounted.configurationRevision !== plan.revision) throw new Error('receipt mismatch');
-        } catch {
-          warning = 'Settings were saved, but the NAS mount was not confirmed. Reapply the destination before testing or using it.';
+        } catch (err) {
+          warning = 'Settings were saved, but the NAS was not confirmed'
+            + (err instanceof NasShareError ? `: ${err.message}` : '.') + ' Reapply the destination before testing or using it.';
         }
       } else if (plan.previous?.kind === 'nas') {
         try {
@@ -700,7 +710,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const { row, credentials: opened } = prepared;
 
       if (row.kind === 'nas') {
-        await requireCurrentNasMount(ctx, row);
+        await requireCurrentNasMount(ctx, row, opened);
         const path = normalize(row.bucket);
         let result: { ok: boolean; detail: string };
         try {

@@ -58,7 +58,7 @@ export const DESTINATIONS: readonly DestinationDescriptor[] = [
   {
     kind: 'nas',
     label: 'NAS / network share',
-    credentialsHelp: 'Enter the NAS address and authenticate. Josi mounts the selected folder through its restricted storage controller; there is no Docker path to configure.',
+    credentialsHelp: 'Enter the NAS address and sign in, then Connect and Browse to pick a folder. On a Windows server Josi opens the share as a normal network path (SMB); elsewhere its restricted storage controller mounts it. There is no Docker path to configure.',
     fields: [
       { key: 'shareHost', label: 'NAS address', secret: false, required: true, placeholder: '192.168.1.20', help: 'An IP address or hostname reachable from this server.' },
       { key: 'shareName', label: 'Share or export', secret: false, required: true, placeholder: 'backups' },

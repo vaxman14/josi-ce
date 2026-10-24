@@ -41,6 +41,7 @@ import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRo
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
 import { automationSettingsRoutes } from './http/automationSettingsRoutes.js';
 import { nasController } from './http/nasController.js';
+import { windowsNasController } from './http/nasWindows.js';
 import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
 import { doctorRoutes, type DoctorHelper } from './http/doctorRoutes.js';
@@ -338,7 +339,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     supportGatewayUrl: cfg.supportGatewayUrl ?? null,
     fetchLatestVersion: cfg.fetchLatestVersion,
     outboundResolve: cfg.outboundResolve,
-    nasController: cfg.nasController ?? nasController(),
+    nasController: cfg.nasController ?? nasController()
+      ?? (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1' ? windowsNasController() : null),
   }));
 
   api.use((_req, res) => res.status(404).json({ error: 'no such endpoint' }));
