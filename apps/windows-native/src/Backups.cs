@@ -84,7 +84,11 @@ namespace Josi.Native {
         status((row["progress_phase"].Text.Length > 0 ? Wires.Capitalize(row["progress_phase"].Text) : "Working") + "…");
       }
       if (row["state"].Text != "complete") throw new JosiException("The backup did not finish: " + Wires.Words(row["error_category"].Text.Length > 0 ? row["error_category"].Text : "unknown") + ".");
-      long size; if (!long.TryParse(row["byte_size"].Text, out size) || size <= 0) size = (long)row["byte_size"].Number;
+      // The create reply says byteSize, the list says byte_size; a bigint
+      // arrives as text or number depending on the route.
+      var sizeWire = row["byte_size"].IsNull ? row["byteSize"] : row["byte_size"];
+      long size; if (!long.TryParse(sizeWire.Text, out size) || size <= 0) size = (long)sizeWire.Number;
+      if (size <= 0) throw new JosiException("The backup was made but its size did not come back. Refresh and use Save a Copy on it.");
       status("Saving " + Wires.Bytes(size) + "…");
       await api.DownloadBackup(id, size, destination, count => status("Saving backup: " + Wires.Bytes(count) + " of " + Wires.Bytes(size)), cancelled);
       return "Backup saved to " + destination + " (" + Wires.Bytes(size) + (encrypted ? ", encrypted" : "") + "). "
@@ -113,7 +117,7 @@ namespace Josi.Native {
           "Everything in the backup comes back: people, conversations, settings and connections. Saved logins need the installation master key from the old server as well.", "Restore")) return null;
         status("Uploading and restoring…");
         var result = await api.UploadArchive("/setup/restore", path, fields, count => status("Uploading: " + Wires.Bytes(count)), cancelled);
-        return "Restored from " + Path.GetFileName(path) + (result["attachmentsRestored"].Integer > 0 ? " with " + result["attachmentsRestored"].Integer + " attachment(s)" : "") + ". "
+        return "Restored from " + Path.GetFileName(path) + " (" + result["rowsRestored"].Integer + " account" + (result["rowsRestored"].Integer == 1 ? "" : "s") + (result["attachmentsRestored"].Integer > 0 ? ", " + result["attachmentsRestored"].Integer + " attachment(s)" : "") + "). "
           + (result["warning"].Text.Length > 0 ? result["warning"].Text + " " : "") + "Sign in with an account from the backup.";
       }
       status("Uploading and reading the backup…");
@@ -124,8 +128,9 @@ namespace Josi.Native {
       var body = Wires.O("confirm", "restore", "stagedId", staged["stagedId"].Text);
       if (passphrase != null) body["passphrase"] = passphrase;
       var outcome = await api.Request("/ops/admin/restore", "POST", body);
-      return "Restored. " + outcome["rowsRestored"].Integer + " database rows and " + Math.Max(0, outcome["attachmentsRestored"].Integer) + " attachment(s) came back."
-        + (outcome["warning"].Text.Length > 0 ? " " + outcome["warning"].Text : "") + " Everyone is signed out; sign in again.";
+      return "Restored from " + Path.GetFileName(path) + ": the database (" + outcome["rowsRestored"].Integer + " account" + (outcome["rowsRestored"].Integer == 1 ? "" : "s") + ") and "
+        + Math.Max(0, outcome["attachmentsRestored"].Integer) + " attachment(s) came back." + (outcome["warning"].Text.Length > 0 ? " " + outcome["warning"].Text : "")
+        + " Everyone else is signed out; you stay signed in.";
     }
 
     static bool ConfirmRestore(Window owner, Wire staged, string filename) {

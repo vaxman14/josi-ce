@@ -19,7 +19,7 @@ import { rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import multer from 'multer';
-import { RestoreError, restoreFromFile } from '@josi-ce/ops';
+import { RestoreError, reconcileBackupRows, restoreFromFile } from '@josi-ce/ops';
 import {
   appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, initializeVault, json, loadMasterKey, resolveDataPath,
   updateWorkspace,
@@ -228,7 +228,8 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         path, passphrase, reader: ctx.restoreReader, attachmentsDir: ctx.attachmentsDir ?? null, masterKeyPresent,
         serverVersion: ctx.version ?? process.env.JOSI_VERSION ?? '0.1.0', actorUserId: null,
       });
-      res.json({ ok: true, credentialsRecovered: out.credentialsRecovered, attachmentsRestored: out.attachmentsRestored,
+      await reconcileBackupRows(db, ctx.backupWriter).catch(() => undefined);
+      res.json({ ok: true, rowsRestored: out.rowsRestored, credentialsRecovered: out.credentialsRecovered, attachmentsRestored: out.attachmentsRestored,
         josiVersion: out.manifest.josiVersion, warning: out.warning ?? null });
     } catch (error) {
       if (error instanceof RestoreError) { res.status(error.category === 'version_too_new' ? 409 : 400).json({ error: error.message, category: error.category }); return; }

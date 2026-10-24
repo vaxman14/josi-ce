@@ -55,6 +55,31 @@ export interface RestoreFromFileArgs {
   keepSessionId?: string | null;
 }
 
+/** After the database is replaced, the backups table is the backup's own
+ * memory of itself: the backup being restored sits there still "running"
+ * (the dump was taken mid-write), rows for files that never reached this
+ * disk linger, and the snapshot taken a moment ago has no row at all. Make
+ * the table say what is on disk. */
+export async function reconcileBackupRows(db: Db, writer: { physicalPath?: (p: string) => string }, snapshot?: { path: string; byteSize: number; sha256: string; createdBy: string | null } | null): Promise<void> {
+  const { stat } = await import('node:fs/promises');
+  const rows = await db.query<{ id: string; stored_path: string; state: string }>(`select id, stored_path, state from backups`);
+  for (const row of rows) {
+    const physical = writer.physicalPath ? writer.physicalPath(row.stored_path) : row.stored_path;
+    const info = await stat(physical).catch(() => null);
+    if (!info || !info.isFile() || info.size === 0) { await db.query(`delete from backups where id = $1`, [row.id]); continue; }
+    if (row.state === 'running') {
+      await db.query(`update backups set state = 'complete', byte_size = $2, completed_at = coalesce(completed_at, now()), progress_percent = 100, progress_phase = 'verified', progress_step = progress_steps where id = $1`, [row.id, info.size]);
+    }
+  }
+  if (snapshot) {
+    await db.query(
+      `insert into backups (kind, stored_path, includes_recovery_copies, includes_documents, master_key_confirmed, created_by, state, automatic, byte_size, sha256, completed_at, progress_percent, progress_phase, progress_step)
+       values ('full', $1, true, true, false, $2, 'complete', true, $3, $4, now(), 100, 'verified', 5)`,
+      [snapshot.path, snapshot.createdBy, snapshot.byteSize, snapshot.sha256],
+    );
+  }
+}
+
 export interface RestoreFromFileOutcome extends RestoreOutcome {
   attachmentsRestored: number;
   manifest: ArchiveManifest;

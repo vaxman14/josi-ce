@@ -356,8 +356,12 @@ namespace Josi.Native {
       if (!info.Exists || (info.Attributes & (FileAttributes.Directory | FileAttributes.Device | FileAttributes.ReparsePoint)) != 0) throw new JosiException("Choose a regular file.");
       if (!native && csrf == null) await PrimeCsrf();
       var name = info.Name.Replace("\"", "_").Replace("\r", "_").Replace("\n", "_");
+      // The body is read on a thread-pool thread; progress goes back to the
+      // thread that asked, since the page it updates belongs to that thread.
+      var context = SynchronizationContext.Current;
+      Action<long> onUi = count => { if (report == null) return; if (context != null) context.Post(_ => report(count), null); else report(count); };
       using (var stream = new FileStream(info.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 256 * 1024, true))
-      using (var counted = new CountingStream(stream, report, cancelled))
+      using (var counted = new CountingStream(stream, onUi, cancelled))
       using (var message = Message("POST", Route(route)))
       using (var form = new MultipartFormDataContent("Josi-" + Guid.NewGuid().ToString("N"))) {
         foreach (var field in fields) form.Add(new StringContent(field.Value), "\"" + field.Key + "\"");

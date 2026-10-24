@@ -30,7 +30,7 @@ import { randomUUID } from 'node:crypto';
 import { join, normalize } from 'node:path';
 import multer from 'multer';
 import { resolveDataPath } from '@josi-ce/core';
-import { inspectArchive, restoreFromFile } from '@josi-ce/ops';
+import { inspectArchive, reconcileBackupRows, restoreFromFile } from '@josi-ce/ops';
 import { asyncRoute, param } from './async.js';
 import type { NasController } from './nasController.js';
 import { NasShareError } from './nasWindows.js';
@@ -862,15 +862,22 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const writer = ctx.backupWriter, actor = req.user!.id;
       const pauseFile = resolveDataPath(WORKER_PAUSE_FILE);
       let out;
+      let snapshot: { path: string; byteSize: number; sha256: string; createdBy: string | null } | null = null;
       try {
         out = await restoreFromFile(db, {
           path, passphrase, reader: ctx.restoreReader, attachmentsDir: ctx.attachmentsDir ?? null, masterKeyPresent,
           serverVersion: ctx.version ?? process.env.JOSI_VERSION ?? '0.1.0', backupId, actorUserId: actor, keepSessionId: req.user!.session_id,
-          // The way back: a plain backup of what is about to be replaced.
-          snapshot: async () => { await createBackup(db, { kind: 'full', createdBy: actor, writer, filename: `josi-before-restore-${Date.now()}.zip`, automatic: true }); },
+          // The way back: a plain backup of what is about to be replaced. Its
+          // row is written again after the restore, since the restore replaces
+          // the table it was written to.
+          snapshot: async () => {
+            const { backup } = await createBackup(db, { kind: 'full', createdBy: actor, writer, filename: `josi-before-restore-${Date.now()}.zip`, automatic: true });
+            snapshot = { path: backup.stored_path, byteSize: Number(backup.byte_size), sha256: backup.sha256 ?? '', createdBy: actor };
+          },
           pause: async () => { await mkdir(join(pauseFile, '..'), { recursive: true }); await writeFile(pauseFile, new Date().toISOString()); },
           resume: async () => { await rm(pauseFile, { force: true }); },
         });
+        await reconcileBackupRows(db, writer, snapshot).catch(() => undefined);
       } finally { if (temp) await rm(temp, { force: true }).catch(() => undefined); }
       if (stagedId) { stagedFiles.delete(stagedId); await rm(path, { force: true }).catch(() => undefined); }
       return res.json(out);

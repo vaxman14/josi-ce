@@ -34,7 +34,7 @@ export {
   type ArchiveManifest, type OpenedArchive,
 } from './archive.js';
 export { crc32, writeZip, ZipReader, type ZipEntry, type ZipSource } from './zip.js';
-export { inspectArchive, restoreFromFile, type ArchiveInspection, type RestoreFromFileArgs, type RestoreFromFileOutcome } from './restore.js';
+export { inspectArchive, reconcileBackupRows, restoreFromFile, type ArchiveInspection, type RestoreFromFileArgs, type RestoreFromFileOutcome } from './restore.js';
 export { createNativeSnapshot, restoreNativeSnapshot, verifyNativeSnapshot } from './nativeSnapshot.js';
 export { BackupConfigurationError, prepareBackupDestinationSave, commitBackupDestinationSave, loadBackupDestination,
   recordBackupDestinationCheck, removeBackupDestination, type BackupDestinationRow, type BackupDestinationInput } from './backupCredentials.js';

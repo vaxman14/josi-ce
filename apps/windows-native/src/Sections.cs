@@ -731,7 +731,9 @@ namespace Josi.Native {
       model.Run(async () => {
         try {
           var result = await BackupFlows.RestoreFromFile(model, owner, false, Status, () => cancelWork);
-          if (result != null) { Dialogs.Message(owner, "Restored", result); model.Disconnect(); return; }
+          // The restoring person's own session is kept by the server; the page
+          // reloads and shows the restored state.
+          if (result != null) { note = result; Dialogs.Message(owner, "Restored", result); }
         }
         catch (OperationCanceledException) { note = "Cancelled. Nothing was changed."; }
         catch (JosiException e) { note = e.Message; }
@@ -752,8 +754,9 @@ namespace Josi.Native {
         var body = Wires.O("confirm", "restore", "backupId", id);
         if (passphrase != null) body["passphrase"] = passphrase;
         var r = await api.Request("/ops/admin/restore", "POST", body);
-        Dialogs.Message(owner, "Restored", r["rowsRestored"].Integer + " database rows came back." + (r["warning"].Text.Length > 0 ? " " + r["warning"].Text : "") + " Everyone is signed out; sign in again.");
-        model.Disconnect();
+        note = "Restored: the database (" + r["rowsRestored"].Integer + " account" + (r["rowsRestored"].Integer == 1 ? "" : "s") + ") and " + Math.Max(0, r["attachmentsRestored"].Integer) + " attachment(s) came back."
+          + (r["warning"].Text.Length > 0 ? " " + r["warning"].Text : "") + " Everyone else is signed out; you stay signed in.";
+        Dialogs.Message(owner, "Restored", note);
       }, false);
     }
     static long? Count(Wire value) {

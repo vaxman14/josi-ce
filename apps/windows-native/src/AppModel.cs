@@ -87,7 +87,10 @@ namespace Josi.Native {
       if (e is JosiException) return e.Message;
       if (e is UnauthorizedAccessException) return "Windows denied access to that file or folder.";
       if (e is System.IO.IOException) return "The file could not be read or written. " + e.Message;
-      return "Something went wrong: " + e.Message;
+      // The cause is usually one level down (a closed connection, a refused
+      // write); without it "an error occurred" says nothing.
+      var inner = e.InnerException;
+      return "Something went wrong: " + e.Message + (inner != null && inner.Message != e.Message ? " (" + inner.Message + ")" : "");
     }
 
     public void RefreshLocal() {
