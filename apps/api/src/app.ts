@@ -203,6 +203,12 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     llmResolve: cfg.llmResolve,
     connectorFetch: cfg.connectorFetch,
     mailTransport: cfg.mailTransport,
+    // A brand-new server may be restored from a backup file before any
+    // account exists.
+    backupWriter: cfg.backupWriter,
+    restoreReader: cfg.restoreReader,
+    attachmentsDir: cfg.attachmentStorageRoot ?? null,
+    version: process.env.JOSI_VERSION ?? '0.1.0',
   }));
   api.use('/auth', authRoutes({
     db, cookieSecure: cfg.cookieSecure, appUrl: cfg.appUrl,
@@ -341,6 +347,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     outboundResolve: cfg.outboundResolve,
     nasController: cfg.nasController ?? nasController()
       ?? (process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1' ? windowsNasController() : null),
+    attachmentsDir: cfg.attachmentStorageRoot ?? null,
+    version: process.env.JOSI_VERSION ?? '0.1.0',
   }));
 
   api.use((_req, res) => res.status(404).json({ error: 'no such endpoint' }));

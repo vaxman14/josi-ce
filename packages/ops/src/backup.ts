@@ -127,13 +127,18 @@ export interface BackupRow {
  * whole lifecycle without a real `pg_dump`, and so the runtime test can use the
  * real one. */
 export interface BackupWriter {
-  /** Returns the archive bytes. Throws `BackupError` with a category. */
-  write(args: { kind: BackupKind; contents: BackupContents; destination: string }): Promise<{
+  /** Writes the archive to `destination`. Throws `BackupError` with a category.
+   * A passphrase, when the writer supports one, seals the file on disk. */
+  write(args: { kind: BackupKind; contents: BackupContents; destination: string; passphrase?: string }): Promise<{
     byteSize: number;
     sha256: string;
+    attachments?: number;
+    encrypted?: boolean;
   }>;
   read(path: string): Promise<Buffer>;
   remove(path: string): Promise<void>;
+  /** Where `path` is on disk, for readers that open the file in place. */
+  physicalPath?(path: string): string;
 }
 
 export const BACKUP_DIR = '/data/backups';
@@ -142,7 +147,8 @@ export async function createBackup(
   db: Db,
   args: {
     kind: BackupKind;
-    createdBy: string;
+    /** Null for a backup the schedule made. */
+    createdBy: string | null;
     masterKeyConfirmed?: boolean;
     writer: BackupWriter;
     /** Supplied by the caller so paths are deterministic in tests. */
@@ -151,6 +157,10 @@ export async function createBackup(
     destinationDir?: string;
     /** Keep the row running while the caller writes and verifies an off-site copy. */
     deferCompletion?: boolean;
+    /** Seals the file with this passphrase; never stored anywhere. */
+    passphrase?: string;
+    /** Made by the schedule, not a person; pruned by the schedule's keep count. */
+    automatic?: boolean;
   },
 ): Promise<{ backup: BackupRow; description: string }> {
   const contents = contentsFor(args.kind);
@@ -159,12 +169,12 @@ export async function createBackup(
   const [row] = await db.query<BackupRow>(
     `insert into backups
        (kind, stored_path, includes_recovery_copies, includes_documents,
-        master_key_confirmed, created_by, state)
-     values ($1, $2, $3, $4, $5, $6, 'running')
+        master_key_confirmed, created_by, state, encrypted, automatic)
+     values ($1, $2, $3, $4, $5, $6, 'running', $7, $8)
      returning *`,
     [
       args.kind, storedPath, contents.recoveryCopies, contents.uploads,
-      args.masterKeyConfirmed === true, args.createdBy,
+      args.masterKeyConfirmed === true, args.createdBy || null, !!args.passphrase, args.automatic === true,
     ],
   );
 
@@ -173,21 +183,21 @@ export async function createBackup(
       `update backups set progress_percent = 15, progress_phase = 'exporting database', progress_step = 1 where id = $1`,
       [row.id],
     );
-    const { byteSize, sha256 } = await args.writer.write({
-      kind: args.kind, contents, destination: storedPath,
+    const { byteSize, sha256, attachments } = await args.writer.write({
+      kind: args.kind, contents, destination: storedPath, passphrase: args.passphrase,
     });
     const [done] = await db.query<BackupRow>(
-      `update backups set state = $4, byte_size = $2, sha256 = $3,
+      `update backups set state = $4, byte_size = $2, sha256 = $3, attachment_count = $5,
           completed_at = case when $4 = 'complete' then now() else null end,
           progress_percent = case when $4 = 'complete' then 100 else 60 end,
           progress_phase = case when $4 = 'complete' then 'verified' else 'local archive ready' end,
           progress_step = case when $4 = 'complete' then progress_steps else 3 end
        where id = $1 returning *`,
-      [row.id, byteSize, sha256, args.deferCompletion ? 'running' : 'complete'],
+      [row.id, byteSize, sha256, args.deferCompletion ? 'running' : 'complete', attachments ?? 0],
     );
     if (!args.deferCompletion) await appendEvent(db, {
-      actorUserId: args.createdBy,
-      actor: 'super_admin',
+      actorUserId: args.createdBy || undefined,
+      actor: args.automatic ? 'system' : 'super_admin',
       kind: 'backup.created',
       subjectType: 'backup',
       subjectId: row.id,

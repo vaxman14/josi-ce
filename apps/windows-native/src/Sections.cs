@@ -611,69 +611,149 @@ namespace Josi.Native {
     }
   }
 
+  /// Administrator: one file with everything important. Back up and save it
+  /// anywhere, restore from a file, a daily backup kept on the server, and the
+  /// history of what was made.
   public sealed class BackupsView : SectionView {
-    Wire view = Wire.Null; bool creating, downloading, cancelDownload;
+    Wire view = Wire.Null; bool working, cancelWork; string activity = "";
     readonly CheckBox masterKeySaved = Ui.Toggle("I have saved the installation master key separately");
+    readonly CheckBox scheduleOn = Ui.Toggle("Back up every day");
+    readonly TextBox hour = Ui.Input("3"), keep = Ui.Input("7"), copyTo = Ui.Input("Optional: a folder to copy the newest backup into, such as a mapped NAS drive");
+    bool scheduleLoaded;
     readonly DispatcherTimer timer = new DispatcherTimer();
-    bool Running { get { return creating || view["backups"].List.Any(b => b["state"].Text == "running"); } }
+    bool Running { get { return working || view["backups"].List.Any(b => b["state"].Text == "running"); } }
     public BackupsView(AppModel model, Window owner) : base(model, owner) {
-      timer.Tick += delegate { timer.Interval = TimeSpan.FromSeconds(Running ? 3 : 15); if (owner.IsActive && (!model.Busy || creating)) StartLoad(); };
+      timer.Tick += delegate { timer.Interval = TimeSpan.FromSeconds(Running ? 3 : 15); if (owner.IsActive && !model.Busy && !working) StartLoad(); };
       timer.Interval = TimeSpan.FromSeconds(15);
       Loaded += delegate { timer.Start(); };
     }
-    protected override void OnLeave() { timer.Stop(); cancelDownload = true; }
+    protected override void OnLeave() { timer.Stop(); cancelWork = true; }
     protected override async Task Load() {
       if (!model.IsAdministrator) return;
       var api = Api; var stamp = Stamp;
       try {
         var result = await api.Request("/ops/admin/backups");
-        if (Current(stamp)) view = result;
+        if (!Current(stamp)) return;
+        view = result;
+        var s = result["schedule"];
+        if (!scheduleLoaded && !s.IsNull) {
+          scheduleLoaded = true;
+          scheduleOn.IsChecked = s["enabled"].Flag; hour.Text = s["hour"].Integer.ToString(); keep.Text = s["keep"].Integer.ToString(); copyTo.Text = s["copy_to"].Text;
+        }
       } catch (Exception) { if (Current(stamp)) view = Wire.Null; throw; }
     }
     protected override UIElement Build() {
       var page = Page(Ui.HeadingWith("Backups", null, Ui.Pill("Refresh", StartLoad)),
-        Ui.Secondary("A full backup is used for restoration. A portable export is for taking your data elsewhere and does not include recovery copies."));
-      var panel = masterKeySaved.Parent as Panel; if (panel != null) panel.Children.Remove(masterKeySaved);
+        Ui.Secondary("One file holds everything important. Make it, save it anywhere, and bring it back here or on a new server."));
+      if (view.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "Backup history is unavailable. Refresh to load the current server state."), 0); return page; }
+
+      Ui.Detach(masterKeySaved);
       Ui.Add(page, Ui.CardBox("Keep your recovery material separately",
         Ui.T(view["masterKeyGuidance"].Text.Length == 0 ? "The installation master key is not included in these archives. Keep it and your Vault recovery copy safe outside Josi." : view["masterKeyGuidance"].Text),
         masterKeySaved), 20);
-      var buttons = Ui.Row(10, Ui.Pill("Back Up Now", () => Create("full"), true), Ui.Pill("Portable Export", () => Create("portable")));
-      buttons.IsEnabled = !Running && model.IsAdministrator && !view.IsNull;
-      Ui.Add(page, buttons, 20);
-      destination = destination ?? new BackupDestinationPanel(model, owner);
-      Ui.Detach(destination);
-      Ui.Add(page, destination, 20);
-      if (downloading) Ui.Add(page, Ui.Row(10, Ui.T("Saving the archive to your selected folder…"), Ui.Pill(cancelDownload ? "Cancelling…" : "Cancel Download", () => { cancelDownload = true; Render(); })), 20);
-      if (note.Length > 0) Ui.Add(page, Ui.Copyable(note), 20);
-      if (view.IsNull) Ui.Add(page, Ui.T("Backup history is unavailable. Refresh to load the current server state."), 20);
-      else if (view["backups"].List.Count == 0) Ui.Add(page, Ui.T("No backups have been recorded."), 20);
+
+      var actions = Ui.Wrap(Ui.Pill("Back Up and Save…", BackUp, true), Ui.Pill("Restore from a File…", RestoreFile));
+      actions.IsEnabled = !Running && model.IsAdministrator;
+      var contents = new List<UIElement> { Ui.Caption(view["contents"].Text), actions };
+      if (working) contents.Add(Ui.Row(10, Ui.Working(activity.Length > 0 ? activity : "Working…"), Ui.Pill(cancelWork ? "Cancelling…" : "Cancel", () => { cancelWork = true; Render(); })));
+      if (note.Length > 0) contents.Add(Ui.Copyable(note, 13.5));
+      Ui.Add(page, Ui.CardBox("Back up and restore", contents.ToArray()), 20);
+
+      Ui.Add(page, ScheduleCard(), 20);
+
+      var history = new List<UIElement>();
+      if (view["backups"].List.Count == 0) history.Add(Ui.Caption("No backups have been recorded on this server yet."));
       foreach (var backup in view["backups"].List) {
-        var items = new List<UIElement> { Ui.Headline(StateLabel(backup["state"].Text)), Ui.Caption(Wires.Date(backup["created_at"].Text) + " · " + ByteLabel(backup["byte_size"])) };
+        var item = backup;
+        var row = Ui.Stack(3, Ui.Spread(Ui.T((backup["automatic"].Flag ? "Daily backup" : backup["kind"].Text == "portable" ? "Portable export" : "Backup") + " · " + Wires.Date(backup["created_at"].Text), 14, FontWeights.Medium),
+          ModelText.Pill(StateLabel(backup["state"].Text), backup["state"].Text == "complete")));
+        row.Children.Add(Ui.Caption(ByteLabel(backup["byte_size"]) + (backup["encrypted"].Flag ? " · encrypted" : "") + (backup["attachment_count"].Integer > 0 ? " · " + backup["attachment_count"].Integer + " attachment(s)" : "")));
         if (backup["state"].Text == "running") {
-          items.Add(Ui.T(backup["progress_phase"].Text));
-          items.Add(new ProgressBar { Minimum = 0, Maximum = 100, Value = Math.Max(0, Math.Min(100, backup["progress_percent"].Integer)) });
-          items.Add(Ui.Caption("Step " + backup["progress_step"].Integer + " of " + backup["progress_steps"].Integer));
+          row.Children.Add(Ui.T(backup["progress_phase"].Text));
+          row.Children.Add(new ProgressBar { Minimum = 0, Maximum = 100, Value = Math.Max(0, Math.Min(100, backup["progress_percent"].Integer)) });
         } else if (backup["state"].Text == "complete") {
-          var item = backup;
-          var row = Ui.Wrap(Ui.Pill("Save Archive…", () => Download(item)));
-          if (backup["kind"].Text == "full") row.Children.Add(Ui.Danger("Restore This Backup…", () => Restore(item)));
-          items.Add(row);
-        } else if (backup["state"].Text == "failed") items.Add(Ui.T(backup["error_category"].Text, 12, null, Ui.Orange));
-        Ui.Add(page, Ui.CardBox(backup["kind"].Text == "full" ? "Full backup" : "Portable export", items.ToArray()), 20);
+          var buttons = Ui.Wrap(Ui.Pill("Save a Copy…", () => Download(item)));
+          if (backup["kind"].Text == "full") buttons.Children.Add(Ui.Danger("Restore This One…", () => RestoreStored(item)));
+          row.Children.Add(buttons);
+        } else if (backup["state"].Text == "failed") row.Children.Add(Ui.T(Wires.Words(backup["error_category"].Text), 12, null, Ui.Orange));
+        history.Add(new Border { BorderBrush = Ui.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12), Child = row });
       }
+      Ui.Add(page, Ui.CardBox("On this server", history.ToArray()), 20);
       return page;
     }
-    BackupDestinationPanel destination;
-    /// Restoring replaces the current database. The server reports what came
-    /// back separately from whether credentials work.
-    void Restore(Wire backup) {
+
+    UIElement ScheduleCard() {
+      foreach (var c in new Control[] { scheduleOn, hour, keep, copyTo }) Ui.Detach(c);
+      var s = view["schedule"];
+      var items = new List<UIElement> { scheduleOn,
+        Ui.Caption("Into this server's own backups folder, after the hour you choose, keeping the newest few. A copy on another disk is what protects you from losing this PC: name a folder below, or save a backup by hand now and then."),
+        Ui.Field("Hour of the day (0–23)", hour), Ui.Field("How many daily backups to keep", keep), Ui.Field("Copy the newest backup into this folder", copyTo),
+        Ui.Wrap(Ui.Pill("Choose a Folder…", () => { var d = new Microsoft.Win32.OpenFolderDialog { Title = "Folder for backup copies" }; if (d.ShowDialog(owner) == true) copyTo.Text = d.FolderName; }),
+          Ui.Pill("Save Schedule", SaveSchedule, true)) };
+      if (!s.IsNull) {
+        if (s["last_run_at"].Text.Length > 0) items.Add(Ui.Caption("Last daily backup: " + Wires.Date(s["last_run_at"].Text) + (s["last_copy_ok"].IsBool ? (s["last_copy_ok"].Flag ? " · copied to the folder" : " · the copy failed: " + s["last_copy_error"].Text) : "")));
+        else items.Add(Ui.Caption("No daily backup has run yet."));
+        var newest = view["backups"].List.FirstOrDefault(b => b["state"].Text == "complete");
+        if (newest != null && s["copy_to"].Text.Length == 0) {
+          DateTime made;
+          if (DateTime.TryParse(newest["created_at"].Text, null, System.Globalization.DateTimeStyles.RoundtripKind, out made) && (DateTime.UtcNow - made.ToUniversalTime()).TotalDays >= 7)
+            items.Add(Ui.T("The newest backup on this server is " + (int)(DateTime.UtcNow - made.ToUniversalTime()).TotalDays + " days old and lives only on this PC. Save a copy somewhere else.", 13.5, null, Ui.Orange));
+        }
+      }
+      return Ui.CardBox("Daily backup", items.ToArray());
+    }
+    void SaveSchedule() {
+      int h, k;
+      if (!int.TryParse(hour.Text, out h) || h < 0 || h > 23) { model.Error = "The hour is a number from 0 to 23."; model.Notify(); return; }
+      if (!int.TryParse(keep.Text, out k) || k < 1 || k > 60) { model.Error = "Keep between 1 and 60 daily backups."; model.Notify(); return; }
+      var body = Wires.O("enabled", scheduleOn.IsChecked == true, "hour", h, "keep", k, "copyTo", copyTo.Text.Trim());
+      Perform(async (api, stamp) => { await api.Request("/ops/admin/backups/schedule", "PUT", body); if (Current(stamp)) { scheduleLoaded = false; note = "Schedule saved."; } });
+    }
+
+    void Begin(string what) { working = true; cancelWork = false; activity = what; note = ""; Render(); }
+    void End() { working = false; activity = ""; model.Activity = ""; }
+    void Status(string text) { activity = text; model.Activity = text; Render(); }
+
+    void BackUp() {
+      if (Running || model.Busy || !model.IsAdministrator) return;
+      var confirmed = masterKeySaved.IsChecked == true;
+      Begin("Preparing…");
+      model.Run(async () => {
+        try { var result = await BackupFlows.BackUpAndSave(model, owner, confirmed, Status, () => cancelWork); if (result != null) note = result; }
+        catch (OperationCanceledException) { note = "Cancelled. Nothing was saved."; }
+        catch (JosiException e) { note = e.Message; }
+        finally { End(); StartLoad(); }
+      });
+    }
+    void RestoreFile() {
+      if (Running || model.Busy || !model.IsAdministrator) return;
+      Begin("Choosing a file…");
+      model.Run(async () => {
+        try {
+          var result = await BackupFlows.RestoreFromFile(model, owner, false, Status, () => cancelWork);
+          if (result != null) { Dialogs.Message(owner, "Restored", result); model.Disconnect(); return; }
+        }
+        catch (OperationCanceledException) { note = "Cancelled. Nothing was changed."; }
+        catch (JosiException e) { note = e.Message; }
+        finally { End(); if (IsLoaded) StartLoad(); }
+      });
+    }
+    /// Restoring one of the server's own backups replaces the current database
+    /// the same way, with the same snapshot first.
+    void RestoreStored(Wire backup) {
       var id = backup.Id;
       Perform(async (api, stamp) => {
         var pre = await api.Request("/ops/admin/restore/preflight");
-        var detail = pre["warning"].Text + "\n\n" + pre["guidance"].Text + (pre["masterKeyPresent"].Flag ? "" : "\n\nThe installation master key is not present on this server, so stored credentials will not be readable after the restore.");
-        if (!Dialogs.Confirm(owner, "Replace the current database with this backup?", detail + "\n\nThis cannot be undone.", "Restore")) return;
-        var r = await api.Request("/ops/admin/restore", "POST", Wires.O("confirm", "restore", "backupId", id));
-        note = "Restore finished. " + r.Json;
+        var detail = "Everything on this server is replaced by the backup from " + Wires.Date(backup["created_at"].Text) + ", and everyone is signed out. A snapshot is taken first."
+          + (pre["masterKeyPresent"].Flag ? "" : "\n\nThe installation master key is not present on this server, so saved logins stay sealed until it is restored too.");
+        if (!Dialogs.Confirm(owner, "Restore this backup?", detail, "Restore")) return;
+        string passphrase = null;
+        if (backup["encrypted"].Flag) { var choice = BackupFlows.AskPassphrase(owner, false, "This backup"); if (choice.Cancelled) return; passphrase = choice.Value; }
+        var body = Wires.O("confirm", "restore", "backupId", id);
+        if (passphrase != null) body["passphrase"] = passphrase;
+        var r = await api.Request("/ops/admin/restore", "POST", body);
+        Dialogs.Message(owner, "Restored", r["rowsRestored"].Integer + " database rows came back." + (r["warning"].Text.Length > 0 ? " " + r["warning"].Text : "") + " Everyone is signed out; sign in again.");
+        model.Disconnect();
       }, false);
     }
     static long? Count(Wire value) {
@@ -684,37 +764,24 @@ namespace Josi.Native {
     }
     static string ByteLabel(Wire value) { var n = Count(value); return n.HasValue ? Wires.Bytes(n.Value) : "Size unavailable"; }
     static string StateLabel(string value) {
-      switch (value) { case "running": return "Still being written"; case "complete": return "Ready to save"; case "failed": return "Did not finish"; default: return "Status unavailable"; }
-    }
-    void Create(string kind) {
-      if (Running || model.Busy || !model.IsAdministrator) return;
-      var confirmed = masterKeySaved.IsChecked == true;
-      creating = true;
-      Perform(async (api, stamp) => {
-        try {
-          var result = await api.Request("/ops/admin/backups", "POST", Wires.O("kind", kind, "masterKeyConfirmed", confirmed));
-          if (Current(stamp)) note = result["description"].Text;
-        } catch (JosiException) {
-          throw new JosiException("The backup request was not confirmed. Inspect its current history before trying again; work on the server may still be running.");
-        } finally { creating = false; }
-      });
+      switch (value) { case "running": return "Being written"; case "complete": return "Ready"; case "failed": return "Did not finish"; default: return "Status unavailable"; }
     }
     void Download(Wire backup) {
       var size = Count(backup["byte_size"]);
       if (!model.IsAdministrator || !size.HasValue || size.Value <= 0 || !Wires.IsUuid(backup.Id)) return;
-      var dialog = new Microsoft.Win32.SaveFileDialog { FileName = "Josi-" + (backup["kind"].Text == "full" ? "backup" : "export") + "-" + backup.Id + ".zip", Filter = "ZIP archive (*.zip)|*.zip" };
+      var encrypted = backup["encrypted"].Flag;
+      var dialog = new Microsoft.Win32.SaveFileDialog { FileName = "josi-backup-" + Wires.Date(backup["created_at"].Text).Replace(":", "-").Replace(" ", "-") + (encrypted ? ".josi-backup" : ".zip"),
+        Filter = encrypted ? "Encrypted Josi backup (*.josi-backup)|*.josi-backup" : "ZIP archive (*.zip)|*.zip" };
       if (dialog.ShowDialog(owner) != true || model.Busy) return;
       var destination = dialog.FileName; var expected = size.Value; var id = backup.Id;
-      downloading = true; cancelDownload = false; note = "";
+      Begin("Saving…");
       Perform(async (api, stamp) => {
         try {
-          await api.DownloadBackup(id, expected, destination, count => {
-            model.Activity = "Saving backup: " + Wires.Bytes(count) + " of " + Wires.Bytes(expected); model.Notify();
-          }, () => cancelDownload || !Current(stamp));
-          note = "Archive saved. Keep the installation master key separately; an archive alone is not a complete recovery.";
+          await api.DownloadBackup(id, expected, destination, count => Status("Saving backup: " + Wires.Bytes(count) + " of " + Wires.Bytes(expected)), () => cancelWork || !Current(stamp));
+          note = "Saved to " + destination + ". Keep the installation master key separately; an archive alone is not a complete recovery.";
         } catch (OperationCanceledException) {
           note = "Download cancelled. The selected destination was not replaced.";
-        } finally { downloading = false; model.Activity = ""; }
+        } finally { End(); }
       }, false);
     }
   }

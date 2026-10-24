@@ -349,6 +349,55 @@ namespace Josi.Native {
 
     /// The archive is written to a private temporary file next to the chosen
     /// destination and moved into place only after its full length arrives.
+    /// Streams one file as a multipart upload (a backup of any size), with the
+    /// extra fields first so the server can read them before the file body.
+    public async Task<Wire> UploadArchive(string route, string path, IDictionary<string, string> fields, Action<long> report, Func<bool> cancelled) {
+      var info = new FileInfo(path);
+      if (!info.Exists || (info.Attributes & (FileAttributes.Directory | FileAttributes.Device | FileAttributes.ReparsePoint)) != 0) throw new JosiException("Choose a regular file.");
+      if (!native && csrf == null) await PrimeCsrf();
+      var name = info.Name.Replace("\"", "_").Replace("\r", "_").Replace("\n", "_");
+      using (var stream = new FileStream(info.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 256 * 1024, true))
+      using (var counted = new CountingStream(stream, report, cancelled))
+      using (var message = Message("POST", Route(route)))
+      using (var form = new MultipartFormDataContent("Josi-" + Guid.NewGuid().ToString("N"))) {
+        foreach (var field in fields) form.Add(new StringContent(field.Value), "\"" + field.Key + "\"");
+        var file = new StreamContent(counted, 256 * 1024);
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        file.Headers.ContentDisposition = new ContentDispositionHeaderValue("form-data") { Name = "\"archive\"", FileName = "\"" + name + "\"" };
+        file.Headers.ContentLength = info.Length;
+        form.Add(file);
+        message.Content = form;
+        using (var response = await streaming.SendAsync(message, HttpCompletionOption.ResponseContentRead, closing.Token)) {
+          var value = Wires.Parse(await response.Content.ReadAsStringAsync());
+          if (!response.IsSuccessStatusCode) {
+            var detail = value["error"].Text;
+            throw new JosiException(detail.Length == 0 ? "The server could not process this file." : detail, (int)response.StatusCode);
+          }
+          return value;
+        }
+      }
+    }
+    sealed class CountingStream : Stream {
+      readonly Stream inner; readonly Action<long> report; readonly Func<bool> cancelled; long total, lastReported;
+      public CountingStream(Stream inner, Action<long> report, Func<bool> cancelled) { this.inner = inner; this.report = report; this.cancelled = cancelled; }
+      public override bool CanRead { get { return true; } }
+      public override bool CanSeek { get { return false; } }
+      public override bool CanWrite { get { return false; } }
+      public override long Length { get { return inner.Length; } }
+      public override long Position { get { return total; } set { throw new NotSupportedException(); } }
+      public override void Flush() { }
+      public override int Read(byte[] buffer, int offset, int count) { var n = inner.Read(buffer, offset, count); Count(n); return n; }
+      public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken token) { var n = await inner.ReadAsync(buffer, offset, count, token); Count(n); return n; }
+      void Count(int n) {
+        if (cancelled != null && cancelled()) throw new OperationCanceledException();
+        total += n;
+        if (report != null && total - lastReported >= 1024 * 1024) { lastReported = total; report(total); }
+      }
+      public override long Seek(long offset, SeekOrigin origin) { throw new NotSupportedException(); }
+      public override void SetLength(long value) { throw new NotSupportedException(); }
+      public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
+    }
+
     public async Task DownloadBackup(string identifier, long expected, string destination, Action<long> report, Func<bool> cancelled) {
       var id = Uuid(identifier);
       if (expected <= 0) throw new JosiException("Refresh the completed backup before downloading.");
@@ -360,7 +409,7 @@ namespace Josi.Native {
         message.Headers.AcceptEncoding.ParseAdd("identity");
         using (var response = await streaming.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, closing.Token)) {
           var type = response.Content.Headers.ContentType == null ? "" : response.Content.Headers.ContentType.MediaType;
-          if ((int)response.StatusCode != 200 || type != "application/zip" || response.Content.Headers.ContentLength != expected)
+          if ((int)response.StatusCode != 200 || (type != "application/zip" && type != "application/octet-stream") || response.Content.Headers.ContentLength != expected)
             throw new JosiException("The completed archive could not be verified. Refresh backup history and try again.");
           var temporary = Path.Combine(folder, ".josi-export-" + Guid.NewGuid().ToString("N"));
           try {

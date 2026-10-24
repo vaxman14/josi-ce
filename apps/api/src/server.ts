@@ -1,5 +1,5 @@
 // Josi CE API entrypoint.
-import { pgBackupWriter, pgRestoreReader } from '@josi-ce/ops';
+import { josiArchiveWriter, pgRestoreReader } from '@josi-ce/ops';
 import { apiListenHost, connectFromEnv, loadMasterKey, createNativeInspectionRuntime } from '@josi-ce/core';
 import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
 import { createApp } from './app.js';
@@ -67,7 +67,10 @@ const app = createApp(db, {
   appUrl,
   appleNativeClientId: process.env.APPLE_NATIVE_CLIENT_ID || null,
   webDir: process.env.WEB_DIR,
-  backupWriter: pgBackupWriter(pgConn),
+  // One file with everything important (item 42): the dump, the chat
+  // attachments and a manifest, optionally sealed with a passphrase.
+  backupWriter: josiArchiveWriter(pgConn, { attachmentsDir: attachmentRoot(), version: process.env.JOSI_VERSION ?? '0.1.0',
+    installationId: async () => (await db.query<{ install_id: string }>(`select install_id from install_identity where id = true`))[0]?.install_id ?? null }),
   restoreReader: pgRestoreReader(pgConn),
   // M115: no gateway ships. An operator who wants one sets it.
   supportGatewayUrl: process.env.JOSI_SUPPORT_GATEWAY || null,

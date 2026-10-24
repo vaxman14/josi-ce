@@ -24,10 +24,13 @@ import {
 import { UnsafeEndpointError } from '@josi-ce/llm';
 import { nativeMac } from '@josi-ce/storage';
 import { requireAuth, requireSuperAdmin } from './authz.js';
-import { constants, existsSync } from 'node:fs';
-import { access, open, rm } from 'node:fs/promises';
+import { constants, existsSync, mkdirSync } from 'node:fs';
+import { access, mkdir, open, rm, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { normalize } from 'node:path';
+import { join, normalize } from 'node:path';
+import multer from 'multer';
+import { resolveDataPath } from '@josi-ce/core';
+import { inspectArchive, restoreFromFile } from '@josi-ce/ops';
 import { asyncRoute, param } from './async.js';
 import type { NasController } from './nasController.js';
 import { NasShareError } from './nasWindows.js';
@@ -48,7 +51,15 @@ export interface OpsRoutesCtx {
   /** Injected by the tests so no suite resolves a hostname. */
   outboundResolve?: (hostname: string) => Promise<string[]>;
   nasController?: NasController | null;
+  /** Where chat attachments live, so a restore can swap them in. */
+  attachmentsDir?: string | null;
+  /** This server's version, for the newer-backup refusal. */
+  version?: string;
 }
+
+/** The worker holds its queue while this file exists (a restore is replacing
+ * the database under it). */
+export const WORKER_PAUSE_FILE = '/data/state/worker.pause';
 
 /** The destination row as stored. `credentials_enc` is selected only by the
  * routes that must open it, and is never part of a response. */
@@ -350,11 +361,14 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const backups = await db.query(
         `select id, kind, byte_size, state, error_category, includes_recovery_copies,
                 master_key_confirmed, progress_percent, progress_phase, progress_step,
-                progress_steps, created_at, completed_at
+                progress_steps, created_at, completed_at, encrypted, automatic, attachment_count
          from backups order by created_at desc limit 50`,
       );
+      const [schedule] = await db.query(`select enabled, hour, keep, copy_to, last_run_at, last_copy_ok, last_copy_error from backup_schedule where id = true`);
       // The path is deployment detail and is deliberately not returned.
-      return res.json({ backups, masterKeyGuidance: MASTER_KEY_DOC });
+      return res.json({ backups, masterKeyGuidance: MASTER_KEY_DOC, schedule: schedule ?? null,
+        contents: 'A backup holds the whole database (people, conversations, settings, calendar and contact copies, sealed logins), every chat attachment, and recovery copies. '
+          + 'It does not hold the installation master key (keep that separately), the files Josi indexes from your folders and cloud accounts (they re-sync), or the voice models and runtimes (they come with the installer).' });
     }),
   );
 
@@ -373,13 +387,18 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       const [destination] = kind === 'full' ? await db.query<DestinationRow>(
         `select * from backup_destination where id = true`,
       ) : [];
+      // The passphrase seals the file on disk and is never stored; the person
+      // types it again when restoring.
+      const passphrase = typeof req.body?.passphrase === 'string' ? req.body.passphrase.slice(0, 512) : '';
+      if (passphrase && passphrase.length < 8) throw new RouteError(400, 'use a passphrase of at least 8 characters');
       const { backup, description } = await createBackup(db, {
         kind,
         createdBy: req.user!.id,
         masterKeyConfirmed: req.body?.masterKeyConfirmed === true,
         writer: ctx.backupWriter,
-        filename: `josi-${kind}-${Date.now()}.zip`,
+        filename: `josi-${kind}-${Date.now()}${passphrase ? '.josi-backup' : '.zip'}`,
         deferCompletion: kind === 'full' && destination?.last_check_ok === true,
+        passphrase: passphrase || undefined,
       });
       if (kind === 'full' && destination?.last_check_ok === true) {
         try {
@@ -408,6 +427,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           id: backup.id, kind: backup.kind, byteSize: backup.byte_size,
           state: kind === 'full' && destination?.last_check_ok === true ? 'complete' : backup.state,
           includesRecoveryCopies: backup.includes_recovery_copies,
+          encrypted: !!passphrase,
         },
         description,
       });
@@ -450,9 +470,9 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       }
       const [row] = await db.query<{
         id: string; kind: string; state: string; stored_path: string;
-        byte_size: string | number; created_at: string;
+        byte_size: string | number; created_at: string; encrypted: boolean;
       }>(
-        `select id, kind, state, stored_path, byte_size, created_at from backups where id = $1`,
+        `select id, kind, state, stored_path, byte_size, created_at, encrypted from backups where id = $1`,
         [id],
       );
       if (!row) throw new RouteError(404, 'no such backup');
@@ -483,8 +503,9 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       // it is, which installation date it belongs to, and an extension their
       // operating system will honour.
       const stamp = new Date(row.created_at).toISOString().slice(0, 19).replace(/[:T]/g, '-');
-      const filename = `josi-${row.kind}-${stamp}.zip`;
-      res.setHeader('Content-Type', 'application/zip');
+      // A sealed file is not a zip until its passphrase opens it; its name says so.
+      const filename = `josi-${row.kind}-${stamp}${row.encrypted ? '.josi-backup' : '.zip'}`;
+      res.setHeader('Content-Type', row.encrypted ? 'application/octet-stream' : 'application/zip');
       res.setHeader('Content-Length', String(archive.byteLength));
       // `attachment` so a browser saves it instead of trying to render it, and
       // the name quoted because it contains no quotes by construction.
@@ -784,7 +805,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     '/admin/restore/preflight',
     requireSuperAdmin,
     handle(async (_req, res) => res.json({
-      masterKeyPresent: !!process.env.MASTER_KEY_FILE,
+      masterKeyPresent: !!process.env.MASTER_KEY_FILE && existsSync(process.env.MASTER_KEY_FILE),
       guidance: MASTER_KEY_DOC,
       warning: describeBackup('full', false),
     })),
@@ -809,25 +830,134 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         throw new RouteError(400, 'confirm the restore — this replaces the current database');
       }
 
+      // One of the server's own backups, or a file staged a moment ago.
       const backupId = str(req.body?.backupId, 64) || null;
-      if (!backupId) throw new RouteError(400, 'name the backup to restore');
-      const [row] = await db.query<{ stored_path: string; state: string }>(
-        `select stored_path, state from backups where id = $1`, [backupId],
-      );
-      if (!row || row.state !== 'complete') throw new RouteError(404, 'no such completed backup');
-
-      const archive = await ctx.backupWriter.read(row.stored_path);
+      const stagedId = str(req.body?.stagedId, 64) || null;
+      let path: string, temp: string | null = null;
+      if (stagedId) {
+        const staged = stagedFiles.get(stagedId);
+        if (!staged || staged.owner !== req.user!.id) throw new RouteError(404, 'that uploaded file is no longer here; upload it again');
+        path = staged.path;
+      } else {
+        if (!backupId) throw new RouteError(400, 'name the backup to restore');
+        const [row] = await db.query<{ stored_path: string; state: string }>(
+          `select stored_path, state from backups where id = $1`, [backupId],
+        );
+        if (!row || row.state !== 'complete') throw new RouteError(404, 'no such completed backup');
+        if (ctx.backupWriter.physicalPath) path = ctx.backupWriter.physicalPath(row.stored_path);
+        else {
+          // A writer that keeps its archives elsewhere hands the bytes over;
+          // the restore reads a file, so they land in one for the moment.
+          temp = join(incomingDir, `restore-${randomUUID()}`);
+          await mkdir(incomingDir, { recursive: true });
+          await writeFile(temp, await ctx.backupWriter.read(row.stored_path), { mode: 0o600 });
+          path = temp;
+        }
+      }
+      const passphrase = typeof req.body?.passphrase === 'string' ? req.body.passphrase.slice(0, 512) : undefined;
       // Whether the key is mounted is a property of the deployment, read here
       // rather than assumed, so the answer reflects this container.
       const masterKeyPresent = !!process.env.MASTER_KEY_FILE
         && existsSync(process.env.MASTER_KEY_FILE);
-
-      const out = await restoreBackup(db, {
-        backupId, archive, masterKeyPresent, reader: ctx.restoreReader,
-      });
+      const writer = ctx.backupWriter, actor = req.user!.id;
+      const pauseFile = resolveDataPath(WORKER_PAUSE_FILE);
+      let out;
+      try {
+        out = await restoreFromFile(db, {
+          path, passphrase, reader: ctx.restoreReader, attachmentsDir: ctx.attachmentsDir ?? null, masterKeyPresent,
+          serverVersion: ctx.version ?? process.env.JOSI_VERSION ?? '0.1.0', backupId, actorUserId: actor, keepSessionId: req.user!.session_id,
+          // The way back: a plain backup of what is about to be replaced.
+          snapshot: async () => { await createBackup(db, { kind: 'full', createdBy: actor, writer, filename: `josi-before-restore-${Date.now()}.zip`, automatic: true }); },
+          pause: async () => { await mkdir(join(pauseFile, '..'), { recursive: true }); await writeFile(pauseFile, new Date().toISOString()); },
+          resume: async () => { await rm(pauseFile, { force: true }); },
+        });
+      } finally { if (temp) await rm(temp, { force: true }).catch(() => undefined); }
+      if (stagedId) { stagedFiles.delete(stagedId); await rm(path, { force: true }).catch(() => undefined); }
       return res.json(out);
     }),
   );
+
+  // ------------------------------------------------- restore from a file
+  //
+  // A backup file from anywhere: a USB stick, a NAS, another server. The file
+  // is uploaded once and looked at first (what is in it, what restoring would
+  // mean), and only a second, confirmed call replaces anything.
+  const stagedFiles = new Map<string, { owner: string; path: string; at: number }>();
+  const incomingDir = resolveDataPath('/data/backups/incoming');
+  try { mkdirSync(incomingDir, { recursive: true }); } catch { /* reported on first upload */ }
+  const receiveArchive = multer({
+    storage: multer.diskStorage({ destination: incomingDir, filename: (_req, _file, done) => done(null, `upload-${randomUUID()}`) }),
+    limits: { fileSize: 8 * 1024 * 1024 * 1024, files: 1, fields: 2, parts: 3 },
+  });
+  const pruneStaged = async () => {
+    for (const [id, staged] of stagedFiles) {
+      if (Date.now() - staged.at > 60 * 60_000) { stagedFiles.delete(id); await rm(staged.path, { force: true }).catch(() => undefined); }
+    }
+  };
+  r.post(
+    '/admin/restore/stage',
+    requireSuperAdmin,
+    handle(async (req, res) => {
+      if (!ctx.restoreReader || !ctx.backupWriter) throw new RouteError(503, 'restore is not available on this installation');
+      await pruneStaged();
+      await new Promise<void>((resolve, reject) => receiveArchive.single('archive')(req, res, (error) => error ? reject(error) : resolve())).catch((error) => {
+        if (error instanceof multer.MulterError) throw new RouteError(413, error.code === 'LIMIT_FILE_SIZE' ? 'That file is larger than 8 GB.' : 'Upload one backup file.');
+        throw new RouteError(400, 'The upload could not be read. Choose the file and try again.');
+      });
+      if (!req.file) throw new RouteError(400, 'choose a backup file');
+      const path = req.file.path;
+      const passphrase = typeof req.body?.passphrase === 'string' ? req.body.passphrase.slice(0, 512) : undefined;
+      const masterKeyPresent = !!process.env.MASTER_KEY_FILE && existsSync(process.env.MASTER_KEY_FILE);
+      const [identity] = await db.query<{ install_id: string }>(`select install_id from install_identity where id = true`).catch(() => []);
+      let inspection;
+      try {
+        const head = Buffer.alloc(6); const file = await open(path, 'r');
+        try { await file.read(head, 0, 6, 0); } finally { await file.close(); }
+        inspection = await inspectArchive(path, { passphrase, serverVersion: ctx.version ?? process.env.JOSI_VERSION ?? '0.1.0', masterKeyPresent,
+          installationId: identity?.install_id ?? null, encrypted: head.toString('latin1') === 'JOSIP1' });
+      } catch (error) {
+        await rm(path, { force: true }).catch(() => undefined);
+        if (error instanceof RestoreError) throw new RouteError(error.category === 'version_too_new' ? 409 : 400, error.message);
+        throw error;
+      }
+      const stagedId = randomUUID();
+      stagedFiles.set(stagedId, { owner: req.user!.id, path, at: Date.now() });
+      return res.json({ stagedId, ...inspection, masterKeyPresent, byteSize: req.file.size, filename: req.file.originalname });
+    }),
+  );
+
+  // ------------------------------------------------------- the schedule
+  r.get('/admin/backups/schedule', requireSuperAdmin, handle(async (_req, res) => {
+    const [row] = await db.query(`select enabled, hour, keep, copy_to, last_run_at, last_copy_ok, last_copy_error from backup_schedule where id = true`);
+    return res.json({ schedule: row ?? null });
+  }));
+  r.put('/admin/backups/schedule', requireSuperAdmin, handle(async (req, res) => {
+    const b = req.body ?? {};
+    const enabled = typeof b.enabled === 'boolean' ? b.enabled : null;
+    const hour = Number.isInteger(b.hour) && b.hour >= 0 && b.hour <= 23 ? b.hour : null;
+    const keep = Number.isInteger(b.keep) && b.keep >= 1 && b.keep <= 60 ? b.keep : null;
+    let copyTo: string | null | undefined;
+    if (b.copyTo === null || b.copyTo === '') copyTo = null;
+    else if (typeof b.copyTo === 'string') {
+      const folder = b.copyTo.trim().slice(0, 1000);
+      copyTo = folder;
+      // A folder Josi can write a file into, checked now rather than at three in the morning.
+      try {
+        await mkdir(folder, { recursive: true });
+        const probe = join(folder, `.josi-write-test-${randomUUID()}`);
+        const file = await open(probe, 'wx'); await file.close(); await rm(probe);
+      } catch { throw new RouteError(400, `Josi cannot write into ${folder}. Check the path and that this server may write there.`); }
+    }
+    const [row] = await db.query(
+      `update backup_schedule set enabled = coalesce($1, enabled), hour = coalesce($2, hour), keep = coalesce($3, keep),
+         copy_to = case when $5 then $4 else copy_to end, last_copy_ok = case when $5 then null else last_copy_ok end,
+         last_copy_error = case when $5 then null else last_copy_error end, updated_at = now()
+       where id = true returning enabled, hour, keep, copy_to, last_run_at, last_copy_ok, last_copy_error`,
+      [enabled, hour, keep, copyTo ?? null, copyTo !== undefined],
+    );
+    await appendEvent(db, { actorUserId: req.user!.id, actor: 'super_admin', kind: 'backup.schedule_changed', payload: { enabled: row.enabled, hour: row.hour, keep: row.keep, copies: !!row.copy_to } });
+    return res.json({ schedule: row });
+  }));
 
   r.get(
     '/admin/update',

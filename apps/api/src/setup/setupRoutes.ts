@@ -14,9 +14,14 @@
 // Nothing here ever reads a role, a user id, a completion flag or an install
 // identity from the request body.
 import { isIP } from 'node:net';
+import { existsSync, mkdirSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
+import multer from 'multer';
+import { RestoreError, restoreFromFile } from '@josi-ce/ops';
 import {
-  appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, initializeVault, json, loadMasterKey,
+  appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, initializeVault, json, loadMasterKey, resolveDataPath,
   updateWorkspace,
   recordVerification, openSealed, summarizeReview, VaultError, VaultLockedError,
   type Db, type LoadOptions, type MasterKey, type ReviewItemInput,
@@ -63,6 +68,11 @@ export interface SetupRoutesCtx {
    * rather than a stub, which is how Phase 8 found three defects the unit
    * suite could not. */
   mailTransport?: Parameters<typeof verifySmtp>[0]['transport'];
+  /** For restoring a backup file onto a brand-new server (item 42). */
+  backupWriter?: import('@josi-ce/ops').BackupWriter;
+  restoreReader?: import('@josi-ce/ops').RestoreReader;
+  attachmentsDir?: string | null;
+  version?: string;
 }
 
 /** Everything setup is allowed to claim it checked.
@@ -187,6 +197,44 @@ async function expectedSetupStep(db: Db, completed: readonly string[]): Promise<
 export function setupRoutes(ctx: SetupRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
+
+  /** Restore a backup file instead of setting up from nothing.
+   *
+   * Open only while the server has no owner: once an account exists this is a
+   * destructive administrator action and lives under /ops. The whole thing
+   * happens in one call; a fresh server has nothing worth a snapshot. */
+  const incomingDir = resolveDataPath('/data/backups/incoming');
+  try { mkdirSync(incomingDir, { recursive: true }); } catch { /* reported on upload */ }
+  const receiveArchive = multer({
+    storage: multer.diskStorage({ destination: incomingDir, filename: (_req, _file, done) => done(null, `setup-${randomUUID()}`) }),
+    limits: { fileSize: 8 * 1024 * 1024 * 1024, files: 1, fields: 2, parts: 3 },
+  });
+  r.post('/restore', asyncRoute(async (req, res) => {
+    const [owner] = await db.query<{ present: boolean }>("select exists(select 1 from users where role='super_admin') as present");
+    if (owner?.present) { res.status(409).json({ error: 'This server already has an owner. Restore from Administration → Backups instead.' }); return; }
+    if (!ctx.restoreReader || !ctx.backupWriter) { res.status(503).json({ error: 'restore is not available on this installation' }); return; }
+    try {
+      await new Promise<void>((resolve, reject) => receiveArchive.single('archive')(req, res, (error) => error ? reject(error) : resolve()));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE' ? 'That file is larger than 8 GB.' : 'The upload could not be read. Choose the backup file and try again.' });
+      return;
+    }
+    if (!req.file) { res.status(400).json({ error: 'choose a backup file' }); return; }
+    const path = req.file.path;
+    const passphrase = typeof req.body?.passphrase === 'string' ? req.body.passphrase.slice(0, 512) : undefined;
+    const masterKeyPresent = !!process.env.MASTER_KEY_FILE && existsSync(process.env.MASTER_KEY_FILE);
+    try {
+      const out = await restoreFromFile(db, {
+        path, passphrase, reader: ctx.restoreReader, attachmentsDir: ctx.attachmentsDir ?? null, masterKeyPresent,
+        serverVersion: ctx.version ?? process.env.JOSI_VERSION ?? '0.1.0', actorUserId: null,
+      });
+      res.json({ ok: true, credentialsRecovered: out.credentialsRecovered, attachmentsRestored: out.attachmentsRestored,
+        josiVersion: out.manifest.josiVersion, warning: out.warning ?? null });
+    } catch (error) {
+      if (error instanceof RestoreError) { res.status(error.category === 'version_too_new' ? 409 : 400).json({ error: error.message, category: error.category }); return; }
+      throw error;
+    } finally { await rm(path, { force: true }).catch(() => undefined); }
+  }));
 
   /** Current position. The only thing a client is told about where it is. */
   r.get(

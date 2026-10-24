@@ -183,6 +183,17 @@ namespace Josi.Native {
           Ui.Add(page, Ui.CardBox("Setup review", items), 24);
         }
       }
+      // A brand-new server can come back from a backup instead of being set
+      // up from nothing; the server refuses this once an owner exists.
+      if (!model.SetupState["ownerExists"].Flag) Ui.Add(page, Ui.CardBox("Already have a Josi backup?",
+        Ui.Caption("Restore it here and skip setup: people, conversations, settings and connections come back. Saved logins also need the old server's installation master key, copied separately."),
+        Ui.Pill("Restore from a Backup…", () => model.Run(async () => {
+          model.Activity = "Choosing a backup…";
+          try {
+            var result = await BackupFlows.RestoreFromFile(model, owner, true, text => { model.Activity = text; model.Notify(); }, () => false);
+            if (result != null) { Dialogs.Message(owner, "Restored", result); await model.LoadSetup(); }
+          } finally { model.Activity = ""; }
+        }))), 24);
       Ui.Add(page, Ui.Row(10, Ui.Pill("Refresh Setup", () => model.Run(() => model.LoadSetup())),
         Ui.Pill("Disconnect", () => { fields.Clear(); model.Disconnect(); })), 24);
       page.IsEnabled = !model.Busy;

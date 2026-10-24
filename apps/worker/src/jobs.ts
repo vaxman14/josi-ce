@@ -38,6 +38,7 @@ import { IMAGE_MEDIA_TYPES, MEDIA_PROCESSING, MEDIA_TRANSCRIPT, clock, extractFr
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import { extname } from 'node:path';
 import { purgeGoogleLoginStates } from '@josi-ce/auth';
+import { runDailyBackup } from './dailyBackup.js';
 
 /** What the worker needs beyond the database.
  *
@@ -47,6 +48,8 @@ import { purgeGoogleLoginStates } from '@josi-ce/auth';
 export interface WorkerContext {
   automationRuntime?: import('@josi-ce/core').AutomationRuntime;
   scanner?: Scanner;
+  /** How the daily backup is written. Absent in the suite: no schedule runs. */
+  backupWriter?: import('@josi-ce/ops').BackupWriter;
   masterKey?: MasterKey | null;
   /** Injected by the tests so no suite contacts a provider. */
   connectorFetch?: typeof fetch;
@@ -605,6 +608,7 @@ export async function processQueue(
     await createStateStore(db, ctx.masterKey ?? null).purge();
     await purgeGoogleLoginStates(db);
     await tickSchedules(db);
+    if (ctx.backupWriter) await runDailyBackup(db, ctx.backupWriter).catch((error) => console.error('josi-ce worker: daily backup:', error instanceof Error ? error.message : error));
   }
   const jobs = await claimJobs(db, workerId, limit);
   let done = 0;

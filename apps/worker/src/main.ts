@@ -5,7 +5,8 @@
 // checking and least-privilege networking against — and because adding it later
 // would mean revisiting all three.
 import { connectFromEnv, loadMasterKey, resolveDataPath, createNativeInspectionRuntime } from '@josi-ce/core';
-import { cleanupAttachments, probeAttachmentStorage, nativeScanner } from '@josi-ce/storage';
+import { attachmentRoot, cleanupAttachments, probeAttachmentStorage, nativeScanner } from '@josi-ce/storage';
+import { josiArchiveWriter } from '@josi-ce/ops';
 import { processQueue } from './jobs.js';
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,6 +38,17 @@ try {
 
 const automationRuntime = masterKey ? createNativeInspectionRuntime(db, masterKey) : undefined;
 
+// The daily backup writes the same one-file archive the Backups page does.
+const backupWriter = josiArchiveWriter({
+  host: process.env.PGHOST ?? 'db', port: Number(process.env.PGPORT ?? 5432),
+  user: process.env.POSTGRES_USER ?? 'josi', database: process.env.POSTGRES_DB ?? 'josi',
+  passwordFile: process.env.PGPASSWORD_FILE, password: process.env.PGPASSWORD_FILE ? undefined : process.env.PGPASSWORD,
+  toolsDirectory: process.env.JOSI_PG_BIN,
+}, { attachmentsDir: attachmentRoot(), version: process.env.JOSI_VERSION ?? '0.1.0',
+  installationId: async () => (await db.query<{ install_id: string }>(`select install_id from install_identity where id = true`))[0]?.install_id ?? null });
+// A restore in progress holds the queue: the database is being replaced.
+const PAUSE_FILE = resolveDataPath('/data/state/worker.pause');
+
 /** The container healthcheck reads this file's mtime. A worker that is wedged
  * stops touching it and gets restarted; one that is merely idle keeps ticking. */
 function heartbeat(): void {
@@ -61,6 +73,7 @@ let storageAvailable = false;
 async function tick(maintenance: boolean): Promise<void> {
   if (!stopping && existsSync(STOP_FILE)) { void shutdown('stop request'); return; }
   if (stopping) return;
+  if (existsSync(PAUSE_FILE)) { heartbeat(); return; }
   if (scanner && Date.now() - lastAntivirusProbe > 5 * 60_000) {
     const result = await scanner.scanStatus(Buffer.from('Josi antivirus availability check.'));
     const status = result === 'clean' ? 'available' : result === 'unavailable' ? 'unavailable' : 'error';
@@ -81,7 +94,7 @@ async function tick(maintenance: boolean): Promise<void> {
   if (Date.now() - lastCleanup > 3600000) {
     await cleanupAttachments(db); lastCleanup = Date.now();
   }
-  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey, pushFetch: fetch, scanner, automationRuntime, maintenance });
+  const outcome = await processQueue(db, WORKER_ID, 5, { masterKey, pushFetch: fetch, scanner, automationRuntime, maintenance, backupWriter });
   if (outcome.claimed) {
     console.log(`josi-ce worker: ${outcome.done} done, ${outcome.failed} failed`);
   }

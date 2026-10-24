@@ -20,6 +20,7 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 import { privateTemporaryDirectory, readMacSecret, readWindowsSecret, resolveDataPath } from '@josi-ce/core';
 import { BackupError, type BackupContents, type BackupKind, type BackupWriter } from './backup.js';
 import { RestoreError, type RestoreReader } from './backup.js';
+import { buildArchive } from './archive.js';
 
 export interface PgConnection {
   host: string;
@@ -142,35 +143,61 @@ function classify(stderr: string): 'disk_full' | 'permission_denied' | 'database
   return 'unknown';
 }
 
+/** The database, dumped and gzipped. Compressed because M109-style size limits
+ * and ordinary disks both matter, and a SQL dump compresses by roughly ten to
+ * one. */
+export async function dumpDatabase(conn: PgConnection, kind: BackupKind): Promise<Buffer> {
+  const args = ['-h', conn.host, '-p', String(conn.port), '-U', conn.user, '-d', conn.database,
+    '--no-owner', '--no-privileges', '--clean', '--if-exists'];
+  if (kind === 'portable') {
+    for (const table of PORTABLE_EXCLUDES) args.push('--exclude-table-data', table);
+  }
+  let result;
+  try {
+    result = await runPg(conn, 'pg_dump', args);
+  } catch (e) {
+    if (e instanceof BackupError) throw e;
+    throw new BackupError('pg_dump could not be started', 'unknown');
+  }
+  if (result.code !== 0) {
+    throw new BackupError('the database could not be dumped', classify(result.stderr));
+  }
+  return gzipSync(result.stdout, { level: 6 });
+}
+
+/** The one-file backup (item 42): a zip with the dump, the chat attachments
+ * and a manifest, optionally sealed with a passphrase. Reads and removes work
+ * on any file under the backup folder, old gzip-only backups included. */
+export function josiArchiveWriter(conn: PgConnection, options: { attachmentsDir?: string | null; version: string; installationId?: () => Promise<string | null> }): BackupWriter {
+  return {
+    async write({ kind, destination, passphrase }) {
+      const databaseDump = await dumpDatabase(conn, kind);
+      const physicalDestination = resolveDataPath(destination);
+      try {
+        return await buildArchive({
+          destination: physicalDestination, kind, databaseDump, attachmentsDir: options.attachmentsDir ?? null,
+          josiVersion: options.version, installationId: options.installationId ? await options.installationId().catch(() => null) : null, passphrase,
+        });
+      } catch (e) {
+        if (e instanceof BackupError) throw e;
+        const code = (e as NodeJS.ErrnoException).code;
+        throw new BackupError('the backup could not be written', code === 'ENOSPC' ? 'disk_full' : code === 'EACCES' ? 'permission_denied' : 'unknown');
+      }
+    },
+    async read(path: string) { return readFile(resolveDataPath(path)); },
+    async remove(path: string) { await rm(resolveDataPath(path), { force: true }); },
+    physicalPath: (path: string) => resolveDataPath(path),
+  };
+}
+
 export function pgBackupWriter(conn: PgConnection): BackupWriter {
-  const baseArgs = [
-    '-h', conn.host, '-p', String(conn.port), '-U', conn.user, '-d', conn.database,
-  ];
 
   return {
     async write({ kind, contents, destination }: {
       kind: BackupKind; contents: BackupContents; destination: string;
     }) {
-      const args = [...baseArgs, '--no-owner', '--no-privileges', '--clean', '--if-exists'];
-      if (kind === 'portable') {
-        for (const table of PORTABLE_EXCLUDES) args.push('--exclude-table-data', table);
-      }
       void contents;
-
-      let result;
-      try {
-        result = await runPg(conn, 'pg_dump', args);
-      } catch (e) {
-        if (e instanceof BackupError) throw e;
-        throw new BackupError('pg_dump could not be started', 'unknown');
-      }
-      if (result.code !== 0) {
-        throw new BackupError('the database could not be dumped', classify(result.stderr));
-      }
-
-      // Compressed, because M109-style size limits and ordinary disks both
-      // matter, and a SQL dump compresses by roughly ten to one.
-      const compressed = gzipSync(result.stdout, { level: 6 });
+      const compressed = await dumpDatabase(conn, kind);
       const physicalDestination = resolveDataPath(destination);
       try {
         await mkdir(dirname(physicalDestination), { recursive: true });
