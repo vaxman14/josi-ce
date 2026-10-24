@@ -1,5 +1,5 @@
 // Backup, update, diagnostics, telemetry and support over the wire.
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -136,6 +136,8 @@ beforeAll(async () => {
 
 afterAll(async () => { await new Promise<void>((r) => server.close(() => r())); });
 
+// A restore signs everyone else out (item 42); the suite shares its sign-ins across tests, so after any test that restored, sign in again.
+afterEach(async () => { if (restoresApplied > 0) for (const who of ['admin', 'alice', 'bob'] as const) cookies[who] = await signIn(who, PW[who]); });
 beforeEach(async () => {
   // The limiter is per user and persists across requests, so a suite that takes
   // several backups in one run would otherwise exhaust a real allowance.
