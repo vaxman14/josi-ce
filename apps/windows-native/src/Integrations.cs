@@ -36,30 +36,47 @@ namespace Josi.Native {
         if (!secrets.ContainsKey(p)) secrets[p] = Ui.Secret("Client secret");
       }
     }
+    /// Where an administrator creates the OAuth application for each provider.
+    static readonly Dictionary<string, string[]> Console = new Dictionary<string, string[]> {
+      { "google", new[] { "Google Cloud Console", "https://console.cloud.google.com/apis/credentials",
+        "APIs & Services, Credentials, Create credentials, OAuth client ID, type Web application. Fill in the consent screen once if Google asks for it." } },
+      { "microsoft", new[] { "Microsoft Entra admin center", "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+        "App registrations, New registration, platform Web. Then Certificates & secrets, New client secret." } },
+      { "dropbox", new[] { "Dropbox App Console", "https://www.dropbox.com/developers/apps",
+        "Create app, Scoped access, Full Dropbox or App folder. The App key is the client ID, the App secret is the client secret." } },
+      { "box", new[] { "Box Developer Console", "https://app.box.com/developers/console",
+        "Create Platform App, Custom App, User Authentication (OAuth 2.0)." } } };
+
     protected override UIElement Build() {
       var page = Page(Ui.HeadingWith("Connectors", null, Ui.Pill("Refresh", StartLoad)),
-        Ui.Secondary("Register this installation's provider applications here. People connect their own accounts under Connections; administrators can configure access and see health, but never account contents."));
+        Ui.Secondary("Register this installation's own applications with Google, Microsoft, Dropbox and Box. People then connect their accounts under Connections. You configure and see health here, never what is inside anyone's account."));
       if (view.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "Connector settings have not loaded."), 0); return page; }
       var registration = view["registration"];
       if (!registration["available"].Flag) {
         Ui.Add(page, Ui.CardBox("A public address is needed first", Ui.Secondary(registration["reason"].Text),
           Ui.Caption("Currently detected address: " + registration["detectedOrigin"].Text),
-          Ui.Caption("Set one under Network and address, then come back here. Nothing else depends on it and no data is affected.")), 0);
+          Ui.Caption("Set one under Network, then come back here. Nothing else depends on it and no data is affected.")), 0);
       } else {
-        Ui.Add(page, Ui.Caption("Public origin: " + registration["publicHttpsBase"].Text), 0);
+        var address = Ui.Copyable(registration["publicHttpsBase"].Text, 14, null, true);
+        Ui.Add(page, Ui.CardBox(null, Ui.Spread(
+          Ui.Stack(4, Ui.Headline("Public address"), Ui.Caption("Every provider calls Josi back on this address. It comes from the server's Network settings.")),
+          Ui.Row(12, address, ModelText.Pill("Ready", true)))), 0);
         foreach (var client in view["clients"].List) Ui.Add(page, Client(client), 0);
       }
-      Ui.Add(page, Ui.CardBox("Nextcloud", Ui.Caption("No application needed. Each person connects Nextcloud under Connections with their server address, username and an app password.")), 0);
-      Ui.Add(page, new Disclosure("Member permissions", () => {
-        var list = Ui.Stack(10, Ui.Caption("This can only take permissions away. Marking something allowed does not switch it on for anyone: it returns the choice to each person."));
-        foreach (var row in view["policy"].List) {
-          var key = row["key"].Text; var allowed = row["allowed"].Flag;
-          list.Children.Add(Ui.Spread(Ui.Row(8, Ui.T(row["label"].Text), row["kind"].Text == "write" ? Ui.Caption("writes") : null),
-            Ui.Pill(allowed ? "Allowed" : "Switched Off", () => Perform(async (api, stamp) => await api.Request("/admin/connectors/policy/" + Uri.EscapeDataString(key), "PUT", Wires.O("allowed", !allowed))), !allowed)));
-        }
-        return list;
-      }), 0);
-      var rows = Ui.Stack(8, Ui.Caption("Whose connection it is and whether it works. Not the account address, not what is inside it."));
+      Ui.Add(page, Ui.CardBox(null, Ui.Spread(
+        Ui.Stack(4, Ui.Headline("Nextcloud"), Ui.Caption("No application to register. Each person connects Nextcloud under Connections with their server address, username and an app password.")),
+        ModelText.Pill("Nothing to set up", true))), 0);
+
+      var policy = Ui.Stack(10, Ui.Caption("This only takes choices away. \"Allowed\" does not switch anything on for anyone; it leaves the choice to each person."));
+      foreach (var row in view["policy"].List) {
+        var key = row["key"].Text; var allowed = row["allowed"].Flag;
+        var provider = Label.ContainsKey(row["provider"].Text) ? Label[row["provider"].Text] : row["provider"].Text;
+        policy.Children.Add(Ui.Spread(Ui.Stack(2, Ui.T(row["label"].Text), Ui.Caption(provider + (row["kind"].Text == "write" ? " · can change things" : " · read-only"))),
+          Ui.Pill(allowed ? "Allowed" : "Switched Off", () => Perform(async (api, stamp) => await api.Request("/admin/connectors/policy/" + Uri.EscapeDataString(key), "PUT", Wires.O("allowed", !allowed))), !allowed)));
+      }
+      Ui.Add(page, Ui.CardBox("What members may connect", policy), 0);
+
+      var rows = Ui.Stack(10, Ui.Caption("Whose connection it is and whether it works. Not the account address, not what is inside it."));
       if (health.Count == 0) rows.Children.Add(Ui.Secondary("Nobody has connected an account yet."));
       foreach (var row in health) {
         var id = row.Id;
@@ -72,30 +89,70 @@ namespace Josi.Native {
       Ui.Add(page, Note(), 0);
       return page;
     }
+
+    /// One provider: what it is for, what people will be asked to allow, and
+    /// a numbered setup with the two addresses ready to copy.
     UIElement Client(Wire client) {
       var p = client["provider"].Text; var name = Label.ContainsKey(p) ? Label[p] : p;
+      var configured = client["configured"].Flag;
       var suggestion = view["suggestedRedirectUris"].List.FirstOrDefault(u => u["provider"].Text == p);
-      return new Disclosure(name + " application · " + (client["configured"].Flag ? "configured" : "not set up"), () => {
-        var stack = Ui.Stack(10, Ui.Caption((Help.ContainsKey(p) ? Help[p] + " " : "") + "Josi ships with no application credentials of its own: register this installation with " + name + " and paste the credentials here. The secret is encrypted with the installation's master key and never shown again."));
-        var asks = view["policy"].List.Where(c => c["provider"].Text == p && c["kind"].Text == "read").ToList();
-        if (asks.Count > 0) stack.Children.Add(Ui.Stack(3, new UIElement[] { Ui.Headline("Permissions this asks each person for") }.Concat(asks.Select(a => (UIElement)Ui.Caption(a["label"].Text + " (read-only)"))).ToArray()));
-        if (suggestion != null) {
-          stack.Children.Add(Ui.Caption("Paste this into " + name + " as the redirect URL:"));
-          stack.Children.Add(Ui.Copyable(suggestion["uri"].Text, 13, null, true));
-          foreach (var extra in suggestion["additionalUris"].List) { stack.Children.Add(Ui.Caption("Also register this URL for Sign in with Google:")); stack.Children.Add(Ui.Copyable(extra.Text, 13, null, true)); }
+      var header = Ui.Spread(Ui.Stack(4, Ui.T(name, 17, FontWeights.SemiBold), Ui.Caption(Help.ContainsKey(p) ? Help[p] : "")),
+        ModelText.Pill(configured ? "Set up" : "Not set up", configured));
+      var asks = view["policy"].List.Where(c => c["provider"].Text == p && c["kind"].Text == "read").ToList();
+      var allow = new StackPanel();
+      if (asks.Count > 0) {
+        Ui.Add(allow, Ui.T("People will be asked to allow", 13.5, FontWeights.Medium), 0);
+        foreach (var a in asks) Ui.Add(allow, Ui.Caption("•  " + a["label"].Text + " (read-only)"), 3);
+      }
+      var setup = new Disclosure(configured ? "Change the application" : "Set up the application", () => {
+        var stack = new StackPanel();
+        var where = Console.ContainsKey(p) ? Console[p] : null;
+        Ui.Add(stack, Ui.T("1.  Create an OAuth application for this installation", 13.5, FontWeights.Medium), 0);
+        if (where != null) {
+          Ui.Add(stack, Ui.Caption(where[2]), 4);
+          Ui.Add(stack, Ui.Link("Open " + where[0] + " ↗", () => {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(where[1]) { UseShellExecute = true }); }
+            catch (Exception e) { model.Error = "The browser could not be opened: " + e.Message; model.Notify(); }
+          }), 4);
         }
+        Ui.Add(stack, Ui.T("2.  Add these redirect addresses, exactly as shown", 13.5, FontWeights.Medium), 14);
+        if (suggestion != null) {
+          Ui.Add(stack, Address("Redirect address for connections", suggestion["uri"].Text), 6);
+          foreach (var extra in suggestion["additionalUris"].List) Ui.Add(stack, Address("Also, for Sign in with " + name, extra.Text), 6);
+        }
+        Ui.Add(stack, Ui.T("3.  Paste the application's credentials here", 13.5, FontWeights.Medium), 14);
+        Ui.Add(stack, Ui.Caption("The secret is encrypted with the installation's master key and never shown again."), 4);
         Ui.Detach(ids[p]); Ui.Detach(secrets[p]); Ui.Detach(uris[p]);
-        stack.Children.Add(Ui.Field("Client ID", ids[p]));
-        stack.Children.Add(Ui.Field(client["configured"].Flag ? "Client secret (stored; enter a new one to replace it)" : "Client secret", secrets[p]));
-        stack.Children.Add(Ui.Field("Redirect URL (change only if a proxy rewrites the path)", uris[p]));
-        stack.Children.Add(Ui.Pill("Save " + name + " Application", () => {
+        Ui.Add(stack, Ui.Field("Client ID", ids[p]), 10);
+        Ui.Add(stack, Ui.Field(configured ? "Client secret (stored; enter a new one to replace it)" : "Client secret", secrets[p]), 10);
+        Ui.Add(stack, new Disclosure("Advanced: the address Josi reports to " + name, () => Ui.Stack(6,
+          Ui.Caption("Change this only when a proxy rewrites the path. It must match what you registered above."), uris[p])), 10);
+        Ui.Add(stack, Ui.Spread(null, Ui.Pill("Save " + name + " Application", () => {
           var body = Wires.O("clientId", ids[p].Text.Trim(), "clientSecret", secrets[p].Password, "redirectUri", uris[p].Text.Trim());
-          if (ids[p].Text.Trim().Length == 0 || secrets[p].Password.Length == 0 || !uris[p].Text.Trim().StartsWith("http")) { model.Error = "Enter the client ID, the client secret and a redirect URL."; model.Notify(); return; }
+          if (ids[p].Text.Trim().Length == 0 || secrets[p].Password.Length == 0 || !uris[p].Text.Trim().StartsWith("http")) { model.Error = "Enter the client ID, the client secret and a redirect address."; model.Notify(); return; }
           secrets[p].Clear();
           Perform(async (api, stamp) => { await api.Request("/admin/connectors/clients/" + p, "PUT", body); note = name + " application saved."; });
-        }, true));
+        }, true)), 14);
         return stack;
-      }, !client["configured"].Flag);
+      }, !configured);
+      return Ui.CardBox(null, header, allow.Children.Count > 0 ? allow : null, setup);
+    }
+
+    /// A labelled address with its own Copy button, so it goes into the
+    /// provider's console exactly as Josi expects it back.
+    static UIElement Address(string label, string url) {
+      var copy = Ui.IconButton(Glyph.Copy, "Copy " + label.ToLowerInvariant(), null, 14);
+      copy.Click += delegate {
+        var done = false;
+        for (var attempt = 0; attempt < 5 && !done; attempt++) {
+          try { Clipboard.SetDataObject(url, true); done = true; }
+          catch (System.Runtime.InteropServices.ExternalException) { System.Threading.Thread.Sleep(40); }
+        }
+        copy.ToolTip = done ? "Copied" : "Could not copy. Select the text and press Ctrl+C.";
+      };
+      var box = new Border { Background = Ui.Raised, CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 8, 8, 8),
+        Child = Ui.Spread(Ui.Stack(2, Ui.Caption(label), Ui.Copyable(url, 13, null, true)), copy) };
+      return box;
     }
   }
 
