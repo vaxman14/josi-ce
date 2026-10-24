@@ -190,7 +190,7 @@ namespace Josi.Native {
           Ui.Pill("Disconnect…", () => { if (Dialogs.Confirm(owner, "Disconnect " + row["label"].Text + "?", "The saved token is removed.", "Disconnect")) Perform(async (api, stamp) => await api.Request("/connections/developer/" + Uri.EscapeDataString(service), "DELETE", null)); })));
       } else if (!row["allowed"].Flag) {
         items.Add(Ui.Caption(model.IsAdministrator
-          ? "Switched off for members. Turn it on under Connectors (in Administration) → Member permissions." + (row["note"].Text.Length > 0 ? " " + row["note"].Text : "")
+          ? "Switched off for members. Turn it on under Integrations (in Administration) → Who may connect each service." + (row["note"].Text.Length > 0 ? " " + row["note"].Text : "")
           : "An administrator has not made this available. " + (row["note"].Text.Length > 0 ? row["note"].Text : "Ask your administrator if you need it.")));
       } else {
         if (row["usernameLabel"].Text.Length > 0) items.Add(F(row["usernameLabel"].Text, Detail(service, "username")));
@@ -282,7 +282,15 @@ namespace Josi.Native {
                 receipt = created["consent"].Text.Length > 0 ? created["consent"].Text : "Syncing started.";
               } catch (JosiException e) { receipt = "The folder was mapped, but syncing did not start: " + e.Message + " Use Sync Now."; }
               sheet.Locked = false; sheet.Close();
-            } catch (JosiException e) { sheet.Locked = false; render(folders, e.Message); }
+            } catch (JosiException e) {
+              sheet.Locked = false;
+              // "An administrator has not enabled folder mapping for you" read
+              // as a dead end to the administrator himself; name the switch.
+              var why = e.Message.IndexOf("administrator has not enabled", StringComparison.OrdinalIgnoreCase) >= 0 && model.IsAdministrator
+                ? e.Message + " Switch it on under People (in Administration) → your account → Folder access: \"Map cloud folders\" and \"Index and search connected files\", then Save Folder Access."
+                : e.Message;
+              render(folders, why);
+            }
           }, true));
           buttons.Children.Add(Ui.Pill("Up One Level", () => { path.RemoveAt(path.Count - 1); browse(path.Count == 0 ? null : path[path.Count - 1].Id); }));
         }

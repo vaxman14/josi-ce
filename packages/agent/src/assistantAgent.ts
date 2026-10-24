@@ -763,8 +763,9 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       // some tools have run (a lookup, say), only a reply that OPENS with the
       // promise counts, so a finished answer that ends "I'll let you know if
       // anything changes" is left alone.
-      const futureWords = /\b(?:i['’]ll|i will|i am going to|i['’]m going to|let me|i can now|now i['’]ll|i['’]m ready to|i am ready to|ready to|next,? i|about to|i['’]m about to|first,? i)\b/i;
-      const opensWithPromise = /^\s*(?:i['’]ll|i will|i am going to|i['’]m going to|let me|now i['’]ll|next,? i|first,? i|i['’]m (?:resuming|continuing|picking up)|i am (?:resuming|continuing))\b/i;
+      const doing = '(?:checking|looking|getting|fetching|pulling|opening|reading|searching|resuming|continuing|picking up|taking|viewing|listing)';
+      const futureWords = new RegExp(`\\b(?:i['’]ll|i will|i am going to|i['’]m going to|let me|i can now|now i['’]ll|i['’]m ready to|i am ready to|ready to|next,? i|about to|i['’]m about to|first,? i|i['’]m ${doing}|i am ${doing}|${doing} (?:your|the|it|that|now))\\b`, 'i');
+      const opensWithPromise = new RegExp(`^\\s*(?:i['’]ll|i will|i am going to|i['’]m going to|let me|now i['’]ll|next,? i|first,? i|i['’]m ${doing}|i am ${doing})\\b`, 'i');
       if (offeredToolNames.size && !promisedActionReprompted && hop + 1 < hopLimit && res.text.trim().length < 400
         && (actions.length ? opensWithPromise.test(res.text) : futureWords.test(res.text))) {
         promisedActionReprompted = true;
