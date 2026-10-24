@@ -70,6 +70,9 @@ function Get-RoleEnvironment([string]$Role) {
         JOSI_SCANNER_TEMP = (Join-Path $data 'temp\scanner')
         # Pinned ffmpeg (Get-Ffmpeg.ps1): video frames and soundtracks for attachments.
         JOSI_FFMPEG_EXE = (Join-Path $Root 'ffmpeg\ffmpeg.exe'); JOSI_FFPROBE_EXE = (Join-Path $Root 'ffmpeg\ffprobe.exe')
+        # Item 29: the built Josi app doubles as the device-consent window the
+        # server opens on this screen when a PC enrolls for protected approvals.
+        JOSI_DEVICE_CONSENT_HELPER = (Join-Path $repo 'apps\windows-native\bin\Release\net8.0-windows10.0.19041.0\Josi.exe')
         # Same private profile layout as the installed services.
         USERPROFILE = $profile; HOME = $profile
         APPDATA = (Join-Path $profile 'AppData\Roaming'); LOCALAPPDATA = (Join-Path $profile 'AppData\Local')
@@ -130,6 +133,11 @@ try {
         # native app on this PC still talks to http://localhost. Secure cookies
         # would never reach the app, so runtime.json may set cookieSecure=false.
         if ($settings.PSObject.Properties['cookieSecure'] -and $settings.cookieSecure -eq $false) { $environment['COOKIE_SECURE'] = 'false' }
+        # Item 29: the server opens the device-consent window on this screen only
+        # from an interactive session; Windows marks one with SESSIONNAME.
+        # This script is only ever run by a person at this PC, so the marker is
+        # passed through, or set when the starting shell did not carry it.
+        $environment['SESSIONNAME'] = if ($env:SESSIONNAME) { $env:SESSIONNAME } else { 'Console' }
         foreach ($pair in $environment.GetEnumerator()) { $lines += 'set "' + $pair.Key + '=' + $pair.Value + '"' }
         $lines += 'cd /d "' + $repo + '"'
         $lines += '"' + $node + '" ' + $entry + ' 1>>"' + (Join-Path $data "logs\$role.log") + '" 2>>"' + (Join-Path $data "logs\$role.err.log") + '"'

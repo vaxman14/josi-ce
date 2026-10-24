@@ -6,7 +6,7 @@ import {
   type ProtectedDeviceEnrollment, type ProtectedDeviceCommand, type ProtectedDeviceAuthority,
 } from '@josi-ce/core';
 import { isProtectedControlOrigin, type DeviceConsentChallenge } from '@josi-ce/protocol';
-import { startNativeDeviceConsent, type NativeDeviceConsent } from './nativeDeviceConsent.js';
+import { startNativeDeviceConsent, windowsConsentAvailable, type NativeDeviceConsent } from './nativeDeviceConsent.js';
 import { ProtectedChangeError } from './protectedChanges.js';
 
 type Records = ReturnType<typeof vaultRecords>;
@@ -34,7 +34,11 @@ export class DeviceEnrollments {
   private readonly beginning = new Set<string>();
   constructor(private readonly db: Db, private readonly master: () => MasterKey, private readonly origin: string) {}
   async available(): Promise<boolean> {
-    if (process.platform !== 'darwin' || !isProtectedControlOrigin(this.origin)) return false;
+    if (!isProtectedControlOrigin(this.origin)) return false;
+    // Item 29: on Windows the server starts the Josi app in its consent mode
+    // on the server's own screen (see nativeDeviceConsent.ts).
+    if (process.platform === 'win32') return windowsConsentAvailable();
+    if (process.platform !== 'darwin') return false;
     try {
       const [file, directory] = await Promise.all([lstat(helper), lstat(control)]);
       return file.isFile() && !file.isSymbolicLink() && file.uid === 0 && !(file.mode & 0o022)
@@ -100,12 +104,12 @@ export class DeviceEnrollments {
   async begin(actor: string, session: string, label: unknown) {
     this.prune();
     if (typeof label !== 'string' || !label.trim() || label !== label.trim() || label.length > 120
-      || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(label)) throw new ProtectedChangeError(400, 'Give this Mac a clear name, up to 120 characters.');
+      || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(label)) throw new ProtectedChangeError(400, 'Give this computer a clear name, up to 120 characters.');
     if (this.beginning.has(actor) || [...this.pending.values()].some(p => p.actor === actor)) throw new ProtectedChangeError(409, 'Finish or cancel your existing device enrollment first.');
     if (this.pending.size + this.beginning.size >= 32) throw new ProtectedChangeError(429, 'Device enrollment is busy. Wait for a current request to end.');
     this.beginning.add(actor);
     try {
-      if (!await this.available()) throw new ProtectedChangeError(503, 'Device enrollment requires the installed native consent helper on the server Mac.');
+      if (!await this.available()) throw new ProtectedChangeError(503, 'Device enrollment needs the Josi app installed on the computer that runs this server, where the request is approved.');
       const serverId = await this.account(actor, session), records = vaultRecords(this.db, this.master());
       const inventory = await records.protectedDevices(this.authority()).inventory(actor);
       if (inventory.reconciliationRequired) throw new ProtectedChangeError(409, 'Reconcile the Vault before enrolling a device.');

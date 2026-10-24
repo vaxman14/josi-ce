@@ -564,20 +564,35 @@ namespace Josi.Native {
       Content = Ui.Scroll(page, Ui.PageWidth, 30);
     }
     UIElement Authority() {
-      var settings = model.AutomationSettings;
+      var settings = model.AutomationSettings; var api = model.Api;
+      // Item 29: rules and devices are approved on this PC with Windows Hello once it is enrolled.
+      var capabilities = model.AutomationCatalog["capabilities"];
+      var canApprove = api != null && capabilities["nativeReview"].Flag && ProtectedApproval.ThisPc(model) != null;
       var items = new List<UIElement> {
-        Ui.Caption("Changes to Cardinal Rules, permissions and protected devices need an exact preview and an independent protected local approval. This Windows app shows the current Vault authority; protected approval on Windows is not available yet, so changes are not offered here.")
+        Ui.Caption(canApprove ? "Changes to Cardinal Rules and protected devices are approved here: the exact change is shown, then Windows Hello. Permissions are edited in the web app for now."
+          : "Changes to Cardinal Rules, permissions and protected devices need an exact preview and an independent approval with Windows Hello on an enrolled PC. Enroll this PC below to approve changes here.")
       };
       if (settings.IsNull) items.Add(Ui.T("Current Vault settings are unavailable. Refresh before reviewing them.", 14, null, Ui.Orange));
       else {
         items.Add(Ui.T("Cardinal Rules", 15, FontWeights.SemiBold));
         var rules = settings["rules"]["document"]["rules"].List;
         if (rules.Count == 0) items.Add(Ui.Secondary("No permanent rules. An explicit empty policy is in effect."));
-        foreach (var rule in rules)
-          items.Add(Ui.Stack(4, Ui.Headline(rule["definition"]["label"].Text), Ui.Copyable(rule["definition"]["wording"].Text),
-            Ui.Caption("Definition version " + rule["source"]["version"].Integer)));
-        var drafts = settings["drafts"].List.Count;
-        if (drafts > 0) items.Add(Ui.Caption(drafts + " inactive draft(s) saved in the Vault."));
+        var policyReference = settings["rules"]["reference"];
+        foreach (var rule in rules) {
+          var ruleId = rule["ruleId"].Text; var head = Ui.Headline(rule["definition"]["label"].Text);
+          items.Add(Ui.Stack(4, canApprove ? (UIElement)Ui.Spread(head, Ui.Pill("Retire…", () => model.Run(() => ProtectedApproval.Review(owner, model, "Retire this rule",
+              Wires.O("kind", "cardinal.retire", "ruleId", ruleId, "policy", policyReference))))) : head,
+            Ui.Copyable(rule["definition"]["wording"].Text), Ui.Caption("Definition version " + rule["source"]["version"].Integer)));
+        }
+        var drafts = settings["drafts"].List;
+        if (drafts.Count > 0) items.Add(Ui.Caption(drafts.Count + " inactive draft(s) saved in the Vault."));
+        foreach (var draft in drafts) {
+          var draftReference = draft["reference"]; var tested = draft["document"]["tested"];
+          var head = Ui.Headline("Draft: " + draft["document"]["draft"]["label"].Text);
+          items.Add(Ui.Stack(4, canApprove ? (UIElement)Ui.Spread(head, Ui.Pill("Make Permanent…", () => model.Run(() => ProtectedApproval.Review(owner, model, "Make this rule permanent",
+              Wires.O("kind", "cardinal.activate", "draft", draftReference, "policy", policyReference))))) : head,
+            Ui.Copyable(draft["document"]["draft"]["wording"].Text), Ui.Caption(tested.IsNull ? "Not yet reviewed by the model." : "Reviewed " + Wires.Date(tested["testedAt"].Text))));
+        }
         items.Add(Ui.T("Permissions", 15, FontWeights.SemiBold));
         if (settings["permissions"]["reconciliationRequired"].Flag) items.Add(Ui.T("Vault recovery must be reconciled before permissions can be enforced.", 14, null, Ui.Orange));
         var policies = settings["permissions"]["document"]["policies"].List;
@@ -590,15 +605,24 @@ namespace Josi.Native {
           items.Add(Ui.Stack(6, lines.ToArray()));
         }
       }
-      items.Add(Ui.T("Protected confirmation devices", 15, FontWeights.SemiBold));
+      items.Add(Ui.Spread(Ui.T("Protected confirmation devices", 15, FontWeights.SemiBold),
+        api == null ? null : Ui.Pill("Enroll This PC…", () => model.Run(() => ProtectedApproval.Enroll(owner, model)))));
+      items.Add(Ui.Caption(capabilities["deviceEnrollment"].Flag
+        ? "Enrolling this PC makes a key in Windows' protected key store, tied to Windows Hello. The computer that runs the server approves the enrollment in a window of its own."
+        : "Enrollment is approved in a window on the computer that runs the server, so that computer needs the Josi app and a signed-in screen. This server reports it cannot show one right now."));
       if (model.AutomationDevicesError.Length > 0) items.Add(Ui.T(model.AutomationDevicesError, 14, null, Ui.Orange));
       var devices = model.AutomationDevices;
       if (devices.IsNull && model.AutomationDevicesError.Length == 0) items.Add(Ui.Secondary("Saved devices have not been loaded. Refresh Automation to check this account."));
       if (devices["reconciliationRequired"].Flag) items.Add(Ui.T("Vault recovery must be reconciled before devices can approve changes.", 14, null, Ui.Orange));
       if (!devices.IsNull && devices["devices"].List.Count == 0) items.Add(Ui.Secondary("No protected confirmation devices are enrolled for this account."));
-      foreach (var device in devices["devices"].List)
-        items.Add(Ui.Stack(3, Ui.Headline(device["label"].Text), Ui.T(device["revokedAt"].IsNull ? "Enrolled" : "Revoked"),
-          Ui.Caption(device["identity"]["serverOrigin"].Text + " · Enrolled " + Wires.Date(device["enrolledAt"].Text))));
+      foreach (var device in devices["devices"].List) {
+        var enrollmentId = device["enrollmentId"].Text; var expected = devices["reference"]; var label = device["label"].Text;
+        var thisPc = api != null && device["revokedAt"].IsNull && device["identity"]["serverOrigin"].Text == api.OriginText && DeviceKey.Exists(device["identity"]["deviceId"].Text);
+        var head = Ui.Headline(label + (thisPc ? " (this PC)" : ""));
+        items.Add(Ui.Stack(3, canApprove && device["revokedAt"].IsNull ? (UIElement)Ui.Spread(head, Ui.Pill("Revoke…", () => model.Run(() => ProtectedApproval.Review(owner, model, "Revoke protected confirmations on " + label,
+            Wires.O("kind", "device.revoke", "enrollmentId", enrollmentId, "expected", expected))))) : head,
+          Ui.T(device["revokedAt"].IsNull ? "Enrolled" : "Revoked"), Ui.Caption(device["identity"]["serverOrigin"].Text + " · Enrolled " + Wires.Date(device["enrolledAt"].Text))));
+      }
       return Ui.CardBox("Rules, permissions and devices", items.ToArray());
     }
     static string Mode(Wire mode) {

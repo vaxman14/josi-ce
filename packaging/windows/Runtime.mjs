@@ -70,6 +70,9 @@ try {
     // Josi's tool server for the Claude Code and Codex harnesses. Without it
     // they fall back to the container path and every tool is switched off.
     JOSI_MCP_SERVER: join(program, 'app/packages/agent/dist/mcp/server.js'),
+    // Item 29: the Josi app beside the server doubles as the device-consent
+    // window the server opens on this screen (interactive sessions only).
+    JOSI_DEVICE_CONSENT_HELPER: join(program, 'Josi.exe'),
   });
   process.chdir(join(program, 'app'));
   if (role === 'migrate') {

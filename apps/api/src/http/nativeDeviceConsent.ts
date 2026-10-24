@@ -7,6 +7,30 @@ import { deviceConsentMessage, parseDeviceConsentChallenge, type DeviceConsentCh
 const execute = promisify(execFile);
 const helper = '/Applications/Josi.app/Contents/Helpers/JosiDeviceConsentHost';
 const directory = '/Library/Application Support/Josi CE Server/control';
+/** Item 29, Windows: the consent helper is the Josi app itself, started by the
+ * server in its "--device-consent" mode on the computer that runs the server.
+ * It shows the exact enrollment on that screen, asks Windows Hello, and
+ * answers over the same framed pipe as the Mac helper (no socket). The path
+ * comes from the server's own environment, never from a request. */
+export function windowsConsentHelper(): { command: string; args: string[] } | null {
+  if (process.platform !== 'win32') return null;
+  const command = process.env.JOSI_DEVICE_CONSENT_HELPER ?? '';
+  if (!/^[A-Za-z]:\\/.test(command) || !/\.exe$/i.test(command) || command.length > 1024) return null;
+  let args = ['--device-consent'];
+  // Development and tests only: node.exe with a script that plays the helper.
+  if (process.env.JOSI_DEVICE_CONSENT_HELPER_ARGS) {
+    try { const parsed: unknown = JSON.parse(process.env.JOSI_DEVICE_CONSENT_HELPER_ARGS); if (Array.isArray(parsed) && parsed.every(v => typeof v === 'string')) args = parsed; } catch { /* default */ }
+  }
+  return { command, args };
+}
+export async function windowsConsentAvailable(): Promise<boolean> {
+  const found = windowsConsentHelper();
+  // A service has no screen to show the request on; only an interactive
+  // session (SESSIONNAME is set by Windows for those) can host the window.
+  if (!found || !process.env.SESSIONNAME) return false;
+  try { const file = await lstat(found.command); return file.isFile() && !file.isSymbolicLink() && await realpath(found.command) === found.command; }
+  catch { return false; }
+}
 const requirement = '=anchor apple generic and identifier "com.heyjosi.ce.device-consent" and certificate leaf[subject.OU] = "LRH75YR6QW"';
 const refused = () => new Error('Local device-owner consent is unavailable or expired.');
 export interface NativeDeviceConsent {
@@ -19,19 +43,32 @@ export interface NativeDeviceConsent {
 }
 export async function startNativeDeviceConsent(value: DeviceConsentChallenge, signal: AbortSignal): Promise<NativeDeviceConsent> {
   const challenge = parseDeviceConsentChallenge(value);
-  if (process.platform !== 'darwin' || !challenge || signal.aborted || challenge.issuedAtMs > Date.now()
+  const windows = windowsConsentHelper();
+  if (!(process.platform === 'darwin' || windows) || !challenge || signal.aborted || challenge.issuedAtMs > Date.now()
     || challenge.expiresAtMs <= Date.now()) throw refused();
   const message = Buffer.from(deviceConsentMessage(challenge));
   const digest = createHash('sha256').update(message).digest('hex');
-  const file = await lstat(helper), folder = await lstat(directory), owner = process.getuid?.();
-  if (!owner || !file.isFile() || file.isSymbolicLink() || file.uid !== 0 || file.mode & 0o022
-    || !folder.isDirectory() || folder.isSymbolicLink() || folder.uid !== owner || folder.mode & 0o022
-    || await realpath(helper) !== helper || await realpath(directory) !== directory) throw refused();
-  await execute('/usr/bin/codesign', ['--verify', '--strict', '-R', requirement, helper], {
-    timeout: 10_000, maxBuffer: 16 * 1024, env: { PATH: '/usr/bin:/bin' }, signal,
-  });
+  let owner: number | undefined;
+  if (windows) {
+    if (!await windowsConsentAvailable()) throw refused();
+  } else {
+    const file = await lstat(helper), folder = await lstat(directory); owner = process.getuid?.();
+    if (!owner || !file.isFile() || file.isSymbolicLink() || file.uid !== 0 || file.mode & 0o022
+      || !folder.isDirectory() || folder.isSymbolicLink() || folder.uid !== owner || folder.mode & 0o022
+      || await realpath(helper) !== helper || await realpath(directory) !== directory) throw refused();
+    await execute('/usr/bin/codesign', ['--verify', '--strict', '-R', requirement, helper], {
+      timeout: 10_000, maxBuffer: 16 * 1024, env: { PATH: '/usr/bin:/bin' }, signal,
+    });
+  }
   if (signal.aborted || challenge.expiresAtMs <= Date.now()) throw refused();
-  const child = spawn(helper, [], { shell: false, stdio: ['pipe', 'pipe', 'ignore'], env: { PATH: '/usr/bin:/bin' } });
+  // On Windows the helper is a window on the server's desktop: it needs the
+  // system folders and the signed-in user's profile, nothing from Josi's own
+  // environment (no database address, key file or token paths).
+  const child = windows
+    ? spawn(windows.command, windows.args, { shell: false, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: false,
+      env: { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows', WINDIR: process.env.SystemRoot ?? 'C:\\Windows', PATH: (process.env.SystemRoot ?? 'C:\\Windows') + '\\System32',
+        USERPROFILE: process.env.USERPROFILE ?? '', LOCALAPPDATA: process.env.LOCALAPPDATA ?? '', APPDATA: process.env.APPDATA ?? '', TEMP: process.env.TEMP ?? '', TMP: process.env.TMP ?? '' } })
+    : spawn(helper, [], { shell: false, stdio: ['pipe', 'pipe', 'ignore'], env: { PATH: '/usr/bin:/bin' } });
   const socket = `${directory}/${challenge.id}.sock`;
   let state: 'starting' | 'waiting' | 'approved' | 'cancelled' | 'expired' = 'starting';
   let previousWall = Date.now(), previousMono = performance.now();
@@ -42,7 +79,7 @@ export async function startNativeDeviceConsent(value: DeviceConsentChallenge, si
   const timer = setTimeout(() => { state = 'expired'; close(); }, challenge.expiresAtMs - Date.now()); timer.unref();
   const readyTimer = setTimeout(() => close(), Math.min(10_000, challenge.expiresAtMs - Date.now())); readyTimer.unref();
   async function cleanupSocket() {
-    if (inode === null) return;
+    if (inode === null || windows) return;
     try {
       const info = await lstat(socket);
       if (info.isSocket() && info.ino === inode && info.uid === owner) await unlink(socket);
@@ -90,6 +127,7 @@ export async function startNativeDeviceConsent(value: DeviceConsentChallenge, si
         || item.schemaVersion !== 1 || item.id !== challenge.id || item.challengeDigest !== digest) { close(); return; }
       if (state === 'starting' && item.state === 'ready') {
         state = 'waiting'; clearTimeout(readyTimer);
+        if (windows) { if (current()) readyResolve(); else close(); continue; }
         void lstat(socket).then(info => {
           if (!info.isSocket() || info.uid !== owner) throw refused();
           inode = info.ino;

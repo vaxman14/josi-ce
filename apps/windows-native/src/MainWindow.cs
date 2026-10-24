@@ -15,6 +15,8 @@ namespace Josi.Native {
     public static int Main(string[] args) {
       // Chrome starting Josi as the browser extension's native host.
       if (BrowserHost.IsLaunch(args)) return BrowserHost.Run();
+      // The server starting the device-consent window on its own screen (item 29).
+      if (ConsentHost.IsLaunch(args)) return ConsentHost.Run();
       bool created;
       // A josi:// link (Google sign-in returning) arrives as the only argument.
       var link = args.Length == 1 && AppLinks.IsLink(args[0]) ? args[0] : null;

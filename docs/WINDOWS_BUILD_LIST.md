@@ -21,7 +21,8 @@ Server changes made for the app: connections started from the app finish through
 Still open:
 - **4 Google live test: done on October 23.** `https://ce.heyjosi.com` reaches this PC's dev server through the Cloudflare Tunnel "josi-thebutt" (connector started by `Start-DevServer.ps1` from `C:\Dev\josi-dev\cloudflared`, token in `data\secrets\cloudflared-token`; `runtime.json` has `publicUrl` https and `cookieSecure=false` for the local native app). Roman registered the Google application from the redesigned Connectors page and connected his Google account from the Windows app: consent in Chrome, callback on the public address, return into the app, connection active with every capability off until switched on. Sign in with Google itself (the login page button) is registered too and not yet tried.
 - **16 Live replies: built October 24.** The model providers in use (and the Codex CLI mode) hand back a whole reply, so there is no word-by-word stream to show. What the app shows instead: the live status of the turn beside the animated J ("Thinking…", "Checking your calendar…", "Reading the page…", one line per tool as it starts; with narration on, the sentence Josi said along the way), pushed from the server over an event stream (`GET /assistant/threads/:id/turns/:turnId/stream`, worker writes `assistant_turns.progress`), and the reply itself appears the moment it is saved instead of on the next one-second poll. Word-by-word streaming stays a provider change for later.
-- **27 Chrome acceptance** on Roman's page; **29 Windows Hello approvals** need the server's protected-confirmation enrollment (currently Mac-only) ported to Windows.
+- **27 Chrome acceptance** on Roman's page.
+- **29 Windows Hello approvals: built October 24, not yet tried end to end (needs Roman's password and his Windows Hello).** Server: the device-consent helper has a Windows branch (`nativeDeviceConsent.ts`): the server starts `Josi.exe --device-consent` on its own screen, which shows the exact enrollment and approves it only after Windows Hello; enrollment is offered on Windows when the server runs in a signed-in session with the app beside it (`JOSI_DEVICE_CONSENT_HELPER`, set by the dev script and the packaged runtime). App: `Ed25519.cs` (checked against the RFC 8032 vectors), `ProtectedKeys.cs` (a P-256 key in Windows' key store for this account that proves the PC and unwraps the signing key; the signing key is also wrapped to a Windows Hello key, so every approval asks for fingerprint, face or PIN), `ProtectedApproval.cs` (Enroll This PC; Retire / Make Permanent / Revoke with the exact wording, meaning and advisory shown first), `ConsentHost.cs` (the window the server opens). Permissions editing stays in the web app. The TPM provider is tried first and used when it can both sign and agree; on this PC the software key store is used.
 - **34 full installer build**: needs the pinned runtimes and helper builds rebuilt on this PC, then the installer compiled.
 - **35 signing**: needs Roman's Azure Trusted Signing sign-in.
 - Family and Companion apps show "coming soon", matching the web app, where those features are not released.
@@ -80,7 +81,7 @@ Everything still to do for the Windows app, in build order. It combines the miss
 ### Phase 4 — Desktop and Chrome
 27. **Desktop + Chrome**: Josi works on this PC and in Chrome; Chrome extension loaded unpacked for testing; secure device enrollment for this PC. Needs Roman's test page.
 28. **PC control** (administrator): exact scopes, saved scopes and temporary access, actions awaiting approval, activity log. (Web: `admin/PcControl.tsx`.)
-29. **Windows Hello approvals**: protected approvals confirmed with fingerprint, face or PIN.
+29. **Windows Hello approvals**: protected approvals confirmed with fingerprint, face or PIN. (Built October 24; see the open-items note above for what is left to try.)
 
 ### Phase 5 — Windows extras and family
 30. **Windows notifications** for task updates, approvals and reminders.
@@ -98,7 +99,7 @@ Everything still to do for the Windows app, in build order. It combines the miss
 - Telegram, WhatsApp and Slack access: **Have** (Messaging Apps linking; administrator channel setup).
 - Email and password sign-in: **Have**. Google Sign-In: **Have** (needs Connectors, item 2, to be usable). Apple Sign-In: **Not this app** (Apple platforms).
 - Native push notifications, native reminders, native share intake: **Missing** (items 18, 30 and 31).
-- Secure device enrollment: **Partial** (Automation "This PC"; finished in the Desktop + Chrome phase).
+- Secure device enrollment: **Have** (Enroll This PC with Windows Hello; approved in the server's own window). Not yet tried end to end.
 - Multi-device sessions and session revocation: **Have**. Remembered sign-in: **Have**.
 
 ### Assistant

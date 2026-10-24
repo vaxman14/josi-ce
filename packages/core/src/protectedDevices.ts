@@ -170,7 +170,7 @@ export class ProtectedDeviceStore {
     const presentation: ProtectedControlPresentation = { wording: `Enroll ${args.label} for protected administrator confirmations.`,
       meaning: `Server: ${material.identity.serverOrigin}\nServer ID: ${material.identity.serverId}\nAdministrator: ${material.identity.userId}\nDevice: ${material.identity.deviceId}\nSigning key SHA-256: ${fingerprints.signingFingerprint}\nHardware wrapping key SHA-256: ${fingerprints.wrappingFingerprint}\nThis enrolls a protected confirmation key. It does not grant browser, desktop, file, network or task access.`,
       advisory: ['The Vault remains canonical. Local owner consent and fresh administrator verification are both required.',
-        'Approve this request in the installed Josi app on the server Mac. For a remote target Mac, compare the complete device identity and both key fingerprints with its enrollment window before approving.'] };
+        'Approve this request in the installed Josi app on the computer that runs this server. For a device elsewhere, compare the complete device identity and both key fingerprints with its enrollment window before approving.'] };
     return { ...value, command, presentation };
   }
   async prepareEnrollment(args: ProtectedDeviceEnrollment) {
@@ -208,10 +208,10 @@ export class ProtectedDeviceStore {
     await server(this.authority, context.tx, device.material.identity);
     const command: ProtectedDeviceCommand = { purpose: 'device.revoke', requestDigest: cardinalContentDigest(args) };
     const presentation: ProtectedControlPresentation = { wording: `Revoke protected confirmations on ${device.label}.`,
-      meaning: `Server: ${device.material.identity.serverOrigin}\nAdministrator: ${args.actorUserId}\nDevice: ${device.material.identity.deviceId}\nThis key will no longer verify protected changes. Existing challenges become stale. Vault history remains. This does not log out website accounts or erase the Mac's hardware wrapping root.`,
+      meaning: `Server: ${device.material.identity.serverOrigin}\nAdministrator: ${args.actorUserId}\nDevice: ${device.material.identity.deviceId}\nThis key will no longer verify protected changes. Existing challenges become stale. Vault history remains. This does not log out website accounts or erase the device's own hardware-protected key.`,
       advisory: ['A revoked enrollment cannot be silently reactivated. Recovery requires an explicitly approved new enrollment.',
         ...(value.document.devices.filter(d => d.material.identity.userId === args.actorUserId && !d.revokedAt).length === 1
-          ? ['This is your last active confirmation device. After revocation, enroll a new device with approval in Josi on the server Mac before making another protected change.'] : [])] };
+          ? ['This is your last active confirmation device. After revocation, enroll a new device with approval in Josi on the computer that runs this server before making another protected change.'] : [])] };
     return { ...value, device, command, presentation };
   }
   async prepareRevocation(args: ProtectedDeviceRevocation) {
