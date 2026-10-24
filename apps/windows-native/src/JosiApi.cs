@@ -219,6 +219,25 @@ namespace Josi.Native {
       finally { if (progress == own) progress = null; own.Dispose(); }
     }
 
+    /// The type the server expects for each extension it accepts (its
+    /// attachment contract refuses a bare octet-stream, because a declared
+    /// type the bytes are then checked against is part of the contract).
+    /// Anything not listed goes up as octet-stream and is refused by name.
+    static readonly Dictionary<string, string> MediaTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+      { "jpg", "image/jpeg" }, { "jpeg", "image/jpeg" }, { "png", "image/png" }, { "gif", "image/gif" }, { "webp", "image/webp" }, { "heic", "image/heic" }, { "heif", "image/heif" },
+      { "pdf", "application/pdf" }, { "txt", "text/plain" }, { "md", "text/markdown" }, { "csv", "text/csv" }, { "json", "application/json" }, { "rtf", "application/rtf" },
+      { "doc", "application/msword" }, { "xls", "application/vnd.ms-excel" }, { "ppt", "application/vnd.ms-powerpoint" },
+      { "docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }, { "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      { "pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation" },
+      { "odt", "application/vnd.oasis.opendocument.text" }, { "ods", "application/vnd.oasis.opendocument.spreadsheet" }, { "odp", "application/vnd.oasis.opendocument.presentationml.presentation" },
+      { "mp3", "audio/mpeg" }, { "m4a", "audio/mp4" }, { "aac", "audio/aac" }, { "wav", "audio/wav" }, { "ogg", "audio/ogg" }, { "opus", "audio/opus" }, { "flac", "audio/flac" },
+      { "mp4", "video/mp4" }, { "m4v", "video/x-m4v" }, { "mov", "video/quicktime" }, { "webm", "video/webm" }, { "mpeg", "video/mpeg" }, { "zip", "application/zip" } };
+    public static string MediaTypeFor(string filename) {
+      var dot = filename.LastIndexOf('.');
+      string type;
+      return dot >= 0 && MediaTypes.TryGetValue(filename.Substring(dot + 1), out type) ? type : "application/octet-stream";
+    }
+
     public async Task<Wire> UploadAttachment(string path, string thread) {
       var id = Uuid(thread);
       var info = new FileInfo(path);
@@ -232,7 +251,7 @@ namespace Josi.Native {
       using (var message = Message("POST", Route("/assistant/threads/" + id + "/attachments")))
       using (var form = new MultipartFormDataContent("Josi-" + Guid.NewGuid().ToString("N"))) {
         var file = new ByteArrayContent(content);
-        file.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        file.Headers.ContentType = new MediaTypeHeaderValue(MediaTypeFor(name));
         file.Headers.ContentDisposition = new ContentDispositionHeaderValue("form-data") { Name = "\"file\"", FileName = "\"" + name + "\"" };
         form.Add(file);
         message.Content = form;
@@ -263,7 +282,7 @@ namespace Josi.Native {
       using (var form = new MultipartFormDataContent("Josi-" + Guid.NewGuid().ToString("N"))) {
         foreach (var part in parts) {
           var file = new ByteArrayContent(part.Value);
-          file.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+          file.Headers.ContentType = new MediaTypeHeaderValue(MediaTypeFor(part.Key));
           file.Headers.ContentDisposition = new ContentDispositionHeaderValue("form-data") { Name = "\"" + field + "\"", FileName = "\"" + part.Key + "\"" };
           form.Add(file);
         }
