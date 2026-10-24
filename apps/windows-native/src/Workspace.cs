@@ -15,6 +15,14 @@ namespace Josi.Native {
     ChatView chat;
     TaskManagerView tasks;
     string shownSection;
+    // Item 39: the sidebar is drawn once and then only touched where something
+    // changed, and a section page is kept once built, so a click no longer
+    // tears the whole left side down and rebuilds the page from nothing.
+    readonly System.Collections.Generic.Dictionary<string, Button> navButtons = new System.Collections.Generic.Dictionary<string, Button>();
+    readonly System.Collections.Generic.Dictionary<string, TextBlock> navLabels = new System.Collections.Generic.Dictionary<string, TextBlock>();
+    readonly System.Collections.Generic.Dictionary<string, UIElement> views = new System.Collections.Generic.Dictionary<string, UIElement>();
+    readonly System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Button>> threadButtons = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Button>>();
+    bool navAdmin; string threadsKey, footerKey;
 
     public WorkspaceView(AppModel model, Window owner) {
       this.model = model; this.owner = owner;
@@ -65,7 +73,9 @@ namespace Josi.Native {
     }
 
     void RenderNav() {
-      nav.Children.Clear();
+      if (nav.Children.Count > 0 && navAdmin == model.IsAdministrator) { SyncNav(); return; }
+      navAdmin = model.IsAdministrator;
+      nav.Children.Clear(); navButtons.Clear(); navLabels.Clear();
       Item("Conversations", Glyph.Chat, "chat");
       Item("Task Manager", Glyph.Checklist, "tasks");
       Item("Approvals", Glyph.Approve, "approvals");
@@ -112,6 +122,21 @@ namespace Josi.Native {
         Item("Audit Log", Glyph.History, "audit");
       }
       Item("Server", Glyph.Server, "server");
+      SyncNav();
+    }
+    /// The selected entry and the busy state, applied to the buttons in place.
+    void SyncNav() {
+      foreach (var pair in navButtons) {
+        var on = model.Section == pair.Key;
+        var button = pair.Value;
+        if (!ReferenceEquals(button.Foreground, on ? Ui.Orange : Ui.Muted)) button.Foreground = on ? Ui.Orange : Ui.Muted;
+        var back = on ? Ui.OrangeSoft : Brushes.Transparent;
+        if (!ReferenceEquals(button.Background, back)) button.Background = back;
+        var weight = on ? FontWeights.Medium : FontWeights.Normal;
+        TextBlock label;
+        if (navLabels.TryGetValue(pair.Key, out label) && label.FontWeight != weight) label.FontWeight = weight;
+        if (button.IsEnabled == model.Busy) button.IsEnabled = !model.Busy;
+      }
     }
     void Group(string title) {
       var label = Ui.Caption(title.ToUpperInvariant()); label.Margin = new Thickness(12, 14, 0, 6); label.FontWeight = FontWeights.SemiBold;
@@ -129,6 +154,7 @@ namespace Josi.Native {
       button.IsEnabled = !model.Busy;
       button.Click += delegate { Go(section); };
       nav.Children.Add(button);
+      navButtons[section] = button; navLabels[section] = label;
     }
     void Go(string section) {
       model.Section = section;
@@ -138,8 +164,21 @@ namespace Josi.Native {
     }
 
     void RenderThreads() {
-      threads.Children.Clear();
       var term = threadSearch.Text.Trim();
+      // Rebuilt only when the list itself changed (a thread added, renamed or
+      // filtered out); the selection and the busy state are applied in place.
+      var key = term + "\n" + string.Join("\n", model.Threads.Select(t => t.Id + "\t" + t["title"].Text));
+      if (key == threadsKey) {
+        foreach (var pair in threadButtons) {
+          var on = model.SelectedThread == pair.Key;
+          var wanted = on ? Ui.Text : Ui.Muted;
+          if (!ReferenceEquals(pair.Value.Foreground, wanted)) pair.Value.Foreground = wanted;
+          if (pair.Value.IsEnabled == model.Busy) pair.Value.IsEnabled = !model.Busy;
+        }
+        return;
+      }
+      threadsKey = key;
+      threads.Children.Clear(); threadButtons.Clear();
       foreach (var thread in model.Threads) {
         if (term.Length > 0 && thread["title"].Text.IndexOf(term, StringComparison.CurrentCultureIgnoreCase) < 0) continue;
         var id = thread.Id; var on = model.SelectedThread == id;
@@ -152,9 +191,13 @@ namespace Josi.Native {
         button.IsEnabled = !model.Busy;
         button.Click += delegate { model.Run(() => model.SelectThread(id)); };
         threads.Children.Add(button);
+        threadButtons.Add(new System.Collections.Generic.KeyValuePair<string, Button>(id, button));
       }
     }
     void RenderFooter() {
+      var footerNow = model.SignedInName + "\n" + model.Address + "\n" + model.Busy;
+      if (footerNow == footerKey) return;
+      footerKey = footerNow;
       var initials = new string(model.SignedInName.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Take(2).Select(w => w[0]).ToArray());
       var avatar = new Border { Width = 36, Height = 36, CornerRadius = new CornerRadius(18), Background = Ui.Raised,
         Child = new TextBlock { Text = initials.ToUpperInvariant(), FontWeight = FontWeights.Bold, Foreground = Ui.Text, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
@@ -171,7 +214,10 @@ namespace Josi.Native {
       if (shownSection == model.Section && detail.Content != null) return;
       if (shownSection == "chat" && chat != null) chat.Pause();
       shownSection = model.Section;
+      // A page already built is shown again as it was; its own Loaded handler
+      // refreshes the data behind it without a blank page in between.
       UIElement view;
+      if (views.TryGetValue(model.Section, out view)) { detail.Content = view; return; }
       switch (model.Section) {
         case "tasks": tasks = tasks ?? new TaskManagerView(model, owner); tasks.Refresh(); view = tasks; break;
         case "memory": view = new MemoryView(model, owner); break;
@@ -215,6 +261,7 @@ namespace Josi.Native {
         case "audit": view = model.IsAdministrator ? new AuditView(model, owner) : null; break;
         default: chat = chat ?? new ChatView(model, owner); chat.Refresh(); view = chat; break;
       }
+      if (view != null && model.Section != "chat" && model.Section != "tasks") views[model.Section] = view;
       detail.Content = view;
     }
   }
