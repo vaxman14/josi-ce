@@ -25,7 +25,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   appendEvent, checkChildAccess, checkStepUp,
-  listTemplates, listWorkGoals, pinnedWorkGoals, recordChildActivity, resolveConversationalAction,
+  advanceWorkRepeat, listTemplates, listWorkGoals, pinnedWorkGoals, recordChildActivity, resolveConversationalAction,
   beginWorkConversation, releaseWorkConversation, requireWorkContinuation, runWorkIntent,
   formatWorkContext, workMemoryVersion, requireCurrentWorkMemory, WorkMemoryChangedError,
   type ActivityChannel, type Db, type AutomationModelProjection,
@@ -525,7 +525,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   if (offeredToolNames.has('own_goal') && offeredToolNames.has('checkpoint_goal')) {
     guidance += `${guidance ? '\n\n' : ''}Long tasks: when a request means many repeated steps (for example more than five items, photos or pages), own it as a work goal with own_goal before starting, `
       + 'and save progress with checkpoint_goal after every few items (what is done, what is next). Then "keep going" or "try again" resumes from the saved place, even in a later conversation. '
-      + 'For photos on a page: view one, then put its description in your reply while proposing the next view in the same response; checkpoint once per five photos, not after each; keep the plan as it is unless a step is truly impossible.';
+      + 'For photos on a page: view one, then put its description in your reply while proposing the next view in the same response; keep the plan as it is unless a step is truly impossible. '
+      + 'When one step repeats over many items (53 photos, every row), declare it in own_goal with repeats (step position, count, unit, the tool whose successful run is one item, such as browser_view_photo): the server then counts the items from the tool receipts, shows "photo 14 of 53", verifies the step at the count and continues by itself, so you spend every response on the items and never on bookkeeping.';
   }
 
   // The person's own layers, in the order the plan fixes. A failure here costs
@@ -599,6 +600,10 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   let emptyReplies = 0;
   let invalidStepReprompted = false;
   let promisedActionReprompted = false;
+  // The goal this turn owns (own_goal), and whether a repeat step advanced
+  // from tool receipts during it.
+  let ownedGoalId: string | null = null;
+  let progressed = false;
   // In the one-step subscription mode the model's `reply` beside a tool
   // proposal is written for the person (a photo's description while the next
   // view is requested). Kept here so a segment that ends at its limit, or in a
@@ -723,7 +728,9 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     }
 
     if (!res.toolCalls.length) {
-      if (!checkpointGuardReprompted && hop + 1 < hopLimit
+      // A segment that counted items on a repeat step saved its own progress;
+      // the server continues it. No checkpoint is demanded of the model.
+      if (!checkpointGuardReprompted && !progressed && hop + 1 < hopLimit
         && (args.workGoalId || actions.some(action => action.tool === 'own_goal'))
         && !actions.some(action => ['checkpoint_goal', 'verify_goal'].includes(action.tool)
           && action.result && typeof action.result === 'object' && !('error' in action.result))) {
@@ -955,6 +962,16 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       actions.push({ tool: call.name, result });
       retry = retryTargetFor(call.name, call.input);
       toolResults.push({ toolCallId: call.id, name: call.name, content: JSON.stringify(result) });
+      // Progress on a repeat step comes from what the tool did, counted here
+      // the moment it succeeded, not from the model's bookkeeping (item 38).
+      if (call.name === 'own_goal' && result && typeof result === 'object' && typeof (result as { goal?: { goalId?: unknown } }).goal?.goalId === 'string') {
+        ownedGoalId = (result as { goal: { goalId: string } }).goal.goalId;
+      }
+      const progressGoal = args.workGoalId ?? ownedGoalId;
+      if (progressGoal && result && typeof result === 'object' && !('error' in result) && (result as { ok?: unknown }).ok !== false) {
+        try { if (await advanceWorkRepeat(db, { ownerUserId: userId, goalId: progressGoal, tool: call.name })) progressed = true; }
+        catch (err) { console.warn(`josi-ce: repeat progress not counted: ${(err as Error).message}`); }
+      }
     }
 
     if (callerSubscription && res.text.trim()) interim.push(res.text.trim());

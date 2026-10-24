@@ -9,7 +9,7 @@ import { ISOLATED_AUTOMATION_TEMPLATE } from './tasks.js';
 import { appendEvent } from './events.js';
 import { workBudgetReason, type WorkBudgetRow } from './workBudget.js';
 import { isAutomationIdentity } from './automationPermissions.js';
-import { readyWorkSteps, workDependencies, workDependenciesSatisfied, workStepRequired, workStepUnfinished, type WorkGoalStep } from './workPlan.js';
+import { readyWorkSteps, workDependencies, workDependenciesSatisfied, workStepProgress, workStepRequired, workStepUnfinished, type WorkGoalStep } from './workPlan.js';
 export type { WorkGoalStep } from './workPlan.js';
 
 export class WorkGoalError extends Error {
@@ -96,15 +96,75 @@ async function save(db: Db, row: GoalRow, kind: string, summary?: string): Promi
   await event(db, saved, kind, summary ?? saved.activity);
   return snapshot(saved);
 }
-function current(row: GoalRow, revision: unknown) {
-  if (!Number.isSafeInteger(revision) || revision !== row.revision) throw new WorkGoalError('This work changed. Refresh it before updating.', 409);
+async function current(db: Db, row: GoalRow, revision: unknown) {
+  if (!Number.isSafeInteger(revision)) throw new WorkGoalError('This work changed. Refresh it before updating.', 409);
+  if (revision !== row.revision) {
+    // Items the server counted on a repeat step move the revision under the
+    // model between its reads. Those moves alone change nothing the model has
+    // to re-read, so a revision that is stale only by them still counts.
+    const since = (revision as number) < row.revision
+      ? await db.query<{ kind: string }>(`select kind from work_goal_events where goal_id=$1 and sequence>$2 and sequence<=$3`, [row.id, revision, row.revision]) : [];
+    if (!since.length || since.some(entry => entry.kind !== 'step.progress')) throw new WorkGoalError('This work changed. Refresh it before updating.', 409);
+  }
   if (['completed', 'cancelled'].includes(row.state)) throw new WorkGoalError('This work has already ended.', 409);
 }
 
+/** Build item 38: one more item of a repeat step done, counted from what the
+ * tool actually did rather than from the model's bookkeeping. Returns the
+ * goal when the step moved, null when this tool run was not one of its items. */
+export async function advanceWorkRepeat(db: Db, args: { ownerUserId: string; goalId: string; tool: string }): Promise<WorkGoalSnapshot | null> {
+  return transaction(db, async tx => {
+    const row = await owned(tx, args.ownerUserId, args.goalId, true);
+    if (!['planning', 'working'].includes(row.state) || row.continuation?.kind !== 'action') return null;
+    const step = row.steps.find(value => value.id === (row.continuation as { stepId: string }).stepId);
+    if (!step || !step.repeat || step.repeat.tool !== args.tool || !workStepUnfinished(step)) return null;
+    step.repeat = { ...step.repeat, done: Math.min(step.repeat.count, step.repeat.done + 1) };
+    step.state = 'working'; row.state = 'working';
+    row.activity = workStepProgress(step) ?? step.title;
+    if (step.repeat.done >= step.repeat.count) {
+      // Every item seen: the receipts verified the step; on to the next.
+      step.state = 'verified'; step.evidence = `repeat:${step.repeat.count}`; step.blockedReason = null; step.blockedUntil = null;
+      const unfinished = row.steps.find(workStepUnfinished);
+      if (unfinished) {
+        const ready = readyWorkSteps(row.steps)[0];
+        row.state = ready ? 'working' : 'needs_instruction';
+        row.continuation = ready ? { kind: 'action', stepId: ready.id }
+          : { kind: 'question', questionId: randomUUID(), text: unfinished.blockedReason ?? `What evidence or additional work is needed to verify “${unfinished.title}”?` };
+        row.activity = `${row.activity} · done; ${ready ? `continuing with “${ready.title}”` : 'the rest needs attention'}`;
+      } else {
+        row.state = 'verifying';
+        row.continuation = { kind: 'question', questionId: randomUUID(), text: 'Every step is done. Does the result meet every completion criterion?' };
+        row.activity = `${row.activity} · all done; waiting for your confirmation`;
+      }
+    }
+    return save(tx, row, 'step.progress', row.activity);
+  });
+}
+export { workStepProgress } from './workPlan.js';
+
+/** A repeat declaration from the model: which step, how many items, what one
+ * successful tool run counts as one item. */
+function repeatInput(value: unknown): { count: number; unit: string; tool: string } {
+  const v = value as Record<string, unknown> | null;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new WorkGoalError('Describe a repeat as count, unit and tool.');
+  if (!Number.isSafeInteger(v.count) || (v.count as number) < 1 || (v.count as number) > 10000) throw new WorkGoalError('A repeat count is a whole number from 1 to 10000.');
+  if (typeof v.tool !== 'string' || !/^[a-z][a-z0-9_]{1,80}$/.test(v.tool)) throw new WorkGoalError('Name the tool whose successful run counts as one item.');
+  return { count: v.count as number, unit: text(v.unit ?? 'item', 40), tool: v.tool };
+}
+
 export async function createWorkGoal(db: Db, args: { ownerUserId: string; threadId: string; sourceMessageId: string;
-  outcome: unknown; criteria: unknown; steps: unknown }): Promise<WorkGoalSnapshot> {
+  outcome: unknown; criteria: unknown; steps: unknown; repeats?: unknown }): Promise<WorkGoalSnapshot> {
   const outcome = text(args.outcome, 500), criteria = strings(args.criteria), titles = strings(args.steps, 40);
   if (!criteria.length || !titles.length) throw new WorkGoalError('Record what finished means and at least one concrete step.');
+  const repeats = new Map<number, { count: number; unit: string; tool: string }>();
+  if (args.repeats !== undefined) {
+    if (!Array.isArray(args.repeats) || args.repeats.length > titles.length) throw new WorkGoalError('List at most one repeat per step.');
+    for (const entry of args.repeats) {
+      const index = (entry as { step?: unknown })?.step;
+      if (!Number.isSafeInteger(index) || (index as number) < 1 || (index as number) > titles.length) throw new WorkGoalError('A repeat names its step by position, counting from 1.');
+      repeats.set((index as number) - 1, repeatInput(entry));
+    }
+  }
   return transaction(db, async tx => {
     await tx.query(`select id from users where id=$1 for update`, [args.ownerUserId]);
     const [source] = await tx.query(`select m.id from messages m join threads t on t.id=m.thread_id
@@ -117,7 +177,8 @@ export async function createWorkGoal(db: Db, args: { ownerUserId: string; thread
     if (count.count >= 100) throw new WorkGoalError('Finish or cancel an existing goal before starting more work.', 409);
     const stepIds = titles.map(() => randomUUID());
     const steps: WorkGoalStep[] = titles.map((title, index) => ({ id: stepIds[index], title, state: 'pending', taskId: null,
-      evidence: null, dependsOn: index ? [stepIds[index - 1]] : [], blockedReason: null }));
+      evidence: null, dependsOn: index ? [stepIds[index - 1]] : [], blockedReason: null,
+      ...(repeats.has(index) ? { repeat: { ...repeats.get(index)!, done: 0 } } : {}) }));
     const [row] = await tx.query<GoalRow>(`insert into work_goals(id,owner_user_id,thread_id,source_message_id,state,outcome,criteria,steps,continuation,activity)
       values($1,$2,$3,$4,'planning',$5,$6,$7,$8,$9) returning *`,
       [randomUUID(), args.ownerUserId, args.threadId, args.sourceMessageId, outcome, json(criteria), json(steps),
@@ -178,7 +239,7 @@ export async function startAutomationWorkTask(db: Db, args: {
       }
       return { taskId: previous.task_id, state: previous.state, replayed: true, goal: snapshot(row), executionPermissionGranted: false };
     }
-    current(row, args.revision);
+    await current(tx, row, args.revision);
     if (step.taskId) throw new WorkGoalError('Keep this step’s existing task. Do not create a replacement attempt.', 409);
     const [effect] = await tx.query('select 1 from work_goal_effects where goal_id=$1 and (step_id=$2 or state=$3) limit 1',
       [goalId, stepId, 'started']);
@@ -207,15 +268,17 @@ export async function reviseWorkPlan(db: Db, args: { ownerUserId: string; goalId
   const reason = text(args.reason, 500);
   if (!Array.isArray(args.steps) || !args.steps.length || args.steps.length > 40) throw new WorkGoalError('Use between 1 and 40 plan steps.');
   const input = args.steps.map(value => {
+    const keys = value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).sort().join(',') : '';
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).sort().join(',') !== 'dependsOn,id,title'
+      || (keys !== 'dependsOn,id,title' && keys !== 'dependsOn,id,repeat,title')
       || typeof value.id !== 'string' || !(UUID.test(value.id) || /^new:[a-z0-9_-]{1,40}$/.test(value.id))
       || !Array.isArray(value.dependsOn) || value.dependsOn.length > 39
       || value.dependsOn.some((item: unknown) => typeof item !== 'string')) throw new WorkGoalError('Use an exact step identity, title and dependency list.');
-    return { id: value.id as string, title: text(value.title), dependsOn: [...value.dependsOn] as string[] };
+    return { id: value.id as string, title: text(value.title), dependsOn: [...value.dependsOn] as string[],
+      repeat: !('repeat' in value) ? undefined : value.repeat === null ? null : repeatInput(value.repeat) };
   });
   return transaction(db, async tx => {
-    const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
+    const row = await owned(tx, args.ownerUserId, args.goalId, true); await current(tx, row, args.revision);
     if (row.state === 'paused' || row.state === 'verifying') throw new WorkGoalError('Resume this work with instructions before changing its plan.', 409);
     const needsReview = needsPlanReview(row);
     if ((needsReview || args.outcomeRevision !== undefined) && args.outcomeRevision !== row.outcome_revision) {
@@ -240,8 +303,12 @@ export async function reviseWorkPlan(db: Db, args: { ownerUserId: string; goalId
         && (step.title !== previous.title || JSON.stringify([...dependsOn].sort()) !== JSON.stringify([...workDependencies(row.steps, previous)].sort()))) {
         throw new WorkGoalError('Keep the meaning and dependencies of a step that already has an action or receipt.', 409);
       }
-      return previous ? { ...previous, title: step.title, dependsOn }
-        : { id: ids.get(step.id)!, title: step.title, dependsOn, state: 'pending' as const, taskId: null, evidence: null, blockedReason: null };
+      // A repeat keeps its count of done items when it stays the same loop.
+      const repeat = step.repeat === undefined ? previous?.repeat ?? null
+        : step.repeat === null ? null
+        : { ...step.repeat, done: previous?.repeat && previous.repeat.tool === step.repeat.tool ? Math.min(previous.repeat.done, step.repeat.count) : 0 };
+      return previous ? { ...previous, title: step.title, dependsOn, repeat }
+        : { id: ids.get(step.id)!, title: step.title, dependsOn, state: 'pending' as const, taskId: null, evidence: null, blockedReason: null, repeat };
     });
     const visiting = new Set<string>(), visited = new Set<string>();
     function visit(stepId: string) {
@@ -290,7 +357,7 @@ export async function retireWorkStep(db: Db, args: { ownerUserId: string; goalId
   const stepId = id(args.stepId), reason = text(args.reason);
   if (typeof args.continueWork !== 'boolean') throw new WorkGoalError('Choose whether to continue after reviewing the plan.');
   return transaction(db, async tx => {
-    const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
+    const row = await owned(tx, args.ownerUserId, args.goalId, true); await current(tx, row, args.revision);
     const step = row.steps.find(value => value.id === stepId);
     if (!step || !workStepUnfinished(step)) throw new WorkGoalError('Choose an unfinished required step.');
     if (row.steps.filter(workStepRequired).length <= 1) throw new WorkGoalError('Keep at least one required step. Add replacement work to the plan or cancel the goal if it is no longer needed.');
@@ -359,7 +426,7 @@ export async function changeWorkOutcome(db: Db, args: { ownerUserId: string; goa
   const outcome = text(args.outcome, 500), criteria = strings(args.criteria), reason = text(args.reason);
   if (!criteria.length || typeof args.continueWork !== 'boolean') throw new WorkGoalError('Record completion criteria and choose whether to continue.');
   return transaction(db, async tx => {
-    const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
+    const row = await owned(tx, args.ownerUserId, args.goalId, true); await current(tx, row, args.revision);
     if (row.outcome === outcome && JSON.stringify(row.criteria) === JSON.stringify(criteria)) {
       throw new WorkGoalError('The outcome and criteria are unchanged. Use Add instructions to steer the next action.');
     }
@@ -497,7 +564,7 @@ export async function checkpointWorkGoal(db: Db, args: { ownerUserId: string; go
   if (!cp || typeof cp !== 'object' || Array.isArray(cp)) throw new WorkGoalError('Save the decisions, facts, assumptions and next action.');
   const checkpoint: WorkCheckpoint = { decisions: strings(cp.decisions), facts: strings(cp.facts), assumptions: strings(cp.assumptions), nextAction: text(cp.nextAction) };
   return transaction(db, async tx => {
-    const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
+    const row = await owned(tx, args.ownerUserId, args.goalId, true); await current(tx, row, args.revision);
     if (row.state === 'paused') throw new WorkGoalError('The user paused this work. Only the user can resume it.', 409);
     const next = args.next as Record<string, unknown> | null;
     if (!next || typeof next !== 'object' || Array.isArray(next)) throw new WorkGoalError('Every unfinished goal needs a next step, wait or question.');
@@ -559,7 +626,7 @@ export async function checkpointWorkGoal(db: Db, args: { ownerUserId: string; go
 
 export async function verifyWorkGoal(db: Db, args: { ownerUserId: string; goalId: string; revision: unknown }): Promise<WorkGoalSnapshot> {
   return transaction(db, async tx => {
-    const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
+    const row = await owned(tx, args.ownerUserId, args.goalId, true); await current(tx, row, args.revision);
     if (row.state === 'paused') throw new WorkGoalError('The user paused this work.', 409);
     if (needsPlanReview(row)) throw new WorkGoalError('Review the plan for the updated outcome before verification.', 409);
     for (const step of row.steps) {
@@ -597,7 +664,7 @@ export async function controlWorkGoal(db: Db, args: { ownerUserId: string; goalI
     // revision on the person's screen is often already stale when they press
     // Pause or Cancel; refusing would leave the work running against their
     // wish. Resuming and confirming still need the exact revision they saw.
-    if (args.action !== 'pause' && args.action !== 'cancel') current(row, args.revision);
+    if (args.action !== 'pause' && args.action !== 'cancel') await current(tx, row, args.revision);
     if (args.action === 'pause') { row.state = 'paused'; row.continuation = { kind: 'user_paused' }; row.activity = 'Paused by you'; }
     else if (args.action === 'cancel') { row.state = 'cancelled'; row.continuation = null; row.activity = 'Cancelled by you'; }
     else if (args.action === 'confirm') {
@@ -650,7 +717,7 @@ export async function setWorkLimits(db: Db, args: { ownerUserId: string; goalId:
     throw new WorkGoalError('Choose an exact background-work deadline or no goal-specific deadline.');
   }
   return transaction(db, async tx => {
-    const row = await owned(tx, args.ownerUserId, args.goalId, true); current(row, args.revision);
+    const row = await owned(tx, args.ownerUserId, args.goalId, true); await current(tx, row, args.revision);
     row.automatic_run_limit = args.runLimit as number | null; row.automatic_deadline = args.deadline as string | null;
     const reason = workBudgetReason(row), active = ['planning', 'working', 'waiting'].includes(row.state);
     if (active && reason) {

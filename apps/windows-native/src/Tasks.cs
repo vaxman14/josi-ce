@@ -112,7 +112,11 @@ namespace Josi.Native {
       if (goal["activity"].Text.Length > 0) Ui.Add(stack, Ui.Secondary(goal["activity"].Text), 10);
       foreach (var step in VisibleSteps()) {
         var s = step["state"].Text;
-        var label = Ui.T(step["title"].Text);
+        // A repeat step shows how far along it is, counted by the server from
+        // what the tools did ("Photo 14 of 53"), live.
+        var repeat = step["repeat"];
+        var progress = repeat.IsNull ? "" : " — " + Wires.Capitalize(repeat["unit"].Text.Length > 0 ? repeat["unit"].Text : "item") + " " + Math.Min(repeat["done"].Integer, repeat["count"].Integer) + " of " + repeat["count"].Integer;
+        var label = Ui.T(step["title"].Text + progress);
         if (s == "skipped") label.TextDecorations = TextDecorations.Strikethrough;
         var icon = Ui.Icon(s == "verified" ? Glyph.Check : s == "skipped" ? Glyph.Minus : Glyph.Circle, 14, s == "verified" ? Ui.Green : Ui.Muted);
         icon.Margin = new Thickness(0, 2, 8, 0); icon.VerticalAlignment = VerticalAlignment.Top;

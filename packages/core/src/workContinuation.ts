@@ -210,6 +210,11 @@ export async function settleWorkContinuation(db: Db, turnId: string): Promise<vo
     if (steered) return;
     if (turn.status === 'completed' && goal.revision > turn.work_goal_revision) {
       await tx.query(`update work_goals set continuation_ready_at=now()+interval '30 seconds' where id=$1`, [goal.id]);
+      // Items counted on a repeat step during this segment: one plain line in
+      // the conversation ("Photo 14 of 53"), instead of a recovery card.
+      const [progress] = await tx.query<{ summary: string }>(`select summary from work_goal_events where goal_id=$1 and kind='step.progress' and sequence>$2 order by sequence desc limit 1`, [goal.id, turn.work_goal_revision]);
+      if (progress) await addMessage(tx, { threadId: goal.thread_id, direction: 'out', body: progress.summary,
+        meta: { work_goal_id: goal.id, work_goal_revision: goal.revision, progress_notice: true } });
       return;
     }
     const blocker = automationBlockerFromReceipts(turn.tool_receipts);
