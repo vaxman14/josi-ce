@@ -19,7 +19,7 @@ Server changes made for the app: connections started from the app finish through
 - Layout: one left-aligned content column and one spacing rhythm for every section.
 
 Still open:
-- **4 Google sign-in live test**: needs Google registered under Connectors, which needs a public HTTPS address.
+- **4 Google sign-in live test**: needs Google registered under Connectors. The public HTTPS address exists since October 23: `https://ce.heyjosi.com` reaches this PC's dev server through the Cloudflare Tunnel "josi-thebutt" (connector started by `Start-DevServer.ps1` from `C:\Dev\josi-dev\cloudflared`, token in `data\secrets\cloudflared-token`; `runtime.json` has `publicUrl` https and `cookieSecure=false` for the local native app). What remains is registering Google with the `https://ce.heyjosi.com` callback and the live test.
 - **16 Streaming replies**: the server does not stream replies to any client yet; the app now checks every second while a reply is written. True streaming is a server change.
 - **27 Chrome acceptance** on Roman's page; **29 Windows Hello approvals** need the server's protected-confirmation enrollment (currently Mac-only) ported to Windows.
 - **34 full installer build**: needs the pinned runtimes and helper builds rebuilt on this PC, then the installer compiled.
