@@ -338,6 +338,19 @@ export class PcControl {
 
 export const LOCAL_WINDOWS_PC='local-windows-host';
 const PRESENCE_TTL=30_000;
+/** Build item 36: every Josi app instance names its own PC (`win-<id>`), so
+ * two PCs on one account keep separate permissions, requests and presence.
+ * An app that sends no identity is the hosting PC of the old single-PC form. */
+export function pcIdFrom(value:unknown):string{
+  return typeof value==='string'&&/^[a-z0-9-]{1,80}$/.test(value)?value:LOCAL_WINDOWS_PC;
+}
+/** The owner's PC whose app reported in most recently and is still live:
+ * where the assistant's PC tools run. Null when no app is open anywhere. */
+export async function livePcId(db:Db,owner:string):Promise<string|null>{
+  if(!uuid(owner))return null;
+  const [row]=await db.query<{pc_id:string}>(`select pc_id from pc_control_presence where owner_user_id=$1 and expires_at>now() order by expires_at desc limit 1`,[owner]);
+  return row?.pc_id??null;
+}
 /** What the Windows app reports about the browser attached through its
  * native messaging host. Page content never travels here. */
 export type PcBrowserPresence={family:string;application:string;profile:string;origin:string|null;title:string|null};

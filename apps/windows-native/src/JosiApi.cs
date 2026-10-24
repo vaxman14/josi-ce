@@ -42,6 +42,16 @@ namespace Josi.Native {
         AllowAutoRedirect = false, UseCookies = true, CookieContainer = new CookieContainer(),
         UseDefaultCredentials = false, Credentials = null, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
       };
+      // Item 36: a server on the LAN answers with a certificate its own proxy
+      // issued. Windows does not know that authority; a Josi app that has
+      // pinned it (after the person confirmed its fingerprint once) does.
+      handler.ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => {
+        if (errors == System.Net.Security.SslPolicyErrors.None) return true;
+        if (certificate == null) return false;
+        if (TrustedByPin(Origin.Host, certificate, chain)) return true;
+        lock (untrustedGate) untrusted = new UntrustedServer { Host = Origin.Host, Thumbprint = certificate.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256), Subject = certificate.Subject };
+        return false;
+      };
       http = new HttpClient(handler, false) { Timeout = TimeSpan.FromSeconds(180), MaxResponseContentBufferSize = MaxResponse };
       streaming = new HttpClient(handler, false) { Timeout = Timeout.InfiniteTimeSpan };
       foreach (var client in new[] { http, streaming }) {
@@ -89,8 +99,74 @@ namespace Josi.Native {
       if (url.Host != Origin.Host || url.Scheme != Origin.Scheme || url.Port != Origin.Port) throw new JosiException("Reconnect to your Josi server.");
       return url;
     }
+    // ---- Trusting a LAN server's own certificate authority (item 36) ----
+    public sealed class UntrustedServer { public string Host, Thumbprint, Subject; }
+    static readonly object untrustedGate = new object();
+    static UntrustedServer untrusted;
+    /// The server whose certificate Windows refused on the last attempt, if any.
+    public static UntrustedServer TakeUntrusted() { lock (untrustedGate) { var u = untrusted; untrusted = null; return u; } }
+    static string PinFile(string host) {
+      var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi", "trusted");
+      Directory.CreateDirectory(folder);
+      return Path.Combine(folder, Regex.Replace(host.ToLowerInvariant(), "[^a-z0-9.-]", "_") + ".crt");
+    }
+    /// True when the presented chain leads to the authority pinned for this host.
+    static bool TrustedByPin(string host, System.Security.Cryptography.X509Certificates.X509Certificate certificate, System.Security.Cryptography.X509Certificates.X509Chain presented) {
+      try {
+        var file = PinFile(host);
+        if (!File.Exists(file)) return false;
+        using (var root = new System.Security.Cryptography.X509Certificates.X509Certificate2(file))
+        using (var leaf = new System.Security.Cryptography.X509Certificates.X509Certificate2(certificate))
+        using (var chain = new System.Security.Cryptography.X509Certificates.X509Chain()) {
+          chain.ChainPolicy.TrustMode = System.Security.Cryptography.X509Certificates.X509ChainTrustMode.CustomRootTrust;
+          chain.ChainPolicy.CustomTrustStore.Add(root);
+          chain.ChainPolicy.RevocationMode = System.Security.Cryptography.X509Certificates.X509RevocationMode.NoCheck;
+          if (presented != null) foreach (var element in presented.ChainElements) if (!element.Certificate.Equals(leaf)) chain.ChainPolicy.ExtraStore.Add(element.Certificate);
+          return chain.Build(leaf);
+        }
+      } catch (Exception) { return false; }
+    }
+    /// Fetches the server's certificate authority over the connection the
+    /// person just approved by its fingerprint, and pins it for this host.
+    public static async Task<string> TrustServer(string origin, UntrustedServer approved) {
+      using (var temp = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) {
+        temp.ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) =>
+          errors == System.Net.Security.SslPolicyErrors.None || (certificate != null && certificate.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256) == approved.Thumbprint);
+        using (var client = new HttpClient(temp, false) { Timeout = TimeSpan.FromSeconds(30) }) {
+          var result = Wires.Parse(await client.GetStringAsync(new Uri(new Uri(origin), "/api/network/ca")));
+          var pem = result["pem"].Text;
+          if (!pem.Contains("BEGIN CERTIFICATE")) throw new JosiException("This server issues no certificate of its own, so it cannot be trusted this way.");
+          using (var root = System.Security.Cryptography.X509Certificates.X509Certificate2.CreateFromPem(pem)) {
+            File.WriteAllBytes(PinFile(new Uri(origin).Host), root.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Cert));
+            return result["fingerprint"].Text;
+          }
+        }
+      }
+    }
+    public static bool IsUntrustedCertificate(Exception e) {
+      for (var inner = e; inner != null; inner = inner.InnerException)
+        if (inner is System.Security.Authentication.AuthenticationException) return true;
+      return false;
+    }
+
+    /// This PC's own name for PC Control (item 36): made once, kept in the
+    /// profile, so two PCs on one account never share permissions or requests.
+    public static readonly string DeviceId = LoadDeviceId();
+    static string LoadDeviceId() {
+      try {
+        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi");
+        var file = Path.Combine(folder, "device-id");
+        if (File.Exists(file)) { var saved = File.ReadAllText(file).Trim(); if (Regex.IsMatch(saved, "^win-[a-f0-9]{32}$")) return saved; }
+        Directory.CreateDirectory(folder);
+        var fresh = "win-" + Guid.NewGuid().ToString("N");
+        File.WriteAllText(file, fresh);
+        return fresh;
+      } catch (Exception) { return "win-" + Environment.MachineName.ToLowerInvariant().Replace("_", "-").Replace(".", "-"); }
+    }
+
     HttpRequestMessage Message(string method, Uri url) {
       var message = new HttpRequestMessage(new HttpMethod(method), url);
+      message.Headers.TryAddWithoutValidation("x-josi-pc", DeviceId);
       if (native) {
         message.Headers.TryAddWithoutValidation("x-josi-client", "native");
         if (session != null) message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session);

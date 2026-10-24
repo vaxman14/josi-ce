@@ -3,7 +3,7 @@
 // app's native messaging host. Every operation is an exact PC Control request
 // (action + browser + profile + origin), decided by the owner's saved
 // permissions or approved in Josi, and claimed by the app one at a time.
-import { LOCAL_WINDOWS_PC, PcControl, PcControlError, type Db, type MasterKey, type PcAction, type PcBrowserPresence } from '@josi-ce/core';
+import { LOCAL_WINDOWS_PC, livePcId, PcControl, PcControlError, type Db, type MasterKey, type PcAction, type PcBrowserPresence } from '@josi-ce/core';
 import type { ToolSpec } from './tools.js';
 
 const id = { type: 'string', format: 'uuid' };
@@ -42,14 +42,18 @@ export const PC_BROWSER_ABSENT_PROMPT = 'No browser tab is attached to Josi righ
   + 'If the owner asks about their browser, tab, page or website, say that plainly and tell them to click the Josi extension in their browser and choose "Attach this tab" (the tab detaches whenever Josi is restarted).';
 export const PC_BROWSER_TOOL_NAMES = new Set(PC_BROWSER_TOOLS.map(tool => tool.def.name));
 
-function service(db: Db, key: MasterKey) { return new PcControl(db, key, LOCAL_WINDOWS_PC); }
-/** Offered only on the Windows host, with control on and a tab attached. */
+/** The PC whose Josi app is open right now (item 36: the server may live on
+ * another machine; the tools run wherever the owner's app reports in). */
+async function service(db: Db, key: MasterKey, owner: string) { return new PcControl(db, key, await livePcId(db, owner) ?? LOCAL_WINDOWS_PC); }
+/** Offered when the owner's app is open somewhere with control on and a tab attached. */
 export async function pcBrowserToolAvailability(db: Db, owner: string, key: MasterKey | null | undefined): Promise<ToolSpec[]> {
-  if (process.platform !== 'win32' || process.env.JOSI_NATIVE_RUNTIME !== '1' || !key) return [];
+  if (!key) return [];
   try {
-    const [settings] = await db.query<{ enabled: boolean }>('select enabled from pc_control_settings where owner_user_id=$1 and pc_id=$2', [owner, LOCAL_WINDOWS_PC]);
+    const pcId = await livePcId(db, owner);
+    if (!pcId) return [];
+    const [settings] = await db.query<{ enabled: boolean }>('select enabled from pc_control_settings where owner_user_id=$1 and pc_id=$2', [owner, pcId]);
     if (!settings?.enabled) return [];
-    return (await service(db, key).presence(owner))?.origin ? PC_BROWSER_TOOLS : [];
+    return (await new PcControl(db, key, pcId).presence(owner))?.origin ? PC_BROWSER_TOOLS : [];
   } catch { return []; }
 }
 
@@ -112,7 +116,7 @@ export async function settle(control: PcControl, owner: string, requestId: strin
 
 export async function executePcBrowserTool(db: Db, owner: string, key: MasterKey | null, name: string, input: Record<string, unknown>) {
   if (!key) return { ok: false, code: 'browser_unavailable', message: 'Browser control is unavailable on this installation.' };
-  const control = service(db, key);
+  const control = await service(db, key, owner);
   try {
     if (name === 'browser_check_request') return await settle(control, owner, String(input.request_id), 20_000);
     const browser: PcBrowserPresence | null = await control.presence(owner);

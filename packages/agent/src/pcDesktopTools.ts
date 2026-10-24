@@ -5,7 +5,7 @@
 // Every operation is an exact PC Control request decided by the owner's
 // saved permissions (Full control included) or approved in Josi. Moving the
 // mouse or typing on the PC stops Josi: the app refuses work for a while.
-import { LOCAL_WINDOWS_PC, PcControl, PcControlError, type Db, type MasterKey, type PcAction, type PcScope } from '@josi-ce/core';
+import { LOCAL_WINDOWS_PC, livePcId, PcControl, PcControlError, type Db, type MasterKey, type PcAction, type PcScope } from '@josi-ce/core';
 import { settle } from './pcBrowserTools.js';
 import type { ToolSpec } from './tools.js';
 
@@ -50,15 +50,18 @@ export const PC_DESKTOP_PROMPT = 'The Josi app is open on this PC, so you can us
   + 'Read the window again after acting and describe what actually changed; never report an action as done because you sent it.';
 export const PC_DESKTOP_TOOL_NAMES = new Set(PC_DESKTOP_TOOLS.map((tool) => tool.def.name));
 
-function service(db: Db, key: MasterKey) { return new PcControl(db, key, LOCAL_WINDOWS_PC); }
-/** Offered on the Windows host with control on and the Josi app connected
- * (with or without a browser tab). */
+/** The PC whose Josi app is open right now (item 36). */
+async function service(db: Db, key: MasterKey, owner: string) { return new PcControl(db, key, await livePcId(db, owner) ?? LOCAL_WINDOWS_PC); }
+/** Offered when the owner's app is open somewhere with control on (with or
+ * without a browser tab). */
 export async function pcDesktopToolAvailability(db: Db, owner: string, key: MasterKey | null | undefined): Promise<ToolSpec[]> {
-  if (process.platform !== 'win32' || process.env.JOSI_NATIVE_RUNTIME !== '1' || !key) return [];
+  if (!key) return [];
   try {
-    const [settings] = await db.query<{ enabled: boolean }>('select enabled from pc_control_settings where owner_user_id=$1 and pc_id=$2', [owner, LOCAL_WINDOWS_PC]);
+    const pcId = await livePcId(db, owner);
+    if (!pcId) return [];
+    const [settings] = await db.query<{ enabled: boolean }>('select enabled from pc_control_settings where owner_user_id=$1 and pc_id=$2', [owner, pcId]);
     if (!settings?.enabled) return [];
-    return (await service(db, key).presence(owner)) ? PC_DESKTOP_TOOLS : [];
+    return (await new PcControl(db, key, pcId).presence(owner)) ? PC_DESKTOP_TOOLS : [];
   } catch { return []; }
 }
 
@@ -79,7 +82,7 @@ async function observed(control: PcControl, owner: string, observationId: string
 
 export async function executePcDesktopTool(db: Db, owner: string, key: MasterKey | null, name: string, input: Record<string, unknown>) {
   if (!key) return { ok: false, code: 'desktop_unavailable', message: 'Desktop control is unavailable on this installation.' };
-  const control = service(db, key);
+  const control = await service(db, key, owner);
   try {
     if (name === 'desktop_check_request') return await settle(control, owner, String(input.request_id), 20_000);
     if (!await control.presence(owner)) return { ok: false, code: 'josi_not_open',

@@ -148,12 +148,53 @@ namespace Josi.Native {
   /// previous configuration if it fails.
   public sealed class NetworkView : SectionView {
     readonly PasswordBox password = Ui.Secret("Your current administrator password");
-    Wire launch = Wire.Null;
+    readonly TextBox publicUrl = Ui.Input("https://name-or-ip:8080");
+    Wire launch = Wire.Null, network = Wire.Null;
+    bool urlLoaded;
     public NetworkView(AppModel model, Window owner) : base(model, owner) { }
     protected override void OnLeave() { password.Clear(); }
-    protected override Task Load() { return Task.CompletedTask; }
+    protected override async Task Load() {
+      var api = Api; var stamp = Stamp;
+      try { var n = await api.Request("/admin/network"); if (Current(stamp)) { network = n; if (!urlLoaded) { publicUrl.Text = n["configuredUrl"].Text.Length > 0 ? n["configuredUrl"].Text : n["publicUrl"].Text; urlLoaded = true; } } }
+      catch (JosiException e) { if (e.Status != 404) throw; }
+    }
+    /// Item 36: where this server answers, and the address other devices use.
+    UIElement Addresses() {
+      if (network.IsNull) return Ui.CardBox("Addresses", Ui.Secondary(loading ? "Loading…" : "This server does not report its addresses."));
+      var mode = network["mode"].Text;
+      var items = new List<UIElement> {
+        Ui.Spread(Ui.Stack(2, Ui.Headline("Public address"), Ui.Caption(mode == "local" ? "Only this PC reaches Josi." : mode == "lan" ? "This PC and your network, over HTTPS with Josi's own certificate." : "A public domain, served through your tunnel or reverse proxy.")),
+          Ui.Copyable(network["publicUrl"].Text, 14, null, true)) };
+      if (network["restartNeeded"].Flag) items.Add(Ui.T("The saved address (" + network["configuredUrl"].Text + ") differs from the running one. Restart the server to apply it.", 13.5, null, Ui.Orange));
+      var lan = network["lan"].List;
+      if (lan.Count > 0) {
+        var rows = Ui.Stack(4);
+        foreach (var a in lan) rows.Children.Add(Ui.Row(10, Ui.Caption(a["name"].Text), Ui.Copyable("https://" + a["address"].Text + ":" + network["port"].Integer, 13, null, true)));
+        items.Add(Ui.Stack(4, Ui.Headline("This PC on the network"), Ui.Caption("Other devices reach this server at one of these once the public address is set to it."), rows));
+      }
+      if (!network["certificate"].IsNull) items.Add(Ui.Stack(2, Ui.Headline("Certificate fingerprint"),
+        Ui.Caption("The authority this server's proxy issues its LAN certificate from. The Josi app on another PC shows the same fingerprint before you trust it."), Ui.Copyable(network["certificate"]["fingerprint"].Text, 12, null, true)));
+      return Ui.CardBox("Addresses", items.ToArray());
+    }
+    UIElement ChangeAddress() {
+      Ui.Detach(publicUrl);
+      var items = new List<UIElement> {
+        Ui.Caption("https://name-or-ip:port for your network (Josi issues the certificate), http://localhost:port for this PC only, or https://your.domain for a public address served through a tunnel or reverse proxy."),
+        Ui.Field("Public address", publicUrl) };
+      var save = Ui.Pill("Save Address", () => {
+        var value = publicUrl.Text.Trim();
+        Perform(async (api, stamp) => { var r = await api.Request("/admin/network", "PUT", Wires.O("publicUrl", value)); if (Current(stamp)) { urlLoaded = false; note = r["note"].Text; } });
+      }, true);
+      save.IsEnabled = !network.IsNull && network["editable"].Flag;
+      items.Add(save);
+      if (!network.IsNull && !network["editable"].Flag) items.Add(Ui.Caption("This server takes its address from where it is started, not from a settings file."));
+      if (note.Length > 0) items.Add(Ui.Secondary(note));
+      return Ui.CardBox("Change the public address", items.ToArray());
+    }
     protected override UIElement Build() {
-      var page = Page(Ui.Heading("Network and Address", "Change LAN, public-domain, reverse-proxy, HTTPS and port settings without reinstalling Josi."));
+      var page = Page(Ui.HeadingWith("Network and Address", "Where this server answers, and how other devices reach it.", Ui.Pill("Refresh", StartLoad)));
+      Ui.Add(page, Addresses(), 0);
+      Ui.Add(page, ChangeAddress(), 0);
       Ui.Detach(password);
       var items = new List<UIElement> { Ui.Secondary("Josi briefly opens a separate local controller because this connection is unavailable while the address changes. The controller previews the change, verifies health at the new address, and restores the previous configuration if it fails."),
         Ui.Field("Administrator password (used once to re-confirm; never saved)", password),
@@ -171,7 +212,7 @@ namespace Josi.Native {
         items.Add(Ui.T("Setup code: " + launch["code"].Text, 18, FontWeights.SemiBold));
         items.Add(Ui.Caption("The code works once and expires with the maintenance session."));
       }
-      Ui.Add(page, Ui.CardBox("Open protected maintenance", items.ToArray()), 0);
+      Ui.Add(page, new Disclosure("Advanced: protected maintenance (ports, reverse proxy, certificates)", () => Ui.CardBox(null, items.ToArray()), !launch.IsNull), 0);
       return page;
     }
   }

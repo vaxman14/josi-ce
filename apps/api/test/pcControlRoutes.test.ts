@@ -29,13 +29,13 @@ async function call(path='',method='GET',body?:unknown,jar=ownerJar,csrf=true){
   return {status:r.status,body:await r.json(),cache:r.headers.get('cache-control')};
 }
 describe('PC permissions over the real authenticated HTTP surface',()=>{
-  it('requires installation owner, CSRF and native Windows; never exposes a browser executor',async()=>{
+  it('requires installation owner and CSRF on any server (item 36); never exposes a browser executor',async()=>{
     expect((await call('','GET',undefined,'')).status).toBe(401);expect((await call('','GET',undefined,memberJar)).status).toBe(403);
     expect((await call('/enabled','PUT',{enabled:true},ownerJar,false)).status).toBe(403);
     for(const route of ['/execute','/propose','/register-pc'])expect((await call(route,'POST',{})).status).toBe(404);
     const state=await call();expect(state.status).toBe(200);expect(state.cache).toBe('no-store');expect(state.body.enabled).toBe(false);expect(state.body.executorAvailable).toBe(false);
     const linux=createApp(db,{cookieSecure:false,appUrl:'http://localhost',nativeWindowsPermissions:false,masterKeyCheck:false}).listen(0,'127.0.0.1');
-    await new Promise<void>(resolve=>linux.once('listening',resolve));try{const r=await fetch(`http://127.0.0.1:${(linux.address() as AddressInfo).port}${endpoint}`,{headers:{cookie:ownerJar}});expect(r.status).toBe(404);}finally{await new Promise<void>(resolve=>linux.close(()=>resolve()));}
+    await new Promise<void>(resolve=>linux.once('listening',resolve));try{const r=await fetch(`http://127.0.0.1:${(linux.address() as AddressInfo).port}${endpoint}`,{headers:{cookie:ownerJar}});expect(r.status).toBe(503);}finally{await new Promise<void>(resolve=>linux.close(()=>resolve()));}
   });
   it('persists only the session owner/hosting-PC scopes and validates malformed choices',async()=>{
     const saved=await call('/policies','PUT',{action:'folder.read',scope,mode:'temporary',expiresAt:new Date(Date.now()+60000).toISOString(),ownerUserId:'foreign-user',pcId:'different-pc'});

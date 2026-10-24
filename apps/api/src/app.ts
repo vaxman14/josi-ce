@@ -46,6 +46,7 @@ import { maintenanceRoutes } from './http/maintenanceRoutes.js';
 import { adminWorkflowRoutes, mountWorkflowCallbacks, workflowRoutes } from './http/workflowRoutes.js';
 import { doctorRoutes, type DoctorHelper } from './http/doctorRoutes.js';
 import { pcControlRoutes } from './http/pcControlRoutes.js';
+import { networkPublicRoutes, networkRoutes } from './http/networkRoutes.js';
 import { settingsChangeRoutes } from './http/settingsChangeRoutes.js';
 import { improvementRoutes, turnContextRoutes } from './http/improvementRoutes.js';
 
@@ -192,6 +193,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   const voiceBox = voiceBoxRoutes(voice);
   api.use('/admin/voice-box', voiceBox.admin);
   api.use('/voice', voiceBox.voice);
+  // The proxy's own certificate authority, for a Josi app to pin (item 36).
+  api.use('/network', networkPublicRoutes());
 
   api.use('/setup', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   api.use('/setup', setupRoutes({
@@ -292,6 +295,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   api.use('/admin/improvements', improvementRoutes(db));
   api.use('/settings-changes', settingsChangeRoutes({ db, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport }));
+  api.use('/admin/network', networkRoutes({ db }));
   api.use('/admin/pc-control', pcControlRoutes({db,masterKey:cfg.masterKeyCheck,
     windows:cfg.nativeWindowsPermissions ?? (process.platform==='win32' && process.env.JOSI_NATIVE_RUNTIME==='1')}));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));

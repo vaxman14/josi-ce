@@ -108,7 +108,17 @@ namespace Josi.Native {
       workStreamUnsupported = false; workAccessEnded = false;
       ClearAccount();
       Address = next.OriginText;
-      await next.PrimeCsrf();
+      // A LAN server's own certificate (item 36): shown once, pinned on a yes.
+      try { await next.PrimeCsrf(); }
+      catch (System.Net.Http.HttpRequestException e) when (JosiApi.IsUntrustedCertificate(e)) {
+        var seen = JosiApi.TakeUntrusted();
+        if (seen == null || window == null) throw;
+        var fingerprint = string.Join(":", Regex.Matches(seen.Thumbprint, "..").Cast<Match>().Select(m => m.Value));
+        if (!Dialogs.Confirm(window, "Trust this server?", "Windows does not know the certificate of " + seen.Host + ". If this is your own Josi server on your network, compare this fingerprint with the one shown under Administration → Network on the server, then trust it once.\n\n" + fingerprint, "Trust This Server"))
+          throw new JosiException("Not connected. The server's certificate was not trusted.");
+        await JosiApi.TrustServer(next.OriginText, seen);
+        await next.PrimeCsrf();
+      }
       var incomplete = false;
       try { incomplete = !(await next.Request("/onboarding/state"))["completed"].Flag; }
       catch (JosiException e) { if (e.Status != 404) throw; /* CE servers without native bootstrap still accept login. */ }
