@@ -194,6 +194,27 @@ describe('durable native turns and devices',()=>{
     expect(limited.status).toBe(429);expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
   });
 
+  it('streams a turn: what Josi is doing now, then done the moment the reply is saved (item 16)',async()=>{
+    const threadId=await threadWith('alice');
+    const accepted=await call(`/api/assistant/threads/${threadId}/turns`,{method:'POST',jar:cookies.alice,body:{client_message_id:'live-1',message:'what is on today'}});
+    expect(accepted.status).toBe(202);const turnId=accepted.body.turn.id as string;
+    const url=`${base}/api/assistant/threads/${threadId}/turns/${turnId}/stream`;
+    expect((await fetch(url,{headers:{cookie:cookies.bob}})).status).toBe(404);
+    const controller=new AbortController();
+    const res=await fetch(url,{headers:{cookie:cookies.alice},signal:controller.signal});
+    expect(res.status).toBe(200);expect(res.headers.get('content-type')).toContain('text/event-stream');
+    const reader=res.body!.getReader();const decoder=new TextDecoder();let text='';
+    const until=async(marker:string)=>{const deadline=Date.now()+10_000;while(!text.includes(marker)){if(Date.now()>deadline)throw new Error('timed out waiting for '+marker+' in '+text);const {value,done}=await reader.read();if(done)break;text+=decoder.decode(value,{stream:true});}};
+    await until('event: progress');
+    expect(text).toContain('"status":"queued"');
+    await db.query(`update assistant_turns set progress=$2 where id=$1`,[turnId,json({phase:'tool',detail:'Checking your calendar',at:new Date().toISOString()})]);
+    await until('Checking your calendar');
+    await db.query(`update assistant_turns set status='failed',error_code='provider_unavailable',error_retryable=true where id=$1`,[turnId]);
+    await until('event: done');
+    expect(text).toContain('"status":"failed"');
+    controller.abort();
+  });
+
   it('seals Expo tokens and never returns ciphertext or plaintext',async()=>{
     const registered=await call('/api/assistant/devices',{method:'PUT',jar:cookies.alice,body:{device_identity:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',platform:'ios',expo_token:'ExpoPushToken[api_test]',app_state:'background',privacy_locked:true,categories:{assistant:true},quiet_start:'22:00',quiet_end:'07:00',timezone:'America/Los_Angeles'}});
     expect(registered.status).toBe(200);

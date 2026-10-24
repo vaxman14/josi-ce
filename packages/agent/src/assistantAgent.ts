@@ -133,6 +133,9 @@ export interface TurnArgs {
   /** Server-bound original goal for a background continuation, never a user
    * request field or a model-generated approval. */
   workGoalId?: string;
+  /** Item 16: what the turn is doing right now, for the person's screen.
+   * Best effort; a failing listener never fails the turn. */
+  onProgress?: (progress: { phase: 'thinking' | 'tool' | 'said'; detail: string }) => void;
   /** Relative dates in continued actions stay bound to the original request. */
   originalRequestAt?: Date;
   /** Durable queued channels require yes/no to target the presented approval
@@ -265,8 +268,25 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   }
 }
 
+/** What a tool is doing, in the person's words, for the live status line. */
+function toolActivity(name: string): string {
+  const known: Record<string, string> = {
+    query_calendar: 'Checking your calendar', get_event: 'Reading the event', search_email: 'Reading your mail', get_email: 'Reading the message',
+    check_email_availability: 'Checking your mail account', search_contacts: 'Looking through your contacts', draft_email: 'Drafting the email',
+    draft_calendar_event: 'Drafting the event', search_documents: 'Searching your files', workspace_list: 'Looking in the folder', workspace_read: 'Reading the file',
+    browser_open_page: 'Opening the page', browser_read_page: 'Reading the page', browser_click: 'Clicking in the browser', browser_fill: 'Typing in the browser',
+    browser_view_photo: 'Looking at the photo', desktop_list_windows: 'Looking at the open windows', desktop_read_window: 'Reading the window',
+    desktop_screenshot: 'Taking a screenshot', desktop_click: 'Clicking', desktop_click_point: 'Clicking', desktop_type: 'Typing', desktop_keys: 'Pressing keys',
+    desktop_launch: 'Opening the program', own_goal: 'Planning the work', checkpoint_goal: 'Saving progress', verify_goal: 'Checking the results',
+    revise_goal_plan: 'Updating the plan', schedule_reminder: 'Setting the reminder', create_task: 'Preparing the task', list_josi_settings: 'Reading settings',
+    propose_josi_setting_change: 'Preparing the settings change', remember: 'Saving a memory',
+  };
+  return known[name] ?? `Using ${name.replace(/_/g, ' ')}`;
+}
+
 async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   const { db, userId } = args;
+  const progress = (phase: 'thinking' | 'tool' | 'said', detail: string) => { try { args.onProgress?.({ phase, detail }); } catch { /* the screen is a courtesy */ } };
   // Whether what the one-step mode writes along the way ("Checking your
   // calendar.") is shown above the final answer. The person's choice, read
   // once per turn; the default is the answer alone.
@@ -660,6 +680,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
             : [projectedMessage];
         });
       }
+      progress('thinking', hop === 0 ? 'Thinking' : actions.length ? 'Working with what came back' : 'Thinking');
       outcome = await chat(
         args.registry,
         {
@@ -918,7 +939,9 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
 
     const toolResults: ToolResult[] = [];
     const toolImages: ChatImage[] = [];
+    if (callerSubscription && res.text.trim()) progress('said', res.text.trim().slice(0, 200));
     for (const call of res.toolCalls) {
+      progress('tool', toolActivity(call.name));
       let result: unknown;
       try {
         // A provider may still emit a known tool it was not offered. In

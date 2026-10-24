@@ -392,6 +392,34 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,attachment_receipts:t.attachment_ids.flatMap(id=>{const a=receiptById.get(id);return a?[{id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}}]:[];}),error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
   }));
 
+  /** Item 16: one turn, live. What Josi is doing right now, and the moment
+   * its reply is saved, pushed to the app instead of polled for. */
+  r.get('/threads/:id/turns/:turnId/stream',requireOwnership({db},{type:'thread',need:'owner'}),asyncRoute(async(req,res)=>{
+    const threadId=param(req,'id'),turnId=param(req,'turnId');
+    if(!/^[0-9a-f-]{36}$/i.test(turnId)){res.status(404).json({error:'no such turn'});return;}
+    res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});
+    const send=(event:string,data:unknown)=>{res.write('event: '+event+'\ndata: '+JSON.stringify(data)+'\n\n');};
+    res.write(': open\n\n');
+    let closed=false,last='';
+    const close=()=>{if(closed)return;closed=true;clearInterval(timer);clearTimeout(limit);res.end();};
+    req.on('close',close);
+    const tick=async()=>{
+      if(closed)return;
+      try{
+        const [turn]=await db.query<{status:string;progress:unknown;assistant_message_id:string|null;error_code:string|null}>(
+          'select status,progress,assistant_message_id,error_code from assistant_turns where id=$1 and thread_id=$2 and owner_user_id=$3',[turnId,threadId,req.user!.id]);
+        if(!turn){send('gone',{});close();return;}
+        const snapshot=JSON.stringify({status:turn.status,progress:turn.progress??null});
+        if(snapshot!==last){last=snapshot;send('progress',{status:turn.status,progress:turn.progress??null});}
+        if(turn.status==='completed'||turn.status==='failed'){send('done',{status:turn.status,messageId:turn.assistant_message_id,error:turn.error_code});close();}
+      }catch{close();}
+    };
+    const timer=setInterval(()=>{void tick();},400);
+    // A turn that never settles must not hold the connection forever.
+    const limit=setTimeout(close,30*60_000);
+    void tick();
+  }));
+
   r.put('/devices',handle(async(req,res)=>{
     if(!ctx.appUrl)throw new RouteError(503,'Push registration is unavailable because the deployment identity is unavailable.');
     let key;try{key=ctx.masterKey===false?null:loadMasterKey(ctx.masterKey??{});}catch{key=null;}

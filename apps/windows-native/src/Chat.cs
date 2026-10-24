@@ -143,7 +143,7 @@ namespace Josi.Native {
       goalScroller.Visibility = goals.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
       foreach (var turn in model.Turns.Where(t => t["status"].Text == "failed" && !model.Messages.Any(m => m.Id == t["inbound_message_id"].Text)))
         Ui.Add(messages, new ChatTurnFailure(model, turn), 12);
-      if (Thinking) Ui.Add(messages, Ui.Thinking(), 20);
+      if (Thinking) Ui.Add(messages, Ui.Thinking(model.TurnActivity), 20);
     }
 
     UIElement MessageRow(Wire message) {

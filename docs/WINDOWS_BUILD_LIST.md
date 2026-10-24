@@ -20,7 +20,7 @@ Server changes made for the app: connections started from the app finish through
 
 Still open:
 - **4 Google live test: done on October 23.** `https://ce.heyjosi.com` reaches this PC's dev server through the Cloudflare Tunnel "josi-thebutt" (connector started by `Start-DevServer.ps1` from `C:\Dev\josi-dev\cloudflared`, token in `data\secrets\cloudflared-token`; `runtime.json` has `publicUrl` https and `cookieSecure=false` for the local native app). Roman registered the Google application from the redesigned Connectors page and connected his Google account from the Windows app: consent in Chrome, callback on the public address, return into the app, connection active with every capability off until switched on. Sign in with Google itself (the login page button) is registered too and not yet tried.
-- **16 Streaming replies**: the server does not stream replies to any client yet; the app now checks every second while a reply is written. True streaming is a server change.
+- **16 Live replies: built October 24.** The model providers in use (and the Codex CLI mode) hand back a whole reply, so there is no word-by-word stream to show. What the app shows instead: the live status of the turn beside the animated J ("Thinking…", "Checking your calendar…", "Reading the page…", one line per tool as it starts; with narration on, the sentence Josi said along the way), pushed from the server over an event stream (`GET /assistant/threads/:id/turns/:turnId/stream`, worker writes `assistant_turns.progress`), and the reply itself appears the moment it is saved instead of on the next one-second poll. Word-by-word streaming stays a provider change for later.
 - **27 Chrome acceptance** on Roman's page; **29 Windows Hello approvals** need the server's protected-confirmation enrollment (currently Mac-only) ported to Windows.
 - **34 full installer build**: needs the pinned runtimes and helper builds rebuilt on this PC, then the installer compiled.
 - **35 signing**: needs Roman's Azure Trusted Signing sign-in.
@@ -63,7 +63,7 @@ Everything still to do for the Windows app, in build order. It combines the miss
 13. **Assistant migration**: OpenClaw, Hermes and Josi v1 profile, memory and conversation-archive imports with preview, receipts, rollback and the read-only imported archive. (Web: `AssistantMigration.tsx`.)
 14. **Workflows**: Zapier, Zapier MCP, n8n (including private network) and Make; workflow discovery, exposure controls, input schemas, preparation, approvals, execution, signed callbacks, history and disconnect. User and administrator screens. (Web: `Workflows.tsx`, `admin/Workflows.tsx`.)
 15. **Custom APIs**: custom REST APIs, OpenAPI 3 import, endpoint allowlists, GET/HEAD actions, write and delete approval, bearer, API-key, basic and custom-header authentication, audit history. (Web: `admin/CustomApis.tsx`.)
-16. **Streaming replies**: show the reply as it is written instead of on refresh.
+16. **Live replies**: the status of the running turn as it happens and the reply the moment it is saved (word-by-word streaming awaits a provider that streams).
 17. **Conversation search** and **conversation privacy** controls.
 18. **Reminders and scheduled tasks**: a screen for reminders and scheduled work.
 19. **Usage**: personal usage and cost, per-user budgets and model allowances; administrator overview with per-user activity, interrupt-rate and correction-rate metrics. (Web: `Usage.tsx`, `admin/Overview.tsx`.)
@@ -103,7 +103,7 @@ Everything still to do for the Windows app, in build order. It combines the miss
 
 ### Assistant
 - AI chat, durable history, conversation task tracking, background task manager, task activity, retry and cancellation: **Have**.
-- Streaming replies: **Partial** (replies arrive by refresh, not token streaming).
+- Live replies: **Have** (live turn status and instant delivery; no word-by-word streaming from the providers).
 - Conversation search: **Missing** (item 17). Conversation privacy: **Partial** (item 17).
 - Scheduled tasks and reminders: **Partial** (scheduled continuation shown; no reminders screen; item 18).
 - Exact-action approvals: **Have** (routine approval settings, step-up). Expiring approvals and approval history: **Missing** (item 10).

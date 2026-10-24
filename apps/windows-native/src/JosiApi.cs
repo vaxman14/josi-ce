@@ -244,6 +244,40 @@ namespace Josi.Native {
 
     /// Owner-scoped invalidations only. Event contents never become goal text,
     /// completion evidence, permissions, or instructions.
+    /// Item 16: one turn, live. Reports what Josi is doing as it happens and
+    /// returns when the turn is done (completed or failed) or the connection ends.
+    public async Task FollowTurn(string threadId, string turnId, Action<string> activity, CancellationToken cancel) {
+      var url = Route("/assistant/threads/" + Uuid(threadId) + "/turns/" + Uuid(turnId) + "/stream");
+      using (var linked = CancellationTokenSource.CreateLinkedTokenSource(closing.Token, cancel))
+      using (var message = Message("GET", url)) {
+        message.Headers.Accept.Clear(); message.Headers.Accept.ParseAdd("text/event-stream");
+        using (var response = await streaming.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, linked.Token)) {
+          var media = response.Content.Headers.ContentType == null ? "" : response.Content.Headers.ContentType.MediaType;
+          if ((int)response.StatusCode != 200 || media != "text/event-stream") throw new JosiException("Live replies are unavailable.", (int)response.StatusCode);
+          using (var stream = await response.Content.ReadAsStreamAsync())
+          using (linked.Token.Register(() => stream.Dispose())) {
+            var reader = new StreamReader(stream, new UTF8Encoding(false, true));
+            string evt = "", payload = ""; long total = 0;
+            while (true) {
+              var line = await reader.ReadLineAsync();
+              if (line == null || linked.IsCancellationRequested) return;
+              total += line.Length + 1;
+              if (total > 4 * 1024 * 1024 || line.Length > 16384) return;
+              if (line.Length == 0) {
+                if (evt == "progress") {
+                  var value = Wires.Parse(payload)["progress"];
+                  var phase = value["phase"].Text; var detail = value["detail"].Text;
+                  activity(phase == "said" ? detail : detail.Length > 0 ? detail + "…" : "");
+                } else if (evt == "done" || evt == "gone") return;
+                evt = ""; payload = "";
+              } else if (line.StartsWith("event:")) evt = line.Substring(6).Trim();
+              else if (line.StartsWith("data:")) payload += line.Substring(5).Trim();
+            }
+          }
+        }
+      }
+    }
+
     public async Task FollowWorkProgress(Action<string> signal) {
       if (closed || progress != null) throw new OperationCanceledException();
       var own = CancellationTokenSource.CreateLinkedTokenSource(closing.Token);

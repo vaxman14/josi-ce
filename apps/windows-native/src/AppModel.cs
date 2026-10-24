@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -603,6 +604,25 @@ namespace Josi.Native {
       LastAcceptedTurnId = accepted["turn"]["id"].Text;
       pending = null; PendingMessage = false;
       await ReloadWorkspace();
+      FollowTurn(api, turn.Thread, LastAcceptedTurnId);
+    }
+    /// Item 16: the running turn's live status, shown beside "Josi is thinking".
+    public string TurnActivity = "";
+    CancellationTokenSource turnFollow;
+    async void FollowTurn(JosiApi api, string thread, string turnId) {
+      if (turnFollow != null) turnFollow.Cancel();
+      var own = new CancellationTokenSource(); turnFollow = own;
+      TurnActivity = "";
+      try {
+        await api.FollowTurn(thread, turnId, text => { if (turnFollow == own) { TurnActivity = text; NotifyWorkspace(); } }, own.Token);
+      } catch (Exception) { /* the poll timer still brings the reply */ }
+      finally {
+        if (turnFollow == own) {
+          turnFollow = null; TurnActivity = "";
+          // The reply is saved: show it now rather than on the next poll.
+          if (Api == api && SelectedThread == thread) { try { await LoadThread(thread); } catch (Exception) { } NotifyWorkspace(); }
+        }
+      }
     }
     public async Task Control(Wire goal, string action, string instruction) {
       var api = Api; if (api == null) return;

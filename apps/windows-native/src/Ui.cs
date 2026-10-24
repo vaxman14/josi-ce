@@ -353,8 +353,8 @@ namespace Josi.Native {
       return markElement;
     }
     /// The animated J thinking indicator in the chat.
-    public static FrameworkElement Thinking() {
-      var row = Row(14, AnimatedMark(38), T("Josi is thinking…", 14, null, Muted));
+    public static FrameworkElement Thinking(string activity = null) {
+      var row = Row(14, AnimatedMark(38), T(string.IsNullOrEmpty(activity) ? "Josi is thinking…" : activity, 14, null, Muted));
       row.Margin = new Thickness(0, 12, 0, 12);
       System.Windows.Automation.AutomationProperties.SetName(row, "Josi is thinking");
       return row;
