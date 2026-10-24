@@ -354,6 +354,14 @@ namespace Josi.Native {
             Ui.Add(stack, enable, 12);
           }
         } else Ui.Add(stack, Ui.T("Your server administrator manages the voice models."), 16);
+        // Anyone may hear the voice before deciding to talk with it.
+        if (voice.Available) Ui.Add(stack, Ui.Pill(voice.Speaking ? "Stop the Sample" : "Hear a Sample", () => {
+          var api = model.Api; if (api == null) return;
+          if (voice.Speaking) { voice.Interrupt(); render(); return; }
+          voice.Speak("Hi, I’m Josi. This is how I sound when we talk. What would you like to work on today?", api)
+            .ContinueWith(t => { if (t.Exception != null) error = AppModel.Friendly(t.Exception.InnerException); render(); }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
+          render();
+        }), 12);
         if (error.Length > 0) Ui.Add(stack, Ui.T(error, 13, null, Ui.Orange), 12);
         if (working) Ui.Add(stack, Ui.Caption("Checking speech models…"), 12);
         stack.IsEnabled = !working;

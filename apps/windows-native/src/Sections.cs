@@ -79,6 +79,7 @@ namespace Josi.Native {
   public sealed class MemoryView : SectionView {
     List<Wire> memories = new List<Wire>(), suggestions = new List<Wire>();
     string savedMode = "", mode = "manual";
+    bool showNarration;
     readonly TextBox added = Ui.Input("Something Josi should remember", "", true);
     readonly Dictionary<string, TextBox> drafts = new Dictionary<string, TextBox>();
     Button addButton;
@@ -95,6 +96,7 @@ namespace Josi.Native {
       if (value != "manual" && value != "automatic" && value != "off") throw new JosiException("Saved memory changed. Refresh and review it before applying your edit.");
       var previous = savedMode;
       memories = saved["memories"].List; suggestions = pending["suggestions"].List; savedMode = value;
+      showNarration = settings["settings"]["show_narration"].Flag;
       if (previous.Length == 0 || mode == previous) mode = value;
     }
     protected override UIElement Build() {
@@ -116,6 +118,14 @@ namespace Josi.Native {
       save.IsEnabled = savedMode.Length > 0 && savedMode != mode;
       Ui.Add(page, Ui.CardBox("Learning preferences", Ui.Field("New memories", picker),
         Ui.Caption("Lessons from completed work always require your review. These settings do not clear existing memories or unfinished work and its saved progress."), save), 20);
+      // What Josi writes along the way ("Checking your calendar.") is honest
+      // but it is not the answer; the final reply alone is the default.
+      var narration = Ui.Toggle("Show what Josi says along the way, above the final answer", showNarration);
+      narration.Click += delegate {
+        var wanted = narration.IsChecked == true;
+        Perform(async (api, stamp) => { await api.Request("/persona/settings", "PUT", Wires.O("showNarration", wanted)); note = wanted ? "Josi will show its steps above the answer." : "Josi will show only the final answer."; });
+      };
+      Ui.Add(page, Ui.CardBox("Replies", narration, Ui.Caption("With this off, a reply that needed a few steps shows only its result. The steps still run and still appear in the Task Manager.")), 20);
       if (suggestions.Count > 0) {
         Ui.Add(page, Ui.Title2("Proposed memories and lessons"), 20);
         foreach (var item in suggestions) Ui.Add(page, Suggestion(item), 12);

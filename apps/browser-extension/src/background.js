@@ -20,17 +20,45 @@ function webUrl(value) {
 }
 function live() {
   const now = Date.now();
-  if (now < lastClock || !workspace || now >= workspace.expiresAt) { stop('Connection expired. Reconnect from Josi.'); return false; }
+  if (now < lastClock || !workspace || now >= workspace.expiresAt) { stop('Connection expired. Reconnect from Josi.', true, true); return false; }
   lastClock = now;
   return true;
 }
-function stop(message = 'Paused. Resume control in Josi.', disconnect = true) {
+function stop(message = 'Paused. Resume control in Josi.', disconnect = true, remember = false) {
+  const lostTab = attachedTabId;
   generation++; workspace = null; attachedTabId = null; status = message;
   if (disconnect) { const previous = nativeChannel; nativeChannel = null; previous?.close(); }
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
   void browserApi.action.setBadgeText({ text: '' });
+  // The host went away (Josi closed or restarted), not the person: keep the
+  // tab in mind and attach it again by itself once Josi is back.
+  if (remember && Number.isSafeInteger(lostTab)) scheduleReattach(lostTab);
 }
+// Re-attaching after Josi restarts. Only a connection the host dropped is
+// remembered; a stop from the popup, the page or a closed tab is final. The
+// attempt runs for ten minutes, then the tab has to be attached by hand.
+let reattach = null;
+function cancelReattach() { if (reattach?.timer) clearTimeout(reattach.timer); reattach = null; void browserApi.alarms?.clear('josi-reattach'); }
+function scheduleReattach(tabId) {
+  cancelReattach();
+  reattach = { tabId, until: Date.now() + 10 * 60000, timer: setTimeout(tryReattach, 3000) };
+  status = 'Josi closed. This tab attaches itself again when Josi is back.';
+  void browserApi.alarms?.create('josi-reattach', { periodInMinutes: 0.5 });
+}
+async function tryReattach() {
+  const plan = reattach;
+  if (!plan || pending || workspace) return;
+  plan.timer = null;
+  if (Date.now() > plan.until) { cancelReattach(); status = 'Josi did not come back. Attach the tab again when it is open.'; return; }
+  let tab = null;
+  try { tab = await browserApi.tabs.get(plan.tabId); } catch { /* closed meanwhile */ }
+  if (!tab || tab.incognito || !webUrl(tab.url)) { cancelReattach(); status = 'The attached tab is gone. Attach a tab again when you need Josi.'; return; }
+  await connect(plan.tabId, true);
+  if (workspace) { cancelReattach(); return; }
+  if (reattach === plan) plan.timer = setTimeout(tryReattach, 5000);
+}
+browserApi.alarms?.onAlarm.addListener(alarm => { if (alarm.name === 'josi-reattach') void tryReattach(); });
 async function native(operation, payload = {}, sessionId = workspace?.sessionId) {
   const requestId = crypto.randomUUID();
   const request = { version: 1, requestId, operation, sessionId: sessionId ?? null, payload };
@@ -54,17 +82,19 @@ function acceptSession(value) {
     profileId: value.profileId, family: value.family, expiresAt: value.expiresAt,
     origins: Object.freeze([...value.origins]) });
 }
-async function connect() {
+async function connect(tabId = null, quiet = false) {
   if (pending || workspace) return;
+  if (!quiet) cancelReattach();
   pending = true; const epoch = ++generation;
+  const waiting = status;
   status = 'Attaching this tab to Josi…';
   nativeChannel?.close();
   const connection = globalThis.createJosiNativeChannel(browserApi, config.family, () => {
-    if (nativeChannel === connection) stop('Connection interrupted. Reconnect from Josi; uncertain actions will not be repeated.');
+    if (nativeChannel === connection) stop('Connection interrupted. Reconnect from Josi; uncertain actions will not be repeated.', true, true);
   });
   nativeChannel = connection;
   try {
-    const tabs = await browserApi.tabs.query({ active: true, currentWindow: true });
+    const tabs = tabId === null ? await browserApi.tabs.query({ active: true, currentWindow: true }) : [await browserApi.tabs.get(tabId)];
     if (tabs.length !== 1 || tabs[0].incognito || !webUrl(tabs[0].url)) throw new Error('unsupported_tab');
     attachedTabId = tabs[0].id;
     const origin = webUrl(tabs[0].url).origin;
@@ -89,7 +119,7 @@ async function connect() {
       : 'Connected. Waiting for a permitted task; page access is not enabled.';
     await browserApi.action.setBadgeText({ text: 'J' });
     pollTimer = setTimeout(poll, 100);
-  } catch { if (epoch === generation) stop('No current Josi connection is available. Open Josi on this computer and allow this browser there first.'); }
+  } catch { if (epoch === generation) stop(quiet ? waiting : 'No current Josi connection is available. Open Josi on this computer and allow this browser there first.'); }
   finally { pending = false; }
 }
 async function currentTab(tabId) {
@@ -255,7 +285,7 @@ async function poll() {
       // a command or converts a click into proof of business completion.
       await native('browser.receipt', { commandId: reply.command.id, ...result }, sessionId);
     }
-  } catch { if (epoch === generation) stop('Connection interrupted. Josi must reconnect before continuing.'); }
+  } catch { if (epoch === generation) stop('Connection interrupted. Josi must reconnect before continuing.', true, true); }
   finally {
     pending = false;
     if (epoch === generation && workspace) pollTimer = setTimeout(poll, 750);

@@ -267,6 +267,12 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
 
 async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   const { db, userId } = args;
+  // Whether what the one-step mode writes along the way ("Checking your
+  // calendar.") is shown above the final answer. The person's choice, read
+  // once per turn; the default is the answer alone.
+  const showNarration = await db.query<{ show_narration: boolean }>(
+    `select show_narration from persona_settings where user_id = $1`, [userId],
+  ).then((rows) => rows[0]?.show_narration === true).catch(() => false);
   const actions: AgentTurnResult['actions'] = [];
   let retry: AssistantRetryTarget | undefined;
   const sessionKey = args.sessionKey ?? args.threadId;
@@ -777,8 +783,10 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       }
       let reply = res.text.trim() ? res.text : emptyFallback(actions);
       // What the one-step mode wrote for the person along the way comes first,
-      // unless the closing reply already repeats it.
-      if (interim.length) reply = [...interim.filter(text => !reply.includes(text)), reply].join('\n\n');
+      // unless the closing reply already repeats it, or the person asked for
+      // the answer alone (a reply that IS only the fallback keeps it: the
+      // steps may be the only words written for them).
+      if (interim.length && (showNarration || !res.text.trim())) reply = [...interim.filter(text => !reply.includes(text)), reply].join('\n\n');
       const dataReceiptsThisTurn: DataToolReceipt[] = actions
         .filter((a) => DATA_CLAIM_TOOLS.has(a.tool))
         .map((a) => ({ tool: a.tool, result: a.result }));

@@ -15,7 +15,7 @@ namespace Josi.Native {
     List<Wire> all = new List<Wire>(), mappings = new List<Wire>(), entries = new List<Wire>();
     readonly Dictionary<string, Wire> mappingStatus = new Dictionary<string, Wire>();
     Wire available = Wire.Null, permissions = Wire.Null;
-    string mapping = "", path = "", preview = "", receipt = "";
+    string mapping = "", path = "", preview = "", receipt = "", listError = "";
     Wire pending = Wire.Null; Dictionary<string, object> pendingChange;
     readonly TextBox filter = Ui.Input("Search this folder"), name = Ui.Input("Filename"), content = Ui.Input("", "", true), destination = Ui.Input("Destination relative to the folder");
     bool editing, moving;
@@ -52,8 +52,13 @@ namespace Josi.Native {
       await List(api, stamp);
     }
     async Task List(JosiApi api, int stamp) {
+      listError = "";
       if (mapping.Length == 0) { entries = new List<Wire>(); return; }
-      var data = await api.Request("/workspace/" + api.Uuid(mapping) + "/list?path=" + Uri.EscapeDataString(path));
+      // A refused listing is said on the page, next to the folder, rather than
+      // left to look like an empty folder.
+      Wire data;
+      try { data = await api.Request("/workspace/" + api.Uuid(mapping) + "/list?path=" + Uri.EscapeDataString(path)); }
+      catch (JosiException e) { if (Current(stamp)) { entries = new List<Wire>(); permissions = Wire.Null; listError = e.Message; } return; }
       if (!Current(stamp)) return;
       entries = data["entries"].List; permissions = data["permissions"];
     }
@@ -81,7 +86,8 @@ namespace Josi.Native {
       var list = Ui.Stack(6);
       var shown = entries.Where(e => e["name"].Text.IndexOf(filter.Text, StringComparison.OrdinalIgnoreCase) >= 0)
         .OrderBy(e => e["kind"].Text == "folder" ? 0 : 1).ThenBy(e => e["name"].Text, StringComparer.CurrentCultureIgnoreCase).ToList();
-      if (shown.Count == 0) list.Children.Add(Ui.Secondary(entries.Count == 0 ? "This folder is empty." : "Nothing matches."));
+      if (listError.Length > 0) list.Children.Add(Ui.T("Josi could not list " + browsing["display_path"].Text + (path.Length > 0 ? "/" + path : "") + ": " + listError, 13.5, null, Ui.Orange));
+      else if (shown.Count == 0) list.Children.Add(Ui.Secondary(entries.Count == 0 ? "This folder is empty." : "Nothing matches."));
       foreach (var e in shown) {
         var entry = e["name"].Text; var full = Full(entry);
         if (e["kind"].Text == "folder") { list.Children.Add(Ui.Link("📁  " + entry, () => { path = full; StartLoad(); })); continue; }

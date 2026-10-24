@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -142,7 +143,34 @@ namespace Josi.Native {
 
     /// start/stop/restart run one fixed elevated command. Windows shows its own
     /// UAC prompt; Josi never stores or bypasses administrator approval.
-    public static Task Operate(string operation) {
+    public static async Task Operate(string operation) {
+      if (operation == "start") await Task.Run(() => RefuseOwnedPorts());
+      await OperateElevated(operation);
+    }
+    /// Starting the installed services while another Josi owns the ports (on
+    /// a developer's PC, the development server) knocks that one off its ports
+    /// and leaves two half-servers. Say who owns them instead, before UAC asks.
+    static void RefuseOwnedPorts() {
+      ServiceController[] all;
+      try { all = ServiceController.GetServices(); } catch (Win32Exception) { return; }
+      if (all.Any(s => Services.Contains(s.ServiceName) && s.Status == ServiceControllerStatus.Running)) return;
+      var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+      var probe = "Get-NetTCPConnection -State Listen -LocalPort 8080,15432 -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; '{0} {1} {2}' -f $_.LocalPort, $p.ProcessName, $_.OwningProcess }";
+      var info = new ProcessStartInfo(powershell, "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"" + probe + "\"") { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true };
+      var owners = new List<string>();
+      try {
+        using (var process = Process.Start(info)) {
+          var output = process.StandardOutput.ReadToEnd(); process.WaitForExit(15000);
+          foreach (var line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)) {
+            var parts = line.Trim().Split(' ');
+            if (parts.Length == 3) owners.Add("port " + parts[0] + " by " + parts[1] + " (process " + parts[2] + ")");
+          }
+        }
+      } catch (Exception) { return; }
+      if (owners.Count == 0) return;
+      throw new JosiException("Josi's ports are already in use on this PC: " + string.Join(", ", owners.Distinct()) + ". Another Josi, most likely the development server, is running here. Stop it first (scripts\\windows\\dev\\Stop-DevServer.ps1), then start the installed server.");
+    }
+    static Task OperateElevated(string operation) {
       string script;
       var forward = string.Join(",", Services.Select(s => "'" + s + "'"));
       var reverse = string.Join(",", Enumerable.Reverse(Services).Select(s => "'" + s + "'"));

@@ -17,7 +17,7 @@ for (const family of ['chrome', 'brave', 'firefox', 'safari']) {
     ...(['chrome', 'brave'].includes(family) ? { key: identity.chromiumPublicKey } : {}),
     manifest_version: 3, name: 'Josi Browser Control', version: '0.8.0',
     description: 'Control an explicitly attached tab in your existing browser with Josi permissions.',
-    permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage'],
+    permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage', 'alarms'],
     optional_host_permissions: ['https://*/*', 'http://*/*'],
     action: { default_popup: 'popup.html', default_title: 'Attach this tab to Josi' },
     background: ['chrome', 'brave'].includes(family) ? { service_worker: 'background.js' }
