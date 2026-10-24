@@ -199,15 +199,15 @@ const extensionOf = (filename: string): string => {
 
 // ------------------------------------------------------------- scheduling
 
-/** Cloud mappings whose turn has come. Excludes everything the run itself
- * would refuse — paused installations, paused mappings, indexing off — so the
- * worker does not enqueue jobs whose whole outcome is "nothing to do". */
+/** Mappings whose turn has come, local folders included — the worker routes
+ * each to the walk that fits. Excludes everything the run itself would refuse
+ * — paused installations, paused mappings, indexing off — so the worker does
+ * not enqueue jobs whose whole outcome is "nothing to do". */
 export async function dueCloudMappings(db: Db, limit = 20): Promise<Array<{ id: string }>> {
   return db.query<{ id: string }>(
     `select m.id from folder_mappings m
      left join sync_state s on s.mapping_id = m.id
-     where m.provider <> 'local'
-       and m.status = 'active'
+     where m.status = 'active'
        and m.indexing_enabled = true
        and (s.next_sync_after is null or s.next_sync_after <= now())
        and not (select processing_paused from storage_policy where id = true)

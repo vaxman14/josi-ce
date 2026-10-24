@@ -146,10 +146,10 @@ namespace Josi.Native {
 
     UIElement Folders(string provider, Wire connection, bool storageOn) {
       var label = provider == "google" ? "Google Drive" : provider == "microsoft" ? "OneDrive" : Label[provider];
-      if (!storageOn) return Ui.Caption("To let Josi read folders from " + label + ", switch on reading files above. It is read-only: Josi cannot change or delete anything in your account.");
       var stack = Ui.Stack(8, Ui.Headline(label + " folders"));
       var mine = (mappings ?? new List<Wire>()).Where(m => m["provider"].Text == MappingProvider[provider]).ToList();
-      if (mine.Count == 0) stack.Children.Add(Ui.Caption("No folders yet. Choose one and Josi will read it, index the text it can read, and make it searchable, for you only."));
+      if (mine.Count == 0) stack.Children.Add(Ui.Caption("No folders yet. Add one and Josi reads it, indexes the text it can read, and makes it searchable, for you only. It is read-only: Josi cannot change or delete anything in your account."));
+      if (!storageOn) stack.Children.Add(Ui.Caption("Adding a folder switches on reading files from " + label + " for this account."));
       foreach (var mapping in mine) {
         var id = mapping.Id;
         var row = Ui.Stack(3, Ui.Spread(Ui.T(mapping["display_path"].Text, 14, FontWeights.Medium), ModelText.Pill(Wires.Words(mapping["status"].Text), mapping["status"].Text == "active")));
@@ -167,10 +167,10 @@ namespace Josi.Native {
           Ui.Pill("Remove…", () => { if (Dialogs.Confirm(owner, "Stop reading this folder?", mapping["display_path"].Text, "Remove")) Perform(async (api, stamp) => await api.Request("/storage/mappings/" + api.Uuid(id), "DELETE", null)); })));
         stack.Children.Add(new Border { BorderBrush = Ui.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12), Child = row });
       }
-      stack.Children.Add(Ui.Pill("Add a Folder…", () => {
-        var receipt = FolderPicker.Show(owner, model, label, MappingProvider[provider], connection.Id);
+      stack.Children.Add(Ui.Row(10, Ui.Pill("Add a Folder…", () => {
+        var receipt = FolderSheet.Show(owner, model, provider, connection.Id);
         if (receipt != null) { note = receipt; StartLoad(); }
-      }));
+      }), Ui.Link("All your folders are under Files", () => model.Section = "files")));
       return stack;
     }
 
@@ -240,75 +240,6 @@ namespace Josi.Native {
         var result = await api.Request("/connections/" + api.Uuid(id), "DELETE", null);
         if (result["note"].Text.Length > 0) note = result["note"].Text;
       });
-    }
-  }
-
-  /// Browse a connected cloud account and map one folder: picking it maps the
-  /// folder, turns indexing on and queues the first sync, and shows the
-  /// server's consent sentence as the receipt.
-  static class FolderPicker {
-    public static string Show(Window owner, AppModel model, string label, string mappingProvider, string connectionId) {
-      var sheet = new Dialogs.Sheet(owner, "Choose a folder", 560);
-      var path = new List<Wire>();
-      string receipt = null;
-      var recursive = Ui.Toggle("Include subfolders, including ones added later", true);
-      var host = new ContentControl { Focusable = false };
-      Action<string> browse = null;
-      Action<List<Wire>, string> render = null;
-      render = (folders, error) => {
-        var stack = Ui.Stack(10, Ui.Title2("Choose a folder"),
-          Ui.Caption(path.Count == 0 ? "The top of your " + label + ". Pick a folder: Josi maps one folder at a time, never the whole drive." : label + "/" + string.Join("/", path.Select(p => p["name"].Text))));
-        if (error != null) stack.Children.Add(Ui.T(error, 13.5, null, Ui.Orange));
-        if (folders == null) stack.Children.Add(Ui.Caption("Loading…"));
-        else if (folders.Count == 0) stack.Children.Add(Ui.Caption("No folders inside this one."));
-        else foreach (var folder in folders) {
-          var f = folder;
-          stack.Children.Add(Ui.Link("📁  " + f["name"].Text, () => { path.Add(f); browse(f.Id); }));
-        }
-        Ui.Detach(recursive); stack.Children.Add(recursive);
-        stack.Children.Add(Ui.Caption("Josi reads it, indexes the text it can read, and starts syncing the moment you use it."));
-        var buttons = Ui.Wrap();
-        if (path.Count > 0) {
-          var current = path[path.Count - 1];
-          buttons.Children.Add(Ui.Pill("Use “" + current["name"].Text + "”", async () => {
-            sheet.Locked = true;
-            try {
-              var created = await model.Api.Request("/storage/mappings", "POST", Wires.O("provider", mappingProvider, "connectionId", connectionId,
-                "remoteFolderId", current.Id, "displayPath", label + "/" + string.Join("/", path.Select(p => p["name"].Text)), "recursive", recursive.IsChecked == true));
-              var id = model.Api.Uuid(created["mapping"].Id);
-              try {
-                await model.Api.Request("/storage/mappings/" + id + "/indexing", "PUT", Wires.O("enabled", true));
-                await model.Api.Request("/storage/mappings/" + id + "/sync", "POST", Wires.O());
-                receipt = created["consent"].Text.Length > 0 ? created["consent"].Text : "Syncing started.";
-              } catch (JosiException e) { receipt = "The folder was mapped, but syncing did not start: " + e.Message + " Use Sync Now."; }
-              sheet.Locked = false; sheet.Close();
-            } catch (JosiException e) {
-              sheet.Locked = false;
-              // "An administrator has not enabled folder mapping for you" read
-              // as a dead end to the administrator himself; name the switch.
-              var why = e.Message.IndexOf("administrator has not enabled", StringComparison.OrdinalIgnoreCase) >= 0 && model.IsAdministrator
-                ? e.Message + " Switch it on under People (in Administration) → your account → Folder access: \"Map cloud folders\" and \"Index and search connected files\", then Save Folder Access."
-                : e.Message;
-              render(folders, why);
-            }
-          }, true));
-          buttons.Children.Add(Ui.Pill("Up One Level", () => { path.RemoveAt(path.Count - 1); browse(path.Count == 0 ? null : path[path.Count - 1].Id); }));
-        }
-        buttons.Children.Add(Ui.Pill("Cancel", sheet.Close));
-        stack.Children.Add(buttons);
-        host.Content = stack;
-      };
-      browse = async parent => {
-        render(null, null);
-        try {
-          var result = await model.Api.Request("/connections/" + model.Api.Uuid(connectionId) + "/storage/folders" + (parent == null ? "" : "?parent=" + Uri.EscapeDataString(parent)));
-          render(result["folders"].List, null);
-        } catch (JosiException e) { render(new List<Wire>(), e.Message); }
-      };
-      sheet.Body(host);
-      sheet.Loaded += delegate { browse(null); };
-      sheet.ShowDialog();
-      return receipt;
     }
   }
 }

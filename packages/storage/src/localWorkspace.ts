@@ -46,12 +46,17 @@ async function pinnedDirectory(path: string) {
 }
 interface Grant { id: string; relative_path: string; container_path: string; recursive: boolean; writable: boolean; may_create: boolean; may_edit: boolean; may_move: boolean; may_delete: boolean }
 export async function workspaceGrant(db: Db, userId: string, id: string): Promise<Grant> {
-  const [g] = await db.query<Grant>(`select m.id,m.relative_path,m.recursive,m.may_create,m.may_edit,m.may_move,m.may_delete,r.container_path,r.writable
+  const [g] = await db.query<Grant & { purpose: string }>(`select m.id,m.relative_path,m.recursive,m.may_create,m.may_edit,m.may_move,m.may_delete,r.container_path,r.writable,r.purpose
     from folder_mappings m join storage_roots r on r.id=m.root_id join storage_capabilities c on c.user_id=m.owner_user_id
     where m.id=$1 and m.owner_user_id=$2 and m.provider='local' and m.status='active' and r.enabled=true and c.may_map_local=true`, [id,userId]);
   const configuredWorkspace = process.env.JOSI_WORKSPACE_ENABLED === '1'
     && g?.container_path === '/workspace';
-  if (!g || !((isInside(ROOT_BASE, g.container_path) && !isInside(g.container_path, ROOT_BASE)) || configuredWorkspace)) {
+  // A folder the administrator picked on the Windows PC that runs Josi lives
+  // wherever they keep it, not under the mount base; `registerPcFolder` is
+  // the gate for those, and the row's purpose says it went through it.
+  const pcFolder = process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
+    && g?.purpose === 'pc_folder' && /^[A-Za-z]:\\/.test(g.container_path);
+  if (!g || !((isInside(ROOT_BASE, g.container_path) && !isInside(g.container_path, ROOT_BASE)) || configuredWorkspace || pcFolder)) {
     throw new PathEscape('Workspace unavailable or permission revoked');
   }
   return g;

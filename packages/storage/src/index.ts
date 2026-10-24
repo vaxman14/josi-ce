@@ -4,7 +4,7 @@ export {
 } from './paths.js';
 export {
   MappingError, ROOT_BASE, capabilityFor, consentText, createMapping, mappingsBlockingUserRemoval,
-  pauseMapping, purgeDerived, registerRoot, requireOwnedMapping, setIndexing, setPermissions, unmapFolder,
+  pauseMapping, purgeDerived, registerRoot, registerPcFolder, forgetPcFolder, requireOwnedMapping, setIndexing, setPermissions, unmapFolder,
   type CreateMappingArgs, type Mapping, type Provider, type PurgeCounts, type StorageCapability,
 } from './mappings.js';
 export {
@@ -69,6 +69,7 @@ export { AttachmentError, attachmentFailure, attachmentRoot, validateAttachment,
   CHAT_FILE_BYTES, CHAT_USER_BYTES, CHAT_USER_FILES, CHAT_THREAD_FILES, CHAT_TENANT_BYTES,
 } from './chatAttachments.js';
 export { proposeCodingRun, getCodingRun, startCodingRun, codingRunStatus } from './workspaceCoding.js';
+export { syncLocalMapping, type LocalSyncCounts, type LocalSyncOptions, type LocalSyncResult } from './localSync.js';
 export { nativeScanner, NativeScanFailure, type NativeScannerOptions, type NativeScanStatus } from './nativeScanner.js';
 export { nativeScannerHealth, type NativeScannerHealth } from './nativeScannerHealth.js';
 export { openStorageFile, pinWindowsDirectory, publishWindowsFile } from './windowsFiles.js';

@@ -11,7 +11,8 @@
 // `createMapping` takes the owner from the session, never from the request
 // body, and there is no admin route that reaches it.
 import { appendEvent, resolveAccess, type Db } from '@josi-ce/core';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, win32 } from 'node:path';
+import { lstat } from 'node:fs/promises';
 import { PathEscape, isInside, resolveWithin, safeRelativePath } from './paths.js';
 import { pinNativeWorkspace } from './nativeWorkspace.js';
 
@@ -452,4 +453,70 @@ export async function registerRoot(
     [path, args.label.trim(), (args.purpose ?? '').slice(0, 500), args.writable === true],
   );
   return row;
+}
+
+/** A folder on the Windows PC that runs Josi, chosen by the administrator in
+ * the app's folder dialog.
+ *
+ * On a Windows server the server IS the PC, so there is no compose file to
+ * edit and no mount base to stay under: the administrator picks any folder they
+ * can see. The guard rails that remain are the ones that would surprise them:
+ * no whole drive, nothing under Josi's own data folder (secrets live there),
+ * nothing under Windows itself, and it must exist and be a folder. The person
+ * who maps it is still gated by their capability, exactly as for any root. */
+export async function registerPcFolder(
+  db: Db,
+  args: { path: string; label?: string; dataDir?: string; systemRoot?: string; statImpl?: typeof lstat; platform?: NodeJS.Platform },
+): Promise<{ id: string; container_path: string; label: string }> {
+  if ((args.platform ?? process.platform) !== 'win32') throw new MappingError('folders on this PC can only be added on a Windows server', 'bad_root');
+  const raw = (args.path ?? '').trim();
+  if (!raw || raw.includes('\0') || raw.length > 1000 || !/^[A-Za-z]:[\\/]/.test(raw) || !win32.isAbsolute(raw)) {
+    throw new MappingError('choose a folder on this PC, such as C:\\Users\\You\\Documents', 'bad_root');
+  }
+  const path = win32.normalize(raw).replace(/[\\/]+$/, '');
+  if (path.split('\\').some((part) => part === '.' || part === '..')) {
+    throw new MappingError('that folder path is not in the expected form', 'bad_root');
+  }
+  if (/^[A-Za-z]:$/.test(path)) throw new MappingError('choose a folder, not a whole drive', 'bad_root');
+  const fenced = [args.dataDir ?? process.env.JOSI_DATA_DIR, args.systemRoot ?? process.env.SystemRoot]
+    .filter((p): p is string => typeof p === 'string' && p.length > 0);
+  for (const fence of fenced) {
+    if (isInsideWin32(fence, path)) throw new MappingError('that folder belongs to Josi or Windows itself; choose one of your own folders', 'bad_root');
+  }
+  const stat = await (args.statImpl ?? lstat)(path).catch(() => null);
+  if (!stat) throw new MappingError('Josi cannot find that folder on this PC', 'bad_root');
+  if (stat.isSymbolicLink()) throw new MappingError('that is a link to a folder; choose the folder itself', 'bad_root');
+  if (!stat.isDirectory()) throw new MappingError('that is a file, not a folder', 'bad_root');
+
+  const label = (args.label ?? '').trim() || win32.basename(path) || path;
+  const [row] = await db.query<{ id: string; container_path: string; label: string }>(
+    `insert into storage_roots (container_path, label, purpose, writable, enabled)
+     values ($1, $2, 'pc_folder', false, true)
+     on conflict (container_path) do update set
+       label = excluded.label, purpose = excluded.purpose, enabled = true
+     returning id, container_path, label`,
+    [path, label.slice(0, 120)],
+  );
+  return row;
+}
+
+/** `isInside` for Windows paths regardless of the platform the test runs on. */
+function isInsideWin32(parent: string, child: string): boolean {
+  const p = win32.resolve(parent).toLowerCase();
+  const c = win32.resolve(child).toLowerCase();
+  if (c === p) return true;
+  const rel = win32.relative(p, c);
+  return rel.length > 0 && !rel.startsWith('..') && !win32.isAbsolute(rel);
+}
+
+/** Forget a PC folder nobody maps any more. Deleting the row would orphan the
+ * history of mappings that referenced it, so it is switched off instead, which
+ * is what every reader already checks. */
+export async function forgetPcFolder(db: Db, rootId: string): Promise<{ forgotten: boolean; reason?: string }> {
+  const [root] = await db.query<{ id: string }>(`select id from storage_roots where id = $1 and enabled = true`, [rootId]);
+  if (!root) return { forgotten: false, reason: 'not_found' };
+  const [{ n }] = await db.query<{ n: number }>(`select count(*)::int as n from folder_mappings where root_id = $1`, [rootId]);
+  if (n > 0) return { forgotten: false, reason: 'in_use' };
+  await db.query(`update storage_roots set enabled = false where id = $1`, [rootId]);
+  return { forgotten: true };
 }

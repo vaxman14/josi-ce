@@ -118,7 +118,10 @@ Everything still to do for the Windows app, in build order. It combines the miss
 - Camera capture and photo-library selection: **Not this app** (phones); Windows camera capture could be added later.
 - Attachment download and deletion: **Partial** (verify; add if missing).
 
-### Files and storage — **Missing** except folder permissions (item 5)
+### Files and storage — **Partial** (item 5)
+- Adding a folder, one sheet for every source (2026-10-23): a folder on this PC through the Windows folder dialog (the administrator registers it as a root on the spot through POST /storage/roots, Windows server only; members pick from the folders the administrator added), or a folder in a connected Google Drive / OneDrive / Dropbox / Box / Nextcloud account. The sheet switches on what the folder needs: the administrator's own folder rights, and the account's read-files capability. Files lists every folder (PC and cloud) with status, indexed counts, Browse, Sync Now, Make Searchable, Remove. Server: PC folders outside the mount base can be browsed, and the worker now walks local folders (syncLocalMapping), which it never did before; the Mac workspace flow is untouched: **Have**.
+- Create, edit, rename, move, delete with approval; preview; download; coding sandbox: **Have** (unchanged).
+- WebDAV folders, read/write mappings from the app, shares: **Missing**.
 
 ### Personalization and memory
 - Personal memory, manual memory, proposed memories, confirmation, deletion, learning preferences: **Have**.

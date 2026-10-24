@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 import {
   MappingError, capabilityFor, consentText, createMapping, mappingsBlockingUserRemoval,
-  pauseMapping, purgeDerived, registerRoot, setIndexing, setPermissions, unmapFolder,
+  pauseMapping, purgeDerived, registerPcFolder, forgetPcFolder, registerRoot, setIndexing, setPermissions, unmapFolder,
 } from '../src/mappings.js';
 import { PathEscape } from '../src/paths.js';
 
@@ -400,5 +400,52 @@ describe('capabilities default to nothing — M45', () => {
       may_map_local: false, may_map_cloud: false, may_index: false,
       max_files: null, max_bytes: null,
     });
+  });
+});
+
+describe('a folder on the Windows PC that runs Josi', () => {
+  // Windows paths, so the rule is exercised on every platform; the stat is
+  // supplied for the same reason.
+  const dir = { isDirectory: () => true, isSymbolicLink: () => false } as import('node:fs').Stats;
+  const file = { isDirectory: () => false, isSymbolicLink: () => false } as import('node:fs').Stats;
+  const link = { isDirectory: () => true, isSymbolicLink: () => true } as import('node:fs').Stats;
+  const on = (stat: import('node:fs').Stats | null) => ({
+    platform: 'win32' as const, dataDir: 'C:\\Dev\\josi-dev', systemRoot: 'C:\\Windows',
+    statImpl: async () => { if (!stat) throw new Error('ENOENT'); return stat; },
+  });
+
+  it('registers an existing folder under its own name, read-only, and re-enables it when added again', async () => {
+    const root = await registerPcFolder(db, { path: 'C:\\Users\\Roman\\Documents\\Invoices\\', ...on(dir) });
+    expect(root.container_path).toBe('C:\\Users\\Roman\\Documents\\Invoices');
+    expect(root.label).toBe('Invoices');
+    const [row] = await db.query<{ writable: boolean; enabled: boolean; purpose: string }>(
+      `select writable, enabled, purpose from storage_roots where id = $1`, [root.id]);
+    expect(row).toMatchObject({ writable: false, enabled: true, purpose: 'pc_folder' });
+    expect(await forgetPcFolder(db, root.id)).toEqual({ forgotten: true });
+    const again = await registerPcFolder(db, { path: 'C:\\Users\\Roman\\Documents\\Invoices', label: 'Bills', ...on(dir) });
+    expect(again.id).toBe(root.id);
+    expect(again.label).toBe('Bills');
+  });
+
+  it('refuses a drive, a file, a link, a missing folder, and anything under Josi or Windows', async () => {
+    await expect(registerPcFolder(db, { path: 'C:\\', ...on(dir) })).rejects.toThrow(/whole drive/);
+    await expect(registerPcFolder(db, { path: 'C:\\Users\\Roman\\notes.txt', ...on(file) })).rejects.toThrow(/a file, not a folder/);
+    await expect(registerPcFolder(db, { path: 'C:\\Users\\Roman\\Link', ...on(link) })).rejects.toThrow(/link to a folder/);
+    await expect(registerPcFolder(db, { path: 'C:\\Users\\Roman\\Gone', ...on(null) })).rejects.toThrow(/cannot find/);
+    await expect(registerPcFolder(db, { path: 'C:\\Dev\\josi-dev\\data\\secrets', ...on(dir) })).rejects.toThrow(/belongs to Josi or Windows/);
+    await expect(registerPcFolder(db, { path: 'c:\\windows\\System32', ...on(dir) })).rejects.toThrow(/belongs to Josi or Windows/);
+    await expect(registerPcFolder(db, { path: 'C:\\Dev\\josi-dev-private', ...on(dir) })).resolves.toMatchObject({ label: 'josi-dev-private' });
+    await expect(registerPcFolder(db, { path: 'Documents\\Invoices', ...on(dir) })).rejects.toThrow(/choose a folder on this PC/);
+    await expect(registerPcFolder(db, { path: 'C:\\Users\\..\\Windows', ...on(dir) })).rejects.toThrow(/belongs to Josi or Windows|expected form/);
+    await expect(registerPcFolder(db, { path: 'C:\\Users\\Roman', ...on(dir), platform: 'linux' })).rejects.toThrow(/Windows server/);
+  });
+
+  it('is not forgotten while somebody still maps it', async () => {
+    const root = await registerPcFolder(db, { path: 'C:\\Shared\\Team', ...on(dir) });
+    await allow('alice');
+    await db.query(`insert into folder_mappings (owner_user_id, provider, root_id, relative_path, display_path, recursive)
+                    values ($1, 'local', $2, '', 'Team', true)`, [ids.alice, root.id]);
+    expect(await forgetPcFolder(db, root.id)).toEqual({ forgotten: false, reason: 'in_use' });
+    expect(await forgetPcFolder(db, '00000000-0000-0000-0000-000000000000')).toEqual({ forgotten: false, reason: 'not_found' });
   });
 });

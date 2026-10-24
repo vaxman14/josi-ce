@@ -24,6 +24,7 @@ import {
   nativeScannerHealth,
   refreshNativeWorkspace,
   connectNativeWorkspace,
+  registerPcFolder, forgetPcFolder,
   type Provider as MappingProvider,
 } from '@josi-ce/storage';
 import { requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
@@ -61,6 +62,7 @@ class RouteError extends Error {
 }
 
 const str = (v: unknown, max = 500): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const nativeWindows = (): boolean => process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1';
 const flag = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined);
 
 function handle(fn: (req: Request, res: Response) => Promise<unknown>) {
@@ -138,9 +140,34 @@ export function storageRoutes(ctx: StorageRoutesCtx): Router {
         `select processing_paused from storage_policy where id = true`,
       );
       return res.json({ capability, roots, processingPaused: policy?.processing_paused ?? false,
+        // The app shows "a folder on this PC" only where the server is the PC.
+        pcFolders: nativeWindows(),
         ...(nativeWorkspace ? { nativeWorkspace } : {}) });
     }),
   );
+
+  /** Windows server: the administrator adds a folder on this PC to the list of
+   * folders people may map. Registering is not mapping — the administrator's
+   * own mapping still goes through `createMapping` under their own capability,
+   * and nobody else's folder is touched. */
+  r.post('/roots', requireSuperAdmin, handle(async (req, res) => {
+    if (!nativeWindows()) return res.status(404).json({ error: 'Folders on this PC can only be added on a Windows server.' });
+    const root = await registerPcFolder(db, { path: str(req.body?.path, 1000), label: str(req.body?.label, 120) });
+    await appendEvent(db, {
+      actorUserId: req.user!.id, actor: 'super_admin', kind: 'storage.root_registered',
+      subjectType: 'storage_root', subjectId: root.id, payload: { label: root.label },
+    });
+    return res.status(201).json({ root });
+  }));
+
+  r.delete('/roots/:id', requireSuperAdmin, handle(async (req, res) => {
+    const result = await forgetPcFolder(db, param(req, 'id'));
+    if (!result.forgotten) {
+      return res.status(result.reason === 'in_use' ? 409 : 404).json({ error: result.reason === 'in_use'
+        ? 'Somebody still has that folder connected. Remove the connection first.' : 'That folder is not on the list.' });
+    }
+    return res.json({ forgotten: true });
+  }));
 
   /** What agreeing would mean, in words, before anything is created.
    *

@@ -12,12 +12,12 @@ namespace Josi.Native {
   /// new folder) is prepared first and applied only after you approve that
   /// exact change. Also the isolated JavaScript coding sandbox.
   public sealed class FilesView : SectionView {
-    List<Wire> mappings = new List<Wire>(), entries = new List<Wire>();
+    List<Wire> all = new List<Wire>(), mappings = new List<Wire>(), entries = new List<Wire>();
+    readonly Dictionary<string, Wire> mappingStatus = new Dictionary<string, Wire>();
     Wire available = Wire.Null, permissions = Wire.Null;
     string mapping = "", path = "", preview = "", receipt = "";
     Wire pending = Wire.Null; Dictionary<string, object> pendingChange;
     readonly TextBox filter = Ui.Input("Search this folder"), name = Ui.Input("Filename"), content = Ui.Input("", "", true), destination = Ui.Input("Destination relative to the folder");
-    readonly ComboBox rootPick = new ComboBox();
     bool editing, moving;
     // Coding sandbox
     readonly TextBox source = Ui.Input("Exact JavaScript source", "", true);
@@ -39,11 +39,15 @@ namespace Josi.Native {
       var m = await api.Request("/storage/mappings");
       if (!Current(stamp)) return;
       available = a;
-      var roots = a["roots"].List;
-      mappings = m["mappings"].List.Where(x => x["provider"].Text == "local" && x["status"].Text == "active"
-        && a["capability"]["may_map_local"].Flag && roots.Any(r => r.Id == x["root_id"].Text)).ToList();
-      rootPick.ItemsSource = roots.Select(r => r["label"].Text).ToList();
-      if (rootPick.SelectedIndex < 0 && roots.Count > 0) rootPick.SelectedIndex = 0;
+      all = m["mappings"].List;
+      // Browsing works on folders Josi reads directly; cloud folders are read
+      // through the account and show up through search and in chat.
+      mappings = all.Where(x => x["provider"].Text == "local" && x["status"].Text == "active").ToList();
+      foreach (var x in all) {
+        try { var s = await api.Request("/storage/mappings/" + api.Uuid(x.Id) + "/status"); if (Current(stamp)) mappingStatus[x.Id] = s; }
+        catch (JosiException) { }
+      }
+      if (!Current(stamp)) return;
       if (!mappings.Any(x => x.Id == mapping)) mapping = mappings.Count == 1 ? mappings[0].Id : "";
       await List(api, stamp);
     }
@@ -56,15 +60,16 @@ namespace Josi.Native {
     string Full(string entry) { return string.Join("/", new[] { path, entry }.Where(s => s.Length > 0)); }
 
     protected override UIElement Build() {
-      var page = Page(Ui.HeadingWith("Files", null, Ui.Pill("Refresh", StartLoad)),
-        Ui.Secondary("Browse folders you explicitly connected. Files are never instructions to grant access. Cloud folders (Google Drive, OneDrive, Dropbox, Box, Nextcloud) are added under Connections."));
+      var page = Page(Ui.HeadingWith("Files", null, Ui.Row(8, Ui.Pill("Add a Folder…", AddFolder, true), Ui.Pill("Refresh", StartLoad))),
+        Ui.Secondary("The folders Josi may read for you, on this PC and in your cloud accounts. Josi reads only what you add here, and a file is never an instruction to grant access."));
       if (receipt.Length > 0) Ui.Add(page, Ui.T("Completed. Receipt: " + receipt, 14, null, Ui.Green), 0);
       if (available.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "Folders have not loaded."), 0); return page; }
-      if (mappings.Count == 0) { Ui.Add(page, Connect(), 0); return page; }
-      var picker = Ui.Segments(mappings.Select(m => new KeyValuePair<string, string>(m.Id, m["display_path"].Text)).ToList(), mapping,
-        value => { mapping = value; path = ""; preview = ""; pending = Wire.Null; StartLoad(); });
-      Ui.Add(page, Ui.Field("Connected folder", new ContentControl { Content = picker, Focusable = false }), 0);
-      if (mapping.Length == 0) return page;
+      Ui.Add(page, FoldersCard(), 0);
+      var nativeCard = NativeConnect();
+      if (nativeCard != null) Ui.Add(page, nativeCard, 0);
+      if (mapping.Length == 0) { Ui.Add(page, Note(), 0); return page; }
+      var browsing = mappings.First(m => m.Id == mapping);
+      Ui.Add(page, Ui.Spread(Ui.Headline("Browsing " + browsing["display_path"].Text), Ui.Link("Close", () => { mapping = ""; path = ""; preview = ""; pending = Wire.Null; Render(); })), 0);
 
       var crumbs = Ui.Wrap(Ui.Link("Folder root", () => { path = ""; StartLoad(); }));
       var parts = path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
@@ -123,29 +128,73 @@ namespace Josi.Native {
       return page;
     }
 
-    UIElement Connect() {
-      var native = available["nativeWorkspace"];
-      var items = new List<UIElement>();
-      var status = native["status"].Text;
-      items.Add(Ui.Secondary(status == "unavailable" ? "Josi cannot read the selected workspace folder (" + native["label"].Text + "). Review it and refresh."
-        : status == "paused" ? "This folder connection is paused. Review its access settings before reconnecting." : "No local folders connected."));
-      var canConnect = (!native.IsNull && (status == "revoked" || status == "awaiting_mapping"))
-        || (available["capability"]["may_map_local"].Flag && available["roots"].List.Count > 0 && status != "paused");
-      if (canConnect) {
-        if (!native.IsNull) items.Add(Ui.T("Selected folder: " + native["label"].Text));
-        else { Ui.Detach(rootPick); items.Add(Ui.Field("Available folder", rootPick)); }
-        items.Add(Ui.Caption("Connect this folder, everything inside it, and subfolders added later. Files are read when you ask; connecting does not turn on indexing or grant write access."));
-        items.Add(Ui.Pill("Connect Folder", () => {
-          var roots = available["roots"].List; var index = rootPick.SelectedIndex;
-          Perform(async (api, stamp) => {
-            if (!native.IsNull) await api.Request("/storage/native-workspace/connect", "POST", Wires.O());
-            else if (index >= 0) await api.Request("/storage/mappings", "POST", Wires.O("provider", "local", "rootId", roots[index].Id, "relativePath", "", "recursive", true));
-          });
-        }, true));
-      } else if (status != "unavailable" && status != "paused") {
-        items.Add(Ui.Caption("Folder mapping permission and a configured folder are required. Ask your administrator to review local folder access (People and Storage)."));
+    void AddFolder() {
+      var added = FolderSheet.Show(owner, model);
+      if (added != null) { note = added; StartLoad(); }
+    }
+
+    /// Every folder Josi reads for this person, wherever it lives, with what
+    /// is happening to it and the few things one can do about it.
+    UIElement FoldersCard() {
+      var list = Ui.Stack(10);
+      if (all.Count == 0) {
+        list.Children.Add(Ui.T("No folders yet.", 14, FontWeights.Medium));
+        list.Children.Add(Ui.Caption("Add a folder on this PC or from Google Drive, OneDrive, Dropbox, Box or Nextcloud. Josi reads it, makes it searchable for you, and never changes anything in it."));
+        list.Children.Add(Ui.Pill("Add a Folder…", AddFolder, true));
       }
-      return Ui.CardBox("Local Workspace", items.ToArray());
+      foreach (var m in all) {
+        var folder = m; var id = m.Id; var local = m["provider"].Text == "local"; var active = m["status"].Text == "active";
+        var row = Ui.Stack(3, Ui.Spread(Ui.Row(8, Ui.T(local ? "💻" : "☁", 16), Ui.T(m["display_path"].Text, 14, FontWeights.Medium)),
+          ModelText.Pill(Wires.Words(m["status"].Text), active)));
+        row.Children.Add(Ui.Caption(FolderSheet.ProviderName(m["provider"].Text) + (m["recursive"].Flag ? " · with subfolders" : " · this folder only")
+          + (m["indexing_enabled"].Flag ? " · searchable" : " · read on request, not searchable")));
+        if (m["paused_reason"].Text.Length > 0) row.Children.Add(Ui.T("Paused: " + Wires.Words(m["paused_reason"].Text), 13, null, Ui.Orange));
+        Wire status;
+        if (mappingStatus.TryGetValue(id, out status) && status["total"].Integer > 0) {
+          row.Children.Add(Ui.Caption(status["byState"]["indexed"].Integer + " of " + status["total"].Integer + " file(s) indexed and searchable."));
+          foreach (var skipped in status["skipped"].List) {
+            var why = status["explanations"][skipped["reason"].Text].Text;
+            row.Children.Add(Ui.Caption(skipped["count"].Integer + " skipped: " + (why.Length > 0 ? why : skipped["reason"].Text)));
+          }
+        }
+        var actions = Ui.Wrap();
+        if (local && active && mapping != id) actions.Children.Add(Ui.Pill("Browse", () => { mapping = id; path = ""; preview = ""; pending = Wire.Null; StartLoad(); }));
+        if (m["indexing_enabled"].Flag) actions.Children.Add(Ui.Pill("Sync Now", () => Perform(async (api, stamp) => {
+          await api.Request("/storage/mappings/" + api.Uuid(id) + "/sync", "POST", Wires.O()); note = "Sync queued. New and changed files appear as the worker gets to them."; })));
+        else if (active) actions.Children.Add(Ui.Pill("Make Searchable", () => Perform(async (api, stamp) => {
+          await api.Request("/storage/mappings/" + api.Uuid(id) + "/indexing", "PUT", Wires.O("enabled", true));
+          await api.Request("/storage/mappings/" + api.Uuid(id) + "/sync", "POST", Wires.O()); note = "Josi is reading the folder now."; })));
+        actions.Children.Add(Ui.Pill("Remove…", () => {
+          if (!Dialogs.Confirm(owner, "Stop reading this folder?", folder["display_path"].Text + "\n\nJosi forgets what it indexed from it. Nothing in the folder itself is touched.", "Remove")) return;
+          var rootId = folder["root_id"].Text;
+          Perform(async (api, stamp) => {
+            await api.Request("/storage/mappings/" + api.Uuid(id), "DELETE", null);
+            if (mapping == id) { mapping = ""; path = ""; preview = ""; }
+            // The administrator's own PC folder leaves the list with its last
+            // mapping; a folder somebody else still uses stays (409) and that is fine.
+            if (local && model.IsAdministrator && Wires.IsUuid(rootId)) { try { await api.Request("/storage/roots/" + rootId, "DELETE", null); } catch (JosiException) { } }
+          });
+        }));
+        row.Children.Add(actions);
+        list.Children.Add(new Border { BorderBrush = Ui.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12), Child = row });
+      }
+      return Ui.CardBox(all.Count == 0 ? null : "Your folders", list);
+    }
+
+    /// Josi Server on a Mac picks one workspace folder outside the app; the
+    /// Windows app only has to connect or reconnect it.
+    UIElement NativeConnect() {
+      var native = available["nativeWorkspace"];
+      if (native.IsNull) return null;
+      var status = native["status"].Text;
+      if (status != "revoked" && status != "awaiting_mapping" && status != "unavailable" && status != "paused") return null;
+      var items = new List<UIElement> { Ui.Secondary(status == "unavailable" ? "Josi cannot read the selected workspace folder (" + native["label"].Text + "). Review it and refresh."
+        : status == "paused" ? "This folder connection is paused. Review its access settings before reconnecting." : "Selected folder: " + native["label"].Text) };
+      if (status == "revoked" || status == "awaiting_mapping") {
+        items.Add(Ui.Caption("Connect this folder, everything inside it, and subfolders added later. Files are read when you ask; connecting does not turn on indexing or grant write access."));
+        items.Add(Ui.Pill("Connect Folder", () => Perform(async (api, stamp) => await api.Request("/storage/native-workspace/connect", "POST", Wires.O())), true));
+      }
+      return Ui.CardBox("Workspace folder on the server", items.ToArray());
     }
 
     void Propose(Dictionary<string, object> change) {

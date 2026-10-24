@@ -34,7 +34,7 @@ import {
 import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
 import { effectiveTimeContext, formatCalendarRange, runAssistantTurn, conversationHistory, createRecall, summarizeThread,
   recordTurnInsights, learnFromTurn, reviewInsights, ALL_TOOLS } from '@josi-ce/agent';
-import { IMAGE_MEDIA_TYPES, MEDIA_PROCESSING, MEDIA_TRANSCRIPT, clock, extractFrames, isAudio, isVideo, mediaToolsAvailable, readAttachment, withMediaFile, type Scanner } from '@josi-ce/storage';
+import { IMAGE_MEDIA_TYPES, MEDIA_PROCESSING, MEDIA_TRANSCRIPT, clock, extractFrames, isAudio, isVideo, mediaToolsAvailable, readAttachment, syncLocalMapping, withMediaFile, type Scanner } from '@josi-ce/storage';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import { extname } from 'node:path';
 import { purgeGoogleLoginStates } from '@josi-ce/auth';
@@ -365,11 +365,17 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       // token, missing scope) into a retried job the queue keeps re-running —
       // but it is now logged, so a failing sync is visible in the same place a
       // throwing one always was.
-      const result = await syncCloudMapping(db, mappingId, {
-        masterKey: ctx.masterKey,
-        fetchImpl: ctx.connectorFetch,
-        scanner: ctx.scanner,
-      });
+      // A folder Josi opens itself (a PC folder on the Windows server, a
+      // compose root) is walked on disk; everything else goes through the
+      // owner's connection. Same gates, same tables, same result shape.
+      const [kind] = await db.query<{ provider: string }>(`select provider from folder_mappings where id = $1`, [mappingId]);
+      const result = kind?.provider === 'local'
+        ? await syncLocalMapping(db, mappingId, { scanner: ctx.scanner })
+        : await syncCloudMapping(db, mappingId, {
+          masterKey: ctx.masterKey,
+          fetchImpl: ctx.connectorFetch,
+          scanner: ctx.scanner,
+        });
       if (result.status === 'failed') {
         console.error(
           `[storage.sync] mapping ${mappingId} did not sync: category=${result.errorCategory}`,
