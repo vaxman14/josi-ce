@@ -45,7 +45,8 @@ function explain(code: number, host: string, share: string): string {
     case 5: return `The NAS refused access to \\\\${host}\\${share} for that account.`;
     case 53: return `Josi cannot reach ${host}. Check the address and that the NAS is on.`;
     case 67: return `${host} has no share named "${share}".`;
-    case 86: case 1326: return 'The NAS refused the username or password.';
+    case 86: return 'The NAS knows that username but not that password. Check the password set for that user on the NAS itself.';
+    case 1326: return 'The NAS refused the username or password.';
     case 1219: return 'Windows already has a session with this NAS under another account. Sign out of it (net use /delete) or use the same account.';
     case 1231: case 1232: return `The network path to ${host} is not available from this server.`;
     default: return `Windows could not connect to \\\\${host}\\${share} (error ${code}).`;
@@ -96,7 +97,9 @@ export function windowsNasController(options: WindowsNasOptions = {}): NasContro
   };
 
   return {
-    mountPath: (plan) => win32.join(pathFor(plan.host, plan.share), ...folderParts(plan.folder)),
+    // `join` keeps a trailing separator on a bare share root; the path is
+    // stored and compared, so it is spelled one way.
+    mountPath: (plan) => win32.join(pathFor(plan.host, plan.share), ...folderParts(plan.folder)).replace(/(?<=[^\\])\\$/, ''),
     async reconnect(plan) { check(plan); await connect(plan.host, plan.share, plan.username, plan.password); },
     async browse(plan) {
       check(plan);

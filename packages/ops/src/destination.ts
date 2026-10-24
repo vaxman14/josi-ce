@@ -62,7 +62,9 @@ export const DESTINATIONS: readonly DestinationDescriptor[] = [
     fields: [
       { key: 'shareHost', label: 'NAS address', secret: false, required: true, placeholder: '192.168.1.20', help: 'An IP address or hostname reachable from this server.' },
       { key: 'shareName', label: 'Share or export', secret: false, required: true, placeholder: 'backups' },
-      { key: 'username', label: 'Username', secret: true, required: false, help: 'Required for most SMB shares; NFS commonly uses host permissions instead.' },
+      // Not a secret: a masked username hides the typo that then reads as a
+      // wrong password at the NAS. It is still sealed with the password at rest.
+      { key: 'username', label: 'Username', secret: false, required: false, placeholder: 'the NAS user who may write to the share', help: 'Required for most SMB shares; NFS commonly uses host permissions instead.' },
       { key: 'password', label: 'Password', secret: true, required: false },
       { key: 'folder', label: 'Folder on the share', secret: false, required: false, placeholder: 'josi', help: 'Use Browse after authentication to choose an existing folder.' },
     ],

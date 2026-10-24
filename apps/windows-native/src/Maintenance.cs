@@ -22,7 +22,9 @@ namespace Josi.Native {
     public BackupDestinationPanel(AppModel model, Window owner) { this.model = model; this.owner = owner; Loaded += async delegate { await Load(); }; }
     async Task Load() {
       if (model.Api == null) return;
-      try { view = await model.Api.Request("/ops/admin/backups/destination"); error = ""; }
+      // A reload after an action keeps that action's message: clearing it here
+      // made every refused test and every save warning vanish before it was read.
+      try { view = await model.Api.Request("/ops/admin/backups/destination"); }
       catch (JosiException e) { error = e.Message; }
       var d = view["destination"];
       if (!editing) kind = !d.IsNull ? d["kind"].Text : view["catalog"].List.Select(c => c["kind"].Text).FirstOrDefault() ?? "";
@@ -95,6 +97,9 @@ namespace Josi.Native {
             if (kind == "nas") { body["shareProtocol"] = protocol; if (folderPick.SelectedIndex > 0) body["folder"] = folders[folderPick.SelectedIndex - 1].Text; }
             var missing = entry["fields"].List.Where(f => f["required"].Flag && !(f["secret"].Flag && keeping) && Value(f["key"].Text).Length == 0).Select(f => f["label"].Text).ToList();
             if (missing.Count > 0) { error = "Still needed: " + string.Join(", ", missing) + "."; Render(); return; }
+            // A username without its password is the one combination no share
+            // accepts; saying so here beats a refusal from the NAS later.
+            if (kind == "nas" && !keeping && Value("username").Length > 0 && Value("password").Length == 0) { error = "Enter the password for that username, or leave both empty for a share that allows guest access."; Render(); return; }
             foreach (var p in fields.Values.OfType<PasswordBox>()) p.Clear();
             Run(async api => { var r = await api.Request("/ops/admin/backups/destination", "PUT", body); recoveryKey = r["recoveryKey"].Text; if (r["warning"].Text.Length > 0) error = r["warning"].Text; editing = false; fields.Clear(); });
           }, true));
