@@ -105,7 +105,6 @@ namespace Josi.Native {
         Item("Models", Glyph.Layers, "models");
         Item("People", Glyph.People, "people");
         Item("Connectors", Glyph.Plug, "connectors");
-        Item("Integrations", Glyph.Code, "integrations");
         Item("Custom APIs", Glyph.Code, "custom-apis");
         Item("Workflow Providers", Glyph.Flow, "workflow-providers");
         Item("Approval Policy", Glyph.Shield, "policy");
@@ -127,7 +126,7 @@ namespace Josi.Native {
     /// The selected entry and the busy state, applied to the buttons in place.
     void SyncNav() {
       foreach (var pair in navButtons) {
-        var on = model.Section == pair.Key;
+        var on = model.Section == pair.Key || (pair.Key == "connectors" && model.Section == "integrations");
         var button = pair.Value;
         if (!ReferenceEquals(button.Foreground, on ? Ui.Orange : Ui.Muted)) button.Foreground = on ? Ui.Orange : Ui.Muted;
         var back = on ? Ui.OrangeSoft : Brushes.Transparent;
@@ -246,8 +245,10 @@ namespace Josi.Native {
         case "apps": view = ComingSoonPage.Build("Companion Apps", "There is no iPhone or Android build of Josi yet. When one exists it will be linked here.", "Signing in will use your email address and normal Josi password. A small directory service tells the app which installation owns your address; it never receives your password or anything else from this installation. Your administrator adds your address to the approved list first."); break;
         case "overview": view = model.IsAdministrator ? new OverviewView(model, owner) : null; break;
         case "checklist": view = model.IsAdministrator ? new ChecklistView(model, owner) : null; break;
-        case "connectors": view = model.IsAdministrator ? new ConnectorsView(model, owner) : null; break;
-        case "integrations": view = model.IsAdministrator ? new IntegrationsView(model, owner) : null; break;
+        // Item 41: one page with a two-way switch; the old "integrations" key
+        // lands on its second tab.
+        case "connectors": view = model.IsAdministrator ? new ConnectorsHubView(model, owner, "providers") : null; break;
+        case "integrations": view = model.IsAdministrator ? new ConnectorsHubView(model, owner, "developer") : null; break;
         case "custom-apis": view = model.IsAdministrator ? new CustomApisView(model, owner) : null; break;
         case "workflow-providers": view = model.IsAdministrator ? new WorkflowAdminView(model, owner) : null; break;
         case "policy": view = model.IsAdministrator ? new PolicyView(model, owner) : null; break;

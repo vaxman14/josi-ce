@@ -48,7 +48,7 @@ namespace Josi.Native {
         "Create Platform App, Custom App, User Authentication (OAuth 2.0)." } } };
 
     protected override UIElement Build() {
-      var page = Page(Ui.HeadingWith("Connectors", null, Ui.Pill("Refresh", StartLoad)),
+      var page = Page(Ui.HeadingWith("Account providers", null, Ui.Pill("Refresh", StartLoad)),
         Ui.Secondary("Register this installation's own applications with Google, Microsoft, Dropbox and Box. People then connect their accounts under Connections. You configure and see health here, never what is inside anyone's account."));
       if (view.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "Connector settings have not loaded."), 0); return page; }
       var registration = view["registration"];
@@ -184,7 +184,7 @@ namespace Josi.Native {
       }
     }
     protected override UIElement Build() {
-      var page = Page(Ui.HeadingWith("Integrations", null, Ui.Pill("Refresh", StartLoad)),
+      var page = Page(Ui.HeadingWith("Developer services", null, Ui.Pill("Refresh", StartLoad)),
         Ui.Secondary("Each person connects their own developer accounts under Connections with their own token. What you decide here is who is permitted to. You never enter or see anyone's credential."));
       var catalog = Ui.Stack(6);
       foreach (var c in Catalog) catalog.Children.Add(Ui.Stack(2, Ui.Headline(c[0]), Ui.Caption(c[1])));
@@ -261,6 +261,33 @@ namespace Josi.Native {
       }
       if (markdown.Length > 0) items.Add(Ui.Copyable(markdown, 13, null, true));
       return Ui.CardBox("Obsidian workspace vaults", items.ToArray());
+    }
+  }
+
+  /// Item 41: one Connectors entry for the administrator's "what may people
+  /// connect, and is it working", with a two-way switch between the account
+  /// providers (Google, Microsoft, Dropbox, Box, Nextcloud) and the developer
+  /// services (GitHub, Netlify, Supabase, Notion and the rest). Both pages are
+  /// kept once built, so switching back is instant.
+  public sealed class ConnectorsHubView : UserControl {
+    readonly AppModel model; readonly Window owner;
+    readonly ContentControl host = new ContentControl { Focusable = false };
+    readonly Border strip = new Border { Background = Ui.Background, Padding = new Thickness(30, 22, 30, 0) };
+    ConnectorsView providers; IntegrationsView developer;
+    string tab;
+    public ConnectorsHubView(AppModel model, Window owner, string initial) {
+      this.model = model; this.owner = owner; tab = initial == "developer" ? "developer" : "providers";
+      var dock = new DockPanel { LastChildFill = true };
+      DockPanel.SetDock(strip, Dock.Top);
+      dock.Children.Add(strip); dock.Children.Add(host);
+      Content = dock;
+      Show();
+    }
+    void Show() {
+      var picker = Ui.Segments(Ui.Options("providers", "Account providers", "developer", "Developer services"), tab, value => { tab = value; Show(); });
+      strip.Child = Ui.Stack(8, Ui.Heading("Connectors", "What people here may connect, and whether it is working."), picker);
+      if (tab == "developer") { developer = developer ?? new IntegrationsView(model, owner); host.Content = developer; }
+      else { providers = providers ?? new ConnectorsView(model, owner); host.Content = providers; }
     }
   }
 }
