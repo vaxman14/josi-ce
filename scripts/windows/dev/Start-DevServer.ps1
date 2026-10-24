@@ -125,7 +125,12 @@ try {
         # never secret values (those stay in the protected secret files).
         $launcher = Join-Path $data "state\run-$role.cmd"
         $lines = @('@echo off')
-        foreach ($pair in (Get-RoleEnvironment $role).GetEnumerator()) { $lines += 'set "' + $pair.Key + '=' + $pair.Value + '"' }
+        $environment = Get-RoleEnvironment $role
+        # Development behind a tunnel: the public address is https while the
+        # native app on this PC still talks to http://localhost. Secure cookies
+        # would never reach the app, so runtime.json may set cookieSecure=false.
+        if ($settings.PSObject.Properties['cookieSecure'] -and $settings.cookieSecure -eq $false) { $environment['COOKIE_SECURE'] = 'false' }
+        foreach ($pair in $environment.GetEnumerator()) { $lines += 'set "' + $pair.Key + '=' + $pair.Value + '"' }
         $lines += 'cd /d "' + $repo + '"'
         $lines += '"' + $node + '" ' + $entry + ' 1>>"' + (Join-Path $data "logs\$role.log") + '" 2>>"' + (Join-Path $data "logs\$role.err.log") + '"'
         [IO.File]::WriteAllLines($launcher, $lines, [Text.Encoding]::ASCII)
@@ -133,6 +138,31 @@ try {
         Set-Content -Path $pidFile -Value $id
         Write-Host "$role started (pid $id); log: $(Join-Path $data "logs\$role.log")"
     }
+
+    # Cloudflare Tunnel connector, when the binary and a tunnel token are
+    # present: a plain process under this account, never a Windows service.
+    # It reaches the API on loopback, so nothing listens on the LAN. The
+    # token stays in the protected secrets folder and is read by cloudflared
+    # itself; it never appears in the launcher or on a command line.
+    $cloudflared = Join-Path $Root 'cloudflared\cloudflared.exe'
+    $tunnelToken = Join-Path $data 'secrets\cloudflared-token'
+    $tunnelPid = Join-Path $data 'state\tunnel.pid'
+    if ((Test-Path $cloudflared) -and (Test-Path $tunnelToken)) {
+        $existing = if (Test-Path $tunnelPid) { Get-Process -Id ([int](Get-Content $tunnelPid)) -ErrorAction SilentlyContinue } else { $null }
+        if ($existing) { Write-Host "tunnel already running (pid $($existing.Id))" }
+        else {
+            $launcher = Join-Path $data 'state\run-tunnel.cmd'
+            $lines = @('@echo off', 'set "TUNNEL_TOKEN_FILE=' + $tunnelToken + '"', 'set "TEMP=' + (Join-Path $data 'temp\tunnel') + '"', 'set "TMP=' + (Join-Path $data 'temp\tunnel') + '"')
+            $null = New-Item -ItemType Directory -Force (Join-Path $data 'temp\tunnel')
+            # --token-file takes the path (not the secret); the environment
+            # variable alone is not honoured by the run subcommand.
+            $lines += '"' + $cloudflared + '" tunnel --no-autoupdate --loglevel info run --token-file "' + $tunnelToken + '" 1>>"' + (Join-Path $data 'logs\tunnel.log') + '" 2>>&1'
+            [IO.File]::WriteAllLines($launcher, $lines, [Text.Encoding]::ASCII)
+            $id = Start-Independent ('"' + (Join-Path $env:SystemRoot 'System32\cmd.exe') + '" /d /c "' + $launcher + '"') $Root
+            Set-Content -Path $tunnelPid -Value $id
+            Write-Host "tunnel started (pid $id); log: $(Join-Path $data 'logs\tunnel.log')"
+        }
+    } elseif (Test-Path $cloudflared) { Write-Host 'tunnel not started: no token in data\secrets\cloudflared-token' }
 } finally { Pop-Location }
 
 # Voice Box, when its pinned runtime and verified models are present (see
