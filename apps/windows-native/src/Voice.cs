@@ -4,6 +4,7 @@ using System.IO;
 using System.Media;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
 
@@ -29,6 +30,7 @@ namespace Josi.Native {
     Task turnChain = Task.FromResult(0);
     Microphone microphone;
     SoundPlayer player;
+    CancellationTokenSource speechCancel;
 
     public Voice(AppModel model) { this.model = model; }
     void Notify() { var handler = Changed; if (handler != null) handler(); }
@@ -124,27 +126,60 @@ namespace Josi.Native {
       var target = model.Api; if (target == null) return;
       Speak(text, target).ContinueWith(t => { if (t.Exception != null) { Error = AppModel.Friendly(t.Exception.InnerException); Notify(); } }, TaskScheduler.FromCurrentSynchronizationContext());
     }
+    /// Reads text aloud in sentence-sized pieces. The next piece is requested
+    /// while the current one plays, so the pause between pieces is the
+    /// server's rendering time minus the playing time, usually nothing, and
+    /// the first sound arrives after one short piece rather than a long one.
     public async Task Speak(string text, JosiApi target) {
       Interrupt();
       var mine = speechGeneration;
+      var cancel = new CancellationTokenSource();
+      speechCancel = cancel;
       Speaking = true; Notify();
       try {
-        var remaining = (text ?? "").Trim();
-        while (remaining.Length > 0 && mine == speechGeneration) {
-          var chunk = remaining.Length > 400 ? remaining.Substring(0, 400) : remaining;
-          remaining = remaining.Substring(chunk.Length);
-          var audio = await target.VoiceAudio("/voice/speech", Wires.O("text", chunk));
+        var pieces = Pieces((text ?? "").Trim());
+        Task<byte[]> next = pieces.Count > 0 ? target.VoiceAudio("/voice/speech", Wires.O("text", pieces[0]), cancel.Token) : null;
+        for (var i = 0; i < pieces.Count && mine == speechGeneration; i++) {
+          var audio = await next;
           if (mine != speechGeneration) return;
+          next = i + 1 < pieces.Count ? target.VoiceAudio("/voice/speech", Wires.O("text", pieces[i + 1]), cancel.Token) : null;
           var sound = new SoundPlayer(new MemoryStream(audio));
           player = sound;
           try { await Task.Run(() => sound.PlaySync()); }
           catch (InvalidOperationException) { throw new JosiException("Josi could not play the voice reply."); }
         }
-      } finally { if (mine == speechGeneration) { Speaking = false; player = null; Notify(); } }
+        if (next != null) next.ContinueWith(t => { var _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+      } catch (OperationCanceledException) {
+      } finally { if (mine == speechGeneration) { Speaking = false; player = null; speechCancel = null; Notify(); } }
+    }
+    /// Sentence ends first, then clauses, then a hard cut, up to about 220
+    /// characters: short enough to render in a few seconds, long enough to
+    /// keep the voice's rhythm.
+    internal static List<string> Pieces(string text) {
+      var pieces = new List<string>();
+      var remaining = text;
+      while (remaining.Length > 0) {
+        if (remaining.Length <= 220) { pieces.Add(remaining); break; }
+        var window = remaining.Substring(0, 220);
+        var cut = -1;
+        foreach (var marks in new[] { ".!?", ";:", ",", " " }) {
+          for (var k = window.Length - 1; k >= 60; k--) if (marks.IndexOf(window[k]) >= 0 && (k + 1 == window.Length || window[k + 1] == ' ' || marks == " ")) { cut = k + 1; break; }
+          if (cut > 0) break;
+        }
+        if (cut <= 0) cut = 220;
+        var piece = remaining.Substring(0, cut).Trim();
+        if (piece.Length > 0) pieces.Add(piece);
+        remaining = remaining.Substring(cut).TrimStart();
+      }
+      return pieces;
     }
     public void Interrupt() {
       speechGeneration++;
       var current = player; player = null;
+      // The server renders a piece whether or not anyone is listening; telling
+      // it now frees Voice Box for the next request instead of ten seconds later.
+      var pending = speechCancel; speechCancel = null;
+      if (pending != null) { try { pending.Cancel(); } catch (Exception) { } }
       if (current != null) { try { current.Stop(); } catch (Exception) { } }
       if (Speaking) { Speaking = false; Notify(); }
     }

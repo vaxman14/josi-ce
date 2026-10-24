@@ -94,6 +94,8 @@ export function voiceBoxRoutes(helper: VoiceHelper): { admin: Router; voice: Rou
   voice.use(requireAuth);
   const sessions = new Map<string, { owner: string; at: number; busy: boolean }>();
   const active = new Set<string>();
+  let speechTurn: Promise<void> = Promise.resolve();
+  let waiting = 0;
   const prune = () => {
     for (const [id, session] of sessions) if (Date.now() - session.at > 60_000) sessions.delete(id);
   };
@@ -173,11 +175,24 @@ export function voiceBoxRoutes(helper: VoiceHelper): { admin: Router; voice: Rou
     const text = req.body?.text;
     if (Object.keys(req.body ?? {}).join(',') !== 'text' || typeof text !== 'string' || !text.trim() || text.length > 600)
       return res.status(400).json({ error: 'Provide between 1 and 600 characters to speak' });
-    const owner = req.user!.id;
-    if (active.has(owner) || active.size >= 4) return res.status(429).json({ error: 'Voice Box is busy' });
-    active.add(owner);
-    try { return forward(res, await helper('/speech', { text })); }
-    finally { active.delete(owner); }
+    // Speech is generated one piece at a time (the gateway holds one TTS
+    // lock), and a piece of 400 characters takes about ten seconds on a CPU.
+    // Refusing a second request while the first is still rendering turned
+    // every "read this one instead" and every quick follow-up into "Voice Box
+    // is busy". Requests now wait their turn, a few deep; a caller that gave
+    // up while waiting is skipped rather than rendered for nobody.
+    if (waiting >= 4) return res.status(429).json({ error: 'Voice Box is busy; try again in a moment' });
+    waiting++;
+    let gone = false;
+    req.on('close', () => { gone = true; });
+    const previous = speechTurn;
+    let release!: () => void;
+    speechTurn = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await previous;
+      if (gone) return;
+      return forward(res, await helper('/speech', { text }));
+    } finally { waiting--; release(); }
   }));
   return { admin, voice };
 }

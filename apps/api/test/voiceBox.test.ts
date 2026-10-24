@@ -32,10 +32,12 @@ const jars: Record<string, string> = {};
 const calls: { path: string; body: unknown }[] = [];
 let ready = false;
 let helperDown = false;
+let slowSpeech: Promise<void> | null = null;
 let serial = 0;
 const helper: VoiceHelper = async (path, body) => {
   calls.push({ path, body });
   if (helperDown) throw new Error('private socket error');
+  if (path === '/speech' && slowSpeech) await slowSpeech;
   const data = path === '/status' ? { healthy: ready, verified: ready, phase: ready ? 'ready' : 'absent', privateHost: 'should not reach members' }
     : path === '/session' ? { session: (++serial).toString(16).padStart(48, '0') }
     : path === '/audio' ? { events: [{ type: 'final', text: 'hello' }] } : { ok: true };
@@ -108,6 +110,21 @@ describe('Voice Box API security and lifecycle', () => {
     expect((await call('/voice/audio', 'alice', frame)).status).toBe(200);
     expect((await call('/voice/close', 'alice', { session })).status).toBe(200);
     expect((await call('/voice/audio', 'alice', frame)).status).toBe(404);
+  });
+  it('renders speech one request at a time, in order, instead of refusing the second', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    slowSpeech = gate;
+    const first = call('/voice/speech', 'alice', { text: 'first' });
+    await new Promise((r) => setTimeout(r, 50));
+    const second = call('/voice/speech', 'alice', { text: 'second' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls.filter((c) => c.path === '/speech').map((c) => (c.body as { text: string }).text).slice(-1)).toEqual(['first']);
+    slowSpeech = null;
+    release();
+    expect((await first).status).toBe(200);
+    expect((await second).status).toBe(200);
+    expect(calls.filter((c) => c.path === '/speech').map((c) => (c.body as { text: string }).text).slice(-2)).toEqual(['first', 'second']);
   });
   it('rejects oversized speech and reports absent helpers without private errors', async () => {
     expect((await call('/voice/speech', 'alice', { text: 'x'.repeat(601) })).status).toBe(400);

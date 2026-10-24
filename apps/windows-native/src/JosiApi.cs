@@ -280,12 +280,13 @@ namespace Josi.Native {
     }
 
     /// Voice routes return audio bytes rather than JSON.
-    public async Task<byte[]> VoiceAudio(string route, object body) {
+    public async Task<byte[]> VoiceAudio(string route, object body, CancellationToken cancel = default(CancellationToken)) {
       if (route != "/voice/speech" && route != "/admin/voice-box/preview") throw new OperationCanceledException();
       if (csrf == null) await PrimeCsrf();
+      using (var linked = CancellationTokenSource.CreateLinkedTokenSource(closing.Token, cancel))
       using (var message = Message("POST", Route(route))) {
         message.Content = new StringContent(Wires.Serialize(body), Encoding.UTF8, "application/json");
-        using (var response = await http.SendAsync(message, closing.Token)) {
+        using (var response = await http.SendAsync(message, linked.Token)) {
           var bytes = await response.Content.ReadAsByteArrayAsync();
           if (!response.IsSuccessStatusCode) {
             var detail = Wires.Parse(Encoding.UTF8.GetString(bytes))["error"].Text;
