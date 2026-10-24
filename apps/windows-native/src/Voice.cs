@@ -152,21 +152,26 @@ namespace Josi.Native {
       } catch (OperationCanceledException) {
       } finally { if (mine == speechGeneration) { Speaking = false; player = null; speechCancel = null; Notify(); } }
     }
-    /// Sentence ends first, then clauses, then a hard cut, up to about 220
-    /// characters: short enough to render in a few seconds, long enough to
-    /// keep the voice's rhythm.
+    /// Sentence ends first, then clauses, then a hard cut. The first piece is
+    /// short (about 90 characters, one sentence or so) because the server
+    /// renders at roughly twice real time, so the wait before the first word
+    /// is half the first piece's length: a short opener starts in two or three
+    /// seconds, and every later piece (up to about 220 characters) is ready
+    /// before the one before it has finished playing.
     internal static List<string> Pieces(string text) {
       var pieces = new List<string>();
       var remaining = text;
       while (remaining.Length > 0) {
-        if (remaining.Length <= 220) { pieces.Add(remaining); break; }
-        var window = remaining.Substring(0, 220);
+        var limit = pieces.Count == 0 ? 90 : 220;
+        var floor = pieces.Count == 0 ? 30 : 60;
+        if (remaining.Length <= limit) { pieces.Add(remaining); break; }
+        var window = remaining.Substring(0, limit);
         var cut = -1;
         foreach (var marks in new[] { ".!?", ";:", ",", " " }) {
-          for (var k = window.Length - 1; k >= 60; k--) if (marks.IndexOf(window[k]) >= 0 && (k + 1 == window.Length || window[k + 1] == ' ' || marks == " ")) { cut = k + 1; break; }
+          for (var k = window.Length - 1; k >= floor; k--) if (marks.IndexOf(window[k]) >= 0 && (k + 1 == window.Length || window[k + 1] == ' ' || marks == " ")) { cut = k + 1; break; }
           if (cut > 0) break;
         }
-        if (cut <= 0) cut = 220;
+        if (cut <= 0) cut = limit;
         var piece = remaining.Substring(0, cut).Trim();
         if (piece.Length > 0) pieces.Add(piece);
         remaining = remaining.Substring(cut).TrimStart();
