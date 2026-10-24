@@ -20,11 +20,19 @@ namespace Josi.Native {
   static class BrowserHost {
     public const string Name = "com.heyjosi.browser";
     public const string ExtensionId = "peopadjeldgefmbfllgjgdndhabbagpl";
+    /// Item 37: the Firefox add-on ID (fixed in development-identity.json; Mozilla ties the listing to it).
+    public const string FirefoxExtensionId = "josi-browser@heyjosi.com";
+    /// The store-assigned Chromium IDs, once published, go here beside the development one.
+    public static readonly string[] ChromiumExtensionIds = { ExtensionId };
     public const int MaxFrame = 200 * 1024;
     static string Origin { get { return "chrome-extension://" + ExtensionId + "/"; } }
     public static string PipeName { get { return "Josi.Native.Windows.Browser" + AppLinks.Instance + "." + WindowsIdentity.GetCurrent().User.Value; } }
 
-    public static bool IsLaunch(string[] args) { return args.Length >= 1 && args[0] == Origin; }
+    public static bool IsLaunch(string[] args) {
+      if (args.Length >= 1 && args[0] == Origin) return true;
+      // Firefox starts the host with the manifest path and the add-on ID.
+      return args.Length >= 2 && args[1] == FirefoxExtensionId && args[0].EndsWith(Name + ".firefox.json", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// Points Chrome, Brave and Edge at this copy of Josi for the current
     /// Windows account (no administrator change). Test runs never change it.
@@ -40,6 +48,12 @@ namespace Josi.Native {
         if (!File.Exists(manifest) || File.ReadAllText(manifest) != json) File.WriteAllText(manifest, json);
         foreach (var browser in new[] { @"Software\Google\Chrome", @"Software\BraveSoftware\Brave-Browser", @"Software\Microsoft\Edge" })
           using (var key = Registry.CurrentUser.CreateSubKey(browser + @"\NativeMessagingHosts\" + Name)) key.SetValue("", manifest);
+        // Firefox (item 37): its own manifest names the add-on instead of an origin.
+        var firefoxManifest = Path.Combine(folder, Name + ".firefox.json");
+        var firefoxJson = Wires.Serialize(Wires.O("name", Name, "description", "Josi browser control", "path", exe, "type", "stdio",
+          "allowed_extensions", new List<object> { FirefoxExtensionId }));
+        if (!File.Exists(firefoxManifest) || File.ReadAllText(firefoxManifest) != firefoxJson) File.WriteAllText(firefoxManifest, firefoxJson);
+        using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Mozilla\NativeMessagingHosts\" + Name)) key.SetValue("", firefoxManifest);
       } catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is System.Security.SecurityException) { }
     }
 
@@ -89,7 +103,7 @@ namespace Josi.Native {
         pid = entry.Item1;
         if (!processes.TryGetValue(pid, out entry)) return null;
         var family = entry.Item2.ToLowerInvariant() == "chrome.exe" ? "chrome" : entry.Item2.ToLowerInvariant() == "brave.exe" ? "brave"
-          : entry.Item2.ToLowerInvariant() == "msedge.exe" ? "edge" : null;
+          : entry.Item2.ToLowerInvariant() == "msedge.exe" ? "edge" : entry.Item2.ToLowerInvariant() == "firefox.exe" ? "firefox" : null;
         if (family == null) continue;
         var path = ImagePath(pid); if (path == null) return null;
         return Wires.O("kind", "peer", "family", family, "application", path, "processId", (long)pid);

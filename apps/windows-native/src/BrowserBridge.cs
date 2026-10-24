@@ -133,8 +133,10 @@ namespace Josi.Native {
         lock (gate) {
           if (operation == "browser.hello") {
             var family = payload["family"].Text; var nativeProfileId = payload["nativeProfileId"].Text; var url = payload["url"].Text;
-            if (family != "chrome" && family != "brave" || payload["extensionId"].Text != BrowserHost.ExtensionId
-              || !Wires.IsUuid(nativeProfileId) || !payload["attachedTabId"].IsNumber || OriginOf(url) == null) return Reply(id, false, null);
+            // Item 37: every family the build produces, each with the ID the app knows for it.
+            var knownExtension = family == "firefox" ? payload["extensionId"].Text == BrowserHost.FirefoxExtensionId
+              : (family == "chrome" || family == "brave" || family == "edge") && BrowserHost.ChromiumExtensionIds.Contains(payload["extensionId"].Text);
+            if (!knownExtension || !Wires.IsUuid(nativeProfileId) || !payload["attachedTabId"].IsNumber || OriginOf(url) == null) return Reply(id, false, null);
             var browser = peer["family"].Text == "edge" ? "Edge" : Wires.Capitalize(peer["family"].Text);
             var known = Allowed().FirstOrDefault(a => a["nativeProfileId"].Text == nativeProfileId
               && string.Equals(a["application"].Text, peer["application"].Text, StringComparison.OrdinalIgnoreCase));

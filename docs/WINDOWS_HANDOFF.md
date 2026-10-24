@@ -58,8 +58,9 @@ Requirements:
 5. Roman signs in, sets up his Claude model (Models, then "Save and Check Model"; "Tool calling" must pass), and allows his browser in PC Control.
 6. Build the extension:
    - `node scripts/unified/build-browser-extensions.mjs <new empty folder>`
-   - copy its `chrome` folder to `C:\Dev\josi-dev\browser-extension\chrome`
+   - copy its `chrome` folder to `C:\Dev\josi-dev\browser-extension\chrome` (`edge/` and `firefox/` load the same way in those browsers)
    - Roman loads it unpacked in Chrome. The extension ID is fixed by `development-identity.json`.
+   - The same run writes `store/*.zip` for the Chrome Web Store, Edge Add-ons and Firefox Add-ons; the publishing steps are in `docs/BROWSER_EXTENSION_STORES.md`.
 
 ## Gotchas learned the hard way
 
