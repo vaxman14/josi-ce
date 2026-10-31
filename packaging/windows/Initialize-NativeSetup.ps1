@@ -14,13 +14,13 @@ if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparseP
 $manifest=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
 $required=@('Initialize-NativeSetup.ps1','Josi.NativeSetup.dll','Configuration.psm1','DataLayout.psm1','Database.psm1',
     'Maintenance.psm1','Payloads.psm1','Services.psm1','Transactions.psm1','service-host.lock.json',
-    'Lifecycle.psm1','Diagnostics.psm1','StartupEvidence.psm1','Invoke-NativeSetup.ps1','WinSW.Josi.exe','JosiLauncher.exe')
+    'Lifecycle.psm1','Diagnostics.psm1','StartupEvidence.psm1','Invoke-NativeSetup.ps1','WinSW.Josi.exe','JosiLauncher.exe','Josi.exe')
 if(@($manifest.PSObject.Properties).Count -ne 4 -or $manifest.schemaVersion -ne 1 -or $manifest.product -cne 'Josi CE installer kit' -or
     $manifest.architecture -cne 'x64' -or @($manifest.files).Count -ne $required.Count){throw 'Installer kit identity failed'}
 $seen=@{}
 foreach($entry in $manifest.files){
     if(@($entry.PSObject.Properties).Count -ne 3 -or $entry.path -cnotin $required -or $seen.ContainsKey($entry.path) -or
-        $entry.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $entry.size -le 0 -or $entry.size -gt 1048576){throw 'Installer kit inventory failed'}
+        $entry.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $entry.size -le 0 -or $entry.size -gt $(if($entry.path -ceq 'Josi.exe'){536870912}else{1048576})){throw 'Installer kit inventory failed'}
     $seen[$entry.path]=$true
     $file=Join-Path $root $entry.path
     $info=Get-Item -LiteralPath $file -Force

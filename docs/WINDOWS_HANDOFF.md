@@ -34,8 +34,7 @@ Pre-existing test failures, also on earlier commits:
 Still open (see the build list):
 - Windows Hello approvals (server enrollment is macOS-only).
 - Streaming replies.
-- Full installer (runtimes, CTranslate2 source build, ffmpeg component).
-- Azure signing (needs Roman).
+- Installing the 1.0 installer on a clean PC or VM (the build and signing are done: `docs/WINDOWS_RELEASE.md`).
 - Google live test.
 - Calendar week column clip.
 - Chrome profile is shown as "Default" in browser permissions.

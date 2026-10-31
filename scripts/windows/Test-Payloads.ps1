@@ -19,7 +19,7 @@ foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User,
 $null = [IO.Directory]::CreateDirectory($root, $acl)
 $path = Join-Path $root 'manifest.json'
 $version = '0.0.0-test'
-$components = @('josi', 'node', 'python', 'postgresql', 'caddy', 'voice-models') | ForEach-Object {
+$components = @('josi', 'node', 'python', 'postgresql', 'caddy', 'voice-models', 'cli', 'ffmpeg') | ForEach-Object {
     [ordered]@{ id=$_; version='1.0.0'; architecture='x64'; asset=($_ + '.zip'); size=1;
         sha256=('a' * 64); license='MIT'; licenseSource='https://example.test/license';
         redistributionEvidence=('licenses/' + $_ + '.txt');

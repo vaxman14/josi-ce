@@ -25,7 +25,8 @@ if (!$SignTool) {
 }
 if (!$SignTool -or !(Test-Path -LiteralPath $SignTool)) { throw 'signtool.exe was not found. Install the Windows SDK signing tools.' }
 if (!$Dlib) {
-  $Dlib = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\MicrosoftTrustedSigningClientTools\*\Azure.CodeSigning.Dlib.dll", "$env:USERPROFILE\.nuget\packages\microsoft.trusted.signing.client\*\bin\x64\Azure.CodeSigning.Dlib.dll" -ErrorAction SilentlyContinue |
+  # The client tools were renamed to Artifact Signing in 2026; both install folders are searched.
+  $Dlib = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\MicrosoftArtifactSigningClientTools\Azure.CodeSigning.Dlib.dll", "$env:LOCALAPPDATA\Microsoft\MicrosoftArtifactSigningClientTools\*\Azure.CodeSigning.Dlib.dll", "$env:LOCALAPPDATA\Microsoft\MicrosoftTrustedSigningClientTools\*\Azure.CodeSigning.Dlib.dll", "$env:USERPROFILE\.nuget\packages\microsoft.trusted.signing.client\*\bin\x64\Azure.CodeSigning.Dlib.dll" -ErrorAction SilentlyContinue |
     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
 }
 if (!$Dlib -or !(Test-Path -LiteralPath $Dlib)) { throw 'Azure.CodeSigning.Dlib.dll was not found. Install the Trusted Signing client tools (winget install Microsoft.Azure.TrustedSigningClientTools).' }

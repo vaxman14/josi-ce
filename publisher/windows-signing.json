@@ -1,0 +1,7 @@
+{
+  "comment": "Azure Trusted Signing (Artifact Signing) for the Windows release. No secret here: the publisher signs in with 'az login' before building; scripts/windows/Sign-WindowsArtifacts.ps1 uses that session.",
+  "endpoint": "https://wus2.codesigning.azure.net",
+  "account": "SoCalReceptionist",
+  "profile": "josi-public-trust",
+  "subject": "CN=SoCal Receptionist, O=SoCal Receptionist, L=Murrieta, S=California, C=US"
+}

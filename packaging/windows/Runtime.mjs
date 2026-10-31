@@ -42,7 +42,10 @@ try {
   for (const key of Object.keys(process.env)) delete process.env[key];
   Object.assign(process.env, {
     SystemRoot: windows, WINDIR: windows, COMSPEC: join(windows, 'System32/cmd.exe'),
-    PATH: [join(program, 'node'), join(windows, 'System32')].join(';'),
+    // Josi's own Node, the bundled subscription CLIs (codex.exe, claude.exe and
+    // Codex's ripgrep; packaging/windows/subscription-cli.lock.json) and System32.
+    PATH: [join(program, 'node'), join(program, 'cli/codex/bin'), join(program, 'cli/codex/codex-path'),
+      join(program, 'cli/claude'), join(windows, 'System32')].join(';'),
     TEMP: join(data, 'temp', role), TMP: join(data, 'temp', role),
     APPDATA: join(data, 'profiles', role, 'AppData/Roaming'),
     LOCALAPPDATA: join(data, 'profiles', role, 'AppData/Local'),

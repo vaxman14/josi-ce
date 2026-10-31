@@ -94,7 +94,9 @@ def main():
         text = (REPO / 'services/voice-box' / lock).read_text(encoding='utf-8')
         for name, version in re.findall(r'^([A-Za-z0-9_-]+)==([^\s]+)', text, re.M):
             expected[normalize(name)] = version
-    expected.update({'en-core-web-sm': '3.8.0', 'faster-whisper': '1.2.1+josi.pcm1', 'ctranslate2': '4.8.2+josi.windows2'})
+    # 1.0: the upstream CTranslate2 CPU wheel (the one the dev server runs) is
+    # shipped; the patched source build (+josi.windows2) is a later release gate.
+    expected.update({'en-core-web-sm': '3.8.0', 'faster-whisper': '1.2.1+josi.pcm1', 'ctranslate2': '4.8.2'})
     site = TOOLS / 'Lib/site-packages'
     installed = {}
     for dist in metadata.distributions(path=[str(site)]):
