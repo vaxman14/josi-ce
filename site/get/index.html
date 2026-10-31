@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Get Josi CE</title>
+<meta name="description" content="Download Josi CE, the free assistant that runs on a computer you own, for Windows, Mac, Linux and NAS, and the apps for your phone and browser.">
+<link rel="canonical" href="https://get.heyjosi.com/">
+<link rel="icon" type="image/png" href="josi-mark.png">
+<meta property="og:title" content="Get Josi CE">
+<meta property="og:description" content="Josi CE runs on a computer you own. Install it there, then use it from everything else.">
+<meta property="og:image" content="https://get.heyjosi.com/josi-mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Figtree:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one left-aligned column, the Josi app's palette and 18px rhythm. Dark first, light for people who ask for it. */
+:root {
+  --bg: #0B111E; --panel: #141E30; --card: #101728; --raised: #1F283D; --line: #252D41;
+  --accent: #F6831E; --accent-ink: #1A0E03; --fg: #FDF6EA; --muted: #9DABBE; --good: #5FCB8A;
+  --display: 'Sora', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  --body: 'Figtree', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', Consolas, 'Cascadia Mono', monospace;
+  --radius: 14px; --gap: 18px; --page: 65rem;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #F6F2EA; --panel: #FFFFFF; --card: #FFFDF9; --raised: #ECE6DA; --line: #D9D2C4;
+  --accent: #E0700F; --accent-ink: #FFFFFF; --fg: #16202F; --muted: #5E6A7E; --good: #1E8F4E; color-scheme: light; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 56px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.15; }
+p { margin: 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover, a:focus-visible { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.col { max-width: var(--page); margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+.muted { color: var(--muted); }
+.small { font-size: 14px; }
+.mono { font-family: var(--mono); font-size: 13px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.card.hot { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.pill { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 10px 20px; font-weight: 600; font-size: 15px;
+  border: 1px solid var(--line); background: var(--raised); color: var(--fg); width: fit-content; }
+.pill:hover { text-decoration: none; filter: brightness(1.08); }
+.pill.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.pill.big { padding: 14px 28px; font-size: 17px; }
+.pill[aria-disabled="true"] { opacity: .55; pointer-events: none; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 3px 10px; background: var(--raised); color: var(--muted); width: fit-content; }
+.tag.on { background: var(--accent); color: var(--accent-ink); }
+pre { font-family: var(--mono); font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 0; white-space: pre; }
+ul { margin: 0; padding-left: 20px; } li { margin: 4px 0; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
+.mark { width: 36px; height: 36px; border-radius: 10px; flex: none; }
+nav { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; font-size: 14px; color: var(--muted); padding-top: 22px; }
+nav .brand { display: flex; gap: 10px; align-items: center; color: var(--fg); font-family: var(--display); font-weight: 600; font-size: 18px; margin-right: auto; }
+nav a { color: var(--muted); }
+.hero { display: flex; flex-direction: column; gap: 14px; }
+.hero h1 { font-size: clamp(32px, 5vw, 46px); }
+.hero .lead { font-size: 19px; max-width: 36rem; color: var(--muted); }
+.doors { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.door h2 { font-size: 22px; }
+.door .meta { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+section { display: flex; flex-direction: column; gap: 14px; }
+section > h2 { font-size: 24px; }
+.steps { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); counter-reset: s; }
+.step { padding: 20px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line); min-width: 0; }
+.step::before { counter-increment: s; content: counter(s); display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-family: var(--display); font-weight: 700; margin-bottom: 10px; }
+.step h3 { font-size: 18px; margin-bottom: 6px; }
+.grid { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
+dt { color: var(--muted); } dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.note { background: var(--panel); border-left: 3px solid var(--accent); padding: 12px 16px; border-radius: 0 10px 10px 0; font-size: 14px; color: var(--muted); }
+footer { font-size: 14px; color: var(--muted); display: flex; flex-direction: column; gap: 8px; }
+@media (prefers-reduced-motion: no-preference) { .door.hot { transition: box-shadow .3s; } }
+</style>
+</head>
+<body>
+<div class="col">
+  <nav>
+    <a class="brand" href="/"><img class="mark" src="josi-mark.png" alt="">Josi CE</a>
+    <a href="#download">Download</a>
+    <a href="https://help.heyjosi.com" rel="noopener">Help</a>
+    <a href="#whats-new">What's new</a>
+    <a href="https://github.com/vaxman14/josi-ce" rel="noopener">Source code</a>
+    <a href="https://heyjosi.com">heyjosi.com</a>
+  </nav>
+
+  <div class="hero" id="download">
+    <h1>Get Josi CE</h1>
+    <p class="lead">Josi CE runs on a computer you own. Install it there, then use it from everything else.</p>
+    <p class="small muted" id="release-line">Looking up the latest version…</p>
+  </div>
+
+  <div class="doors">
+    <div class="card door" id="door-windows">
+      <span class="tag" data-this="Windows">Windows</span>
+      <h2>Windows</h2>
+      <p class="small muted">Windows 10 or 11, 64-bit. One installer with the server and the app. The PC you sit at can be the server.</p>
+      <a class="pill primary" data-asset="windows" href="https://github.com/vaxman14/josi-ce/releases" rel="noopener">Download for Windows</a>
+      <p class="meta" data-meta="windows">Signed by SOCAL RECEPTIONIST LLC</p>
+    </div>
+    <div class="card door" id="door-mac">
+      <span class="tag" data-this="Mac">Mac</span>
+      <h2>Mac</h2>
+      <p class="small muted">macOS 14 or newer, Apple silicon or Intel. One installer with the server and the app.</p>
+      <a class="pill" data-asset="mac" href="https://github.com/vaxman14/josi-ce/releases" rel="noopener">Download for Mac</a>
+      <p class="meta" data-meta="mac">Notarized by Apple</p>
+    </div>
+    <div class="card door" id="door-linux">
+      <span class="tag" data-this="Linux">Linux and NAS</span>
+      <h2>Linux and NAS</h2>
+      <p class="small muted">Any 64-bit Linux machine: a mini PC, a VM, Unraid, TrueNAS, a Synology with Docker. Copy this into a terminal on that machine.</p>
+      <pre id="linux-command">curl -fsSL https://get.heyjosi.com/install.sh -o install.sh
+sudo bash install.sh</pre>
+      <p class="meta" data-meta="linux"><a data-asset="linux-packages" href="https://github.com/vaxman14/josi-ce/releases" rel="noopener">Packages for Debian, Ubuntu, Fedora and Arch</a> · <a href="/install.sh">read the script first</a></p>
+    </div>
+  </div>
+
+  <section>
+    <h2>What you need</h2>
+    <ul class="muted">
+      <li>A computer that stays on while you use Josi. It can be the one you sit at.</li>
+      <li>An AI account you already have: a ChatGPT or Claude plan, or an API key from any provider Josi supports.</li>
+      <li>About fifteen minutes.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What happens next</h2>
+    <div class="steps">
+      <div class="step"><h3>Install</h3><p class="small muted">Run the installer. It asks nothing but where to put Josi, then opens it.</p></div>
+      <div class="step"><h3>Set up</h3><p class="small muted">Make your account, save your recovery key, sign in to your AI. Josi checks that it answers before you continue.</p></div>
+      <div class="step"><h3>Add your devices</h3><p class="small muted">Your phone, your browser, your other computers and your people, each from inside Josi, each when you want it.</p></div>
+    </div>
+  </section>
+
+  <section id="devices">
+    <h2>Use Josi from your other devices</h2>
+    <p class="muted">These connect to the Josi you installed above. They are not a second Josi.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>Your phone</h3>
+        <p class="small muted">The Josi CE app, or Josi's address in the phone's browser. Josi shows you the address and a code to scan under Add › Phone.</p>
+        <div class="row"><a class="pill" href="https://apps.apple.com/us/app/josi-ce/id6810549193" rel="noopener">App Store</a><a class="pill" href="https://play.google.com/store/apps/details?id=com.socalreceptionist.josice" rel="noopener">Google Play</a></div>
+      </div>
+      <div class="card">
+        <h3>Your browser</h3>
+        <p class="small muted">The Josi extension lets Josi read and use one tab you choose, through the Josi app on the same computer. It comes with the Windows and Mac apps; the Chrome, Edge and Firefox store listings follow.</p>
+      </div>
+      <div class="card">
+        <h3>Another computer</h3>
+        <p class="small muted">A second PC or Mac can run the same app and choose "I already have a Josi server". Everyone in the house or office can have their own account on the one server.</p>
+        <p class="small" id="desktop-clients"></p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Check your download</h2>
+    <p class="small muted">Every file is signed and its SHA-256 is listed on the release page. On Windows: right-click the file, Properties, Digital Signatures; the signer is SOCAL RECEPTIONIST LLC. On a Mac, Gatekeeper checks the notarization for you.</p>
+    <dl id="checksums"><dt>Checksums</dt><dd><a id="sums-link" href="https://github.com/vaxman14/josi-ce/releases" rel="noopener">SHA256SUMS.txt on the release page</a></dd></dl>
+  </section>
+
+  <section id="whats-new">
+    <h2>What's new</h2>
+    <div class="note" id="notes">The release notes of the latest version appear here.</div>
+    <p class="small muted">All versions: <a href="https://github.com/vaxman14/josi-ce/releases" rel="noopener">github.com/vaxman14/josi-ce/releases</a></p>
+  </section>
+
+  <section>
+    <h2>Help and source code</h2>
+    <p class="small muted">Help pages: <a href="https://help.heyjosi.com" rel="noopener">help.heyjosi.com</a>. Questions and bugs: <a href="https://github.com/vaxman14/josi-ce/issues" rel="noopener">GitHub issues</a>. The source: <a href="https://github.com/vaxman14/josi-ce" rel="noopener">github.com/vaxman14/josi-ce</a>, open under its licence. Josi sends nothing to us; see the <a href="https://help.heyjosi.com/legal/" rel="noopener">privacy notice</a>.</p>
+  </section>
+
+  <hr>
+  <footer>
+    <p>Josi CE is made by SOCAL RECEPTIONIST LLC. <a href="https://heyjosi.com/privacy/">Privacy</a> · <a href="https://heyjosi.com/terms/">Terms</a> · <a href="https://help.heyjosi.com/legal/">Licences</a></p>
+    <p>Josi, the paid assistant with our own model built in, is coming next. Josi CE stays free.</p>
+  </footer>
+</div>
+<script src="releases.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# The Linux install script is the one in the latest final release.
+/install.sh   https://github.com/vaxman14/josi-ce/releases/latest/download/install-josi-ce-server.sh   302
+/install.sh.sha256   https://github.com/vaxman14/josi-ce/releases/latest/download/SHA256SUMS.txt   302
+/releases   https://github.com/vaxman14/josi-ce/releases   302
