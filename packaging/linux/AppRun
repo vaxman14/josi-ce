@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+APPDIR="${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
+export APPDIR
+export JOSI_HOST_GDK_BACKEND="${GDK_BACKEND-}"
+export JOSI_HOST_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
+export JOSI_HOST_SSL_CERT_FILE="${SSL_CERT_FILE-}"
+export JOSI_HOST_XDG_DATA_DIRS="${XDG_DATA_DIRS-}"
+export PYTHONHOME="$APPDIR/usr"
+export PYTHONPATH="$APPDIR/usr/lib/python3/dist-packages"
+export GI_TYPELIB_PATH="$APPDIR/usr/lib/x86_64-linux-gnu/girepository-1.0"
+export GSETTINGS_SCHEMA_DIR="$APPDIR/usr/share/glib-2.0/schemas"
+export FONTCONFIG_PATH="$APPDIR/etc/josi-fontconfig"
+export FONTCONFIG_FILE="$APPDIR/etc/josi-fontconfig/portable-fonts.conf"
+# Debian 12's bundled GTK cannot create a Wayland shared-memory pool on newer
+# rolling kernels. XWayland is part of the supported desktop baseline and keeps
+# this portable GTK stack isolated from the host compositor ABI.
+export GDK_BACKEND="${GDK_BACKEND:-x11}"
+export XDG_DATA_DIRS="$APPDIR/usr/share"
+export LD_LIBRARY_PATH="$APPDIR/usr/lib/x86_64-linux-gnu:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
+exec "$APPDIR/usr/bin/python3" "$APPDIR/usr/share/josi-ce-server-installer/universal_installer.py" "$@"

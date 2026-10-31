@@ -9,10 +9,10 @@ export function resolveDataPath(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  if (!['win32', 'darwin'].includes(platform) || env.JOSI_NATIVE_RUNTIME !== '1') return path;
+  if (!['win32', 'darwin', 'linux'].includes(platform) || env.JOSI_NATIVE_RUNTIME !== '1') return path;
   if (path !== '/data' && !path.startsWith('/data/')) return path;
   const root = env.JOSI_DATA_DIR;
-  if (platform === 'darwin') {
+  if (platform === 'darwin' || platform === 'linux') {
     if (!root || !posix.isAbsolute(root) || root === '/' || posix.normalize(root) !== root
       || /[\x00-\x1f]/.test(root) || root.endsWith('/')) {
       throw new Error('Native data storage is not configured');

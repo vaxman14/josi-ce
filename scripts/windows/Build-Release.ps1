@@ -164,8 +164,29 @@ Set-Content -LiteralPath (Join-Path $release 'RELEASE-NOTES.md') -Value ($notes 
 Write-Host ("Installer: {0} ({1} MB, sha256 {2}, signed: {3})" -f (Join-Path $release $exeName), [Math]::Round($installer.size / 1MB), $installer.sha256, $Sign.IsPresent)
 
 if ($Publish) {
-  Step "Draft GitHub release v$Version"
-  & gh release create ("v$Version") --repo vaxman14/josi-ce --draft --title ("Josi CE $Version") --notes-file (Join-Path $release 'RELEASE-NOTES.md') (Join-Path $release $exeName) (Join-Path $release 'SHA256SUMS.txt')
-  if ($LASTEXITCODE) { throw 'gh release create failed' }
-  Write-Host 'Draft release created. Review it on GitHub and press Publish when the Mac and Linux files are attached too.'
+  # One GitHub release per version carries the Windows, Mac and Linux files, so
+  # whichever platform builds first creates the draft and the others attach to
+  # it, merging their lines into the shared SHA256SUMS.txt.
+  $tag = "v$Version"
+  Step "GitHub release $tag"
+  & gh release view $tag --repo vaxman14/josi-ce *> $null
+  if ($LASTEXITCODE -eq 0) {
+    $merged = Join-Path $env:TEMP ("josi-sums-" + [Guid]::NewGuid().ToString('n'))
+    $null = New-Item -ItemType Directory -Force $merged
+    & gh release download $tag --repo vaxman14/josi-ce --pattern SHA256SUMS.txt --dir $merged *> $null
+    $existing = if (Test-Path (Join-Path $merged 'SHA256SUMS.txt')) { Get-Content (Join-Path $merged 'SHA256SUMS.txt') } else { @() }
+    $lines = @{}
+    foreach ($line in @(Get-Content (Join-Path $release 'SHA256SUMS.txt')) + @($existing)) {
+      $parts = $line -split '  ', 2
+      if ($parts.Count -eq 2 -and -not $lines.ContainsKey($parts[1])) { $lines[$parts[1]] = $line }
+    }
+    Set-Content -LiteralPath (Join-Path $merged 'SHA256SUMS.txt') -Value (($lines.Keys | Sort-Object | ForEach-Object { $lines[$_] }) -join "`n") -Encoding ascii
+    & gh release upload $tag --repo vaxman14/josi-ce --clobber (Join-Path $release $exeName) (Join-Path $merged 'SHA256SUMS.txt')
+    if ($LASTEXITCODE) { throw 'gh release upload failed' }
+    Write-Host "Attached to the existing release $tag (still a draft if it was one)."
+  } else {
+    & gh release create $tag --repo vaxman14/josi-ce --draft --title ("Josi CE $Version") --notes-file (Join-Path $release 'RELEASE-NOTES.md') (Join-Path $release $exeName) (Join-Path $release 'SHA256SUMS.txt')
+    if ($LASTEXITCODE) { throw 'gh release create failed' }
+    Write-Host "Draft release $tag created. Attach the Mac and Linux files, then press Publish on GitHub."
+  }
 }

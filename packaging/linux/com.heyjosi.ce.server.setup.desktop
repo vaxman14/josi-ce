@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Josi CE Server Setup
+Comment=Install, verify and repair Josi CE Server
+Exec=/usr/bin/josi-ce-server-setup
+Icon=com.heyjosi.ce.server
+Terminal=false
+Categories=System;Utility;
+StartupNotify=true

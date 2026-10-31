@@ -61,7 +61,9 @@ extension (`apps/browser-extension`) and the help site (`docs-site`).
 
 - Build and run: [docs/HELP.md](docs/HELP.md) and
   [docs/INSTALLATION.md](docs/INSTALLATION.md).
-- Windows release: [docs/WINDOWS_RELEASE.md](docs/WINDOWS_RELEASE.md).
+- Releases: [Windows](docs/WINDOWS_RELEASE.md), [Mac](docs/MACOS_RELEASE.md),
+  [Linux](docs/LINUX_RELEASE.md). All three attach to one GitHub release per
+  version (`v1.0.0`), which is what the download page reads.
 - Browser extension stores:
   [docs/BROWSER_EXTENSION_STORES.md](docs/BROWSER_EXTENSION_STORES.md).
 - Design, decisions, threat model and the rest: the [docs](docs) folder.

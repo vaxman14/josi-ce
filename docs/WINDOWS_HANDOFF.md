@@ -35,6 +35,7 @@ Still open (see the build list):
 - Windows Hello approvals (server enrollment is macOS-only).
 - Streaming replies.
 - Installing the 1.0 installer on a clean PC or VM (the build and signing are done: `docs/WINDOWS_RELEASE.md`).
+- The Mac and Linux 1.0 builds, which run on their own machines: `docs/MACOS_RELEASE.md` (the Mac with the Socal signing identities) and `docs/LINUX_RELEASE.md` (an x86_64 Linux box with Docker). The Linux packaging was merged into this branch from `linux/native-distribution-20261010` of josi-ce-internal on October 31; all three attach to one GitHub release `v1.0.0`.
 - Google live test.
 - Calendar week column clip.
 - Chrome profile is shown as "Default" in browser permissions.

@@ -9,7 +9,11 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\Build-Release.ps1 -Vers
 ```
 
 Leave out `-Sign` for an unsigned test build and `-Publish` to keep the result
-local. The output lands in `artifacts\windows-native\releases\<version>\`:
+local. With `-Publish` the script creates the draft GitHub release `v<version>`,
+or, when the Mac or Linux build created it first, attaches the installer to it
+and merges its line into the shared `SHA256SUMS.txt`; the release is published
+by hand once all three platforms are attached (see
+[MACOS_RELEASE.md](MACOS_RELEASE.md) and [LINUX_RELEASE.md](LINUX_RELEASE.md)). The output lands in `artifacts\windows-native\releases\<version>\`:
 
 - `Josi-CE-<version>-Windows-x64.exe`: the installer (about 1 GB; it embeds
   PostgreSQL, Node, the private Python with the voice packages, the voice

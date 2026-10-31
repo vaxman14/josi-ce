@@ -22,7 +22,7 @@ import {
   type BackupWriter, type LogWindow, type TelemetrySender, type TicketCategory,
 } from '@josi-ce/ops';
 import { UnsafeEndpointError } from '@josi-ce/llm';
-import { nativeMac } from '@josi-ce/storage';
+import { nativePosix } from '@josi-ce/storage';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { constants, existsSync, mkdirSync } from 'node:fs';
 import { access, mkdir, open, rm, writeFile } from 'node:fs/promises';
@@ -242,7 +242,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         },
         configStatus: {
           smtp: (smtp?.n ?? 0) > 0,
-          ...(nativeMac() ? { malware_scanning: false }
+          ...(nativePosix() ? { malware_scanning: false }
             : process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME === '1'
             ? { malware_scanning: policy?.clamav_enabled ?? false } : { clamav: policy?.clamav_enabled ?? false }),
           ocr: policy?.ocr_enabled ?? false,

@@ -80,3 +80,5 @@ export { listAutomationModelCandidates, type AutomationModelCandidate, type Auto
 export * from './automationBrowserTargets.js';
 
 export * from './automationBlockers.js';
+
+export { readLinuxSecret, readProtectedLinuxFile } from './linuxSecrets.js';

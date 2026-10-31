@@ -1,4 +1,4 @@
-import { nativeMac } from '@josi-ce/storage';
+import { nativePosix } from '@josi-ce/storage';
 // Can this machine actually run Josi?
 //
 // Two constraints shape every check here:
@@ -66,7 +66,7 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: major >= MIN_NODE_MAJOR ? 'pass' : 'fail',
     detail: major >= MIN_NODE_MAJOR
       ? 'The bundled runtime is supported.'
-      : nativeMac() ? 'The application runtime needs repair. Open Josi CE Server Setup and follow TEST-ME recovery instructions.'
+      : nativePosix() ? 'The application runtime needs repair. Open Josi CE Server Setup and follow the platform recovery instructions.'
       : process.platform === 'win32' ? 'The application runtime needs repair. Run Josi Setup again.'
         : 'This image is running an unsupported runtime. Pull the current Josi CE image.',
   });
@@ -83,7 +83,7 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: dbUp ? 'pass' : 'fail',
     detail: dbUp
       ? 'Josi can reach its database.'
-      : nativeMac() ? 'Josi cannot reach its stored data. Preserve it and follow the macOS TEST-ME recovery instructions.'
+      : nativePosix() ? 'Josi cannot reach its stored data. Preserve it and follow the platform recovery instructions.'
       : process.platform === 'win32' ? 'Josi cannot reach its stored data. Run Josi Setup and choose Repair.'
         : 'Josi cannot reach its database. Check that the database container is running.',
   });
@@ -95,7 +95,7 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: migrated ? 'pass' : 'fail',
     detail: migrated
       ? 'The schema is up to date.'
-      : nativeMac() ? 'The data update is incomplete. Preserve the installer transaction evidence and follow TEST-ME recovery instructions.'
+      : nativePosix() ? 'The data update is incomplete. Preserve the installer transaction evidence and follow the platform recovery instructions.'
       : process.platform === 'win32' ? 'The data update is incomplete. Run Josi Setup and choose Repair.'
         : 'The database has not been migrated. Restart the stack so the migration step runs.',
   });
@@ -111,7 +111,7 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: keyOk ? 'pass' : 'fail',
     detail: keyOk
       ? 'Found. Back it up separately — a database backup alone cannot restore your saved credentials.'
-      : nativeMac() ? 'The protected installation key is unavailable. Preserve existing data and follow TEST-ME recovery instructions.'
+      : nativePosix() ? 'The protected installation key is unavailable. Preserve existing data and follow the platform recovery instructions.'
       : process.platform === 'win32' ? 'The installation key is unavailable. Open Josi Setup to recover this installation.'
         : 'No usable master key. Run scripts/install.sh and mount it as a Docker secret, then reload.',
   });
@@ -135,7 +135,7 @@ export async function runHostChecks(db: Db, opts: HostCheckOptions = {}): Promis
     status: scratchOk ? 'pass' : 'fail',
     detail: scratchOk
       ? 'Josi can write temporary files.'
-      : nativeMac() ? 'Josi cannot write private temporary files. Follow the macOS TEST-ME permission checks.'
+      : nativePosix() ? 'Josi cannot write private temporary files. Follow the platform permission checks.'
       : process.platform === 'win32' ? 'Josi cannot write temporary files. Run Josi Setup and choose Repair.'
         : 'Josi cannot write temporary files. Check the container has a writable /tmp.',
   });

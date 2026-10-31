@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import stat
 import subprocess
@@ -22,10 +23,20 @@ APP_ID = 'com.heyjosi.ce.unified'
 APP_IDENTITY = 'Developer ID Application: Socal Receptionist LLC (LRH75YR6QW)'
 INSTALLER_IDENTITY = 'Developer ID Installer: Socal Receptionist LLC (LRH75YR6QW)'
 KEYCHAIN = '/Users/roman/Library/Keychains/login.keychain-db'
-VERSION = '0.7.0-native.20'
-PACKAGE_VERSION = '0.7.0.21'
+VERSION = '1.0.0'  # replaced by --version
+PACKAGE_VERSION = '1.0.0'
 PROTECTED_ID = 'com.heyjosi.ce.protected-key'
 SIGNING_CERTIFICATE_SHA1 = '0bdc050694b41330db6833e440a4a8e6f466abdb'
+
+
+def short_version(version):
+    """The numeric part Apple shows as the app version: 1.0.0 from 1.0.0-rc.1."""
+    return version.split('-', 1)[0]
+
+
+def package_version(version):
+    """Installer package versions are dotted integers; a pre-release keeps the numbers."""
+    return short_version(version)
 
 
 def digest(path):
@@ -104,6 +115,12 @@ def protected_entitlements(profile):
 
 
 def build(args):
+    global VERSION, PACKAGE_VERSION
+    if not re.fullmatch(r'd+.d+.d+(-[A-Za-z0-9.]+)?', args.version):
+        raise ValueError('Use --version like 1.0.0')
+    VERSION = args.version
+    PACKAGE_VERSION = package_version(args.version)
+    bundle_version = time.strftime('%Y%m%d.%H%M', time.gmtime())
     if sys.platform != 'darwin' or os.uname().machine != 'arm64':
         raise ValueError('Apple Silicon macOS is required')
     if args.package and not args.sign:
@@ -152,8 +169,8 @@ def build(args):
     run('create-app-icon', ['/usr/bin/iconutil', '-c', 'icns', icons, '-o', resources / 'Josi.icns'])
     info = {
         'CFBundleIdentifier': APP_ID, 'CFBundleName': 'Josi', 'CFBundleDisplayName': 'Josi',
-        'CFBundleExecutable': 'Josi', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.7.0',
-        'CFBundleVersion': '20261021.21', 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
+        'CFBundleExecutable': 'Josi', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': short_version(VERSION),
+        'CFBundleVersion': bundle_version, 'CFBundleIconFile': 'Josi.icns', 'LSMinimumSystemVersion': '14.2',
         'NSMicrophoneUsageDescription': 'Josi uses your microphone only when you start dictation or voice chat. Audio is processed by Voice Box on your Josi server.',
         'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
@@ -208,7 +225,7 @@ def build(args):
     (key_bundle / 'Contents/Info.plist').write_bytes(plistlib.dumps({
         'CFBundleIdentifier': PROTECTED_ID, 'CFBundleName': 'Josi Protected Key Host',
         'CFBundleExecutable': 'JosiProtectedKeyHost', 'CFBundlePackageType': 'APPL',
-        'CFBundleShortVersionString': '0.7.0', 'CFBundleVersion': info['CFBundleVersion'],
+        'CFBundleShortVersionString': short_version(VERSION), 'CFBundleVersion': info['CFBundleVersion'],
         'LSMinimumSystemVersion': '14.2', 'LSUIElement': True,
     }))
     if profile:
@@ -354,6 +371,7 @@ def build(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--version', default=VERSION, help='Release version, like 1.0.0; the app, package and runtime carry it')
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--sign', action='store_true')

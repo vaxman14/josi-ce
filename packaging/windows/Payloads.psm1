@@ -34,7 +34,7 @@ function Read-NativeManifest([string]$Path, [string]$ExpectedHash, [string]$Expe
     $manifest = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) | ConvertFrom-Json
     if ($manifest.schemaVersion -ne 1 -or $manifest.product -cne 'Josi CE Server' -or
         $manifest.version -cne $ExpectedVersion -or $manifest.architecture -cne 'x64' -or
-        $manifest.releaseTag -cne ('windows-v' + $ExpectedVersion)) { throw 'Release identity does not match this installer' }
+        $manifest.releaseTag -cne ('v' + $ExpectedVersion)) { throw 'Release identity does not match this installer' }
     $required = @('josi', 'node', 'python', 'postgresql', 'caddy', 'voice-models', 'cli', 'ffmpeg')
     $components = @($manifest.components)
     if ($components.Count -ne $required.Count) { throw 'Release component inventory is incomplete' }

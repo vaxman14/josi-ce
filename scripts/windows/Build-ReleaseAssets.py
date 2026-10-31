@@ -105,10 +105,10 @@ def main():
             if archive.testzip() is not None or len(archive.infolist()) != len(files) + 1:
                 raise ValueError('Archive verification failed')
         components.append({'id': name, 'version': versions[name], 'architecture': 'x64', 'asset': asset, 'size': path.stat().st_size, 'sha256': sha(path),
-                           'url': f'https://github.com/vaxman14/josi-ce/releases/download/windows-v{app["version"]}/{asset}',
+                           'url': f'https://github.com/vaxman14/josi-ce/releases/download/v{app["version"]}/{asset}',
                            'license': licenses[name], 'licenseSource': upstream[name], 'redistributionEvidence': 'licenses/THIRD_PARTY_NOTICES.txt'})
         print(json.dumps({'component': name, 'files': len(files), 'archiveVerified': True}), flush=True)
-    manifest = {'schemaVersion': 1, 'product': 'Josi CE Server', 'version': app['version'], 'architecture': 'x64', 'releaseTag': 'windows-v' + app['version'],
+    manifest = {'schemaVersion': 1, 'product': 'Josi CE Server', 'version': app['version'], 'architecture': 'x64', 'releaseTag': 'v' + app['version'],
                 'components': components, 'installable': local, 'localUnsignedAcceptance': local, 'licenseGatePassed': False, 'unsignedAcceptancePassed': False,
                 'payloadAcceptancePassed': True, 'published': False, 'openLicenseGates': metadata['gaps'],
                 'acceptanceScope': 'private offline unsigned physical acceptance; no redistribution approval' if local else 'accepted .5 payload; full thin-EXE installation acceptance is unfinished'}

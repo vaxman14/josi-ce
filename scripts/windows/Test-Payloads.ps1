@@ -23,10 +23,10 @@ $components = @('josi', 'node', 'python', 'postgresql', 'caddy', 'voice-models',
     [ordered]@{ id=$_; version='1.0.0'; architecture='x64'; asset=($_ + '.zip'); size=1;
         sha256=('a' * 64); license='MIT'; licenseSource='https://example.test/license';
         redistributionEvidence=('licenses/' + $_ + '.txt');
-        url=('https://github.com/vaxman14/josi-ce/releases/download/windows-v' + $version + '/' + $_ + '.zip') }
+        url=('https://github.com/vaxman14/josi-ce/releases/download/v' + $version + '/' + $_ + '.zip') }
 }
 $manifest = [ordered]@{ schemaVersion=1; product='Josi CE Server'; version=$version;
-    releaseTag=('windows-v' + $version); architecture='x64'; components=@($components) }
+    releaseTag=('v' + $version); architecture='x64'; components=@($components) }
 function Write-Fixture($Value) {
     [IO.File]::WriteAllText($path, ($Value | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
     return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()

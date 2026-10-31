@@ -204,7 +204,7 @@ for (const [id, files] of Object.entries(groups)) {
   ]);
   totalBytes += written.byteSize;
   components.push({ id, version: meta[id][2], architecture: 'x64', asset, size: written.byteSize, sha256: written.sha256,
-    url: `https://github.com/vaxman14/josi-ce/releases/download/windows-v${version}/${asset}`,
+    url: `https://github.com/vaxman14/josi-ce/releases/download/v${version}/${asset}`,
     license: meta[id][0], licenseSource: meta[id][1], redistributionEvidence: 'licenses/THIRD_PARTY_NOTICES.txt' });
   console.log(JSON.stringify({ component: id, files: files.length, bytes: written.byteSize }));
 }
@@ -213,7 +213,7 @@ await rm(notices, { recursive: true, force: true });
 
 // The manifest's gate fields are what the setup host reads: an installer that
 // carries its own verified payloads takes the "local payloads" path.
-const manifest = { schemaVersion: 1, product: 'Josi CE Server', version, architecture: 'x64', releaseTag: `windows-v${version}`, components,
+const manifest = { schemaVersion: 1, product: 'Josi CE Server', version, architecture: 'x64', releaseTag: `v${version}`, components,
   installable: true, localUnsignedAcceptance: true, licenseGatePassed: false, unsignedAcceptancePassed: false, payloadAcceptancePassed: true, published: false,
   acceptanceScope: 'public release; every component archive is embedded in the signed installer and verified by hash before extraction' };
 const manifestPath = join(output, 'release-manifest.json');
