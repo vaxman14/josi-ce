@@ -1,7 +1,12 @@
 # Stops the development server's API, worker and PostgreSQL. Data is kept.
 [CmdletBinding()]
-param([string]$Root = 'C:\Dev\josi-dev')
+param(
+    [string]$Root = 'C:\Dev\josi-dev',
+    # Where the pinned PostgreSQL binaries live (see Start-DevServer.ps1).
+    [string]$Tools = ''
+)
 $ErrorActionPreference = 'Stop'
+if (!$Tools) { $Tools = $Root }
 $data = Join-Path $Root 'data'
 foreach ($role in 'tunnel', 'web', 'worker', 'voice') {
     $file = Join-Path $data "state\$role.pid"
@@ -30,5 +35,5 @@ foreach ($role in 'tunnel', 'web', 'worker', 'voice') {
     }
     Remove-Item $file
 }
-& (Join-Path $Root 'pgsql\bin\pg_ctl.exe') -D (Join-Path $data 'database') -m fast -w stop | Out-Null
+& (Join-Path $Tools 'pgsql\bin\pg_ctl.exe') -D (Join-Path $data 'database') -m fast -w stop | Out-Null
 Write-Host 'Database stopped'

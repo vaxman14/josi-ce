@@ -8,18 +8,25 @@
 # can share its Job Object and be ended together with it; these must keep
 # running until Stop-DevServer.ps1 stops them.
 [CmdletBinding()]
-param([string]$Root = 'C:\Dev\josi-dev')
+param(
+    [string]$Root = 'C:\Dev\josi-dev',
+    # Where the pinned tools (pgsql, cli, python, ffmpeg) live. By default the
+    # root itself; the demo server points here at the development server's
+    # folder and shares its tools. Voice Box and the tunnel stay per root.
+    [string]$Tools = ''
+)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if (!$Tools) { $Tools = $Root }
 $data = Join-Path $Root 'data'
-$pg = Join-Path $Root 'pgsql\bin'
+$pg = Join-Path $Tools 'pgsql\bin'
 $repo = Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent
 $settings = Get-Content -Raw (Join-Path $data 'config\runtime.json') | ConvertFrom-Json
 $cluster = Join-Path $data 'database'
-$cli = Join-Path $Root 'cli'
+$cli = Join-Path $Tools 'cli'
 $node = (Get-Command node).Source
-if (!(Test-Path (Join-Path $Root 'python\python.exe'))) {
-    Write-Warning "Upload scanning needs the pinned Python in $(Join-Path $Root 'python'); uploads that require a scan will be refused."
+if (!(Test-Path (Join-Path $Tools 'python\python.exe'))) {
+    Write-Warning "Upload scanning needs the pinned Python in $(Join-Path $Tools 'python'); uploads that require a scan will be refused."
 }
 
 function Start-Independent([string]$CommandLine, [string]$Directory) {
@@ -63,13 +70,13 @@ function Get-RoleEnvironment([string]$Role) {
         TEMP = (Join-Path $data "temp\$Role"); TMP = (Join-Path $data "temp\$Role")
         # Upload scanning through Windows AMSI (the registered antivirus), as
         # in the installed services: pinned private Python plus the adapter.
-        JOSI_PYTHON_EXE = (Join-Path $Root 'python\python.exe')
+        JOSI_PYTHON_EXE = (Join-Path $Tools 'python\python.exe')
         # Josi's tool server for the Claude Code and Codex harnesses.
         JOSI_MCP_SERVER = (Join-Path $repo 'packages\agent\dist\mcp\server.js')
         JOSI_SCANNER_ADAPTER = (Join-Path $repo 'services\scanner\windows_amsi.py')
         JOSI_SCANNER_TEMP = (Join-Path $data 'temp\scanner')
         # Pinned ffmpeg (Get-Ffmpeg.ps1): video frames and soundtracks for attachments.
-        JOSI_FFMPEG_EXE = (Join-Path $Root 'ffmpeg\ffmpeg.exe'); JOSI_FFPROBE_EXE = (Join-Path $Root 'ffmpeg\ffprobe.exe')
+        JOSI_FFMPEG_EXE = (Join-Path $Tools 'ffmpeg\ffmpeg.exe'); JOSI_FFPROBE_EXE = (Join-Path $Tools 'ffmpeg\ffprobe.exe')
         # Item 29: the built Josi app doubles as the device-consent window the
         # server opens on this screen when a PC enrolls for protected approvals.
         JOSI_DEVICE_CONSENT_HELPER = (Join-Path $repo 'apps\windows-native\bin\Release\net8.0-windows10.0.19041.0\Josi.exe')

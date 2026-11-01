@@ -5,11 +5,19 @@
 [CmdletBinding()]
 param(
     [string]$Root = 'C:\Dev\josi-dev',
-    [int]$DatabasePort = 15432
+    [int]$DatabasePort = 15432,
+    # The API port written into runtime.json. 8080 is the installer's port; a
+    # second server beside the first (the demo server) takes another one.
+    [int]$ApiPort = 8080,
+    # Where the pinned PostgreSQL binaries live. By default the root itself; a
+    # second root can point here at the first one and share its tools.
+    [string]$Tools = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if (!$Tools) { $Tools = $Root }
 $data = Join-Path $Root 'data'
+$null = New-Item -ItemType Directory -Force $Root
 # pg_ctl start leaves the database holding any handles it inherits; launch it
 # through the shell (no handle inheritance) and wait for pg_ctl alone.
 function Start-Database([string]$Bin, [string]$Cluster, [string]$Log) {
@@ -17,7 +25,7 @@ function Start-Database([string]$Bin, [string]$Cluster, [string]$Log) {
     $process.WaitForExit()
     if ($process.ExitCode) { throw "PostgreSQL did not start; see $Log" }
 }
-$pg = Join-Path $Root 'pgsql\bin'
+$pg = Join-Path $Tools 'pgsql\bin'
 if (!(Test-Path (Join-Path $pg 'postgres.exe'))) { throw "PostgreSQL 16 binaries not found in $pg" }
 if (Test-Path (Join-Path $data 'database\PG_VERSION')) { throw "A development database already exists in $data; refusing to overwrite it" }
 
@@ -64,13 +72,13 @@ foreach ($name in 'master-key', 'database-password', 'init-password', 'voice-con
 # person who created the server. Only the token's SHA-256 reaches the server.
 $setupToken = New-Token
 $null = New-Item -ItemType Directory -Force (Join-Path $data 'first-run')
-Write-Private (Join-Path $data 'first-run\bootstrap.json') ((@{ schemaVersion = 1; port = 8080; token = $setupToken } | ConvertTo-Json -Compress))
+Write-Private (Join-Path $data 'first-run\bootstrap.json') ((@{ schemaVersion = 1; port = $ApiPort; token = $setupToken } | ConvertTo-Json -Compress))
 $sha = [Security.Cryptography.SHA256]::Create()
 $setupHash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::ASCII.GetBytes($setupToken))) -replace '-', '').ToLowerInvariant()
 $setupToken = $null
 
-$runtime = [ordered]@{ schemaVersion = 1; version = '0.7.0-dev'; databasePort = $DatabasePort; apiPort = 8080
-    publicUrl = 'http://localhost:8080'; setupTokenSha256 = $setupHash }
+$runtime = [ordered]@{ schemaVersion = 1; version = '0.7.0-dev'; databasePort = $DatabasePort; apiPort = $ApiPort
+    publicUrl = "http://localhost:$ApiPort"; setupTokenSha256 = $setupHash }
 [IO.File]::WriteAllText((Join-Path $data 'config\runtime.json'), ($runtime | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
 
 # Same initdb arguments as packaging/windows/Database.psm1.
