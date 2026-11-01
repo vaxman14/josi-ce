@@ -99,6 +99,12 @@ test/                mock API + UI Automation driver
 QUESTIONS.md         open decisions for Roman
 ```
 
+## Automation and the demo server
+
+Stable automation ids, the `josi.status` state line, demo mode (`--demo`) and the
+demo server scripts in `scripts/windows/demo` are described in `AUTOMATION.md`
+at the repository root.
+
 ## Development server on this PC
 
 Runs Josi CE from this checkout under your Windows account: PostgreSQL 16.15 (pinned,
