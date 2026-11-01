@@ -412,7 +412,6 @@ ignored by a normal launch except `--help` and `--status`.
 - **Real desktop actions** (Josi clicking in other programs) are not seeded;
   the banner is scripted instead.
 - **Keyboard focus**: a sheet such as the settings-change popup opens with
-  its primary button focused and takes focus like any new window. Do not
-  type at the keyboard while a storyboard runs, or an Enter meant for
-  another program can approve the popup. Record on a session nobody is
-  typing in.
+  its primary button focused and takes focus like any new window, so a
+  person at the keyboard can change a take. Record on a session nobody is
+  typing or clicking in.
