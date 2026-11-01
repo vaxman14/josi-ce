@@ -45,11 +45,11 @@ namespace Josi.Native {
       var page = Page(Ui.HeadingWith("PC Control", null, Ui.Pill("Refresh", StartLoad)));
       if (state.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading PC permissions…" : "PC permissions have not loaded."), 0); return page; }
       var enabled = state["enabled"].Flag; var full = state["fullControl"].Flag;
-      var master = Ui.Toggle("Allow Josi to control this PC", enabled);
+      var master = Automation.Id(Ui.Toggle("Allow Josi to control this PC", enabled), "josi.pc-control.enabled");
       master.Click += delegate { var on = master.IsChecked == true; Perform(async (api, stamp) => await api.Request("/admin/pc-control/enabled", "PUT", Wires.O("enabled", on))); };
       Ui.Add(page, Ui.CardBox(null, Ui.Secondary(state["availability"].Text), master,
         Ui.Caption("Off by default. Turning this on grants no browser, folder or application access by itself. These permissions apply only to this PC and your account."),
-        Ui.Danger("Stop Control and Revoke Temporary Access", () => { if (Dialogs.Confirm(owner, "Stop PC control now?", "Disables control, cancels active actions and revokes pending approvals and task or temporary grants. Completed changes cannot be undone. Permanent scope choices stay saved.", "Stop")) Perform(async (api, stamp) => await api.Request("/admin/pc-control/stop", "POST", Wires.O())); }),
+        Automation.Id(Ui.Danger("Stop Control and Revoke Temporary Access", () => { if (Dialogs.Confirm(owner, "Stop PC control now?", "Disables control, cancels active actions and revokes pending approvals and task or temporary grants. Completed changes cannot be undone. Permanent scope choices stay saved.", "Stop")) Perform(async (api, stamp) => await api.Request("/admin/pc-control/stop", "POST", Wires.O())); }), "josi.pc-control.stop-control"),
         state["uac"].Text.Length > 0 ? Ui.Caption(state["uac"].Text) : null), 0);
       Ui.Add(page, FullControlCard(enabled, full), 0);
       Ui.Add(page, BrowserCard(enabled, full), 0);
@@ -72,7 +72,7 @@ namespace Josi.Native {
       form.Add(Ui.Field("Approval mode", new ContentControl { Focusable = false, Content = Ui.Segments(Modes, mode, v => { mode = v; Render(); }) }));
       if (mode == "task") { form.Add(Ui.Field("Exact active Josi task", taskPick)); form.Add(Ui.Caption("Expires when the task ends, or after 24 hours, whichever comes first.")); }
       if (mode == "temporary") form.Add(Ui.Field("Expires at (your local time, within 24 hours)", expires));
-      form.Add(Ui.Pill("Save Exact-Scope Permission", Save, true));
+      form.Add(Automation.Id(Ui.Pill("Save Exact-Scope Permission", Save, true), "josi.pc-control.save-scope"));
       form.Add(Ui.Caption("Deleting, submissions and messages, financial actions, credential access, installs, security changes and elevation always ask separately."));
       Ui.Add(page, Ui.CardBox("Choose one exact scope", form.ToArray()), 0);
       var policies = Ui.Stack(10);
@@ -86,21 +86,23 @@ namespace Josi.Native {
       Ui.Add(page, Ui.CardBox("Saved scopes and temporary access", policies), 0);
       var pending = Ui.Stack(12);
       if (state["requests"].List.Count == 0) pending.Children.Add(Ui.Caption("No actions awaiting approval."));
+      var requestNumber = 0;
       foreach (var q in state["requests"].List) {
         var id = q.Id; var high = q["highRisk"].Flag;
+        requestNumber++; var requestId = "josi.pc-control.request." + requestNumber;
         PasswordBox box; if (!passwords.TryGetValue(id, out box)) passwords[id] = box = Ui.Secret("Your account password");
         Ui.Detach(box);
         var item = Ui.Stack(4, Ui.T(q["description"].Text, 14, FontWeights.Medium), Ui.Caption(q["access"].Text + (high ? " · High risk" : "")));
         foreach (var r in q["requirements"].List) item.Children.Add(Ui.Caption(LabelOf(r["action"].Text) + ": " + Scope(r["scope"])));
         item.Children.Add(Ui.Caption("Expires " + Wires.Date(q["expiresAt"].Text)));
         if (high) item.Children.Add(Ui.Field("Confirm your account password", box));
-        item.Children.Add(Ui.Wrap(Ui.Pill("Approve This Exact Action Once", () => {
+        item.Children.Add(Ui.Wrap(Automation.Id(Ui.Pill("Approve This Exact Action Once", () => {
             if (high && box.Password.Length == 0) { model.Error = "Enter your password to approve a high-risk action."; model.Notify(); return; }
             var password = box.Password; box.Clear();
             Perform(async (api, stamp) => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", true, "password", password)));
-          }, true),
-          Ui.Pill("Deny", () => Perform(async (api, stamp) => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", false))))));
-        pending.Children.Add(item);
+          }, true), requestId + ".approve"),
+          Automation.Id(Ui.Pill("Deny", () => Perform(async (api, stamp) => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", false)))), requestId + ".deny")));
+        pending.Children.Add(Automation.Group(requestId, q["description"].Text, item));
       }
       Ui.Add(page, Ui.CardBox("Actions awaiting approval", pending), 0);
       var activity = Ui.Stack(6, Ui.Caption("Latest 100 attempts, decisions and outcomes. Form values, command output and credentials are omitted."));
@@ -115,7 +117,7 @@ namespace Josi.Native {
     /// browsers, folders and applications stop asking. The server lists what
     /// it covers and what still asks, so this card never promises more.
     UIElement FullControlCard(bool enabled, bool full) {
-      var toggle = Ui.Toggle("Full control: let Josi work without asking before each everyday action", full);
+      var toggle = Automation.Id(Ui.Toggle("Full control: let Josi work without asking before each everyday action", full), "josi.pc-control.full-control");
       toggle.IsEnabled = enabled;
       toggle.Click += delegate {
         var on = toggle.IsChecked == true;

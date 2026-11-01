@@ -896,17 +896,18 @@ namespace Josi.Native {
       var items = new List<UIElement>();
       var catalog = settings["providerCatalog"].List;
       if (saved.IsNull) {
-        items.Add(ModelText.Pill("Not set up", false));
+        items.Add(Automation.Group("josi.models." + role + ".state", "Not set up", ModelText.Pill("Not set up", false)));
         items.Add(Ui.Secondary(role == "primary" ? "Josi needs a primary model before it can answer." : "Optional. Josi uses it when the primary model cannot answer."));
-        items.Add(Ui.Pill(role == "primary" ? "Set Up a Model…" : "Add a Fallback…", () => Edit(role, 0), role == "primary"));
+        items.Add(Automation.Id(Ui.Pill(role == "primary" ? "Set Up a Model…" : "Add a Fallback…", () => Edit(role, 0), role == "primary"), "josi.models." + role + ".set-up"));
         return Card(title, items);
       }
       var kind = saved["provider"].Text;
       var entry = ModelText.Entry(catalog, kind);
       var subscriptionMissing = ModelText.Subscription(kind) && subscriptions.ContainsKey(kind) && !subscriptions[kind]["signedIn"].Flag;
       var state = subscriptionMissing ? "Not signed in" : saved["active"].Flag ? "Ready" : saved["probedAt"].Text.Length == 0 ? "Needs a capability check" : "Check failed";
-      items.Add(ModelText.Pill(state, state == "Ready"));
-      items.Add(Ui.T(entry.IsNull ? kind : entry["label"].Text, 17, FontWeights.SemiBold));
+      // josi.models.<role>.state reads "Ready", "Not signed in", "Needs a capability check" or "Check failed".
+      items.Add(Automation.Group("josi.models." + role + ".state", state, ModelText.Pill(state, state == "Ready")));
+      items.Add(Automation.Id(Ui.T(entry.IsNull ? kind : entry["label"].Text, 17, FontWeights.SemiBold), "josi.models." + role + ".provider"));
       items.Add(Ui.Secondary(saved["model"].Text.Length == 0 ? (ModelText.Subscription(kind) ? "Plan default model" : "Provider default model") : saved["model"].Text));
       if (saved["external"].Flag) items.Add(Ui.Caption("Task content is sent to " + (entry.IsNull ? kind : entry["label"].Text)
         + (entry["residency"].Text.Length > 0 ? " · " + entry["residency"].Text : "") + "."));
@@ -921,13 +922,13 @@ namespace Josi.Native {
       var steps = saved["probeSteps"].List;
       if (steps.Count > 0) items.Add(new Disclosure("Check details", () => ModelText.Steps(steps)));
       var actions = Ui.Wrap(
-        subscriptionMissing ? Ui.Pill("Sign In…", () => Edit(role, 1), true) : null,
-        Ui.Pill("Change…", () => Edit(role, 0)),
-        subscriptionMissing ? null : Ui.Pill(saved["active"].Flag ? "Check Again" : "Run Capability Check", () => Probe(role), !saved["active"].Flag),
-        role == "fallback" ? Ui.Danger("Remove…", () => {
+        subscriptionMissing ? Automation.Id(Ui.Pill("Sign In…", () => Edit(role, 1), true), "josi.models." + role + ".sign-in") : null,
+        Automation.Id(Ui.Pill("Change…", () => Edit(role, 0)), "josi.models." + role + ".change"),
+        subscriptionMissing ? null : Automation.Id(Ui.Pill(saved["active"].Flag ? "Check Again" : "Run Capability Check", () => Probe(role), !saved["active"].Flag), "josi.models." + role + ".check"),
+        role == "fallback" ? Automation.Id(Ui.Danger("Remove…", () => {
           if (Dialogs.Confirm(owner, "Remove the fallback model?", "Josi will use only its primary model.", "Remove"))
             Request("/admin/llm/providers/fallback", "DELETE", null, "Fallback model removed.");
-        }) : null);
+        }), "josi.models.fallback.remove") : null);
       items.Add(actions);
       return Card(title, items);
     }

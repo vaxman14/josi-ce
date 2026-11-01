@@ -34,6 +34,8 @@ namespace Josi.Native {
       voice = new Voice(model);
       voice.Changed += RenderComposer;
 
+      Automation.BeginScope("chat");
+      Automation.Id(title, "josi.chat.title"); Automation.Id(modelName, "josi.chat.model");
       var header = Ui.Spread(Ui.Stack(5, title, Ui.Caption("Conversation")), modelName);
       header.Margin = new Thickness(28, 24, 28, 18);
       var rule = new Border { Height = 1, Background = Ui.Border, Margin = new Thickness(24, 0, 24, 0) };
@@ -50,6 +52,8 @@ namespace Josi.Native {
       editor.Template = EditorTemplate();
       Ui.Placeholder(editor, "Message Josi…", Brushes.Transparent);
       System.Windows.Automation.AutomationProperties.SetName(editor, "Message Josi");
+      Automation.Id(editor, "josi.chat.composer");
+      Automation.Id(hint, "josi.chat.hint");
       System.Windows.Automation.AutomationProperties.SetHelpText(editor, "Enter sends the message. Shift+Enter starts a new line.");
       editor.PreviewKeyDown += OnKey;
       editor.TextChanged += delegate { model.Draft = editor.Text; RenderComposer(); };
@@ -125,32 +129,38 @@ namespace Josi.Native {
     }
 
     void RenderMessages(List<Wire> goals) {
+      Automation.BeginScope("chat");
       messages.Children.Clear();
       if (model.Messages.Count == 0) {
         var welcome = Ui.Stack(16, Ui.JosiMark(64), Ui.T("What would you like to get done?", 21, FontWeights.SemiBold),
           Ui.Secondary("Ask Josi, attach a photo, or start a voice conversation."));
         foreach (FrameworkElement child in welcome.Children) { child.HorizontalAlignment = HorizontalAlignment.Center; var t = child as TextBlock; if (t != null) t.TextAlignment = TextAlignment.Center; }
         welcome.Margin = new Thickness(0, 70, 0, 30);
-        messages.Children.Add(welcome);
+        messages.Children.Add(Automation.Group("josi.chat.empty", "What would you like to get done?", welcome));
       }
+      // josi.chat.turn.<n> is the n-th message you sent, josi.chat.reply.<n> the n-th
+      // reply from Josi, josi.chat.failure.<n> the n-th reply that failed.
+      int turns = 0, replies = 0, failures = 0;
       foreach (var message in model.Messages) {
-        Ui.Add(messages, MessageRow(message), 28);
+        var incoming = message["direction"].Text == "in";
+        var position = incoming ? ++turns : ++replies;
+        Ui.Add(messages, Automation.Group("josi.chat." + (incoming ? "turn." : "reply.") + position, message["body"].Text, MessageRow(message, position)), 28);
         foreach (var turn in model.Turns.Where(t => t["status"].Text == "failed" && t["inbound_message_id"].Text == message.Id))
-          Ui.Add(messages, new ChatTurnFailure(model, turn), 12);
+          Ui.Add(messages, Automation.Id(new ChatTurnFailure(model, turn), "josi.chat.failure." + (++failures), "Josi couldn't reply"), 12);
       }
       goalPanel.Children.Clear();
       foreach (var goal in goals) Ui.Add(goalPanel, new GoalCard(model, owner, goal, true), 16);
       goalScroller.Visibility = goals.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
       foreach (var turn in model.Turns.Where(t => t["status"].Text == "failed" && !model.Messages.Any(m => m.Id == t["inbound_message_id"].Text)))
-        Ui.Add(messages, new ChatTurnFailure(model, turn), 12);
+        Ui.Add(messages, Automation.Id(new ChatTurnFailure(model, turn), "josi.chat.failure." + (++failures), "Josi couldn't reply"), 12);
       if (Thinking) Ui.Add(messages, Ui.Thinking(model.TurnActivity), 20);
     }
 
-    UIElement MessageRow(Wire message) {
+    UIElement MessageRow(Wire message, int position) {
       if (message["direction"].Text == "in") {
         var bubbleStack = new StackPanel();
         foreach (var item in message["attachments"].List) Ui.Add(bubbleStack, Ui.Row(6, Ui.Icon(Glyph.Clip, 12, Ui.Muted), Ui.Caption(item["filename"].Text)), 6);
-        var body = Ui.Copyable(message["body"].Text, 15);
+        var body = Automation.Id(Ui.Copyable(message["body"].Text, 15), "josi.chat.turn." + position + ".text");
         Ui.Add(bubbleStack, body, 8);
         var bubble = new Border { Background = Ui.Raised, CornerRadius = new CornerRadius(20), Padding = new Thickness(18, 14, 18, 14), Child = bubbleStack, HorizontalAlignment = HorizontalAlignment.Right };
         var you = Ui.Caption("You"); you.HorizontalAlignment = HorizontalAlignment.Right;
@@ -158,7 +168,7 @@ namespace Josi.Native {
         column.MaxWidth = 640; column.HorizontalAlignment = HorizontalAlignment.Right; column.Margin = new Thickness(70, 0, 0, 0);
         return column;
       }
-      var text = Markdown(message["body"].Text);
+      var text = Automation.Id(Markdown(message["body"].Text), "josi.chat.reply." + position + ".text", message["body"].Text);
       Button copy = null;
       copy = Ui.IconButton(Glyph.Copy, "Copy message", () => {
         // The clipboard can be briefly held by another app; try a few times
@@ -174,10 +184,11 @@ namespace Josi.Native {
         reset.Tick += delegate { reset.Stop(); copy.Content = Ui.Icon(Glyph.Copy, 14); copy.ToolTip = "Copy message"; };
         reset.Start();
       }, 14);
-      var read = Ui.IconButton(voice.Speaking ? Glyph.Stop : Glyph.Speaker, "Read aloud", () => voice.ToggleSpeak(message["body"].Text), 14);
+      Automation.Id(copy, "josi.chat.reply." + position + ".copy");
+      var read = Automation.Id(Ui.IconButton(voice.Speaking ? Glyph.Stop : Glyph.Speaker, "Read aloud", () => voice.ToggleSpeak(message["body"].Text), 14), "josi.chat.reply." + position + ".read");
       read.IsEnabled = voice.Available;
       var turn = model.Turns.FirstOrDefault(t => t["assistant_message_id"].Text == message.Id);
-      var knew = Ui.IconButton(Glyph.List, "What Josi knew", () => ShowKnew(turn == null ? "" : turn.Id), 14);
+      var knew = Automation.Id(Ui.IconButton(Glyph.List, "What Josi knew", () => ShowKnew(turn == null ? "" : turn.Id), 14), "josi.chat.reply." + position + ".knew");
       knew.IsEnabled = turn != null; knew.ToolTip = "What Josi knew for this reply";
       var column2 = Ui.Stack(12, Ui.T("Josi", 13.5, FontWeights.SemiBold), text, Ui.Row(10, copy, read, knew));
       var grid = new Grid();
@@ -195,7 +206,7 @@ namespace Josi.Native {
       Wire context;
       try { context = (await api.Request("/assistant/turn-context/" + api.Uuid(turnId)))["context"]; }
       catch (JosiException e) { Dialogs.Message(owner, "What Josi knew", e.Message); return; }
-      var sheet = new Dialogs.Sheet(owner, "Josi", 600);
+      var sheet = new Dialogs.Sheet(owner, "Josi", 600, "knew");
       var stack = Ui.Stack(12, Ui.T("What Josi knew for this reply", 17, FontWeights.SemiBold));
       Action<string, IEnumerable<string>, string> section = (title, items, empty) => {
         var list = items.Where(i => i.Length > 0).ToList();
@@ -262,11 +273,13 @@ namespace Josi.Native {
     }
 
     void RenderComposer() {
+      Automation.BeginScope("chat");
       editor.IsEnabled = !model.PendingMessage && voice.Mode != VoiceMode.Conversation;
       attachments.Children.Clear();
+      var attachmentNumber = 0;
       foreach (var item in model.DraftAttachments) {
         var id = item.Id;
-        var remove = Ui.IconButton(Glyph.Close, "Remove attachment from message", () => { model.DraftAttachments.RemoveAll(a => a.Id == id); RenderComposer(); }, 10);
+        var remove = Automation.Id(Ui.IconButton(Glyph.Close, "Remove attachment from message", () => { model.DraftAttachments.RemoveAll(a => a.Id == id); RenderComposer(); }, 10), "josi.chat.attachment." + (++attachmentNumber) + ".remove");
         var chip = new Border { Background = Ui.Card, CornerRadius = new CornerRadius(14), Padding = new Thickness(10, 4, 4, 4), Margin = new Thickness(0, 0, 8, 0),
           Child = Ui.Row(6, Ui.Icon(Glyph.Clip, 12, Ui.Muted), Ui.Caption(item["filename"].Text), remove) };
         attachments.Children.Add(chip);
@@ -276,22 +289,25 @@ namespace Josi.Native {
       voiceError.Text = voice.Error; voiceError.Visibility = voice.Error.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 
       left.Children.Clear(); right.Children.Clear();
-      var attach = Ui.PillIcon(Glyph.Plus, null, Attach, false, "Attach a file or photo");
+      var attach = Automation.Id(Ui.PillIcon(Glyph.Plus, null, Attach, false, "Attach a file or photo"), "josi.chat.attach");
       attach.IsEnabled = !model.Busy && !model.PendingMessage && model.DraftAttachments.Count < 10 && voice.Mode == VoiceMode.None;
-      var settings = Ui.PillIcon(Glyph.Chevron, voice.ModelLabel, () => Dialogs.VoiceSettings(owner, model, voice), false, "Voice models and settings");
+      var settings = Automation.Id(Ui.PillIcon(Glyph.Chevron, voice.ModelLabel, () => Dialogs.VoiceSettings(owner, model, voice), false, "Voice models and settings"), "josi.chat.voice-settings");
       settings.IsEnabled = voice.Mode == VoiceMode.None;
       Ui.Add(left, attach, 8); Ui.Add(left, settings, 8);
 
-      var dictate = Ui.PillIcon(voice.Mode == VoiceMode.Dictation ? Glyph.Stop : Glyph.Mic, voice.Mode == VoiceMode.Dictation ? "Done" : "Dictate", () => ToggleVoice(VoiceMode.Dictation));
+      var dictate = Automation.Id(Ui.PillIcon(voice.Mode == VoiceMode.Dictation ? Glyph.Stop : Glyph.Mic, voice.Mode == VoiceMode.Dictation ? "Done" : "Dictate", () => ToggleVoice(VoiceMode.Dictation)), "josi.chat.dictate");
       dictate.IsEnabled = !model.PendingMessage && !voice.Starting && voice.Mode != VoiceMode.Conversation;
       Ui.Add(right, dictate, 8);
       Button primary;
+      // josi.chat.send is the one button in that place whatever it does right
+      // now: send, retry delivery, start voice chat or end it. Its Name says which.
       if (voice.Mode == VoiceMode.Conversation) primary = Ui.PillIcon(Glyph.Stop, "End voice", voice.Stop, true);
       else if (CanSend) primary = Ui.PillIcon(Glyph.Up, null, Send, true, model.PendingMessage ? "Retry delivery" : "Send message");
       else {
         primary = Ui.PillIcon(Glyph.Wave, "Voice chat", () => ToggleVoice(VoiceMode.Conversation), true);
         primary.IsEnabled = !voice.Starting && !model.Busy && voice.Mode == VoiceMode.None && model.DraftAttachments.Count == 0;
       }
+      Automation.Id(primary, "josi.chat.send");
       Ui.Add(right, primary, 8);
       hint.Text = model.PendingMessage ? "Delivery is unconfirmed. Retry keeps the same message and attachments." : "Enter to send · Shift + Enter for a new line";
     }

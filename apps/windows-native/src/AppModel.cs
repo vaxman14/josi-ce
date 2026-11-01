@@ -75,7 +75,9 @@ namespace Josi.Native {
     public bool Active { get { return window != null && window.IsActive; } }
 
     /// One user-initiated operation at a time; errors surface in the banner.
-    public async void Run(Func<Task> action) {
+    public void Run(Func<Task> action) { var _ = RunTask(action); }
+    /// The same, awaitable: finished (with any error already shown) when it returns.
+    public async Task RunTask(Func<Task> action) {
       if (Busy) return;
       Busy = true; Error = ""; Notify();
       try { await action(); }
@@ -621,6 +623,9 @@ namespace Josi.Native {
           turnFollow = null; TurnActivity = "";
           // The reply is saved: show it now rather than on the next poll.
           if (Api == api && SelectedThread == thread) { try { await LoadThread(thread); } catch (Exception) { } NotifyWorkspace(); }
+          // Demo: a settings change Josi prepared in this reply shows its popup
+          // on the next poll instead of up to 30 seconds later.
+          if (Josi.Native.Automation.Demo) lastNotificationCheck = DateTime.MinValue;
         }
       }
     }

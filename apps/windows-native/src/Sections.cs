@@ -17,6 +17,8 @@ namespace Josi.Native {
     protected readonly AppModel model; protected readonly Window owner;
     protected string note = "";
     protected bool loading;
+    /// The sidebar key this page was opened under; derived control ids start with josi.<SectionKey>.
+    public string SectionKey;
     int generation;
     ScrollViewer scroll;
     readonly string ownerId;
@@ -51,6 +53,7 @@ namespace Josi.Native {
     }
     protected void Render() {
       if (!IsLoaded && scroll != null) return;
+      Automation.BeginScope(SectionKey ?? Automation.Slug(GetType().Name.Replace("View", "")));
       var page = Build() as FrameworkElement;
       if (page == null) return;
       page.IsEnabled = !model.Busy && !loading;

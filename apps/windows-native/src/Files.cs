@@ -27,10 +27,11 @@ namespace Josi.Native {
 
     public FilesView(AppModel model, Window owner) : base(model, owner) {
       filter.TextChanged += delegate { Render(); };
+      syncPoll.Tick += delegate { if (!loading && !model.Busy) StartLoad(); };
       content.MinHeight = 120; source.MinHeight = 120; source.FontFamily = Ui.Mono;
       poll.Tick += async delegate { await PollRun(); };
     }
-    protected override void OnLeave() { poll.Stop(); }
+    protected override void OnLeave() { poll.Stop(); syncPoll.Stop(); }
     protected override double PageWidth() { return Ui.PageWidth; }
 
     protected override async Task Load() {
@@ -50,7 +51,19 @@ namespace Josi.Native {
       if (!Current(stamp)) return;
       if (!mappings.Any(x => x.Id == mapping)) mapping = mappings.Count == 1 ? mappings[0].Id : "";
       await List(api, stamp);
+      // Folder sync state for automation: none, syncing (files still to read) or synced.
+      var syncing = all.Any(x => { Wire s; return x["indexing_enabled"].Flag && (!mappingStatus.TryGetValue(x.Id, out s) || Pending(s)); });
+      Automation.Folders = all.Count == 0 ? "none" : syncing ? "syncing" : "synced";
+      if (syncing && Automation.Demo) syncPoll.Start(); else syncPoll.Stop();
     }
+    static bool Pending(Wire status) {
+      var total = status["total"].Integer;
+      var settled = status["byState"]["indexed"].Integer + status["byState"]["skipped"].Integer + status["byState"]["blocked"].Integer;
+      return total > 0 && settled < total;
+    }
+    // Demo mode re-reads a syncing folder every two seconds so its row and the
+    // folders state move on their own; a normal launch refreshes on request.
+    readonly DispatcherTimer syncPoll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
     async Task List(JosiApi api, int stamp) {
       listError = "";
       if (mapping.Length == 0) { entries = new List<Wire>(); return; }
@@ -65,9 +78,9 @@ namespace Josi.Native {
     string Full(string entry) { return string.Join("/", new[] { path, entry }.Where(s => s.Length > 0)); }
 
     protected override UIElement Build() {
-      var page = Page(Ui.HeadingWith("Files", null, Ui.Row(8, Ui.Pill("Add a Folder…", AddFolder, true), Ui.Pill("Refresh", StartLoad))),
+      var page = Page(Ui.HeadingWith("Files", null, Ui.Row(8, Automation.Id(Ui.Pill("Add a Folder…", AddFolder, true), "josi.files.add-folder"), Automation.Id(Ui.Pill("Refresh", StartLoad), "josi.files.refresh"))),
         Ui.Secondary("The folders Josi may read for you, on this PC and in your cloud accounts. Josi reads only what you add here, and a file is never an instruction to grant access."));
-      if (receipt.Length > 0) Ui.Add(page, Ui.T("Completed. Receipt: " + receipt, 14, null, Ui.Green), 0);
+      if (receipt.Length > 0) Ui.Add(page, Automation.Id(Ui.T("Completed. Receipt: " + receipt, 14, null, Ui.Green), "josi.files.receipt"), 0);
       if (available.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "Folders have not loaded."), 0); return page; }
       Ui.Add(page, FoldersCard(), 0);
       var nativeCard = NativeConnect();
@@ -79,7 +92,7 @@ namespace Josi.Native {
       var crumbs = Ui.Wrap(Ui.Link("Folder root", () => { path = ""; StartLoad(); }));
       var parts = path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
       for (var i = 0; i < parts.Length; i++) { var to = string.Join("/", parts.Take(i + 1)); crumbs.Children.Add(Ui.Link("/ " + parts[i], () => { path = to; StartLoad(); })); }
-      Ui.Detach(filter);
+      Ui.Detach(filter); Automation.Id(filter, "josi.files.filter");
       Ui.Add(page, Ui.Spread(crumbs, filter), 0);
       filter.Width = 260;
 
@@ -88,9 +101,11 @@ namespace Josi.Native {
         .OrderBy(e => e["kind"].Text == "folder" ? 0 : 1).ThenBy(e => e["name"].Text, StringComparer.CurrentCultureIgnoreCase).ToList();
       if (listError.Length > 0) list.Children.Add(Ui.T("Josi could not list " + browsing["display_path"].Text + (path.Length > 0 ? "/" + path : "") + ": " + listError, 13.5, null, Ui.Orange));
       else if (shown.Count == 0) list.Children.Add(Ui.Secondary(entries.Count == 0 ? "This folder is empty." : "Nothing matches."));
+      var entryNumber = 0;
       foreach (var e in shown) {
         var entry = e["name"].Text; var full = Full(entry);
-        if (e["kind"].Text == "folder") { list.Children.Add(Ui.Link("📁  " + entry, () => { path = full; StartLoad(); })); continue; }
+        entryNumber++;
+        if (e["kind"].Text == "folder") { list.Children.Add(Automation.Id(Ui.Link("📁  " + entry, () => { path = full; StartLoad(); }), "josi.files.entry." + entryNumber, entry)); continue; }
         var detail = e["size"].IsNumber ? Wires.Bytes(e["size"].Number) + (e["modified"].Text.Length > 0 ? " · " + Wires.Date(e["modified"].Text) : "") : "";
         var actions = Ui.Wrap(Ui.Pill("Preview", () => Perform(async (api, stamp) => {
             var x = await api.Request("/workspace/" + api.Uuid(mapping) + "/preview?path=" + Uri.EscapeDataString(full));
@@ -103,7 +118,7 @@ namespace Josi.Native {
           }, false)));
         if (permissions["move"].Flag) actions.Children.Add(Ui.Pill("Rename or Move", () => { name.Text = entry; destination.Text = full; moving = true; Render(); }));
         if (permissions["delete"].Flag) actions.Children.Add(Ui.Pill("Delete…", () => Propose(Wires.O("operation", "delete", "path", full))));
-        list.Children.Add(Ui.Spread(Ui.Stack(2, Ui.T("📄  " + entry), Ui.Caption(detail)), actions));
+        list.Children.Add(Automation.Group("josi.files.entry." + entryNumber, entry, Ui.Spread(Ui.Stack(2, Ui.T("📄  " + entry), Ui.Caption(detail)), actions)));
       }
       Ui.Add(page, Ui.CardBox(null, list), 0);
       if (preview.Length > 0) Ui.Add(page, Ui.CardBox("Preview", Ui.Copyable(preview, 13, null, true), Ui.Pill("Close Preview", () => { preview = ""; Render(); })), 0);
@@ -146,12 +161,16 @@ namespace Josi.Native {
       if (all.Count == 0) {
         list.Children.Add(Ui.T("No folders yet.", 14, FontWeights.Medium));
         list.Children.Add(Ui.Caption("Add a folder on this PC or from Google Drive, OneDrive, Dropbox, Box or Nextcloud. Josi reads it, makes it searchable for you, and never changes anything in it."));
-        list.Children.Add(Ui.Pill("Add a Folder…", AddFolder, true));
+        list.Children.Add(Automation.Id(Ui.Pill("Add a Folder…", AddFolder, true), "josi.files.add-folder.empty"));
       }
+      var folderNumber = 0;
       foreach (var m in all) {
         var folder = m; var id = m.Id; var local = m["provider"].Text == "local"; var active = m["status"].Text == "active";
-        var row = Ui.Stack(3, Ui.Spread(Ui.Row(8, Ui.T(local ? "💻" : "☁", 16), Ui.T(m["display_path"].Text, 14, FontWeights.Medium)),
-          ModelText.Pill(Wires.Words(m["status"].Text), active)));
+        folderNumber++; var prefix = "josi.files.folder." + folderNumber;
+        Wire known; var pending = mappingStatus.TryGetValue(id, out known) && Pending(known);
+        var syncState = !m["indexing_enabled"].Flag ? "not-indexed" : known == null || pending ? "syncing" : "synced";
+        var row = Ui.Stack(3, Ui.Spread(Ui.Row(8, Ui.T(local ? "💻" : "☁", 16), Automation.Id(Ui.T(m["display_path"].Text, 14, FontWeights.Medium), prefix + ".name")),
+          Automation.Group(prefix + ".status", Wires.Words(m["status"].Text) + " · " + syncState, ModelText.Pill(Wires.Words(m["status"].Text), active))));
         row.Children.Add(Ui.Caption(FolderSheet.ProviderName(m["provider"].Text) + (m["recursive"].Flag ? " · with subfolders" : " · this folder only")
           + (m["indexing_enabled"].Flag ? " · searchable" : " · read on request, not searchable")));
         if (m["paused_reason"].Text.Length > 0) row.Children.Add(Ui.T("Paused: " + Wires.Words(m["paused_reason"].Text), 13, null, Ui.Orange));
@@ -164,13 +183,13 @@ namespace Josi.Native {
           }
         }
         var actions = Ui.Wrap();
-        if (local && active && mapping != id) actions.Children.Add(Ui.Pill("Browse", () => { mapping = id; path = ""; preview = ""; pending = Wire.Null; StartLoad(); }));
-        if (m["indexing_enabled"].Flag) actions.Children.Add(Ui.Pill("Sync Now", () => Perform(async (api, stamp) => {
-          await api.Request("/storage/mappings/" + api.Uuid(id) + "/sync", "POST", Wires.O()); note = "Sync queued. New and changed files appear as the worker gets to them."; })));
-        else if (active) actions.Children.Add(Ui.Pill("Make Searchable", () => Perform(async (api, stamp) => {
+        if (local && active && mapping != id) actions.Children.Add(Automation.Id(Ui.Pill("Browse", () => { mapping = id; path = ""; preview = ""; this.pending = Wire.Null; StartLoad(); }), prefix + ".browse"));
+        if (m["indexing_enabled"].Flag) actions.Children.Add(Automation.Id(Ui.Pill("Sync Now", () => { Automation.Folders = "syncing"; if (Automation.Demo) syncPoll.Start(); Perform(async (api, stamp) => {
+          await api.Request("/storage/mappings/" + api.Uuid(id) + "/sync", "POST", Wires.O()); note = "Sync queued. New and changed files appear as the worker gets to them."; }); }), prefix + ".sync"));
+        else if (active) actions.Children.Add(Automation.Id(Ui.Pill("Make Searchable", () => { Automation.Folders = "syncing"; if (Automation.Demo) syncPoll.Start(); Perform(async (api, stamp) => {
           await api.Request("/storage/mappings/" + api.Uuid(id) + "/indexing", "PUT", Wires.O("enabled", true));
-          await api.Request("/storage/mappings/" + api.Uuid(id) + "/sync", "POST", Wires.O()); note = "Josi is reading the folder now."; })));
-        actions.Children.Add(Ui.Pill("Remove…", () => {
+          await api.Request("/storage/mappings/" + api.Uuid(id) + "/sync", "POST", Wires.O()); note = "Josi is reading the folder now."; }); }), prefix + ".searchable"));
+        actions.Children.Add(Automation.Id(Ui.Pill("Remove…", () => {
           if (!Dialogs.Confirm(owner, "Stop reading this folder?", folder["display_path"].Text + "\n\nJosi forgets what it indexed from it. Nothing in the folder itself is touched.", "Remove")) return;
           var rootId = folder["root_id"].Text;
           Perform(async (api, stamp) => {
@@ -180,9 +199,10 @@ namespace Josi.Native {
             // mapping; a folder somebody else still uses stays (409) and that is fine.
             if (local && model.IsAdministrator && Wires.IsUuid(rootId)) { try { await api.Request("/storage/roots/" + rootId, "DELETE", null); } catch (JosiException) { } }
           });
-        }));
+        }), prefix + ".remove"));
         row.Children.Add(actions);
-        list.Children.Add(new Border { BorderBrush = Ui.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12), Child = row });
+        list.Children.Add(Automation.Group(prefix, m["display_path"].Text + " · " + Wires.Words(m["status"].Text) + " · " + syncState,
+          new Border { BorderBrush = Ui.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12), Child = row }));
       }
       return Ui.CardBox(all.Count == 0 ? null : "Your folders", list);
     }

@@ -15,18 +15,20 @@ namespace Josi.Native {
     }
     public void Refresh() {
       var r = model.Receipt;
+      Automation.BeginScope("welcome");
       var local = Ui.CardBox(null,
         Ui.Row(10, Ui.Icon(Glyph.Desktop, 22, Ui.Text), Ui.T("On this PC", 21, FontWeights.Bold)),
         Ui.Secondary(r.Installed ? "Your existing server is available here. Its accounts and data stay with it."
                                  : "Set up a server here, or restore the data retained by your previous installation."),
         r.Installed ? Ui.Caption("Version " + (r.Version.Length == 0 ? "unknown" : r.Version) + " · " + r.Detail) : null,
-        r.Installed ? Ui.Pill("Open Josi", () => model.Run(async () => { model.Activity = "Connecting to the server on this PC…"; try { await model.Connect(r.Address, true); } finally { model.Activity = ""; } }), true)
-                    : Ui.Pill("Set Up on This PC…", () => ServerControls.ChooseInstaller(model, owner), true),
+        r.Installed ? Automation.Id(Ui.Pill("Open Josi", () => model.Run(async () => { model.Activity = "Connecting to the server on this PC…"; try { await model.Connect(r.Address, true); } finally { model.Activity = ""; } }), true), "josi.welcome.open")
+                    : Automation.Id(Ui.Pill("Set Up on This PC…", () => ServerControls.ChooseInstaller(model, owner), true), "josi.welcome.setup"),
         new ServerControls(model, owner, true));
       var brand = Ui.Row(14, Ui.JosiMark(52), Ui.Stack(2, Ui.T("Josi", 28, FontWeights.SemiBold), Ui.Caption("Your assistant, on your own server.")));
       var page = Ui.Stack(28, brand, Ui.Heading("Welcome to Josi", "Your conversations, your work, your PC."), local,
         Ui.Secondary("Closing this window leaves your server running for your other devices."));
       page.IsEnabled = !model.Busy;
+      Automation.Id(this, "josi.welcome", "Welcome to Josi");
       Content = Ui.Scroll(page, 720, 36);
     }
   }
@@ -48,7 +50,7 @@ namespace Josi.Native {
         buttons.Children.Add(Ui.Pill("Update or Repair Server…", () => ChooseInstaller(model, owner)));
       }
       buttons.Children.Add(Ui.Pill("Refresh Status", model.RefreshLocal));
-      var status = Ui.T(r.Installed ? r.Address + " · " + (r.Version.Length == 0 ? "version unknown" : r.Version) + " · " + r.Detail : "Local server is not installed.");
+      var status = Automation.Id(Ui.T(r.Installed ? r.Address + " · " + (r.Version.Length == 0 ? "version unknown" : r.Version) + " · " + r.Detail : "Local server is not installed."), "josi." + Automation.Scope + ".server-status");
       if (compact) {
         Ui.Add(stack, status, 0);
         if (r.Development) Ui.Add(stack, Ui.Caption("This development server runs from source under your Windows account. Start and stop it with scripts/windows/dev/Start-DevServer.ps1 and Stop-DevServer.ps1."), 10);
@@ -101,6 +103,9 @@ namespace Josi.Native {
       var key = model.MfaChallenge + "|" + model.GoogleSignIn + "|" + model.GoogleWaiting;
       if (shown == key && Content != null) { ((FrameworkElement)Content).IsEnabled = !model.Busy; return; }
       shown = key;
+      Automation.BeginScope("login");
+      Automation.Id(this, "josi.login", "Sign in to Josi");
+      Automation.Id(identifier, "josi.login.identifier"); Automation.Id(password, "josi.login.password"); Automation.Id(code, "josi.login.code");
       var stack = new StackPanel { MaxWidth = 580, Margin = new Thickness(36), VerticalAlignment = VerticalAlignment.Center };
       Ui.Add(stack, Ui.Row(14, Ui.JosiMark(44), Ui.Heading("Sign in to Josi", model.Address)), 0);
       if (model.MfaChallenge.Length == 0) {
@@ -108,13 +113,13 @@ namespace Josi.Native {
         Ui.Add(stack, Ui.Field("Username or email", identifier), 22);
         Ui.Add(stack, Ui.Field("Password", password), 14);
         Ui.Add(stack, Ui.Row(18,
-          Ui.Link("Forgot password?", () => { password.Clear(); Dialogs.ForgotPassword(owner, model, identifier.Text.Trim()); }),
-          Ui.Link("Have an invitation or reset link?", () => { password.Clear(); Dialogs.PasswordSetup(owner, model); })), 10);
+          Automation.Id(Ui.Link("Forgot password?", () => { password.Clear(); Dialogs.ForgotPassword(owner, model, identifier.Text.Trim()); }), "josi.login.forgot"),
+          Automation.Id(Ui.Link("Have an invitation or reset link?", () => { password.Clear(); Dialogs.PasswordSetup(owner, model); }), "josi.login.reset-link")), 10);
         if (model.GoogleWaiting) {
           Ui.Add(stack, Ui.Working("Finish signing in with Google in your browser.", true), 22);
           Ui.Add(stack, Ui.Row(14, Ui.Caption("Josi continues when Google sends you back."), Ui.Link("Cancel", model.CancelGoogle)), 6);
         } else if (model.GoogleSignIn) {
-          var google = Ui.Pill("Sign in with Google", () => model.Run(() => model.StartGoogle()));
+          var google = Automation.Id(Ui.Pill("Sign in with Google", () => model.Run(() => model.StartGoogle())), "josi.login.google");
           google.HorizontalAlignment = HorizontalAlignment.Stretch;
           Ui.Add(stack, Ui.T("or", 13, null, Ui.Muted), 18);
           Ui.Add(stack, google, 10);
@@ -125,8 +130,8 @@ namespace Josi.Native {
         Ui.Add(stack, code, 12);
         code.Focus();
       }
-      var back = Ui.Pill("Back", () => { password.Clear(); code.Clear(); model.Disconnect(); });
-      var submit = Ui.Pill(model.MfaChallenge.Length == 0 ? "Sign In" : "Verify", Submit, true);
+      var back = Automation.Id(Ui.Pill("Back", () => { password.Clear(); code.Clear(); model.Disconnect(); }), "josi.login.back");
+      var submit = Automation.Id(Ui.Pill(model.MfaChallenge.Length == 0 ? "Sign In" : "Verify", Submit, true), "josi.login.submit");
       submit.IsDefault = true;
       Ui.Add(stack, Ui.Spread(back, submit), 22);
       stack.IsEnabled = !model.Busy;
@@ -163,6 +168,8 @@ namespace Josi.Native {
       if (key == renderedKey && Content != null) { ((FrameworkElement)((ScrollViewer)Content).Content).IsEnabled = !model.Busy; return; }
       if (renderedKey != null && !renderedKey.StartsWith(model.SetupState.Json)) { fields.Clear(); }
       renderedKey = key;
+      Automation.BeginScope("setup");
+      Automation.Id(this, "josi.setup", "Set up Josi");
       var page = new StackPanel();
       Ui.Add(page, Ui.Heading("Set up Josi", "Everything stays inside the app. Your server determines the next step."), 0);
       var steps = Ui.Wrap(model.SetupState["steps"].List.Select(item => (UIElement)Ui.Row(5,

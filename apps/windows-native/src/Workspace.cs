@@ -30,14 +30,16 @@ namespace Josi.Native {
       grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(250) });
       grid.ColumnDefinitions.Add(new ColumnDefinition());
 
+      Automation.BeginScope("sidebar");
       var header = Ui.Spread(Ui.Row(10, Ui.JosiMark(38), Ui.T("Josi", 25, FontWeights.SemiBold)),
-        Ui.IconButton(Glyph.Compose, "New conversation", () => model.Run(() => model.NewThread()), 18));
+        Automation.Id(Ui.IconButton(Glyph.Compose, "New conversation", () => model.Run(() => model.NewThread()), 18), "josi.sidebar.new-conversation"));
       header.Margin = new Thickness(18, 24, 14, 18);
       var list = new StackPanel { Margin = new Thickness(12, 0, 12, 12) };
       list.Children.Add(nav);
       list.Children.Add(new Border { Height = 1, Background = Ui.Border, Margin = new Thickness(0, 12, 0, 12) });
       var recent = Ui.Caption("Recent conversations"); recent.Margin = new Thickness(12, 0, 0, 5);
       list.Children.Add(recent);
+      Automation.Id(threadSearch, "josi.sidebar.search");
       threadSearch.Margin = new Thickness(4, 0, 4, 6);
       threadSearch.TextChanged += delegate { RenderThreads(); };
       list.Children.Add(threadSearch);
@@ -131,6 +133,7 @@ namespace Josi.Native {
         if (!ReferenceEquals(button.Foreground, on ? Ui.Orange : Ui.Muted)) button.Foreground = on ? Ui.Orange : Ui.Muted;
         var back = on ? Ui.OrangeSoft : Brushes.Transparent;
         if (!ReferenceEquals(button.Background, back)) button.Background = back;
+        System.Windows.Automation.AutomationProperties.SetItemStatus(button, on ? "selected" : "");
         var weight = on ? FontWeights.Medium : FontWeights.Normal;
         TextBlock label;
         if (navLabels.TryGetValue(pair.Key, out label) && label.FontWeight != weight) label.FontWeight = weight;
@@ -150,12 +153,14 @@ namespace Josi.Native {
       var button = new Button { Content = row, Style = (Style)Ui.Resources["Plain"], Padding = new Thickness(12, 10, 12, 10),
         Foreground = on ? Ui.Orange : Ui.Muted, Background = on ? Ui.OrangeSoft : Brushes.Transparent, Margin = new Thickness(0, 0, 0, 3) };
       Ui.Name(button, title, null);
+      Automation.Id(button, "josi.sidebar.item." + section);
       button.IsEnabled = !model.Busy;
       button.Click += delegate { Go(section); };
       nav.Children.Add(button);
       navButtons[section] = button; navLabels[section] = label;
     }
-    void Go(string section) {
+    /// Opens a sidebar section, as a click on it would.
+    public void Go(string section) {
       model.Section = section;
       if (section == "automation") model.Run(() => model.LoadAutomation());
       else if (section == "server") model.RefreshLocal();
@@ -172,12 +177,14 @@ namespace Josi.Native {
           var on = model.SelectedThread == pair.Key;
           var wanted = on ? Ui.Text : Ui.Muted;
           if (!ReferenceEquals(pair.Value.Foreground, wanted)) pair.Value.Foreground = wanted;
+          System.Windows.Automation.AutomationProperties.SetItemStatus(pair.Value, on ? "selected" : "");
           if (pair.Value.IsEnabled == model.Busy) pair.Value.IsEnabled = !model.Busy;
         }
         return;
       }
       threadsKey = key;
       threads.Children.Clear(); threadButtons.Clear();
+      var position = 0;
       foreach (var thread in model.Threads) {
         if (term.Length > 0 && thread["title"].Text.IndexOf(term, StringComparison.CurrentCultureIgnoreCase) < 0) continue;
         var id = thread.Id; var on = model.SelectedThread == id;
@@ -187,6 +194,9 @@ namespace Josi.Native {
         var button = new Button { Content = Ui.Row(10, icon, title), Style = (Style)Ui.Resources["Plain"], Padding = new Thickness(12, 9, 12, 9),
           Foreground = on ? Ui.Text : Ui.Muted };
         Ui.Name(button, title.Text, null);
+        position++;
+        Automation.Id(button, "josi.sidebar.thread." + position);
+        System.Windows.Automation.AutomationProperties.SetHelpText(button, id);
         button.IsEnabled = !model.Busy;
         button.Click += delegate { model.Run(() => model.SelectThread(id)); };
         threads.Children.Add(button);
@@ -203,7 +213,8 @@ namespace Josi.Native {
       var name = Ui.T(model.SignedInName, 13.5, FontWeights.SemiBold); name.TextWrapping = TextWrapping.NoWrap; name.TextTrimming = TextTrimming.CharacterEllipsis;
       var where = Ui.Caption(model.Address.Contains("localhost") ? "Local server" : model.Address); where.TextWrapping = TextWrapping.NoWrap; where.TextTrimming = TextTrimming.CharacterEllipsis;
       var who = Ui.Stack(3, name, where); who.MaxWidth = 140;
-      var signOut = Ui.IconButton(Glyph.SignOut, "Sign out", () => model.Run(() => model.SignOut()));
+      Automation.Id(name, "josi.sidebar.account");
+      var signOut = Automation.Id(Ui.IconButton(Glyph.SignOut, "Sign out", () => model.Run(() => model.SignOut())), "josi.sidebar.sign-out");
       signOut.IsEnabled = !model.Busy;
       footer.Child = Ui.Spread(Ui.Row(10, avatar, who), signOut);
     }
@@ -217,6 +228,7 @@ namespace Josi.Native {
       // refreshes the data behind it without a blank page in between.
       UIElement view;
       if (views.TryGetValue(model.Section, out view)) { detail.Content = view; return; }
+      Automation.BeginScope(model.Section);
       switch (model.Section) {
         case "tasks": tasks = tasks ?? new TaskManagerView(model, owner); tasks.Refresh(); view = tasks; break;
         case "memory": view = new MemoryView(model, owner); break;
@@ -263,6 +275,8 @@ namespace Josi.Native {
         default: chat = chat ?? new ChatView(model, owner); chat.Refresh(); view = chat; break;
       }
       if (view != null && model.Section != "chat" && model.Section != "tasks") views[model.Section] = view;
+      // A section page derives its control ids from the sidebar key it was opened under.
+      var page = view as SectionView; if (page != null) page.SectionKey = model.Section;
       detail.Content = view;
     }
   }

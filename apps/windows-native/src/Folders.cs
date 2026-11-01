@@ -30,7 +30,7 @@ namespace Josi.Native {
     /// cloud account's folders. Returns a receipt sentence once a folder was
     /// added, or null when nothing changed.
     public static string Show(Window owner, AppModel model, string provider = null, string connectionId = null) {
-      var sheet = new Dialogs.Sheet(owner, "Add a folder", 600);
+      var sheet = new Dialogs.Sheet(owner, "Add a folder", 600, "add-folder");
       var host = new ContentControl { Focusable = false };
       var api = model.Api;
       string receipt = null;
@@ -39,10 +39,12 @@ namespace Josi.Native {
 
       // One error line, shared by every page, so a failed request is shown on
       // the page it came from with everything the person typed still there.
-      var error = Ui.T("", 13.5, null, Ui.Orange); error.Visibility = Visibility.Collapsed;
+      var error = Automation.Id(Ui.T("", 13.5, null, Ui.Orange), "josi.add-folder.error"); error.Visibility = Visibility.Collapsed;
       Action<string> fail = text => { error.Text = text ?? ""; error.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible; };
       Func<UIElement> slot = () => { Ui.Detach(error); return error; };
       Action<UIElement, string> show = (content, problem) => { fail(problem); host.Content = content; };
+      // Every page of the sheet derives its ids under josi.add-folder.
+      Action<string> page = step => { Automation.BeginScope("add-folder"); Automation.Id(host, "josi.add-folder.page", step); };
       Action<Func<Task>> run = null;
       Action<string> sources = null;
 
@@ -87,6 +89,7 @@ namespace Josi.Native {
         var label = Ui.Input("A name people will recognise", path == null ? root["label"].Text : System.IO.Path.GetFileName(path.TrimEnd('\\', '/')));
         var subfolders = Ui.Toggle("Include subfolders, including ones added later", true);
         var index = Ui.Toggle("Let Josi read and search the files inside", true);
+        page("pc");
         var add = Ui.Pill("Add This Folder", () => run(async () => {
           var granted = await ensureRights("local", index.IsChecked == true);
           var rootId = root.IsNull ? "" : root.Id;
@@ -96,6 +99,7 @@ namespace Josi.Native {
           }
           await finish(Wires.O("provider", "local", "rootId", rootId, "relativePath", "", "recursive", subfolders.IsChecked == true), index.IsChecked == true, granted);
         }), true);
+        Automation.Id(add, "josi.add-folder.add");
         show(Ui.Stack(12, Ui.Title2("A folder on this PC"), Ui.Copyable(where, 14), slot(),
           path == null ? null : Ui.Field("Shown as", label), subfolders, index,
           Ui.Caption("Josi only reads. It never changes, moves or deletes anything in this folder, and you can remove it from Josi at any time under Files."),
@@ -107,6 +111,7 @@ namespace Josi.Native {
         confirmPc(dialog.FolderName, Wire.Null);
       };
       Action pcList = () => {
+        page("server-folders");
         var roots = available["roots"].List;
         var stack = Ui.Stack(10, Ui.Title2("Folders on the server PC"), slot());
         if (roots.Count == 0) stack.Children.Add(Ui.Caption("Your administrator has not added any folders on the server PC yet."));
@@ -128,6 +133,7 @@ namespace Josi.Native {
         Action<string> browse = null;
         Action<List<Wire>, string> render = null;
         render = (folders, problem) => {
+          page("cloud");
           var stack = Ui.Stack(10, Ui.Title2(label),
             Ui.Caption(path.Count == 0 ? "The top of your " + label + ". Open a folder, then use it. Josi maps one folder at a time, never the whole drive."
               : label + "/" + string.Join("/", path.Select(p => p["name"].Text))));
@@ -142,11 +148,11 @@ namespace Josi.Native {
           var buttons = Ui.Wrap();
           if (path.Count > 0) {
             var current = path[path.Count - 1];
-            buttons.Children.Add(Ui.Pill("Use “" + current["name"].Text + "”", () => run(async () => {
+            buttons.Children.Add(Automation.Id(Ui.Pill("Use “" + current["name"].Text + "”", () => run(async () => {
               var granted = await ensureRights("cloud", index.IsChecked == true);
               await finish(Wires.O("provider", mappingProvider, "connectionId", connection, "remoteFolderId", current.Id,
                 "displayPath", label + "/" + string.Join("/", path.Select(p => p["name"].Text)), "recursive", recursive.IsChecked == true), index.IsChecked == true, granted);
-            }), true));
+            }), true), "josi.add-folder.use"));
             buttons.Children.Add(Ui.Pill("Up One Level", () => { path.RemoveAt(path.Count - 1); browse(path.Count == 0 ? null : path[path.Count - 1].Id); }));
           }
           if (provider == null) buttons.Children.Add(Ui.Pill("Back", () => sources(null)));
@@ -181,14 +187,15 @@ namespace Josi.Native {
 
       // --- Where is the folder? ----------------------------------------------
       sources = problem => {
+        page("sources");
         var stack = Ui.Stack(12, Ui.Title2("Where is the folder?"),
           Ui.Caption("Josi reads only the folders you add here, and only for you. Nothing else on the PC or in your accounts is touched."), slot());
         var options = Ui.Stack(8);
         var pc = available["pcFolders"].Flag;
         var roots = available["roots"].List;
-        if (pc && model.IsAdministrator && api.IsLocal) options.Children.Add(Choice("💻", "A folder on this PC", "Pick any folder in the Windows folder dialog.", pickPc));
+        if (pc && model.IsAdministrator && api.IsLocal) options.Children.Add(Choice("💻", "A folder on this PC", "Pick any folder in the Windows folder dialog.", pickPc, "josi.add-folder.source.pc"));
         else if (roots.Count > 0 || (pc && model.IsAdministrator))
-          options.Children.Add(Choice("💻", "A folder on the server PC", roots.Count > 0 ? "Pick one of the folders the administrator made available." : "Open Josi on the server PC itself to pick a new folder there.", pcList));
+          options.Children.Add(Choice("💻", "A folder on the server PC", roots.Count > 0 ? "Pick one of the folders the administrator made available." : "Open Josi on the server PC itself to pick a new folder there.", pcList, "josi.add-folder.source.server"));
         var missing = new List<string>();
         foreach (var view in providers) {
           var kind = view["provider"].Text;
@@ -200,7 +207,7 @@ namespace Josi.Native {
           foreach (var account in active) {
             var c = account; var k = kind;
             var detail = c["account"].Text.Length > 0 ? c["account"].Text : c["serverUrl"].Text;
-            options.Children.Add(Choice("☁", "A folder in " + CloudLabel[kind], detail.Length > 0 ? detail : "Browse the account and pick a folder.", () => openCloud(k, c)));
+            options.Children.Add(Choice("☁", "A folder in " + CloudLabel[kind], detail.Length > 0 ? detail : "Browse the account and pick a folder.", () => openCloud(k, c), "josi.add-folder.source." + kind));
           }
         }
         if (options.Children.Count == 0) stack.Children.Add(Ui.Caption("There is nowhere to add a folder from yet."));
@@ -244,8 +251,9 @@ namespace Josi.Native {
       return receipt;
     }
 
-    static UIElement Choice(string glyph, string title, string detail, Action pick) {
+    static UIElement Choice(string glyph, string title, string detail, Action pick, string id) {
       var button = new Button { Style = (Style)Ui.Resources["Plain"], HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(0) };
+      Automation.Id(button, id);
       button.Content = new Border { BorderBrush = Ui.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(14, 12, 14, 12), Background = Ui.Card,
         Child = Ui.Row(12, Ui.T(glyph, 20), Ui.Stack(2, Ui.T(title, 14.5, FontWeights.Medium), Ui.Caption(detail))) };
       Ui.Name(button, title, detail);

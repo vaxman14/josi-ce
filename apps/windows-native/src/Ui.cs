@@ -193,13 +193,18 @@ namespace Josi.Native {
       return grid;
     }
 
+    // Every control these helpers build gets an automation id derived from its
+    // label within the current screen (Automation.Derive); a screen gives the
+    // important ones a hand-chosen id afterwards. See AUTOMATION.md.
     public static Button Pill(string text, Action click, bool prominent = false) {
       var button = new Button { Content = text, Style = (Style)Resources[prominent ? "PillProminent" : "Pill"] };
+      Automation.Derive(button, "button", text);
       if (click != null) button.Click += delegate { click(); };
       return button;
     }
     public static Button Danger(string text, Action click) {
       var button = new Button { Content = text, Style = (Style)Resources["PillDanger"] };
+      Automation.Derive(button, "button", text);
       if (click != null) button.Click += delegate { click(); };
       return button;
     }
@@ -213,17 +218,20 @@ namespace Josi.Native {
       }
       var button = new Button { Content = content, Style = (Style)Resources[prominent ? "PillProminent" : "Pill"] };
       Name(button, label ?? tip, tip);
+      Automation.Derive(button, "button", label ?? tip);
       if (click != null) button.Click += delegate { click(); };
       return button;
     }
     public static Button IconButton(string glyph, string label, Action click, double size = 16) {
       var button = new Button { Content = Icon(glyph, size), Style = (Style)Resources["Plain"], Padding = new Thickness(6) };
       Name(button, label, label);
+      Automation.Derive(button, "button", label);
       if (click != null) button.Click += delegate { click(); };
       return button;
     }
     public static Button Link(string text, Action click) {
       var button = new Button { Content = text, Style = (Style)Resources["LinkButton"] };
+      Automation.Derive(button, "link", text);
       if (click != null) button.Click += delegate { click(); };
       return button;
     }
@@ -235,17 +243,18 @@ namespace Josi.Native {
     public static TextBox Input(string placeholder = null, string value = "", bool multiline = false) {
       var box = new TextBox { Text = value ?? "" };
       if (multiline) { box.AcceptsReturn = true; box.TextWrapping = TextWrapping.Wrap; box.MinHeight = 64; box.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; }
-      if (!string.IsNullOrEmpty(placeholder)) Placeholder(box, placeholder);
+      if (!string.IsNullOrEmpty(placeholder)) { Placeholder(box, placeholder); Automation.Derive(box, "input", placeholder); }
       return box;
     }
     public static PasswordBox Secret(string placeholder = null) {
       var box = new PasswordBox();
-      if (!string.IsNullOrEmpty(placeholder)) System.Windows.Automation.AutomationProperties.SetName(box, placeholder);
+      if (!string.IsNullOrEmpty(placeholder)) { System.Windows.Automation.AutomationProperties.SetName(box, placeholder); Automation.Derive(box, "secret", placeholder); }
       return box;
     }
     /// Label above a control, as the Mac setup forms present fields.
     public static FrameworkElement Field(string label, Control control) {
       System.Windows.Automation.AutomationProperties.SetName(control, label);
+      if (Automation.Unnamed(control)) Automation.Derive(control, "field", label);
       return Stack(5, T(label, 13.5), control);
     }
     public static void Placeholder(TextBox box, string text, Brush fill = null) {
@@ -274,7 +283,9 @@ namespace Josi.Native {
       update();
     }
     public static CheckBox Toggle(string text, bool value = false) {
-      return new CheckBox { Content = text, IsChecked = value };
+      var box = new CheckBox { Content = text, IsChecked = value };
+      Automation.Derive(box, "toggle", text);
+      return box;
     }
     public static ComboBox Choice(IList<KeyValuePair<string, string>> options, string selected) {
       var combo = new ComboBox();
@@ -305,6 +316,8 @@ namespace Josi.Native {
         label.TextAlignment = TextAlignment.Center; label.HorizontalAlignment = HorizontalAlignment.Center;
         var button = new Button { Content = label, Style = (Style)Resources["Plain"], Padding = new Thickness(12, 9, 12, 9),
           Background = on ? (Brush)Resources["OrangeSoft"] : Brushes.Transparent, Margin = new Thickness(2) };
+        Automation.Derive(button, "segment", "segment " + key);
+        System.Windows.Automation.AutomationProperties.SetItemStatus(button, on ? "selected" : "");
         button.Click += delegate { pick(key); };
         grid.Children.Add(button);
       }
@@ -354,16 +367,20 @@ namespace Josi.Native {
     }
     /// The animated J thinking indicator in the chat.
     public static FrameworkElement Thinking(string activity = null) {
-      var row = Row(14, AnimatedMark(38), T(string.IsNullOrEmpty(activity) ? "Josi is thinking…" : activity, 14, null, Muted));
-      row.Margin = new Thickness(0, 12, 0, 12);
-      System.Windows.Automation.AutomationProperties.SetName(row, "Josi is thinking");
-      return row;
+      var text = string.IsNullOrEmpty(activity) ? "Josi is thinking…" : activity;
+      var row = Row(14, AnimatedMark(38), Automation.Id(T(text, 14, null, Muted), "josi.chat.thinking.text"));
+      // A panel has no automation peer; the group makes the indicator findable.
+      var group = Automation.Group("josi.chat.thinking", "Josi is thinking", row);
+      group.Margin = new Thickness(0, 12, 0, 12);
+      return group;
     }
     /// A small animated J with a sentence, for any wait: "Checking…",
     /// "Waiting for your approval…". With `elapsed`, a seconds counter shows
     /// the wait is alive rather than stuck.
     public static WorkingIndicator Working(string text, bool elapsed = false, double size = 22) {
-      return new WorkingIndicator(text, elapsed, size);
+      var indicator = new WorkingIndicator(text, elapsed, size);
+      Automation.Derive(indicator, "working", "working");
+      return indicator;
     }
 
     public static bool Confirm(Window owner, string title, string detail, string action) {

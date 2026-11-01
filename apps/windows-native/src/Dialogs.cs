@@ -19,7 +19,14 @@ namespace Josi.Native {
 
     public class Sheet : Window {
       public bool Locked;
-      public Sheet(Window owner, string title, double width) {
+      /// What this sheet is, for automation: josi.sheet.<Kind>, and the popup state while it is open.
+      public readonly string Kind;
+      public Sheet(Window owner, string title, double width, string kind = null) {
+        Kind = kind ?? Automation.Slug(title);
+        Automation.Id(this, "josi.sheet." + Kind, title);
+        Automation.BeginScope(Kind);
+        Loaded += delegate { Automation.Popup = Kind; };
+        Closed += delegate { if (Automation.Popup == Kind) Automation.Popup = "none"; };
         Owner = owner; Title = title; Width = width; SizeToContent = SizeToContent.Height; MaxHeight = 760;
         WindowStartupLocation = WindowStartupLocation.CenterOwner; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false;
         Background = Ui.Sidebar; Foreground = Ui.Text; FontFamily = Ui.Font; FontSize = 14;
@@ -40,11 +47,12 @@ namespace Josi.Native {
     static void NativeDark(IntPtr handle, int attribute, ref int value) { try { DwmSetWindowAttribute(handle, attribute, ref value, sizeof(int)); } catch (Exception) { } }
 
     public static bool Confirm(Window owner, string title, string detail, string action) {
-      var sheet = new Sheet(owner, "Josi", 480);
+      var sheet = new Sheet(owner, "Josi", 480, "confirm");
       var result = false;
-      var go = Ui.Pill(action, () => { result = true; sheet.Close(); }, true);
-      var cancel = Ui.Pill("Cancel", () => sheet.Close());
+      var go = Automation.Id(Ui.Pill(action, () => { result = true; sheet.Close(); }, true), "josi.confirm.ok");
+      var cancel = Automation.Id(Ui.Pill("Cancel", () => sheet.Close()), "josi.confirm.cancel");
       cancel.IsCancel = true;
+      sheet.Closed += delegate { Automation.PopupResult = result ? "confirm:ok" : "confirm:cancelled"; };
       sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), detail == null ? null : Ui.Copyable(detail, 14, Ui.Muted),
         Ui.Spread(null, Ui.Row(8, cancel, go))));
       sheet.Loaded += delegate { cancel.Focus(); };
@@ -52,27 +60,30 @@ namespace Josi.Native {
       return result;
     }
     public static void Message(Window owner, string title, string detail) {
-      var sheet = new Sheet(owner, "Josi", 460);
-      var ok = Ui.Pill("OK", () => sheet.Close(), true); ok.IsDefault = true;
+      var sheet = new Sheet(owner, "Josi", 460, "message");
+      var ok = Automation.Id(Ui.Pill("OK", () => sheet.Close(), true), "josi.message.ok"); ok.IsDefault = true;
+      sheet.Closed += delegate { Automation.PopupResult = "message:ok"; };
       sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), Ui.Secondary(detail), Ui.Spread(null, ok)));
       sheet.ShowDialog();
     }
     /// A settings change Josi prepared in conversation: what will change, in
     /// the words the person will be held to, with Approve and Decline.
     public static void SettingsChange(Window owner, AppModel model, Wire proposal) {
-      var sheet = new Sheet(owner, "Josi", 560);
+      var sheet = new Sheet(owner, "Josi", 560, "settings-change");
       var administrator = proposal["scope"].Text == "administrator";
-      var approve = Ui.Pill(administrator ? "Approve and Apply" : "Approve", () => {
-        sheet.Close();
+      var decision = "later";
+      var approve = Automation.Id(Ui.Pill(administrator ? "Approve and Apply" : "Approve", () => {
+        decision = "approved"; sheet.Close();
         model.Run(async () => { var note = await model.DecideSettingsChange(proposal, true); if (note.Length > 0) Notifications.Show("Settings change", note); });
-      }, true);
-      var decline = Ui.Pill("Decline", () => { sheet.Close(); model.Run(async () => { await model.DecideSettingsChange(proposal, false); }); });
-      var later = Ui.Pill("Decide Later", () => sheet.Close());
+      }, true), "josi.settings-change.approve");
+      var decline = Automation.Id(Ui.Pill("Decline", () => { decision = "declined"; sheet.Close(); model.Run(async () => { await model.DecideSettingsChange(proposal, false); }); }), "josi.settings-change.decline");
+      var later = Automation.Id(Ui.Pill("Decide Later", () => sheet.Close()), "josi.settings-change.later");
       later.IsCancel = true;
+      sheet.Closed += delegate { Automation.PopupResult = "settings-change:" + decision; };
       sheet.Body(Ui.Stack(14,
         Ui.Row(10, Ui.JosiMark(28), Ui.T("Josi proposes a settings change", 17, FontWeights.SemiBold)),
-        Ui.T(proposal["title"].Text, 15, FontWeights.SemiBold),
-        Ui.Copyable(proposal["summary"].Text, 14),
+        Automation.Id(Ui.T(proposal["title"].Text, 15, FontWeights.SemiBold), "josi.settings-change.title"),
+        Automation.Id(Ui.Copyable(proposal["summary"].Text, 14), "josi.settings-change.summary"),
         Ui.Caption((administrator ? "An administrator setting for this installation." : "Your own setting.")
           + (proposal["sensitive"].Flag ? " This is a sensitive change; the administrator is told by email when a member makes one." : "")
           + " Nothing changes until you approve. You can also find it under Approvals."),
@@ -83,13 +94,14 @@ namespace Josi.Native {
     /// Asks for the account password once, for a change the server protects
     /// with it. Returns null when cancelled; the box is cleared either way.
     public static string AskPassword(Window owner, string title, string detail, string action) {
-      var sheet = new Sheet(owner, "Josi", 520);
+      var sheet = new Sheet(owner, "Josi", 520, "password");
       string result = null;
-      var box = Ui.Secret("Your account password");
-      var go = Ui.Pill(action, () => { if (box.Password.Length == 0) return; result = box.Password; box.Clear(); sheet.Close(); }, true);
+      var box = Automation.Id(Ui.Secret("Your account password"), "josi.password.input");
+      var go = Automation.Id(Ui.Pill(action, () => { if (box.Password.Length == 0) return; result = box.Password; box.Clear(); sheet.Close(); }, true), "josi.password.ok");
       go.IsDefault = true;
-      var cancel = Ui.Pill("Cancel", () => { box.Clear(); sheet.Close(); });
+      var cancel = Automation.Id(Ui.Pill("Cancel", () => { box.Clear(); sheet.Close(); }), "josi.password.cancel");
       cancel.IsCancel = true;
+      sheet.Closed += delegate { Automation.PopupResult = result == null ? "password:cancelled" : "password:ok"; };
       sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), detail == null ? null : Ui.Copyable(detail, 14, Ui.Muted),
         Ui.Field("Confirm your account password", box), Ui.Spread(null, Ui.Row(8, cancel, go))));
       sheet.Loaded += delegate { box.Focus(); };
@@ -135,7 +147,7 @@ namespace Josi.Native {
       }));
     }
     static void VaultRecovery(Window owner, AppModel model) {
-      var sheet = new Sheet(owner, "Save Your Vault Recovery Key", 600) { Locked = true };
+      var sheet = new Sheet(owner, "Save Your Vault Recovery Key", 600, "vault-recovery") { Locked = true };
       var key = model.VaultRecovery["recoveryKey"].Text; var fingerprint = model.VaultRecovery["fingerprint"].Text;
       var shown = Ui.Copyable(key, 14, null, true); shown.Visibility = Visibility.Collapsed;
       var show = Ui.Toggle("Show recovery key");
@@ -152,7 +164,7 @@ namespace Josi.Native {
       sheet.ShowDialog();
     }
     static void MfaRecovery(Window owner, AppModel model) {
-      var sheet = new Sheet(owner, "Save your sign-in recovery codes", 560) { Locked = true };
+      var sheet = new Sheet(owner, "Save your sign-in recovery codes", 560, "mfa-recovery") { Locked = true };
       var value = model.MfaRecovery;
       var codes = string.Join("\r\n", value["codes"].List.Select(c => c.Text));
       var shown = Ui.Copyable(codes, 14, null, true); shown.Visibility = Visibility.Collapsed;
@@ -182,7 +194,7 @@ namespace Josi.Native {
     /// Asks the server to email a password-reset link. The server answers the
     /// same way whether or not the account exists.
     public static void ForgotPassword(Window owner, AppModel model, string identifierText) {
-      var sheet = new Sheet(owner, "Forgot your password?", 520);
+      var sheet = new Sheet(owner, "Forgot your password?", 520, "forgot-password");
       var identifier = Ui.Input("Username or email", identifierText ?? "");
       var note = Ui.Secondary("");
       var api = model.Api;
@@ -209,7 +221,7 @@ namespace Josi.Native {
 
     /// Sets a password from an invitation or reset link for the connected server.
     public static void PasswordSetup(Window owner, AppModel model) {
-      var sheet = new Sheet(owner, "Invitation or password reset", 560);
+      var sheet = new Sheet(owner, "Invitation or password reset", 560, "password-setup");
       var input = Ui.Input("Paste the one-time link or code");
       var password = new NewPassword("New password");
       var note = Ui.Secondary("");
@@ -282,7 +294,7 @@ namespace Josi.Native {
     }
 
     public static void MemorySource(Window owner, AppModel model, Wire source) {
-      var sheet = new Sheet(owner, "Source work", 660);
+      var sheet = new Sheet(owner, "Source work", 660, "memory-source");
       var body = new ContentControl { Content = Ui.Caption("Loading…"), Focusable = false };
       sheet.Body(Ui.Stack(16, Ui.Spread(Ui.Title2("Source work"), Ui.Pill("Close", () => sheet.Close())), body));
       sheet.Loaded += async delegate {
@@ -306,7 +318,7 @@ namespace Josi.Native {
     }
 
     public static void VoiceSettings(Window owner, AppModel model, Voice voice) {
-      var sheet = new Sheet(owner, "Voice Box", 500);
+      var sheet = new Sheet(owner, "Voice Box", 500, "voice-settings");
       var host = new ContentControl { Focusable = false };
       var error = ""; var working = false;
       var selected = "af_heart"; var transcription = "base.en";
