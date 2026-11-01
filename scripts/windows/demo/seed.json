@@ -1,0 +1,31 @@
+{
+  "workspace": { "name": "Josi Demo", "timezone": "America/Los_Angeles" },
+  "account": { "displayName": "Dana Demo", "email": "dana@josi-demo.local", "username": "dana" },
+  "memories": [
+    "Dana prefers short, factual answers.",
+    "Dana's product video is recorded with ClipForge.",
+    "The download page lives at get.heyjosi.com."
+  ],
+  "folder": {
+    "label": "Demo Files",
+    "files": {
+      "launch-plan.md": "# Launch plan\n\n1. Finish the download page by Friday. Three doors: Windows, Mac, Linux.\n2. Record the product video next week with the demo workspace.\n3. Announce on the newsletter and the community forum the same morning.\n\nOpen: who writes the release notes; whether the Linux build ships as a .deb only.\n",
+      "shopping-list.txt": "oat milk\ncoffee beans\n2 TB backup drive (urgent)\nprinter paper\n",
+      "notes/meeting-2026-10-28.md": "# Meeting 28 October 2026\n\n- Video: one storyboard, ten takes, identical each time.\n- Demo workspace resets between takes.\n- Nobody's real data is used.\n"
+    }
+  },
+  "threads": [
+    {
+      "title": "Getting started",
+      "messages": ["What can you help me with today?"]
+    },
+    {
+      "title": "Launch plan",
+      "messages": ["Can you summarise the launch plan?"]
+    },
+    {
+      "title": "Shopping",
+      "messages": ["What is on the shopping list?"]
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "delayMs": 1800,
+  "perCharacterMs": 4,
+  "fallback": "This is the Josi demo. I answer from a fixed script, so every take looks the same. Ask me what I can help with, to summarise the launch plan, or to rename the workspace.",
+  "replies": [
+    {
+      "id": "hello",
+      "prompt": "What can you help me with today?",
+      "reply": "Quite a lot. I can read the folders you connect and answer questions about the files in them, keep your calendar and reminders, draft and send email once you approve it, and remember the things you tell me so you do not have to repeat them.\n\nEverything runs on your own server, and anything that changes something outside this conversation waits for your approval first."
+    },
+    {
+      "id": "plan",
+      "match": "summar(y|ise|ize).*(launch|plan)",
+      "reply": "Here is the launch plan from **launch-plan.md** in your Demo Files folder:\n\n1. **Finish the download page** by Friday. Three doors: Windows, Mac, Linux.\n2. **Record the product video** next week with the demo workspace.\n3. **Announce** on the newsletter and the community forum the same morning.\n\nTwo things are still open: who writes the release notes, and whether the Linux build ships as a .deb only."
+    },
+    {
+      "id": "shopping",
+      "match": "shopping list|what do (i|we) need to buy",
+      "reply": "From **shopping-list.txt**: oat milk, coffee beans, a 2 TB backup drive and printer paper. The backup drive is marked urgent."
+    },
+    {
+      "id": "rename",
+      "prompt": "Rename the workspace to Northwind Demo",
+      "toolCalls": [
+        { "name": "propose_josi_setting_change", "arguments": { "area": "workspace", "summary": "Rename the workspace from Josi Demo to Northwind Demo. The time zone stays America/Los_Angeles.", "body": { "name": "Northwind Demo", "timezone": "America/Los_Angeles" } } }
+      ],
+      "afterTools": "I have prepared the change: the workspace will be called **Northwind Demo**. It is waiting for your approval in the Josi app; nothing changes until you approve it.",
+      "reply": "I have prepared the change: the workspace will be called **Northwind Demo**. It is waiting for your approval in the Josi app; nothing changes until you approve it."
+    },
+    {
+      "id": "remember",
+      "match": "remember that",
+      "reply": "Noted. I will keep that in mind for next time."
+    },
+    {
+      "id": "thanks",
+      "match": "^(thanks|thank you)",
+      "reply": "You are welcome. Anything else?"
+    }
+  ]
+}
