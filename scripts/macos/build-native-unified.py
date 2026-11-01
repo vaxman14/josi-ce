@@ -116,7 +116,7 @@ def protected_entitlements(profile):
 
 def build(args):
     global VERSION, PACKAGE_VERSION
-    if not re.fullmatch(r'd+.d+.d+(-[A-Za-z0-9.]+)?', args.version):
+    if not re.fullmatch(r'\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?', args.version):
         raise ValueError('Use --version like 1.0.0')
     VERSION = args.version
     PACKAGE_VERSION = package_version(args.version)
