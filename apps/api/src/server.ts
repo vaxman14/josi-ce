@@ -3,6 +3,7 @@ import { josiArchiveWriter, pgRestoreReader } from '@josi-ce/ops';
 import { apiListenHost, connectFromEnv, loadMasterKey, createNativeInspectionRuntime } from '@josi-ce/core';
 import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
 import { createApp } from './app.js';
+import type { CookieSecurePolicy } from './http/cookies.js';
 import { publicAddressFromEnvironment, reconcilePublicAddress } from './setup/publicAddress.js';
 
 const attachmentStorage = await probeAttachmentStorage();
@@ -51,11 +52,11 @@ if (workspaceMount.status === 'unavailable') {
 } else if (workspaceMount.status === 'ready') {
   console.log(`josi-ce: workspace mount ready (${workspaceMount.writable ? 'read/write' : 'read-only'})`);
 }
-const cookieSecure = process.env.COOKIE_SECURE === 'true'
+const cookieSecure: CookieSecurePolicy = process.env.COOKIE_SECURE === 'true'
   ? true
   : process.env.COOKIE_SECURE === 'false'
     ? false
-    : new URL(appUrl).protocol === 'https:';
+    : new URL(appUrl).protocol === 'https:' ? 'auto' : false;
 
 const app = createApp(db, {
   automationRuntime: installationKey ? createNativeInspectionRuntime(db, installationKey) : undefined,

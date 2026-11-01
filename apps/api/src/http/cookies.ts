@@ -53,6 +53,25 @@ export interface CookieOptions {
   secure: boolean;
 }
 
+/** How the Secure flag on the session, CSRF and setup cookies is chosen.
+ * `true` and `false` are fixed (the COOKIE_SECURE override). 'auto' is an
+ * https installation: Secure on every address except a loopback one. A cookie
+ * for localhost never leaves the machine, so Secure adds nothing there, and
+ * the Josi app on the same PC (a .NET cookie jar talking to http://localhost)
+ * would drop it, which is what used to need a hand edit of runtime.json once
+ * a public https address was set. */
+export type CookieSecurePolicy = boolean | 'auto';
+
+export function isLoopbackHost(host: string | undefined): boolean {
+  const h = (host ?? '').toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+}
+
+export function cookieSecureFor(req: Request, policy: CookieSecurePolicy): boolean {
+  if (policy !== 'auto') return policy;
+  return !isLoopbackHost(req.hostname);
+}
+
 export function setSessionCookie(res: Response, token: string, ttlSeconds: number, opts: CookieOptions): void {
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,

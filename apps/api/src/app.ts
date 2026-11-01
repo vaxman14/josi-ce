@@ -10,6 +10,7 @@ import { checkReadiness, type Db, type LoadOptions } from '@josi-ce/core';
 import { probeAttachmentStorage } from '@josi-ce/storage';
 import { attachUser } from './http/authz.js';
 import { requireCsrf } from './http/cookies.js';
+import type { CookieSecurePolicy } from './http/cookies.js';
 import { authRoutes } from './http/authRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { checklistRoutes } from './http/checklistRoutes.js';
@@ -57,8 +58,9 @@ export interface AppConfig {
   attachmentStorageRoot?: string;
   voiceBoxHelper?: VoiceHelper;
   nasController?: import('./http/nasController.js').NasController | null;
-  /** https in production; false lets cookies work over plain http locally. */
-  cookieSecure: boolean;
+  /** 'auto' on an https installation (Secure except on a loopback address),
+   * false lets cookies work over plain http, true forces Secure everywhere. */
+  cookieSecure: CookieSecurePolicy;
   /** Public origin, used for invite/reset links. */
   appUrl: string;
   /** Master-key options for the readiness probe, or `false` to skip the check

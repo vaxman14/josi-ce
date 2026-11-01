@@ -11,13 +11,14 @@ import { buildAuthUrl, exchangeCode, fetchIdentity, loadClient } from '@josi-ce/
 import { generateURI } from 'otplib';
 import QRCode from 'qrcode';
 import { asyncRoute, param } from './async.js';
-import { clearSessionCookie, clientIp, isNativeClient, issueCsrfToken, setSessionCookie } from './cookies.js';
+import { clearSessionCookie, clientIp, cookieSecureFor, isNativeClient, issueCsrfToken, setSessionCookie } from './cookies.js';
+import type { CookieSecurePolicy } from './cookies.js';
 import { requireAuth } from './authz.js';
 import { verifyAppleIdentityToken } from './appleIdentity.js';
 
 export interface AuthRoutesCtx {
   db: Db;
-  cookieSecure: boolean;
+  cookieSecure: CookieSecurePolicy;
   appUrl: string;
   masterKey?: LoadOptions | false;
   mailTransport?: SmtpTransport;
@@ -39,7 +40,7 @@ const mfaRoute = (fn: (req: Request, res: Response) => Promise<unknown>) => asyn
 export function authRoutes(ctx: AuthRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
-  const cookieOpts = { secure: ctx.cookieSecure };
+  const cookieOpts = (req: Request) => ({ secure: cookieSecureFor(req, ctx.cookieSecure) });
   function mfaKey() {
     try { return ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {}); }
     catch { return null; } // Recovery codes still require the existing first factor.
@@ -89,8 +90,8 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
   }
 
   /** Hands the SPA a CSRF token before it posts anything, including login. */
-  r.get('/csrf', (_req, res) => {
-    res.json({ csrfToken: issueCsrfToken(res, cookieOpts) });
+  r.get('/csrf', (req, res) => {
+    res.json({ csrfToken: issueCsrfToken(res, cookieOpts(req)) });
   });
 
   r.post(
@@ -137,10 +138,10 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         userAgent: req.header('user-agent'),
         ttlSeconds,
       });
-      setSessionCookie(res, token, ttlSeconds, cookieOpts);
+      setSessionCookie(res, token, ttlSeconds, cookieOpts(req));
       // Rotate the CSRF token on privilege change, so a token captured before
       // sign-in is not valid for the authenticated session.
-      issueCsrfToken(res, cookieOpts);
+      issueCsrfToken(res, cookieOpts(req));
       await appendEvent(db, {
         actorUserId: result.user.id,
         actor: 'user',
@@ -230,7 +231,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       ip: clientIp(req), userAgent: req.header('user-agent'),
     });
     if (!result) return res.status(401).json({ error: 'That verification code did not work.' });
-    setSessionCookie(res, result.token, result.ttlSeconds, cookieOpts); issueCsrfToken(res, cookieOpts);
+    setSessionCookie(res, result.token, result.ttlSeconds, cookieOpts(req)); issueCsrfToken(res, cookieOpts(req));
     return res.json({ user: publicUser(result.user), ...(isNativeClient(req) ? { sessionToken: result.token } : {}) });
   }));
 
@@ -324,7 +325,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     const { token } = await createSession(db, {
       userId: user.id, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds,
     });
-    setSessionCookie(res, token, ttlSeconds, cookieOpts); issueCsrfToken(res, cookieOpts);
+    setSessionCookie(res, token, ttlSeconds, cookieOpts(req)); issueCsrfToken(res, cookieOpts(req));
     await appendEvent(db, { actorUserId: user.id, actor: 'user', kind: 'auth.google_login', subjectType: 'user', subjectId: user.id });
     return res.redirect('/app');
   }));
@@ -550,8 +551,8 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         ip: clientIp(req),
         userAgent: req.header('user-agent'),
       });
-      setSessionCookie(res, sessionToken, SESSION_TTL_SECONDS, cookieOpts);
-      issueCsrfToken(res, cookieOpts);
+      setSessionCookie(res, sessionToken, SESSION_TTL_SECONDS, cookieOpts(req));
+      issueCsrfToken(res, cookieOpts(req));
       const rows = await db.query<{
         id: string; email: string; username: string; role: 'super_admin' | 'member'; display_name: string | null;
       }>(`select id, email, username, role, display_name from users where id = $1`, [redeemed.user_id]);

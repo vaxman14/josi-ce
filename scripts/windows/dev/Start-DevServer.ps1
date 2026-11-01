@@ -129,10 +129,6 @@ try {
         $launcher = Join-Path $data "state\run-$role.cmd"
         $lines = @('@echo off')
         $environment = Get-RoleEnvironment $role
-        # Development behind a tunnel: the public address is https while the
-        # native app on this PC still talks to http://localhost. Secure cookies
-        # would never reach the app, so runtime.json may set cookieSecure=false.
-        if ($settings.PSObject.Properties['cookieSecure'] -and $settings.cookieSecure -eq $false) { $environment['COOKIE_SECURE'] = 'false' }
         # Item 29: the server opens the device-consent window on this screen only
         # from an interactive session; Windows marks one with SESSIONNAME.
         # This script is only ever run by a person at this PC, so the marker is

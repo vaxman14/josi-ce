@@ -18,7 +18,8 @@
 import type { NextFunction, Request, Response } from 'express';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { getSetupState, type Db } from '@josi-ce/core';
-import { readCookie } from './cookies.js';
+import { cookieSecureFor, readCookie } from './cookies.js';
+import type { CookieSecurePolicy } from './cookies.js';
 import { HANDOFF_TTL, SETUP_SESSION_COOKIE, SETUP_SESSION_TTL, SetupHandoffs } from './setupHandoffs.js';
 
 /** Paths that must answer regardless of setup state.
@@ -37,7 +38,7 @@ function isSetupPath(path: string): boolean {
   return SETUP_EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
-export function setupGate(db: Db, setupTokenSha256?: string | null, cookieSecure = false) {
+export function setupGate(db: Db, setupTokenSha256?: string | null, cookieSecure: CookieSecurePolicy = false) {
   const handoffs = new SetupHandoffs();
   const expected = setupTokenSha256
     ? Buffer.from(setupTokenSha256, 'hex')
@@ -77,7 +78,7 @@ export function setupGate(db: Db, setupTokenSha256?: string | null, cookieSecure
       }
       const session = handoffs.consume(req.body?.token);
       if (!session) { res.status(410).json({ error: 'This setup link expired or was already used. Reopen Josi to continue.' }); return; }
-      res.cookie(SETUP_SESSION_COOKIE, session, { httpOnly: true, secure: cookieSecure,
+      res.cookie(SETUP_SESSION_COOKIE, session, { httpOnly: true, secure: cookieSecureFor(req, cookieSecure),
         sameSite: 'strict', path: '/api/setup', maxAge: SETUP_SESSION_TTL });
       res.status(204).end(); return;
     }
