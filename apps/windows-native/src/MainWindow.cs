@@ -301,6 +301,9 @@ namespace Josi.Native {
     /// and reloads the workspace, without restarting the server or this app.
     async System.Threading.Tasks.Task ResetDemo() {
       Automation.State = "resetting";
+      // A sheet left open by the last take (a model setup half done, a popup) is not part
+      // of the seeded state: close it before the workspace reloads.
+      foreach (var owned in OwnedWindows.Cast<Window>().ToList()) { try { owned.Close(); } catch (Exception) { } }
       await Model.RunTask(async () => {
         Model.Activity = "Resetting the demo…"; Model.Notify();
         try { await Automation.RunReset(); } finally { Model.Activity = ""; }
