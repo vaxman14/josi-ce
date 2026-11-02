@@ -92,7 +92,9 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\demo\Stop-DemoServer.ps
 | `--open <section>` | Open a sidebar section once signed in: `chat`, `tasks`, `approvals`, `calendar`, `contacts`, `files`, `reminders`, `memory`, `personalization`, `templates`, `workflows`, `automation`, `migration`, `connections`, `vault`, `channels`, `usage`, `account`, `family`, `apps`, `overview`, `checklist`, `models`, `people`, `connectors`, `custom-apis`, `workflow-providers`, `policy`, `parental`, `storage`, `mail-settings`, `backups`, `voice-box`, `pc-control`, `improvements`, `workspace`, `network`, `maintenance`, `audit`, `server`. |
 | `--thread <id\|n\|title>` | Open a conversation: its id, its 1-based position in the sidebar, or part of its title. |
 | `--pc-banner working\|paused\|takeover\|off` | Show the PC Control banner in that state (scripted, see below). |
-| `--demo-reset` | Restore the seeded state. |
+| `--model <name>` | Make the primary model the configuration `demo.json` names under `models` (`replay` for the canned replies, `ollama` for a real local model), saved and checked through the ordinary Models routes. The status reads `check=running`, then `passed` or `failed`, and `model=<name>` once it is in use. A reset puts the replay model back. |
+| `--demo-fresh` | A fresh demo root (section "First-run setup" below): open on the Welcome screen against a server that is not set up, sign nobody in. |
+| `--demo-reset` | Restore the seeded state (a fresh root: back to not set up). |
 | `--status` | Print the running demo copy's status as JSON and exit. |
 
 When a demo copy is already open, a second `Josi.exe --demo ...` with these
@@ -137,12 +139,30 @@ rebuilds exactly it:
 - One folder, **Demo Files** (`C:\Dev\josi-demo\sample-files`): three files
   (`launch-plan.md`, `shopping-list.txt`, `notes/meeting-2026-10-28.md`),
   indexed and searchable.
-- Three memories.
+- Three memories; memory learning set to **automatic**, so a "Remember that
+  ..." turn whose replay entry carries a `learn` answer lands on the Memory
+  page during the take.
+- A calendar kept on the demo server, **Dana's calendar** (provider `local`:
+  no account behind it), selected and the write default, with six events
+  placed around today (`calendar.events` in `seed.json`, `day` = days from
+  today, times in the workspace zone): a design review and a lunch tomorrow,
+  the dentist in two days, launch planning in three, and so on.
+- Mail: the demo server's system and communications email profiles point at
+  the **mail sink** (`mail-sink.mjs`, 127.0.0.1:2525, started by
+  `Start-DemoServer.ps1`). Every email the server sends is a real SMTP
+  delivery that lands as a `.eml` file in `sample-files\mail\` (inside Demo
+  Files) with an `index.json` beside it. Nothing leaves the PC.
+- Two Vault records (locked; the box opens with the demo password), an
+  approval policy (`email_send` capped at "risky only"), five model-usage
+  rows, and one completed portable backup (made once, kept across resets).
 - PC Control off, no pending approvals, no settings proposals, the replay
-  model "josi-demo" set up and ready.
+  model "josi-demo" set up and ready, and `demo.json` carrying the `models`
+  configurations `--model` can switch to.
 
-Audit-log entries and model usage counts survive a reset (the demo database
-keeps them); nothing in the storyboard screens shows them.
+Audit-log entries survive a reset (the `events` table never deletes);
+nothing in the storyboard screens depends on them. Usage counts are cleared
+and seeded again. The Family page is not seeded (it needs a licence
+entitlement and an authenticator step the demo account does not have).
 
 ### The replay file
 
@@ -177,10 +197,30 @@ can be edited between takes without restarting anything:
   `afterTools` (or `reply`). This is how the settings-change popup is
   produced for real: `propose_josi_setting_change` creates a real proposal,
   Approve applies it for real on the demo server, and the reset undoes it.
-- Josi's own background model calls (memory learning, conversation notes,
-  improvement review) and its five capability checks are answered inside
-  `replay-model.mjs` with fixed, empty answers, so the demo never learns or
-  proposes anything on its own.
+  The same shape drives the other real actions: `draft_email` prepares a real
+  email that waits under Approvals and is sent through the mail sink once
+  approved; `draft_calendar_event` prepares a real booking on the local
+  calendar; `query_calendar` reads it.
+- Replies and tool arguments may carry date tokens filled in at reply time in
+  the demo's time zone (`JOSI_DEMO_TZ`, default America/Los_Angeles), so a
+  booking always lands in the days being shown: `{{date:+3 10:00}}` is three
+  days from today at 10:00 as an instant, `{{date:+3 dddd}}` that day's name,
+  `{{date:+3 date}}` its date.
+- A reply may carry `learn`: `{ "pattern": "remember that (.+?)\\.?$", "fact": "Dana: {{1}}" }`.
+  When Josi's memory learner asks about that turn, the replay answers with
+  that fact (quoted from the person's own words), so the memory is saved for
+  real. Without `learn`, the learner gets an empty answer.
+- Josi's other background model calls (conversation notes, improvement
+  review) and its five capability checks are answered inside
+  `replay-model.mjs` with fixed answers, so the demo never proposes anything
+  on its own.
+
+The shipped `replay.json` has entries for: the three seeded questions, the
+workspace rename, three more settings changes (local-only models, manual
+memory learning, a nightly backup), "Email Sam the launch plan summary",
+"What is on my calendar tomorrow?", "Book 30 minutes with Sam on Thursday at
+10", "Remember that ...", and thanks. Each entry's `match` is the regular
+expression a storyboard line has to satisfy.
 - Markdown works as in the app: `**bold**`, `` `code` ``, `[text](https://...)`.
 
 The model's log is `C:\Dev\josi-demo\data\logs\model.log` (which reply was
@@ -196,7 +236,58 @@ chosen, and after what delay).
 | PC Control permissions page | Real. Turning control on and adding scopes is real on the demo server; a reset turns it off again. |
 | PC Control actions on the desktop | Real executor, if a scripted reply calls a `desktop_*` tool and the request is approved. Not seeded; `--pc-banner` is the scripted alternative for the banner itself. |
 | PC Control banner | `--pc-banner working|paused|takeover` shows it without any desktop action. Pause, Resume and Stop Josi then move between those states inside the app only (Stop clears it and sets `pc=stopped`). |
-| Voice, browser extension, email, cloud accounts | Not set up on the demo server. |
+| Email | Real: a scripted `draft_email` prepares a real approval; approving it under Approvals makes the worker send through the server's communications profile, which is the mail sink. The message appears as a file under Demo Files › mail, and under Administration › Email Delivery › Recent delivery status. |
+| Calendar | Real, on the local calendar: the Calendar page reads it, `query_calendar` answers from it, and an approved `draft_calendar_event` puts the event on it. |
+| Models | Real: `--model ollama` saves and checks a real local model through the Models routes; replies in that state are real and differ per take. `--model replay` or a reset returns to the canned replies. |
+| Voice, browser extension, cloud accounts | Not set up on the demo server. |
+
+### First-run setup: the fresh root
+
+A second demo root whose server is **not set up**, so the Welcome screen,
+Set Up on This PC and every setup step can be recorded. Create it once:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\windows\demo\New-DemoServer.ps1 -Fresh
+```
+
+(`C:\Dev\josi-fresh`, API `http://localhost:8091`, PostgreSQL 15434; the
+replay model and the mail sink are shared with the seeded demo, whichever
+root starts first owns them.) Start it with
+`Start-DemoServer.ps1 -Root C:\Dev\josi-fresh`; it is never seeded. Open the
+app with:
+
+```bash
+Josi.exe --demo-fresh --demo-root C:\Dev\josi-fresh
+```
+
+It opens on Welcome (`state=waiting;screen=connect`) with the button
+`josi.welcome.setup` ("Set Up on This PC"), which opens first-run setup in
+the app against that server (`screen=setup`), and signs nobody in. A
+remembered sign-in from an earlier take is forgotten at launch. Reset
+between takes:
+
+```bash
+Josi.exe --demo-fresh --demo-root C:\Dev\josi-fresh --demo-reset
+```
+
+(or `Reset-FreshDemo.ps1`): the server is stopped, its data folder removed
+and created again from nothing, and started; about half a minute. A fresh
+copy and a seeded copy are different instances (`JOSI_TEST_INSTANCE`
+`DemoFresh` and `Demo`), so flags never cross between them, but close one
+before recording the other: both windows are titled "Josi".
+
+What setup asks for, in order, and what a storyboard types (the values the
+seed uses are a good script): host checks (Continue), the owner account
+(name, email, username, password twice, Create Account), the Vault recovery
+key (show it, tick "I have saved my recovery key", Continue), the server
+address (`localhost`, "My own reverse proxy", Continue), the first model
+(the model sheet below: OpenAI-compatible, endpoint
+`http://127.0.0.1:18090/v1`, model `josi-demo` from the list, Save and Check
+Model, which runs the five checks live), email (`127.0.0.1`, port `2525`,
+None, from `josi@josi-demo.local`, a test address, Save and Test; or Skip for
+Now), folders (Continue), usage counts (Continue), review (Continue), Finish
+Setup. Then the sign-in screen (`josi.login.*`) with the account just
+created, and the workspace.
 
 ## 3. Automation ids
 
@@ -242,7 +333,7 @@ Names are set wherever a control had none. Ids never depend on position.
 |---|---|
 | `josi.welcome` | The Welcome screen. `josi.welcome.open` is Open Josi; `josi.welcome.setup` is Set Up on This PC; `josi.welcome.server-status` is the server line; `josi.welcome.refresh-status`, `josi.welcome.start`, `josi.welcome.stop`, `josi.welcome.restart` the server controls. |
 | `josi.login` | The sign-in screen: `josi.login.identifier`, `josi.login.password` (the password box is its child Edit), `josi.login.code` (authenticator code), `josi.login.submit` (Sign In / Verify), `josi.login.back`, `josi.login.google`, `josi.login.forgot`, `josi.login.reset-link`. |
-| `josi.setup` | First-run setup; its fields and buttons derive ids under `josi.setup.`. |
+| `josi.setup` | First-run setup. Fields by the server's field key: `josi.setup.displayName`, `.email`, `.username`, `.password` (with `.password.box`, `.password.show`, `.password.confirm`, `.password.confirm.box`), `.domain`, `.tlsMode`, `.acmeEmail`, `.host`, `.port`, `.security`, `.username`, `.fromName`, `.fromAddress`, `.testTo`; the step's toggle `josi.setup.enabled`. Buttons: `josi.setup.continue`, `.create-account`, `.sign-in` (resume an existing owner, with `.resume-password`), `.smtp.save`, `.smtp.skip`, `.finish`. The recovery card: `josi.setup.recovery.show`, `.recovery.key`, `.recovery.save`, `.recovery.saved`, `.recovery.continue`. The model step is the model sheet (`josi.models.setup.*`). The status reads `setup=<step>`. |
 
 **Sidebar**
 
@@ -296,6 +387,16 @@ Names are set wherever a control had none. Ids never depend on position.
 |---|---|
 | `josi.models.primary.state`, `josi.models.fallback.state` | Name reads `Ready`, `Not signed in`, `Needs a capability check`, `Check failed` or `Not set up`. |
 | `josi.models.<role>.provider`, `.set-up`, `.sign-in`, `.change`, `.check`, `josi.models.fallback.remove` | The slot's provider name and buttons. |
+| `josi.models.setup.*` | The four-step model sheet (Change… / Set Up a Model… open it as the sheet `josi.sheet.primary-model`; first-run setup embeds it). `josi.models.setup.step` (Name = `Choose`, `Connect`, `Model`, `Review and check`, `Checking`, `Result`); provider rows `josi.models.setup.provider.<kind>` with `_` as `-` (`openai-compatible`, `openai`, `anthropic`, ...; ItemStatus `selected`); the Connect fields `josi.models.setup.<field key>` (`apiKey`, ...) and `josi.models.setup.base-url`; the Model step's rows `josi.models.setup.model.<model id as a slug>` (`qwen2.5:14b` is `qwen2-5-14b`; `josi-demo` stays), `.search`, `.refresh`, `.custom-model`, `.plan-default`; `.external` (the consent toggle on Review); the footer `.back`, `.continue`, `.save`; after the check `josi.models.setup.result` (Name `passed` or `failed`), `.change-settings`, `.done`. The status reads `check=running|passed|failed`. |
+
+**Calendar**
+
+| Id | What |
+|---|---|
+| `josi.calendar.previous`, `.today`, `.next`, `.refresh` | Navigation. `josi.calendar.title` Name = the range shown ("Nov 1 – Nov 7, 2026"). |
+| `josi.calendar.view.list`, `.view.month`, `.view.week`, `.view.day` | The view switch; ItemStatus `selected` on the current one. `josi.calendar.zone` the time-zone picker. |
+| `josi.calendar.event.<n>` | The n-th event drawn on the page (Name = "title, time"); opens its card, closed with `josi.calendar.detail.close`. |
+| `josi.calendar.source.<n>` | The n-th calendar's toggle; `.source.<n>.make-default`. `josi.calendar.add-local` (shown when there is no calendar) keeps one on this server. |
 
 **PC Control page**
 
@@ -339,6 +440,9 @@ state=ready;screen=workspace;section=chat;thread=<id>;turn=idle;popup=none;popup
 | `auth` | `signed-in` or `signed-out`. |
 | `folders` | `none`, `syncing`, `synced`; set when the Files page loads, when Sync Now or Make Searchable is pressed, and (demo mode) every two seconds while a folder is syncing. |
 | `busy` | `1` while a request runs. `error` | `1` while the error bar shows. |
+| `setup` | On the setup screen: the step the server asks for (`host_checks`, `owner`, `domain`, `llm`, `smtp`, `security`, `telemetry`, `review`), `recovery` while the Vault recovery key is shown, `done` when only Finish Setup is left. Empty elsewhere. |
+| `model` | Demo mode: the name of the model configuration in use after `--model` (`replay`, `ollama`); empty after a reset. |
+| `check` | A model capability check: `running`, then `passed` or `failed`; empty when none has run. |
 | `activity` | The busy indicator's sentence. |
 
 ### Per-element states
@@ -385,11 +489,13 @@ ignored by a normal launch except `--help` and `--status`.
 
 | | |
 |---|---|
-| Demo root | `C:\Dev\josi-demo` (`demo.json`, `data\`, `sample-files\`, `state\app-status.json`). |
+| Demo root | `C:\Dev\josi-demo` (`demo.json`, `data\`, `sample-files\` with `mail\` inside, `state\app-status.json`). |
 | Demo server | `http://localhost:8090`, PostgreSQL 127.0.0.1:15433, logs in `C:\Dev\josi-demo\data\logs`. |
+| Fresh root | `C:\Dev\josi-fresh`, `http://localhost:8091`, PostgreSQL 15434; never seeded. |
 | Replay model | `http://127.0.0.1:18090/v1`, `scripts\windows\demo\replay-model.mjs`, replies in `replay.json`, log `data\logs\model.log`. |
-| Seed | `scripts\windows\demo\seed-demo.mjs`, data in `seed.json`. |
-| Scripts | `scripts\windows\demo\New-DemoServer.ps1`, `Start-DemoServer.ps1`, `Stop-DemoServer.ps1`, `Reset-Demo.ps1`, `Open-DemoApp.ps1`. |
+| Mail sink | 127.0.0.1:2525, `scripts\windows\demo\mail-sink.mjs`, messages in `C:\Dev\josi-demo\sample-files\mail`, log `data\logs\mail.log`. |
+| Seed | `scripts\windows\demo\seed-demo.mjs`, data in `seed.json` (workspace, account, memories, folder, threads, mail, calendar, vault, policy, usage, models). |
+| Scripts | `scripts\windows\demo\New-DemoServer.ps1` (`-Fresh` for the fresh root), `Start-DemoServer.ps1`, `Stop-DemoServer.ps1`, `Reset-Demo.ps1`, `Reset-FreshDemo.ps1`, `Open-DemoApp.ps1`. |
 | App source | `apps/windows-native/src/Automation.cs` (ids, status, demo flags), `MainWindow.cs` (launch, status, demo start, scene commands). |
 | Development server | `C:\Dev\josi-dev`, API 8080, PostgreSQL 15432: untouched by all of this. |
 
@@ -406,7 +512,10 @@ ignored by a normal launch except `--help` and `--status`.
   dialogs with their own ids, not Josi's.
 - **Approvals page rows, Task Manager cards and the administration pages**
   have derived ids only (`josi.approvals.approve`, `.approve.2`, ...), which
-  follow label and order rather than the item.
+  follow label and order rather than the item. The email and calendar beats
+  approve there: after a reset the first pending row is the one the take
+  just created, so `josi.approvals.approve` is it.
+- **Family and Parental Controls** are not seeded.
 - **Thread ids change on every reset**; use `--thread <n>` or a title
   rather than an id across takes.
 - **Real desktop actions** (Josi clicking in other programs) are not seeded;

@@ -31,7 +31,7 @@ type WriteProvider = 'google' | 'microsoft';
 import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk, deliverTelegramWorkProgress,
 } from '@josi-ce/channels';
-import { mailPolicy, renderedEmailMime, verifyFrozenEmail } from '@josi-ce/mail';
+import { assistantMailAvailable, loadProfile, mailPolicy, newRoutingToken, renderedEmailMime, sendOperationalEmail, smtpTransport, verifyFrozenEmail } from '@josi-ce/mail';
 import { effectiveTimeContext, formatCalendarRange, runAssistantTurn, conversationHistory, createRecall, summarizeThread,
   recordTurnInsights, learnFromTurn, reviewInsights, ALL_TOOLS } from '@josi-ce/agent';
 import { IMAGE_MEDIA_TYPES, MEDIA_PROCESSING, MEDIA_TRANSCRIPT, clock, extractFrames, isAudio, isVideo, mediaToolsAvailable, readAttachment, syncLocalMapping, withMediaFile, type Scanner } from '@josi-ce/storage';
@@ -432,6 +432,10 @@ export function calendarEventUrl(provider: WriteProvider, calendarId: string, ev
 
 async function taskWriteEnabled(db: Db, task: WritableTask): Promise<boolean> {
   const family = task.template_key === 'send_message' ? 'mail' : task.template_key === 'schedule_appointment' ? 'calendar' : 'contacts';
+  // The installation's own mail server and the calendar kept on this server
+  // need no connected account.
+  if (family === 'mail' && (await assistantMailAvailable(db))) return true;
+  if (family === 'calendar' && (await can(db, { ownerUserId: task.owner_user_id, capability: 'local.calendar.write' })).allowed) return true;
   const keys: Record<string, Record<WriteProvider, string>> = {
     mail: { google: 'google.mail.send', microsoft: 'microsoft.mail.send' },
     calendar: { google: 'google.calendar.write', microsoft: 'microsoft.calendar.write' },
@@ -470,9 +474,48 @@ async function providerFetch(ctx: WorkerContext, url: string, accessToken: strin
   if (!response.ok) throw new Error(`The connected provider refused the write (${response.status}).`);
 }
 
+/** Sends an approved email through the installation's own mail server (the
+ * communications SMTP profile) when the person has no connected mailbox to
+ * send from. The message gets its own operational thread, so it is recorded
+ * and delivery is reported like any other mail Josi sends. */
+async function sendThroughSmtp(db: Db, task: WritableTask, ctx: WorkerContext, mail: { to: string; cc: string[]; subject: string; body: string }): Promise<void> {
+  if (!ctx.masterKey) throw new Error('Sending email needs the installation master key.');
+  const profile = await loadProfile(db, ctx.masterKey, 'communications');
+  const [person] = await db.query<{ display_name: string | null; username: string }>(`select display_name, username from users where id = $1`, [task.owner_user_id]);
+  const [thread] = await db.query<{ id: string }>(
+    `insert into email_threads (owner_user_id, subject, routing_token) values ($1, $2, $3) returning id`,
+    [task.owner_user_id, mail.subject || '(no subject)', newRoutingToken()],
+  );
+  await sendOperationalEmail({
+    db, transport: smtpTransport(profile), threadId: thread.id,
+    initiator: { id: task.owner_user_id, name: person?.display_name ?? person?.username ?? '' },
+    to: [mail.to], cc: mail.cc, subject: mail.subject, body: mail.body,
+    profile: { fromAddress: profile.fromAddress, fromName: profile.fromName },
+    capabilityAllowed: true,
+    // The person approved this exact draft through the assistant's gate.
+    preApproved: true,
+  });
+}
+
 async function executeWriteTask(db: Db, task: WritableTask, ctx: WorkerContext): Promise<void> {
   if (task.template_key === 'send_message') {
-    const session = await writeSession(db, task, 'mail', ctx); const to = mailAddress(textSlot(task, 'recipient')); const cc = listSlot(task, 'cc').map(mailAddress);
+    const to = mailAddress(textSlot(task, 'recipient')); const cc = listSlot(task, 'cc').map(mailAddress);
+    let session: Awaited<ReturnType<typeof writeSession>> | null = null;
+    try { session = await writeSession(db, task, 'mail', ctx); }
+    catch (error) {
+      // No connected mailbox: the installation's own mail server, when there is one.
+      if (!(await assistantMailAvailable(db))) throw error;
+    }
+    if (!session) {
+      let subject = textSlot(task, 'subject'); let body = textSlot(task, 'body') || textSlot(task, 'body_brief');
+      if (task.slots.rendered_email) {
+        const frozen = verifyFrozenEmail(task.slots.rendered_email);
+        if (frozen.values.recipient !== to || task.slots.subject !== frozen.subject || task.slots.body !== frozen.text) throw new Error('The approved email fields do not match.');
+        subject = frozen.subject; body = frozen.text;
+      } else if (task.slots.template_id || task.slots.template_name) throw new Error('Template email must have an approved rendered snapshot.');
+      await sendThroughSmtp(db, task, ctx, { to, cc, subject: mailHeader(subject), body });
+      return;
+    }
     if (task.slots.rendered_email) {
       const frozen = verifyFrozenEmail(task.slots.rendered_email);
       if (frozen.values.recipient !== to || task.slots.subject !== frozen.subject || task.slots.body !== frozen.text) throw new Error('The approved email fields do not match.');
@@ -504,7 +547,7 @@ async function executeWriteTask(db: Db, task: WritableTask, ctx: WorkerContext):
     if (!source || typeof source.calendar_id !== 'string' || !source.calendar_id) {
       throw new Error('The approved task has no exact calendar source. Draft it again and choose a calendar.');
     }
-    const provider = source.provider === 'google' || source.provider === 'microsoft' ? source.provider : null;
+    const provider = source.provider === 'google' || source.provider === 'microsoft' || source.provider === 'local' ? source.provider : null;
     if (!provider) throw new Error('The approved task has an invalid calendar provider.');
     const connections = await connectionsWithCapability(db, { ownerUserId: task.owner_user_id, capability: `${provider}.calendar.write` });
     const connection = connections.find((candidate) => candidate.id === source.account_id);
@@ -547,8 +590,9 @@ async function reportCalendarTaskOutcome(db:Db,task:WritableTask,succeeded:boole
     : typeof source.calendar_id==='string'&&source.calendar_id.trim()?source.calendar_id.trim():'the selected calendar';
   const title=textSlot(task,'title')||'Untitled event';
   const {locale,timeZone}=await effectiveTimeContext(db,task.owner_user_id);
+  const local=typeof (source as {provider?:unknown}).provider==='string'&&(source as {provider?:unknown}).provider==='local';
   const body=succeeded
-    ? `Saved “${title}” in Josi for ${calendar}.\n${formatCalendarRange(task.slots.start,task.slots.end,{locale,timeZone})}\nIt is queued to sync with the connected calendar.`
+    ? `Saved “${title}” in Josi for ${calendar}.\n${formatCalendarRange(task.slots.start,task.slots.end,{locale,timeZone})}\n${local?'It is on your calendar now.':'It is queued to sync with the connected calendar.'}`
     : `The calendar action could not be completed. ${safeTaskError(error)}`;
   await addMessage(db,{threadId:task.thread_id,direction:'out',body,meta:{action_status_domain:'calendar',task_result:{taskId:task.id,status:succeeded?'succeeded':'failed'}}});
 }

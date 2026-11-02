@@ -307,7 +307,8 @@ namespace Josi.Native {
     }
 
     /// Segmented control, as Picker(.segmented) and the Task Manager filters.
-    public static Border Segments(IList<KeyValuePair<string, string>> options, string selected, Action<string> pick) {
+    /// idPrefix, when given, makes each segment's id fixed: idPrefix + key (AUTOMATION.md).
+    public static Border Segments(IList<KeyValuePair<string, string>> options, string selected, Action<string> pick, string idPrefix = null) {
       var grid = new UniformGrid { Rows = 1 };
       foreach (var option in options) {
         var key = option.Key;
@@ -316,7 +317,8 @@ namespace Josi.Native {
         label.TextAlignment = TextAlignment.Center; label.HorizontalAlignment = HorizontalAlignment.Center;
         var button = new Button { Content = label, Style = (Style)Resources["Plain"], Padding = new Thickness(12, 9, 12, 9),
           Background = on ? (Brush)Resources["OrangeSoft"] : Brushes.Transparent, Margin = new Thickness(2) };
-        Automation.Derive(button, "segment", "segment " + key);
+        if (idPrefix != null) Automation.Id(button, idPrefix + key, option.Value);
+        else Automation.Derive(button, "segment", "segment " + key);
         System.Windows.Automation.AutomationProperties.SetItemStatus(button, on ? "selected" : "");
         button.Click += delegate { pick(key); };
         grid.Children.Add(button);

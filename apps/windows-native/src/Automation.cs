@@ -59,7 +59,7 @@ namespace Josi.Native {
     // ---------------------------------------------------------- status
     // One value per thing worth waiting on. A script reads them from the
     // josi.status element, or in demo mode from state\app-status.json.
-    static string state = "starting", screen = "", section = "", thread = "", turn = "idle", popup = "none", popupResult = "", pc = "off", auth = "signed-out", folders = "none", activity = "";
+    static string state = "starting", screen = "", section = "", thread = "", turn = "idle", popup = "none", popupResult = "", pc = "off", auth = "signed-out", folders = "none", activity = "", setup = "", model = "", check = "";
     static bool busy, error;
     public static event Action Changed;
     static bool pending;
@@ -85,6 +85,14 @@ namespace Josi.Native {
     /// "none", "syncing", "synced".
     public static string Folders { get { return folders; } set { Set(ref folders, value ?? ""); } }
     public static string Activity { get { return activity; } set { Set(ref activity, value ?? ""); } }
+    /// First-run setup: the step the server asks for ("host_checks", "owner", "domain", "llm", "smtp",
+    /// "security", "telemetry", "review"), "recovery" while the Vault recovery key is shown,
+    /// "done" when Finish Setup is the only thing left; empty outside the setup screen.
+    public static string Setup { get { return setup; } set { Set(ref setup, value ?? ""); } }
+    /// Demo mode: the name of the model configuration in use ("replay", "ollama", ...), set by --model.
+    public static string ModelName { get { return model; } set { Set(ref model, value ?? ""); } }
+    /// A model capability check: "running", "passed" or "failed"; empty when none has run.
+    public static string Check { get { return check; } set { Set(ref check, value ?? ""); } }
     public static bool Busy { get { return busy; } set { if (busy == value) return; busy = value; Raise(); } }
     public static bool Error { get { return error; } set { if (error == value) return; error = value; Raise(); } }
 
@@ -93,7 +101,8 @@ namespace Josi.Native {
       get {
         return "state=" + state + ";screen=" + screen + ";section=" + section + ";thread=" + thread + ";turn=" + turn
           + ";popup=" + popup + ";popup-result=" + popupResult + ";pc=" + pc + ";auth=" + auth + ";folders=" + folders
-          + ";busy=" + (busy ? "1" : "0") + ";error=" + (error ? "1" : "0") + ";activity=" + activity.Replace(";", ",");
+          + ";busy=" + (busy ? "1" : "0") + ";error=" + (error ? "1" : "0") + ";setup=" + setup + ";model=" + model + ";check=" + check
+          + ";activity=" + activity.Replace(";", ",");
       }
     }
     static void Raise() {
@@ -118,7 +127,7 @@ namespace Josi.Native {
         var file = Path.Combine(folder, "app-status.json");
         var json = Wires.Serialize(Wires.O("state", state, "screen", screen, "section", section, "thread", thread, "turn", turn,
           "popup", popup, "popupResult", popupResult, "pc", pc, "auth", auth, "folders", folders, "busy", busy, "error", error,
-          "activity", activity, "summary", Summary, "updatedAt", DateTime.UtcNow.ToString("o"), "pid", Environment.ProcessId));
+          "setup", setup, "model", model, "check", check, "activity", activity, "summary", Summary, "updatedAt", DateTime.UtcNow.ToString("o"), "pid", Environment.ProcessId));
         var temporary = file + ".tmp";
         File.WriteAllText(temporary, json);
         File.Move(temporary, file, true);
@@ -133,13 +142,17 @@ namespace Josi.Native {
     public static bool Demo;
     public static string DemoRoot = "";
     public static Wire DemoConfig = Wire.Null;
+    /// A fresh demo root (`--demo-fresh`, or "fresh": true in its demo.json): a server that has
+    /// not been set up yet, so first-run setup itself can be recorded. The app opens on the
+    /// Welcome screen and signs nobody in; a reset puts the server back to not set up.
+    public static bool Fresh;
     /// Scene requests from the command line, applied once signed in.
-    public static string OpenSection, OpenThread, PcBanner;
+    public static string OpenSection, OpenThread, PcBanner, ModelRequest;
     public static bool ResetRequested;
 
     public sealed class Launch {
-      public bool Demo, Status, Reset, Help;
-      public string Root, Open, Thread, Pc;
+      public bool Demo, Status, Reset, Help, Fresh;
+      public string Root, Open, Thread, Pc, Model;
       public List<string> Rest = new List<string>();
     }
     /// Reads the automation flags and leaves the rest (josi:// links, --share) alone.
@@ -150,6 +163,8 @@ namespace Josi.Native {
         var next = i + 1 < args.Length ? args[i + 1] : null;
         switch (arg) {
           case "--demo": launch.Demo = true; break;
+          case "--demo-fresh": launch.Demo = true; launch.Fresh = true; break;
+          case "--model": if (next != null) { launch.Demo = true; launch.Model = next; i++; } break;
           case "--demo-reset": case "--reset": launch.Demo = true; launch.Reset = true; break;
           case "--status": launch.Demo = true; launch.Status = true; break;
           case "--demo-root": if (next != null) { launch.Root = next; i++; } break;
@@ -169,14 +184,17 @@ namespace Josi.Native {
     public static void Enable(Launch launch) {
       Demo = true;
       DemoRoot = Path.GetFullPath(launch.Root);
-      OpenSection = launch.Open; OpenThread = launch.Thread; PcBanner = launch.Pc; ResetRequested = launch.Reset;
+      OpenSection = launch.Open; OpenThread = launch.Thread; PcBanner = launch.Pc; ModelRequest = launch.Model; ResetRequested = launch.Reset;
       try { DemoConfig = Wires.Parse(File.ReadAllText(Path.Combine(DemoRoot, "demo.json"))); } catch (Exception) { DemoConfig = Wire.Null; }
+      Fresh = launch.Fresh || DemoConfig["fresh"].Flag;
       var data = DemoConfig["dataDir"].Text.Length > 0 ? DemoConfig["dataDir"].Text : Path.Combine(DemoRoot, "data");
       // The demo server's data folder, never the development or installed one.
       Environment.SetEnvironmentVariable("JOSI_SERVER_DATA", data);
       // Its own instance: own mutex, pipes, settings file and remembered sign-in;
       // no josi:// or browser-host registration, no notifications, no browser.
-      Environment.SetEnvironmentVariable("JOSI_TEST_INSTANCE", "Demo");
+      // A fresh root is a further instance, so its copy and the seeded demo's
+      // copy never hand scene flags to each other.
+      Environment.SetEnvironmentVariable("JOSI_TEST_INSTANCE", Fresh ? "DemoFresh" : "Demo");
       Environment.SetEnvironmentVariable("JOSI_TEST_NO_BROWSER", "1");
     }
     public static string DemoAddress { get { var a = DemoConfig["address"].Text; return a.Length > 0 ? a : "http://localhost:" + (DemoConfig["apiPort"].Integer > 0 ? DemoConfig["apiPort"].Integer : 8090); } }
@@ -202,17 +220,18 @@ namespace Josi.Native {
     }
     public static bool IsDemoLink(string link) { return link != null && link.StartsWith("josi://demo/", StringComparison.OrdinalIgnoreCase); }
 
-    /// Runs the demo reset (scripts\windows\demo\seed-demo.mjs --reset) and
-    /// returns its output. The paths come from demo.json, written by the seed.
+    /// Runs the demo reset (scripts\windows\demo\seed-demo.mjs --reset, or
+    /// reset-fresh.mjs for a fresh root) and returns its output. The paths come
+    /// from demo.json, written by the seed or by New-DemoServer.ps1.
     public static System.Threading.Tasks.Task<string> RunReset() {
       return System.Threading.Tasks.Task.Run(() => {
         var node = DemoConfig["node"].Text.Length > 0 ? DemoConfig["node"].Text : "node";
         var repo = DemoConfig["repo"].Text;
         if (repo.Length == 0) throw new JosiException("demo.json has no repository path; run the demo seed once.");
-        var script = Path.Combine(repo, @"scripts\windows\demo\seed-demo.mjs");
-        if (!File.Exists(script)) throw new JosiException("The demo seed script is missing: " + script);
+        var script = Path.Combine(repo, Fresh ? @"scripts\windows\demo\reset-fresh.mjs" : @"scripts\windows\demo\seed-demo.mjs");
+        if (!File.Exists(script)) throw new JosiException("The demo reset script is missing: " + script);
         var info = new ProcessStartInfo(node) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true, WorkingDirectory = repo };
-        info.ArgumentList.Add(script); info.ArgumentList.Add(DemoRoot); info.ArgumentList.Add("--reset");
+        info.ArgumentList.Add(script); info.ArgumentList.Add(DemoRoot); if (!Fresh) info.ArgumentList.Add("--reset");
         using (var process = Process.Start(info)) {
           var output = process.StandardOutput.ReadToEnd(); var errors = process.StandardError.ReadToEnd();
           if (!process.WaitForExit(240000)) { try { process.Kill(true); } catch (Exception) { } throw new JosiException("The demo reset did not finish in four minutes."); }
@@ -246,6 +265,6 @@ namespace Josi.Native {
         return status.Json;
       } catch (Exception) { return "{\"state\":\"unknown\",\"summary\":\"state=unknown\"}"; }
     }
-    public const string Usage = "Josi automation flags:\n  --demo                 start in demo mode against JOSI_DEMO_ROOT (C:\\Dev\\josi-demo)\n  --demo-root <folder>   another demo root\n  --open <section>       open a sidebar section once signed in (chat, files, models, ...)\n  --thread <id|n|title>  open a conversation by id, position in the sidebar, or title\n  --pc-banner <state>    show the PC Control banner: working, paused, takeover, off\n  --demo-reset           restore the seeded demo state (reloads a running demo copy)\n  --status               print the running demo copy's status as JSON\nSee AUTOMATION.md.";
+    public const string Usage = "Josi automation flags:\n  --demo                 start in demo mode against JOSI_DEMO_ROOT (C:\\Dev\\josi-demo)\n  --demo-root <folder>   another demo root\n  --demo-fresh           a root whose server is not set up yet: open on Welcome, sign nobody in\n  --open <section>       open a sidebar section once signed in (chat, files, models, ...)\n  --thread <id|n|title>  open a conversation by id, position in the sidebar, or title\n  --pc-banner <state>    show the PC Control banner: working, paused, takeover, off\n  --model <name>         switch the primary model to a configuration named in demo.json (replay, ollama)\n  --demo-reset           restore the seeded demo state (reloads a running demo copy)\n  --status               print the running demo copy's status as JSON\nSee AUTOMATION.md.";
   }
 }

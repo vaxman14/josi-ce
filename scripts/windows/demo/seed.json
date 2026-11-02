@@ -6,6 +6,7 @@
     "Dana's product video is recorded with ClipForge.",
     "The download page lives at get.heyjosi.com."
   ],
+  "memoryMode": "automatic",
   "folder": {
     "label": "Demo Files",
     "files": {
@@ -27,5 +28,39 @@
       "title": "Shopping",
       "messages": ["What is on the shopping list?"]
     }
-  ]
+  ],
+  "mail": {
+    "fromName": "Josi",
+    "fromAddress": "josi@josi-demo.local"
+  },
+  "calendar": {
+    "name": "Dana's calendar",
+    "events": [
+      { "day": 1, "start": "10:00", "end": "10:30", "title": "Design review", "location": "Video call" },
+      { "day": 1, "start": "12:30", "end": "13:30", "title": "Lunch with Mira", "location": "Corner Café" },
+      { "day": 2, "start": "09:00", "end": "09:45", "title": "Dentist", "location": "Elm Street Dental" },
+      { "day": 3, "start": "15:00", "end": "16:00", "title": "Launch planning", "location": "Meeting room 2" },
+      { "day": 5, "start": "18:00", "end": "20:00", "title": "Pottery class" },
+      { "day": 8, "start": "11:00", "end": "11:30", "title": "Weekly check-in with Sam", "location": "Video call" }
+    ]
+  },
+  "vault": [
+    { "kind": "api_key", "service": "weather.example", "slot": "default", "label": "Weather API key", "value": "demo-weather-key-0000" },
+    { "kind": "password", "service": "printer.example", "slot": "office", "label": "Office printer admin", "value": "demo-printer-password" }
+  ],
+  "approvalPolicy": [
+    { "actionClass": "email_send", "maxLevel": "risky_only" }
+  ],
+  "usage": [
+    { "purpose": "chat", "inputTokens": 1840, "outputTokens": 410, "daysAgo": 0 },
+    { "purpose": "chat", "inputTokens": 2210, "outputTokens": 380, "daysAgo": 1 },
+    { "purpose": "memory.learn", "inputTokens": 640, "outputTokens": 60, "daysAgo": 1 },
+    { "purpose": "chat", "inputTokens": 3100, "outputTokens": 720, "daysAgo": 2 },
+    { "purpose": "thread.summarize", "inputTokens": 900, "outputTokens": 120, "daysAgo": 3 }
+  ],
+  "backup": true,
+  "models": {
+    "replay": { "provider": "openai_compatible", "model": "josi-demo", "baseUrl": "http://127.0.0.1:{modelPort}/v1" },
+    "ollama": { "provider": "openai_compatible", "model": "qwen2.5:14b", "baseUrl": "http://127.0.0.1:11434/v1" }
+  }
 }

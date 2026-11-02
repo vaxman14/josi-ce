@@ -385,6 +385,7 @@ namespace Josi.Native {
     readonly ContentControl stepHost = new ContentControl { Focusable = false };
     readonly StackPanel rail = new StackPanel { Orientation = Orientation.Horizontal };
     readonly StackPanel footer = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+    UserControl stepGroup;
     int step;
     string kind = "", chosenModel = "", discoveryMessage = "";
     bool discovering, discoveredFromCatalog, allowsCustom = true, planDefault = true;
@@ -415,8 +416,11 @@ namespace Josi.Native {
       var layout = new DockPanel();
       rail.Margin = new Thickness(0, 0, 0, 18);
       footer.Margin = new Thickness(0, 18, 0, 0);
-      DockPanel.SetDock(rail, Dock.Top); DockPanel.SetDock(footer, Dock.Bottom);
-      layout.Children.Add(rail); layout.Children.Add(footer); layout.Children.Add(stepHost);
+      // josi.models.setup.step: Name = the current step (Choose, Connect, Model, Review and check).
+      stepGroup = Automation.Group("josi.models.setup.step", StepNames[step], rail);
+      DockPanel.SetDock(stepGroup, Dock.Top); DockPanel.SetDock(footer, Dock.Bottom);
+      layout.Children.Add(stepGroup); layout.Children.Add(footer); layout.Children.Add(stepHost);
+      Automation.Id(search, "josi.models.setup.search"); Automation.Id(custom, "josi.models.setup.custom-model"); Automation.Id(external, "josi.models.setup.external");
       Content = layout;
       // The footer buttons wait while the app is busy; a sign-in that finishes
       // during a request must enable them once that request ends.
@@ -449,11 +453,12 @@ namespace Josi.Native {
     void Reset(string next, bool fromInitial) {
       kind = next; fields.Clear(); discovered = new List<Wire>(); discoveryMessage = ""; checkResult = Wire.Null;
       var entry = Entry; var same = fromInitial || next == initial["provider"].Text;
+      // Fixed ids (AUTOMATION.md): josi.models.setup.<field key> (apiKey, ...) and josi.models.setup.base-url.
       foreach (var field in entry["fields"].List) {
-        fields[field["key"].Text] = field["secret"].Flag ? (Control)Ui.Secret(field["label"].Text)
-          : Ui.Input(field["placeholder"].Text, same ? initial["providerConfig"][field["key"].Text].Text : "");
+        fields[field["key"].Text] = Automation.Id(field["secret"].Flag ? (Control)Ui.Secret(field["label"].Text)
+          : Ui.Input(field["placeholder"].Text, same ? initial["providerConfig"][field["key"].Text].Text : ""), "josi.models.setup." + field["key"].Text);
       }
-      fields["baseUrl"] = Ui.Input(entry["defaultBaseUrl"].Text, same && initial["baseUrl"].Text.Length > 0 ? initial["baseUrl"].Text : entry["defaultBaseUrl"].Text);
+      fields["baseUrl"] = Automation.Id(Ui.Input(entry["defaultBaseUrl"].Text, same && initial["baseUrl"].Text.Length > 0 ? initial["baseUrl"].Text : entry["defaultBaseUrl"].Text), "josi.models.setup.base-url");
       chosenModel = same ? initial["model"].Text : "";
       planDefault = ModelText.Subscription(next) && chosenModel.Length == 0;
       custom.Text = "";
@@ -489,6 +494,7 @@ namespace Josi.Native {
 
     void Render() {
       rail.Children.Clear();
+      if (stepGroup != null) System.Windows.Automation.AutomationProperties.SetName(stepGroup, !checkResult.IsNull ? "Result" : checking ? "Checking" : StepNames[step]);
       for (var index = 0; index < StepNames.Length; index++) {
         var i = index; var current = i == step; var reachable = i < step || (i == step);
         var label = Ui.T((i + 1) + "  " + StepNames[i], 13.5, current ? FontWeights.SemiBold : FontWeights.Normal, current ? Ui.Orange : i < step ? Ui.Text : Ui.Muted);
@@ -504,19 +510,19 @@ namespace Josi.Native {
     void UpdateFooter() {
       footer.Children.Clear();
       if (!checkResult.IsNull || checking) return;
-      if (step > 0) footer.Children.Add(Spaced(Ui.Pill("Back", () => { step--; Render(); })));
+      if (step > 0) footer.Children.Add(Spaced(Automation.Id(Ui.Pill("Back", () => { step--; Render(); }), "josi.models.setup.back")));
       // Choosing a provider already moves on; Continue only returns to a choice made before.
       if (step == 0 && kind.Length == 0) return;
       if (step < 3) {
-        var next = Ui.Pill("Continue", () => {
+        var next = Automation.Id(Ui.Pill("Continue", () => {
           step++;
           if (step == 2 && discovered.Count == 0) Discover();
           Render();
-        }, true);
+        }, true), "josi.models.setup.continue");
         next.IsEnabled = CanContinue() && !model.Busy;
         footer.Children.Add(next);
       } else {
-        var go = Ui.Pill(endpoints.Setup ? "Save and Check Model" : "Save and Run Capability Check", SaveAndCheck, true);
+        var go = Automation.Id(Ui.Pill(endpoints.Setup ? "Save and Check Model" : "Save and Run Capability Check", SaveAndCheck, true), "josi.models.setup.save");
         go.IsEnabled = CanContinue() && !model.Busy;
         footer.Children.Add(go);
       }
@@ -569,6 +575,7 @@ namespace Josi.Native {
             BorderThickness = new Thickness(selected ? 2 : 1), CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 8, 12, 8),
             Child = Ui.Stack(2, title, sub) } };
         Ui.Name(row, entry["label"].Text, available ? detail : (option == null ? null : option["reason"].Text));
+        Automation.Id(row, "josi.models.setup.provider." + Automation.Slug(id));  // josi.models.setup.provider.openai_compatible -> openai-compatible
         row.Click += delegate {
           if (kind != id) Reset(id, false);
           step = 1;
@@ -640,7 +647,7 @@ namespace Josi.Native {
       var stack = new StackPanel();
       Ui.Add(stack, Ui.Title2("Choose the " + (Entry["modelNoun"].Text.Length > 0 ? Entry["modelNoun"].Text : "model")), 0);
       if (IsSubscription) {
-        var planRow = Row("Use my plan's default (recommended)", "The subscription picks its current default model.", planDefault, () => { planDefault = true; chosenModel = ""; RenderStep(); UpdateFooter(); });
+        var planRow = Row("Use my plan's default (recommended)", "The subscription picks its current default model.", planDefault, () => { planDefault = true; chosenModel = ""; RenderStep(); UpdateFooter(); }, "josi.models.setup.plan-default");
         Ui.Add(stack, planRow, 14);
       }
       if (discovering) { Ui.Add(stack, Ui.Working("Asking the provider which models you can use…", true), 14); return stack; }
@@ -653,24 +660,28 @@ namespace Josi.Native {
         foreach (var item in discovered.Where(d => filter.Length == 0 || (d["id"].Text + " " + d["label"].Text).IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0).Take(200)) {
           var id = item["id"].Text;
           var label = item["label"].Text.Length > 0 && item["label"].Text != id ? item["label"].Text : id;
-          list.Children.Add(Row(label, label == id ? "" : id, !planDefault && chosenModel == id, () => { chosenModel = id; planDefault = false; custom.Text = ""; RenderStep(); UpdateFooter(); }));
+          // josi.models.setup.model.<id as a slug>: qwen2.5:14b -> josi.models.setup.model.qwen2-5-14b
+          list.Children.Add(Row(label, label == id ? "" : id, !planDefault && chosenModel == id, () => { chosenModel = id; planDefault = false; custom.Text = ""; RenderStep(); UpdateFooter(); },
+            "josi.models.setup.model." + Automation.Slug(id)));
         }
         Ui.Add(stack, new Border { BorderBrush = Ui.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(4),
           Child = new ScrollViewer { Content = list, MaxHeight = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } }, 8);
       }
-      Ui.Add(stack, Ui.Pill("Refresh List", () => { Discover(); RenderStep(); }), 10);
+      Ui.Add(stack, Automation.Id(Ui.Pill("Refresh List", () => { Discover(); RenderStep(); }), "josi.models.setup.refresh"), 10);
       if (allowsCustom || !discoveredFromCatalog) {
         Ui.Detach(custom);
         Ui.Add(stack, Ui.Field("Or enter a model name", custom), 16);
       }
       return stack;
     }
-    UIElement Row(string title, string detail, bool selected, Action pick) {
+    UIElement Row(string title, string detail, bool selected, Action pick, string id = null) {
       var text = Ui.Stack(2, Ui.T(title, 14, selected ? FontWeights.SemiBold : FontWeights.Normal, selected ? Ui.Orange : Ui.Text), detail.Length > 0 ? Ui.Caption(detail) : null);
       var button = new Button { Style = (Style)Ui.Resources["Plain"], Padding = new Thickness(12, 8, 12, 8), HorizontalContentAlignment = HorizontalAlignment.Stretch,
         Background = selected ? Ui.OrangeSoft : Brushes.Transparent,
         Content = Ui.Row(10, Ui.Icon(selected ? Glyph.Check : Glyph.Circle, 14, selected ? Ui.Orange : Ui.Muted), text) };
       Ui.Name(button, title, null);
+      if (id != null) Automation.Id(button, id);
+      System.Windows.Automation.AutomationProperties.SetItemStatus(button, selected ? "selected" : "");
       button.Click += delegate { pick(); };
       return button;
     }
@@ -714,10 +725,11 @@ namespace Josi.Native {
       Ui.Add(stack, ModelText.Capabilities(checkResult["provider"]["capabilities"]), 14);
       Ui.Add(stack, ModelText.Steps(checkResult["result"]["steps"].List), 10);
       if (checkResult["result"]["fatal"].Text.Length > 0) Ui.Add(stack, Ui.Copyable(checkResult["result"]["fatal"].Text, 13.5, Ui.Orange), 10);
-      Ui.Add(stack, Ui.Row(10, passed ? null : Ui.Pill("Change Settings", () => { checkResult = Wire.Null; step = 1; Render(); }),
+      Ui.Add(stack, Ui.Row(10, passed ? null : Automation.Id(Ui.Pill("Change Settings", () => { checkResult = Wire.Null; step = 1; Render(); }), "josi.models.setup.change-settings"),
         // Only the separate setup window closes; first-run setup embeds this panel in the main window.
-        endpoints.Setup ? null : Ui.Pill("Done", () => { var window = Window.GetWindow(this) as ModelSetupWindow; if (window != null) window.Close(); }, passed)), 18);
-      return stack;
+        endpoints.Setup ? null : Automation.Id(Ui.Pill("Done", () => { var window = Window.GetWindow(this) as ModelSetupWindow; if (window != null) window.Close(); }, passed), "josi.models.setup.done")), 18);
+      // josi.models.setup.result: Name reads "passed" or "failed".
+      return Automation.Group("josi.models.setup.result", passed ? "passed" : "failed", stack);
     }
     /// Shown while the server saves the settings and runs the five checks:
     /// which question it is on, what passed so far, and a live clock.
@@ -726,19 +738,27 @@ namespace Josi.Native {
       var body = Body();
       foreach (var control in fields.Values) { var secret = control as PasswordBox; if (secret != null) secret.Clear(); }
       checking = true; sawRunning = false; progress = Wire.Null;
+      Automation.Check = "running";
       Render();
       progressPoll.Start();
       model.Run(async () => {
-        try { await save(body); }
+        var ok = false;
+        try { await save(body); ok = true; }
         finally {
           progressPoll.Stop(); checking = false;
+          // First-run setup moves to its next step on a pass and shows a failure through ShowResult.
+          if (checkResult.IsNull) Automation.Check = ok ? "passed" : "failed";
           // ShowResult already drew the result; otherwise return to the review.
           if (checkResult.IsNull) Render();
         }
       });
     }
     /// Admin path result: shows the capability check in place.
-    public void ShowResult(Wire result) { checkResult = result; Render(); }
+    public void ShowResult(Wire result) {
+      checkResult = result;
+      Automation.Check = checkResult["provider"]["active"].Flag || checkResult["passed"].Flag ? "passed" : "failed";
+      Render();
+    }
   }
 
   public sealed class ModelSetupWindow : Dialogs.Sheet {

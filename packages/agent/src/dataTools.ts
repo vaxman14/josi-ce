@@ -24,6 +24,7 @@ import {
   refusalReason, searchMail,
   type CalendarEventRow, type CapabilityState, type ConnectionRow, type OAuthClient, type Provider, type RemoteEvent,
 } from '@josi-ce/connectors';
+import { assistantMailAvailable } from '@josi-ce/mail';
 import type { ToolSpec } from './tools.js';
 
 /** How the executor reaches sealed tokens. Optional on the context because
@@ -59,12 +60,17 @@ const WRITE_CAPABILITY: Record<WriteCapability, Record<DataProvider, string>> = 
 // address book — narrower than `Provider` on purpose, the same choice
 // `CONTACT_CAPABILITY` in capabilities.ts makes for the same reason.
 type DataProvider = 'google' | 'microsoft';
+/** The calendar can also be the one kept on this server (`local`): read and
+ * written through the same switches, with no account behind it. */
+export type CalendarReadProvider = DataProvider | 'local';
 
 const FAMILY_CAPABILITY: Record<Family, Record<DataProvider, string>> = {
   mail: { google: 'google.mail.read', microsoft: 'microsoft.mail.read' },
   calendar: { google: 'google.calendar.read', microsoft: 'microsoft.calendar.read' },
   contacts: { google: 'google.contacts.read', microsoft: 'microsoft.contacts.read' },
 };
+const CALENDAR_READ: Record<CalendarReadProvider, string> = { ...FAMILY_CAPABILITY.calendar, local: 'local.calendar.read' };
+const LOCAL_CALENDAR_WRITE = 'local.calendar.write';
 
 const FAMILY_LABEL: Record<Family, string> = {
   mail: 'email',
@@ -189,6 +195,10 @@ async function familyAccess(db: Db, userId: string, family: Family): Promise<Fam
   const allowed: DataProvider[] = [];
   let bestState: CapabilityState | null = null;
   let bestCapability = FAMILY_CAPABILITY[family].google;
+  // The server's own calendar counts as an allowed calendar read.
+  if (family === 'calendar' && (await can(db, { ownerUserId: userId, capability: CALENDAR_READ.local })).allowed) {
+    return { allowed: ['local' as DataProvider], refusal: '' };
+  }
   for (const provider of PROVIDERS) {
     const capability = FAMILY_CAPABILITY[family][provider];
     const verdict = await can(db, { ownerUserId: userId, capability });
@@ -269,6 +279,10 @@ export async function writeActionCapabilities(db: Db, userId: string): Promise<S
       }
     }
   }
+  // The calendar kept on this server, and the installation's own mail server:
+  // both let the assistant act with no Google or Microsoft account connected.
+  if (!available.has('calendar_write') && (await can(db, { ownerUserId: userId, capability: LOCAL_CALENDAR_WRITE })).allowed) available.add('calendar_write');
+  if (!available.has('email_send') && (await assistantMailAvailable(db))) available.add('email_send');
   return available;
 }
 
@@ -326,7 +340,7 @@ function untagId(tagged: string): { provider: DataProvider; connectionId: string
   return legacy ? { provider: legacy[1] as DataProvider, connectionId: null, id: legacy[2] } : null;
 }
 
-export interface CalendarSource { id:string; connection_id:string; provider_calendar_id:string; name:string; is_primary:boolean; is_write_default:boolean; writable:boolean; provider:DataProvider; account:string|null }
+export interface CalendarSource { id:string; connection_id:string; provider_calendar_id:string; name:string; is_primary:boolean; is_write_default:boolean; writable:boolean; provider:CalendarReadProvider; account:string|null }
 export async function selectedCalendars(db:Db,userId:string,sourceId?:string):Promise<CalendarSource[]> {
   return db.query<CalendarSource>(`select s.id,s.connection_id,s.provider_calendar_id,s.name,s.is_primary,s.is_write_default,s.writable,c.provider,c.account_email account
     from calendar_sources s join connections c on c.id=s.connection_id
@@ -435,7 +449,7 @@ export async function executeDataTool(
       const sourceByCalendar = new Map<string,CalendarSource>();
       const coverageProblems: string[] = [];
       for (const source of sources) {
-        if (!(await can(db,{ownerUserId:args.userId,capability:FAMILY_CAPABILITY.calendar[source.provider]})).allowed) {
+        if (!(await can(db,{ownerUserId:args.userId,capability:CALENDAR_READ[source.provider]})).allowed) {
           coverageProblems.push(`${source.name} access is disabled`);
           continue;
         }
@@ -443,7 +457,9 @@ export async function executeDataTool(
         if (!origin) { coverageProblems.push(`${source.name} has not synchronized yet`); continue; }
         const age = origin.last_sync_at ? Date.now()-new Date(origin.last_sync_at).getTime() : Number.POSITIVE_INFINITY;
         const staleAfter = Math.max(900_000, Number(origin.sync_interval_seconds)*3_000);
-        if (origin.status !== 'idle') coverageProblems.push(`${source.name} synchronization ${origin.status === 'error' ? 'failed' : 'is incomplete'}`);
+        // A local calendar is its own source of truth: nothing to be stale against.
+        if (source.provider === 'local') { /* always current */ }
+        else if (origin.status !== 'idle') coverageProblems.push(`${source.name} synchronization ${origin.status === 'error' ? 'failed' : 'is incomplete'}`);
         else if (!origin.last_sync_at || !Number.isFinite(age) || age > staleAfter) coverageProblems.push(`${source.name} synchronization is stale`);
         calendarIds.add(origin.calendar_id); sourceByCalendar.set(origin.calendar_id,source);
       }
@@ -479,7 +495,7 @@ export async function executeDataTool(
       const [source]=await db.query<CalendarSource>(`select s.id,s.connection_id,s.provider_calendar_id,s.name,c.provider,c.account_email account
         from calendar_sync_origins o join calendar_sources s on s.connection_id=o.connection_id and s.provider_calendar_id=o.provider_calendar_id
         join connections c on c.id=s.connection_id where o.calendar_id=$1 and s.owner_user_id=$2 and s.selected=true`,[event.calendar_id,args.userId]);
-      if(!source||!(await can(db,{ownerUserId:args.userId,capability:FAMILY_CAPABILITY.calendar[source.provider]})).allowed)return NO_ACCESS('The event\'s original calendar is unavailable or permission was removed. No other calendar was substituted.');
+      if(!source||!(await can(db,{ownerUserId:args.userId,capability:CALENDAR_READ[source.provider]})).allowed)return NO_ACCESS('The event\'s original calendar is unavailable or permission was removed. No other calendar was substituted.');
       const [link]=await db.query<{provider_event_id:string}>(`select provider_event_id from calendar_event_links where event_id=$1`,[event.id]);
       return { ok: true, event: { event_id: event.id, source_id:source.id,provider:source.provider,account_id:source.connection_id,account:source.account,
         calendar_id:source.provider_calendar_id,calendar_name:source.name,provider_event_id:link?.provider_event_id??null,title: event.title,

@@ -36,6 +36,22 @@ export async function listSmtpProfiles(db: Db) {
     })) };
   });
 }
+/** Whether the assistant can send email through the installation's own mail
+ * server: a communications profile with a server behind it (its own, or the
+ * system one it copies). This is what lets "draft an email" work for a person
+ * who has connected no Google or Microsoft mailbox; every send still goes
+ * through the person's approval first. Readable while the Vault is locked. */
+export async function assistantMailAvailable(db: Db): Promise<boolean> {
+  const [row] = await db.query<{ ok: boolean }>(
+    `select exists(
+       select 1 from smtp_profiles c
+        where c.kind = 'communications' and coalesce(c.from_address, '') <> ''
+          and (coalesce(c.host, '') <> ''
+            or (c.copy_from_system and exists(select 1 from smtp_profiles s where s.kind = 'system' and coalesce(s.host, '') <> '')))
+     ) as ok`,
+  );
+  return row?.ok === true;
+}
 export class NoProfileError extends Error {}
 export class SmtpConfigurationError extends Error {
   constructor(readonly status: number, message: string) { super(message); }

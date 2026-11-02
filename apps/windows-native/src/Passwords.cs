@@ -35,6 +35,11 @@ namespace Josi.Native {
     }
     void Raise() { var handler = Changed; if (handler != null) handler(); }
     public string Password { get { return showing ? visible.Text : hidden.Password; } }
+    /// A fixed automation id (AUTOMATION.md): the control itself, its box (`.box`, the
+    /// hidden or visible entry, whichever is showing) and its show/hide toggle (`.show`).
+    public void SetId(string id) {
+      Automation.Id(this, id); Automation.Id(hidden, id + ".box"); Automation.Id(visible, id + ".box"); Automation.Id(toggle, id + ".show");
+    }
     public void Clear() {
       syncing = true;
       try { hidden.Clear(); visible.Clear(); } finally { syncing = false; }
@@ -85,6 +90,8 @@ namespace Josi.Native {
     }
     public bool Valid { get { return first.Password.Length >= Minimum && first.Password == second.Password; } }
     public string Password { get { return first.Password; } }
+    /// Fixed ids for both entries: `<id>` and `<id>.confirm` (each with `.box` and `.show`).
+    public void SetId(string id) { first.SetId(id); second.SetId(id + ".confirm"); }
     public void Clear() { first.Clear(); second.Clear(); }
     public new void Focus() { first.Focus(); }
     void Update() {

@@ -175,6 +175,8 @@ function writeSampleFiles() {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, text);
   }
+  // Where the mail sink files every email Josi sends: empty after a reset.
+  if (seed.mail) mkdirSync(join(folder, 'mail'), { recursive: true });
   return folder;
 }
 
@@ -201,7 +203,120 @@ async function seedMemories() {
   const saved = (await call('GET', '/persona/memories')).memories ?? [];
   for (const m of saved) { try { await call('DELETE', `/persona/memories/${m.id}`); } catch { /* keep going */ } }
   for (const content of seed.memories) await call('POST', '/persona/memories', { content });
+  // "automatic": a fact told in a conversation is remembered without review, so a
+  // "Remember that ..." beat shows up on the Memory page within the take.
+  if (seed.memoryMode) await call('PUT', '/persona/settings', { memoryMode: seed.memoryMode });
   say(`${seed.memories.length} memories saved`);
+}
+
+// ---------------------------------------------------- the model in use
+/** The primary model goes back to the replay model (a take may have switched
+ * it to Ollama with --model). demo.json gets every configuration the app may
+ * switch to, with the replay model's port filled in. */
+async function seedModels() {
+  const fill = (spec) => ({ ...spec, baseUrl: String(spec.baseUrl ?? '').replace('{modelPort}', String(modelPort)) });
+  demo.models = Object.fromEntries(Object.entries(seed.models ?? {}).map(([name, spec]) => [name, fill(spec)]));
+  const replay = demo.models.replay;
+  if (!replay) return;
+  const current = await call('GET', '/admin/llm');
+  const primary = current.primary ?? {};
+  if (primary.provider === replay.provider && primary.model === replay.model && (primary.baseUrl ?? '') === replay.baseUrl && primary.active) { say('primary model: replay (unchanged)'); return; }
+  await call('PUT', '/admin/llm/providers/primary', { provider: replay.provider, model: replay.model, baseUrl: replay.baseUrl, externalAcknowledged: false });
+  const probe = await call('POST', '/admin/llm/providers/primary/probe', {});
+  if (!probe.provider?.active) throw new Error(`the replay model did not pass its capability check: ${probe.result?.fatal ?? 'see the server log'}`);
+  say('primary model: replay (restored)');
+}
+
+// --------------------------------------------------------- mail server
+/** The demo's mail server is the sink started by Start-DemoServer.ps1: every
+ * message Josi sends lands as a file in the Demo Files folder. */
+async function seedMail() {
+  if (!seed.mail) return;
+  const mailPort = Number(process.env.JOSI_DEMO_MAIL_PORT || demo.mailPort || 2525);
+  const current = await call('GET', '/admin/mail/smtp');
+  const profile = (copy) => ({ copyFromSystem: copy, host: copy ? '' : '127.0.0.1', port: mailPort, security: 'none', username: '', password: '', clearPassword: false,
+    fromName: seed.mail.fromName, fromAddress: seed.mail.fromAddress });
+  await call('PUT', '/admin/mail/smtp', { system: profile(false), communications: profile(true), expected: current.versions });
+  say(`mail: every email goes to the sink on 127.0.0.1:${mailPort}`);
+}
+
+// ------------------------------------------------------------ calendar
+/** A calendar kept on the demo server, with a week of events placed around
+ * today so the Calendar page and the booking beat always show something. */
+function zoned(dayOffset, hhmm, timezone) {
+  // The civil time on that day in the workspace's zone, as an instant.
+  const [hh, mm] = hhmm.split(':').map(Number);
+  const day = new Date(); day.setUTCDate(day.getUTCDate() + dayOffset);
+  const civil = `${day.toISOString().slice(0, 10)}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+  const guess = new Date(civil + 'Z');
+  const shown = new Date(guess.toLocaleString('en-US', { timeZone: timezone }));
+  const asUtc = new Date(guess.toLocaleString('en-US', { timeZone: 'UTC' }));
+  return new Date(guess.getTime() + (asUtc.getTime() - shown.getTime())).toISOString();
+}
+async function seedCalendar(userId) {
+  if (!seed.calendar) return;
+  const local = await call('POST', '/calendar/local', { name: seed.calendar.name });
+  const password = readFileSync(join(data, 'secrets', 'database-password'), 'utf8').trim();
+  const sql = postgres({ host: '127.0.0.1', port: runtime.databasePort, username: 'josi', database: 'josi', password, max: 1, onnotice: () => {} });
+  try {
+    await sql.unsafe(`delete from calendar_events where owner_user_id = $1 and calendar_id = $2`, [userId, local.calendarId]);
+    for (const event of seed.calendar.events) {
+      await sql.unsafe(`insert into calendar_events (owner_user_id, calendar_id, title, location, starts_at, ends_at, all_day, timezone, status, sync_state)
+        values ($1, $2, $3, $4, $5, $6, false, $7, 'confirmed', 'synced')`,
+        [userId, local.calendarId, event.title, event.location ?? null, zoned(event.day, event.start, seed.workspace.timezone), zoned(event.day, event.end, seed.workspace.timezone), seed.workspace.timezone]);
+    }
+  } finally { await sql.end({ timeout: 5 }); }
+  demo.calendar = { sourceId: local.sourceId, calendarId: local.calendarId };
+  say(`calendar "${seed.calendar.name}" with ${seed.calendar.events.length} events`);
+}
+
+// ----------------------------------------------- the administration pages
+async function seedVault() {
+  if (!seed.vault?.length) return;
+  try {
+    await call('POST', '/vault/unlock', { password: demo.account.password });
+    const existing = (await call('GET', '/vault')).items ?? [];
+    for (const item of seed.vault) {
+      if (existing.some((e) => e.service === item.service && e.slot === item.slot)) continue;
+      await call('POST', '/vault/items', item);
+    }
+    await call('PUT', '/vault/box/lock', { locked: true });
+    say(`vault: ${seed.vault.length} records`);
+  } catch (error) { say(`vault not seeded: ${error.message}`); }
+}
+async function seedPolicy() {
+  for (const rule of seed.approvalPolicy ?? []) {
+    try { await call('PUT', `/admin/assistant/approval-policy/${rule.actionClass}`, { maxLevel: rule.maxLevel, confirmRelaxation: true }); }
+    catch (error) { say(`approval policy ${rule.actionClass} not set: ${error.message}`); }
+  }
+}
+async function seedUsage(userId) {
+  if (!seed.usage?.length) return;
+  const password = readFileSync(join(data, 'secrets', 'database-password'), 'utf8').trim();
+  const sql = postgres({ host: '127.0.0.1', port: runtime.databasePort, username: 'josi', database: 'josi', password, max: 1, onnotice: () => {} });
+  try {
+    for (const row of seed.usage) {
+      await sql.unsafe(`insert into llm_usage (user_id, provider, model, role, input_tokens, output_tokens, cost_usd, cost_source, latency_ms, purpose, created_at)
+        values ($1, 'openai_compatible', 'josi-demo', 'primary', $2, $3, 0, 'none', 850, $4, now() - make_interval(days => $5))`,
+        [userId, row.inputTokens, row.outputTokens, row.purpose, row.daysAgo]);
+    }
+    say(`usage: ${seed.usage.length} model calls on record`);
+  } finally { await sql.end({ timeout: 5 }); }
+}
+async function seedBackup() {
+  if (!seed.backup) return;
+  try {
+    const existing = (await call('GET', '/ops/admin/backups')).backups ?? [];
+    if (existing.some((b) => b.state === 'complete')) return;
+    await call('POST', '/ops/admin/backups', { kind: 'portable', masterKeyConfirmed: true });
+    for (let i = 0; i < 120; i++) {
+      await sleep(1000);
+      const list = (await call('GET', '/ops/admin/backups')).backups ?? [];
+      if (list.some((b) => b.state === 'complete')) { say('backups: one completed backup'); return; }
+      if (list.some((b) => b.state === 'failed')) throw new Error('the backup failed; see the server log');
+    }
+    say('backups: still running; it will show once finished');
+  } catch (error) { say(`backup not seeded: ${error.message}`); }
 }
 
 async function seedThreads() {
@@ -233,9 +348,16 @@ say(`signed in as ${user.username}`);
 if (reset) await clearContent(user.id);
 await call('PATCH', '/admin/workspace', { name: seed.workspace.name, timezone: seed.workspace.timezone });
 try { await call('PUT', '/admin/pc-control/enabled', { enabled: false }); } catch { /* PC control may be unavailable here */ }
+await seedModels();
+await seedMail();
 await seedFolder(user.id);
 await seedMemories();
+await seedCalendar(user.id);
 await seedThreads();
+await seedVault();
+await seedPolicy();
+await seedUsage(user.id);
+await seedBackup();
 demo.seededAt = new Date().toISOString();
 save();
 say(`done. Demo state written to ${demoFile}`);

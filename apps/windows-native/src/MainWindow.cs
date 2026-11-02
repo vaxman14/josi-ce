@@ -73,6 +73,7 @@ namespace Josi.Native {
     /// The scene a second `--demo` launch asked for, as links for the open copy.
     static System.Collections.Generic.IEnumerable<string> SceneLinks(Automation.Launch launch) {
       if (launch.Reset) yield return Automation.Link("reset");
+      if (launch.Model != null) yield return Automation.Link("model", "name", launch.Model);
       if (launch.Open != null) yield return Automation.Link("open", "section", launch.Open);
       if (launch.Thread != null) yield return Automation.Link("thread", "value", launch.Thread);
       if (launch.Pc != null) yield return Automation.Link("pc", "state", launch.Pc);
@@ -213,6 +214,8 @@ namespace Josi.Native {
         if (last != null) turn = last["status"].Text == "failed" ? "failed" : last["status"].Text == "completed" ? "done" : "running";
       }
       Automation.Turn = turn;
+      Automation.Setup = Model.Screen != Screen.Setup ? "" : !Model.Recovery.IsNull ? "recovery"
+        : Model.SetupState.IsNull ? "" : Model.SetupState["nextStep"].Text.Length > 0 ? Model.SetupState["nextStep"].Text : "done";
       if (Automation.State != "resetting" && Automation.State != "error")
         Automation.State = Model.Screen == Screen.Workspace ? (Model.LastRefreshed.HasValue && !Model.Busy ? "ready" : "loading") : Model.Busy ? "connecting" : "waiting";
     }
@@ -224,6 +227,14 @@ namespace Josi.Native {
     async void StartDemo() {
       Automation.State = "connecting";
       if (Automation.ResetRequested) { Automation.ResetRequested = false; await ResetDemo(); }
+      if (Automation.Fresh) {
+        // A server that is not set up yet: stay on Welcome, where "Set Up on This
+        // PC" opens first-run setup. A sign-in remembered from an earlier take
+        // must not skip it.
+        try { SessionStore.Forget(new Uri(Automation.DemoAddress).GetLeftPart(UriPartial.Authority)); } catch (Exception) { }
+        Automation.State = "waiting"; UpdateStatus();
+        return;
+      }
       if (Model.Screen != Screen.Workspace) {
         await Model.RunTask(async () => {
           Model.Activity = "Opening the demo…";
@@ -243,15 +254,40 @@ namespace Josi.Native {
     /// Opens the section, conversation and banner state the command line or a
     /// josi://demo link asked for. Nothing to do when none was asked.
     async System.Threading.Tasks.Task ApplyScene() {
-      var section = Automation.OpenSection; var thread = Automation.OpenThread; var pc = Automation.PcBanner;
-      Automation.OpenSection = Automation.OpenThread = Automation.PcBanner = null;
+      var section = Automation.OpenSection; var thread = Automation.OpenThread; var pc = Automation.PcBanner; var modelName = Automation.ModelRequest;
+      Automation.OpenSection = Automation.OpenThread = Automation.PcBanner = Automation.ModelRequest = null;
       if (pc != null) { demoPc = pc == "off" ? null : pc; if (pc == "off") pcStopped = false; RenderControlBar(); }
+      if (modelName != null) await Model.RunTask(() => SwitchDemoModel(modelName));
       if (thread != null) {
         var id = FindThread(thread);
         if (id != null) await Model.RunTask(() => Model.SelectThread(id));
         else { Model.Error = "No conversation matches \"" + thread + "\"."; Model.Notify(); }
       }
       if (section != null && workspace != null) workspace.Go(section);
+    }
+    /// Demo mode: makes the primary model the configuration demo.json names
+    /// under "models" (for example "replay" for the canned replies and "ollama"
+    /// for a real local model), saved and checked through the ordinary
+    /// administrator routes. The status reads model=<name> once it is in use.
+    async System.Threading.Tasks.Task SwitchDemoModel(string name) {
+      var spec = Automation.DemoConfig["models"][name];
+      if (spec.IsNull) throw new JosiException("demo.json names no model configuration \"" + name + "\" under \"models\".");
+      var api = Model.Api; if (api == null) return;
+      Model.Activity = "Switching the model to " + name + "…"; Model.Notify();
+      Automation.Check = "running";
+      try {
+        var body = Wires.O("provider", spec["provider"].Text, "baseUrl", spec["baseUrl"].Text, "model", spec["model"].Text,
+          "externalAcknowledged", spec["externalAcknowledged"].Flag);
+        foreach (var pair in (System.Collections.Generic.Dictionary<string, object>)(spec["fields"].IsNull ? new System.Collections.Generic.Dictionary<string, object>() : spec["fields"].Raw)) body[pair.Key] = pair.Value;
+        await api.Request("/admin/llm/providers/primary", "PUT", body);
+        var result = await api.Request("/admin/llm/providers/primary/probe", "POST", Wires.O());
+        var passed = result["provider"]["active"].Flag || result["passed"].Flag;
+        Automation.Check = passed ? "passed" : "failed";
+        if (!passed) throw new JosiException("The model \"" + name + "\" did not pass its capability check: " + result["result"]["fatal"].Text);
+        Automation.ModelName = name;
+      } catch (Exception) { if (Automation.Check == "running") Automation.Check = "failed"; throw; }
+      finally { Model.Activity = ""; }
+      if (workspace != null && Model.Section == "models") workspace.Go("models");
     }
     /// A conversation by id, by 1-based position in the sidebar, or by part of its title.
     string FindThread(string value) {
@@ -274,20 +310,28 @@ namespace Josi.Native {
           await Model.ReloadWorkspace();
         }
       });
-      Automation.PopupResult = ""; Automation.Folders = "none"; demoPc = null; pcStopped = false; RenderControlBar();
-      Automation.State = "loading"; UpdateStatus();
+      Automation.PopupResult = ""; Automation.Folders = "none"; Automation.ModelName = ""; Automation.Check = ""; demoPc = null; pcStopped = false; RenderControlBar();
+      if (Automation.Fresh && Model.Screen != Screen.Connect) Model.Disconnect();
+      Automation.State = Automation.Fresh ? "waiting" : "loading"; UpdateStatus();
     }
     void HandleDemoLink(string link) {
       Uri uri; if (!Uri.TryCreate(link, UriKind.Absolute, out uri)) return;
       var value = uri.Query.Length > 1 ? Uri.UnescapeDataString(uri.Query.Substring(uri.Query.IndexOf('=') + 1)) : "";
       switch (uri.AbsolutePath) {
         case "/reset": Automation.ResetRequested = true; break;
+        case "/model": Automation.ModelRequest = value; break;
         case "/open": Automation.OpenSection = value; break;
         case "/thread": Automation.OpenThread = value; break;
         case "/pc": Automation.PcBanner = value; break;
         default: return;
       }
-      if (Model.Screen == Screen.Workspace && !Model.Busy) {
+      if (Model.Busy) return;
+      if (Automation.Fresh) {
+        // A fresh root has no workspace to apply scenes to; only a reset applies.
+        if (Automation.ResetRequested) { Automation.ResetRequested = false; var _ = ResetDemo(); }
+        return;
+      }
+      if (Model.Screen == Screen.Workspace) {
         if (Automation.ResetRequested) { Automation.ResetRequested = false; var _ = ResetDemo().ContinueWith(t => Dispatcher.BeginInvoke(new Action(() => { var __ = ApplyScene(); }))); }
         else { var _ = ApplyScene(); }
       }

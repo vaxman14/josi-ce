@@ -16,13 +16,19 @@ namespace Josi.Native {
     public void Refresh() {
       var r = model.Receipt;
       Automation.BeginScope("welcome");
+      // A fresh demo root (AUTOMATION.md): the server on this PC is installed but not set
+      // up, so the page offers setup, and the button opens first-run setup in the app.
+      var fresh = Automation.Demo && Automation.Fresh;
+      var installed = r.Installed && !fresh;
       var local = Ui.CardBox(null,
         Ui.Row(10, Ui.Icon(Glyph.Desktop, 22, Ui.Text), Ui.T("On this PC", 21, FontWeights.Bold)),
-        Ui.Secondary(r.Installed ? "Your existing server is available here. Its accounts and data stay with it."
-                                 : "Set up a server here, or restore the data retained by your previous installation."),
-        r.Installed ? Ui.Caption("Version " + (r.Version.Length == 0 ? "unknown" : r.Version) + " · " + r.Detail) : null,
-        r.Installed ? Automation.Id(Ui.Pill("Open Josi", () => model.Run(async () => { model.Activity = "Connecting to the server on this PC…"; try { await model.Connect(r.Address, true); } finally { model.Activity = ""; } }), true), "josi.welcome.open")
-                    : Automation.Id(Ui.Pill("Set Up on This PC…", () => ServerControls.ChooseInstaller(model, owner), true), "josi.welcome.setup"),
+        Ui.Secondary(installed ? "Your existing server is available here. Its accounts and data stay with it."
+                               : fresh ? "Your server is installed and waiting for its first setup."
+                               : "Set up a server here, or restore the data retained by your previous installation."),
+        installed ? Ui.Caption("Version " + (r.Version.Length == 0 ? "unknown" : r.Version) + " · " + r.Detail) : null,
+        installed ? Automation.Id(Ui.Pill("Open Josi", () => model.Run(async () => { model.Activity = "Connecting to the server on this PC…"; try { await model.Connect(r.Address, true); } finally { model.Activity = ""; } }), true), "josi.welcome.open")
+          : fresh ? Automation.Id(Ui.Pill("Set Up on This PC", () => model.Run(async () => { model.Activity = "Opening setup on the server on this PC…"; try { await model.Connect(Automation.DemoAddress, true); } finally { model.Activity = ""; } }), true), "josi.welcome.setup")
+                  : Automation.Id(Ui.Pill("Set Up on This PC…", () => ServerControls.ChooseInstaller(model, owner), true), "josi.welcome.setup"),
         new ServerControls(model, owner, true));
       var brand = Ui.Row(14, Ui.JosiMark(52), Ui.Stack(2, Ui.T("Josi", 28, FontWeights.SemiBold), Ui.Caption("Your assistant, on your own server.")));
       var page = Ui.Stack(28, brand, Ui.Heading("Welcome to Josi", "Your conversations, your work, your PC."), local,
@@ -211,6 +217,8 @@ namespace Josi.Native {
       Control control;
       if (!fields.TryGetValue(key, out control)) {
         control = secret ? (Control)Ui.Secret(key) : Ui.Input(null, fallback);
+        // Fixed ids by the server's field key (josi.setup.displayName, josi.setup.host, ...).
+        Automation.Id(control, "josi.setup." + key);
         fields[key] = control;
       }
       return control;
@@ -231,11 +239,11 @@ namespace Josi.Native {
     static object LogicalTreeHelperParent(FrameworkElement element) { return element.Parent; }
     FrameworkElement Picker(string label, string key, string fallback, params string[] options) {
       Control control;
-      if (!fields.TryGetValue(key, out control)) { control = Ui.Choice(Ui.Options(options), fallback); fields[key] = control; }
+      if (!fields.TryGetValue(key, out control)) { control = Automation.Id(Ui.Choice(Ui.Options(options), fallback), "josi.setup." + key); fields[key] = control; }
       if (control.Parent != null) ((Panel)control.Parent).Children.Remove(control);
       return Ui.Field(label, control);
     }
-    Button Next(Func<object> body) { return Ui.Pill("Continue", () => Submit(body()), true); }
+    Button Next(Func<object> body) { return Automation.Id(Ui.Pill("Continue", () => Submit(body()), true), "josi.setup.continue"); }
 
     IEnumerable<UIElement> StepForm() {
       var list = new List<UIElement>();
@@ -252,14 +260,16 @@ namespace Josi.Native {
             resumePassword = resumePassword ?? new PasswordInput("Password");
             Ui.Detach(resumePassword);
             list.Add(Ui.Field("Password", resumePassword));
-            list.Add(Ui.Pill("Sign In and Continue", () => {
+            resumePassword.SetId("josi.setup.resume-password");
+            list.Add(Automation.Id(Ui.Pill("Sign In and Continue", () => {
               var secret = resumePassword.Password; resumePassword.Clear();
               Submit(Wires.O("resumeOwner", true, "identifier", Value("identifier"), "password", secret));
-            }, true));
+            }, true), "josi.setup.sign-in"));
           } else {
             list.Add(Field("Your name", "displayName")); list.Add(Field("Email", "email")); list.Add(Field("Username", "username"));
             if (ownerPassword == null) {
               ownerPassword = new NewPassword("Password");
+              ownerPassword.SetId("josi.setup.password");
               ownerPassword.Changed += delegate { if (createOwner != null) createOwner.IsEnabled = ownerPassword.Valid; };
             }
             Ui.Detach(ownerPassword);
@@ -270,6 +280,7 @@ namespace Josi.Native {
               Submit(Wires.O("displayName", Value("displayName"), "email", Value("email"), "username", Value("username"),
                 "password", secret, "timezone", TimeZones.Local()));
             }, true);
+            Automation.Id(create, "josi.setup.create-account");
             create.IsEnabled = ownerPassword.Valid;
             createOwner = create;
             list.Add(create);
@@ -292,21 +303,21 @@ namespace Josi.Native {
           list.Add(Field("Send a test email to", "testTo"));
           list.Add(Ui.Caption("Save and Test sends one email to the address above. Your mail password is saved in the server's Vault."));
           list.Add(Ui.Row(10,
-            Ui.Pill("Save and Test", () => {
+            Automation.Id(Ui.Pill("Save and Test", () => {
               int port; if (!int.TryParse(Value("port", "587"), out port)) port = 587;
               Submit(Wires.O("system", Wires.O("host", Value("host"), "port", port, "security", Value("security", "starttls"), "username", Value("username"),
                 "password", Value("password"), "fromName", Value("fromName", "Josi"), "fromAddress", Value("fromAddress")),
                 "communications", Wires.O("copyFromSystem", true, "fromName", "Josi", "fromAddress", Value("fromAddress")), "testTo", Value("testTo")));
-            }, true),
-            Ui.Pill("Skip for Now", () => Submit(Wires.O("skip", true)))));
+            }, true), "josi.setup.smtp.save"),
+            Automation.Id(Ui.Pill("Skip for Now", () => Submit(Wires.O("skip", true))), "josi.setup.smtp.skip")));
           break;
         case "security":
-          enabled = enabled ?? Ui.Toggle("Allow people to choose folders for Josi to read");
+          enabled = enabled ?? Automation.Id(Ui.Toggle("Allow people to choose folders for Josi to read"), "josi.setup.enabled");
           list.Add(Detach(enabled)); list.Add(Ui.Secondary("Each person still needs to approve their own folders."));
           list.Add(Next(() => Wires.O("folderMappingEnabled", enabled.IsChecked == true)));
           break;
         case "telemetry":
-          enabled = enabled ?? Ui.Toggle("Send anonymous usage counts");
+          enabled = enabled ?? Automation.Id(Ui.Toggle("Send anonymous usage counts"), "josi.setup.enabled");
           list.Add(Detach(enabled)); list.Add(Ui.Secondary("Optional. Does not include conversations, credentials or business content."));
           list.Add(Next(() => Wires.O("enabled", enabled.IsChecked == true)));
           break;
@@ -315,7 +326,7 @@ namespace Josi.Native {
           list.Add(Next(() => Wires.O()));
           break;
         case "":
-          var finish = Ui.Pill("Finish Setup", () => model.Run(() => model.FinishSetup()), true);
+          var finish = Automation.Id(Ui.Pill("Finish Setup", () => model.Run(() => model.FinishSetup()), true), "josi.setup.finish");
           finish.IsEnabled = model.SetupReview["canComplete"].Flag;
           list.Add(finish);
           break;
@@ -373,17 +384,17 @@ namespace Josi.Native {
     }
     UIElement RecoveryCard() {
       var key = model.Recovery["key"].Text; var fingerprint = model.Recovery["fingerprint"].Text;
-      var shown = Ui.Copyable(key, 14, null, true); shown.Visibility = Visibility.Collapsed;
-      var show = Ui.Toggle("Show recovery key");
+      var shown = Automation.Id(Ui.Copyable(key, 14, null, true), "josi.setup.recovery.key"); shown.Visibility = Visibility.Collapsed;
+      var show = Automation.Id(Ui.Toggle("Show recovery key"), "josi.setup.recovery.show");
       show.Checked += delegate { shown.Visibility = Visibility.Visible; }; show.Unchecked += delegate { shown.Visibility = Visibility.Collapsed; };
-      recoverySaved = Ui.Toggle("I have saved my recovery key");
-      var proceed = Ui.Pill("Continue", () => model.Run(() => model.ConfirmRecovery()), true);
+      recoverySaved = Automation.Id(Ui.Toggle("I have saved my recovery key"), "josi.setup.recovery.saved");
+      var proceed = Automation.Id(Ui.Pill("Continue", () => model.Run(() => model.ConfirmRecovery()), true), "josi.setup.recovery.continue");
       proceed.IsEnabled = false;
       recoverySaved.Checked += delegate { proceed.IsEnabled = true; }; recoverySaved.Unchecked += delegate { proceed.IsEnabled = false; };
       return Ui.CardBox("Save your Vault recovery key",
         Ui.T("Keep this key somewhere safe outside Josi. It can recover your Vault if the installation key is lost."),
         show, shown, Ui.Secondary("Fingerprint: " + fingerprint),
-        Ui.Pill("Save Recovery Key…", () => { if (Dialogs.SaveRecoveryKey(owner, key, fingerprint)) recoverySaved.IsChecked = true; }),
+        Automation.Id(Ui.Pill("Save Recovery Key…", () => { if (Dialogs.SaveRecoveryKey(owner, key, fingerprint)) recoverySaved.IsChecked = true; }), "josi.setup.recovery.save"),
         recoverySaved, proceed);
     }
 

@@ -187,6 +187,11 @@ export interface SendArgs {
   /** Checked before anything else; supplied by the caller so this file does not
    * reach into the connector package. */
   capabilityAllowed: boolean;
+  /** The person already approved exactly this message through the assistant's
+   * own gate (a prepared action they said yes to), so the mail-level approval
+   * is not asked for a second time. Only the worker, executing an approved
+   * task, sets this. */
+  preApproved?: boolean;
 }
 
 export interface SendResult {
@@ -247,7 +252,7 @@ export async function sendOperationalEmail(args: SendArgs): Promise<SendResult> 
   // it here, from the same canonical form, is what keeps the two in step.
   const approvedHash = approvalHash(messagePayload(identity));
 
-  if (needed) {
+  if (needed && !args.preApproved) {
     if (!args.approvalId) {
       throw new SendRefused('needs_approval', needed.summary);
     }

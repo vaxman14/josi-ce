@@ -5,7 +5,9 @@ import { loadClient } from './oauthClients.js';
 import { ConnectorError, type ErrorCategory, type FetchOptions } from './providers.js';
 import { providerRequest, raiseProviderError } from './providers/http.js';
 
-export type CalendarProvider = 'google' | 'microsoft';
+/** `local`: the calendar kept on this server. Its events are the rows in
+ * calendar_events and nothing else; there is no remote side to sync with. */
+export type CalendarProvider = 'google' | 'microsoft' | 'local';
 export type CalendarSyncState = 'synced' | 'pending' | 'failed' | 'conflict';
 export interface CalendarEventInput {
   title?: string | null; description?: string | null; location?: string | null;
@@ -68,7 +70,7 @@ export async function ensureInternalCalendar(db: Db, args:{ownerUserId:string;co
   // to a newly selected provider source. Inserting the new row as default would
   // violate calendars_one_default before its origin can be provisioned.
   const [calendar]=await db.query<{id:string}>(`insert into calendars(owner_user_id,name,is_default)
-    values($1,$2,false) returning id`,[args.ownerUserId,args.name ?? source?.name ?? `${args.provider === 'google' ? 'Google' : 'Outlook'} calendar`]);
+    values($1,$2,false) returning id`,[args.ownerUserId,args.name ?? source?.name ?? `${args.provider === 'google' ? 'Google' : args.provider === 'local' ? 'Local' : 'Outlook'} calendar`]);
   const [origin]=await db.query<Origin>(`insert into calendar_sync_origins(calendar_id,connection_id,owner_user_id,provider,provider_account_id,provider_calendar_id)
     values($1,$2,$3,$4,$5,$6) returning *`,[calendar.id,args.connectionId,args.ownerUserId,args.provider,connection.provider_account_id,providerCalendarId]);
   if(source?.is_write_default===true){
@@ -123,6 +125,7 @@ export async function getInternalEvent(db:Db,args:{ownerUserId:string;eventId:st
 function googleBody(e:CalendarEventRow,includeId=false){return {...(includeId?{id:e.id.replace(/-/g,'')}:{}),summary:e.title,description:e.description,location:e.location,status:e.status,attendees:e.attendees,recurrence:e.recurrence,
   start:e.all_day?{date:e.start_date}:{dateTime:e.starts_at,timeZone:e.timezone},end:e.all_day?{date:e.end_date}:{dateTime:e.ends_at,timeZone:e.timezone}};}
 async function session(db:Db,origin:Origin,key:MasterKey,fetchImpl?:typeof fetch){
+  if(origin.provider==='local') throw new Error('a local calendar has no provider session');
   const connection=await getConnection(db,origin.connection_id); if(!connection) throw new Error('calendar connection is gone');
   const capability=`${origin.provider}.calendar.write`; if(!(await can(db,{ownerUserId:origin.owner_user_id,capability})).allowed) throw new ConnectorError('calendar write access is disabled',{category:'insufficient_scope'});
   const client=await loadClient(db,key,origin.provider); const accessToken=await accessTokenFor(db,key,{connection,client},{fetchImpl}); return accessToken;
@@ -133,7 +136,14 @@ export async function processCalendarOutbox(db:Db,args:{masterKey:MasterKey;fetc
   for(const item of rows){
     try{
       const [origin]=await db.query<Origin>(`select * from calendar_sync_origins where id=$1`,[item.origin_id]); const [event]=await db.query<CalendarEventRow>(`select * from calendar_events where id=$1 and owner_user_id=$2`,[item.event_id,item.owner_user_id]);
-      if(!origin||!event) throw new Error('calendar outbox reference is gone'); const token=await session(db,origin,args.masterKey,args.fetchImpl);
+      if(!origin||!event) throw new Error('calendar outbox reference is gone');
+      if(origin.provider==='local'){
+        // The server is the calendar: the row written locally is the whole truth.
+        if(item.operation!=='delete')await db.query(`update calendar_events set sync_state='synced',sync_error=null,conflict_state=null where id=$1`,[event.id]);
+        await db.query(`update calendar_outbox set status='done',last_error_category=null where id=$1`,[item.id]);
+        continue;
+      }
+      const token=await session(db,origin,args.masterKey,args.fetchImpl);
       const [link]=await db.query<Link>(`select * from calendar_event_links where origin_id=$1 and event_id=$2`,[origin.id,event.id]);
       if(origin.provider!=='google') throw new ConnectorError('Outlook calendar sync is not enabled yet',{category:'provider_error'});
       const base=`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(origin.provider_calendar_id)}/events`;
@@ -191,6 +201,9 @@ async function ensureGoogleWatch(db:Db,origin:Origin,token:string,fetchImpl?:typ
 
 export async function syncCalendarOrigin(db:Db,originId:string,args:{masterKey:MasterKey;fetchImpl?:typeof fetch}){
   const [origin]=await db.query<Origin>(`select * from calendar_sync_origins where id=$1`,[originId]); if(!origin||!['idle','error','syncing'].includes(origin.status))return;
+  // A local calendar has nothing to fetch; a sync is a fresh stamp, so the
+  // assistant's "is this calendar current" check reads it as current.
+  if(origin.provider==='local'){await db.query(`update calendar_sync_origins set status='idle',last_sync_at=now(),last_error_category=null where id=$1`,[origin.id]);return;}
   if(origin.provider!=='google')return; await db.query(`update calendar_sync_origins set status='syncing' where id=$1`,[origin.id]);
   try{
     const connection=await getConnection(db,origin.connection_id);if(!connection)throw new Error('calendar connection is gone');const client=await loadClient(db,args.masterKey,'google');const token=await accessTokenFor(db,args.masterKey,{connection,client},{fetchImpl:args.fetchImpl});
@@ -214,4 +227,27 @@ async function applyRemote(db:Db,origin:Origin,r:any){
   const shaped:any={title:r.summary??null,description:r.description??null,location:r.location??null,all_day:allDay,starts_at:allDay?null:r.start?.dateTime??null,ends_at:allDay?null:r.end?.dateTime??null,start_date:allDay?r.start?.date:null,end_date:allDay?r.end?.date:null,timezone:r.start?.timeZone??'UTC',status:r.status??'confirmed',organizer:r.organizer?.email??null,attendees:(r.attendees??[]).map((a:any)=>({email:a.email,response_status:a.responseStatus})),recurrence:r.recurrence??[],recurring_event_id:parentLink?.event_id??null,recurring_provider_event_id:r.recurringEventId?String(r.recurringEventId):null,original_start:r.originalStartTime?.dateTime??r.originalStartTime?.date??null,deleted_at:null};const remoteFp=calendarFingerprint(shaped);
   if(link){const [local]=await db.query<CalendarEventRow>(`select * from calendar_events where id=$1`,[link.event_id]);const localFp=local?calendarFingerprint(local):null;const remoteChanged=link.remote_fingerprint!==null&&remoteFp!==link.remote_fingerprint;const localChanged=link.local_fingerprint!==null&&localFp!==link.local_fingerprint;if(remoteChanged&&localChanged){await db.query(`update calendar_events set sync_state='conflict',conflict_state='local_remote_changed' where id=$1`,[link.event_id]);return;}await db.query(`update calendar_events set title=$2,description=$3,location=$4,starts_at=$5,ends_at=$6,start_date=$7,end_date=$8,all_day=$9,timezone=$10,status=$11,organizer=$12,attendees=$13,recurrence=$14,recurring_event_id=$15,recurring_provider_event_id=$16,original_start=$17,sync_state='synced',sync_error=null,deleted_at=null where id=$1`,[link.event_id,shaped.title,shaped.description,shaped.location,shaped.starts_at,shaped.ends_at,shaped.start_date,shaped.end_date,shaped.all_day,shaped.timezone,shaped.status,shaped.organizer,json(shaped.attendees),json(shaped.recurrence),shaped.recurring_event_id,shaped.recurring_provider_event_id,shaped.original_start]);await db.query(`update calendar_event_links set remote_etag=$2,remote_revision=$3,remote_updated_at=$4,remote_fingerprint=$5,local_fingerprint=$5,last_synced_at=now() where origin_id=$1 and provider_event_id=$6`,[origin.id,r.etag??null,r.sequence==null?null:String(r.sequence),r.updated??null,remoteFp,remoteId]);return;}
   const [tomb]=await db.query<{id:string}>(`select id from calendar_tombstones where origin_id=$1 and provider_event_id=$2`,[origin.id,remoteId]);if(tomb)return;const [event]=await db.query<{id:string}>(`insert into calendar_events(owner_user_id,calendar_id,title,description,location,starts_at,ends_at,start_date,end_date,all_day,timezone,status,organizer,attendees,recurrence,recurring_event_id,recurring_provider_event_id,original_start,sync_state) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'synced') returning id`,[origin.owner_user_id,origin.calendar_id,shaped.title,shaped.description,shaped.location,shaped.starts_at,shaped.ends_at,shaped.start_date,shaped.end_date,shaped.all_day,shaped.timezone,shaped.status,shaped.organizer,json(shaped.attendees),json(shaped.recurrence),shaped.recurring_event_id,shaped.recurring_provider_event_id,shaped.original_start]);await db.query(`insert into calendar_event_links(origin_id,event_id,provider_event_id,ical_uid,remote_etag,remote_revision,remote_updated_at,remote_fingerprint,local_fingerprint,last_synced_at) values($1,$2,$3,$4,$5,$6,$7,$8,$8,now())`,[origin.id,event.id,remoteId,r.iCalUID??null,r.etag??null,r.sequence==null?null:String(r.sequence),r.updated??null,remoteFp]);
+}
+
+/** The calendar kept on this server: a `local` connection with no account
+ * behind it, both calendar switches on (there is no provider to grant them),
+ * one writable source, and its internal calendar. One per person; connecting
+ * again returns the existing one. Events live in calendar_events and the
+ * outbox marks them synced without calling anyone. */
+export async function connectLocalCalendar(db:Db,args:{ownerUserId:string;name?:string}):Promise<{connectionId:string;sourceId:string;calendarId:string;originId:string}>{
+  // The name is set when the calendar is created and kept afterwards unless a new one is given.
+  const [known]=await db.query<{id:string}>(`select id from connections where owner_user_id=$1 and provider='local'`,[args.ownerUserId]);
+  const name=args.name??(known?undefined:'My calendar');
+  const [connection]=await db.query<{id:string}>(`insert into connections(owner_user_id,provider,account_email,granted_scopes,status,last_check_at,last_check_ok,meta)
+    values($1,'local',null,'','active',now(),true,'{}')
+    on conflict(owner_user_id,provider) where provider='local' do update set status='active',last_check_at=now(),last_check_ok=true
+    returning id`,[args.ownerUserId]);
+  for(const capability of ['local.calendar.read','local.calendar.write']){
+    await db.query(`insert into connection_capabilities(connection_id,capability,enabled,scopes_granted_at) values($1,$2,true,now())
+      on conflict(connection_id,capability) do update set enabled=true,scopes_granted_at=now()`,[connection.id,capability]);
+  }
+  const origin=await ensureInternalCalendar(db,{ownerUserId:args.ownerUserId,connectionId:connection.id,provider:'local',providerCalendarId:'local',name,writable:true});
+  await db.query(`update calendar_sync_origins set status='idle',last_sync_at=now(),last_error_category=null where id=$1`,[origin.id]);
+  const [source]=await db.query<{id:string}>(`select id from calendar_sources where connection_id=$1 and provider_calendar_id='local'`,[connection.id]);
+  return {connectionId:connection.id,sourceId:source.id,calendarId:origin.calendar_id,originId:origin.id};
 }

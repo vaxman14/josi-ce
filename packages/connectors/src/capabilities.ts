@@ -16,7 +16,10 @@
 // owner enables it; an owner who enables it still does not write if the admin
 // forbade it; and neither of them can conjure a scope the provider withheld.
 
-export type Provider = 'google' | 'microsoft' | 'dropbox' | 'box' | 'nextcloud';
+/** `local` is the calendar kept on this server itself: a connection row with
+ * no account, no token and no provider behind it, so the same capability
+ * switches and calendar sources work for people who connect nothing. */
+export type Provider = 'google' | 'microsoft' | 'dropbox' | 'box' | 'nextcloud' | 'local';
 
 /** OAuth2 providers, in the Google/Microsoft shape: an application the
  * installation registers, a code exchange, a refresh token. Nextcloud is
@@ -65,6 +68,22 @@ export interface CapabilitySpec {
  * `calendar` scope. The engine learned that against a live account; do not trim
  * it back to look tidier. */
 export const CAPABILITIES: readonly CapabilitySpec[] = [
+  // The calendar on this server. Nothing to grant: the server owns the data.
+  {
+    key: 'local.calendar.read',
+    provider: 'local',
+    label: 'Read the calendar kept on this server',
+    scopes: [],
+    kind: 'read',
+  },
+  {
+    key: 'local.calendar.write',
+    provider: 'local',
+    label: 'Create and change events on the calendar kept on this server',
+    scopes: [],
+    kind: 'write',
+    consequence: 'Josi can put events in this calendar and change ones that are already there.',
+  },
   {
     key: 'google.calendar.read',
     provider: 'google',

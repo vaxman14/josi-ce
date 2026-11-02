@@ -1,9 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import { loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import {
-  accessTokenFor, ensureInternalCalendar, getConnection, getEvent, listCalendars, listEvents, loadClient,
+  accessTokenFor, connectLocalCalendar, ensureInternalCalendar, getConnection, getEvent, getInternalEvent, listCalendars, listEvents, listInternalEvents, loadClient,
   syncCalendarOrigin,
-  type CalendarProvider, type OAuthProvider,
+  type CalendarEventRow, type CalendarProvider, type OAuthProvider,
 } from '@josi-ce/connectors';
 import { asyncRoute, param } from './async.js';
 import { requireAuth } from './authz.js';
@@ -27,15 +27,33 @@ async function calendarAccess(db: Db, connectionId: string): Promise<boolean> {
     `select cc.enabled and cc.scopes_granted_at is not null and coalesce(p.allowed, true) as allowed
        from connection_capabilities cc
        left join admin_capability_policy p on p.capability = cc.capability
-      where cc.connection_id = $1 and cc.capability in ('google.calendar.read','microsoft.calendar.read')`,
+      where cc.connection_id = $1 and cc.capability in ('google.calendar.read','microsoft.calendar.read','local.calendar.read')`,
     [connectionId],
   );
   return row?.allowed === true;
 }
 
+/** A local calendar's events in the shape the live provider reads use, so the
+ * client sees one kind of event whatever is behind it. */
+function localEventView(event: CalendarEventRow) {
+  return {
+    sourceId: event.id, title: event.title ?? '', description: event.description ?? '', location: event.location ?? '',
+    start: event.all_day ? event.start_date : event.starts_at, end: event.all_day ? event.end_date : event.ends_at,
+    allDay: event.all_day, status: event.status, organizer: event.organizer ?? '',
+    attendees: (event.attendees ?? []).map((a) => a.email), timezone: event.timezone,
+  };
+}
+async function localCalendarId(db: Db, connectionId: string, providerCalendarId: string): Promise<string | null> {
+  const [origin] = await db.query<{ calendar_id: string }>(
+    `select calendar_id from calendar_sync_origins where connection_id=$1 and provider_calendar_id=$2`, [connectionId, providerCalendarId],
+  );
+  return origin?.calendar_id ?? null;
+}
+
 async function discover(ctx: Ctx, ownerUserId: string) {
   const errors: Array<{ connectionId: string; provider: OAuthProvider; error: string }> = [];
-  const connections = await ctx.db.query<{ id: string; provider: CalendarProvider }>(
+  // Discovery asks a provider for its calendars; the local calendar has none to ask.
+  const connections = await ctx.db.query<{ id: string; provider: 'google' | 'microsoft' }>(
     `select id, provider from connections where owner_user_id = $1
       and provider in ('google','microsoft') and status = 'active' order by created_at`,
     [ownerUserId],
@@ -179,6 +197,13 @@ export function calendarRoutes(ctx: Ctx): Router {
     if (!event) throw new HttpError(404, 'event not found');
     return res.json({ event });
   }));
+  /** A calendar kept on this server, for a person who connects no account.
+   * One per person; calling it again returns the same one. */
+  r.post('/local', handle(async (req, res) => {
+    const name = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim().slice(0, 120) : undefined;
+    const created = await connectLocalCalendar(ctx.db, { ownerUserId: req.user!.id, name });
+    return res.json(created);
+  }));
   r.get('/sources', handle(async (req, res) => {
     const [count] = await ctx.db.query<{ n: number }>(`select count(*)::int n from calendar_sources where owner_user_id=$1`, [req.user!.id]);
     const discoveryErrors = (count?.n ?? 0) === 0 || req.query.refresh === 'true' ? await discover(ctx, req.user!.id) : [];
@@ -238,7 +263,7 @@ export function calendarRoutes(ctx: Ctx): Router {
   r.get('/events', handle(async (req, res) => {
     const start = new Date(String(req.query.start ?? '')); const end = new Date(String(req.query.end ?? ''));
     if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start || end.getTime()-start.getTime()>92*86400000) throw new HttpError(400, 'choose a valid range of at most 92 days');
-    const sources = await ctx.db.query<{ id:string; connection_id:string; provider_calendar_id:string; name:string; color:string|null; provider:OAuthProvider; account:string|null }>(
+    const sources = await ctx.db.query<{ id:string; connection_id:string; provider_calendar_id:string; name:string; color:string|null; provider:CalendarProvider; account:string|null }>(
       `select s.id,s.connection_id,s.provider_calendar_id,s.name,s.color,c.provider,c.account_email account
        from calendar_sources s join connections c on c.id=s.connection_id
        where s.owner_user_id=$1 and s.selected=true order by s.name`, [req.user!.id]);
@@ -246,6 +271,13 @@ export function calendarRoutes(ctx: Ctx): Router {
     for (const source of sources) {
       try {
         if (!(await calendarAccess(ctx.db, source.connection_id))) throw new HttpError(403, 'Calendar access is disabled.');
+        if (source.provider === 'local') {
+          // The server's own calendar: its rows, no provider call.
+          const calendarId = await localCalendarId(ctx.db, source.connection_id, source.provider_calendar_id);
+          const rows = calendarId ? (await listInternalEvents(ctx.db, { ownerUserId: req.user!.id, start: start.toISOString(), end: end.toISOString() })).filter((e) => e.calendar_id === calendarId) : [];
+          events.push(...rows.map((row) => ({ ...localEventView(row), eventId: row.id, sourceId: source.id, sourceName: source.name, connectionId: source.connection_id, providerCalendarId: source.provider_calendar_id, sourceColor: source.color, provider: source.provider, account: source.account })));
+          continue;
+        }
         const connection = await getConnection(ctx.db, source.connection_id); if (!connection || connection.status !== 'active') throw new HttpError(403, 'Calendar account is unavailable.');
         const client = await loadClient(ctx.db, key(ctx), source.provider);
         const accessToken = await accessTokenFor(ctx.db, key(ctx), { connection, client }, { fetchImpl: ctx.fetchImpl });
@@ -257,9 +289,15 @@ export function calendarRoutes(ctx: Ctx): Router {
     return res.json({ events, sourceErrors });
   }));
   r.get('/events/:sourceId/:eventId', handle(async (req, res) => {
-    const [source] = await ctx.db.query<{ connection_id:string; provider_calendar_id:string; provider:OAuthProvider; name:string; color:string|null; account:string|null }>(
+    const [source] = await ctx.db.query<{ connection_id:string; provider_calendar_id:string; provider:CalendarProvider; name:string; color:string|null; account:string|null }>(
       `select s.connection_id,s.provider_calendar_id,s.name,s.color,c.provider,c.account_email account from calendar_sources s join connections c on c.id=s.connection_id where s.id=$1 and s.owner_user_id=$2`, [param(req,'sourceId'), req.user!.id]);
     if (!source || !(await calendarAccess(ctx.db,source.connection_id))) throw new HttpError(404,'event not found');
+    if (source.provider === 'local') {
+      const row = await getInternalEvent(ctx.db, { ownerUserId: req.user!.id, eventId: param(req, 'eventId') });
+      const calendarId = await localCalendarId(ctx.db, source.connection_id, source.provider_calendar_id);
+      if (!row || row.calendar_id !== calendarId) throw new HttpError(404, 'event not found');
+      return res.json({ event: { ...localEventView(row), eventId: row.id, sourceId: param(req, 'sourceId'), connectionId: source.connection_id, providerCalendarId: source.provider_calendar_id, sourceName: source.name, sourceColor: source.color, provider: source.provider, account: source.account } });
+    }
     const connection=await getConnection(ctx.db,source.connection_id); if(!connection || connection.status !== 'active') throw new HttpError(404,'event not found');
     const client=await loadClient(ctx.db,key(ctx),source.provider); const accessToken=await accessTokenFor(ctx.db,key(ctx),{connection,client},{fetchImpl:ctx.fetchImpl});
     const event=await getEvent(source.provider,{accessToken,calendarId:source.provider_calendar_id,id:param(req,'eventId')},{fetchImpl:ctx.fetchImpl});

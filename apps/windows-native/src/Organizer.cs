@@ -17,6 +17,7 @@ namespace Josi.Native {
     List<Wire> sources = new List<Wire>(), events = new List<Wire>();
     readonly List<string> warnings = new List<string>();
     string view = "week";
+    int eventCount;
     DateTime anchor = DateTime.Today;
     TimeZoneInfo zone = TimeZoneInfo.Local;
     readonly ComboBox zonePick = new ComboBox { Width = 320 };
@@ -68,14 +69,19 @@ namespace Josi.Native {
       }).OrderBy(e => e["allDay"].Flag ? 0 : 1).ThenBy(e => e["start"].Text);
     }
     protected override UIElement Build() {
+      eventCount = 0;
       var page = Page(Ui.HeadingWith("Calendar", "One view of the calendars you choose from all your connected accounts.",
-        Ui.Pill("Refresh Calendars", () => { refreshSources = true; StartLoad(); })));
+        Automation.Id(Ui.Pill("Refresh Calendars", () => { refreshSources = true; StartLoad(); }), "josi.calendar.refresh")));
       foreach (var w in warnings.Distinct()) Ui.Add(page, Ui.T(w, 13.5, null, Ui.Orange), 0);
       var title = view == "month" ? anchor.ToString("MMMM yyyy") : view == "day" ? anchor.ToString("D") : Days()[0].ToString("MMM d") + " – " + Days().Last().ToString("MMM d, yyyy");
       Ui.Detach(zonePick);
-      Ui.Add(page, Ui.Spread(Ui.Row(8, Ui.Pill("Previous", () => Move(-1)), Ui.Pill("Today", () => { anchor = DateTime.Today; StartLoad(); }), Ui.Pill("Next", () => Move(1)), Ui.Headline(title)),
-        Ui.Segments(Ui.Options("list", "List", "month", "Month", "week", "Week", "day", "Day"), view, v => { view = v; StartLoad(); })), 0);
-      Ui.Add(page, Ui.Row(10, Ui.Caption("Time zone"), zonePick), 0);
+      // Fixed ids (AUTOMATION.md): josi.calendar.previous/today/next, josi.calendar.title (Name = the
+      // visible range), josi.calendar.view.<list|month|week|day> (ItemStatus selected on the current one).
+      Ui.Add(page, Ui.Spread(Ui.Row(8, Automation.Id(Ui.Pill("Previous", () => Move(-1)), "josi.calendar.previous"),
+          Automation.Id(Ui.Pill("Today", () => { anchor = DateTime.Today; StartLoad(); }), "josi.calendar.today"),
+          Automation.Id(Ui.Pill("Next", () => Move(1)), "josi.calendar.next"), Automation.Id(Ui.Headline(title), "josi.calendar.title", title)),
+        Ui.Segments(Ui.Options("list", "List", "month", "Month", "week", "Week", "day", "Day"), view, v => { view = v; StartLoad(); }, "josi.calendar.view.")), 0);
+      Ui.Add(page, Ui.Row(10, Ui.Caption("Time zone"), Automation.Id(zonePick, "josi.calendar.zone")), 0);
       if (loading && events.Count == 0) { Ui.Add(page, Ui.Secondary("Loading…"), 0); }
       else {
         if (events.Count == 0) Ui.Add(page, Ui.Secondary("No events in this range."), 0);
@@ -89,18 +95,24 @@ namespace Josi.Native {
           d["organizer"].Text.Length > 0 ? Ui.Caption("Organizer: " + d["organizer"].Text) : null,
           d["attendees"].List.Count > 0 ? Ui.Caption("Attendees: " + string.Join(", ", d["attendees"].List.Select(a => a.Text.Length > 0 ? a.Text : a["email"].Text))) : null,
           d["description"].Text.Length > 0 ? Ui.Copyable(d["description"].Text, 13) : null,
-          Ui.Pill("Close", () => { detail = Wire.Null; Render(); })), 0);
+          Automation.Id(Ui.Pill("Close", () => { detail = Wire.Null; Render(); }), "josi.calendar.detail.close")), 0);
       }
       var list = Ui.Stack(6);
-      if (sources.Count == 0) list.Children.Add(Ui.Caption("No calendar connection yet. Connect Google or Microsoft under Connections and turn on calendar reading."));
+      if (sources.Count == 0) {
+        list.Children.Add(Ui.Caption("No calendar yet. Keep one on this server, or connect Google or Microsoft under Connections and turn on calendar reading."));
+        list.Children.Add(Automation.Id(Ui.Pill("Add a Calendar on This Server", () => Perform(async (api, stamp) => { await api.Request("/calendar/local", "POST", Wires.O()); refreshSources = false; })), "josi.calendar.add-local"));
+      }
+      var sourceIndex = 0;
       foreach (var s in sources) {
-        var id = s.Id; var on = s["selected"].Flag;
-        var box = Ui.Toggle(s["name"].Text + "  ·  " + Wires.Capitalize(s["provider"].Text) + " · " + (s["account"].Text.Length > 0 ? s["account"].Text : s["connectionId"].Text), on);
+        var id = s.Id; var on = s["selected"].Flag; sourceIndex++;
+        var box = Automation.Id(Ui.Toggle(s["name"].Text + "  ·  " + Wires.Capitalize(s["provider"].Text) + " · " + (s["account"].Text.Length > 0 ? s["account"].Text : s["connectionId"].Text), on),
+          "josi.calendar.source." + sourceIndex);
         box.Click += delegate { Perform(async (api, stamp) => await api.Request("/calendar/sources/" + Uri.EscapeDataString(id), "PUT", Wires.O("selected", !on))); };
         var row = Ui.Row(10, Swatch(s["color"].Text), box);
         if (s["primary"].Flag) row.Children.Add(Ui.Caption("Primary"));
         if (s["writable"].Flag) row.Children.Add(s["writeDefault"].Flag ? (UIElement)Ui.Caption("Default for new events") :
-          Ui.Link("Make default", () => Perform(async (api, stamp) => await api.Request("/calendar/sources/" + Uri.EscapeDataString(id), "PUT", Wires.O("writeDefault", true)))));
+          Automation.Id(Ui.Link("Make default", () => Perform(async (api, stamp) => await api.Request("/calendar/sources/" + Uri.EscapeDataString(id), "PUT", Wires.O("writeDefault", true)))),
+            "josi.calendar.source." + sourceIndex + ".make-default"));
         list.Children.Add(row);
       }
       Ui.Add(page, Ui.CardBox("Calendars", list), 0);
@@ -129,6 +141,8 @@ namespace Josi.Native {
       var button = new Button { Style = (Style)Ui.Resources["Plain"], HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(8, 5, 8, 5), Margin = new Thickness(0, 0, 0, 4),
         BorderBrush = accent, BorderThickness = new Thickness(4, 0, 0, 0), Background = Ui.Raised, Content = content };
       Ui.Name(button, t + ", " + Time(e), null);
+      // josi.calendar.event.<n>: the n-th event drawn on the page, top to bottom, left to right.
+      Automation.Id(button, "josi.calendar.event." + (++eventCount));
       var source = e["sourceId"].Text; var id = e["eventId"].Text;
       button.Click += delegate { Perform(async (api, stamp) => {
         var r = await api.Request("/calendar/events/" + Uri.EscapeDataString(source) + "/" + Uri.EscapeDataString(id));

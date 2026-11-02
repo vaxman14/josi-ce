@@ -29,9 +29,64 @@
       "reply": "I have prepared the change: the workspace will be called **Northwind Demo**. It is waiting for your approval in the Josi app; nothing changes until you approve it."
     },
     {
+      "id": "local-only",
+      "match": "only use models (that run|running) on (my|this) (own )?(hardware|machine|computer|pc)",
+      "toolCalls": [
+        { "name": "propose_josi_setting_change", "arguments": { "area": "local_only_models", "summary": "Turn on local-only mode: Josi stops every request to external model providers and only uses models running on your own hardware.", "body": { "enabled": true } } }
+      ],
+      "afterTools": "Prepared: **local-only mode** for models. Once you approve it, nothing goes to an outside model provider; Josi only uses models on your own hardware.",
+      "reply": "Prepared: **local-only mode** for models. Once you approve it, nothing goes to an outside model provider; Josi only uses models on your own hardware."
+    },
+    {
+      "id": "memory-manual",
+      "match": "(stop|don.?t) (learning|remembering|saving) (memories|things) on your own|ask me before (you )?(remember|sav)",
+      "toolCalls": [
+        { "name": "propose_josi_setting_change", "arguments": { "area": "memory_learning", "summary": "Switch memory learning to manual: Josi suggests new memories and saves them only after you review them.", "body": { "memoryMode": "manual" } } }
+      ],
+      "afterTools": "Prepared: memory learning goes to **manual**. After you approve it, I will suggest new memories and keep them only once you have reviewed them.",
+      "reply": "Prepared: memory learning goes to **manual**. After you approve it, I will suggest new memories and keep them only once you have reviewed them."
+    },
+    {
+      "id": "backup-nightly",
+      "match": "back ?up (the server|this server|everything) (every night|nightly|each night)",
+      "toolCalls": [
+        { "name": "propose_josi_setting_change", "arguments": { "area": "backup_schedule", "summary": "Back the server up automatically every night at 02:00, keeping the last 14 backups.", "body": { "enabled": true, "hour": 2, "keep": 14 } } }
+      ],
+      "afterTools": "Prepared: a nightly backup at **02:00**, keeping the last 14. It starts once you approve it.",
+      "reply": "Prepared: a nightly backup at **02:00**, keeping the last 14. It starts once you approve it."
+    },
+    {
+      "id": "email-sam",
+      "match": "e-?mail sam .*launch plan",
+      "toolCalls": [
+        { "name": "draft_email", "arguments": { "recipient": "sam@example.com", "subject": "Launch plan summary", "body": "Hi Sam,\n\nHere is where the launch stands:\n\n1. Finish the download page by Friday (Windows, Mac, Linux).\n2. Record the product video next week with the demo workspace.\n3. Announce on the newsletter and the community forum the same morning.\n\nStill open: who writes the release notes, and whether the Linux build ships as a .deb only.\n\nDana" } }
+      ],
+      "afterTools": "I have drafted an email to **sam@example.com** with the subject **Launch plan summary**: the three steps and the two open questions from launch-plan.md. It is waiting under Approvals; nothing is sent until you approve it.",
+      "reply": "I have drafted an email to **sam@example.com** with the subject **Launch plan summary**: the three steps and the two open questions from launch-plan.md. It is waiting under Approvals; nothing is sent until you approve it."
+    },
+    {
+      "id": "calendar-tomorrow",
+      "match": "what('s| is) on my calendar tomorrow",
+      "toolCalls": [
+        { "name": "query_calendar", "arguments": { "start": "{{date:+1 00:00}}", "end": "{{date:+2 00:00}}" } }
+      ],
+      "afterTools": "Tomorrow you have two things: **Design review** at 10:00 on a video call, and **Lunch with Mira** at 12:30 at Corner Café. The rest of the day is free.",
+      "reply": "Tomorrow you have two things: **Design review** at 10:00 on a video call, and **Lunch with Mira** at 12:30 at Corner Café. The rest of the day is free."
+    },
+    {
+      "id": "book-sam",
+      "match": "book (30|thirty) minutes with sam",
+      "toolCalls": [
+        { "name": "draft_calendar_event", "arguments": { "title": "Sam · launch check-in", "start": "{{date:+3 10:00}}", "end": "{{date:+3 10:30}}", "location": "Video call", "attendees": ["sam@example.com"], "calendar": "main" } }
+      ],
+      "afterTools": "Prepared: **Sam · launch check-in**, 30 minutes at 10:00 on {{date:+3 dddd}}, on your calendar, with Sam invited. It is waiting under Approvals; nothing is booked until you approve it.",
+      "reply": "Prepared: **Sam · launch check-in**, 30 minutes at 10:00 on {{date:+3 dddd}}, on your calendar, with Sam invited. It is waiting under Approvals; nothing is booked until you approve it."
+    },
+    {
       "id": "remember",
       "match": "remember that",
-      "reply": "Noted. I will keep that in mind for next time."
+      "reply": "Noted: {{1}}. It is in your memories now, and you can read or delete it on the Memory page.",
+      "learn": { "pattern": "remember that (.+?)\\.?$", "fact": "Dana: {{1}}" }
     },
     {
       "id": "thanks",
