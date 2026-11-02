@@ -11,7 +11,7 @@
 // (JOSI_DEMO_MAIL_DIR). Plain SMTP, no TLS; AUTH is accepted with any login.
 import net from 'node:net';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const port = Number(process.argv[2] || process.env.JOSI_DEMO_MAIL_PORT || 2525);
 const folder = process.argv[3] || process.env.JOSI_DEMO_MAIL_DIR || join(process.env.JOSI_DEMO_ROOT || 'C:\\Dev\\josi-demo', 'sample-files', 'mail');
@@ -41,8 +41,11 @@ function deliver(from, recipients, raw) {
   const name = `${stamp}-${String(count).padStart(2, '0')}-${slug(subject)}.eml`;
   mkdirSync(folder, { recursive: true });  // the demo seed recreates the Files folder between takes
   writeFileSync(join(folder, name), raw);
-  // index.json: what arrived, newest last, for scripts and the demo seed to read.
-  const indexFile = join(folder, 'index.json');
+  // The index: what arrived, newest last, for scripts to read. Kept out of the
+  // mail folder when JOSI_DEMO_MAIL_INDEX says where, so the Files page shows
+  // only the messages.
+  const indexFile = process.env.JOSI_DEMO_MAIL_INDEX || join(folder, 'index.json');
+  mkdirSync(dirname(indexFile), { recursive: true });
   const index = existsSync(indexFile) ? JSON.parse(readFileSync(indexFile, 'utf8')) : [];
   index.push({ file: name, from, to: recipients, subject, receivedAt: new Date().toISOString() });
   writeFileSync(indexFile, JSON.stringify(index, null, 2) + '\n');

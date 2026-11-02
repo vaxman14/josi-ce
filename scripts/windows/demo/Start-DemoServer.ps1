@@ -63,7 +63,7 @@ Start-Sidecar 'model' 'replay-model.mjs' $modelPort @([string]$modelPort, (Join-
 # seeded demo's Files folder, where Josi can show it.
 $mailRoot = if ($fresh) { 'C:\Dev\josi-demo' } else { $Root }
 $mailDir = Join-Path $mailRoot 'sample-files\mail'
-Start-Sidecar 'mail' 'mail-sink.mjs' $mailPort @([string]$mailPort, $mailDir) @{ JOSI_DEMO_MAIL_LOG = (Join-Path $data 'logs\mail.log') }
+Start-Sidecar 'mail' 'mail-sink.mjs' $mailPort @([string]$mailPort, $mailDir) @{ JOSI_DEMO_MAIL_LOG = (Join-Path $data 'logs\mail.log'); JOSI_DEMO_MAIL_INDEX = (Join-Path $data 'state\mail-index.json') }
 
 & (Join-Path (Split-Path $PSScriptRoot -Parent) 'dev\Start-DevServer.ps1') -Root $Root -Tools $tools
 
