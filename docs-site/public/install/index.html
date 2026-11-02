@@ -174,20 +174,40 @@ so Josi returns after a restart.</p>
 the same account, workspace, conversations, memory, and tools.</p>
 <ul>
 <li><strong>Android:</strong> <a href="https://play.google.com/store/apps/details?id=com.socalreceptionist.josice">Install Josi CE from Google Play</a>.</li>
-<li><strong>iPhone and iPad:</strong> The App Store release is coming soon.</li>
-<li><strong>macOS, Windows, and Linux:</strong> Desktop downloads are in final
-device testing. Links will appear here when each build is approved.</li>
+<li><strong>iPhone and iPad:</strong> <a href="https://apps.apple.com/us/app/josi-ce/id6810549193">Install Josi CE from the App Store</a>.</li>
+<li><strong>Windows, Mac and Linux:</strong> the downloads at <a href="https://get.heyjosi.com">get.heyjosi.com</a>.</li>
 </ul>
-<p>To connect a native app:</p>
+<p>Every app asks for the server's address once. There are three ways to reach
+the server, chosen on the server's <strong>Network &amp; address</strong> page
+(in the Josi app on the server PC, or the web app as a super admin):</p>
+<ul>
+<li><strong>Your network.</strong> Set the public address to
+<code>https://&lt;name or IP&gt;:8080</code>. Josi answers over HTTPS with a
+certificate it issues itself; the app shows the certificate fingerprint once
+and you compare it with the one on the Network page. Works at home or at the
+office, and over a VPN.</li>
+<li><strong>Tailscale.</strong> For a phone or a PC anywhere, with no public
+domain and no port forwarding. Install
+<a href="https://tailscale.com/download">Tailscale</a> on the server and on
+each device and sign them all in to the same Tailscale account. The Network
+page then shows the server's Tailscale address and a
+<strong>Use the Tailscale address</strong> button; press it and restart the
+server. On the phone, with Tailscale on, give the Josi app that address. Josi
+does not install Tailscale and does not talk to Tailscale's service; it only
+reads the state of the Tailscale you installed.</li>
+<li><strong>A public domain.</strong> <code>https://your.domain</code> served
+through a tunnel or a reverse proxy you run, pointed at the server PC.</li>
+</ul>
+<p>To connect an app:</p>
 <ol>
-<li>Open Josi CE.</li>
-<li>Choose <strong>Public URL</strong> or <strong>Tailscale</strong>.</li>
-<li>Paste the Josi URL shown during server setup.</li>
-<li>Select <strong>Verify and continue</strong>.</li>
+<li>Open Josi CE on the device.</li>
+<li>Enter the server's address.</li>
+<li>If the app shows a certificate fingerprint, compare it with the Network
+page and accept it.</li>
 <li>Sign in with the same Josi account you created in the browser.</li>
 </ol>
-<p>The app connects to the Josi server you just installed. It does not install
-or create another server.</p>
+<p>The app connects to the Josi server you installed. It does not install or
+create another server.</p>
 
 <h2 id="updating-josi">Updating Josi</h2>
 <p>Open <strong>Admin → System checkup</strong> as a super-admin, select

@@ -163,7 +163,7 @@ namespace Josi.Native {
       if (network.IsNull) return Ui.CardBox("Addresses", Ui.Secondary(loading ? "Loading…" : "This server does not report its addresses."));
       var mode = network["mode"].Text;
       var items = new List<UIElement> {
-        Ui.Spread(Ui.Stack(2, Ui.Headline("Public address"), Ui.Caption(mode == "local" ? "Only this PC reaches Josi." : mode == "lan" ? "This PC and your network, over HTTPS with Josi's own certificate." : "A public domain, served through your tunnel or reverse proxy.")),
+        Ui.Spread(Ui.Stack(2, Ui.Headline("Public address"), Ui.Caption(mode == "local" ? "Only this PC reaches Josi." : mode == "lan" ? "This PC and your network, over HTTPS with Josi's own certificate." : mode == "tailscale" ? "Your devices over Tailscale, over HTTPS with Josi's own certificate." : "A public domain, served through your tunnel or reverse proxy.")),
           Ui.Copyable(network["publicUrl"].Text, 14, null, true)) };
       if (network["restartNeeded"].Flag) items.Add(Ui.T("The saved address (" + network["configuredUrl"].Text + ") differs from the running one. Restart the server to apply it.", 13.5, null, Ui.Orange));
       var lan = network["lan"].List;
@@ -176,10 +176,45 @@ namespace Josi.Native {
         Ui.Caption("The authority this server's proxy issues its LAN certificate from. The Josi app on another PC shows the same fingerprint before you trust it."), Ui.Copyable(network["certificate"]["fingerprint"].Text, 12, null, true)));
       return Ui.CardBox("Addresses", items.ToArray());
     }
+    /// Tailscale: the phone or another PC reaches this server anywhere, with
+    /// no public domain and no port forwarding. Josi does not install
+    /// Tailscale; the person installs it on the server and on each device and
+    /// signs both in to the same account. Josi then offers the server's
+    /// Tailscale name as the public address, served like a LAN one.
+    UIElement Tailscale() {
+      if (network.IsNull) return null;
+      var ts = network["tailscale"];
+      var items = new List<UIElement> { Ui.Caption("Reach Josi from your phone or another PC anywhere, with no public domain and no port forwarding. Install Tailscale on this PC and on each device, sign them all in to the same Tailscale account, and use this server's Tailscale address.") };
+      if (ts.IsNull || !ts["installed"].Flag) {
+        items.Add(Ui.Secondary("Tailscale is not installed on this PC. Get it from tailscale.com/download, sign in, then press Refresh above."));
+        return Ui.CardBox("Tailscale", items.ToArray());
+      }
+      if (!ts["running"].Flag) {
+        items.Add(Ui.Secondary(ts["error"].Text.Length > 0 ? ts["error"].Text : "Tailscale is installed but not connected (" + (ts["state"].Text.Length > 0 ? ts["state"].Text : "stopped") + "). Open Tailscale, sign in, then press Refresh above."));
+        return Ui.CardBox("Tailscale", items.ToArray());
+      }
+      var url = network["tailscaleUrl"].Text;
+      var who = ts["loginName"].Text.Length > 0 ? ts["loginName"].Text : "your account";
+      items.Add(Ui.Secondary("Connected as " + who + (ts["tailnet"].Text.Length > 0 ? " on " + ts["tailnet"].Text : "") + "."));
+      items.Add(Ui.Stack(2, Ui.Headline("This server's Tailscale address"), Ui.Copyable(url, 14, null, true)));
+      var ips = ts["ips"].List;
+      if (ips.Count > 0) items.Add(Ui.Caption("Tailscale IP: " + string.Join(", ", ips.Select(ip => ip.Text))));
+      if (network["mode"].Text == "tailscale" && network["publicUrl"].Text == url) {
+        items.Add(Ui.Secondary("This is the public address now. On your phone, install Tailscale, sign in to the same account, and give the Josi app this address. The app shows the certificate fingerprint once; compare it with the one above."));
+      } else {
+        var use = Ui.Pill("Use the Tailscale Address", () => {
+          Perform(async (api, stamp) => { var r = await api.Request("/admin/network", "PUT", Wires.O("publicUrl", url)); if (Current(stamp)) { urlLoaded = false; note = r["note"].Text; } });
+        }, true);
+        use.IsEnabled = network["editable"].Flag;
+        items.Add(use);
+        items.Add(Ui.Caption("Sets the public address to the Tailscale name on the current port. Restart the server afterwards. Devices on the same network keep working through Tailscale too."));
+      }
+      return Ui.CardBox("Tailscale", items.ToArray());
+    }
     UIElement ChangeAddress() {
       Ui.Detach(publicUrl);
       var items = new List<UIElement> {
-        Ui.Caption("https://name-or-ip:port for your network (Josi issues the certificate), http://localhost:port for this PC only, or https://your.domain for a public address served through a tunnel or reverse proxy."),
+        Ui.Caption("https://name-or-ip:port for your network (Josi issues the certificate), https://name.ts.net:port for Tailscale, http://localhost:port for this PC only, or https://your.domain for a public address served through a tunnel or reverse proxy."),
         Ui.Field("Public address", publicUrl) };
       var save = Ui.Pill("Save Address", () => {
         var value = publicUrl.Text.Trim();
@@ -194,6 +229,8 @@ namespace Josi.Native {
     protected override UIElement Build() {
       var page = Page(Ui.HeadingWith("Network and Address", "Where this server answers, and how other devices reach it.", Ui.Pill("Refresh", StartLoad)));
       Ui.Add(page, Addresses(), 0);
+      var tailscale = Tailscale();
+      if (tailscale != null) Ui.Add(page, tailscale, 0);
       Ui.Add(page, ChangeAddress(), 0);
       Ui.Detach(password);
       var items = new List<UIElement> { Ui.Secondary("Josi briefly opens a separate local controller because this connection is unavailable while the address changes. The controller previews the change, verifies health at the new address, and restores the previous configuration if it fails."),

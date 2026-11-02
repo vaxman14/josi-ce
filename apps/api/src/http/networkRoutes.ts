@@ -6,6 +6,8 @@
 //   a LAN name or IP     this PC and the LAN over HTTPS with a certificate the
 //                        proxy issues itself (Caddy's internal CA); the Josi
 //                        app pins that CA on first contact, after showing it
+//   a Tailscale name/IP  this PC's devices over Tailscale, served like a LAN
+//                        address (HTTPS, Josi's own certificate); see setup/tailscale.ts
 //   a public domain      served through a tunnel or a reverse proxy the
 //                        administrator runs; the proxy file is left alone
 // The change is written to runtime.json (and the proxy's Caddyfile where the
@@ -19,12 +21,14 @@ import { join } from 'node:path';
 import { resolveDataPath, type Db } from '@josi-ce/core';
 import { requireSuperAdmin } from './authz.js';
 import { asyncRoute } from './async.js';
+import { isTailscaleHost, tailscaleStatus } from '../setup/tailscale.js';
 
-export type AddressMode = 'local' | 'lan' | 'public';
+export type AddressMode = 'local' | 'lan' | 'tailscale' | 'public';
 
 export function addressMode(url: URL): AddressMode {
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return 'local';
+  if (isTailscaleHost(host)) return 'tailscale';
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.endsWith('.local') || host.endsWith('.lan') || host.endsWith('.home') || !host.includes('.') || host.includes(':')) return 'lan';
   return 'public';
 }
@@ -49,7 +53,7 @@ export function caddyfileFor(url: URL, apiPort: number): string | null {
   const mode = addressMode(url);
   const port = url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80;
   if (mode === 'local') return ['{', '\tadmin off', '\tauto_https off', '}', '', `http://localhost:${port} {`, '\tbind 127.0.0.1', `\treverse_proxy 127.0.0.1:${apiPort}`, '}', ''].join('\n');
-  if (mode === 'lan') return ['{', '\tadmin off', '}', '', `https://${url.hostname}:${port} {`, '\ttls internal', `\treverse_proxy 127.0.0.1:${apiPort}`, '}', ''].join('\n');
+  if (mode === 'lan' || mode === 'tailscale') return ['{', '\tadmin off', '}', '', `https://${url.hostname}:${port} {`, '\ttls internal', `\treverse_proxy 127.0.0.1:${apiPort}`, '}', ''].join('\n');
   return null;
 }
 
@@ -80,11 +84,15 @@ export function networkRoutes(ctx: { db: Db }): Router {
     try { configured = String(JSON.parse(await readFile(RUNTIME_FILE(), 'utf8')).publicUrl ?? '').replace(/\/$/, '') || null; } catch { configured = null; }
     const ca = await caRoot();
     const port = url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80;
+    const tailscale = await tailscaleStatus();
     return res.json({
+      tailscale,
+      // The address to offer: the MagicDNS name on the port already in use, over https.
+      tailscaleUrl: tailscale.running && tailscale.name ? `https://${tailscale.name}:${port}` : null,
       publicUrl: appUrl, mode: addressMode(url), https: url.protocol === 'https:', port,
       apiPort: Number(process.env.PORT ?? 8080),
       lan: lanAddresses(),
-      nativeRuntime: ['win32', 'darwin'].includes(process.platform) && process.env.JOSI_NATIVE_RUNTIME === '1',
+      nativeRuntime: ['win32', 'darwin', 'linux'].includes(process.platform) && process.env.JOSI_NATIVE_RUNTIME === '1',
       editable: existsSync(RUNTIME_FILE()),
       proxyManaged: existsSync(CADDYFILE()),
       configuredUrl: configured,
@@ -118,6 +126,7 @@ export function networkRoutes(ctx: { db: Db }): Router {
       publicUrl: settings.publicUrl, mode, proxy,
       note: mode === 'local' ? 'Only this PC reaches Josi. Restart the server to apply.'
         : mode === 'lan' ? 'Josi answers on your network over HTTPS with its own certificate. Restart the server to apply; the first Josi app to connect shows the certificate and asks you to trust it once. Open the port in Windows Firewall if other PCs cannot reach it.'
+        : mode === 'tailscale' ? 'Josi answers at its Tailscale address over HTTPS with its own certificate. Restart the server to apply. On each phone or PC, install Tailscale, sign in to the same account, and give the Josi app this address; it shows the certificate fingerprint once.'
         : 'A public domain is served through your tunnel or reverse proxy; point it at this PC. Restart the server to apply.',
     });
   }));
