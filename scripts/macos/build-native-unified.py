@@ -116,7 +116,7 @@ def protected_entitlements(profile):
 
 def build(args):
     global VERSION, PACKAGE_VERSION
-    if not re.fullmatch(r'd+.d+.d+(-[A-Za-z0-9.]+)?', args.version):
+    if not re.fullmatch(r'\d+\.\d+\.\d+(-[A-Za-z0-9.]+)?', args.version):
         raise ValueError('Use --version like 1.0.0')
     VERSION = args.version
     PACKAGE_VERSION = package_version(args.version)
@@ -285,7 +285,32 @@ def build(args):
             command += ['--entitlements', entitlements]
         run(name, command + [path], timeout=180)
 
+    def machos(root):
+        found = []
+        for path in sorted(root.rglob('*')):
+            if path.is_file() and not path.is_symlink():
+                with path.open('rb') as reader:
+                    if reader.read(4) == b'\xcf\xfa\xed\xfe':
+                        found.append(path)
+        return found
+
+    def notarizable(path):
+        shown = subprocess.run(['/usr/bin/codesign', '-d', '--verbose=4', str(path)],
+                               capture_output=True, text=True).stderr
+        return 'Authority=Developer ID Application: ' in shown and 'Timestamp=' in shown and '(runtime)' in shown
+
     if args.sign:
+        # Apple notarizes nested runtime binaries too: each needs a Developer ID
+        # signature with the hardened runtime and a secure timestamp. The staged
+        # Python, PostgreSQL and Caddy are signed ad hoc; vendor-signed ones such
+        # as Node keep their own signature.
+        unsigned = [path for path in machos(runtime) + machos(minimal) if not notarizable(path)]
+        if unsigned:
+            run('sign-runtime-binaries', ['/usr/bin/codesign', '--force', '--keychain', KEYCHAIN, '--sign', APP_IDENTITY,
+                                          '--options', 'runtime', '--timestamp', *unsigned], timeout=1800)
+        remaining = [path for path in machos(runtime) + machos(minimal) if not notarizable(path)]
+        if remaining:
+            raise ValueError('Runtime binaries are not signed for notarization: ' + ', '.join(map(str, remaining[:5])))
         sign('sign-JosiProtectedKeyHost', key_bundle, PROTECTED_ID,
              output / 'protected-key-entitlements.plist' if profile else None)
         sign('sign-JosiDeviceConsentHost', helpers / 'JosiDeviceConsentHost', 'com.heyjosi.ce.device-consent')
