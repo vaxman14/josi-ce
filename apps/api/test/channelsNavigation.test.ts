@@ -17,29 +17,29 @@ import { join } from 'node:path';
 const root = join(import.meta.dirname, '../../..');
 const read = (p: string) => readFileSync(join(root, p), 'utf8');
 
-const shell = read('apps/web/src/components/layout/Shell.tsx');
+const menu = read('apps/web/src/components/layout/mobileNavigation.ts');
 const app = read('apps/web/src/App.tsx');
 const channels = read('apps/web/src/pages/Channels.tsx');
 
-/** The member sidebar array, as declared. */
+/** The menu's Workspace list, as declared. */
 function memberNav(): string {
-  const start = shell.indexOf('const MEMBER_NAV');
-  const end = shell.indexOf('];', start);
-  expect(start, 'MEMBER_NAV must still be findable').toBeGreaterThan(-1);
-  return shell.slice(start, end);
+  const start = menu.indexOf('const WORKSPACE_MENU');
+  const end = menu.indexOf('];', start);
+  expect(start, 'WORKSPACE_MENU must still be findable').toBeGreaterThan(-1);
+  return menu.slice(start, end);
 }
 
-/** The administrator sidebar array, as declared. */
+/** The menu's Admin list, as declared. */
 function adminNav(): string {
-  const start = shell.indexOf('const ADMIN_NAV');
-  const end = shell.indexOf('];', start);
-  expect(start, 'ADMIN_NAV must still be findable').toBeGreaterThan(-1);
-  return shell.slice(start, end);
+  const start = menu.indexOf('const ADMIN_MENU');
+  const end = menu.indexOf('];', start);
+  expect(start, 'ADMIN_MENU must still be findable').toBeGreaterThan(-1);
+  return menu.slice(start, end);
 }
 
 describe('one Channels parent, not one item per transport', () => {
-  it('gives the member sidebar a Channels entry', () => {
-    expect(memberNav()).toContain("{ to: '/app/channels', label: 'Channels' }");
+  it('gives the member menu a Channels entry', () => {
+    expect(memberNav()).toContain("{ to: '/app/channels', label: 'Channels',");
   });
 
   it('does not also carry Telegram at the top level', () => {

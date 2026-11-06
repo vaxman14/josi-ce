@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
-import { Button, Card, ErrorNote, Input } from '@/components/ui';
+import { Button, ErrorNote, Input } from '@/components/ui';
+import { AuthPanel, AuthStage } from '@/components/auth/AuthStage';
 
 export function ForgotPassword() {
   const [identifier, setIdentifier] = useState('');
@@ -15,14 +16,15 @@ export function ForgotPassword() {
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not request a reset'); }
     finally { setBusy(false); }
   }
-  return <div className="flex min-h-full items-center justify-center p-4"><Card className="w-full max-w-sm">
-    <h1 className="page-title mb-1">Reset password</h1>
-    <p className="mb-4 text-sm text-muted-foreground">Enter your username or email.</p>
+  return <AuthStage><AuthPanel>
+    <h1 className="text-[1.45rem] font-bold leading-tight tracking-tight">Reset password</h1>
+    <p className="mb-5 mt-1 text-sm text-lilac">Enter your username or email.</p>
     <form onSubmit={submit} className="space-y-3">
-      <Input autoComplete="username" value={identifier} onChange={(e) => setIdentifier(e.target.value)} required />
-      {message ? <p className="text-sm">{message}</p> : null}{error ? <ErrorNote>{error}</ErrorNote> : null}
-      <Button className="w-full" disabled={busy}>{busy ? 'Sending…' : 'Send reset link'}</Button>
-      <a className="block text-center text-sm text-primary underline" href="/login">Back to sign in</a>
+      <label className="sr-only" htmlFor="reset-identifier">Username or email</label>
+      <Input id="reset-identifier" autoComplete="username" value={identifier} onChange={(e) => setIdentifier(e.target.value)} required />
+      {message ? <p role="status" className="text-sm">{message}</p> : null}{error ? <ErrorNote>{error}</ErrorNote> : null}
+      <Button className="min-h-12 w-full rounded-[0.9rem]" disabled={busy}>{busy ? 'Sending…' : 'Send reset link'}</Button>
+      <a className="mx-auto flex min-h-11 w-fit items-center text-sm text-primary underline-offset-2 hover:underline" href="/login">Back to sign in</a>
     </form>
-  </Card></div>;
+  </AuthPanel></AuthStage>;
 }

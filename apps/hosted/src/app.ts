@@ -14,7 +14,7 @@ import { SESSION_COOKIE, apiRouter, loadSession } from './web.js';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '../public');
 const PAGES: Record<string, string> = { '/signup': 'signup', '/login': 'login', '/verify': 'verify', '/forgot': 'forgot', '/reset': 'reset', '/join': 'join', '/signup/google': 'google-name' };
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
   res.set({

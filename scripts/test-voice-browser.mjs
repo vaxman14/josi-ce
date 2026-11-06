@@ -92,9 +92,12 @@ try {
   page.on('pageerror', (err) => errors.push(err.message));
   async function login(name) {
     await page.goto(base + '/login');
+    const toggle = page.getByRole('button', { name: 'Use username and password' });
+    await page.locator('#identifier').or(toggle).first().waitFor();
+    if (await toggle.count()) await toggle.click();
     await page.locator('#identifier').fill(name);
     await page.locator('#password').fill('voice-browser-password-123');
-    await page.locator('button[type=submit]').click();
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.waitForURL((url) => url.pathname.startsWith('/app') || url.pathname.startsWith('/admin'));
   }
   await login('owner');
@@ -114,7 +117,7 @@ try {
   console.log('PASS admin install gate, voice settings, real WAV preview and mobile layout');
   await context.clearCookies();
   await login('alice');
-  await page.goto(base + '/app/talk');
+  await page.goto(base + '/app');
   await page.getByRole('button', { name: 'Start voice chat' }).click();
   await page.getByText('Hello from', { exact: true }).waitFor();
   await page.getByText('Hello from voice chat', { exact: false }).waitFor();

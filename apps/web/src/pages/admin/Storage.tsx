@@ -108,7 +108,7 @@ export function AdminStorage() {
             <textarea
               id="storage-extensions" name="extensions" required
               defaultValue={policy.allowed_extensions.join(', ')}
-              className="min-h-28 w-full rounded-md border border-input bg-background p-3 text-base sm:text-sm"
+              className="min-h-28 w-full rounded-md border border-border bg-background p-3 text-base sm:text-sm"
             />
           </CollapsibleCard>
 
@@ -131,7 +131,7 @@ export function AdminStorage() {
           {error ? <ErrorNote>{error}</ErrorNote> : null}
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save storage settings'}</Button>
-            {saved ? <p className="text-sm text-emerald-400">Saved.</p> : null}
+            {saved ? <p className="text-sm text-success">Saved.</p> : null}
           </div>
         </form>
       ) : null}

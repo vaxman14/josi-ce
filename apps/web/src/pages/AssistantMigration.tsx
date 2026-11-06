@@ -7,7 +7,7 @@ const categories = ['personality', 'preferences', 'behaviour', 'memory', 'conver
 const statuses: Classification[] = ['imported unchanged', 'transformed', 'duplicate', 'sensitive/refused', 'unsupported', 'ignored'];
 const canImport = (item: MigrationItem) => ['imported unchanged', 'transformed'].includes(item.classification);
 const editable = (item: MigrationItem) => item.category === 'memory' && !!item.content && (canImport(item) || item.classification === 'duplicate');
-const fieldClass = 'min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm';
+const fieldClass = 'min-h-11 w-full rounded-md border border-border bg-background px-3 py-2 text-base sm:text-sm';
 type Batch = { id: string; created_at: string; rolled_back_at: string | null; receipt: Omit<MigrationReceipt, 'items'> };
 type Archive = { id: string; source_provenance: Provenance; created_at: string; excerpt?: string; content?: string };
 

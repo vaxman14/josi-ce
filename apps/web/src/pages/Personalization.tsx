@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote } from '@/components/ui';
+import { SKINS, currentSkin, saveSkin, type SkinId } from '@/lib/skin';
 
 type Layer = 'soul' | 'user' | 'agents_user' | 'agents_admin';
 
@@ -44,6 +45,42 @@ const TABS: Array<{ key: Layer; label: string; blurb: string }> = [
   { key: 'user', label: 'About me', blurb: 'What it should know about you.' },
   { key: 'agents_user', label: 'Working style', blurb: 'How it should behave.' },
 ];
+
+/** The picker. Each swatch carries its own data-theme, so it shows that skin's
+ * real tokens whichever skin is on. */
+function SkinPicker() {
+  const [skin, setSkin] = useState<SkinId>(currentSkin);
+  const [error, setError] = useState('');
+  function choose(id: SkinId) {
+    setSkin(id);
+    setError('');
+    void saveSkin(id).catch(err => setError(err instanceof Error ? err.message : 'That skin is on here, but could not be saved to your account.'));
+  }
+  return (
+    <Card>
+      <CardTitle>Skin</CardTitle>
+      <div role="radiogroup" aria-label="Skin" className="grid gap-3 sm:grid-cols-2">
+        {SKINS.map(option => (
+          <button key={option.id} type="button" role="radio" aria-checked={skin === option.id} onClick={() => choose(option.id)}
+            className={`flex min-h-11 items-center gap-3 rounded-lg border p-2.5 text-left transition-colors ${skin === option.id ? 'border-primary' : 'border-border hover:border-primary/60'}`}>
+            <span aria-hidden data-theme={option.id} className="flex h-12 w-20 shrink-0 flex-col justify-between overflow-hidden rounded-md border border-border bg-background p-1.5">
+              <span className="block h-1.5 w-10 rounded-full bg-card" />
+              <span className="flex items-center justify-between gap-1">
+                <span className="block h-3 w-7 rounded-sm bg-card" />
+                <span className="btn-gold block h-3 w-5 rounded-full" />
+              </span>
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium">{option.name}</span>
+              {option.id === 'plum-gold' ? <span className="block text-xs text-text-muted">Default</span> : null}
+            </span>
+          </button>
+        ))}
+      </div>
+      {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
+    </Card>
+  );
+}
 
 export function Personalization() {
   const [schema, setSchema] = useState<{ boundary: string } | null>(null);
@@ -220,6 +257,8 @@ export function Personalization() {
 
       <ErrorNote>{error}</ErrorNote>
 
+      <SkinPicker />
+
       {onboarding?.needed && (
         <Card>
           <CardTitle>Set up your assistant</CardTitle>
@@ -364,7 +403,7 @@ export function Personalization() {
         )}
 
         {notice && (
-          <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          <div className="mt-4 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
             {notice}
           </div>
         )}
@@ -402,7 +441,7 @@ export function Personalization() {
               <li key={k}>
                 <code>{k}</code>: {String(v)}
                 {narrowed.includes(k) && (
-                  <span className="ml-2 text-amber-600">
+                  <span className="ml-2 text-warning">
                     — your administrator requires this
                   </span>
                 )}

@@ -28,7 +28,7 @@ export function AdminPcControl(){
   async function save(){if(!spec)return;await change(()=>api.put(endpoint+'/policies',{action,scope:{kind:spec.kind,target,
     ...(['browser','command'].includes(spec.kind)?{application}:{}),...(spec.kind==='browser'?{profile}:{})},mode,
     ...(mode==='task'?{taskId}:{}),...(mode==='temporary'?{expiresAt:expires?new Date(expires).toISOString():''}:{})}));}
-  const inputClass='min-h-11 w-full rounded-md border border-input bg-background px-3';
+  const inputClass='min-h-11 w-full rounded-md border border-border bg-background px-3';
   return <div className="page">
     <h1 className="page-title">PC control permissions</h1>
     {error?<ErrorNote>{error}</ErrorNote>:null}

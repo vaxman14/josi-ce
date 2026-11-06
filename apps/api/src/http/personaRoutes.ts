@@ -560,12 +560,12 @@ export function personaRoutes(ctx: PersonaRoutesCtx): Router {
     '/settings',
     handle(async (req, res) => {
       const [row] = await db.query(
-        `select memory_mode, onboarding_skipped, onboarding_completed_at, show_narration
+        `select memory_mode, onboarding_skipped, onboarding_completed_at, show_narration, skin
          from persona_settings where user_id = $1`,
         [req.user!.id],
       );
       return res.json({
-        settings: row ?? { memory_mode: 'manual', onboarding_skipped: false, show_narration: false },
+        settings: row ?? { memory_mode: 'manual', onboarding_skipped: false, show_narration: false, skin: null },
         modes: {
           manual: 'Josi suggests things to remember and you decide. This is the default.',
           automatic: 'Josi remembers things from conversations without asking. You can still '
@@ -585,15 +585,18 @@ export function personaRoutes(ctx: PersonaRoutesCtx): Router {
         throw new RouteError(400, 'choose manual, automatic or off');
       }
       const narration = typeof req.body?.showNarration === 'boolean' ? req.body.showNarration : null;
+      const skin = ['plum-gold', 'classic-navy'].includes(req.body?.skin) ? req.body.skin : null;
+      if (!skin && req.body?.skin !== undefined) throw new RouteError(400, 'choose plum-gold or classic-navy');
       const [row] = await db.query(
-        `insert into persona_settings (user_id, memory_mode, onboarding_skipped, show_narration)
-         values ($1, coalesce($2, 'manual'), coalesce($3, false), coalesce($4, false))
+        `insert into persona_settings (user_id, memory_mode, onboarding_skipped, show_narration, skin)
+         values ($1, coalesce($2, 'manual'), coalesce($3, false), coalesce($4, false), $5)
          on conflict (user_id) do update set
            memory_mode = coalesce($2, persona_settings.memory_mode),
            onboarding_skipped = coalesce($3, persona_settings.onboarding_skipped),
-           show_narration = coalesce($4, persona_settings.show_narration)
-         returning memory_mode, onboarding_skipped, show_narration`,
-        [req.user!.id, mode, typeof req.body?.skipOnboarding === 'boolean' ? req.body.skipOnboarding : null, narration],
+           show_narration = coalesce($4, persona_settings.show_narration),
+           skin = coalesce($5, persona_settings.skin)
+         returning memory_mode, onboarding_skipped, show_narration, skin`,
+        [req.user!.id, mode, typeof req.body?.skipOnboarding === 'boolean' ? req.body.skipOnboarding : null, narration, skin],
       );
       return res.json({ settings: row });
     }),

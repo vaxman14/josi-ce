@@ -130,7 +130,7 @@ export function AdminCustomApis() {
       </p>
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {notice ? <p role="status" className="text-sm text-emerald-300">{notice}</p> : null}
+      {notice ? <p role="status" className="text-sm text-success">{notice}</p> : null}
       {!connections ? <Working text="Loading…" /> : null}
 
       {connections?.length === 0 && !adding ? (

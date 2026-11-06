@@ -157,7 +157,7 @@ describe('login hardening routes', () => {
   it('registers MFA as a normal authenticated route, independent of Google sign-in', async () => {
     const res = await call('/api/auth/mfa', { jar: cookies.alice });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ enabled: false, recoveryCodesRemaining: 0 });
+    expect(res.body).toEqual({ enabled: false, recoveryCodesRemaining: 0, heyJosiLinked: false });
   });
 
   it('keeps password-reset requests enumeration-safe', async () => {
