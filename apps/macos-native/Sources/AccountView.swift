@@ -82,6 +82,16 @@ struct NativeAccountView: View {
                                 Button("Close Setup") { setup = .null; code = "" }
                             }
                         } else {
+                            if status["heyJosiLinked"].flag {
+                                Text("Use the authenticator on your Hey Josi account, so one app covers your whole platform.")
+                                SecureField("Your password on this server", text: $password).textContentType(.password)
+                                SecureField("Six-digit code from your Hey Josi authenticator", text: $code).textContentType(.oneTimeCode)
+                                Button("Use My Hey Josi Authenticator") {
+                                    let secret = password, value = code; password = ""; code = ""
+                                    perform("/auth/mfa/share", body: ["password": .string(secret), "code": .string(value)])
+                                }.buttonStyle(.borderedProminent).disabled(password.isEmpty || code.count != 6 || !code.utf8.allSatisfy { (48...57).contains($0) })
+                                Divider()
+                            }
                             Text("Require a code from an authenticator when you sign in. The authenticator secret is held by the server’s Vault.")
                             Button("Set Up Authenticator") { perform("/auth/mfa/setup", body: [:]) }
                         }
@@ -143,7 +153,7 @@ struct NativeAccountView: View {
         model.run {
             let result = try await api.request(path, method: "POST", body: body)
             guard model.api === api, model.user["id"] == user else { return }
-            if path == "/auth/mfa/enable" {
+            if path == "/auth/mfa/enable" || path == "/auth/mfa/share" {
                 let codes = result["recoveryCodes"].list
                 guard result["enabled"].flag, codes.count == 10,
                       codes.allSatisfy({ ProtectedWire.matches($0, "^[A-F0-9]{6}-[A-F0-9]{6}$") }) else {

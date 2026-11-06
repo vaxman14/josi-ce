@@ -89,6 +89,35 @@ export async function enableMfa(db: Db, key: MasterKey, userId: string, supplied
   });
 }
 
+/** Checked before a code is spent asking Hey Josi for its secret. */
+export async function assertCanAdoptMfa(db: Db, key: MasterKey, userId: string, password: string): Promise<void> {
+  await transaction(db, async tx => {
+    await requireVault(tx, key);
+    const row = await account(tx, userId);
+    if (row.mfa_enabled_at) throw new MfaError(409, 'MFA is already enabled. Disable it before using another authenticator.');
+    if (!(await verifyPassword(row.password_hash, password))) throw new MfaError(401, 'That password did not match.');
+  });
+}
+
+/** Uses an authenticator set up elsewhere. Hey Josi has already checked a live
+ * code against this secret, so there's no second code to ask for. */
+export async function adoptMfa(db: Db, key: MasterKey, userId: string, secret: string): Promise<string[]> {
+  if (!/^[A-Z2-7]{16,128}$/.test(secret)) throw new MfaError(502, 'Hey Josi sent an authenticator this server could not use.');
+  return transaction(db, async tx => {
+    await requireVault(tx, key);
+    const row = await account(tx, userId);
+    if (row.mfa_enabled_at) throw new MfaError(409, 'MFA is already enabled.');
+    const reference = await storeVaultCredentialPayload(tx, key, { ownerUserId: userId, kind: 'other', service: MFA_VAULT_SERVICE, slot,
+      label: 'Account authenticator — shared with Hey Josi', payload: { secret } });
+    const codes = Array.from({ length: 10 }, () => `${randomBytes(3).toString('hex')}-${randomBytes(3).toString('hex')}`.toUpperCase());
+    await tx.query('delete from mfa_recovery_codes where user_id=$1', [userId]);
+    for (const recovery of codes) await tx.query('insert into mfa_recovery_codes(user_id,code_hash) values($1,$2)', [userId, digest(recovery)]);
+    await tx.query('update users set totp_secret_enc=$2,mfa_enabled_at=now() where id=$1', [userId, reference]);
+    await appendEvent(tx, { actorUserId: userId, actor: 'user', kind: 'auth.mfa_enabled', subjectType: 'user', subjectId: userId, payload: { source: 'hey_josi' } });
+    return codes;
+  });
+}
+
 export async function disableMfa(db: Db, userId: string, password: string): Promise<void> {
   await transaction(db, async tx => {
     const row = await account(tx, userId);

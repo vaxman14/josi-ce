@@ -3,11 +3,11 @@ import { Router, type Request, type Response } from 'express';
 import {
   SESSION_TTL_SECONDS, consumeAuthToken, createSession, issueAuthToken, login, peekAuthToken,
   revokeSession, setPassword, verifyPassword, startGoogleLogin, consumeGoogleLogin, GOOGLE_NATIVE_RETURN_URI,
-  MfaError, beginMfaSetup, enableMfa, disableMfa, completeMfaLogin, verifyMfaFactor,
+  MfaError, adoptMfa, assertCanAdoptMfa, beginMfaSetup, enableMfa, disableMfa, completeMfaLogin, verifyMfaFactor,
 } from '@josi-ce/auth';
 import { appendEvent, loadMasterKey, VaultError, VaultLockedError, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
-import { buildAuthUrl, exchangeCode, fetchIdentity, loadClient } from '@josi-ce/connectors';
+import { buildAuthUrl, exchangeCode, fetchIdentity, hostedCall, hostedLink, loadClient } from '@josi-ce/connectors';
 import { generateURI } from 'otplib';
 import QRCode from 'qrcode';
 import { asyncRoute, param } from './async.js';
@@ -238,7 +238,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
   r.get('/mfa', requireAuth, asyncRoute(async (req, res) => {
     const [row] = await db.query<{ mfa_enabled_at: string | null }>(`select mfa_enabled_at from users where id = $1`, [req.user!.id]);
     const [codes] = await db.query<{ n: number }>(`select count(*)::int n from mfa_recovery_codes where user_id = $1 and used_at is null`, [req.user!.id]);
-    return res.json({ enabled: !!row?.mfa_enabled_at, recoveryCodesRemaining: codes?.n ?? 0 });
+    return res.json({ enabled: !!row?.mfa_enabled_at, recoveryCodesRemaining: codes?.n ?? 0, heyJosiLinked: !!(await hostedLink(db)) });
   }));
 
   r.post('/mfa/setup', requireAuth, mfaRoute(async (req, res) => {
@@ -255,6 +255,19 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     const code = typeof req.body?.code === 'string' ? req.body.code : '';
     const codes = await enableMfa(db, key, req.user!.id, code);
     return res.json({ enabled: true, recoveryCodes: codes });
+  }));
+
+  /** One authenticator across the platform: uses the one on the Hey Josi account. */
+  r.post('/mfa/share', requireAuth, mfaRoute(async (req, res) => {
+    const key = mfaKey();
+    if (!key) throw new MfaError(503, 'This installation cannot store MFA secrets.');
+    await assertCanAdoptMfa(db, key, req.user!.id, typeof req.body?.password === 'string' ? req.body.password : '');
+    if (!await hostedLink(db)) throw new MfaError(409, 'Link this server to your Hey Josi account first.');
+    let reply;
+    try { reply = await hostedCall<{ secret: string }>(db, { op: 'totp.share', code: typeof req.body?.code === 'string' ? req.body.code : '' }, { fetchImpl: ctx.connectorFetch }); }
+    catch { throw new MfaError(502, 'Could not reach Hey Josi. Try again in a moment.'); }
+    if (!reply.ok) throw new MfaError(400, reply.message ?? 'That code did not match.');
+    return res.json({ enabled: true, recoveryCodes: await adoptMfa(db, key, req.user!.id, reply.secret) });
   }));
 
   r.post('/mfa/disable', requireAuth, mfaRoute(async (req, res) => {

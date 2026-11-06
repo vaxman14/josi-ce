@@ -30,7 +30,8 @@ export type HostedCall =
   | { op: 'rotate-key'; publicKey: string }
   | { op: 'unlink' }
   | { op: 'google.authorize'; state: string; codeChallenge: string; scopes: string }
-  | { op: 'google.refresh'; refreshToken: string; scopes: string };
+  | { op: 'google.refresh'; refreshToken: string; scopes: string }
+  | { op: 'totp.share'; code: string };
 
 export type HostedReply<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; error: string; message?: string };
 

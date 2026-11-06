@@ -412,6 +412,16 @@ namespace Josi.Native {
           Post("/auth/mfa/enable", Wires.O("code", value));
         }, true), Ui.Pill("Close Setup", () => { setup = Wire.Null; code.Clear(); Render(); })));
       } else {
+        if (status["heyJosiLinked"].Flag) {
+          mfa.Add(Ui.T("Use the authenticator on your Hey Josi account, so one app covers your whole platform."));
+          mfa.Add(Ui.Field("Your password on this server", password));
+          mfa.Add(Ui.Field("Six-digit code from your Hey Josi authenticator", code));
+          mfa.Add(Ui.Pill("Use My Hey Josi Authenticator", () => {
+            var secret = password.Password; var value = code.Password; password.Clear(); code.Clear();
+            if (secret.Length == 0 || !Regex.IsMatch(value, "^[0-9]{6}$")) { model.Error = "Enter your password and the six-digit code from your authenticator."; model.Notify(); return; }
+            Post("/auth/mfa/share", Wires.O("password", secret, "code", value));
+          }, true));
+        }
         mfa.Add(Ui.T("Require a code from an authenticator when you sign in. The authenticator secret is held by the server's Vault."));
         mfa.Add(Ui.Pill("Set Up Authenticator", () => Post("/auth/mfa/setup", Wires.O())));
       }
@@ -450,7 +460,7 @@ namespace Josi.Native {
       Perform(async (api, stamp) => {
         var result = await api.Request(path, "POST", body);
         if (!Current(stamp)) return;
-        if (path == "/auth/mfa/enable") {
+        if (path == "/auth/mfa/enable" || path == "/auth/mfa/share") {
           var codes = result["recoveryCodes"].List;
           if (!result["enabled"].Flag || codes.Count != 10 || !codes.All(c => Regex.IsMatch(c.Text, "^[A-F0-9]{6}-[A-F0-9]{6}$"))) {
             setup = Wire.Null;

@@ -113,8 +113,10 @@ function MfaCard() {
   const [setup, setSetup] = useState<{ secret: string; qrDataUrl: string } | null>(null);
   const [code, setCode] = useState(''); const [recovery, setRecovery] = useState<string[]>([]); const [error, setError] = useState('');
   const [disablePassword, setDisablePassword] = useState('');
-  useEffect(() => { void api.get<{ enabled: boolean; recoveryCodesRemaining: number }>('/auth/mfa')
-    .then((r) => { setEnabled(r.enabled); setRemaining(r.recoveryCodesRemaining); }); }, []);
+  const [linked, setLinked] = useState(false); const [sharePassword, setSharePassword] = useState(''); const [shareCode, setShareCode] = useState('');
+  useEffect(() => { void api.get<{ enabled: boolean; recoveryCodesRemaining: number; heyJosiLinked?: boolean }>('/auth/mfa')
+    .then((r) => { setEnabled(r.enabled); setRemaining(r.recoveryCodesRemaining); setLinked(!!r.heyJosiLinked); }); }, []);
+  async function share() { setError(''); try { const r = await api.post<{ enabled: boolean; recoveryCodes: string[] }>('/auth/mfa/share', { password: sharePassword, code: shareCode }); setEnabled(true); setRecovery(r.recoveryCodes); setRemaining(r.recoveryCodes.length); setSharePassword(''); setShareCode(''); } catch (e) { setShareCode(''); setError(e instanceof Error ? e.message : 'Could not use that authenticator'); } }
   async function begin() { setError(''); try { setSetup(await api.post('/auth/mfa/setup')); } catch (e) { setError(e instanceof Error ? e.message : 'Could not start MFA'); } }
   async function enable() { setError(''); try { const r = await api.post<{ enabled: boolean; recoveryCodes: string[] }>('/auth/mfa/enable', { code }); setEnabled(true); setRecovery(r.recoveryCodes); setRemaining(r.recoveryCodes.length); setSetup(null); } catch (e) { setError(e instanceof Error ? e.message : 'Could not enable MFA'); } }
   async function disable() { setError(''); try { await api.post('/auth/mfa/disable', { password: disablePassword }); setEnabled(false); setRecovery([]); setRemaining(0); setDisablePassword(''); } catch (e) { setError(e instanceof Error ? e.message : 'Could not disable MFA'); } }
@@ -126,6 +128,11 @@ function MfaCard() {
     {enabled ? <><p className="mb-3 text-sm text-emerald-400">Enabled · {remaining} recovery codes remain</p>
       <div className="flex gap-2"><Input type="password" autoComplete="current-password" placeholder="Confirm password to disable" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} />
       <Button variant="danger" disabled={!disablePassword} onClick={() => void disable()}>Disable MFA</Button></div></> : null}
+    {!enabled && !setup && linked ? <div className="mb-4 space-y-2 rounded border border-border p-3"><p className="text-sm font-semibold">Use my Hey Josi authenticator</p>
+      <p className="text-sm text-muted-foreground">One authenticator for your whole platform. Turn it on under Security on your Hey Josi account first.</p>
+      <Input type="password" autoComplete="current-password" placeholder="Your password on this server" value={sharePassword} onChange={(e) => setSharePassword(e.target.value)} />
+      <Input inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code from your app" value={shareCode} onChange={(e) => setShareCode(e.target.value)} />
+      <Button disabled={!sharePassword || !/^\d{6}$/.test(shareCode)} onClick={() => void share()}>Use it here</Button></div> : null}
     {!enabled && !setup ? <Button onClick={() => void begin()}>Set up MFA</Button> : null}
     {setup ? <div className="space-y-3"><img src={setup.qrDataUrl} alt="Authenticator QR code" className="h-48 w-48 rounded bg-white p-2" />
       <p className="break-all text-xs">Manual key: {setup.secret}</p><Input inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} />

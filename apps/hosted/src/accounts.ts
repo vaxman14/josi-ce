@@ -242,6 +242,22 @@ async function verifyTotp(ctx: Ctx, accountId: string, sealed: string, code: str
 }
 
 /** Trades a password-checked pending session for a real one. */
+/** One authenticator for the whole platform: a linked server asks for this
+ * account's secret to use at its own sign-in. A live code proves the person asking
+ * holds the authenticator, so a server alone can't take it. A second factor is
+ * all this hands over: it's still no way in without that server's own password. */
+export async function shareTotp(ctx: Ctx, accountId: string, supplied: unknown): Promise<Record<string, unknown>> {
+  const code = String(supplied ?? '').replace(/\s/g, '');
+  const refused = { ok: false, error: 'bad_code', message: 'That code didn\'t match your Hey Josi authenticator.' };
+  if (!/^\d{6}$/.test(code)) return refused;
+  const [row] = await ctx.db.query<{ secret_sealed: string }>('select secret_sealed from heyjosi.totp_secrets where account_id = $1 and enabled_at is not null', [accountId]);
+  if (!row) return { ok: false, error: 'no_totp', message: 'Turn on the authenticator under Security on your Hey Josi account first.' };
+  try { if (!await checkFactor(ctx, accountId, code)) return refused; }
+  catch (error) { if (error instanceof HttpError) return { ok: false, error: 'limited', message: error.message }; throw error; }
+  await audit(ctx.db, accountId, 'totp.shared');
+  return { ok: true, secret: unseal(ctx.config.accountDataKey, row.secret_sealed, `totp:${accountId}`) };
+}
+
 export async function completeLogin(ctx: Ctx, pendingToken: string | undefined, code: unknown): Promise<string> {
   const pending = await sessionFrom(ctx, pendingToken, true);
   if (!pending) throw new HttpError(401, 'That login has timed out. Start again.');

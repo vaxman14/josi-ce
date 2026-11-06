@@ -7,6 +7,7 @@ import { usageFor } from './ai/allowance.js';
 import type { Ctx } from './context.js';
 import { randomToken, sha256 } from './crypto.js';
 import { audit, inTx } from './db.js';
+import { shareTotp } from './accounts.js';
 import { googleAuthorize, googleRefresh } from './google.js';
 import { signGrant } from './grants.js';
 import { aiPool, planOf } from './plans.js';
@@ -60,6 +61,7 @@ async function dispatch(ctx: Ctx, call: HostedCall & RpcEnvelope, caller: string
     case 'unlink': return unlink(ctx, server);
     case 'google.authorize': return googleAuthorize(ctx, server, call);
     case 'google.refresh': return googleRefresh(ctx, server, call);
+    case 'totp.share': return shareTotp(ctx, server.account_id, call.code);
     default: return { ok: false, error: 'unknown_op' };
   }
 }
