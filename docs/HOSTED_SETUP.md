@@ -23,7 +23,11 @@ The pooled connection on port 6543 is the one to try first. It's untested.
 Make four random 32-byte values, base64url: `ACCOUNT_DATA_KEY`,
 `STATE_SIGNING_KEY`, `HOSTED_NOISE_PRIVATE_KEY`, `RELAY_GRANT_PRIVATE_KEY`. Keep
 them out of the repo. Losing `ACCOUNT_DATA_KEY` loses every 2FA secret. Changing
-`HOSTED_NOISE_PRIVATE_KEY` unlinks every server.
+`HOSTED_NOISE_PRIVATE_KEY` unlinks every server, and its public key is built into
+the server as `HOSTED_PUBLIC_KEY` in `apps/api/src/relay/relayService.ts`, so new
+links fail until a release carries the new key. A service you run yourself sets
+`JOSI_HOSTED_PUBLIC_KEY` on its servers, or sets only `JOSI_HOSTED_URL` to have the
+key fetched when linking.
 
 ## 3. Cloudflare
 

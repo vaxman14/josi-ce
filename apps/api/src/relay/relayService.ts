@@ -18,6 +18,9 @@ import { DEFAULT_LAN_PORT, LAN_PATH, RelayLink, httpBridge, lanListener, type Ke
 
 export const RELAY_SECRET = 'relay-secret';
 export const AI_TOKEN = 'hey-josi-ai';
+export const HOSTED_URL = 'https://accounts.heyjosi.com';
+/** The service's key, built in so a link never has to trust what the network says it is. */
+export const HOSTED_PUBLIC_KEY = '7zFMIQd5BBMjZwx5SZCwUSh0xCbarEVFcUGOqTzlhgg';
 const ROTATION_OVERLAP_DAYS = 30;
 const DEVICE_OVERLAP_MINUTES = 10;
 const SYNC_MS = 6 * 3600_000;
@@ -43,7 +46,8 @@ export interface RelayServiceOptions {
   /** Where the local API answers, for tunnelled requests. */
   apiPort: number;
   hostedUrl?: string;
-  /** Pins the hosted key. Unset, it is fetched over HTTPS when linking. */
+  /** Pins the hosted key. Unset, HOSTED_URL uses the built-in key and any other
+   * address has its key fetched over HTTPS when linking. */
   hostedPublicKey?: string;
   /** 0 takes any free port. Null turns the direct path off. */
   lanPort?: number | null;
@@ -340,6 +344,7 @@ export class RelayService {
 
   private async hostedPublic(url: string): Promise<string> {
     if (this.opts.hostedPublicKey) return this.opts.hostedPublicKey;
+    if (url === HOSTED_URL) return HOSTED_PUBLIC_KEY;
     const res = await (this.opts.fetchImpl ?? fetch)(`${url.replace(/\/$/, '')}/v1/noise-key`, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new RelayError(502, 'heyjosi.com could not be reached.');
     return (await res.json() as { publicKey: string }).publicKey;
@@ -348,7 +353,7 @@ export class RelayService {
   /** Links this server to an account with a code from the account page. */
   async linkAccount(args: { code: string; actorUserId: string }): Promise<LinkRow> {
     if (await this.row()) throw new RelayError(409, 'This server is already linked. Unlink it first.');
-    const url = (this.opts.hostedUrl ?? 'https://accounts.heyjosi.com').replace(/\/$/, '');
+    const url = (this.opts.hostedUrl ?? HOSTED_URL).replace(/\/$/, '');
     const hostedPublic = await this.hostedPublic(url);
     const keys = await this.keys();
     const reply = await rpcCall<LinkReply>({ url, key: keys.current, hostedPublic: fromB64url(hostedPublic),
@@ -356,7 +361,7 @@ export class RelayService {
     if (!reply.ok) throw new RelayError(400, reply.message ?? 'That code was wrong, used, or expired. Make a new one on your account page.');
     await this.db.query(
       `insert into hey_josi_link (hosted_url, hosted_public, server_id, site, name, relay_url, plan) values ($1, $2, $3, $4, $5, $6, $7)`,
-      [url, reply.hostedPublic, reply.serverId, reply.site, reply.name, reply.relayUrl, reply.plan]);
+      [url, hostedPublic, reply.serverId, reply.site, reply.name, reply.relayUrl, reply.plan]);
     await appendEvent(this.db, { actorUserId: args.actorUserId, actor: 'super_admin', kind: 'relay.account_linked' });
     await this.sync();
     return (await this.row())!;
