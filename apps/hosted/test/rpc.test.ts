@@ -307,3 +307,20 @@ describe('a key in its overlap', () => {
     expect(await two.server.call({ op: 'rotate-key', publicKey: old })).toMatchObject({ error: 'key_in_use' });
   });
 });
+
+describe('the refresh key', () => {
+  it('is good for google.refresh and nothing else', async () => {
+    const { FakeServerKey } = await import('./helpers.js');
+    const { generateKeyPair, staticKeyFrom, toB64url } = await import('@josi-ce/tunnel');
+    const { server } = await h.aiCustomer('connect');
+    const pair = generateKeyPair();
+    await server.call({ op: 'sync', devices: [], version: 'test', lan: false, refreshKey: toB64url(pair.publicKey) });
+    h.google = () => new Response(JSON.stringify({ access_token: 'fresh', expires_in: 3600 }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const worker = new FakeServerKey(h);
+    worker.key = staticKeyFrom(pair.privateKey);
+    expect(await worker.call({ op: 'google.refresh', refreshToken: 'r', scopes: 'openid' })).toMatchObject({ ok: true, accessToken: 'fresh' });
+    for (const call of [{ op: 'sync', devices: [], version: 'x', lan: false }, { op: 'rotate-key', publicKey: toB64url(generateKeyPair().publicKey) }, { op: 'unlink' }, { op: 'google.authorize', state: 's', codeChallenge: 'c'.repeat(43), scopes: 'openid' }] as const) {
+      expect(await worker.call(call as never)).toMatchObject({ ok: false, error: 'unknown_server' });
+    }
+  });
+});

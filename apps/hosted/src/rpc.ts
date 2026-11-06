@@ -49,7 +49,10 @@ async function serverForKey(ctx: Ctx, key: string, db: Db = ctx.db): Promise<Ser
 
 async function dispatch(ctx: Ctx, call: HostedCall & RpcEnvelope, caller: string): Promise<Record<string, unknown>> {
   if (call.op === 'link') return link(ctx, call, caller);
-  const server = await serverForKey(ctx, caller);
+  // The refresh key belongs to a server's background worker. It's good for this
+  // one call, so nothing it can reach is worth more than the tokens it refreshes.
+  const [byRefreshKey] = call.op === 'google.refresh' ? await ctx.db.query<ServerRow>('select * from heyjosi.servers where refresh_public = $1', [caller]) : [];
+  const server = byRefreshKey ?? await serverForKey(ctx, caller);
   if (!server) return { ok: false, error: 'unknown_server', message: 'This server isn\'t linked to an account.' };
   switch (call.op) {
     case 'sync': return sync(ctx, server, call);
@@ -117,6 +120,7 @@ async function sync(ctx: Ctx, server: ServerRow, call: Extract<HostedCall, { op:
   const devices = Array.isArray(call.devices) ? call.devices.slice(0, MAX_DEVICES) : [];
   await inTx(ctx.db, async tx => {
     await recordDevices(ctx, tx, server.id, devices);
+    if (typeof call.refreshKey === 'string' && /^[A-Za-z0-9_-]{43}$/.test(call.refreshKey)) await tx.query('update heyjosi.servers set refresh_public = $2 where id = $1', [server.id, call.refreshKey]);
     await tx.query('update heyjosi.servers set version = $2, lan = $3, last_sync_at = $4::timestamptz where id = $1', [server.id, text(call.version, 40), !!call.lan, ctx.at()]);
   });
   const { plan } = await planOf(ctx, server.account_id);

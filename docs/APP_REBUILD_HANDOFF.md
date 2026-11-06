@@ -1,14 +1,15 @@
-# Handoff: rebuilding the apps with the relay
+# Handoff: rebuilding the apps with the relay and the nine skins
 
-For the session rebuilding the Mac, Windows and Linux installers. It covers how
-the Hey Josi redesign works, what's in the code, and what a rebuild has to do and
-check.
+For the sessions rebuilding the Mac, Windows and Linux installers and building the
+new iPhone app. It covers how the Hey Josi redesign works, what's in the code, the
+iPhone app and its nine skins, and what a rebuild has to do and check.
 
 ## Where the code is
 
 - Worktree: `JosiDrive/Projects/worktrees/josi-ce-hosted-relay`
 - Branch: `hosted/relay-accounts-20261105`, cut from `windows/native-client-20261020` at `2e2c097`
 - Committed on that branch, not pushed. To build from another folder, use the branch from this repo's local refs.
+- The iPhone app is in a different repo and folder: see [The iPhone app](#the-iphone-app-and-its-nine-skins).
 - `macos/native-distribution-20261009` has no commits this branch lacks. Its worktree has 158 uncommitted files from about Oct 21, which nobody has reviewed.
 
 ## How it works
@@ -39,7 +40,7 @@ source of truth, and a third client should start there.
 
 ## What changed for each app
 
-**Server (all platforms).** New package `packages/tunnel`, new dependencies `ws` and `@noble/{curves,ciphers,hashes}`, new migration `0111_hey_josi.sql`, new folder `apps/api/src/relay`, a new `hey_josi` model provider. It also has real fixes unrelated to the relay. See "Existing bugs fixed" below.
+**Server (all platforms).** New package `packages/tunnel`, new dependencies `ws` and `@noble/{curves,ciphers,hashes}`, new migrations `0111_hey_josi.sql`, `0112` and `0113`, new folder `apps/api/src/relay`, a new `hey_josi` model provider. It also has real fixes unrelated to the relay. See "Existing bugs fixed" below.
 
 **Mac app.** `apps/macos-native/Sources/Tunnel*.swift` and `PairingView.swift`, with edits to `JosiAPI`, `JosiModel`, `JosiApp` and `ServerHealthView`. `NSLocalNetworkUsageDescription` is added in `scripts/macos/build-native-unified.py`.
 
@@ -47,7 +48,64 @@ source of truth, and a third client should start there.
 
 **Web app.** New pages: Devices (`/app/devices`) and Hey Josi (`/admin/hey-josi`), plus an allowance card on Usage. Built into the server as usual.
 
-**Not touched.** `apps/desktop` (the Electron client) has no tunnel. The phone apps aren't done: see below.
+**iPhone app.** New and in progress, in `josi-app`: see the next section.
+
+**Not touched.** `apps/desktop` (the Electron client) has no tunnel. Neither does the Android app.
+
+## The iPhone app and its nine skins
+
+This is a new native SwiftUI app, built from the design of the Android rebuild. People pick one of nine skins. It connects through the same tunnel as the Mac app, so there's one connection design for every client.
+
+**Where it is**
+
+| What | Where | State |
+|---|---|---|
+| New iPhone app | `~/JosiBuild/android-preview/josi-app/ios-native`, local branch `feat/ios-native` off `6bf44f2` | In progress. **Not committed, and only on this Mac** |
+| Skin preview, the design reference | `~/JosiBuild/android-preview/JosiPreview/JosiPreview.swift` | Finished. Not in any repo |
+| Android rebuild it's based on | `vaxman14/josi-app`, branch `feat/android-compose` | Commits `c689e0e`, `6bf44f2` |
+| Palette mockups | Artifact "Tab Bar Palettes" | https://claude.ai/artifact/XD7zdcAkSqJUnPkzb3PFwG |
+
+The session [iOS Recording](claude://claude.ai/epitaxy/local_16acfc4c-89cf-4694-898b-235d6bc32fcc) is building this app. Check with it before editing `ios-native`, so two sessions don't write the same files.
+
+**The nine skins**
+
+Every skin has a dark or light scheme of its own, except Josi Warm, which follows the system. The first five are the base designs. The four frosted skins take the Josi Warm design, a frosted bar with labels, in another skin's palette.
+
+| Id | Name | Scheme | Tab bar |
+|---|---|---|---|
+| `warm` | Josi Warm | System | Frosted |
+| `mocha` | Josi CE Mocha Cloud | Light | Notched |
+| `midnight` | Midnight Apricot | Dark | Notched |
+| `plum` | Plum & Gold | Dark | Notched |
+| `arctic` | Arctic Blue | Light | Notched |
+| `mocha-frosted` | Mocha Cloud Frosted | Light | Frosted |
+| `midnight-frosted` | Midnight Apricot Frosted | Dark | Frosted |
+| `plum-frosted` | Plum & Gold Frosted | Dark | Frosted |
+| `arctic-frosted` | Arctic Blue Frosted | Light | Frosted |
+
+- **Code:** `ios-native/JosiCE/Skins/Theme.swift` holds `Skin` and `Skin.all`, and `Skins/Bars.swift` the bars. Colours come from the skin, never hard-coded in a screen.
+- **Saved as:** the `skin` key in `UserDefaults`, also shown in iOS Settings through `Resources/Settings.bundle`. An unknown value falls back to Josi Warm.
+- **To add a skin:** add it to `Skin.all` and to both the titles and values in `Settings.bundle/Root.plist`, or the two pickers will disagree.
+
+**How it connects**
+
+- `ios-native/JosiCE/Tunnel/*.swift` are generated from the Mac app's files. **Fix tunnel bugs in `apps/macos-native/Sources`, then run the script**, which only changes the client's name:
+
+```bash
+~/JosiBuild/android-preview/josi-app/ios-native/sync-tunnel.sh "<path to a josi-ce checkout>"
+```
+
+- `PairingView.swift` isn't copied, so the iPhone has its own pairing screen.
+- The app uses the native API: `x-josi-client: native` and a bearer session. A request with a bearer token passes through the tunnel unchanged, so the server's cookie jar isn't involved.
+- The device key belongs in the Keychain, as on the Mac.
+
+**Rules for this app**
+
+- It needs its own bundle id. It must not touch the App Store app, `com.socalreceptionist.josice`.
+- Use iOS 26.5 simulators. The iOS 27 one crashed PosterBoard repeatedly.
+- The first version leaves out attachments, voice, push and reminders.
+
+**Not checked yet:** whether the app builds, its screens, a real pairing, and whether a chosen skin survives a force-quit. A skin in the preview may have reverted after one, and nobody confirmed why.
 
 ## Rebuilding
 
@@ -73,7 +131,7 @@ Then run the usual release scripts. Expect these on the way:
 Nothing below has been tested. The top two can break features silently.
 
 1. **Where the server's key ends up.** `openKeyStore` tries the OS store and falls back to a 0600 file in the data folder. The Hey Josi page shows which. If the server runs as a service account, the Keychain or Credential Manager may not work for it, or may behave differently.
-2. **Whether the API and worker share that store.** The worker refreshes Google tokens with the same key. Windows services have their own identities, so if they run as different accounts, the OS store won't be shared and refreshes in the worker will fail. Setting `JOSI_KEY_STORE=file` in the runtime config for both is the simple fix.
+2. **The `keys` folder.** The installers lay out the data folder from fixed lists, so the web service probably can't create `<data>/keys` until it's added to them. The worker doesn't need it: it refreshes Google tokens with its own limited key, sealed in the database.
 3. **The LAN listener.** Port 18777, bound to all interfaces once linked. The Windows installer adds no firewall rule, so other devices won't reach it and will silently use the relay. macOS may show a firewall or Local Network prompt.
 4. **`koffi` and Credential Manager.** The Windows key store code has never run.
 5. **A signed Mac app's Keychain access**, and clicking through the paired-server row and Replace Device Key, which have never been rendered.
@@ -111,7 +169,9 @@ JOSI_BROWSER_E2E=1 npx vitest run packages/tunnel/test/browser
 
 ## Known limits
 
-- **Phones.** No Josi CE phone app source is in this repo. `vaxman14/josi-app` is an Expo app that talks to OpenClaw, and its README doesn't describe Josi CE. Once the real source is found, `packages/tunnel` is pure TypeScript with no Node needs in `client.ts`, and the Swift `Tunnel*.swift` files should port to iOS.
+- **Android has no tunnel.** The Compose rebuild on `feat/android-compose` still uses plain HTTPS. It needs a Kotlin client written from `docs/RELAY_PROTOCOL.md`, or the same approach as the other clients.
+- **The live App Store and Play apps** don't use the tunnel. Only the new iPhone app will.
+- **Skins are iPhone only.** The Mac, Windows and web apps keep their current look.
 - **Pairing needs a relay.** A server with no relay can't pair devices. Its own address still works on the LAN.
 - **Browsers skip the LAN path.** An https page can't open `ws://` to a LAN address, so browsers always use the relay at the Hey Josi address.
 - **No flow control in the mux.** A very large download on a fast path can buffer in memory if the app reads slowly.
@@ -125,7 +185,7 @@ JOSI_BROWSER_E2E=1 npx vitest run packages/tunnel/test/browser
 These change behaviour outside the relay, so they deserve a look during the rebuild:
 
 - A missing or read-only `/data` stopped the API from booting (`multer`). See `apps/api/src/http/archiveUpload.ts`.
-- `settingsChangeRoutes` and `improvementEngine` stored JSON as a string in jsonb on real Postgres. **No repair migration was added**, so installs that already saved those settings may hold bad rows.
+- `settingsChangeRoutes` and `improvementEngine` stored JSON as a string in jsonb on real Postgres. Migration `0112` repairs the rows that left behind. It ran for real on Postgres 17. Postgres 16 was only checked by reading the source.
 - `localSync` failed on macOS for pinned folders.
 - The agent's "promise" re-prompt overrode the honest "I have not searched" reply. A model that says "let me search" right after that correction now keeps that reply.
 - `resolveDataPath` honours `JOSI_TEST_DATA_DIR` only when `NODE_ENV=test`. That's a test hook in product code.

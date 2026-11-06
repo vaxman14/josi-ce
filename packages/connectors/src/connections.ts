@@ -441,7 +441,7 @@ export async function accessTokenFor(
       // A refresh token only works with the application that issued it, so the
       // connection decides, whichever client happens to be configured today.
       refreshed = current.meta?.oauthClient === HEY_JOSI_CLIENT || isHeyJosiClient(args.client)
-        ? await brokeredRefresh(tx, { refreshToken: tokens.refreshToken, scopes: current.granted_scopes }, bounded)
+        ? await brokeredRefresh(tx, key, { refreshToken: tokens.refreshToken, scopes: current.granted_scopes }, bounded)
         : await refreshTokens(args.client, { refreshToken: tokens.refreshToken, scopes: current.granted_scopes }, bounded);
     } catch (err) {
       if (!(err instanceof ConnectorError)) throw err;

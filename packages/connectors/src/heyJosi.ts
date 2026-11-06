@@ -5,7 +5,7 @@
 // packages/tunnel), so the refresh token is readable only by the hosted process,
 // in memory, for the length of one request. It keeps none of them. The tokens
 // themselves live here, in this server's Vault, like any other connection's.
-import { resolveDataPath, type Db } from '@josi-ce/core';
+import { openSealed, resolveDataPath, type Db, type MasterKey } from '@josi-ce/core';
 import { fromB64url, rpcCall, staticKeyFrom, type HostedCall, type HostedReply } from '@josi-ce/tunnel';
 import { openKeyStore, type KeyStore } from '@josi-ce/tunnel/node';
 import { join } from 'node:path';
@@ -58,8 +58,21 @@ export function heyJosiClient(): OAuthClient {
 }
 export const isHeyJosiClient = (client: OAuthClient): boolean => client.clientId === HEY_JOSI_CLIENT;
 
-export async function brokeredRefresh(db: Db, args: { refreshToken: string; scopes: string }, opts: FetchOptions = {}): Promise<TokenSet> {
-  const reply = await hostedCall<{ accessToken: string; expiresIn: number | null; scope: string | null }>(db, { op: 'google.refresh', refreshToken: args.refreshToken, scopes: args.scopes }, opts);
+/** Runs in the worker too, which is a different account from the web service and
+ * can't reach the OS key store. So this uses the refresh key, sealed with the
+ * master key both hold, which hosted accepts for this one call and no other. */
+export async function brokeredRefresh(db: Db, master: MasterKey, args: { refreshToken: string; scopes: string }, opts: FetchOptions = {}): Promise<TokenSet> {
+  const [row] = await db.query<{ hosted_url: string | null; hosted_public: string | null; refresh_key_enc: string | null }>(
+    'select hosted_url, hosted_public, refresh_key_enc from hey_josi_link where id = true');
+  if (!row?.hosted_url || !row.hosted_public || !row.refresh_key_enc) throw new ConnectorError('this server is not linked to a Hey Josi account', { category: 'provider_error' });
+  const { privateKey } = openSealed<{ privateKey: string }>(master, row.refresh_key_enc);
+  let reply: HostedReply<{ accessToken: string; expiresIn: number | null; scope: string | null }>;
+  try {
+    reply = await rpcCall({ url: row.hosted_url, key: staticKeyFrom(fromB64url(privateKey)), hostedPublic: fromB64url(row.hosted_public),
+      call: { op: 'google.refresh', refreshToken: args.refreshToken, scopes: args.scopes }, fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs });
+  } catch {
+    throw new ConnectorError('could not reach heyjosi.com', { category: 'network' });
+  }
   if (!reply.ok) {
     const revoked = reply.error === 'invalid_grant';
     throw new ConnectorError(revoked ? 'the provider refused the request (revoked)' : 'heyjosi.com refused the refresh', { category: revoked ? 'revoked' : 'provider_error', revoked });

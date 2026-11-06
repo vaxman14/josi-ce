@@ -310,6 +310,16 @@ describe('key rotation', () => {
     client.close();
   });
 
+  it('tells hosted the refresh key, and replaces it when the server key changes', async () => {
+    await relay.sync();
+    const first = (hostedCalls.filter(c => c.op === 'sync').at(-1) as { refreshKey: string }).refreshKey;
+    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    await relay.sync();
+    expect((hostedCalls.filter(c => c.op === 'sync').at(-1) as { refreshKey: string }).refreshKey).toBe(first);
+    await call('/api/admin/hey-josi/keys/rotate', { method: 'POST', jar: jars.admin, body: { password: PW.admin } });
+    expect((hostedCalls.filter(c => c.op === 'sync').at(-1) as { refreshKey: string }).refreshKey).not.toBe(first);
+  });
+
   it('destroys the old key at once when asked to, and drops every session', async () => {
     const device = newDevice(), oldPublic = await serverPublic();
     const client = await pairWith(device.key, (await newCode()).raw);
@@ -363,6 +373,21 @@ describe('Google through the shared client', () => {
     await db.query(`update connections set token_expires_at = now() - interval '1 hour' where id = $1`, [connection.id]);
     expect(await accessTokenFor(db, master, { connection, client: heyJosiClient() }, { fetchImpl })).toBe('GOOGLE-ACCESS-2');
     expect(hostedCalls.find(c => c.op === 'google.refresh')).toMatchObject({ refreshToken: REFRESH });
+  });
+
+  it('refreshes from the worker, which can\'t reach the server\'s key store', async () => {
+    const [connection] = await connectionsFor(db, { ownerUserId: ids.alice, provider: 'google' });
+    await db.query(`update connections set token_expires_at = now() - interval '1 hour' where id = $1`, [connection.id]);
+    hostedCalls.length = 0;
+    const blocked = { kind: 'file' as const, get: async () => { throw new Error('EACCES'); }, set: async () => { throw new Error('EACCES'); }, delete: async () => undefined };
+    useKeyStore(blocked);
+    try {
+      expect(await accessTokenFor(db, master, { connection, client: heyJosiClient() }, { fetchImpl })).toBe('GOOGLE-ACCESS-2');
+    } finally { useKeyStore(fileKeyStore(keyDir)); }
+    const call = hostedCalls.find(c => c.op === 'google.refresh')!;
+    expect(call.caller).not.toBe(await relay.publicKey());
+    const [link] = await db.query<{ refresh_key_enc: string }>('select refresh_key_enc from hey_josi_link');
+    expect(link.refresh_key_enc).not.toContain(call.caller);
   });
 
   it('marks a connection for reconnecting when Google has withdrawn the grant', async () => {

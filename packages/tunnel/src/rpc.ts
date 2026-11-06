@@ -26,7 +26,7 @@ export interface HostedUsage {
 
 export type HostedCall =
   | { op: 'link'; code: string; version: string }
-  | { op: 'sync'; devices: HostedDevice[]; version: string; lan: boolean }
+  | { op: 'sync'; devices: HostedDevice[]; version: string; lan: boolean; refreshKey?: string }
   | { op: 'rotate-key'; publicKey: string }
   | { op: 'unlink' }
   | { op: 'google.authorize'; state: string; codeChallenge: string; scopes: string }

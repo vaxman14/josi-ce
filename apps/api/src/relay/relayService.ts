@@ -7,7 +7,7 @@
 // person would reach on the server's own address.
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { appendEvent, json, loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
+import { appendEvent, json, loadMasterKey, openSealed, seal, type Db, type LoadOptions } from '@josi-ce/core';
 import { NOISE_KEYS, createStateStore, fetchIdentity, hostedCall, serverKeyStore, upsertConnection, HEY_JOSI_CLIENT, type ResolvedHandshake, type StoredNoiseKeys } from '@josi-ce/connectors';
 import {
   PAIRING_TTL_SECONDS, TunnelHost, codeHash, displayCode, equal, fromB64url, generateKeyPair, inviteId, newPairingCode, pairingLink,
@@ -153,6 +153,9 @@ export class RelayService {
     await this.keys();
     this.host.announceRotation(next.publicKey, until);
     if (args.immediate) this.host.disconnectAll();
+    // A new key means a new refresh key too. The next sync registers it.
+    await this.db.query('update hey_josi_link set refresh_key_enc = null');
+    await this.sync().catch(() => undefined);
     await appendEvent(this.db, { actorUserId: args.actorUserId, actor: 'super_admin', kind: 'relay.server_key_rotated', payload: { immediate: args.immediate } });
     return { publicKey, previousUntil: until };
   }
@@ -409,7 +412,7 @@ export class RelayService {
     const devices: HostedDevice[] = rows.map(d => ({ id: d.id, name: d.name, platform: d.platform, pairedAt: d.paired_at, lastSeenAt: d.last_seen_at, revokedAt: d.revoked_at }));
     let reply;
     try {
-      reply = await hostedCall<SyncReply>(this.db, { op: 'sync', devices, version: process.env.JOSI_VERSION ?? '0.1.0', lan: row.lan_enabled }, { fetchImpl: this.opts.fetchImpl });
+      reply = await hostedCall<SyncReply>(this.db, { op: 'sync', devices, version: process.env.JOSI_VERSION ?? '0.1.0', lan: row.lan_enabled, refreshKey: await this.refreshKey() }, { fetchImpl: this.opts.fetchImpl });
     } catch (error) {
       await this.db.query('update hey_josi_link set last_sync_error = $1', [(error as Error).message]);
       throw error;
@@ -422,6 +425,15 @@ export class RelayService {
       [reply.plan, reply.name, reply.aiBaseUrl, json(reply.usage), enabled]);
     for (const device of reply.revoke) await this.revoke(device, null, { announce: false });
     await this.applyState();
+  }
+
+  /** See brokeredRefresh. Only its public half ever leaves this server. */
+  private async refreshKey(): Promise<string> {
+    const [row] = await this.db.query<{ refresh_key_enc: string | null }>('select refresh_key_enc from hey_josi_link where id = true');
+    if (row?.refresh_key_enc) return toB64url(staticKeyFrom(fromB64url(openSealed<{ privateKey: string }>(this.master(), row.refresh_key_enc).privateKey)).publicKey);
+    const next = generateKeyPair();
+    await this.db.query('update hey_josi_link set refresh_key_enc = $1', [seal(this.master(), { privateKey: toB64url(next.privateKey) })]);
+    return toB64url(next.publicKey);
   }
 
   /** Registers with the relay the first time, renews after that. */

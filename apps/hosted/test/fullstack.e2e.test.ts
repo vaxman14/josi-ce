@@ -23,7 +23,7 @@ import { createApp } from '../../api/src/app.js';
 import { RelayService } from '../../api/src/relay/relayService.js';
 import { Harness } from './helpers.js';
 
-const PORT = 8799, RELAY = `http://127.0.0.1:${PORT}`, PASSWORD = 'full-stack-password';
+const PORT = 8801, RELAY = `http://127.0.0.1:${PORT}`, PASSWORD = 'full-stack-password';
 const ACCESS = 'REAL-FLOW-ACCESS-TOKEN', REFRESH = 'REAL-FLOW-REFRESH-TOKEN';
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 
@@ -43,7 +43,7 @@ describe.runIf(process.env.JOSI_BROWSER_E2E === '1')('the whole system', () => {
   beforeAll(async () => {
     const grantKey = randomBytes(32);
     const publicGrant = toB64url(ed25519.getPublicKey(grantKey));
-    relayProcess = spawn('npx', ['wrangler', 'dev', '-c', 'wrangler.dev.toml', '--port', String(PORT), '--ip', '127.0.0.1', '--var', `ACCOUNTS_KEYS:${publicGrant}`, '--var', 'OPEN_RELAY:0'],
+    relayProcess = spawn('npx', ['wrangler', 'dev', '-c', 'wrangler.dev.toml', '--port', String(PORT), '--ip', '127.0.0.1', '--var', `ACCOUNTS_KEYS:${publicGrant}`, '--var', 'OPEN_RELAY:0', '--persist-to', mkdtempSync(join(tmpdir(), 'josi-relay-state-'))],
       { cwd: join(process.cwd(), 'services/relay'), detached: true, stdio: 'ignore' });
     for (let i = 0; i < 150; i++) {
       if (await fetch(`${RELAY}/v1/health`).then(r => r.ok).catch(() => false)) break;
