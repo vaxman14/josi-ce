@@ -7,12 +7,13 @@ import { handleWebhook } from './billing.js';
 import type { Ctx } from './context.js';
 import { HttpError } from './errors.js';
 import { googleCallback } from './google.js';
+import { finishGoogleLogin, isLoginState, startGoogleLogin } from './googleLogin.js';
 import { notice } from './pages.js';
 import { answerRpc } from './rpc.js';
 import { SESSION_COOKIE, apiRouter, loadSession } from './web.js';
 
 const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '../public');
-const PAGES: Record<string, string> = { '/signup': 'signup', '/login': 'login', '/verify': 'verify', '/forgot': 'forgot', '/reset': 'reset', '/join': 'join' };
+const PAGES: Record<string, string> = { '/signup': 'signup', '/login': 'login', '/verify': 'verify', '/forgot': 'forgot', '/reset': 'reset', '/join': 'join', '/signup/google': 'google-name' };
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
@@ -45,7 +46,8 @@ export function createApp(ctx: Ctx): Express {
   });
 
   app.use('/ai/v1', aiRouter(ctx));
-  app.get('/oauth/google/callback', (req, res) => googleCallback(ctx, req, res));
+  app.get('/auth/google', (req, res) => startGoogleLogin(ctx, req, res));
+  app.get('/oauth/google/callback', (req, res) => isLoginState(req.query.state) ? finishGoogleLogin(ctx, req, res) : googleCallback(ctx, req, res));
   app.use('/api', apiRouter(ctx));
 
   const sendPage = (res: Response, name: string) => res.set('cache-control', 'no-store').sendFile(join(PUBLIC, `${name}.html`));

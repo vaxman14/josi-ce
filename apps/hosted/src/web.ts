@@ -4,7 +4,7 @@
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { randomBytes } from 'node:crypto';
 import { beginTotp, changePassword, completeLogin, completeReset, createLinkCode, deleteAccount, disableTotp, enableTotp, endSession, login, newRecoveryCodes,
-  requestReset, resendVerification, sessionFrom, signUp, twoFactorState, verifyEmail, SESSION_TTL_MS, type Session } from './accounts.js';
+  requestReset, resendVerification, sessionFrom, signUp, signUpWithGoogle, twoFactorState, verifyEmail, SESSION_TTL_MS, type Session } from './accounts.js';
 import { usageFor } from './ai/allowance.js';
 import { openPortal, startCheckout, startTopUp, topUpHistory } from './billing.js';
 import type { Ctx } from './context.js';
@@ -18,11 +18,12 @@ import { PLANS, aiPool, planOf } from './plans.js';
 // __Host- means no subdomain can set these, which is the point: see above.
 export const SESSION_COOKIE = '__Host-hj_session';
 const PRE_COOKIE = '__Host-hj_pre';
-const MFA_COOKIE = '__Host-hj_mfa';
+export const MFA_COOKIE = '__Host-hj_mfa';
+export const GOOGLE_NEW_COOKIE = '__Host-hj_google_new';
 
 interface Authed extends Request { session?: Session | null }
 
-function cookies(req: Request): Record<string, string> {
+export function cookies(req: Request): Record<string, string> {
   const out: Record<string, string> = {};
   for (const piece of (req.get('cookie') ?? '').split(';')) {
     const at = piece.indexOf('=');
@@ -31,7 +32,7 @@ function cookies(req: Request): Record<string, string> {
   return out;
 }
 
-const cookieOptions = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' } as const;
+export const cookieOptions = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' } as const;
 
 export function clientIp(ctx: Ctx, req: Request): string {
   const header = ctx.config.clientIpHeader ? req.get(ctx.config.clientIpHeader) : undefined;
@@ -60,7 +61,7 @@ const requireSession = (req: Authed, _res: Response, next: NextFunction): void =
   next();
 };
 
-function startSession(res: Response, token: string): void {
+export function startSession(res: Response, token: string): void {
   res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_TTL_MS });
   res.clearCookie(MFA_COOKIE, cookieOptions);
 }
@@ -97,6 +98,11 @@ export function apiRouter(ctx: Ctx): Router {
   api.post('/signup', async (req, res) => {
     await signUp(ctx, { email: req.body?.email, password: req.body?.password, handle: req.body?.handle, ip: ip(req) });
     res.status(202).json({ ok: true });
+  });
+  api.post('/signup/google', async (req, res) => {
+    startSession(res, await signUpWithGoogle(ctx, { ticket: cookies(req)[GOOGLE_NEW_COOKIE], handle: req.body?.handle, ip: ip(req) }));
+    res.clearCookie(GOOGLE_NEW_COOKIE, cookieOptions);
+    res.status(201).json({ ok: true });
   });
   api.post('/verify-email', async (req, res) => { await verifyEmail(ctx, req.body?.token); res.json({ ok: true }); });
   api.post('/resend-verification', async (req, res) => { await resendVerification(ctx, { email: req.body?.email, ip: ip(req) }); res.status(202).json({ ok: true }); });

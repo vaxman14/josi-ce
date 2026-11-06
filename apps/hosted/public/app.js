@@ -31,6 +31,7 @@ export function onSubmit(form, work) {
 const form = name => document.querySelector(`[data-form="${name}"]`);
 function done(formEl, title, text) {
   formEl.hidden = true;
+  document.querySelectorAll('[data-alt]').forEach(el => { el.hidden = true; });
   // The intro was for the form, and now only gets in the way of the outcome.
   document.querySelector('h1').nextElementSibling?.matches('p') && (document.querySelector('h1').nextElementSibling.hidden = true);
   const note = document.createElement('p');
@@ -40,6 +41,23 @@ function done(formEl, title, text) {
   document.querySelector('h1').textContent = title;
 }
 
+for (const input of document.querySelectorAll('input[type=password]')) {
+  const wrap = document.createElement('span'), toggle = document.createElement('button');
+  wrap.className = 'password';
+  input.replaceWith(wrap);
+  wrap.append(input, toggle);
+  Object.assign(toggle, { type: 'button', className: 'show', textContent: 'Show' });
+  toggle.setAttribute('aria-pressed', 'false');
+  toggle.setAttribute('aria-label', 'Show password');
+  toggle.addEventListener('click', () => {
+    const shown = input.type === 'password';
+    input.type = shown ? 'text' : 'password';
+    toggle.textContent = shown ? 'Hide' : 'Show';
+    toggle.setAttribute('aria-pressed', String(shown));
+    input.focus();
+  });
+}
+
 const signup = form('signup');
 if (signup) {
   const preview = signup.querySelector('[data-preview]');
@@ -47,8 +65,22 @@ if (signup) {
   onSubmit(signup, async values => { await api('/signup', values); done(signup, 'Check your email', 'We sent you a link to confirm your account. It works for 48 hours.'); });
 }
 
+const googleName = form('google-name');
+if (googleName) {
+  const preview = googleName.querySelector('[data-preview]');
+  googleName.elements.handle.addEventListener('input', event => { preview.textContent = `${event.target.value || 'yourname'}.heyjosi.com`; });
+  onSubmit(googleName, async values => { await api('/signup/google', values); location.assign('/account'); });
+}
+
 const login = form('login');
 if (login) {
+  // Back from Google with two-step sign-in on: only the code is left to ask for.
+  if (location.hash === '#2fa') {
+    login.hidden = true;
+    document.querySelector('[data-alt]').hidden = true;
+    form('second-step').hidden = false;
+    form('second-step').elements.code.focus();
+  }
   const resend = login.querySelector('[data-resend]');
   onSubmit(login, async values => {
     resend.hidden = true;

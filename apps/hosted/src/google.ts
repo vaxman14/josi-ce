@@ -15,10 +15,10 @@ import { askServer, isOffline } from './peer.js';
 import { planOf } from './plans.js';
 import type { ServerRow } from './rpc.js';
 
-const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+export const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const STATE_TTL_MS = 10 * 60_000;
-const API = 'https://www.googleapis.com/auth/';
+export const API = 'https://www.googleapis.com/auth/';
 
 export const ALLOWED_SCOPES = new Set(['openid', `${API}userinfo.email`, `${API}gmail.readonly`, `${API}gmail.send`, `${API}calendar.readonly`, `${API}calendar`,
   `${API}contacts.readonly`, `${API}contacts`, `${API}drive.readonly`]);
@@ -59,9 +59,9 @@ export async function googleAuthorize(ctx: Ctx, server: ServerRow, call: Extract
   return { ok: true, url: `${AUTH_URL}?${params}` };
 }
 
-interface TokenReply { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string; error?: string }
+interface TokenReply { id_token?: string; access_token?: string; refresh_token?: string; expires_in?: number; scope?: string; error?: string }
 
-async function tokenCall(ctx: Ctx, params: Record<string, string>): Promise<{ status: number; body: TokenReply }> {
+export async function tokenCall(ctx: Ctx, params: Record<string, string>): Promise<{ status: number; body: TokenReply }> {
   const res = await ctx.fetch(TOKEN_URL, {
     method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: ctx.config.google.clientId, client_secret: ctx.config.google.clientSecret, ...params }).toString(),

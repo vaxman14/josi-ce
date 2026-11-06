@@ -7,8 +7,19 @@
 <link rel="stylesheet" href="/style.css">
 <script type="module" src="/app.js"></script>
 </head>
-<body>
-<main class="narrow">
+<body class="gate">
+<aside class="gate-art" aria-hidden="true">
+<div class="orb one"></div><div class="orb two"></div><div class="orb three"></div>
+<div class="gate-brand"><img src="/josi-mark.png" alt="" width="44" height="44"><span>Hey Josi</span></div>
+<div class="gate-pitch">
+<h2>Your assistant.<br>Your server.<br>Your rules.</h2>
+<p>One private address for the Josi you run yourself, encrypted from your devices all the way home.</p>
+</div>
+<p class="gate-foot">The relay carries sealed traffic. It can't read a word.</p>
+</aside>
+<main class="gate-panel">
+<div class="gate-card">
+<a class="gate-mobile-brand" href="/"><img src="/josi-mark.png" alt="" width="36" height="36"><span>Hey Josi</span></a>
 <h1>Reset your password</h1>
 <form data-form="forgot">
 <label>Email <input name="email" type="email" autocomplete="email" required></label>
@@ -16,6 +27,7 @@
 <p class="error" role="alert"></p>
 </form>
 <p class="small"><a href="/login">Back to log in</a></p>
+</div>
 </main>
 </body>
 </html>

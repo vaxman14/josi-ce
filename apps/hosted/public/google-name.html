@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pick your address - Hey Josi</title>
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body class="gate">
+<aside class="gate-art" aria-hidden="true">
+<div class="orb one"></div><div class="orb two"></div><div class="orb three"></div>
+<div class="gate-brand"><img src="/josi-mark.png" alt="" width="44" height="44"><span>Hey Josi</span></div>
+<div class="gate-pitch">
+<h2>Your assistant.<br>Your server.<br>Your rules.</h2>
+<p>One private address for the Josi you run yourself, encrypted from your devices all the way home.</p>
+</div>
+<p class="gate-foot">The relay carries sealed traffic. It can't read a word.</p>
+</aside>
+<main class="gate-panel">
+<div class="gate-card">
+<a class="gate-mobile-brand" href="/"><img src="/josi-mark.png" alt="" width="36" height="36"><span>Hey Josi</span></a>
+<h1>Pick your address</h1>
+<p>Google confirmed your email. One last thing: this is where your Josi server will live.</p>
+<form data-form="google-name">
+<label>Your address <input name="handle" autocomplete="off" autocapitalize="none" spellcheck="false" pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]" required>
+<span class="small" data-preview>yourname.heyjosi.com</span></label>
+<button>Finish</button>
+<p class="error" role="alert"></p>
+</form>
+<p class="small switch"><a href="/login">Back to log in</a></p>
+</div>
+</main>
+</body>
+</html>

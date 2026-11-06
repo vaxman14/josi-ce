@@ -7,7 +7,7 @@ import { hashPassword, verifyPassword } from '@josi-ce/auth';
 import type { Db } from '@josi-ce/core';
 import { PAIRING_TTL_SECONDS, codeHash, displayCode, newPairingCode } from '@josi-ce/tunnel';
 import type { Ctx } from './context.js';
-import { randomToken, seal, sha256, unseal } from './crypto.js';
+import { hmacHex, randomToken, safeEqual, seal, sha256, unseal } from './crypto.js';
 import { audit, clearHits, hit, inTx, num } from './db.js';
 import { HttpError } from './errors.js';
 import { queueRevocation, flushRevocations } from './grants.js';
@@ -19,6 +19,8 @@ const VERIFY_TTL_MS = 48 * 3_600_000;
 const RESET_TTL_MS = 3_600_000;
 const MIN_PASSWORD = 12, MAX_PASSWORD = 1024;
 const RECOVERY_CODES = 10;
+const MAIL_WAIT_MS = 12_000;
+const GOOGLE_TICKET_TTL_MS = 15 * 60_000;
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 export interface Account { id: string; email: string; handle: string; status: string; email_verified_at: unknown; password_hash: string; stripe_customer_id: string | null; created_at: unknown }
@@ -37,7 +39,10 @@ const accountRow = async (db: Db, id: string): Promise<Account | null> => (await
 
 export async function mail(ctx: Ctx, to: string, subject: string, text: string): Promise<void> {
   // A mail outage shouldn't undo a signup: the person can ask for another link.
-  try { await ctx.mailer.send({ to, subject, text }); } catch { ctx.log('mail_failed', { subject }); }
+  // A stuck mail server shouldn't hold the person's page open either.
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('mail timed out')), MAIL_WAIT_MS); });
+  try { await Promise.race([ctx.mailer.send({ to, subject, text }), late]); } catch { ctx.log('mail_failed', { subject }); } finally { clearTimeout(timer); }
 }
 
 async function emailToken(ctx: Ctx, db: Db, accountId: string, kind: 'verify' | 'reset', ttlMs: number): Promise<string> {
@@ -75,6 +80,62 @@ export async function signUp(ctx: Ctx, args: { email: unknown; password: unknown
   if (!row) throw new HttpError(409, 'That name is taken. Try another.');
   await audit(ctx.db, row.id, 'account.created');
   await sendVerification(ctx, row.id, email);
+}
+
+/** Proves to the next page that Google vouched for this email just now. */
+export function googleTicket(ctx: Ctx, email: string): string {
+  const body = Buffer.from(JSON.stringify({ m: normalizeEmail(email), e: ctx.now() + GOOGLE_TICKET_TTL_MS })).toString('base64url');
+  return `${body}.${hmacHex(ctx.oauthKey, `ticket|${body}`)}`;
+}
+
+function ticketEmail(ctx: Ctx, ticket: unknown): string | null {
+  const [body, signature, extra] = String(ticket ?? '').split('.');
+  if (!body || !signature || extra !== undefined || !safeEqual(signature, hmacHex(ctx.oauthKey, `ticket|${body}`))) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { m: string; e: number };
+    return claims.e > ctx.now() ? claims.m : null;
+  } catch { return null; }
+}
+
+/** Google has confirmed this email. Null means it has no account yet.
+ *
+ * An unconfirmed account with this email may have been made by someone else, to
+ * sit waiting for the real owner. Its password is replaced, so whoever set it
+ * can't get in once Google has confirmed who the email belongs to. */
+export async function googleLogin(ctx: Ctx, email: string): Promise<{ token: string; mfa: boolean } | null> {
+  const address = normalizeEmail(email);
+  const [row] = await ctx.db.query<Account>('select * from heyjosi.accounts where email = $1', [address]);
+  if (!row) return null;
+  if (row.status !== 'active') throw new HttpError(403, 'This account is suspended. Write to support@heyjosi.com.');
+  if (!row.email_verified_at) {
+    const hash = await hashPassword(randomToken());
+    await inTx(ctx.db, async tx => {
+      await tx.query('update heyjosi.accounts set email_verified_at = $2::timestamptz, password_hash = $3 where id = $1', [row.id, ctx.at(), hash]);
+      await tx.query('delete from heyjosi.sessions where account_id = $1', [row.id]);
+      await tx.query('delete from heyjosi.email_tokens where account_id = $1', [row.id]);
+    });
+  }
+  const [totp] = await ctx.db.query('select 1 from heyjosi.totp_secrets where account_id = $1 and enabled_at is not null', [row.id]);
+  await audit(ctx.db, row.id, totp ? 'login.google_ok' : 'login.google');
+  return { token: await createSession(ctx, row.id, ctx.db, !!totp), mfa: !!totp };
+}
+
+/** The account has no usable password until its owner sets one with a reset link. */
+export async function signUpWithGoogle(ctx: Ctx, args: { ticket: unknown; handle: unknown; ip: string }): Promise<string> {
+  const email = ticketEmail(ctx, args.ticket);
+  if (!email) throw new HttpError(400, 'That sign-in has expired. Go back and continue with Google again.');
+  const handle = String(args.handle ?? '').trim().toLowerCase();
+  if (!validHandle(handle)) throw new HttpError(400, 'Pick another name: 3 to 32 letters, numbers or single dashes, starting with a letter.');
+  if (!await hit(ctx, `signup:${args.ip}`, 10, 3600)) throw new HttpError(429, 'Too many signups from this network. Try again in an hour.');
+  const [taken] = await ctx.db.query(
+    `select 1 from heyjosi.accounts where handle = $1 union all select 1 from heyjosi.relay_revocations where name = $1`, [handle]);
+  if (taken) throw new HttpError(409, 'That name is taken. Try another.');
+  const [row] = await ctx.db.query<{ id: string }>(
+    'insert into heyjosi.accounts (email, email_verified_at, password_hash, handle) values ($1, $2::timestamptz, $3, $4) on conflict do nothing returning id',
+    [email, ctx.at(), await hashPassword(randomToken()), handle]);
+  if (!row) throw new HttpError(409, 'That email already has an account, or the name was just taken. Try logging in.');
+  await audit(ctx.db, row.id, 'account.created_google');
+  return createSession(ctx, row.id);
 }
 
 export async function resendVerification(ctx: Ctx, args: { email: unknown; ip: string }): Promise<void> {

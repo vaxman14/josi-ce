@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ALLOWED_SCOPES, wrapState } from '../src/google.js';
-import { Harness } from './helpers.js';
+import { Browser, Harness } from './helpers.js';
 
 let h: Harness;
 beforeAll(async () => { h = await new Harness().start(); });
@@ -215,5 +215,75 @@ describe('google.revoke', () => {
   it('isn\'t an operation here: the server calls Google itself', async () => {
     const { server } = await h.aiCustomer('connect');
     expect(await server.call({ op: 'google.revoke', token: 't' } as never)).toEqual({ ok: false, error: 'unknown_op' });
+  });
+});
+
+describe('sign in with Google', () => {
+  const idToken = (claims: Record<string, unknown>) => `e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`;
+  const googleSays = (browser: Browser, nonce: string, claims: Record<string, unknown> = {}) => {
+    h.google = () => json({ access_token: 'a', id_token: idToken({ iss: 'https://accounts.google.com', aud: 'fixture-client', exp: Math.floor(Date.now() / 1000) + 300, nonce, email_verified: true, ...claims }) });
+    return browser;
+  };
+  async function begin() {
+    const browser = new Browser(h);
+    const started = await browser.get('/auth/google');
+    expect(started.status).toBe(302);
+    const url = new URL(started.headers.get('location')!);
+    expect(url.searchParams.get('scope')).toBe(`openid ${API}userinfo.email`);
+    expect(url.searchParams.get('redirect_uri')).toBe('https://heyjosi.test/oauth/google/callback');
+    return { browser, state: url.searchParams.get('state')!, nonce: url.searchParams.get('nonce')! };
+  }
+  const back = (browser: Browser, state: string) => browser.get(`/oauth/google/callback?${new URLSearchParams({ state, code: 'c' })}`);
+
+  it('signs up a new person once they pick an address', async () => {
+    const { browser, state, nonce } = await begin();
+    const email = `new-${randomBytes(4).toString('hex')}@example.test`;
+    const res = await back(googleSays(browser, nonce, { email }), state);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/signup/google');
+    const handle = `g${randomBytes(4).toString('hex')}`;
+    const made = await browser.post('/api/signup/google', { handle });
+    expect(made.status).toBe(201);
+    expect((await browser.get('/account')).status).toBe(200);
+    const [row] = await h.db.query<{ email_verified_at: unknown }>('select email_verified_at from heyjosi.accounts where handle = $1', [handle]);
+    expect(row!.email_verified_at).toBeTruthy();
+  });
+
+  it('logs in an existing account', async () => {
+    const account = await h.account();
+    const { browser, state, nonce } = await begin();
+    const res = await back(googleSays(browser, nonce, { email: account.email }), state);
+    expect(res.headers.get('location')).toBe('/account');
+    expect((await browser.get('/account')).status).toBe(200);
+  });
+
+  it('takes an unconfirmed account back from whoever set its password', async () => {
+    const squatter = new Browser(h);
+    const email = `squat-${randomBytes(4).toString('hex')}@example.test`, password = 'a squatter password';
+    await squatter.post('/api/signup', { email, password, handle: `s${randomBytes(4).toString('hex')}` });
+    const { browser, state, nonce } = await begin();
+    expect((await back(googleSays(browser, nonce, { email }), state)).headers.get('location')).toBe('/account');
+    expect((await squatter.post('/api/login', { email, password })).status).toBe(401);
+  });
+
+  it('refuses an email Google has not verified, or a token for another app or attempt', async () => {
+    for (const claims of [{ email_verified: false }, { aud: 'someone-else' }, { nonce: 'other' }, { iss: 'https://evil.test' }, { exp: 1 }]) {
+      const { browser, state, nonce } = await begin();
+      const res = await back(googleSays(browser, nonce, { email: 'victim@example.test', ...claims }), state);
+      expect(res.status).toBe(502);
+      expect(res.headers.get('location')).toBeNull();
+    }
+  });
+
+  it('needs the browser that started it', async () => {
+    const { browser, state, nonce } = await begin();
+    googleSays(browser, nonce, { email: 'victim@example.test' });
+    expect((await back(new Browser(h), state)).status).toBe(400);
+  });
+
+  it('will not take a forged address ticket', async () => {
+    const browser = new Browser(h);
+    browser.jar.set('__Host-hj_google_new', 'e30.forged');
+    expect((await browser.post('/api/signup/google', { handle: `f${randomBytes(4).toString('hex')}` })).status).toBe(400);
   });
 });
