@@ -8,6 +8,10 @@ release's `install-josi-ce-server.sh`) and `_headers`.
 Hosted on Netlify (project `josi-get`, team CTFDesigns) with the custom
 domain get.heyjosi.com behind Cloudflare. Deploy this folder as is; no build.
 
+Cloudflare keeps `releases.js` and images for up to four hours, whatever
+`_headers` says. The page itself is not kept, so bump `?v=` in `index.html`
+when one of those changes.
+
 Publishing a release is the only step that changes what the page offers:
 
 - Server and app installers go in a release tagged `v<version>` with assets
