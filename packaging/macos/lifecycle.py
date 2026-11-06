@@ -247,6 +247,10 @@ class Lifecycle:
     def write(self,path,bytes,role=None,mode=0o600):
         durable(path,bytes,mode=mode)
         if role and not self.isolated:os.chown(path,0,self.account(role)[1])
+    def key_layout(self):
+        # The relay's private keys when no keychain serves the web account. Web only: the worker has its own limited key.
+        keys=self.data/'keys';keys.mkdir(mode=0o700,exist_ok=True)
+        if not self.isolated:os.chown(keys,*self.account('web'))
     def layout(self, ports):
         self.data.mkdir(mode=0o700)
         if self.isolated:durable(self.data/'isolated-test.json',{'purpose':'disposable-native-acceptance'})
@@ -637,7 +641,7 @@ class Lifecycle:
                 durable(self.data/'database/postgresql.auto.conf',settings.encode(),replace=True,mode=0o600)
                 if not self.isolated:os.chown(self.data/'database/postgresql.auto.conf',*self.account('database'))
                 self.write(self.data/'config/Caddyfile',f"{{\n admin off\n auto_https off\n}}\nhttp://localhost:{cfg['publicPort']} {{\n bind 127.0.0.1\n reverse_proxy 127.0.0.1:{cfg['apiPort']}\n}}\n".encode(),mode=0o644)
-            self.control_layout()
+            self.key_layout();self.control_layout()
             phase('provisioned')
             self.run([self.installed/'postgresql/bin/pg_ctl','-D',self.data/'database','-l',self.data/'logs/database/setup.log','-w','-t','60','start'],'database')
             if fresh:
