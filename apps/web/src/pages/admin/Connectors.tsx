@@ -221,7 +221,7 @@ export function AdminConnectors({ embedded = false }: { embedded?: boolean } = {
           <p className="mt-2 text-sm text-muted-foreground">{view.registration.reason}</p>
           <p className="mt-2 break-all text-sm text-muted-foreground">Currently detected address: <strong>{view.registration.detectedOrigin}</strong></p>
           <p className="mt-2 text-sm text-muted-foreground">
-            Set one in <a className="underline" href="/admin/workspace">Workspace</a>, then come back
+            Set one in <a className="underline" href="/admin/network">Network &amp; address</a>, then come back
             here. Nothing else about this installation depends on it, and no data is affected.
           </p>
         </Card>

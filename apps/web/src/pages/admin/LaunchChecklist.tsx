@@ -134,10 +134,10 @@ export function AdminLaunchChecklist() {
 
       <Card>
         <CardTitle>Optional connections and devices</CardTitle>
-        <p className="mt-1 text-sm text-muted-foreground">Connect services when you need them. Companion-device pairing is unavailable until a compatible app is provided; it is not required to use Josi.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Connect services when you need them. To add a phone or computer, make a pairing code under Devices. Neither is required to use Josi.</p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => navigate('/app/connections')}>Connect services</Button>
-          <Button variant="secondary" onClick={() => navigate('/app/apps')}>Companion devices</Button>
+          <Button variant="secondary" onClick={() => navigate('/app/devices')}>Devices</Button>
         </div>
       </Card>
 

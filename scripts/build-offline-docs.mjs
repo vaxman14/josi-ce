@@ -15,6 +15,8 @@ for (const page of pages) {
   html = html.replace(/\s*<script>[\s\S]*?<\/script>/g, '');
   // The app already serves these, so Help's precached file list stays as it is.
   html = html.replace(/url\('(?:\.\.\/)?fonts\//g, "url('/fonts/");
+  // The iPhone guide stays online: its screenshots are too heavy to ship in every install.
+  html = html.replace('href="iphone/"', 'href="https://help.heyjosi.com/iphone/"');
   html = html.replace(/\b(href|src)="([^"]*)"/g, (original, attribute, url) => {
     if (url.startsWith('#') || /^(?:https?:|mailto:|tel:|data:)/.test(url)) return original;
     const match = url.match(/^([^#?]*)([?#].*)?$/);
