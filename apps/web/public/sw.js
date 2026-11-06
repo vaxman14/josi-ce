@@ -26,7 +26,7 @@
 // Bumped whenever the caching rules change. An old worker's caches are deleted
 // on activate, so a rule that gets tightened takes effect for everybody rather
 // than only for new installs.
-const CACHE_VERSION = 'josi-v2';
+const CACHE_VERSION = 'josi-v3';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 

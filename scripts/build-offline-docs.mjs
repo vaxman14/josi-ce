@@ -13,6 +13,8 @@ for (const page of pages) {
   html = html.replace(/\n    \.help-chat\{[\s\S]*?(?=\n  <\/style>)/, '');
   html = html.replace(/\s*<aside class="help-chat"[\s\S]*?<\/aside>/, '');
   html = html.replace(/\s*<script>[\s\S]*?<\/script>/g, '');
+  // The app already serves these, so Help's precached file list stays as it is.
+  html = html.replace(/url\('(?:\.\.\/)?fonts\//g, "url('/fonts/");
   html = html.replace(/\b(href|src)="([^"]*)"/g, (original, attribute, url) => {
     if (url.startsWith('#') || /^(?:https?:|mailto:|tel:|data:)/.test(url)) return original;
     const match = url.match(/^([^#?]*)([?#].*)?$/);

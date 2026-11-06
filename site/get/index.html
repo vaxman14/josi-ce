@@ -10,26 +10,37 @@
 <meta property="og:title" content="Get Josi CE">
 <meta property="og:description" content="Josi CE runs on a computer you own. Install it there, then use it from everything else.">
 <meta property="og:image" content="https://get.heyjosi.com/josi-mark.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Figtree:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#1B0F20">
 <style>
-/* Layout: one left-aligned column, the Josi app's palette and 18px rhythm. Dark first, light for people who ask for it. */
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:200 800;font-display:swap;src:url('fonts/bricolage-grotesque-latin.woff2') format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:200 800;font-display:swap;src:url('fonts/bricolage-grotesque-latin-ext.woff2') format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:'DM Sans';font-style:normal;font-weight:100 1000;font-display:swap;src:url('fonts/dm-sans-latin.woff2') format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:'DM Sans';font-style:normal;font-weight:100 1000;font-display:swap;src:url('fonts/dm-sans-latin-ext.woff2') format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF}
+/* Layout: one left-aligned column and the 18px rhythm. Plum & Gold, the same tokens as the Josi app. */
 :root {
-  --bg: #0B111E; --panel: #141E30; --card: #101728; --raised: #1F283D; --line: #252D41;
-  --accent: #F6831E; --accent-ink: #1A0E03; --fg: #FDF6EA; --muted: #9DABBE; --good: #5FCB8A;
-  --display: 'Sora', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
-  --body: 'Figtree', 'Segoe UI', system-ui, sans-serif;
-  --mono: 'JetBrains Mono', Consolas, 'Cascadia Mono', monospace;
+  --bg: #1B0F20; --panel: #2C1A33; --card: #2C1A33; --raised: #3A2442; --line: rgba(240, 207, 122, .2); --control: #6B4D72;
+  --accent: #F0CF7A; --accent-ink: #1B0F20; --fg: #F3E9F2; --muted: #B9A0BD; --good: #7FD6A0;
+  --gold-gradient: linear-gradient(135deg, #FFE7A3 0%, #F0CF7A 45%, #C49536 100%);
+  --display: 'Bricolage Grotesque', 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --body: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, Menlo, monospace;
   --radius: 14px; --gap: 18px; --page: 65rem;
   color-scheme: dark;
 }
-@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
-  --bg: #F6F2EA; --panel: #FFFFFF; --card: #FFFDF9; --raised: #ECE6DA; --line: #D9D2C4;
-  --accent: #E0700F; --accent-ink: #FFFFFF; --fg: #16202F; --muted: #5E6A7E; --good: #1E8F4E; color-scheme: light; } }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
-body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.5;
+html { background: var(--bg); }
+body { color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.5;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 56px; }
+body::before { content: ""; position: fixed; inset: 0; z-index: -2; pointer-events: none; background: radial-gradient(ellipse at 25% 10%, #43264A 0%, #150B19 70%); }
+/* The gold stars from the sign-in pages: two layers, so they fade out of step. */
+html::before, body::after { content: ""; position: fixed; top: 0; left: 0; width: 2px; height: 2px; border-radius: 50%; z-index: -1; pointer-events: none; opacity: .5; animation: twinkle 3s ease-in-out infinite; }
+html::before { box-shadow: 58vw 72vh 0 0 var(--accent), 60vw 58vh 0 0 var(--accent), 66vw 76vh 0 0 var(--accent), 25vw 24vh 0 0 var(--accent), 66vw 61vh 0 0 var(--accent), 81vw 79vh 0 0 var(--accent), 24vw 13vh 0 0 var(--accent), 58vw 39vh 0 0 var(--accent), 19vw 12vh 0 0 var(--accent), 69vw 89vh 0 0 var(--accent), 82vw 6vh 0 0 var(--accent), 77vw 51vh 0 0 var(--accent), 58vw 84vh 0 0 var(--accent), 95vw 79vh 0 0 var(--accent), 84vw 21vh 0 0 var(--accent), 80vw 2vh 0 0 var(--accent), 68vw 9vh 0 0 var(--accent), 8vw 5vh 0 0 var(--accent), 25vw 31vh 0 0 var(--accent), 77vw 4vh 0 0 var(--accent), 60vw 42vh 0 0 var(--accent), 57vw 76vh 0 0 var(--accent); }
+body::after { box-shadow: 26vw 67vh 0 0 var(--accent), 30vw 82vh 0 0 var(--accent), 38vw 64vh 0 0 var(--accent), 1vw 85vh 0 0 var(--accent), 11vw 59vh 0 0 var(--accent), 84vw 36vh 0 0 var(--accent), 53vw 71vh 0 0 var(--accent), 11vw 91vh 0 0 var(--accent), 33vw 41vh 0 0 var(--accent), 98vw 30vh 0 0 var(--accent), 66vw 37vh 0 0 var(--accent), 4vw 9vh 0 0 var(--accent), 73vw 99vh 0 0 var(--accent), 14vw 52vh 0 0 var(--accent), 14vw 38vh 0 0 var(--accent), 50vw 9vh 0 0 var(--accent), 3vw 88vh 0 0 var(--accent), 1vw 28vh 0 0 var(--accent), 27vw 7vh 0 0 var(--accent), 61vw 49vh 0 0 var(--accent), 91vw 51vh 0 0 var(--accent), 54vw 10vh 0 0 var(--accent); animation-delay: -1.5s; }
+@keyframes twinkle { 50% { opacity: .1; } }
+@media (prefers-reduced-motion: reduce) { html::before, body::after { animation: none; } }
+@media (max-width: 560px) { body::after { display: none; } }
 h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.15; }
 p { margin: 0; }
 a { color: var(--accent); text-decoration: none; }
@@ -42,13 +53,14 @@ a:hover, a:focus-visible { text-decoration: underline; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .card.hot { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .pill { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 10px 20px; font-weight: 600; font-size: 15px;
-  border: 1px solid var(--line); background: var(--raised); color: var(--fg); width: fit-content; }
-.pill:hover { text-decoration: none; filter: brightness(1.08); }
-.pill.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  border: 1px solid var(--control); background: transparent; color: var(--fg); width: fit-content; }
+.pill:hover { text-decoration: none; border-color: var(--accent); }
+.pill.primary { background: var(--gold-gradient); color: var(--accent-ink); border-color: transparent; }
+.pill.primary:hover { border-color: transparent; filter: brightness(1.06); }
 .pill.big { padding: 14px 28px; font-size: 17px; }
-.pill[aria-disabled="true"] { opacity: .55; pointer-events: none; }
+.pill[aria-disabled="true"], .pill.primary[aria-disabled="true"] { background: transparent; color: var(--muted); border-color: var(--control); font-weight: 500; pointer-events: none; }
 .tag { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 3px 10px; background: var(--raised); color: var(--muted); width: fit-content; }
-.tag.on { background: var(--accent); color: var(--accent-ink); }
+.tag.on { background: var(--gold-gradient); color: var(--accent-ink); }
 pre { font-family: var(--mono); font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 0; white-space: pre; }
 ul { margin: 0; padding-left: 20px; } li { margin: 4px 0; }
 hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
@@ -66,7 +78,7 @@ section { display: flex; flex-direction: column; gap: 14px; }
 section > h2 { font-size: 24px; }
 .steps { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); counter-reset: s; }
 .step { padding: 20px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line); min-width: 0; }
-.step::before { counter-increment: s; content: counter(s); display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-family: var(--display); font-weight: 700; margin-bottom: 10px; }
+.step::before { counter-increment: s; content: counter(s); display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--gold-gradient); color: var(--accent-ink); font-family: var(--display); font-weight: 700; margin-bottom: 10px; }
 .step h3 { font-size: 18px; margin-bottom: 6px; }
 .grid { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }

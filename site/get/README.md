@@ -2,7 +2,7 @@
 
 The download page. Static: `index.html`, `releases.js` (reads the GitHub
 Releases of vaxman14/josi-ce and fills in versions, sizes and links), the
-Josi mark, `_redirects` (the Linux `install.sh` points at the latest final
+Josi mark, `fonts/` (the same files as `apps/web/public/fonts`), `_redirects` (the Linux `install.sh` points at the latest final
 release's `install-josi-ce-server.sh`) and `_headers`.
 
 Hosted on Netlify (project `josi-get`, team CTFDesigns) with the custom
