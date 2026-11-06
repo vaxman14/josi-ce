@@ -19,3 +19,4 @@ export * from './openapiImport.js';
 export * from './workflows.js';
 export * from './obsidian.js';
 export * from './developerCredentials.js';
+export * from './heyJosi.js';

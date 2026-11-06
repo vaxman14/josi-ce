@@ -195,6 +195,10 @@ namespace Josi.Native {
       if (Automation.Demo) Loaded += delegate { StartDemo(); };
       else if (r.Installed && r.Running && r.Address.Length > 0 && SessionStore.Load(r.Address) != null)
         Loaded += delegate { if (Model.Screen == Screen.Connect) Model.Run(() => Model.Connect(r.Address, true)); };
+      else {
+        var paired = TunnelStore.Current.All().FirstOrDefault(p => SessionStore.Load(p.Origin) != null);
+        if (paired != null) Loaded += delegate { if (Model.Screen == Screen.Connect) Model.Run(() => Model.ConnectPaired(paired)); };
+      }
     }
 
     public void ShowError(string message) { Model.Error = message; Model.Busy = false; Render(); }

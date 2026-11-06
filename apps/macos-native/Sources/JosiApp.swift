@@ -149,6 +149,7 @@ struct ConnectionView: View {
                                 .disabled(model.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             Text("Remote connections use HTTPS. Localhost is supported for a server on this Mac.")
                                 .font(.caption).foregroundStyle(.secondary)
+                            TunnelPairingPanel()
                         }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }

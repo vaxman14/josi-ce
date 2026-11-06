@@ -11,7 +11,7 @@
 // sensitive change applied by a member is emailed to every super-admin at
 // once when mail is set up.
 import { Router, type Request, type Response } from 'express';
-import { addMessage, loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
+import { addMessage, json, loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
@@ -151,7 +151,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
   r.put('/policy', requireSuperAdmin, handle(async (req, res) => {
     const value = req.body?.memberSettingsChanges;
     if (value !== 'self' && value !== 'super_admin') throw fail(400, 'Choose "self" or "super_admin".');
-    await db.query(`update workspace set settings = settings || $1::jsonb where id = true`, [JSON.stringify({ memberSettingsChanges: value })]);
+    await db.query(`update workspace set settings = settings || $1::jsonb where id = true`, [json({ memberSettingsChanges: value })]);
     return res.json({ ok: true, policy: value });
   }));
   return r;

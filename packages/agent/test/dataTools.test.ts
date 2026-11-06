@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { testDb, testVault, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
-import { addMessage, markActionsPresented, MasterKey } from '@josi-ce/core';
+import { addMessage, markActionsPresented, MasterKey, workMemoryVersion } from '@josi-ce/core';
 import {
   createInternalEvent, ensureInternalCalendar, saveClient, setCapability, upsertConnection, type ConnectionRow,
 } from '@josi-ce/connectors';
@@ -343,6 +343,7 @@ describe('the MCP server offers the same catalogue', () => {
       databaseUrl: null, passwordFile: null, masterKeyPath: null,
       userId: alice, sessionKey: 's1', threadId: null,
       tools: ['search_email', 'read_email'],
+      workMemoryVersion: await workMemoryVersion(db, alice),
       callsPath: join(dir, 'calls.jsonl'),
     }, async () => db);
     const names = core.tools.map((t) => t.name);

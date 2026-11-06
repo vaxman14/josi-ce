@@ -76,7 +76,7 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
       literal: [
         'openai', 'anthropic', 'xai', 'openai_compatible',
         'deepseek', 'qwen', 'mistral', 'moonshot', 'zhipu', 'openrouter', 'minimax',
-        'gemini', 'cohere', 'bedrock', 'azure_ai', 'vertex_ai', 'ernie', 'hunyuan',
+        'gemini', 'cohere', 'bedrock', 'azure_ai', 'vertex_ai', 'ernie', 'hunyuan', 'hey_josi',
         'openai_subscription', 'anthropic_subscription',
       ],
     },
@@ -99,11 +99,13 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
       vertex_ai: 'Google Vertex AI',
       ernie: 'Baidu ERNIE',
       hunyuan: 'Tencent Hunyuan',
+      hey_josi: 'Hey Josi AI',
       openai_subscription: 'Your ChatGPT plan',
       anthropic_subscription: 'Your Claude plan',
     },
     detail: {
       openai_compatible: 'A model running on hardware you control. Nothing leaves this server for it.',
+      hey_josi: 'Included with Connect + AI. Your requests pass through Hey Josi to OpenAI. Hey Josi counts the cost and keeps no text.',
       // Where the request actually lands, for the providers where that is not
       // obvious from the name. Somebody choosing a model provider is choosing a
       // jurisdiction as much as a vendor, and the screen should say so.

@@ -72,7 +72,7 @@ describe('PC permissions over the real authenticated HTTP surface',()=>{
       const token=/josi_session=([^;]+)/.exec(ownerJar)![1];await context.addCookies([{name:'josi_session',value:token,url:base,httpOnly:true},{name:'josi_csrf',value:'pc-fixture',url:base}]);
       const page=await context.newPage();page.setDefaultTimeout(5000);page.setDefaultNavigationTimeout(5000);
       await page.goto(base+'/admin/pc-control');await page.getByRole('heading',{name:'PC control permissions',exact:true}).waitFor();
-      await page.getByText('PC control is unavailable until the separate Windows desktop client is connected.',{exact:false}).waitFor();
+      await page.getByText('Permissions can be saved here. Browser control starts when the Josi app is open',{exact:false}).waitFor();
       // Controlled switch updates only after the durable save, so wait for the
       // real response rather than asserting an optimistic checkbox change.
       const enabled=page.waitForResponse(r=>r.url()===base+endpoint+'/enabled'&&r.request().method()==='PUT');

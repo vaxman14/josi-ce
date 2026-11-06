@@ -44,12 +44,37 @@ Help pages: [help.heyjosi.com](https://help.heyjosi.com). Questions and bugs:
 - **Backs itself up.** One file with everything, encrypted if you want, that
   restores on a fresh install.
 
+## Reach it from anywhere (optional)
+
+Josi CE is free and complete on its own. With a free Hey Josi account you can add
+a plan that gives your server its own address, like `alice.heyjosi.com`. It works
+behind any router, with no port forwarding.
+
+| Plan | Price | What you get |
+|---|---|---|
+| Free | $0 | All of Josi CE, with your own AI key. No relay needed. |
+| Connect | about $8/mo | The relay, your address, and Google sign-in with no Google setup. |
+| Connect + AI | about $20/mo | Connect, plus AI included up to a monthly allowance. |
+
+Sign up at [heyjosi.com](https://heyjosi.com), install the server, and paste the
+link code from your account page into **Hey Josi** on your server. Then pair each
+phone, computer or browser under **Devices**, with a QR code or a one-time code.
+
+Everything between your devices and your server is encrypted end to end. The
+relay passes sealed messages and can't read or change them. Your account can't
+open your server, and you still sign in to Josi itself. The limits are spelled
+out in [what the relay can and can't see](docs/RELAY_PRIVACY.md), including the
+two places traffic does touch us: Hey Josi AI, and Google sign-in.
+
+On your own network, devices connect straight to your server. You can also
+[run your own relay](docs/SELF_HOSTED_RELAY.md), or use none.
+
 ## What Josi CE is not
 
-- Not a hosted service. There is no account with us and nothing is sent to us.
+- Not a hosted assistant. Your conversations, memory and connected accounts stay
+  on your server. The optional account holds only what's listed in
+  [the privacy page](docs/RELAY_PRIVACY.md).
 - Not multi-tenant. One server is one household or one office.
-- Not the paid Josi. That one, with our own model built in and nothing to set
-  up, is coming next. Josi CE stays free.
 
 ## For developers
 
@@ -57,10 +82,16 @@ The repository holds the server (`apps/api`, `apps/worker`, `packages/*`),
 the web app (`apps/web`), the Windows app (`apps/windows-native`), the
 macOS app and installer (`packaging/macos`), the Windows installer and
 release script (`packaging/windows`, `scripts/windows`), the browser
-extension (`apps/browser-extension`) and the help site (`docs-site`).
+extension (`apps/browser-extension`) and the help site (`docs-site`). The hosted
+side is here too: the relay (`services/relay`), the encrypted tunnel used by
+everything (`packages/tunnel`), and accounts, billing and the AI gateway
+(`apps/hosted`).
 
 - Build and run: [docs/HELP.md](docs/HELP.md) and
   [docs/INSTALLATION.md](docs/INSTALLATION.md).
+- The relay and accounts: [protocol](docs/RELAY_PROTOCOL.md),
+  [privacy](docs/RELAY_PRIVACY.md), [plans](docs/PLANS.md),
+  [setting up the hosted side](docs/HOSTED_SETUP.md).
 - Releases: [Windows](docs/WINDOWS_RELEASE.md), [Mac](docs/MACOS_RELEASE.md),
   [Linux](docs/LINUX_RELEASE.md). All three attach to one GitHub release per
   version (`v1.0.0`), which is what the download page reads.
@@ -75,5 +106,7 @@ Contributions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports:
 
 Josi CE is published under the licence in [LICENSE](LICENSE), with the
 notices in [NOTICE](NOTICE). "Josi" is a trademark of SOCAL RECEPTIONIST LLC;
-see [TRADEMARK.md](TRADEMARK.md). Terms, privacy and support policies:
+see [TRADEMARK.md](TRADEMARK.md). If you fork Josi CE, you may remove its
+branding, and must not present the fork as the official product. Terms, privacy
+and support policies:
 [docs/LEGAL.md](docs/LEGAL.md).

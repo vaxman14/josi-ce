@@ -1,0 +1,13 @@
+{
+  "name": "@josi-ce/hosted",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "main": "dist/server.js",
+  "scripts": {
+    "start": "node dist/server.js",
+    "migrate": "node dist/migrate.js"
+  },
+  "dependencies": { "@josi-ce/tunnel": "0.1.0" }
+}

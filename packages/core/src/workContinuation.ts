@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from './db.js';
 import { json } from './db.js';
 import { automationBlockerFromReceipts } from './automationBlockers.js';
+import { canonicalJson } from './canonicalJson.js';
 import { addMessage } from './conversations.js';
 import { workDependenciesSatisfied, type WorkGoalStep } from './workPlan.js';
 import { workBudgetReason, type WorkBudgetRow } from './workBudget.js';
@@ -49,9 +50,6 @@ const AUTOMATION_TOOLS = new Set(['start_automation_task', 'connect_automation_w
 // automatic-work adapter" even though the owner had granted the control.
 const PC_CONTROL_TOOLS = new Set(['browser_open_page', 'browser_click', 'browser_fill', 'browser_view_photo', 'browser_check_request',
   'desktop_launch', 'desktop_click', 'desktop_click_point', 'desktop_type', 'desktop_keys', 'desktop_close_window', 'desktop_check_request']);
-const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) =>
-  item && typeof item === 'object' && !Array.isArray(item)
-    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 
 /** Rechecked before each model hop and every tool, including subscription MCP.
  * A fresh user message or owner control supersedes an automatic segment.
@@ -119,7 +117,7 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
   if (automatic && INTENT_TOOLS.has(name) && !context.sourceMessageId) throw new WorkContinuationError('The original request is unavailable.');
   if (!INTENT_TOOLS.has(name) || !context.sourceMessageId) return execute();
   if (!db.transaction) throw new WorkContinuationError('Durable work storage is unavailable.');
-  const checksum = createHash('sha256').update(name + '\n' + canonical(input)).digest('hex');
+  const checksum = createHash('sha256').update(name + '\n' + canonicalJson(input)).digest('hex');
   const reserved = await db.transaction(async tx => {
     await requireReviewedWorkOutcome(tx, context.ownerUserId, context.threadId);
     // Resolve only this turn's original goal, or the server-bound continuation.

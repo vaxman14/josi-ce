@@ -39,6 +39,7 @@ const MEMBER_NAV: NavItem[] = [
   { to: '/app/workflows', label: 'Workflows' },
   { to: '/app/vault', label: 'Vault', group: 'Your assistant' },
   { to: '/app/usage', label: 'Usage' },
+  { to: '/app/devices', label: 'Devices' },
   { to: '/app/personalization', label: 'Personalization' },
   { to: '/app/channels', label: 'Channels' },
   { to: '/app/settings', label: 'Settings' },
@@ -66,6 +67,7 @@ const ADMIN_NAV: NavItem[] = [
   { to: '/admin/backups', label: 'Backups', group: 'Server' },
   { to: '/admin/vault', label: 'Master Vault' },
   { to: '/admin/network', label: 'Network & address' },
+  { to: '/admin/hey-josi', label: 'Hey Josi' },
   { to: '/admin/workspace', label: 'Workspace' },
   { to: '/admin/parental-controls', label: 'Parental controls (Coming Soon)' },
 ];

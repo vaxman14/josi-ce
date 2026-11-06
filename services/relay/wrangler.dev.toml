@@ -1,0 +1,30 @@
+# Local runs only: `npx wrangler dev -c wrangler.dev.toml`. No routes, an open
+# relay, and `localhost` as the domain, so http://alice.localhost:8799 works.
+name = "josi-relay-dev"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+PUBLIC_DOMAIN = "localhost"
+RELAY_HOST = "127.0.0.1"
+OPEN_RELAY = "1"
+
+[[durable_objects.bindings]]
+name = "SITES"
+class_name = "Site"
+
+[[durable_objects.bindings]]
+name = "LIMITS"
+class_name = "Limit"
+
+[[durable_objects.bindings]]
+name = "INVITES"
+class_name = "Invite"
+
+[[durable_objects.bindings]]
+name = "NAMES"
+class_name = "Name"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Site", "Limit", "Invite", "Name"]

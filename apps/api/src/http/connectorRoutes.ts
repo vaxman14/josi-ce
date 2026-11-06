@@ -16,7 +16,7 @@ import {
 import {
   CAPABILITIES, CapabilityError, ConnectorError, NoClientError, NEXTCLOUD_STORAGE_CAPABILITY,
   OAUTH_PROVIDERS, STORAGE_CAPABILITY, isOAuthProvider,
-  accessTokenFor, buildAuthUrl, can, capabilitySpec, capabilityViews, clientStatuses, connectNextcloud,
+  accessTokenFor, buildAuthUrl, can, hostedCall, isHeyJosiClient, sharedGoogleAvailable, capabilitySpec, capabilityViews, clientStatuses, connectNextcloud,
   connectionFor, connectionsFor, createStateStore, deleteClient, deleteConnection, exchangeCode, fetchIdentity, getConnection,
   listFolderPage, listNextcloudFolder, loadClient, nextcloudCredentialsFor, normalizeServerUrl,
   refusalReason, refreshTokenForRevocation, revokeAtProvider, safeReturnPath, saveClient, scopesFor, setCapability, upsertConnection,
@@ -135,6 +135,7 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
     '/',
     handle(async (req, res) => {
       const clients = await clientStatuses(db);
+      const sharedGoogle = await sharedGoogleAvailable(db);
       const out = [];
       for (const provider of ALL_PROVIDERS) {
         const connections = await connectionsFor(db, { ownerUserId: req.user!.id, provider });
@@ -165,7 +166,7 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
           // configured) does not apply to a provider with no client at all.
           available: provider === 'nextcloud'
             ? true
-            : clients.find((c) => c.provider === provider)?.configured ?? false,
+            : (clients.find((c) => c.provider === provider)?.configured ?? false) || (provider === 'google' && sharedGoogle),
           connection: await view(connection),
           connections: await Promise.all(connections.map(view)),
           capabilities: await capabilityViews(db, { connection, provider }),
@@ -294,13 +295,17 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         }
       }
       const scopes = scopesFor(provider, capabilities);
+      const shared = isHeyJosiClient(client);
       const { state, challenge } = await store.start({
         userId: req.user!.id,
-        sessionId: req.user!.session_id,
+        // The shared client's callback lands on heyjosi.com, which holds no
+        // session here. The state and PKCE pair still bind the handshake: both
+        // are single use, and only this person's browser ever sees the URL.
+        sessionId: shared ? null : req.user!.session_id,
         provider,
         capabilities,
         scopes,
-        returnPath: isNativeClient(req) && req.body?.native === true
+        returnPath: !shared && isNativeClient(req) && req.body?.native === true
           ? NATIVE_CONNECTION_RETURN
           : safeReturnPath(req.body?.returnPath === NATIVE_CONNECTION_RETURN ? undefined : req.body?.returnPath),
         targetConnectionId,
@@ -312,6 +317,12 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         kind: 'connection.handshake_started',
         payload: { provider, capabilities },
       });
+
+      if (shared) {
+        const reply = await hostedCall<{ url: string }>(db, { op: 'google.authorize', state, codeChallenge: challenge, scopes }, { fetchImpl: ctx.fetchImpl });
+        if (!reply.ok) throw new RouteError(reply.error === 'plan_required' ? 402 : 502, reply.message ?? 'heyjosi.com could not start the Google sign-in.');
+        return res.json({ url: reply.url, capabilities });
+      }
 
       return res.json({
         url: buildAuthUrl(client, { state, scopes, codeChallenge: challenge }),

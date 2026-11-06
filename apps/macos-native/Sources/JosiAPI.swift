@@ -54,7 +54,12 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
     private var csrf: String?
     private var closed = false
     private var workEventRequest: URLSessionTask?
-    init(address: String) throws {
+    private let tunnel: TunnelConnection?
+    /// A tunnelled session has no cookies at all: the server keeps a jar per device
+    /// and adds the CSRF token itself, so an empty token is not a failure there.
+    private var csrfHeader: String? { csrf?.isEmpty == true ? nil : csrf }
+    /// With a tunnel, every request of this session goes through it or fails.
+    init(address: String, tunnel: TunnelConnection? = nil) throws {
         guard var url = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
               let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
               url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/",
@@ -64,15 +69,22 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         }
         url.path = ""
         guard let origin = url.url else { throw JosiError(message: "Enter a valid server address.") }
-        self.origin = origin
+        self.origin = origin; self.tunnel = tunnel
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil; config.urlCredentialStorage = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 180
         config.httpAdditionalHeaders = ["User-Agent": "JosiNative/0.7", "Accept": "application/json"]
+        if let tunnel {
+            config.protocolClasses = [TunnelURLProtocol.self]; config.httpCookieStorage = nil
+            TunnelRoutes.attach(host, tunnel)
+        }
         session = URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
     }
-    func close() { closed = true; csrf = nil; cancelWorkProgress(); session.invalidateAndCancel() }
+    func close() {
+        if !closed, let tunnel, let host = origin.host { TunnelRoutes.release(host, tunnel) }
+        closed = true; csrf = nil; cancelWorkProgress(); session.invalidateAndCancel()
+    }
     func cancelWorkProgress() { workEventRequest?.cancel(); workEventRequest = nil }
 
     /// Owner-scoped invalidations only. Event contents never become goal text,
@@ -172,7 +184,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
     }
     func primeCSRF() async throws {
         let result = try await request("/auth/csrf")
-        guard !result["csrfToken"].text.isEmpty, result["csrfToken"].text.count <= 256 else {
+        guard tunnel != nil || !result["csrfToken"].text.isEmpty, result["csrfToken"].text.count <= 256 else {
             throw JosiError(message: "The server could not prepare a secure session.")
         }
         csrf = result["csrfToken"].text
@@ -189,7 +201,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
-        if method != "GET" { req.setValue(csrf, forHTTPHeaderField: "x-josi-csrf") }
+        if method != "GET" { req.setValue(csrfHeader, forHTTPHeaderField: "x-josi-csrf") }
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
         if let body {
             req.httpBody = try JSONEncoder().encode(body)
@@ -241,7 +253,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         if csrf == nil { try await primeCSRF() }
         var request = URLRequest(url: url); request.httpMethod = "POST"
         request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
-        request.setValue(csrf, forHTTPHeaderField: "x-josi-csrf")
+        request.setValue(csrfHeader, forHTTPHeaderField: "x-josi-csrf")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         return try await mediaResponse(request, mime: "audio/")
@@ -261,7 +273,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         if csrf == nil { try await primeCSRF() }
         var request = URLRequest(url: url); request.httpMethod = "POST"; request.httpBody = body
         request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
-        request.setValue(csrf, forHTTPHeaderField: "x-josi-csrf")
+        request.setValue(csrfHeader, forHTTPHeaderField: "x-josi-csrf")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         return try JSONDecoder().decode(Wire.self, from: await mediaResponse(request))["attachment"]
     }

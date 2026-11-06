@@ -13,13 +13,15 @@ namespace Josi.Native {
   /// One authenticated connection to a Josi CE server. First-run setup uses
   /// the browser-style cookie and CSRF token, held only in memory. Signed-in
   /// use is the server's native-app mode: an explicit bearer session with no
-  /// Origin header, so no browser can attach it and CSRF does not apply.
+  /// Origin header, so no browser can attach it and CSRF does not apply. A
+  /// paired server is the same API through TunnelHandler, end to end encrypted.
   public sealed class JosiApi : IDisposable {
     public const string UserAgent = "JosiWindows/0.7";
     const int MaxResponse = 4 * 1024 * 1024;
     public readonly Uri Origin;
     public readonly string OriginText;
-    readonly HttpClientHandler handler;
+    readonly HttpMessageHandler handler;
+    readonly TunnelHandler tunnel;
     readonly HttpClient http;
     readonly HttpClient streaming;
     readonly CancellationTokenSource closing = new CancellationTokenSource();
@@ -27,7 +29,10 @@ namespace Josi.Native {
     bool closed, native;
     CancellationTokenSource progress;
 
-    public JosiApi(string address) {
+    public JosiApi(string address) : this(address, null) { }
+    /// With `tunnel`, the address only names the server: every request goes
+    /// through the tunnel, and HTTPS certificates don't come into it.
+    public JosiApi(string address, TunnelHandler tunnel) {
       Uri parsed;
       var text = (address ?? "").Trim();
       if (!Uri.TryCreate(text, UriKind.Absolute, out parsed) || string.IsNullOrEmpty(parsed.Host)
@@ -38,20 +43,8 @@ namespace Josi.Native {
       }
       OriginText = parsed.GetLeftPart(UriPartial.Authority);
       Origin = new Uri(OriginText);
-      handler = new HttpClientHandler {
-        AllowAutoRedirect = false, UseCookies = true, CookieContainer = new CookieContainer(),
-        UseDefaultCredentials = false, Credentials = null, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
-      };
-      // Item 36: a server on the LAN answers with a certificate its own proxy
-      // issued. Windows does not know that authority; a Josi app that has
-      // pinned it (after the person confirmed its fingerprint once) does.
-      handler.ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => {
-        if (errors == System.Net.Security.SslPolicyErrors.None) return true;
-        if (certificate == null) return false;
-        if (TrustedByPin(Origin.Host, certificate, chain)) return true;
-        lock (untrustedGate) untrusted = new UntrustedServer { Host = Origin.Host, Thumbprint = certificate.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256), Subject = certificate.Subject };
-        return false;
-      };
+      this.tunnel = tunnel;
+      handler = (HttpMessageHandler)tunnel ?? Direct();
       http = new HttpClient(handler, false) { Timeout = TimeSpan.FromSeconds(180), MaxResponseContentBufferSize = MaxResponse };
       streaming = new HttpClient(handler, false) { Timeout = Timeout.InfiniteTimeSpan };
       foreach (var client in new[] { http, streaming }) {
@@ -59,11 +52,30 @@ namespace Josi.Native {
         client.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
       }
     }
+    HttpClientHandler Direct() {
+      var direct = new HttpClientHandler {
+        AllowAutoRedirect = false, UseCookies = true, CookieContainer = new CookieContainer(),
+        UseDefaultCredentials = false, Credentials = null, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+      };
+      // Item 36: a server on the LAN answers with a certificate its own proxy
+      // issued. Windows does not know that authority; a Josi app that has
+      // pinned it (after the person confirmed its fingerprint once) does.
+      direct.ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => {
+        if (errors == System.Net.Security.SslPolicyErrors.None) return true;
+        if (certificate == null) return false;
+        if (TrustedByPin(Origin.Host, certificate, chain)) return true;
+        lock (untrustedGate) untrusted = new UntrustedServer { Host = Origin.Host, Thumbprint = certificate.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256), Subject = certificate.Subject };
+        return false;
+      };
+      return direct;
+    }
     public static bool IsLoopback(string host) {
       var h = (host ?? "").ToLowerInvariant();
       return h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h == "::1";
     }
-    public bool IsLocal { get { return IsLoopback(Origin.Host); } }
+    public bool IsLocal { get { return tunnel == null && IsLoopback(Origin.Host); } }
+    /// How this server is reached, when it is a paired one.
+    public TunnelConnection Tunnel { get { return tunnel == null ? null : tunnel.Connection; } }
 
     /// Switches to native-app requests (sign-in and everything after it).
     public void UseNative() { native = true; csrf = null; }
@@ -178,7 +190,12 @@ namespace Josi.Native {
       return message;
     }
 
+    /// Over the tunnel, without a bearer session, the server keeps this device's
+    /// cookies: no cookie comes back and it adds the CSRF header itself, so there
+    /// is no token here to hold. Asking is still what fills that jar, and a server
+    /// restart empties it, so it is asked before each post (see Request).
     public async Task PrimeCsrf() {
+      if (tunnel != null) { if (session == null) await Request("/auth/csrf"); return; }
       if (native) return;
       var result = await Request("/auth/csrf");
       var token = result["csrfToken"].Text;
@@ -190,7 +207,7 @@ namespace Josi.Native {
     public Task<Wire> Request(string route, string method, object body) { return Request(route, method, body, null); }
     public async Task<Wire> Request(string route, string method, object body, IDictionary<string, string> headers) {
       var url = Route(route);
-      if (method != "GET" && csrf == null && !native) await PrimeCsrf();
+      if (method != "GET" && (tunnel != null ? session == null : csrf == null && !native)) await PrimeCsrf();
       using (var message = Message(method, url)) {
         if (headers != null) foreach (var pair in headers) message.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
         if (body != null) message.Content = new StringContent(Wires.Serialize(body), Encoding.UTF8, "application/json");
@@ -236,6 +253,7 @@ namespace Josi.Native {
     }
 
     static string Unreachable(HttpRequestException e) {
+      if (e.InnerException is TunnelException) return e.Message;
       var inner = e.InnerException as WebException;
       if (inner != null && inner.Status == WebExceptionStatus.TrustFailure) return "The server's HTTPS certificate is not trusted by Windows.";
       if (inner != null && inner.Status == WebExceptionStatus.NameResolutionFailure) return "The server address could not be found.";

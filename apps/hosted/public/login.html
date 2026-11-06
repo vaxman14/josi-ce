@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Log in - Hey Josi</title>
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<main class="narrow">
+<h1>Log in</h1>
+<form data-form="login">
+<label>Email <input name="email" type="email" autocomplete="email" required></label>
+<label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+<button>Log in</button>
+<p class="error" role="alert"></p>
+<button type="button" class="quiet" data-resend hidden>Send the confirmation link again</button>
+</form>
+<form data-form="second-step" hidden>
+<p>Enter the 6-digit code from your authenticator app, or a recovery code.</p>
+<label>Code <input name="code" autocomplete="one-time-code" required></label>
+<button>Continue</button>
+<p class="error" role="alert"></p>
+</form>
+<p class="small"><a href="/forgot">Forgot your password?</a> &middot; <a href="/signup">Sign up</a></p>
+</main>
+</body>
+</html>

@@ -102,9 +102,49 @@ namespace Josi.Native {
       Notify();
     }
 
-    public async Task Connect(string address, bool local = false) {
+    public Task Connect(string address, bool local = false) { return Open(new JosiApi(address), local); }
+
+    /// Pairs this PC with a server from a code or pairing link, then opens it.
+    public async Task Pair(string input) {
       if (!MfaRecovery.IsNull) throw new JosiException("Save your sign-in recovery codes before changing servers.");
-      var next = new JosiApi(address);
+      TunnelConnection connection;
+      try { connection = await TunnelConnection.Pair(await TunnelInvite.Resolve(input), Environment.MachineName, TunnelStore.Current); }
+      catch (TunnelException e) { throw new JosiException(e.Message); }
+      await OpenTunnel(connection);
+    }
+    /// Opens a server this PC is already paired with.
+    public Task ConnectPaired(TunnelPairing pairing) { return OpenTunnel(new TunnelConnection(pairing, TunnelStore.Current)); }
+    Task OpenTunnel(TunnelConnection connection) {
+      var next = new JosiApi(connection.Pairing.Origin, new TunnelHandler(connection));
+      connection.Ended += reason => { if (window != null) window.Dispatcher.BeginInvoke(new Action(() => PairingEnded(next, reason))); };
+      return Open(next, false);
+    }
+    /// The server ended this pairing. Its key and record are already gone here;
+    /// a sign-in that can no longer reach anything goes with them.
+    void PairingEnded(JosiApi api, string reason) {
+      SessionStore.Forget(api.OriginText);
+      if (Api != api) return;
+      StopWorkStream();
+      Api = null; api.Dispose(); ClearAccount();
+      Screen = Screen.Connect; Error = reason; Activity = "";
+      Notify();
+    }
+    /// Forgets a paired server on this PC. It stays listed on the server until
+    /// it's removed there.
+    public void ForgetPairing(TunnelPairing pairing) {
+      TunnelStore.Current.Delete(pairing);
+      SessionStore.Forget(pairing.Origin);
+      Notify();
+    }
+    public async Task RotateTunnelKey() {
+      var tunnel = Api == null ? null : Api.Tunnel;
+      if (tunnel == null) return;
+      try { await tunnel.RotateDeviceKey(); }
+      catch (TunnelException e) { throw new JosiException(e.Message); }
+    }
+
+    async Task Open(JosiApi next, bool local) {
+      if (!MfaRecovery.IsNull) { next.Dispose(); throw new JosiException("Save your sign-in recovery codes before changing servers."); }
       StopWorkStream();
       if (Api != null) Api.Dispose();
       Api = next;

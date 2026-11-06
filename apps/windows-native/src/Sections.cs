@@ -491,6 +491,10 @@ namespace Josi.Native {
     }
     protected override UIElement Build() {
       var page = Page(Ui.Heading("Server", model.IsAdministrator ? "Health of the server you are connected to, and the server on this PC." : "The server on this PC."));
+      var tunnel = model.Api == null ? null : model.Api.Tunnel;
+      if (tunnel != null) Ui.Add(page, Ui.CardBox("This PC's Connection",
+        Ui.Secondary(tunnel.Route),
+        Ui.Pill("Change This PC's Key", () => model.Run(async () => { await model.RotateTunnelKey(); Render(); }))), Ui.PageSpacing);
       if (model.IsAdministrator) {
         var checks = diagnosis["checks"].List;
         var ordered = checks.Where(c => c["state"].Text == "fail").Concat(checks.Where(c => c["state"].Text == "warn")).Concat(checks.Where(c => c["state"].Text != "fail" && c["state"].Text != "warn"));

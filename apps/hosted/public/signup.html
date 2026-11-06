@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign up - Hey Josi</title>
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<main class="narrow">
+<h1>Make a Hey Josi account</h1>
+<p>An address for your Josi server, and optional AI. Your server stays yours.</p>
+<form data-form="signup">
+<label>Email <input name="email" type="email" autocomplete="email" required></label>
+<label>Password, at least 12 characters <input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+<label>Your address <input name="handle" autocomplete="off" autocapitalize="none" spellcheck="false" pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]" required>
+<span class="small" data-preview>yourname.heyjosi.com</span></label>
+<button>Sign up</button>
+<p class="error" role="alert"></p>
+</form>
+<p class="small">Have an account? <a href="/login">Log in</a></p>
+</main>
+</body>
+</html>

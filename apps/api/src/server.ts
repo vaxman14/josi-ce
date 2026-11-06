@@ -5,6 +5,7 @@ import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from 
 import { createApp } from './app.js';
 import type { CookieSecurePolicy } from './http/cookies.js';
 import { publicAddressFromEnvironment, reconcilePublicAddress } from './setup/publicAddress.js';
+import { RelayService } from './relay/relayService.js';
 
 const attachmentStorage = await probeAttachmentStorage();
 if (!attachmentStorage.ok) console.error(`josi-ce: ${attachmentStorage.code}: ${attachmentStorage.message}`);
@@ -58,7 +59,14 @@ const cookieSecure: CookieSecurePolicy = process.env.COOKIE_SECURE === 'true'
     ? false
     : new URL(appUrl).protocol === 'https:' ? 'auto' : false;
 
+// Off unless this server is linked or set to its own relay: a fresh install opens
+// no listener and contacts nothing.
+const relay = new RelayService({ db, apiPort: PORT,
+  hostedUrl: process.env.JOSI_HOSTED_URL || undefined, hostedPublicKey: process.env.JOSI_HOSTED_PUBLIC_KEY || undefined,
+  lanPort: process.env.JOSI_LAN_NOISE_PORT ? Number(process.env.JOSI_LAN_NOISE_PORT) : undefined });
+
 const app = createApp(db, {
+  relay,
   automationRuntime: installationKey ? createNativeInspectionRuntime(db, installationKey) : undefined,
   attachmentStorageRoot: attachmentRoot(),
   // Empty/unset follows APP_URL. This keeps first-run LAN HTTP usable without
@@ -85,10 +93,13 @@ const server = listenHost
   ? app.listen(PORT, listenHost, () => console.log(`josi-ce api on loopback :${PORT}`))
   : app.listen(PORT, () => console.log(`josi-ce api on :${PORT}`));
 
+await relay.start().catch(err => console.error(`josi-ce: relay did not start: ${(err as Error).message}`));
+
 /** Stop accepting connections, drain, then close the pool. Without this a
  * `docker compose up -d` redeploy cuts requests off mid-flight. */
 async function shutdown(signal: string): Promise<void> {
   console.log(`josi-ce: ${signal} received, shutting down`);
+  await relay.stop().catch(() => undefined);
   server.close(() => void 0);
   await close().catch(() => undefined);
   process.exit(0);

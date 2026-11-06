@@ -17,6 +17,7 @@ struct NativeServerHealth: View {
         GroupBox("Connected server health") {
             VStack(alignment: .leading, spacing: 14) {
                 Text(model.api?.origin.absoluteString ?? "").textSelection(.enabled)
+                if let tunnel = model.tunnel { TunnelServerStatus(tunnel: tunnel) }
                 HStack {
                     Text(available == false ? "Diagnostics unavailable"
                          : diagnosis == .null ? "No current diagnosis"

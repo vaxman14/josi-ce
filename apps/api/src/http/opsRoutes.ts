@@ -24,11 +24,12 @@ import {
 import { UnsafeEndpointError } from '@josi-ce/llm';
 import { nativePosix } from '@josi-ce/storage';
 import { requireAuth, requireSuperAdmin } from './authz.js';
-import { constants, existsSync, mkdirSync } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { access, mkdir, open, rm, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, normalize } from 'node:path';
 import multer from 'multer';
+import { archiveUpload } from './archiveUpload.js';
 import { resolveDataPath } from '@josi-ce/core';
 import { inspectArchive, reconcileBackupRows, restoreFromFile } from '@josi-ce/ops';
 import { asyncRoute, param } from './async.js';
@@ -891,11 +892,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
   // mean), and only a second, confirmed call replaces anything.
   const stagedFiles = new Map<string, { owner: string; path: string; at: number }>();
   const incomingDir = resolveDataPath('/data/backups/incoming');
-  try { mkdirSync(incomingDir, { recursive: true }); } catch { /* reported on first upload */ }
-  const receiveArchive = multer({
-    storage: multer.diskStorage({ destination: incomingDir, filename: (_req, _file, done) => done(null, `upload-${randomUUID()}`) }),
-    limits: { fileSize: 8 * 1024 * 1024 * 1024, files: 1, fields: 2, parts: 3 },
-  });
+  const receiveArchive = archiveUpload(incomingDir, 'upload');
   const pruneStaged = async () => {
     for (const [id, staged] of stagedFiles) {
       if (Date.now() - staged.at > 60 * 60_000) { stagedFiles.delete(id); await rm(staged.path, { force: true }).catch(() => undefined); }

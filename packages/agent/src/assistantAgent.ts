@@ -800,7 +800,10 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       const doing = '(?:checking|looking|getting|fetching|pulling|opening|reading|searching|resuming|continuing|picking up|taking|viewing|listing)';
       const futureWords = new RegExp(`\\b(?:i['’]ll|i will|i am going to|i['’]m going to|let me|i can now|now i['’]ll|i['’]m ready to|i am ready to|ready to|next,? i|about to|i['’]m about to|first,? i|i['’]m ${doing}|i am ${doing}|${doing} (?:your|the|it|that|now))\\b`, 'i');
       const opensWithPromise = new RegExp(`^\\s*(?:i['’]ll|i will|i am going to|i['’]m going to|let me|now i['’]ll|next,? i|first,? i|i['’]m ${doing}|i am ${doing})\\b`, 'i');
-      if (offeredToolNames.size && !promisedActionReprompted && hop + 1 < hopLimit && res.text.trim().length < 400
+      // Not after the narrated-search correction below: it offered "search now
+      // or say honestly you have not", and the honest answer ("I have not
+      // searched; ask me again and I will") must not be sent back as a promise.
+      if (offeredToolNames.size && !promisedActionReprompted && !narratedSearchGuardReprompted && hop + 1 < hopLimit && res.text.trim().length < 400
         && (actions.length ? opensWithPromise.test(res.text) : futureWords.test(res.text))) {
         promisedActionReprompted = true;
         messages.push({ role: 'assistant', content: res.text });

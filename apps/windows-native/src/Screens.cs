@@ -6,7 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 
 namespace Josi.Native {
-  /// The server on this PC. Other devices use the standalone Josi client.
+  /// The server on this PC, or one elsewhere that this PC is paired with.
   public sealed class ConnectView : UserControl, IRefresh {
     readonly AppModel model; readonly Window owner;
     public ConnectView(AppModel model, Window owner) {
@@ -31,11 +31,29 @@ namespace Josi.Native {
                   : Automation.Id(Ui.Pill("Set Up on This PC…", () => ServerControls.ChooseInstaller(model, owner), true), "josi.welcome.setup"),
         new ServerControls(model, owner, true));
       var brand = Ui.Row(14, Ui.JosiMark(52), Ui.Stack(2, Ui.T("Josi", 28, FontWeights.SemiBold), Ui.Caption("Your assistant, on your own server.")));
-      var page = Ui.Stack(28, brand, Ui.Heading("Welcome to Josi", "Your conversations, your work, your PC."), local,
+      var page = Ui.Stack(28, brand, Ui.Heading("Welcome to Josi", "Your conversations, your work, your PC."), local, Elsewhere(),
         Ui.Secondary("Closing this window leaves your server running for your other devices."));
       page.IsEnabled = !model.Busy;
       Automation.Id(this, "josi.welcome", "Welcome to Josi");
       Content = Ui.Scroll(page, 720, 36);
+    }
+    UIElement Elsewhere() {
+      var paired = TunnelStore.Current.All();
+      var items = new List<UIElement> {
+        Ui.Row(10, Ui.Icon(Glyph.Network, 22, Ui.Text), Ui.T("On another computer", 21, FontWeights.Bold)),
+        Ui.Secondary("Pair this PC with your server to reach it from anywhere. Only your server can read what's sent.")
+      };
+      foreach (var server in paired) {
+        var chosen = server;
+        var name = string.IsNullOrEmpty(server.Label) ? new Uri(server.Origin).Host : server.Label;
+        items.Add(Ui.Spread(Ui.T(name), Ui.Row(8,
+          Automation.Id(Ui.Pill("Open", () => model.Run(async () => { model.Activity = "Connecting to " + name + "…"; try { await model.ConnectPaired(chosen); } finally { model.Activity = ""; } }), true), "josi.welcome.paired.open"),
+          Automation.Id(Ui.Pill("Forget…", () => {
+            if (Dialogs.Confirm(owner, "Forget " + name + "?", "This PC will need a new pairing code to reach it again. You can remove this PC on your server too.", "Forget")) model.ForgetPairing(chosen);
+          }), "josi.welcome.paired.forget"))));
+      }
+      items.Add(Automation.Id(Ui.Pill("Pair This PC…", () => Dialogs.PairServer(owner, model), paired.Count == 0), "josi.welcome.pair"));
+      return Ui.CardBox(null, items.ToArray());
     }
   }
 

@@ -8,6 +8,25 @@ import { useResource } from '@/lib/useResource';
 import { ResourceFallback } from '@/components/ResourceFallback';
 import { Badge, Card, CardTitle, CollapsibleCard } from '@/components/ui';
 
+interface HeyJosi { plan: string; usage: { remaining: number; allowance: number; topUps: number; periodEnd: string | null } | null }
+
+/** The household's AI allowance, on Connect + AI. Quiet on every other plan, and
+ * when this server has no Hey Josi routes at all. */
+function AiAllowance() {
+  const resource = useResource<HeyJosi>('/hey-josi');
+  const usage = resource.data?.usage;
+  // Not by plan: a household member on Free shares the owner's allowance.
+  if (!usage || usage.allowance + usage.topUps <= 0) return null;
+  const dollars = (micro: number) => `$${(micro / 1_000_000).toFixed(2)}`;
+  return (
+    <Card>
+      <CardTitle>AI allowance</CardTitle>
+      <p className="text-sm">{dollars(usage.remaining)} left of {dollars(usage.allowance + usage.topUps)}, shared by your household.</p>
+      {usage.periodEnd && <p className="text-sm text-muted-foreground">Resets {new Date(usage.periodEnd).toLocaleDateString()}.</p>}
+    </Card>
+  );
+}
+
 export function Usage() {
   // Every outcome named — same fix as Overview.   // undefined)` made any failed fetch an infinite spinner.
   const resource = useResource<LlmStatus>('/llm/status');
@@ -27,6 +46,7 @@ export function Usage() {
     <div className="page">
       <h1 className="page-title">Usage</h1>
       <p className="text-sm text-muted-foreground">Your own usage this month ({usage.month}).</p>
+      <AiAllowance />
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Card>

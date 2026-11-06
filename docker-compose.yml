@@ -148,6 +148,9 @@ services:
       # Backups and diagnostics bundles. Named volumes so `docker compose down`
       # does not take the only copy with it.
       - josi_backups:/data/backups
+      # The server's relay keys. Its own volume, so a recreated container keeps
+      # its identity, and web and worker read the same keys.
+      - josi_keys:/data/keys
       - josi_diagnostics:/data/diagnostics
       # The Codex CLI's home on the ChatGPT subscription path. Its own volume
       # so replacing a container does not sign the operator out, and so
@@ -224,6 +227,9 @@ services:
       # Backups and diagnostics bundles. Named volumes so `docker compose down`
       # does not take the only copy with it.
       - josi_backups:/data/backups
+      # The server's relay keys. Its own volume, so a recreated container keeps
+      # its identity, and web and worker read the same keys.
+      - josi_keys:/data/keys
       - josi_diagnostics:/data/diagnostics
       # The Codex CLI's home on the ChatGPT subscription path. Its own volume
       # so replacing a container does not sign the operator out, and so
@@ -371,6 +377,7 @@ volumes:
   db_data:
   josi_versions:
   josi_backups:
+  josi_keys:
   josi_diagnostics:
   josi_codex:
   josi_claude:

@@ -45,6 +45,8 @@ import { AdminChannels } from '@/pages/admin/Channels';
 import { AdminVault } from '@/pages/admin/Vault';
 import { AdminAutomation } from '@/pages/admin/Automation';
 import { AdminNetwork } from '@/pages/admin/Network';
+import { AdminHeyJosi } from '@/pages/admin/HeyJosi';
+import { Devices } from '@/pages/Devices';
 import { api } from '@/lib/api';
 
 /** Routing is convenience, not security.
@@ -152,6 +154,7 @@ export function App() {
         <Route path="workspace" element={<LocalWorkspace />} />
         <Route path="vault" element={<Vault />} />
         <Route path="usage" element={<Usage />} />
+        <Route path="devices" element={<Devices />} />
         <Route path="personalization" element={<Personalization />} />
         <Route path="settings" element={<Settings />} />
         <Route path="channels" element={<Channels />} />
@@ -183,6 +186,7 @@ export function App() {
         <Route path="vault" element={<AdminVault />} />
         <Route path="automation" element={<AdminAutomation />} />
         <Route path="network" element={<AdminNetwork />} />
+        <Route path="hey-josi" element={<AdminHeyJosi />} />
         {/* Connectors and Integrations are one page since October 2026 (item 41). */}
         <Route path="developer-services" element={<Navigate to="/admin/connectors?view=developer" replace />} />
         <Route path="integrations" element={<Navigate to="/admin/connectors?view=developer" replace />} />

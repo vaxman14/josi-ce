@@ -8,47 +8,67 @@ namespace Josi.Native {
   /// Windows Credential Manager for this Windows account on this PC (encrypted
   /// by Windows, never roamed), so Josi opens signed in after a restart or an
   /// update. The password itself is never stored. Signing out removes it, and
-  /// the server can end the session at any time.
+  /// the server can end the session at any time. Paired servers keep this PC's
+  /// tunnel keys here the same way.
   static class SessionStore {
     public sealed class Saved { public string Identifier, Token; }
 
-    static string Target(string origin) {
+    static string Target(string kind, string name) {
       // Automated UI tests use their own entries, never a person's sign-in.
       var test = Environment.GetEnvironmentVariable("JOSI_TEST_INSTANCE");
-      return "Josi/session/" + origin + (string.IsNullOrEmpty(test) ? "" : "/test/" + test);
+      return "Josi/" + kind + "/" + name + (string.IsNullOrEmpty(test) ? "" : "/test/" + test);
     }
+    static string Target(string origin) { return Target("session", origin); }
 
-    public static void Save(string origin, string identifier, string token) {
-      var secret = Encoding.UTF8.GetBytes(token);
+    static void Write(string target, string userName, byte[] secret, string failure) {
       var blob = Marshal.AllocHGlobal(secret.Length);
       try {
         Marshal.Copy(secret, 0, blob, secret.Length);
         var credential = new Credential {
-          Type = 1, TargetName = Target(origin), UserName = identifier ?? "", Persist = 2,  // GENERIC, LOCAL_MACHINE
+          Type = 1, TargetName = target, UserName = userName, Persist = 2,  // GENERIC, LOCAL_MACHINE
           CredentialBlobSize = secret.Length, CredentialBlob = blob,
         };
-        if (!CredWrite(ref credential, 0)) throw new JosiException("Windows could not remember this sign-in: " + new Win32Exception().Message);
+        if (!CredWrite(ref credential, 0)) throw new JosiException(failure + new Win32Exception().Message);
       } finally {
         for (var i = 0; i < secret.Length; i++) Marshal.WriteByte(blob, i, 0);
         Marshal.FreeHGlobal(blob);
-        Array.Clear(secret, 0, secret.Length);
       }
     }
-
-    public static Saved Load(string origin) {
+    /// The stored secret, or null. The caller clears it.
+    static byte[] Read(string target, out string userName) {
       IntPtr found;
-      if (!CredRead(Target(origin), 1, 0, out found)) return null;
+      userName = "";
+      if (!CredRead(target, 1, 0, out found)) return null;
       try {
         var credential = (Credential)Marshal.PtrToStructure(found, typeof(Credential));
         if (credential.CredentialBlobSize <= 0 || credential.CredentialBlobSize > 1024) return null;
         var secret = new byte[credential.CredentialBlobSize];
         Marshal.Copy(credential.CredentialBlob, secret, 0, secret.Length);
-        try { return new Saved { Identifier = credential.UserName ?? "", Token = Encoding.UTF8.GetString(secret) }; }
-        finally { Array.Clear(secret, 0, secret.Length); }
+        userName = credential.UserName ?? "";
+        return secret;
       } finally { CredFree(found); }
     }
 
+    public static void Save(string origin, string identifier, string token) {
+      var secret = Encoding.UTF8.GetBytes(token);
+      try { Write(Target(origin), identifier ?? "", secret, "Windows could not remember this sign-in: "); }
+      finally { Array.Clear(secret, 0, secret.Length); }
+    }
+
+    public static Saved Load(string origin) {
+      string identifier;
+      var secret = Read(Target(origin), out identifier);
+      if (secret == null) return null;
+      try { return new Saved { Identifier = identifier, Token = Encoding.UTF8.GetString(secret) }; }
+      finally { Array.Clear(secret, 0, secret.Length); }
+    }
+
     public static void Forget(string origin) { CredDelete(Target(origin), 1, 0); }
+
+    /// This PC's private keys for a paired server (see TunnelStore).
+    public static void SaveTunnelKeys(string site, byte[] keys) { Write(Target("tunnel", site), "", keys, "Windows could not keep this PC's key: "); }
+    public static byte[] LoadTunnelKeys(string site) { string ignored; return Read(Target("tunnel", site), out ignored); }
+    public static void ForgetTunnelKeys(string site) { CredDelete(Target("tunnel", site), 1, 0); }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct Credential {

@@ -174,6 +174,7 @@ def build(args):
         'NSMicrophoneUsageDescription': 'Josi uses your microphone only when you start dictation or voice chat. Audio is processed by Voice Box on your Josi server.',
         'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
+        'NSLocalNetworkUsageDescription': 'Josi connects straight to your server when both are on the same network.',
         'NSAccessibilityUsageDescription': 'Josi controls only the apps you select and approve for this desktop session.',
         'NSScreenCaptureUsageDescription': 'Josi captures permitted app windows during an approved desktop task.',
         'JosiNativeClientProtocol': 1, 'JosiProtectedHostProtocol': 1,

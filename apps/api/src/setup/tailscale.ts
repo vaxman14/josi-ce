@@ -7,7 +7,7 @@
 // over HTTPS with Josi's own certificate, which the Josi apps pin once.
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { win32 } from 'node:path';
 
 export interface TailscaleStatus {
   /** A Tailscale command was found on this machine. */
@@ -38,8 +38,8 @@ export function tailscaleCandidates(platform = process.platform, env = process.e
   const override = env.JOSI_TAILSCALE_EXE;
   if (override) return [override];
   if (platform === 'win32') {
-    return [join(env.ProgramFiles ?? 'C:\\Program Files', 'Tailscale', 'tailscale.exe'),
-      join(env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Tailscale', 'tailscale.exe')];
+    return [win32.join(env.ProgramFiles ?? 'C:\\Program Files', 'Tailscale', 'tailscale.exe'),
+      win32.join(env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Tailscale', 'tailscale.exe')];
   }
   if (platform === 'darwin') {
     return ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/usr/local/bin/tailscale', '/opt/homebrew/bin/tailscale'];

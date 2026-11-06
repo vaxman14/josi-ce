@@ -15,6 +15,7 @@ import {
 import {
   ConnectorError, refreshTokens, type ErrorCategory, type FetchOptions, type OAuthClient, type TokenSet,
 } from './providers.js';
+import { HEY_JOSI_CLIENT, brokeredRefresh, isHeyJosiClient } from './heyJosi.js';
 
 export interface ConnectionRow {
   id: string;
@@ -36,7 +37,7 @@ export interface ConnectionRow {
   // a WebDAV request, and both worth showing the owner without unsealing
   // anything. The app password itself never appears here; it is sealed into
   // `secrets_enc` exactly like an OAuth refresh token.
-  meta: { serverUrl?: string; username?: string } | null;
+  meta: { serverUrl?: string; username?: string; oauthClient?: string } | null;
 }
 
 interface SealedTokens {
@@ -77,6 +78,8 @@ export async function upsertConnection(
     /** The owner started this handshake by pressing an unavailable capability
      * switch on an existing connection. A normal connection stays off. */
     enableRequestedCapabilities?: boolean;
+    /** Set when the tokens came from the shared Hey Josi application. */
+    oauthClient?: string | null;
   },
 ): Promise<ConnectionRow> {
   if (!db.transaction) throw new VaultError('Connection storage requires transactions');
@@ -151,7 +154,11 @@ export async function upsertConnection(
         grantedScopes, sealed, expiresAt,
       ],
     );
-    const connection = rows[0];
+    // Always written, so a reconnect through another application can't leave a
+    // stale mark that sends the refresh to the wrong place.
+    const connection = args.provider === 'google'
+      ? (await tx.query<ConnectionRow>(`update connections set meta = coalesce(meta, jsonb_build_object()) || $2 where id = $1 returning *`, [rows[0].id, json({ oauthClient: args.oauthClient ?? null })]))[0]
+      : rows[0];
 
     // Record which capabilities the provider now covers. A normal first connect
     // leaves the default read bundle off: consent to CONNECT is not consent to
@@ -430,8 +437,12 @@ export async function accessTokenFor(
     // No external business action is performed here, only token renewal.
     let refreshed: TokenSet;
     try {
-      refreshed = await refreshTokens(args.client, { refreshToken: tokens.refreshToken, scopes: current.granted_scopes },
-        { ...opts, timeoutMs: Math.min(opts.timeoutMs ?? 20_000, 20_000) });
+      const bounded = { ...opts, timeoutMs: Math.min(opts.timeoutMs ?? 20_000, 20_000) };
+      // A refresh token only works with the application that issued it, so the
+      // connection decides, whichever client happens to be configured today.
+      refreshed = current.meta?.oauthClient === HEY_JOSI_CLIENT || isHeyJosiClient(args.client)
+        ? await brokeredRefresh(tx, { refreshToken: tokens.refreshToken, scopes: current.granted_scopes }, bounded)
+        : await refreshTokens(args.client, { refreshToken: tokens.refreshToken, scopes: current.granted_scopes }, bounded);
     } catch (err) {
       if (!(err instanceof ConnectorError)) throw err;
       await markUnhealthy(tx, current.id, err.category);

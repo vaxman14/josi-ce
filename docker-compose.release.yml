@@ -164,6 +164,9 @@ services:
       # what an update does — does not destroy the only copy of anything.
       - josi_versions:/data/versions
       - josi_backups:/data/backups
+      # The server's relay keys. Its own volume, so a recreated container keeps
+      # its identity, and web and worker read the same keys.
+      - josi_keys:/data/keys
       - josi_diagnostics:/data/diagnostics
       - josi_codex:/data/codex
       - josi_claude:/data/claude
@@ -227,6 +230,9 @@ services:
     volumes:
       - josi_versions:/data/versions
       - josi_backups:/data/backups
+      # The server's relay keys. Its own volume, so a recreated container keeps
+      # its identity, and web and worker read the same keys.
+      - josi_keys:/data/keys
       - josi_diagnostics:/data/diagnostics
       - josi_codex:/data/codex
       - josi_claude:/data/claude
@@ -344,6 +350,7 @@ volumes:
   db_data:
   josi_versions:
   josi_backups:
+  josi_keys:
   josi_diagnostics:
   # The Codex CLI's home on the ChatGPT subscription path. Its own volume so a
   # container replacement does not sign the operator out, and so removing it is

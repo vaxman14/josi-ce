@@ -291,7 +291,7 @@ describe('running tools', () => {
       content: null, tool_calls: [toolCall('list_open_tasks', {}, `t${i}`)],
     }));
     const result = await turn({ maxHops: 3 });
-    expect(result.reply).toMatch(/round in circles/);
+    expect(result.reply).toMatch(/reached its work limit/);
     expect(requests).toHaveLength(3);
     const logged = await db.query(`select kind from events where kind = 'agent.hop_limit'`);
     expect(logged).toHaveLength(1);
@@ -304,7 +304,8 @@ describe('running tools', () => {
       { content: 'I cannot do that.' },
     ];
     const result = await turn();
-    expect((result.actions[0].result as any).error).toBe('unknown_tool');
+    // Refused as not offered, before anything looks the name up.
+    expect((result.actions[0].result as any).error).toBe('tool_unavailable');
     expect(result.reply).toBe('I cannot do that.');
   });
 });

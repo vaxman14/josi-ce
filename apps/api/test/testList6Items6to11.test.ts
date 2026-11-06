@@ -29,9 +29,15 @@ describe('Test List 6 items 6–11 UI contracts', () => {
     expect(page).toContain('Encrypt off-site backups');
   });
 
-  it('uses one Integrations hub with the requested catalog and request banner', () => {
+  it('uses one Connectors hub with the requested catalog and request banner', () => {
+    // Connectors and Integrations became one page (item 41); the old address lands on its developer view.
+    const hub = read('apps/web/src/pages/admin/ConnectorsHub.tsx');
+    expect(hub).toContain('title="Connectors"');
+    expect(hub).toContain("label: 'Developer services'");
+    expect(hub).toContain('<AdminDeveloperServices embedded />');
+    expect(read('apps/web/src/App.tsx')).toContain('<Route path="integrations" element={<Navigate to="/admin/connectors?view=developer" replace />} />');
     const page = read('apps/web/src/pages/admin/DeveloperServices.tsx');
-    for (const label of ['Integrations', 'GitLab', 'Cloudflare', 'Docker Hub', 'GitHub Container Registry', 'Railway', 'Render', 'Sentry', 'Notion', 'Obsidian', 'Linear', 'Jira', 'Custom API']) {
+    for (const label of ['GitLab', 'Cloudflare', 'Docker Hub', 'GitHub Container Registry', 'Railway', 'Render', 'Sentry', 'Notion', 'Obsidian', 'Linear', 'Jira', 'Custom API']) {
       expect(page).toContain(label);
     }
     // A catalog logo is not an implementation. Unsupported named providers

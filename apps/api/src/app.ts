@@ -50,6 +50,8 @@ import { pcControlRoutes } from './http/pcControlRoutes.js';
 import { networkPublicRoutes, networkRoutes } from './http/networkRoutes.js';
 import { settingsChangeRoutes } from './http/settingsChangeRoutes.js';
 import { improvementRoutes, turnContextRoutes } from './http/improvementRoutes.js';
+import { adminRelayRoutes, relayRoutes } from './relay/relayRoutes.js';
+import type { RelayService } from './relay/relayService.js';
 
 export interface AppConfig {
   /** Injected only by tests; production derives the native Windows boundary. */
@@ -127,6 +129,8 @@ export interface AppConfig {
   outboundResolve?: (hostname: string) => Promise<string[]>;
   /** Hash of the browser installer's one-time first-admin handoff token. */
   setupTokenSha256?: string | null;
+  /** The relay, LAN path and hosted account link. Absent = those routes answer 404. */
+  relay?: RelayService;
 }
 
 export function createApp(db: Db, cfg: AppConfig): Express {
@@ -298,6 +302,10 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/improvements', improvementRoutes(db));
   api.use('/settings-changes', settingsChangeRoutes({ db, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport }));
   api.use('/admin/network', networkRoutes({ db }));
+  if (cfg.relay) {
+    api.use('/admin/hey-josi', adminRelayRoutes({ db, relay: cfg.relay, masterKey: cfg.masterKeyCheck }));
+    api.use('/hey-josi', relayRoutes({ db, relay: cfg.relay, masterKey: cfg.masterKeyCheck }));
+  }
   api.use('/admin/pc-control', pcControlRoutes({db,masterKey:cfg.masterKeyCheck,
     windows:cfg.nativeWindowsPermissions ?? (process.platform==='win32' && process.env.JOSI_NATIVE_RUNTIME==='1')}));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));

@@ -14,9 +14,8 @@
 // Nothing here ever reads a role, a user id, a completion flag or an install
 // identity from the request body.
 import { isIP } from 'node:net';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import multer from 'multer';
 import { RestoreError, reconcileBackupRows, restoreFromFile } from '@josi-ce/ops';
@@ -47,6 +46,7 @@ const READ_ONLY_CAPABILITIES: Record<'google' | 'microsoft', string[]> = {
   microsoft: CAPABILITIES.filter((c) => c.provider === 'microsoft' && c.kind === 'read').map((c) => c.key),
 };
 import { UserError, createUser, verifyPassword } from '@josi-ce/auth';
+import { archiveUpload } from '../http/archiveUpload.js';
 import { asyncRoute, param } from '../http/async.js';
 import { blockingFailures, runHostChecks } from './hostChecks.js';
 import { STEP_DESCRIPTORS, SETUP_STEPS, canSubmit, nextStep, type SetupStep } from './steps.js';
@@ -204,11 +204,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
    * destructive administrator action and lives under /ops. The whole thing
    * happens in one call; a fresh server has nothing worth a snapshot. */
   const incomingDir = resolveDataPath('/data/backups/incoming');
-  try { mkdirSync(incomingDir, { recursive: true }); } catch { /* reported on upload */ }
-  const receiveArchive = multer({
-    storage: multer.diskStorage({ destination: incomingDir, filename: (_req, _file, done) => done(null, `setup-${randomUUID()}`) }),
-    limits: { fileSize: 8 * 1024 * 1024 * 1024, files: 1, fields: 2, parts: 3 },
-  });
+  const receiveArchive = archiveUpload(incomingDir, 'setup');
   r.post('/restore', asyncRoute(async (req, res) => {
     const [owner] = await db.query<{ present: boolean }>("select exists(select 1 from users where role='super_admin') as present");
     if (owner?.present) { res.status(409).json({ error: 'This server already has an owner. Restore from Administration → Backups instead.' }); return; }

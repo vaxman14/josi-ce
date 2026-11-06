@@ -219,6 +219,30 @@ namespace Josi.Native {
       sheet.ShowDialog();
     }
 
+    /// Pairs this PC with a server, from a code or link made on that server.
+    public static void PairServer(Window owner, AppModel model) {
+      var sheet = new Sheet(owner, "Pair This PC", 520, "pair");
+      var input = Automation.Id(Ui.Input("Pairing code or link"), "josi.pair.code");
+      var note = Ui.Secondary("");
+      Action pair = () => {
+        var value = input.Text.Trim();
+        if (value.Length == 0) { note.Text = "Paste the code or link from your server."; return; }
+        note.Text = "Pairing…";
+        model.Run(async () => {
+          try { await model.Pair(value); input.Text = ""; sheet.Close(); }
+          catch (JosiException e) { note.Text = e.Message; }
+        });
+      };
+      var go = Automation.Id(Ui.Pill("Pair", pair, true), "josi.pair.ok");
+      go.IsDefault = true;
+      sheet.Body(Ui.Stack(14, Ui.Title2("Pair This PC"),
+        Ui.T("On your server, make a pairing code. Then paste the code or link here."),
+        Ui.Field("Pairing code or link", input), note,
+        Ui.Spread(go, Ui.Pill("Close", () => sheet.Close()))));
+      sheet.Loaded += delegate { input.Focus(); };
+      sheet.ShowDialog();
+    }
+
     /// Sets a password from an invitation or reset link for the connected server.
     public static void PasswordSetup(Window owner, AppModel model) {
       var sheet = new Sheet(owner, "Invitation or password reset", 560, "password-setup");

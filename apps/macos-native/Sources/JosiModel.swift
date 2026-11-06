@@ -43,6 +43,8 @@ import SwiftUI
     @Published var progressConnection = "Periodic updates"
     let desktop = NativeWorkspaceController()
     private(set) var api: JosiAPI?
+    @Published private(set) var pairings: [TunnelPairing] = []
+    private(set) var tunnel: TunnelConnection?
     private var installAttempt: UUID?
     private var refreshing = false
     private var workStream: Task<Void, Never>?
@@ -71,11 +73,15 @@ import SwiftUI
         do { receipt = try ServerReceipt.read() }
         catch { self.error = error.localizedDescription }
     }
-    func connect(_ address: String, local: Bool = false) async throws {
+    func connect(_ address: String, local: Bool = false, through paired: TunnelConnection? = nil) async throws {
+        if TunnelInvite.isLink(address) { try await pair(address); return }
         guard mfaRecovery == .null else { throw JosiError(message: "Save your sign-in recovery codes before changing servers.") }
         if desktop.requiresClosure { try await desktop.close() }
-        let next = try JosiAPI(address: address)
-        stopWorkStream(); api?.close(); api = next
+        // A paired server's address never goes out as plain HTTPS.
+        let known = pairings.first { $0.origin == address.trimmingCharacters(in: CharacterSet(charactersIn: "/ \n")).lowercased() }
+        let route = paired ?? known.map(tunnelConnection)
+        let next = try JosiAPI(address: address, tunnel: route)
+        stopWorkStream(); api?.close(); api = next; tunnel = route
         workStreamUnsupported = false; workAccessEnded = false
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; taskRuns = []
         pending = nil; pendingMessage = false; draftAttachments = []; draft = ""; selectedThread = nil
@@ -94,6 +100,44 @@ import SwiftUI
             screen = .setup
             try await loadSetup()
         } else { screen = .login }
+    }
+    func loadPairings() {
+        // Most people never pair. A Keychain that can't be read isn't news to them.
+        pairings = (try? TunnelKeychain().list()) ?? []
+    }
+    private func tunnelConnection(_ pairing: TunnelPairing) -> TunnelConnection {
+        // The Keychain copy, not the listed one: keys may have rotated since it was read.
+        TunnelConnection(pairing: (try? TunnelKeychain().load(pairing.site)) ?? pairing, forgotten: tunnelForgotten)
+    }
+    private var tunnelForgotten: @Sendable (String) -> Void {
+        { [weak self] site in Task { @MainActor in self?.pairingEnded(site) } }
+    }
+    private func pairingEnded(_ site: String) {
+        loadPairings()
+        guard tunnel?.site == site else { return }
+        disconnect()
+        error = "This Mac is no longer paired with that server. Pair it again to reconnect."
+    }
+    /// Takes a pairing code or link. The session pairing makes carries straight on.
+    func pair(_ input: String) async throws {
+        guard mfaRecovery == .null else { throw JosiError(message: "Save your sign-in recovery codes before changing servers.") }
+        address = ""
+        activity = "Pairing…"; defer { activity = "" }
+        let invite = try await TunnelInvite.resolve(input)
+        let connection = try await TunnelConnection.pair(invite, name: Host.current().localizedName ?? "Mac", forgotten: tunnelForgotten)
+        loadPairings()
+        try await connect(invite.origin, through: connection)
+    }
+    func open(_ pairing: TunnelPairing) async throws { try await connect(pairing.origin, through: tunnelConnection(pairing)) }
+    /// Local only. The server keeps its record until someone removes it there.
+    func forget(_ pairing: TunnelPairing) throws {
+        try TunnelKeychain().delete(pairing.site)
+        loadPairings()
+    }
+    func rotateDeviceKey() async throws {
+        guard let tunnel else { return }
+        try await tunnel.rotateDeviceKey()
+        loadPairings()
     }
     func signIn(identifier: String, password: String) async throws {
         guard let api else { return }
@@ -120,7 +164,7 @@ import SwiftUI
         guard !busy else { return }
         guard mfaRecovery == .null else { error = "Save your sign-in recovery codes before disconnecting."; return }
         guard !desktop.requiresClosure else { error = "Close the separate desktop before disconnecting."; return }
-        stopWorkStream(); api?.close(); api = nil
+        stopWorkStream(); api?.close(); api = nil; tunnel = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; taskRuns = []; setup = .null
         setupReview = .null; recovery = .null; mfaChallenge = ""; draft = ""; draftAttachments = []; pending = nil; pendingMessage = false
         automationSettings = .null; automationCatalog = .null; automation = .null; selectedThread = nil; resetAutomationDevices()
@@ -135,7 +179,7 @@ import SwiftUI
         }
         // run() keeps busy set until this completes; disconnect's UI guard
         // must not prevent clearing the revoked session.
-        stopWorkStream(); api?.close(); api = nil
+        stopWorkStream(); api?.close(); api = nil; tunnel = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; taskRuns = []
         draft = ""; draftAttachments = []; pending = nil; pendingMessage = false; selectedThread = nil
         recovery = .null; setup = .null; setupReview = .null; mfaChallenge = ""

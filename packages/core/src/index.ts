@@ -50,6 +50,7 @@ export { NativeNetworkTransportError, type NativeNetworkPayload, type NativeNetw
 export { createNativeInspectionRuntime } from './nativeAutomationRuntime.js';
 export * from './subscriptionCredentials.js';
 export { type WorkspaceStorageAuthority, type WorkspaceStorageSummary } from './workspaceStorage.js';
+export * from './canonicalJson.js';
 export * from './workContinuation.js';
 export * from './conversations.js';
 export * from './approvals.js';

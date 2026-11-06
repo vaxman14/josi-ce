@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MediaUnavailable, PCM_RATE, clock, extractFrames, extractPcm, mediaDuration, mediaToolsAvailable, transcriptText, withMediaFile } from '../src/media.js';
 
 const available = mediaToolsAvailable();
@@ -12,10 +12,14 @@ const folder = mkdtempSync(join(tmpdir(), 'josi-media-test-'));
 afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
 describe.skipIf(!available)('video and audio attachments with the pinned ffmpeg', () => {
-  const clip = join(folder, 'clip.mp4');
-  execFileSync(process.env.JOSI_FFMPEG_EXE!, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=6:size=320x240:rate=10',
-    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=6', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', clip]);
-  const bytes = readFileSync(clip);
+  let bytes: Buffer;
+  // In a hook: a skipped describe still runs its body during collection.
+  beforeAll(() => {
+    const clip = join(folder, 'clip.mp4');
+    execFileSync(process.env.JOSI_FFMPEG_EXE!, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=6:size=320x240:rate=10',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=6', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', clip]);
+    bytes = readFileSync(clip);
+  });
 
   it('takes evenly spaced JPEG frames in time order', async () => {
     const frames = await withMediaFile(bytes, 'mp4', (path) => extractFrames(path, 4));
