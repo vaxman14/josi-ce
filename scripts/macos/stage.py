@@ -30,7 +30,7 @@ def main():
         subprocess.run([str(NODE/'bin/npm'),'ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],cwd=app,env=env,check=True)
     meta=json.loads((app/'package.json').read_text());meta.update(name='josi-ce-native-runtime',version=VERSION,type='module')
     (app/'package.json').write_text(json.dumps(meta,indent=2)+'\n')
-    for p in [*REPO.glob('packages/*/dist'),*REPO.glob('apps/*/dist'),REPO/'packages/db/migrate.mjs',REPO/'packages/db/migrations']:
+    for p in [*REPO.glob('packages/*/dist'),*(p for p in REPO.glob('apps/*/dist') if p.parent.name!='hosted'),REPO/'packages/db/migrate.mjs',REPO/'packages/db/migrations']:
         copy(p,app/p.relative_to(REPO))
     copy(REPO/'packaging/macos/install-help.html',app/'apps/web/dist/help/install/index.html')
     if (app/'native').exists():shutil.rmtree(app/'native')
