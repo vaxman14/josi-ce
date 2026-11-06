@@ -8,6 +8,7 @@
 //     confirm a colleague has one.
 //   * The super admin gets nothing here. Not a thread, not a task, not a
 //     message. Their surface is `/api/admin/assistant`, which returns counts.
+import { presentTurnActivity } from './turnActivity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { mkdtempSync } from 'node:fs';
@@ -389,7 +390,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     const receipts=receiptIds.length?await db.query<{id:string;filename:string;content_type:string;analysis_status:string;analysis_code:string|null}>(`select id,filename,content_type,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3`,[receiptIds,req.user!.id,threadId]):[];
     const receiptById=new Map(receipts.map(a=>[a.id,a]));
     res.set('Cache-Control','no-store');
-    return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,attachment_receipts:t.attachment_ids.flatMap(id=>{const a=receiptById.get(id);return a?[{id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}}]:[];}),error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
+    return res.json({turns:turns.map(t=>{const lifecycleState=mobileLifecycleState(t.status);return{id:t.id,job_id:t.id,status:t.status,lifecycle_state:lifecycleState,client_message_id:t.client_message_id,attempt_of:t.attempt_of,inbound_message_id:t.inbound_message_id,assistant_message_id:t.assistant_message_id,attachment_receipts:t.attachment_ids.flatMap(id=>{const a=receiptById.get(id);return a?[{id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}}]:[];}),error:t.status==='failed'?{code:t.error_code,retryable:t.error_retryable}:null,activity:presentTurnActivity(t.tool_receipts),telemetry:{state:lifecycleState,turn_id:t.id,thread_id:threadId},created_at:t.created_at,updated_at:t.updated_at};}),next_cursor:turns.length?encodeTurnCursor(turns[turns.length-1]):cursor});
   }));
 
   /** Item 16: one turn, live. What Josi is doing right now, and the moment
@@ -812,12 +813,12 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     handle(async (req, res) => {
       if(typeof req.body?.approve!=='boolean')throw new RouteError(400,'choose approve or deny');
       try {
-        const {approval} = await decideActionApproval(db, {
+        const {approval, task} = await decideActionApproval(db, {
           approvalId: param(req, 'id'),
           decidedBy: req.user!.id,
           approve: req.body.approve,
         });
-        return res.json({ approval });
+        return res.json({ approval, taskId: task?.id ?? null });
       } catch (err) {
         if (err instanceof ApprovalError) {
           const [approval]=await db.query<{status:string}>(`select status from approvals where id=$1 and owner_user_id=$2`,[param(req,'id'),req.user!.id]);
