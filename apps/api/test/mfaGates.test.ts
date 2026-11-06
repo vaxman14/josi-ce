@@ -1,7 +1,7 @@
 // Holding someone's mailbox or Google account is one factor. These are the two
 // ways in that used to stop there: a password-reset link and Google sign-in.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Server } from 'node:http';
+import { request, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,13 +19,16 @@ const keyPath = join(mkdtempSync(join(tmpdir(), 'josi-mfa-gates-')), 'master.key
 writeFileSync(keyPath, keyBytes.toString('base64'));
 const password = 'synthetic-mfa-password', newPassword = 'a-brand-new-password';
 
-let db: TestDb, server: Server, base: string, userId: string, secret: string, recoveryCodes: string[];
+let db: TestDb, server: Server, base: string, userId: string, secret: string, recoveryCodes: string[], providerCalls = 0;
 
-const connectorFetch = (async (url: RequestInfo | URL) => new Response(JSON.stringify(
-  String(url).includes('userinfo')
-    ? { sub: 'google-linked-1', email: 'linked@google.test' }
-    : { access_token: 'access-token', scope: 'openid email profile' },
-), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+const connectorFetch = (async (url: RequestInfo | URL) => {
+  providerCalls += 1;
+  return new Response(JSON.stringify(
+    String(url).includes('userinfo')
+      ? { sub: 'google-linked-1', email: 'linked@google.test' }
+      : { access_token: 'access-token', scope: 'openid email profile' },
+  ), { status: 200, headers: { 'content-type': 'application/json' } });
+}) as typeof fetch;
 
 /** A browser's cookies, and the CSRF pair the API wants on every POST. */
 function browser() {
@@ -55,11 +58,18 @@ const sessions = async () => (await db.query<{ n: number }>(`select count(*)::in
 const resetToken = async () => (await issueAuthToken(db, { userId, purpose: 'reset' })).token;
 const turnMfaOff = () => db.query(`update users set mfa_enabled_at = null where id = $1`, [userId]);
 
-/** Google's half of the sign-in: what the browser arrives with at the callback. */
-async function googleState(startPath: string) {
-  const started = await fetch(`${base}/api${startPath}`, { redirect: 'manual' });
+/** Google's half of the sign-in: what the app's browser arrives with at the callback. */
+async function nativeState() {
+  const started = await fetch(`${base}/api/auth/google/native/start?redirect_uri=josi%3A%2F%2Fauth%2Fcallback`, { redirect: 'manual' });
   return new URL(started.headers.get('location')!).searchParams.get('state')!;
 }
+
+/** The same on the web, where the browser that starts it is the one that has to finish. */
+async function webState(b: ReturnType<typeof browser>) {
+  const started = await b.get('/auth/google/start?canonical=1');
+  return new URL(started.location!).searchParams.get('state')!;
+}
+const callbackFor = (state: string) => `/auth/google/callback?state=${encodeURIComponent(state)}&code=provider-code`;
 
 beforeEach(async () => {
   db = await testDb(); await ensureWorkspace(db);
@@ -144,7 +154,7 @@ describe('POST /auth/set-password', () => {
 describe('Google sign-in on the web', () => {
   it('stops at the authenticator, then finishes in the browser that started it', async () => {
     const b = browser(); await b.get('/auth/csrf');
-    const callback = await b.get(`/auth/google/callback?state=${encodeURIComponent(await googleState('/auth/google/start'))}&code=provider-code`);
+    const callback = await b.get(callbackFor(await webState(b)));
 
     expect(callback.status).toBe(302);
     expect(callback.location).toBe('/login?mfa=pending');
@@ -171,15 +181,79 @@ describe('Google sign-in on the web', () => {
   it('still goes straight in when the account has no authenticator', async () => {
     await turnMfaOff();
     const b = browser(); await b.get('/auth/csrf');
-    const callback = await b.get(`/auth/google/callback?state=${encodeURIComponent(await googleState('/auth/google/start'))}&code=provider-code`);
+    const callback = await b.get(callbackFor(await webState(b)));
     expect(callback.location).toBe('/app');
     expect(b.jar.has('josi_session')).toBe(true);
   });
 });
 
+describe('whose browser a Google sign-in belongs to', () => {
+  beforeEach(turnMfaOff);
+
+  it('refuses a finished callback link opened in another browser', async () => {
+    const attacker = browser(), victim = browser();
+    const link = callbackFor(await webState(attacker));
+    await victim.get('/auth/csrf');
+    providerCalls = 0;
+    const landed = await victim.get(link);
+    expect(landed.status).toBe(302);
+    expect(landed.location).toBe('/login?error=google_signin_failed');
+    expect(victim.jar.has('josi_session')).toBe(false);
+    expect(await sessions()).toBe(0);
+    expect(providerCalls).toBe(0);
+  });
+
+  it('refuses it too while that browser has a sign-in of its own under way', async () => {
+    const attacker = browser(), victim = browser();
+    const link = callbackFor(await webState(attacker));
+    await webState(victim);
+    expect((await victim.get(link)).location).toBe('/login?error=google_signin_failed');
+    expect(await sessions()).toBe(0);
+  });
+
+  it('finishes in the browser that started it, once', async () => {
+    const b = browser(), link = callbackFor(await webState(b));
+    expect((await b.get(link)).location).toBe('/app');
+    expect(b.jar.has('josi_google_state')).toBe(false);
+    b.jar.delete('josi_session');
+    expect((await b.get(link)).location).toBe('/login?error=google_signin_expired');
+  });
+
+  it('keeps the cookie from page script, on the Google routes, for as long as the state lives', async () => {
+    const b = browser();
+    await webState(b);
+    const cookie = b.set.find(value => value.startsWith('josi_google_state='))!;
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('Path=/api/auth/google');
+    expect(cookie).toContain('SameSite=Lax');
+    expect(cookie).toContain('Max-Age=600');
+  });
+
+  it('starts at APP_URL, where Google will come back to, and only hops once', async () => {
+    const elsewhere = await browser().get('/auth/google/start');
+    expect(elsewhere.status).toBe(302);
+    expect(elsewhere.location).toBe('http://localhost/api/auth/google/start?canonical=1');
+    // Host rewritten by a proxy still reaches Google instead of going round again.
+    expect(new URL((await browser().get('/auth/google/start?canonical=1')).location!).hostname).toBe('accounts.google.com');
+    const direct = await new Promise<string | undefined>((resolve, reject) => {
+      const req = request(`${base}/api/auth/google/start`, { headers: { host: 'localhost' } }, (res) => { res.resume(); resolve(res.headers.location); });
+      req.on('error', reject); req.end();
+    });
+    expect(new URL(direct!).hostname).toBe('accounts.google.com');
+  });
+
+  it('leaves the native flow alone: no cookie to set, and none asked for', async () => {
+    const started = await fetch(`${base}/api/auth/google/native/start?redirect_uri=josi%3A%2F%2Fauth%2Fcallback`, { redirect: 'manual' });
+    expect(started.headers.getSetCookie()).toEqual([]);
+    const state = new URL(started.headers.get('location')!).searchParams.get('state')!;
+    const callback = await fetch(`${base}/api${callbackFor(state)}`, { redirect: 'manual' });
+    expect(new URL(callback.headers.get('location')!).searchParams.get('code')).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+  });
+});
+
 describe('Google sign-in from a native app', () => {
   async function nativeCode() {
-    const state = await googleState('/auth/google/native/start?redirect_uri=josi%3A%2F%2Fauth%2Fcallback');
+    const state = await nativeState();
     const callback = await fetch(`${base}/api/auth/google/callback?state=${encodeURIComponent(state)}&code=provider-code`, { redirect: 'manual' });
     return new URL(callback.headers.get('location')!).searchParams.get('code')!;
   }

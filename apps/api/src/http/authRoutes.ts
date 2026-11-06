@@ -12,8 +12,8 @@ import { generateURI } from 'otplib';
 import QRCode from 'qrcode';
 import { asyncRoute, param } from './async.js';
 import {
-  MFA_CHALLENGE_COOKIE, clearMfaChallengeCookie, clearSessionCookie, clientIp, cookieSecureFor, isNativeClient, issueCsrfToken,
-  readCookie, setMfaChallengeCookie, setSessionCookie,
+  MFA_CHALLENGE_COOKIE, clearGoogleStateCookie, clearMfaChallengeCookie, clearSessionCookie, clientIp, cookieSecureFor, holdsGoogleState,
+  isNativeClient, issueCsrfToken, readCookie, setGoogleStateCookie, setMfaChallengeCookie, setSessionCookie,
 } from './cookies.js';
 import type { CookieSecurePolicy } from './cookies.js';
 import { requireAuth } from './authz.js';
@@ -76,7 +76,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return url.toString();
   }
 
-  async function startGoogle(returnUri: string | null, res: import('express').Response) {
+  async function startGoogle(returnUri: string | null, req: Request, res: Response) {
     if (returnUri !== null && returnUri !== NATIVE_GOOGLE_RETURN_URI) {
       return res.status(400).json({ error: 'unsupported native redirect URI' });
     }
@@ -98,6 +98,8 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     let started;
     try { started = await startGoogleLogin(db, key, returnUri); }
     catch { return returnUri ? res.redirect(nativeCallback(returnUri, { error: 'google_unavailable' })) : res.redirect('/login?error=google_unavailable'); }
+    // A native app checks state itself, and its browser never saw this request.
+    if (returnUri === null) setGoogleStateCookie(res, started.state, cookieOpts(req));
     return res.redirect(buildAuthUrl(
       { ...saved, redirectUri },
       { state: started.state, scopes: 'openid email profile', codeChallenge: started.challenge },
@@ -205,11 +207,20 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return res.json({ ok: true, message: 'If that account exists and system email is configured, a reset link is on its way.' });
   }));
 
-  r.get('/google/start', asyncRoute(async (_req, res) => startGoogle(null, res)));
+  r.get('/google/start', asyncRoute(async (req, res) => {
+    // Google returns to APP_URL, so that is where the state cookie has to be set,
+    // whatever address this page was opened on. Once only: a proxy that rewrites
+    // Host would otherwise send this back here forever.
+    const canonical = new URL(await publicAppUrl());
+    if (req.query.canonical !== '1' && req.get('host') !== canonical.host) {
+      return res.redirect(`${canonical.origin}/api/auth/google/start?canonical=1`);
+    }
+    return startGoogle(null, req, res);
+  }));
 
   r.get('/google/native/start', asyncRoute(async (req, res) => {
     const returnUri = typeof req.query.redirect_uri === 'string' ? req.query.redirect_uri : '';
-    return startGoogle(returnUri, res);
+    return startGoogle(returnUri, req, res);
   }));
 
   r.get('/native/config', asyncRoute(async (_req, res) => {
@@ -312,6 +323,11 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       return pending.nativeReturnUri
         ? res.redirect(nativeCallback(pending.nativeReturnUri, { error, state }))
         : res.redirect(`/login?error=${error}`);
+    }
+    if (!pending.nativeReturnUri) {
+      const ours = holdsGoogleState(req, state);
+      clearGoogleStateCookie(res);
+      if (!ours) return res.redirect('/login?error=google_signin_failed');
     }
     const verifier = pending.verifier!;
     const saved = await loadClient(db, key, 'google');

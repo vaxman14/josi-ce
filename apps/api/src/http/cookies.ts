@@ -14,6 +14,7 @@ import { SESSION_COOKIE } from '@josi-ce/auth';
 export const CSRF_COOKIE = 'josi_csrf';
 export const CSRF_HEADER = 'x-josi-csrf';
 export const MFA_CHALLENGE_COOKIE = 'josi_mfa_challenge';
+export const GOOGLE_STATE_COOKIE = 'josi_google_state';
 
 /** Minimal cookie parse. Two cookies, no signing (the session token is already
  * unguessable and only its hash is stored), no extra dependency. */
@@ -160,6 +161,29 @@ export function setMfaChallengeCookie(res: Response, challenge: string, opts: Co
 
 export function clearMfaChallengeCookie(res: Response): void {
   res.clearCookie(MFA_CHALLENGE_COOKIE, { path: '/api/auth/mfa' });
+}
+
+/** Ties a web Google sign-in to the browser that started it. Without this, a
+ * callback link from someone else's finished sign-in would log the visitor into
+ * that person's account, and whatever the visitor did next would land there.
+ * Lax still rides the top-level redirect back from Google. */
+export function setGoogleStateCookie(res: Response, state: string, opts: CookieOptions): void {
+  res.cookie(GOOGLE_STATE_COOKIE, state, {
+    httpOnly: true,
+    secure: opts.secure,
+    sameSite: 'lax',
+    path: '/api/auth/google',
+    maxAge: 10 * 60 * 1000,
+  });
+}
+
+export function clearGoogleStateCookie(res: Response): void {
+  res.clearCookie(GOOGLE_STATE_COOKIE, { path: '/api/auth/google' });
+}
+
+export function holdsGoogleState(req: Request, state: string): boolean {
+  const held = readCookie(req, GOOGLE_STATE_COOKIE);
+  return !!held && safeEqual(held, state);
 }
 
 /** Readable by design: the SPA has to echo it back in a header. Secrecy from
