@@ -133,7 +133,10 @@ on the server PC, or the web app as a super admin):
   install Tailscale and does not talk to Tailscale's service; it only reads
   the state of the Tailscale you installed.
 - **A public domain.** `https://your.domain` served through a tunnel or a
-  reverse proxy you run, pointed at the server PC.
+  reverse proxy you run, pointed at the server PC. On a Docker install using
+  your own proxy, set `JOSI_TRUSTED_PROXIES` in `.env` to the proxy's address,
+  or every visitor counts as the proxy and shares one set of sign-in limits
+  (see `docker-compose.noproxy.yml`).
 
 To connect an app:
 

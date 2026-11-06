@@ -11,7 +11,10 @@ import { buildAuthUrl, exchangeCode, fetchIdentity, hostedCall, hostedLink, load
 import { generateURI } from 'otplib';
 import QRCode from 'qrcode';
 import { asyncRoute, param } from './async.js';
-import { clearSessionCookie, clientIp, cookieSecureFor, isNativeClient, issueCsrfToken, setSessionCookie } from './cookies.js';
+import {
+  MFA_CHALLENGE_COOKIE, clearMfaChallengeCookie, clearSessionCookie, clientIp, cookieSecureFor, isNativeClient, issueCsrfToken,
+  readCookie, setMfaChallengeCookie, setSessionCookie,
+} from './cookies.js';
 import type { CookieSecurePolicy } from './cookies.js';
 import { requireAuth } from './authz.js';
 import { verifyAppleIdentityToken } from './appleIdentity.js';
@@ -44,6 +47,18 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
   function mfaKey() {
     try { return ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {}); }
     catch { return null; } // Recovery codes still require the existing first factor.
+  }
+
+  /** The first factor is proven and no session exists yet. Only
+   * /auth/mfa/verify-login turns this into one. */
+  async function issueMfaChallenge(req: Request, userId: string, rememberMe: boolean): Promise<string> {
+    const challenge = randomBytes(32).toString('base64url');
+    await db.query(
+      `insert into auth_mfa_challenges (user_id, token_hash, remember_me, ip, user_agent, expires_at)
+       values ($1,$2,$3,$4,$5,now() + interval '5 minutes')`,
+      [userId, createHash('sha256').update(challenge).digest('hex'), rememberMe, clientIp(req), req.header('user-agent')?.slice(0, 400) ?? null],
+    );
+    return challenge;
   }
 
   async function publicAppUrl(): Promise<string> {
@@ -117,12 +132,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         `select totp_secret_enc, mfa_enabled_at from users where id = $1`, [result.user.id],
       );
       if (mfa?.mfa_enabled_at) {
-        const challenge = randomBytes(32).toString('base64url');
-        await db.query(
-          `insert into auth_mfa_challenges (user_id, token_hash, remember_me, ip, user_agent, expires_at)
-           values ($1,$2,$3,$4,$5,now() + interval '5 minutes')`,
-          [result.user.id, createHash('sha256').update(challenge).digest('hex'), rememberMe === true || (isNativeClient(req) && rememberMe !== false), ip, req.header('user-agent')?.slice(0, 400) ?? null],
-        );
+        const challenge = await issueMfaChallenge(req, result.user.id, rememberMe === true || (isNativeClient(req) && rememberMe !== false));
         return res.status(202).json({ mfaRequired: true, challenge });
       }
 
@@ -226,11 +236,13 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
 
   r.post('/mfa/verify-login', mfaRoute(async (req, res) => {
     const result = await completeMfaLogin(db, mfaKey(), {
-      challenge: typeof req.body?.challenge === 'string' ? req.body.challenge : '',
+      // After a redirect the page never saw the challenge, so it rides in a cookie.
+      challenge: (typeof req.body?.challenge === 'string' && req.body.challenge) || readCookie(req, MFA_CHALLENGE_COOKIE) || '',
       code: typeof req.body?.code === 'string' ? req.body.code : '',
       ip: clientIp(req), userAgent: req.header('user-agent'),
     });
     if (!result) return res.status(401).json({ error: 'That verification code did not work.' });
+    clearMfaChallengeCookie(res);
     setSessionCookie(res, result.token, result.ttlSeconds, cookieOpts(req)); issueCsrfToken(res, cookieOpts(req));
     return res.json({ user: publicUser(result.user), ...(isNativeClient(req) ? { sessionToken: result.token } : {}) });
   }));
@@ -310,8 +322,8 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       { fetchImpl: ctx.connectorFetch },
     );
     const identity = await fetchIdentity('google', tokens.accessToken, { fetchImpl: ctx.connectorFetch });
-    const [user] = await db.query<{ id: string; email: string; username: string; role: string; display_name: string | null }>(
-      `select distinct u.id, u.email, u.username, u.role, u.display_name
+    const [user] = await db.query<{ id: string; email: string; username: string; role: string; display_name: string | null; mfa_enabled_at: string | null }>(
+      `select distinct u.id, u.email, u.username, u.role, u.display_name, u.mfa_enabled_at
        from users u join connections c on c.owner_user_id = u.id
        where u.status = 'active' and c.provider = 'google' and c.status = 'active'
          and ((c.provider_account_id is not null and c.provider_account_id = $1)
@@ -334,6 +346,11 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       await appendEvent(db, { actorUserId: user.id, actor: 'user', kind: 'auth.google_native_code_issued', subjectType: 'user', subjectId: user.id });
       return res.redirect(nativeCallback(pending.nativeReturnUri, { code: nativeCode, state }));
     }
+    // Google answers for the first factor only, like an emailed code.
+    if (user.mfa_enabled_at) {
+      setMfaChallengeCookie(res, await issueMfaChallenge(req, user.id, true), cookieOpts(req));
+      return res.redirect('/login?mfa=pending');
+    }
     const ttlSeconds = SESSION_TTL_SECONDS;
     const { token } = await createSession(db, {
       userId: user.id, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds,
@@ -348,19 +365,23 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     const code = typeof req.body?.code === 'string' ? req.body.code : '';
     if (!code) return res.status(400).json({ error: 'code required' });
     const [redeemed] = await db.query<{
-      user_id: string; id: string; email: string; username: string; role: string; display_name: string | null;
+      user_id: string; id: string; email: string; username: string; role: string; display_name: string | null; mfa_enabled_at: string | null;
     }>(
       `with claimed as (
          update auth_native_codes set used_at = now()
          where code_hash = $1 and used_at is null and expires_at > now()
          returning user_id
        )
-       select c.user_id, u.id, u.email, u.username, u.role, u.display_name
+       select c.user_id, u.id, u.email, u.username, u.role, u.display_name, u.mfa_enabled_at
        from claimed c join users u on u.id = c.user_id
        where u.status = 'active'`,
       [createHash('sha256').update(code).digest('hex')],
     );
     if (!redeemed) return res.status(401).json({ error: 'invalid or expired code' });
+    // The same answer /auth/login gives. The app finishes at /auth/mfa/verify-login.
+    if (redeemed.mfa_enabled_at) {
+      return res.status(202).json({ mfaRequired: true, challenge: await issueMfaChallenge(req, redeemed.user_id, true) });
+    }
     const { token } = await createSession(db, {
       userId: redeemed.user_id, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds: SESSION_TTL_SECONDS,
     });
@@ -555,6 +576,19 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         clearSessionCookie(res);
         res.set('Cache-Control', 'private, no-store');
         return res.json({ ok: true, passwordChanged: true });
+      }
+
+      // The link proves the mailbox, not the authenticator. The password stays
+      // changed, but a session still has to get past the second factor.
+      const [mfa] = await db.query<{ mfa_enabled_at: string | null }>(
+        `select mfa_enabled_at from users where id = $1`, [redeemed.user_id],
+      );
+      if (mfa?.mfa_enabled_at) {
+        clearSessionCookie(res);
+        res.set('Cache-Control', 'private, no-store');
+        const challenge = await issueMfaChallenge(req, redeemed.user_id, true);
+        setMfaChallengeCookie(res, challenge, cookieOpts(req));
+        return res.status(202).json({ mfaRequired: true, challenge });
       }
 
       // setPassword revoked every session, so the token they just burned is the

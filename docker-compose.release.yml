@@ -128,6 +128,13 @@ services:
       # Empty means infer from APP_URL: secure for https, non-secure for LAN
       # http. Explicit true/false remains available as an advanced override.
       COOKIE_SECURE: ${JOSI_COOKIE_SECURE:-}
+      # Who may vouch for a visitor's address in X-Forwarded-For. Here that is
+      # Caddy, whose address moves with the Docker network, so this names the
+      # private ranges Docker draws from. It is safe only because web publishes
+      # no port: nothing but Caddy reaches it, and the Caddyfile replaces the
+      # header with the address it saw. docker-compose.noproxy.yml publishes web,
+      # so it resets this.
+      JOSI_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7
       WEB_DIR: /app/web
       # Where the official Codex CLI keeps its login on the ChatGPT subscription
       # path. A dedicated per-installation volume, so the operator's device
