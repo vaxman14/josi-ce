@@ -169,7 +169,7 @@ export function AdminPolicy() {
                   <label className="mb-0.5 block text-sm font-medium" htmlFor={`pol-${cls.key}`}>
                     {cls.label}
                     {cls.impact === 'high' ? (
-                      <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                      <span className="ml-2 rounded bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-warning">
                         High impact
                       </span>
                     ) : null}
@@ -180,7 +180,7 @@ export function AdminPolicy() {
                     value={cls.maxLevel ?? 'automatic'}
                     disabled={busy === cls.key}
                     onChange={(e) => void set(cls, e.target.value)}
-                    className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
+                    className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm"
                   >
                     {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
                   </select>

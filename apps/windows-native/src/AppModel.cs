@@ -234,7 +234,7 @@ namespace Josi.Native {
       var api = Api; if (api == null) return;
       var result = await api.Request("/auth/mfa/verify-login", "POST", Wires.O("challenge", MfaChallenge, "code", code));
       if (Api != api) return;
-      await FinishNativeLogin(api, signingInAs, result);
+      await FinishNativeLogin(api, signingInAs.Length > 0 ? signingInAs : GoogleIdentifier(result), result);
     }
 
     /// Opens Google's page in the browser. Google returns to josi://auth/callback
@@ -272,8 +272,14 @@ namespace Josi.Native {
       if (!Regex.IsMatch(code, "^[A-Za-z0-9_-]{20,512}$")) throw new JosiException("Google sign-in did not finish. Try again.");
       var result = await api.Request("/auth/google/native/exchange", "POST", Wires.O("code", code));
       if (Api != api) return;
+      // Google is the first factor only. An account with an authenticator gets
+      // the same challenge as a password sign-in, and VerifyMfa finishes it.
+      if (result["mfaRequired"].Flag) { signingInAs = ""; MfaChallenge = result["challenge"].Text; Notify(); return; }
+      await FinishNativeLogin(api, GoogleIdentifier(result), result);
+    }
+    static string GoogleIdentifier(Wire result) {
       var user = result["user"];
-      await FinishNativeLogin(api, user["email"].Text.Length > 0 ? user["email"].Text : user["username"].Text, result);
+      return user["email"].Text.Length > 0 ? user["email"].Text : user["username"].Text;
     }
     static string GoogleProblem(string error) {
       switch (error) {

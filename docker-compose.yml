@@ -110,6 +110,13 @@ services:
       # Empty means infer from APP_URL: secure for https, non-secure for LAN
       # http. Explicit true/false remains available as an advanced override.
       COOKIE_SECURE: ${JOSI_COOKIE_SECURE:-}
+      # Who may vouch for a visitor's address in X-Forwarded-For. Here that is
+      # Caddy, whose address moves with the Docker network, so this names the
+      # private ranges Docker draws from. It is safe only because web publishes
+      # no port: nothing but Caddy reaches it, and the Caddyfile replaces the
+      # header with the address it saw. docker-compose.noproxy.yml publishes web,
+      # so it resets this.
+      JOSI_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7
       # Where the built web bundle lives inside the image. The API serves it
       # from its own origin; unset, the API runs headless.
       WEB_DIR: /app/web

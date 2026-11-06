@@ -102,7 +102,7 @@ export function AdminTelegram() {
     <div className="page">
       <h1 className="page-title">Telegram</h1>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {notice ? <p className="text-sm text-emerald-300">{notice}</p> : null}
+      {notice ? <p className="text-sm text-success">{notice}</p> : null}
 
       <CollapsibleCard title="Bot" summary={config.botUsername ? `@${config.botUsername}` : 'Bot credentials and status'} status={<Badge tone={config.enabled ? 'ok' : 'muted'}>{config.enabled ? 'On' : 'Off'}</Badge>} defaultOpen={!config.tokenSet}>
         <p className="mb-3 text-sm text-muted-foreground">

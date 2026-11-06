@@ -17,7 +17,7 @@ const MEMBER = { id: process.env.E2E_MEMBER ?? 'alice', pw: process.env.E2E_MEMB
 // iPhone SE, iPhone 13 mini, iPhone 14/15, Pro Max.
 const WIDTHS = [320, 375, 390, 430];
 const MEMBER_PAGES = [
-  '/app', '/app/talk', '/app/tasks', '/app/approvals', '/app/conversations',
+  '/app', '/app/tasks', '/app/approvals', '/app/conversations',
   '/app/contacts', '/app/connections', '/app/usage', '/app/settings',
   '/app/channels', '/app/channels/telegram',
   '/app/apps',
@@ -37,9 +37,13 @@ const step = (s) => console.log(`\n== ${s}`);
 
 async function signIn(page, who) {
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
+  // Behind a quiet link when passkeys or email codes are on, open when not.
+  const toggle = page.getByRole('button', { name: 'Use username and password' });
+  await page.locator('#identifier').or(toggle).first().waitFor();
+  if (await toggle.count()) await toggle.click();
   await page.fill('#identifier', who.id);
   await page.fill('#password', who.pw);
-  await page.click('button[type=submit]');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.waitForURL((u) => u.pathname.startsWith('/app'), { timeout: 20000 });
 }
 
@@ -87,7 +91,7 @@ async function testTouchSend(browser) {
   const page = await ctx.newPage();
   try {
     await signIn(page, MEMBER);
-    await page.goto(`${BASE}/app/talk`, { waitUntil: 'networkidle' });
+    await page.goto(`${BASE}/app`, { waitUntil: 'networkidle' });
 
     const composer = page.getByLabel('Message Josi');
     await composer.waitFor({ state: 'visible', timeout: 15000 });
@@ -218,9 +222,9 @@ async function testFetchesWork(browser) {
     record('what it created is fetched back and rendered', shown);
 
     await page.goto(`${BASE}/app`, { waitUntil: 'networkidle' });
-    const onHome = await page.getByText(/follow up/i).first().waitFor({ timeout: 15000 })
+    const counted = await page.getByRole('button', { name: /^Open menu, \d+ waiting$/ }).waitFor({ timeout: 15000 })
       .then(() => true).catch(() => false);
-    record('the home page renders data it fetched', onHome);
+    record('the menu button renders the count it fetched', counted);
   } catch (err) {
     record('app fetches', false, String(err).split('\n')[0]);
   } finally {
@@ -474,7 +478,7 @@ async function testPwaAssets(browser) {
     const manifestHref = await page.locator('link[rel=manifest]').getAttribute('href');
     record('the shell links a manifest', manifestHref === '/manifest.webmanifest', String(manifestHref));
     record('and declares a theme colour',
-      (await page.locator('meta[name=theme-color]').getAttribute('content')) === '#0b111e');
+      (await page.locator('meta[name=theme-color]').getAttribute('content')) === '#1B0F20');
     record('and an apple-touch-icon, which is the only icon iOS reads',
       (await page.locator('link[rel=apple-touch-icon]').getAttribute('content').catch(() => null)) === null
         && (await page.locator('link[rel=apple-touch-icon]').getAttribute('href')) === '/icons/icon-192.png');
@@ -662,15 +666,15 @@ async function testBranding(browser) {
   const page = await ctx.newPage();
   try {
     await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
-    const wordmark = page.locator('img[src="/brand/josi-wordmark.png"]');
-    record('the wordmark is on the sign-in screen', (await wordmark.count()) > 0);
-    const loaded = await wordmark.first().evaluate((img) => img.naturalWidth > 0).catch(() => false);
+    const stageMark = page.locator('img[src="/brand/josi-mark-gold.png"]');
+    record('the gold J is on the sign-in screen', (await stageMark.count()) > 0);
+    const loaded = await stageMark.first().evaluate((img) => img.naturalWidth > 0).catch(() => false);
     record('and it actually loaded', loaded === true);
     record('the product line is shown', (await page.getByText(/on your own server/i).count()) > 0);
     record('the publisher is named', (await page.getByText(/SOCAL RECEPTIONIST LLC/i).count()) > 0);
 
     await signIn(page, MEMBER);
-    const mark = page.locator('header img[src="/brand/josi-mark.png"]');
+    const mark = page.locator('header img[src="/brand/josi-mark-gold.png"]');
     record('the J mark is in the header', (await mark.count()) > 0);
   } catch (err) {
     record('branding', false, String(err).split('\n')[0]);

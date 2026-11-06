@@ -166,7 +166,7 @@ export function VoiceChat({ onTurn, disabled, onActiveChange }: { onTurn: (text:
       {listening ? (
         <button
           type="button"
-          className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-colors hover:bg-secondary/80"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full text-primary transition-colors hover:bg-secondary"
           onClick={() => interruptRef.current()}
           aria-label="Interrupt speech"
           title="Interrupt speech"
@@ -176,7 +176,7 @@ export function VoiceChat({ onTurn, disabled, onActiveChange }: { onTurn: (text:
       ) : null}
       <button
         type="button"
-        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-colors hover:bg-secondary/80 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex h-11 w-11 items-center justify-center rounded-full text-primary transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
         disabled={disabled && !listening}
         onClick={() => listening ? stopRef.current() : void start()}
         aria-label={listening ? 'Stop voice chat' : 'Start voice chat'}

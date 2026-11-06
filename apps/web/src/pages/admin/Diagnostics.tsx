@@ -264,7 +264,7 @@ export function AdminDiagnostics() {
             {update.release?.notes ? <pre className="mt-3 max-h-44 overflow-auto whitespace-pre-wrap rounded bg-secondary/40 p-3 text-xs">{update.release.notes}</pre> : null}
             {update.release?.url ? <a className="mt-2 inline-block text-sm underline" href={update.release.url} target="_blank" rel="noreferrer">Open release notes</a> : null}
             <label className="mt-4 block text-sm font-medium" htmlFor="update-confirm">Type <span className="font-mono">UPDATE {update.availableVersion}</span> to approve</label>
-            <input id="update-confirm" className="mt-2 min-h-11 w-full rounded-md border border-input bg-background px-3 font-mono text-sm" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={updateBusy !== null} autoComplete="off" />
+            <input id="update-confirm" className="mt-2 min-h-11 w-full rounded-md border border-border bg-background px-3 font-mono text-sm" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={updateBusy !== null} autoComplete="off" />
             <div className="mt-3 flex flex-wrap gap-2"><Button type="button" disabled={updateBusy !== null || confirmation !== `UPDATE ${update.availableVersion}`} onClick={() => void startUpdate()}>{updateBusy === 'start' ? 'Starting…' : `Back up and update to ${update.availableVersion}`}</Button></div>
           </div>
         ) : null}

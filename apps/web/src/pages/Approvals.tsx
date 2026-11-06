@@ -41,7 +41,7 @@ function TemplatePreview({ id }: { id: string }) {
   }, [id]);
   return error ? <ErrorNote>{error}</ErrorNote> : html ? <details className="mt-3" open>
     <summary className="cursor-pointer py-2 text-sm">Final email layout</summary>
-    <iframe title="Approved email preview" sandbox="" referrerPolicy="no-referrer" srcDoc={html} className="h-[420px] w-full rounded-md border border-border bg-white" />
+    <iframe title="Approved email preview" sandbox="" referrerPolicy="no-referrer" srcDoc={html} className="h-[420px] w-full rounded-md border border-border bg-paper" />
   </details> : null;
 }
 
@@ -112,7 +112,7 @@ export function Approvals() {
     <div className="page">
       <h1 className="page-title">Approvals</h1>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      {notice ? <p role="status" className="text-sm text-emerald-300">{notice}</p> : null}
+      {notice ? <p role="status" className="text-sm text-success">{notice}</p> : null}
 
       {nothing ? (
         <Empty title="Nothing to approve">

@@ -241,7 +241,7 @@ export function ProviderForm({
         <label className="mb-1 block text-sm" htmlFor="provider">Provider</label>
         <select
           id="provider" value={provider} onChange={(e) => setProvider(e.target.value)}
-          className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
+          className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm"
         >
           {/* Drawn from the catalogue the server sent. A hardcoded list here is
               how the installer came to offer five providers while the server
@@ -356,7 +356,7 @@ export function ProviderForm({
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {[{ id: '', label: 'Automatic (Codex chooses)' }, ...usable].map((m) => (
                 <label key={m.id || 'automatic'} className={`flex min-h-14 cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 text-sm ${
-                  chosen === m.id && !manualModel ? 'border-primary bg-primary/10' : 'border-input hover:bg-muted/50'
+                  chosen === m.id && !manualModel ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50'
                 }`}>
                   <input type="radio" name="chatgptChoice" value={m.id} checked={chosen === m.id && !manualModel}
                          onChange={() => { setChosen(m.id); setManualModel(''); }} />
@@ -383,7 +383,7 @@ export function ProviderForm({
           <label className="mb-1 block text-sm capitalize" htmlFor="model">{modelNoun}</label>
           <select
             id="model" value={chosen} onChange={(e) => { setChosen(e.target.value); setManualModel(''); }}
-            className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
+            className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm"
           >
             {usable.map((m) => (
               <option key={m.id} value={m.id}>
@@ -523,9 +523,9 @@ function SubscriptionSignIn({ info, loginPath, compact, onSignedIn }: {
   }
 
   if (signedIn) {
-    if (compact) return <p className="text-sm text-emerald-400">✓ Connected to ChatGPT</p>;
+    if (compact) return <p className="text-sm text-success">✓ Connected to ChatGPT</p>;
     return (
-      <div className="rounded-md border border-input p-3">
+      <div className="rounded-md border border-border p-3">
         <p className="text-sm">Signed in to your ChatGPT plan.</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Josi will send one real message before treating this as working. Everyone on this
@@ -537,7 +537,7 @@ function SubscriptionSignIn({ info, loginPath, compact, onSignedIn }: {
   }
 
   return (
-    <div className="space-y-2 rounded-md border border-input p-3">
+    <div className="space-y-2 rounded-md border border-border p-3">
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
       {login?.challenge ? (

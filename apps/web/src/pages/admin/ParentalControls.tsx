@@ -123,9 +123,9 @@ function AdminParentalControlsImplementation() {
   return (
     <div className="page">
       <h1 className="page-title">Parental controls <Badge tone="danger">BETA</Badge></h1>
-      <div role="alert" className="rounded-md border border-amber-500/60 bg-amber-500/10 p-3 text-sm">
-        <p className="font-semibold text-amber-200">BETA — experimental and not suitable as a safety control.</p>
-        <p className="mt-1 text-amber-100/90">
+      <div role="alert" className="rounded-md border border-warning/60 bg-warning/10 p-3 text-sm">
+        <p className="font-semibold text-warning">BETA — experimental and not suitable as a safety control.</p>
+        <p className="mt-1 text-warning/90">
           Do not trust or rely on this feature to protect a child. It may fail, be delayed, or behave unexpectedly and it controls
           only Josi—not the device, other apps, websites, location, or emergencies. Use active adult supervision and proven
           device-level controls, and verify restrictions independently.
@@ -188,7 +188,7 @@ function AdminParentalControlsImplementation() {
                 rows={3}
                 autoCapitalize="none"
                 spellCheck={false}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs"
                 placeholder="Paste the licence key you were sent"
               />
               <p className="text-xs text-muted-foreground">

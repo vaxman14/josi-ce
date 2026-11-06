@@ -1,4 +1,4 @@
-import { api, onSubmit } from './app.js?v=3';
+import { api, onSubmit } from './app.js?v=4';
 
 const $ = selector => document.querySelector(selector);
 const money = micros => `$${(micros / 1_000_000).toFixed(2)}`;

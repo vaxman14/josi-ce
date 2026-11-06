@@ -136,7 +136,7 @@ function OAuthClientForm({
       </details>
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={!canSave}>{saving ? 'Saving…' : 'Save'}</Button>
-        {saved ? <p className="text-sm text-emerald-400" role="status">{LABEL[client.provider]} application saved.</p> : null}
+        {saved ? <p className="text-sm text-success" role="status">{LABEL[client.provider]} application saved.</p> : null}
       </div>
     </form>
   );

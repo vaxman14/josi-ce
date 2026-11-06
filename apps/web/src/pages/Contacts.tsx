@@ -79,7 +79,7 @@ export function Contacts() {
                 {c.email ? <p className="truncate text-sm text-muted-foreground">{c.email}</p> : null}
                 {c.phone ? <p className="truncate text-sm text-muted-foreground">{c.phone}</p> : null}
                 {c.conflict_state === 'both_changed' ? (
-                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  <p className="mt-1 text-xs text-warning">
 {plainDetail('contact_conflict', 'both_changed')}
                   </p>
                 ) : null}
@@ -157,7 +157,7 @@ function ContactSyncPanel({ onChanged }: { onChanged: () => void }) {
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       <ul className="space-y-3">
         {origins.map((o) => (
-          <li key={o.id} className="border-t border-input pt-3 first:border-0 first:pt-0">
+          <li key={o.id} className="border-t border-border pt-3 first:border-0 first:pt-0">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <span className="min-w-0 truncate text-sm">
                 {plain('contact_source', o.provider)} · {o.sourceAccount}
@@ -195,7 +195,7 @@ function ContactSyncPanel({ onChanged }: { onChanged: () => void }) {
                       .catch((err) => setError(err instanceof Error ? err.message : 'That did not work'))
                       .finally(() => setBusy(''));
                   }}
-                  className="min-h-11 rounded-md border border-input bg-background px-2 text-sm"
+                  className="min-h-11 rounded-md border border-border bg-background px-2 text-sm"
                 >
                   {INTERVALS.map(([seconds, label]) => (
                     <option key={seconds} value={seconds}>{label}</option>
@@ -213,7 +213,7 @@ function ContactSyncPanel({ onChanged }: { onChanged: () => void }) {
       </ul>
 
       {review.length ? (
-        <div className="mt-3 border-t border-input pt-3">
+        <div className="mt-3 border-t border-border pt-3">
           <p className="text-sm font-medium">Possible duplicates</p>
           <p className="mb-2 text-xs text-muted-foreground">
             Nothing has been merged. Josi only joins records automatically when they are the same

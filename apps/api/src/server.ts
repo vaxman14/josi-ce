@@ -74,7 +74,11 @@ const app = createApp(db, {
   // advanced override, not something the normal installer should require.
   cookieSecure,
   appUrl,
+  trustedProxies: process.env.JOSI_TRUSTED_PROXIES,
   appleNativeClientId: process.env.APPLE_NATIVE_CLIENT_ID || null,
+  passkeysEnabled: process.env.JOSI_PASSKEYS !== 'off',
+  emailCodesEnabled: process.env.JOSI_EMAIL_CODES !== 'off',
+  appleWebSignInUrl: process.env.APPLE_WEB_SIGNIN_URL || null,
   webDir: process.env.WEB_DIR,
   // One file with everything important (item 42): the dump, the chat
   // attachments and a manifest, optionally sealed with a passphrase.

@@ -102,6 +102,19 @@ everything (`packages/tunnel`), and accounts, billing and the AI gateway
 Contributions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports:
 [SECURITY.md](SECURITY.md).
 
+## Branding
+
+The official Josi palette is **Plum & Gold**: deep plum panels, gold for anything
+you can press, lilac for secondary text. The app sets it in
+[apps/web/src/index.css](apps/web/src/index.css) as tokens, and every page draws
+from those tokens. **Classic Navy**, the palette it replaced, stays available as a
+skin under Personalization. The J is drawn in one place,
+[JosiMark.tsx](apps/web/src/components/brand/JosiMark.tsx), and its final artwork
+has not been chosen yet.
+
+Headings are Bricolage Grotesque and body text is DM Sans, both under the SIL Open
+Font License and served from the app itself, so it fetches nothing from outside.
+
 ## Licence
 
 Josi CE is published under the licence in [LICENSE](LICENSE), with the

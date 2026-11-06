@@ -67,7 +67,8 @@ render apps/web/public/icons/icon-192.png    192 $((GLYPH_H * 192 / 1024))
 # 59% of a square that keeps its edges.
 render apps/web/public/icons/icon-maskable-512.png 512 $((512 * 44 / 100))
 
-cp apps/web/public/brand/josi-mark.png docs-site/brand/josi-mark.png
+# Help wears the official Plum & Gold mark, not the navy glyph rendered above.
+cp apps/web/public/icons/icon-192-gold.png docs-site/brand/josi-mark.png
 echo "  copied docs-site/brand/josi-mark.png"
 
 echo

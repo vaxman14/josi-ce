@@ -128,6 +128,16 @@ def discovery() -> tuple[list[str], dict[int, str]]:
     return DISCOVERY_CACHE[1], DISCOVERY_CACHE[2]
 
 
+def trusted_proxies(raw: str) -> str:
+    entries = [entry.strip() for entry in raw.split(",") if entry.strip()]
+    for entry in entries:
+        try:
+            ipaddress.ip_network(entry, strict=False)
+        except ValueError as exc:
+            raise ValueError("Enter your proxy as an IP address or CIDR range.") from exc
+    return ",".join(entries)
+
+
 def validate(payload: dict[str, object]) -> dict[str, object]:
     mode = str(payload.get("mode", ""))
     if mode not in {"lan", "domain", "proxy"}:
@@ -211,7 +221,8 @@ def validate(payload: dict[str, object]) -> dict[str, object]:
     return {"mode": mode, "appUrl": app_url, "domain": domain, "httpPort": http_port,
             "httpsPort": https_port, "webPort": web_port, "conflicts": conflicts,
             "workspaceEnabled": workspace_enabled, "workspacePath": workspace_path,
-            "workspaceMode": workspace_mode}
+            "workspaceMode": workspace_mode,
+            "trustedProxies": trusted_proxies(str(payload.get("trustedProxies", ""))) if mode == "proxy" else ""}
 
 
 def write_env(plan: dict[str, object], setup_token_sha256: str = "") -> None:
@@ -238,6 +249,9 @@ def write_env(plan: dict[str, object], setup_token_sha256: str = "") -> None:
         "JOSI_WORKSPACE_HOST_PATH": str(plan.get("workspacePath", "")),
         "JOSI_WORKSPACE_MODE": str(plan.get("workspaceMode", "ro")),
     })
+    # An update leaves this empty, and must not forget what was set before.
+    if plan.get("trustedProxies"):
+        values["JOSI_TRUSTED_PROXIES"] = str(plan["trustedProxies"])
     lines = [f"{key}={value}" for key, value in sorted(values.items())]
     fd, temp_name = tempfile.mkstemp(prefix=".env.", dir=ROOT, text=True)
     try:

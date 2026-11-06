@@ -1,4 +1,6 @@
-# The Linux install script is the one in the latest final release.
-/install.sh   https://github.com/vaxman14/josi-ce/releases/latest/download/install-josi-ce-server.sh   302
-/install.sh.sha256   https://github.com/vaxman14/josi-ce/releases/latest/download/SHA256SUMS.txt   302
+# The Linux install script of the newest server release. These name the tag on
+# purpose: GitHub's releases/latest can be a desktop-v release, which has no
+# install script and different checksums. Move them with each server release.
+/install.sh   https://github.com/vaxman14/josi-ce/releases/download/v0.1.78-linux.20/install-josi-ce-server.sh   302
+/install.sh.sha256   https://github.com/vaxman14/josi-ce/releases/download/v0.1.78-linux.20/SHA256SUMS-linux.20.txt   302
 /releases   https://github.com/vaxman14/josi-ce/releases   302

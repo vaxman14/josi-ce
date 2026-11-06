@@ -222,8 +222,8 @@ describe('the manifest (L2.1, L2.2)', () => {
     expect(manifest.start_url).toBe('/app');
     expect(manifest.scope).toBe('/');
     expect(manifest.display).toBe('standalone');
-    expect(manifest.background_color).toBe('#0b111e');
-    expect(manifest.theme_color).toBe('#0b111e');
+    expect(manifest.background_color).toBe('#1B0F20');
+    expect(manifest.theme_color).toBe('#1B0F20');
   });
 
   it('declares the icon sizes an install actually uses', () => {
@@ -253,7 +253,7 @@ describe('the manifest (L2.1, L2.2)', () => {
   it('is referenced from the shell, with a theme colour that matches', () => {
     const html = readFileSync(join(ROOT, 'apps/web/index.html'), 'utf8');
     expect(html).toContain('rel="manifest" href="/manifest.webmanifest"');
-    expect(html).toContain('name="theme-color" content="#0b111e"');
+    expect(html).toContain('name="theme-color" content="#1B0F20"');
     // iOS ignores the manifest's icons entirely.
     expect(html).toContain('rel="apple-touch-icon" href="/icons/icon-192.png"');
   });

@@ -40,7 +40,7 @@ describe('time-grid event-card containment', () => {
     expect(css).not.toContain('max-height: max(28rem, calc(100vh - 24rem))');
     expect(css).toMatch(/\.calendar-time-grid-scroll\s*\{[\s\S]*?overflow-x: auto;[\s\S]*?overflow-y: visible;/);
     expect(css).not.toContain('scrollbar-gutter: stable');
-    expect(css).toContain('var(--calendar-event-color, #7c3aed)');
+    expect(css).toContain('var(--calendar-event-color, hsl(var(--primary)))');
     expect(page).toContain('calendar-all-day-event');
     expect(css).toMatch(/\.calendar-all-day-event\s*\{[\s\S]*?h-11[\s\S]*?overflow-hidden/);
   });

@@ -131,9 +131,9 @@ function FamilyImplementation() {
 
 function BetaWarning() {
   return (
-    <div role="alert" className="rounded-md border border-amber-500/60 bg-amber-500/10 p-3 text-sm">
-      <p className="font-semibold text-amber-200">BETA — do not rely on these controls for a child&rsquo;s safety.</p>
-      <p className="mt-1 text-amber-100/90">
+    <div role="alert" className="rounded-md border border-warning/60 bg-warning/10 p-3 text-sm">
+      <p className="font-semibold text-warning">BETA — do not rely on these controls for a child&rsquo;s safety.</p>
+      <p className="mt-1 text-warning/90">
         This feature is experimental and may fail, be delayed, or behave unexpectedly. It controls only access to Josi;
         it cannot supervise a device, block other apps or websites, provide emergency monitoring, or replace active adult supervision
         and device-level parental controls. Verify important restrictions yourself.
@@ -565,7 +565,7 @@ function ControlsEditor({ child, reload }: { child: Child; reload: () => Promise
           <Button type="submit">Confirm and save</Button>
         </form>
       ) : null}
-      {note ? <p className="text-sm text-emerald-400">{note}</p> : null}
+      {note ? <p className="text-sm text-success">{note}</p> : null}
       {error ? <ErrorNote>{error}</ErrorNote> : null}
     </div>
   );
@@ -699,7 +699,7 @@ function EndRelationship({ child, reload }: { child: Child; reload: () => Promis
     }
   }
 
-  if (done) return <p className="text-sm text-emerald-400">{done}</p>;
+  if (done) return <p className="text-sm text-success">{done}</p>;
 
   return (
     <div className="space-y-2">

@@ -58,7 +58,7 @@ export function AdminVoiceBox() {
     finally { if (context.state !== 'closed') await context.close(); setPreviewing(false); }
   }
   const working = busy || status?.phase === 'working';
-  const inputClass = 'block min-h-11 w-full rounded border border-input bg-background p-2';
+  const inputClass = 'block min-h-11 w-full rounded border border-border bg-background p-2';
   return <div className="page max-w-2xl">
     <h1 className="page-title">Voice Box</h1>
     <p>Optional local voice chat for Josi. Kokoro provides neural speech on your CPU. Audio stays on this installation; transcripts go through your configured Josi model and its existing permissions.</p>

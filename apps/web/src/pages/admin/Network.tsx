@@ -71,7 +71,7 @@ export function AdminNetwork() {
       <p className="text-sm font-medium">Public address</p>
       <p className="font-mono text-sm" data-testid="josi.network.publicUrl">{network.publicUrl}</p>
       <p className="text-xs text-muted-foreground">{MODE_TEXT[network.mode]}</p>
-      {network.restartNeeded ? <p className="mt-2 text-sm text-amber-600">The saved address ({network.configuredUrl}) differs from the running one. Restart the server to apply it.</p> : null}
+      {network.restartNeeded ? <p className="mt-2 text-sm text-warning">The saved address ({network.configuredUrl}) differs from the running one. Restart the server to apply it.</p> : null}
       {network.lan.length ? <div className="mt-3">
         <p className="text-sm font-medium">This PC on the network</p>
         <p className="text-xs text-muted-foreground">Other devices reach this server at one of these once the public address is set to it.</p>

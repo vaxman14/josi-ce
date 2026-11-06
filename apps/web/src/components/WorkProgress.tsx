@@ -84,7 +84,7 @@ export function WorkProgressCard({ goal, compact = false, refresh }: {
     {!compact ? <WorkChannelProgress goalId={goal.goalId} /> : null}
     <div className="mt-3 flex flex-wrap gap-2 text-xs">
       {compact ? <Link to={`/app/tasks#goal-${goal.goalId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Open task manager ↗</Link> : null}
-      {!compact ? <Link to={`/app/talk?thread=${goal.threadId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Continue in chat ↗</Link> : null}
+      {!compact ? <Link to={`/app?thread=${goal.threadId}`} className="inline-flex min-h-10 items-center rounded-md border border-border px-3">Continue in chat ↗</Link> : null}
       {!ended && goal.state !== 'paused' ? <button disabled={busy} onClick={() => void control('pause')} className="min-h-10 rounded-md border border-border px-3 disabled:opacity-50">Pause goal</button> : null}
       {!ended ? <button disabled={busy} onClick={() => setEditing(!editing)} className="min-h-10 rounded-md border border-border px-3">{goal.state === 'paused' ? 'Resume with instructions' : 'Add instructions'}</button> : null}
       {goal.state === 'verifying' ? <button disabled={busy} onClick={() => void control('confirm')} className="min-h-10 rounded-md bg-primary px-3 text-primary-foreground">Confirm outcome</button> : null}

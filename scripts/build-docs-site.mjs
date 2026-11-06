@@ -102,4 +102,6 @@ fs.writeFileSync('docs-site/netlify/functions/help-index.json', JSON.stringify(h
 fs.cpSync('docs-site/iphone-shots', 'docs-site/public/iphone/img', { recursive: true });
 fs.mkdirSync('docs-site/public/brand', { recursive: true });
 fs.copyFileSync('docs-site/brand/josi-mark.png', 'docs-site/public/brand/josi-mark.png');
+fs.mkdirSync('docs-site/public/fonts', { recursive: true });
+for (const file of fs.readdirSync('apps/web/public/fonts')) fs.copyFileSync(path.join('apps/web/public/fonts', file), path.join('docs-site/public/fonts', file));
 fs.writeFileSync('docs-site/index.html', pages[0][1]);

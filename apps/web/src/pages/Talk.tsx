@@ -24,9 +24,11 @@
 // The e2e suite taps this button in WebKit with touch emulation, which is the
 // closest thing to Safari on an iPhone that runs unattended.
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { api, ApiError, type Message, type Thread, type TurnResult } from '@/lib/api';
+import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
+import { api, ApiError, type Approval, type Message, type Thread, type TurnResult } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { JosiMark } from '@/components/brand/JosiMark';
+import type { ShellOutlet } from '@/components/layout/Shell';
 import { VoiceChat } from '@/components/VoiceChat';
 import { ChatWorkProgress } from '@/components/WorkProgress';
 
@@ -39,9 +41,35 @@ function dayLabel(at: Date): string {
   if (at.toDateString() === yesterday.toDateString()) return 'Yesterday';
   return at.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: at.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
 }
-import { ErrorNote, Working } from '@/components/ui';
+import { Button, ErrorNote, Working } from '@/components/ui';
 
 const talkCache = new Map<string, { thread: Thread; messages: Message[] }>();
+
+const sentence = (action: string) => {
+  const words = action.replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+/** Something Josi wants to do, asked right where the conversation is. "Not now"
+ * decides nothing: declining is final and belongs to the Approvals page, so this
+ * only puts the card away, and the request stays there. */
+function ApprovalCard({ approval, onApprove, onLater }: { approval: Approval; onApprove: () => Promise<void>; onLater: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <div className="approval-card w-full max-w-md rounded-lg p-4">
+      <p className="font-display text-sm font-semibold">{sentence(approval.action)}</p>
+      {/* The exact action, in words, before anyone agrees to it. */}
+      <p className="mt-1 whitespace-pre-wrap break-words text-sm text-lilac">{approval.summary}</p>
+      {approval.action_class === 'email_send' ? <Link to="/app/approvals" className="link mt-1 inline-flex min-h-11 items-center text-sm">See the email first</Link> : null}
+      {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button disabled={busy} onClick={() => { setBusy(true); setError(''); void onApprove().catch(err => { setBusy(false); setError(err instanceof Error ? err.message : 'Could not record that'); }); }}>Approve</Button>
+        <Button variant="secondary" disabled={busy} onClick={onLater}>Not now</Button>
+      </div>
+    </div>
+  );
+}
 
 export function Talk() {
   const [params] = useSearchParams();
@@ -70,6 +98,10 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
   const sendGeneration = useRef(0);
   const followLatest = useRef(true);
   const [backgroundOffline, setBackgroundOffline] = useState(false);
+  const { approvals } = useOutletContext<ShellOutlet>();
+  // Answered here, or put away with "Not now". The poll catches up on its own.
+  const [settled, setSettled] = useState<string[]>([]);
+  const pendingApprovals = approvals.filter(approval => !settled.includes(approval.id));
 
   // The most recent thread, or a new one. A member always has somewhere to talk.
   useEffect(() => {
@@ -164,6 +196,15 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
     return () => vv.removeEventListener('resize', repin);
   }, []);
 
+  // The field grows with what is typed, up to its max height, and shrinks back
+  // when the message goes.
+  useEffect(() => {
+    const field = inputElement.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    field.style.height = `${field.scrollHeight}px`;
+  }, [input]);
+
   async function send(spoken?: string): Promise<string | undefined> {
     if (spoken === undefined && voiceActive) return;
     // Read the DOM value as well as React state: iOS can display composition
@@ -238,41 +279,47 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       // rendered at the TOP of the screen with the history invisible (round-2
       // item 25). data-viewport-managed opts out of the global focus helper.
       data-viewport-managed
-      className="flex w-full min-w-0 max-w-[var(--page-width)] flex-col overflow-hidden lg:rounded-3xl lg:border lg:border-border lg:bg-card"
+      className="flex w-full min-w-0 flex-col overflow-hidden"
       style={{ height: '100%' }}
     >
+      <h1 className="sr-only">Chat with Josi</h1>
       <section ref={transcript} onScroll={event => {
         const view = event.currentTarget; followLatest.current = view.scrollHeight - view.clientHeight - view.scrollTop < 100;
-      }} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-5 sm:px-6" aria-live="polite">
-        {backgroundOffline ? <p className="text-xs text-muted-foreground" role="status">Chat updates are offline. Showing the last saved conversation.</p> : null}
-        {messages.length >= 200 ? <p className="text-xs text-muted-foreground">Showing the most recent 200 messages.</p> : null}
+      }} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6" aria-live="polite">
+        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-2">
+        {backgroundOffline ? <p className="text-xs text-text-muted" role="status">Chat updates are offline. Showing the last saved conversation.</p> : null}
+        {messages.length >= 200 ? <p className="text-xs text-text-muted">Showing the most recent 200 messages.</p> : null}
         {loading ? <Working text="Opening…" /> : null}
         {!loading && messages.length === 0 ? (
-          <div className="mx-auto mt-10 max-w-sm text-center">
-            <h2 className="text-lg font-semibold">What are we doing?</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Ask Josi to remember something, plan it, or start a task.
-            </p>
+          <div className="m-auto flex flex-col items-center text-center">
+            <div className="relative grid h-24 w-24 place-items-center">
+              <span aria-hidden className="josi-glow" />
+              <JosiMark variant="bare" size={72} />
+            </div>
+            <h2 className="mt-5 text-xl">What can I do for you?</h2>
           </div>
         ) : null}
         {messages.map((message, index) => {
           const mine = message.direction === 'in';
           const at = new Date(message.created_at);
-          const prev = index > 0 ? new Date(messages[index - 1].created_at) : null;
+          const before = index > 0 ? messages[index - 1] : null;
+          const prev = before ? new Date(before.created_at) : null;
           const newDay = !prev || prev.toDateString() !== at.toDateString();
+          // The J sits on the first bubble of a run of Josi's, not on every one.
+          const firstOfRun = !mine && (newDay || before?.direction === 'in');
           return (
             <Fragment key={message.id}>
               {newDay ? (
-                <div className="flex justify-center">
-                  <span className="rounded-full bg-secondary px-3 py-1 text-xs text-muted-foreground">
+                <div className="flex justify-center py-1">
+                  <span className="text-[0.7rem] uppercase tracking-[0.12em] text-text-muted">
                     {dayLabel(at)}
                   </span>
                 </div>
               ) : null}
-              <div className={`flex items-start gap-3 ${mine ? 'justify-end' : 'justify-start'}`}>
-                {!mine ? <img src="/brand/josi-mark.png" alt="" width={40} height={40} className="mt-1 h-10 w-10 shrink-0 rounded-full" /> : null}
-                <div className={`flex max-w-[82%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
-                <div className={`whitespace-pre-wrap break-words rounded-[1.4rem] px-4 py-3 text-[0.95rem] leading-6 ${mine ? 'rounded-br-md bg-primary/90 text-primary-foreground' : 'rounded-bl-md border border-border bg-[hsl(var(--sidebar))] text-foreground'}`}>
+              <div className={`flex items-start gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
+                {!mine ? firstOfRun ? <JosiMark size={28} className="mt-0.5" /> : <span aria-hidden className="w-7 shrink-0" /> : null}
+                <div className={`flex min-w-0 max-w-[82%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                <div className={`whitespace-pre-wrap break-words rounded-[1.1rem] px-3.5 py-2.5 text-[0.95rem] leading-6 ${mine ? 'bubble-mine rounded-tr-[0.375rem]' : 'bubble-josi rounded-tl-[0.375rem]'}`}>
                   {message.meta?.attachments?.length ? (
                     <div className="mb-1 space-y-1 text-xs opacity-80">
                       {message.meta.attachments.map((attachment) => attachment.contentType.startsWith('image/') ? (
@@ -289,30 +336,48 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
                   ) : null}
                   {message.body}
                 </div>
-                <span className="mt-1.5 px-2 text-xs text-muted-foreground">{at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}{mine ? <span className="ml-2 text-primary" aria-label="Sent">✓✓</span> : null}</span>
+                <span className="mt-1 px-1.5 text-xs text-text-muted">{at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}{mine ? <span className="ml-1.5 text-primary" aria-label="Sent">✓✓</span> : null}</span>
                 </div>
               </div>
             </Fragment>
           );
         })}
+        {pendingApprovals.length ? (
+          <ul className="flex flex-col gap-2 pl-9" aria-label="Waiting for your approval">
+            {pendingApprovals.map(approval => (
+              <li key={approval.id}>
+                <ApprovalCard
+                  approval={approval}
+                  onLater={() => setSettled(ids => [...ids, approval.id])}
+                  onApprove={async () => {
+                    await api.post(`/assistant/approvals/${approval.id}/decide`, { approve: true });
+                    setSettled(ids => [...ids, approval.id]);
+                  }}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {thread ? <ChatWorkProgress key={thread.id} threadId={thread.id} /> : null}
-        {sending ? <Working text="Josi is thinking…" elapsed size={34} className="py-2" /> : null}
+        {sending ? <Working text="Josi is thinking" elapsed size={28} className="py-2 pl-1" /> : null}
         <div ref={end} />
+        </div>
       </section>
 
-      <footer className="w-full min-w-0 max-w-full shrink-0 overflow-x-clip px-2 pb-3 pt-14 sm:px-4">
-        {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
+      <footer className="frost hairline-t z-10 w-full min-w-0 max-w-full shrink-0 overflow-x-clip px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
+        <div className="mx-auto w-full max-w-3xl">
+        {error ? <div className="mb-2 px-2"><ErrorNote>{error}</ErrorNote></div> : null}
         <form
           onSubmit={(event) => { event.preventDefault(); void send(); }}
-          className="talk-composer flex min-h-14 w-full min-w-0 max-w-full items-center gap-0.5 overflow-hidden rounded-[1.75rem] border border-border bg-[hsl(var(--sidebar))] p-1.5 shadow-lg"
+          className="talk-composer flex min-h-14 w-full min-w-0 max-w-full items-end gap-0.5 overflow-hidden rounded-[1.75rem] border border-[color:var(--hairline-strong)] bg-card/70 p-1.5"
         >
-          <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-secondary text-secondary-foreground hover:bg-secondary/80" aria-label="Attach pictures or files">
+          <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-lilac/15 text-foreground hover:bg-lilac/25" aria-label="Attach pictures or files">
             <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14M5 12h14" />
             </svg>
             <input type="file" multiple className="sr-only" accept="image/*,.pdf,.doc,.docx,.rtf,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.md,.csv" onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 10))} />
           </label>
-          <span aria-hidden className="mx-1 h-8 w-px shrink-0 bg-border" />
+          <span aria-hidden className="mx-1 mb-1.5 h-8 w-px shrink-0 bg-lilac/25" />
           <textarea
             ref={inputElement}
             value={input}
@@ -324,15 +389,16 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
             maxLength={8000}
             enterKeyHint="send"
             placeholder="Message Josi…"
-            className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-2.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
+            className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-2.5 text-base outline-none placeholder:text-text-muted sm:text-sm"
             aria-label="Message Josi"
           />
           <VoiceChat onTurn={send} disabled={sending || loading || !thread} onActiveChange={setVoiceActive} />
-          <button type="submit" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50" disabled={sending || voiceActive} aria-label="Send message">
+          <button type="submit" className="btn-gold inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-opacity disabled:cursor-not-allowed disabled:opacity-50" disabled={sending || voiceActive} aria-label="Send message">
             <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5 -rotate-12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
           </button>
         </form>
-        {files.length ? <p className="mt-1 truncate text-xs text-muted-foreground">Attached: {files.map((file) => file.name).join(', ')}</p> : null}
+        {files.length ? <p className="mt-1 truncate px-2 text-xs text-text-muted">Attached: {files.map((file) => file.name).join(', ')}</p> : null}
+        </div>
       </footer>
     </div>
   );

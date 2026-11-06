@@ -33,8 +33,10 @@ describe('public help and legal coverage', () => {
   });
 
   it('labels every Family entry and both management pages as Coming Soon', () => {
-    expect(shell).toContain("label: 'Family (Coming Soon)'");
-    expect(shell).toContain("label: 'Parental controls (Coming Soon)'");
+    const menu = read('apps/web/src/components/layout/mobileNavigation.ts');
+    expect(menu).toMatch(/label: 'Family'.*soon: true/);
+    expect(menu).toMatch(/label: 'Parental controls'.*soon: true/);
+    expect(shell).toContain('Coming soon');
     for (const surface of [family, parental]) {
       expect(surface).toContain('Coming Soon');
       expect(surface).toMatch(/No supervision, schedules, limits, monitoring, or child-safety enforcement/i);
