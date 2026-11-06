@@ -79,7 +79,7 @@
       var packages = $('[data-asset="linux-packages"]');
       packages.href = linux.release.html_url;
       var script = linux.release.assets.filter(function (a) { return PATTERNS.linuxScript.test(a.name); })[0];
-      if (script) $('#linux-command').textContent = 'curl -fsSL ' + script.browser_download_url + ' -o install.sh\nsudo bash install.sh';
+      if (script) $('#linux-command').textContent = 'curl -fsSL ' + script.browser_download_url + ' -o install.sh\nsh install.sh';
     }
     if (latest) {
       $('#release-line').textContent = 'Version ' + latest.tag_name.replace(/^v/, '') + ' · released ' + day(latest.published_at) + ' · free';

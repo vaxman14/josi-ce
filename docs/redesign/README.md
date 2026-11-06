@@ -24,3 +24,10 @@ Taken from a local server with test data, in Chrome. Each exists at desktop
 | 17-accounts-signup | accounts.heyjosi.com sign up |
 | 18-accounts-dashboard | accounts.heyjosi.com dashboard |
 | 19-accounts-security | accounts.heyjosi.com security |
+
+## help.heyjosi.com and get.heyjosi.com
+
+- `20-help-home-desktop.png`, `20-help-install-phone.png`: Help
+- `21-help-chat-desktop.png`: the Ask Josi CE panel, opened by hand because the button leaves localhost
+- `22-help-offline-desktop.png`: the offline copy inside the app
+- `23-get-desktop.png`, `23-get-phone.png`: the download page
