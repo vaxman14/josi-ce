@@ -43,7 +43,7 @@ export function ClaudeVaultSignIn({ basePath, status, onStatus }: {
     </label>
     <p className="text-xs text-muted-foreground">
       Josi saves this secret only in the server’s Vault. Saving does not verify the account:
-      use Test Model to confirm it works. Everyone using this installation shares its subscription limits.
+      use the test button below to confirm it works. Everyone using this installation shares its subscription limits.
       Expired tokens must be replaced.
     </p>
     {error ? <ErrorNote>{error}</ErrorNote> : null}

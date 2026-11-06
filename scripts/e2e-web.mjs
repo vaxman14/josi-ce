@@ -334,12 +334,12 @@ async function testNoExternalAndNoPlaceholders(browser) {
     const csp = await page.evaluate(async () => (await fetch('/app')).headers.get('content-security-policy'));
     record('the CSP header is served', !!csp && csp.includes("default-src 'self'"), csp ?? 'absent');
 
-    // Companion apps: labelled, with nothing pressable that would lie.
+    // Companion apps: real store links, and the way to pair.
     await page.goto(`${BASE}/app/apps`, { waitUntil: 'networkidle' });
-    const comingSoon = await page.getByText(/coming soon/i).count();
-    const actions = await page.locator('main button, main a[href]:not([href^="/app"]):not([href^="/admin"])').count();
-    record('the companion apps page says Coming soon', comingSoon > 0);
-    record('and offers no download or install action', actions === 0, `${actions} action(s)`);
+    const stores = await page.locator('main a[href^="https://apps.apple.com/"], main a[href^="https://play.google.com/"]').count();
+    const devices = await page.locator('main a[href="/app/devices"]').count();
+    record('the companion apps page links to both stores', stores === 2, `${stores} link(s)`);
+    record('and points to Devices for pairing', devices === 1, `${devices} link(s)`);
 
     // Connections is real as of Phase 7, so the check changes shape: with no
     // OAuth application registered there must still be nothing to press, and

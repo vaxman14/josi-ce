@@ -119,7 +119,7 @@ export function AdminPeople() {
           <div className="mt-3 rounded-md border border-border bg-secondary/40 p-3">
             <p className="text-sm font-medium">Give them this link</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              No email was sent — this installation cannot send mail yet. The link sets their password once.
+              Josi doesn’t email invitations, so send this link yourself. It sets their password once.
             </p>
             <code className="mt-2 block break-all text-xs">{invite}</code>
           </div>
