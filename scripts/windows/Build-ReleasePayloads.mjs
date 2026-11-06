@@ -36,7 +36,7 @@ async function walk(folder, out = []) {
   return out;
 }
 async function signedBy(path, publisher) {
-  const { stdout } = await run(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+  const { stdout } = await run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
     `$s = Get-AuthenticodeSignature -LiteralPath '${path.replace(/'/g, "''")}'; $s.Status.ToString() + '|' + $s.SignerCertificate.Subject`]);
   const [status, subject] = stdout.trim().split('|');
   if (status !== 'Valid' || !subject?.includes(publisher)) throw new Error(`${path} is not validly signed by ${publisher} (${stdout.trim()})`);
@@ -83,7 +83,7 @@ const ffmpegLock = await json(join(repo, 'packaging/windows/ffmpeg.lock.json'));
 const ffmpegZip = join(base, 'cache/ffmpeg-9.0.2.zip');
 if ((await lstat(ffmpegZip)).size !== ffmpegLock.size || await sha256(ffmpegZip) !== ffmpegLock.sha256) throw new Error('ffmpeg archive does not match packaging/windows/ffmpeg.lock.json');
 const ffmpegTemp = join(output, 'ffmpeg-unpacked');
-await run(powershell, ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${ffmpegZip}' -DestinationPath '${ffmpegTemp}'`]);
+await run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', `Expand-Archive -LiteralPath '${ffmpegZip}' -DestinationPath '${ffmpegTemp}'`]);
 const [ffmpegTop] = await readdir(ffmpegTemp);
 await mkdir(join(extra, 'ffmpeg'), { recursive: true });
 for (const file of ffmpegLock.files) await copyFile(join(ffmpegTemp, ffmpegTop, file), join(extra, 'ffmpeg', file.split('/').pop()));

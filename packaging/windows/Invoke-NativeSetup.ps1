@@ -209,6 +209,8 @@ try{
         $failureStage='snapshot';$failureCategory='backup'
         $backupContext=Get-NativeMaintenanceContext $installationId $prior.version $Version
         $null=New-NativeMaintenanceSnapshot $backupContext $lock $directory
+        $failureStage='data-layout';$failureCategory='permissions'
+        Add-NativeMissingDataFolders $data
     }
     $failureStage='migration';$failureCategory='migration';$failureService=$null
     Run-Private $program @((Join-Path $program 'app\native\Runtime.mjs'),'migrate',(Join-Path $data 'config\runtime.json'))

@@ -187,7 +187,7 @@ class Journal:
             if self.identity is None: self.identity = record['identity']
             if record['identity'] != self.identity: raise ValueError('Journal identity')
             if set(self.identity) != {'from','to','manifest'} or not re.fullmatch('[a-f0-9]{64}', self.identity['manifest']): raise ValueError('Journal payload identity')
-            if any(value is not None and not re.fullmatch(r'\d+\.\d+\.\d+-[a-z0-9.]+', value) for value in (self.identity['from'], self.identity['to'])):
+            if any(value is not None and not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?', value) for value in (self.identity['from'], self.identity['to'])):
                 raise ValueError('Journal version identity')
             if self.records and record['phase'] not in TRANSITIONS.get(self.records[-1]['phase'], set()): raise ValueError('Journal transition')
             if not self.records and record['phase'] != 'prepared': raise ValueError('Journal start')
@@ -215,7 +215,7 @@ class Lifecycle:
             raise PermissionError('Administrator authorization required')
         self.data, self.children = self.root/'data', {}
         self.version = json.loads((runtime/'app/package.json').read_text())['version']
-        if not re.fullmatch(r'\d+\.\d+\.\d+-linux\.[a-z0-9.]+', self.version): raise ValueError('Invalid version identity')
+        if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?', self.version): raise ValueError('Invalid version identity')
         self.installed, self.journal = self.root/'versions'/self.version, None
 
     def run(self, args, role=None, timeout=180, **kwargs):
@@ -335,7 +335,7 @@ class Lifecycle:
             path.mkdir(mode=0o2770)
             os.chmod(path, 0o2770)
             if not self.isolated: os.chown(path, 0, shared_gid)
-        for folder,role in [('database','database'),('proxy','proxy'),('voice/gateway','voice-control'),('voice/control','voice-control')]:
+        for folder,role in [('database','database'),('proxy','proxy'),('keys','web'),('voice/gateway','voice-control'),('voice/control','voice-control')]:
             path = self.data/folder
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
             if not self.isolated: os.chown(path, *self.account(role))
@@ -363,6 +363,17 @@ class Lifecycle:
         self.write(self.data/'secrets/bootstrap/browser-token', setup.encode())
         return cfg
 
+    def repair_key_folder(self):
+        """The web service's relay keys, when no Secret Service works for it.
+
+        The service can't create this itself: the data root isn't writable by
+        it. An upgrade from before this folder existed gets it here.
+        """
+        path = plain(self.data/'keys')
+        path.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(path, 0o700)
+        if not self.isolated: os.chown(path, *self.account('web'))
+
     def repair_layout_permissions(self):
         """Reassert the fixed service-write boundary after older installs.
 
@@ -370,6 +381,7 @@ class Lifecycle:
         keeps shared application directories group-writable on physical hosts,
         including upgrades from candidates created before this repair.
         """
+        self.repair_key_folder()
         if self.isolated: return
         shared_gid = grp.getgrnam('josi-ce-app').gr_gid
         for folder in ('chat-attachments','roots','versions','backups','diagnostics','codex','state'):

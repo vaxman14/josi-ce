@@ -46,6 +46,19 @@ class LinuxLifecycleTests(unittest.TestCase):
         proxy = self.obj.caddyfile({'publicPort':8080,'apiPort':18080}).decode()
         self.assertIn('\n:8080 {\n', proxy)
         self.assertNotIn('localhost:8080', proxy)
+    def test_plain_release_version_is_accepted(self):
+        (self.runtime/'app/package.json').write_text('{"version":"1.0.0"}\n')
+        self.assertEqual(lifecycle.Lifecycle(self.runtime,self.installation,isolated=True,progress=lambda *_:None).version,'1.0.0')
+        (self.runtime/'app/package.json').write_text('{"version":"1.0"}\n')
+        with self.assertRaisesRegex(ValueError,'version'):lifecycle.Lifecycle(self.runtime,self.installation,isolated=True,progress=lambda *_:None)
+    def test_key_folder_is_private_on_install_and_restored_on_upgrade(self):
+        self.installation.mkdir(mode=0o700);self.obj.layout((15432,18080,8080,18081,18082))
+        keys=self.obj.data/'keys'
+        self.assertEqual(keys.stat().st_mode&0o777,0o700)
+        keys.rmdir();self.obj.repair_layout_permissions()
+        self.assertEqual(keys.stat().st_mode&0o777,0o700)
+        os.chmod(keys,0o755);self.obj.repair_layout_permissions()
+        self.assertEqual(keys.stat().st_mode&0o777,0o700)
     def test_shared_groups_do_not_collide_with_service_accounts(self):
         self.assertTrue(set(lifecycle.SHARED_GROUPS).isdisjoint(lifecycle.ACCOUNTS.values()))
         self.assertIn('SupplementaryGroups=josi-ce-voice-shared',self.obj.unit('voice').decode())

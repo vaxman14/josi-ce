@@ -21,6 +21,10 @@ function Get-NativeDataPolicy {
     Add 'versions' @() $web
     Add 'backups' @() $web
     Add 'diagnostics' @() @('JosiWeb')
+    # The server's relay keys when no OS key store works for the service. The
+    # file store can't check ACLs on Windows, so this descriptor is the only
+    # protection. The worker uses a separate key from the database.
+    Add 'keys' @() @('JosiWeb')
     Add 'codex' @() $web
     Add 'state' @('JosiWeb') @('JosiWorker')
     Add 'proxy' @() @('JosiProxy')
@@ -76,6 +80,23 @@ function New-NativeDataLayout([string]$DataRoot,[string]$InstallationId) {
             $stream=[IO.FileStream]::new((Join-Path $data 'installation.json'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
             try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
         }
+    }
+}
+
+# An upgrade keeps the existing tree, so folders added to the policy since the
+# installed version are created here, each with its protected descriptor.
+function Add-NativeMissingDataFolders([string]$DataRoot) {
+    $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+    if(!([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+        throw 'Windows administrator approval is required to add installation data folders'
+    }
+    $data=Assert-PlainNativePath $DataRoot
+    $expected=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Josi CE Server'
+    if(![StringComparer]::OrdinalIgnoreCase.Equals($data,$expected)){throw 'The installation must use the standard Windows data folder'}
+    foreach($entry in (Get-NativeDataPolicy).Directories.Values){
+        if(!$entry.Path){continue}
+        $path=Assert-PlainNativePath (Join-Path $data $entry.Path)
+        if(!(Test-Path -LiteralPath $path)){[Josi.NativeSetup.PrivateDirectory]::Create($path,(Get-NativeDirectoryDescriptor $entry))}
     }
 }
 
@@ -137,4 +158,4 @@ function Restore-NativeArtifactPermissions([string]$DataRoot){
     return [pscustomobject]@{permissionsRestored=$true;entries=$items.Count}
 }
 
-Export-ModuleMember -Function Get-NativeDataPolicy, Get-NativeDirectoryDescriptor, New-NativeDataLayout, Write-NativeProtectedFile, Restore-NativeArtifactPermissions
+Export-ModuleMember -Function Get-NativeDataPolicy, Get-NativeDirectoryDescriptor, New-NativeDataLayout, Add-NativeMissingDataFolders, Write-NativeProtectedFile, Restore-NativeArtifactPermissions

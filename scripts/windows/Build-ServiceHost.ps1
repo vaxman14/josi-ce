@@ -27,6 +27,11 @@ foreach($relative in @('src\WinSW\WinSW.csproj','src\WinSW.Core\WinSW.Core.cspro
     $text=$text.Replace('net461','net462').Replace('Version="2.0.12"','Version="3.5.0"').Replace('Version="1.0.0"','Version="1.0.3"').Replace('Version="1.2.0-beta.*"','Version="1.2.0-beta.556"')
     [IO.File]::WriteAllText($path,$text,[Text.UTF8Encoding]::new($false))
 }
+# The exe's lock names win-x86. .NET 8 SDKs infer the older win7-x86 and newer
+# ones win-x86, so state it, on the exe only: the libraries' locks name no runtime.
+$path=Join-Path $source 'src\WinSW\WinSW.csproj';$text=[IO.File]::ReadAllText($path);$needle='<OutputType>Exe</OutputType>'
+if(([regex]::Matches($text,[regex]::Escape($needle))).Count -ne 1){throw 'Upstream service-host project no longer matches'}
+[IO.File]::WriteAllText($path,$text.Replace($needle,$needle+'<RuntimeIdentifier>win-x86</RuntimeIdentifier>'),[Text.UTF8Encoding]::new($false))
 $env:DOTNET_CLI_HOME=Join-Path $base 'cache\dotnet-home'
 $env:NUGET_PACKAGES=(Join-Path $base 'cache\nuget')+'\'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'

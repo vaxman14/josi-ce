@@ -379,7 +379,7 @@ namespace Josi.Native {
           // A reader that goes away without saying so can't stop everything else.
           var limit = TunnelBody.StallLimit; TunnelBody.StallLimit = TimeSpan.FromMilliseconds(300);
           var stalled = await raw.GetAsync("/api/big?n=200000000", HttpCompletionOption.ResponseHeadersRead);
-          await Task.Delay(100);
+          await Task.Delay(1000); // Long enough to fill the body buffer on a slower PC, then go past the limit.
           Check("others go on past a stalled reader", (await raw.GetAsync("/api/auth/me")).StatusCode == HttpStatusCode.OK);
           await ThrowsAsync<IOException>("stalled reader is told", async () => { var s = await stalled.Content.ReadAsStreamAsync(); var b = new byte[1 << 20]; while (await s.ReadAsync(b, 0, b.Length) > 0) { } });
           stalled.Dispose();

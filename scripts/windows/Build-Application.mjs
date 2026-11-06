@@ -148,7 +148,7 @@ await findNative(join(app, 'node_modules'));
 let runtimeIndex = 0;
 for (const folder of nativeFolders) {
   await run(join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-    ['-NoProfile', '-NonInteractive', '-File', join(repo, 'scripts/windows/Copy-MsvcRuntime.ps1'), '-Destination', folder],
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(repo, 'scripts/windows/Copy-MsvcRuntime.ps1'), '-Destination', folder],
     repo, `addon-runtime-${++runtimeIndex}`);
 }
 const inventory = [];
