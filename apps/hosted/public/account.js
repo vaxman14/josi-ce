@@ -1,4 +1,4 @@
-import { api, onSubmit } from './app.js';
+import { api, onSubmit } from './app.js?v=3';
 
 const $ = selector => document.querySelector(selector);
 const money = micros => `$${(micros / 1_000_000).toFixed(2)}`;
@@ -93,8 +93,11 @@ function drawHousehold(account) {
 
 function drawTwoFactor(account) {
   const { enabled, recoveryLeft } = account.twoFactor;
-  setText('twoFactor', enabled ? `It's on. You have ${recoveryLeft} recovery codes left.` : 'Add a code from an authenticator app when you log in.');
-  $('[data-form="2fa-begin"]').hidden = enabled || !$('[data-form="2fa-enable"]').hidden;
+  setText('twoFactor', enabled ? `It's on. You have ${recoveryLeft} recovery codes left.`
+    : account.hasPassword ? 'Ask for a code from your authenticator app every time you log in.' : 'Create a password first, then you can turn this on.');
+  $('[data-form="password"]').hidden = !account.hasPassword;
+  $('[data-form="password-create"]').hidden = account.hasPassword;
+  $('[data-form="2fa-begin"]').hidden = enabled || !account.hasPassword || !$('[data-form="2fa-enable"]').hidden;
   $('[data-form="2fa-disable"]').hidden = !enabled;
 }
 
@@ -131,6 +134,7 @@ function showRecovery(codes) {
 }
 
 onSubmit($('[data-form="invite"]'), async values => { showError('household', null); try { await api('/household/invite', values); $('[data-form="invite"]').reset(); } catch (error) { showError('household', error); } });
+onSubmit($('[data-form="password-create"]'), async values => { await api('/password/create', values); $('[data-form="password-create"]').reset(); await refresh(); });
 onSubmit($('[data-form="password"]'), async values => { await api('/password', values); $('[data-form="password"]').reset(); });
 onSubmit($('[data-form="delete"]'), async values => {
   if (!confirm('Delete your account? This can\'t be undone.')) return;
@@ -159,3 +163,13 @@ for (const name of ['2fa-begin', '2fa-enable', '2fa-disable']) {
 }
 
 refresh().catch(error => { if (error.code === 'signed_out') location.assign('/login'); else showError('plan', error); });
+
+function showPanel() {
+  const wanted = location.hash.slice(1), panels = [...document.querySelectorAll('[data-panel]')];
+  const name = panels.some(panel => panel.dataset.panel === wanted) ? wanted : 'home';
+  for (const panel of panels) panel.hidden = panel.dataset.panel !== name;
+  for (const link of document.querySelectorAll('[data-nav]')) link.classList.toggle('on', link.dataset.nav === name);
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', showPanel);
+showPanel();

@@ -3,7 +3,7 @@
 // heyjosi.com, and those addresses run whatever the person's own server sends.
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { randomBytes } from 'node:crypto';
-import { beginTotp, changePassword, completeLogin, completeReset, createLinkCode, deleteAccount, disableTotp, enableTotp, endSession, login, newRecoveryCodes,
+import { beginTotp, changePassword, completeLogin, completeReset, createLinkCode, createPassword, deleteAccount, disableTotp, enableTotp, endSession, login, newRecoveryCodes,
   requestReset, resendVerification, sessionFrom, signUp, signUpWithGoogle, twoFactorState, verifyEmail, SESSION_TTL_MS, type Session } from './accounts.js';
 import { usageFor } from './ai/allowance.js';
 import { openPortal, startCheckout, startTopUp, topUpHistory } from './billing.js';
@@ -72,7 +72,7 @@ async function accountView(ctx: Ctx, session: Session): Promise<Record<string, u
   const [latest] = await ctx.db.query<{ status: string }>('select status from heyjosi.subscriptions where account_id = $1 order by updated_at desc limit 1', [id]);
   const [server] = await ctx.db.query<{ version: string | null; last_sync_at: unknown; ai_token_hash: string | null }>('select version, last_sync_at, ai_token_hash from heyjosi.servers where account_id = $1', [id]);
   return {
-    email, handle, address: `${handle}.${ctx.config.domain}`, downloadUrl: 'https://get.heyjosi.com',
+    email, handle, hasPassword: session.account.has_password, address: `${handle}.${ctx.config.domain}`, downloadUrl: 'https://get.heyjosi.com',
     plan: { id: plan.plan, label: PLANS[plan.plan].label, status: plan.status ?? latest?.status ?? null, periodEnd: plan.periodEnd, cancelAtPeriodEnd: plan.cancelAtPeriodEnd,
       paymentProblem: latest?.status === 'past_due' || latest?.status === 'unpaid' },
     plans: Object.entries(PLANS).map(([key, value]) => ({ id: key, label: value.label, monthlyUsd: value.monthlyUsd })),
@@ -127,6 +127,7 @@ export function apiRouter(ctx: Ctx): Router {
   const session = (req: Authed): Session => req.session!;
 
   api.get('/account', async (req: Authed, res) => { res.set('cache-control', 'no-store').json(await accountView(ctx, session(req))); });
+  api.post('/password/create', async (req: Authed, res) => { await createPassword(ctx, session(req), req.body?.password); res.json({ ok: true }); });
   api.post('/password', async (req: Authed, res) => { await changePassword(ctx, session(req), { current: req.body?.current, next: req.body?.next }); res.json({ ok: true }); });
   api.post('/2fa/begin', async (req: Authed, res) => { res.set('cache-control', 'no-store').json(await beginTotp(ctx, session(req), req.body?.password)); });
   api.post('/2fa/enable', async (req: Authed, res) => { res.set('cache-control', 'no-store').json({ recoveryCodes: await enableTotp(ctx, session(req), req.body?.code) }); });

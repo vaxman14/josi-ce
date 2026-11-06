@@ -287,3 +287,36 @@ describe('sign in with Google', () => {
     expect((await browser.post('/api/signup/google', { handle: `f${randomBytes(4).toString('hex')}` })).status).toBe(400);
   });
 });
+
+describe('a password for a Google account', () => {
+  const idToken = (claims: Record<string, unknown>) => `e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`;
+  async function googleAccount() {
+    const browser = new Browser(h);
+    const url = new URL((await browser.get('/auth/google')).headers.get('location')!);
+    const email = `pw-${randomBytes(4).toString('hex')}@example.test`, nonce = url.searchParams.get('nonce')!;
+    h.google = () => json({ id_token: idToken({ iss: 'https://accounts.google.com', aud: 'fixture-client', exp: Math.floor(Date.now() / 1000) + 300, nonce, email_verified: true, email }) });
+    await browser.get(`/oauth/google/callback?${new URLSearchParams({ state: url.searchParams.get('state')!, code: 'c' })}`);
+    const before = h.mail.length;
+    await browser.post('/api/signup/google', { handle: `p${randomBytes(4).toString('hex')}` });
+    expect(h.mail.slice(before).map(mail => mail.subject)).toEqual(['Welcome to Hey Josi']);
+    return { browser, email };
+  }
+
+  it('can be created once, then logs in, and an authenticator can follow', async () => {
+    const { browser, email } = await googleAccount(), password = 'a brand new password';
+    expect((await browser.get('/api/account')).body.hasPassword).toBe(false);
+    expect((await browser.post('/api/2fa/begin', { password })).status).toBe(400);
+    expect((await browser.post('/api/password/create', { password: 'short' })).status).toBe(400);
+    expect((await browser.post('/api/password/create', { password })).status).toBe(200);
+    expect((await browser.get('/api/account')).body.hasPassword).toBe(true);
+    expect((await browser.post('/api/password/create', { password: 'another long password' })).status).toBe(409);
+    expect((await new Browser(h).post('/api/login', { email, password })).status).toBe(200);
+    expect((await browser.post('/api/2fa/begin', { password })).status).toBe(200);
+  });
+
+  it('is refused to an account that already has one, and to nobody signed in', async () => {
+    const account = await h.account();
+    expect((await account.browser.post('/api/password/create', { password: 'trying to replace it' })).status).toBe(409);
+    expect((await new Browser(h).post('/api/password/create', { password: 'trying to replace it' })).status).toBe(401);
+  });
+});

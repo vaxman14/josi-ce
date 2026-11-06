@@ -23,7 +23,7 @@ const MAIL_WAIT_MS = 12_000;
 const GOOGLE_TICKET_TTL_MS = 15 * 60_000;
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
-export interface Account { id: string; email: string; handle: string; status: string; email_verified_at: unknown; password_hash: string; stripe_customer_id: string | null; created_at: unknown }
+export interface Account { has_password: boolean; id: string; email: string; handle: string; status: string; email_verified_at: unknown; password_hash: string; stripe_customer_id: string | null; created_at: unknown }
 
 export const normalizeEmail = (email: unknown): string => String(email ?? '').trim().toLowerCase();
 const validEmail = (email: string): boolean => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -50,6 +50,22 @@ async function emailToken(ctx: Ctx, db: Db, accountId: string, kind: 'verify' | 
   const token = randomToken();
   await db.query('insert into heyjosi.email_tokens (account_id, kind, token_hash, expires_at) values ($1, $2, $3, $4::timestamptz)', [accountId, kind, sha256(token), ctx.at(ttlMs)]);
   return token;
+}
+
+async function welcome(ctx: Ctx, email: string, handle: string): Promise<void> {
+  await mail(ctx, email, 'Welcome to Hey Josi', `Your account is ready, and ${handle}.${ctx.config.domain} is yours.
+
+Here's what to do next:
+
+1. Download Josi and install it on your computer: https://get.heyjosi.com
+2. Make a link code on your account page and enter it on your Josi server: ${ctx.config.publicOrigin}/account
+3. Pair your phone and other devices from your Josi server.
+
+While you're there, add an authenticator app under Security.
+
+Everything between your devices and your server is encrypted. We can't read it.
+
+Questions? Write to support@heyjosi.com.`);
 }
 
 async function sendVerification(ctx: Ctx, accountId: string, email: string): Promise<void> {
@@ -110,10 +126,11 @@ export async function googleLogin(ctx: Ctx, email: string): Promise<{ token: str
   if (!row.email_verified_at) {
     const hash = await hashPassword(randomToken());
     await inTx(ctx.db, async tx => {
-      await tx.query('update heyjosi.accounts set email_verified_at = $2::timestamptz, password_hash = $3 where id = $1', [row.id, ctx.at(), hash]);
+      await tx.query('update heyjosi.accounts set email_verified_at = $2::timestamptz, password_hash = $3, has_password = false where id = $1', [row.id, ctx.at(), hash]);
       await tx.query('delete from heyjosi.sessions where account_id = $1', [row.id]);
       await tx.query('delete from heyjosi.email_tokens where account_id = $1', [row.id]);
     });
+    await welcome(ctx, address, row.handle);
   }
   const [totp] = await ctx.db.query('select 1 from heyjosi.totp_secrets where account_id = $1 and enabled_at is not null', [row.id]);
   await audit(ctx.db, row.id, totp ? 'login.google_ok' : 'login.google');
@@ -131,10 +148,11 @@ export async function signUpWithGoogle(ctx: Ctx, args: { ticket: unknown; handle
     `select 1 from heyjosi.accounts where handle = $1 union all select 1 from heyjosi.relay_revocations where name = $1`, [handle]);
   if (taken) throw new HttpError(409, 'That name is taken. Try another.');
   const [row] = await ctx.db.query<{ id: string }>(
-    'insert into heyjosi.accounts (email, email_verified_at, password_hash, handle) values ($1, $2::timestamptz, $3, $4) on conflict do nothing returning id',
+    'insert into heyjosi.accounts (email, email_verified_at, password_hash, handle, has_password) values ($1, $2::timestamptz, $3, $4, false) on conflict do nothing returning id',
     [email, ctx.at(), await hashPassword(randomToken()), handle]);
   if (!row) throw new HttpError(409, 'That email already has an account, or the name was just taken. Try logging in.');
   await audit(ctx.db, row.id, 'account.created_google');
+  await welcome(ctx, email, handle);
   return createSession(ctx, row.id);
 }
 
@@ -158,6 +176,8 @@ export async function verifyEmail(ctx: Ctx, token: unknown): Promise<void> {
   if (!row?.account_id) throw new HttpError(400, 'That link is wrong or has expired. Log in to get a new one.');
   await ctx.db.query('update heyjosi.accounts set email_verified_at = $2::timestamptz where id = $1', [row.account_id, ctx.at()]);
   await audit(ctx.db, row.account_id, 'account.verified');
+  const account = await accountRow(ctx.db, row.account_id);
+  if (account) await welcome(ctx, account.email, account.handle);
 }
 
 export async function createSession(ctx: Ctx, accountId: string, db: Db = ctx.db, pending = false): Promise<string> {
@@ -248,14 +268,24 @@ export async function completeReset(ctx: Ctx, args: { token: unknown; password: 
     const row = await useToken(ctx, tx, args.token, 'reset');
     if (!row?.account_id) throw new HttpError(400, 'That link is wrong or has expired. Ask for a new one.');
     // Reaching this link proves the inbox, so a reset also confirms the email.
-    await tx.query('update heyjosi.accounts set password_hash = $2, email_verified_at = coalesce(email_verified_at, $3::timestamptz) where id = $1', [row.account_id, hash, ctx.at()]);
+    await tx.query('update heyjosi.accounts set password_hash = $2, has_password = true, email_verified_at = coalesce(email_verified_at, $3::timestamptz) where id = $1', [row.account_id, hash, ctx.at()]);
     await tx.query('delete from heyjosi.sessions where account_id = $1', [row.account_id]);
     await audit(tx, row.account_id, 'password.reset');
   });
 }
 
 async function requirePassword(account: Account, password: unknown): Promise<void> {
+  if (!account.has_password) throw new HttpError(400, 'Create a password first.', 'no_password');
   if (!await verifyPassword(account.password_hash, String(password ?? '').slice(0, MAX_PASSWORD))) throw new HttpError(401, 'That password is wrong.');
+}
+
+/** For an account made with Google, which has no password to prove. */
+export async function createPassword(ctx: Ctx, session: Session, password: unknown): Promise<void> {
+  if (!await hit(ctx, `password:${session.account.id}`, 8, 900)) throw new HttpError(429, 'Too many tries. Wait 15 minutes.');
+  if (session.account.has_password) throw new HttpError(409, 'This account already has a password.');
+  const hash = await hashPassword(checkPassword(password));
+  await ctx.db.query('update heyjosi.accounts set password_hash = $2, has_password = true where id = $1 and has_password = false', [session.account.id, hash]);
+  await audit(ctx.db, session.account.id, 'password.created');
 }
 
 export async function changePassword(ctx: Ctx, session: Session, args: { current: unknown; next: unknown }): Promise<void> {
