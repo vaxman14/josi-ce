@@ -8,7 +8,7 @@ check.
 
 - Worktree: `JosiDrive/Projects/worktrees/josi-ce-hosted-relay`
 - Branch: `hosted/relay-accounts-20261105`, cut from `windows/native-client-20261020` at `2e2c097`
-- **Nothing is committed or pushed yet.** Everything is uncommitted in that worktree. Check it's been committed before you build from anywhere else.
+- Committed on that branch, not pushed. To build from another folder, use the branch from this repo's local refs.
 - `macos/native-distribution-20261009` has no commits this branch lacks. Its worktree has 158 uncommitted files from about Oct 21, which nobody has reviewed.
 
 ## How it works
