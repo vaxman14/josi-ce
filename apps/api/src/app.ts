@@ -9,7 +9,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import { checkReadiness, type Db, type LoadOptions } from '@josi-ce/core';
 import { probeAttachmentStorage } from '@josi-ce/storage';
 import { attachUser } from './http/authz.js';
-import { requireCsrf } from './http/cookies.js';
+import { requireCsrf, trustedProxyList } from './http/cookies.js';
 import { signInRoutes } from './http/signInRoutes.js';
 import type { CookieSecurePolicy } from './http/cookies.js';
 import { authRoutes } from './http/authRoutes.js';
@@ -66,6 +66,8 @@ export interface AppConfig {
   cookieSecure: CookieSecurePolicy;
   /** Public origin, used for invite/reset links. */
   appUrl: string;
+  /** JOSI_TRUSTED_PROXIES: who besides loopback may set X-Forwarded-For. */
+  trustedProxies?: string;
   /** Master-key options for the readiness probe, or `false` to skip the check
    * (tests, and the migration container which runs before a key exists). */
   masterKeyCheck?: LoadOptions | false;
@@ -141,6 +143,7 @@ export interface AppConfig {
 
 export function createApp(db: Db, cfg: AppConfig): Express {
   const app = express();
+  app.locals.trustedProxies = trustedProxyList(cfg.trustedProxies);
 
   // A request body is the only unbounded input here; 1 MB is generous for JSON
   // and small enough that a hostile client cannot exhaust memory.

@@ -63,6 +63,12 @@ export function Login() {
         : 'Google sign-in did not finish. Please try again.');
   }, [searchParams]);
 
+  // A password reset or Google sign-in that still owes the authenticator. Its
+  // challenge is in an httpOnly cookie the server reads, so this page has none.
+  useEffect(() => {
+    if (searchParams.get('mfa') === 'pending') mfaStep('');
+  }, [searchParams]);
+
   useEffect(() => {
     if (resendIn <= 0) return;
     const timer = window.setTimeout(() => setResendIn(seconds => seconds - 1), 1000);
@@ -240,6 +246,7 @@ export function Login() {
             {error ? <ErrorNote>{error}</ErrorNote> : null}
             <Button type="submit" className={wideButton} disabled={busy || success || !mfaCode}>{busy ? 'Signing in…' : 'Verify'}</Button>
             <button type="button" className={quietLink} onClick={() => { setRecovery(value => !value); setMfaCode(''); setError(''); }}>{recovery ? 'Use your authenticator app' : 'Use a recovery code'}</button>
+            {!challenge ? <a className={`${quietLink} flex w-fit items-center`} href="/login">Start over</a> : null}
           </form>
         </> : null}
       </AuthPanel>

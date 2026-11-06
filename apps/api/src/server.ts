@@ -74,6 +74,7 @@ const app = createApp(db, {
   // advanced override, not something the normal installer should require.
   cookieSecure,
   appUrl,
+  trustedProxies: process.env.JOSI_TRUSTED_PROXIES,
   appleNativeClientId: process.env.APPLE_NATIVE_CLIENT_ID || null,
   passkeysEnabled: process.env.JOSI_PASSKEYS !== 'off',
   emailCodesEnabled: process.env.JOSI_EMAIL_CODES !== 'off',

@@ -13,7 +13,10 @@ export function SetPassword() {
       .then((r) => setLabel(`Set a password for ${r.username} (${r.email})`)).catch((e) => setError(e instanceof Error ? e.message : 'That link is not valid'));
   }, [token]);
   async function submit(event: React.FormEvent) { event.preventDefault(); setError('');
-    try { await api.post('/auth/set-password', { token, password }); navigate('/app', { replace: true }); }
+    try {
+      const result = await api.post<{ mfaRequired?: boolean }>('/auth/set-password', { token, password });
+      navigate(result.mfaRequired ? '/login?mfa=pending' : '/app', { replace: true });
+    }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not set password'); }
   }
   return <AuthStage><AuthPanel>
