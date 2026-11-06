@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const template = fs.readFileSync('docs-site/template.html', 'utf8');
 const source = fs.readFileSync('docs-site/body.html', 'utf8');
+const iphone = fs.readFileSync('docs-site/iphone.html', 'utf8');
 const at = (marker) => {
   const index = source.indexOf(marker);
   if (index < 0 || source.indexOf(marker, index + 1) >= 0) throw new Error(`Expected one docs section: ${marker}`);
@@ -25,6 +26,7 @@ const legal = source.slice(legalStart);
 const home = `<nav class="topic-index" aria-label="Documentation sections">
   <a href="install/">Install Josi<span>One Docker command, then finish setup in your browser</span></a>
   <a href="install/#troubleshooting">Installation help<span>Simple answers when setup does not finish</span></a>
+  <a href="iphone/">Josi on iPhone<span>Every screen and setting in the iPhone app</span></a>
   <a href="legal/">Legal notices<span>Terms, privacy, cookies, and licences on their own page</span></a>
 </nav>\n${help}`;
 
@@ -74,6 +76,7 @@ function render({ content, root, title, description, hero, intro, canonicalPath,
 const pages = [
   ['index.html', render({ content: home, root: '', title: 'Help', description: 'Josi CE help and links to installation and legal guides.', hero: 'Josi CE Help', intro: 'Choose a guide, or browse help for the current features.', canonicalPath: '', legacyRedirect: redirectOldLinks })],
   ['install/index.html', render({ content: installation, root: '../', title: 'Install Josi CE', description: 'Install Josi CE with Docker, then finish setup in your browser.', hero: 'Install Josi CE', intro: 'One Docker command. The rest happens in your browser.', canonicalPath: 'install/' })],
+  ['iphone/index.html', render({ content: iphone, root: '../', title: 'Josi on iPhone', description: 'Every screen and setting in the Josi CE iPhone app.', hero: 'Josi on iPhone', intro: 'Every screen and setting in the iPhone app, in the order you meet them.', canonicalPath: 'iphone/' })],
   ['legal/index.html', render({ content: legal, root: '../', title: 'Legal notices', description: 'Josi CE terms of use, privacy notice, cookie notice, and licences.', hero: 'Legal notices', intro: 'Terms, privacy, cookies, and licences in one separate legal section.', canonicalPath: 'legal/' })],
 ];
 for (const [filename, html] of pages) {
@@ -96,6 +99,7 @@ const helpIndex = pages.flatMap(([filename, html]) => {
 });
 fs.mkdirSync('docs-site/netlify/functions', { recursive: true });
 fs.writeFileSync('docs-site/netlify/functions/help-index.json', JSON.stringify(helpIndex));
+fs.cpSync('docs-site/iphone-shots', 'docs-site/public/iphone/img', { recursive: true });
 fs.mkdirSync('docs-site/public/brand', { recursive: true });
 fs.copyFileSync('docs-site/brand/josi-mark.png', 'docs-site/public/brand/josi-mark.png');
 fs.writeFileSync('docs-site/index.html', pages[0][1]);

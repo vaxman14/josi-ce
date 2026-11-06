@@ -13,6 +13,8 @@ for (const page of pages) {
   html = html.replace(/\n    \.help-chat\{[\s\S]*?(?=\n  <\/style>)/, '');
   html = html.replace(/\s*<aside class="help-chat"[\s\S]*?<\/aside>/, '');
   html = html.replace(/\s*<script>[\s\S]*?<\/script>/g, '');
+  // The iPhone guide stays online: its screenshots are too heavy to ship in every install.
+  html = html.replace('href="iphone/"', 'href="https://help.heyjosi.com/iphone/"');
   html = html.replace(/\b(href|src)="([^"]*)"/g, (original, attribute, url) => {
     if (url.startsWith('#') || /^(?:https?:|mailto:|tel:|data:)/.test(url)) return original;
     const match = url.match(/^([^#?]*)([?#].*)?$/);
