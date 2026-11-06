@@ -31,7 +31,7 @@ them out of the repo. Losing `ACCOUNT_DATA_KEY` loses every 2FA secret. Changing
   since the Worker answers. Explicit records (`www`, `ce`, `get`, `help`) keep
   working, and the Worker passes reserved names through.
 - Add `relay.heyjosi.com` (the Worker's custom domain in `wrangler.toml`).
-- Point `heyjosi.com` at the hosted service, for example with a Cloudflare tunnel.
+- Point `accounts.heyjosi.com` at the hosted service. `heyjosi.com` itself is the marketing site.
 - Set `ACCOUNTS_KEYS` in `services/relay/wrangler.toml` to the Ed25519 public key
   of `RELAY_GRANT_PRIVATE_KEY`, then:
 
@@ -54,14 +54,14 @@ STRIPE_SECRET_KEY='<test key>' node apps/hosted/scripts/stripe-test-setup.mjs
 
 That prints the four price ids: `STRIPE_PRICE_CONNECT`, `STRIPE_PRICE_CONNECT_AI`,
 `STRIPE_PRICE_TOPUP_10`, `STRIPE_PRICE_TOPUP_20`. Add a webhook at
-`https://heyjosi.com/stripe/webhook` for `checkout.session.completed`,
+`https://accounts.heyjosi.com/stripe/webhook` for `checkout.session.completed`,
 `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`
 and `invoice.payment_failed`, and put its secret in `STRIPE_WEBHOOK_SECRET`.
 
 ## 5. Google console
 
 Use the verified Hey Josi OAuth client, type Web application. Add the redirect
-`https://heyjosi.com/oauth/google/callback`. The scopes must stay exactly: `openid`,
+`https://accounts.heyjosi.com/oauth/google/callback`. The scopes must stay exactly: `openid`,
 `userinfo.email`, `gmail.readonly`, `gmail.send`, `calendar.readonly`, `calendar`,
 `contacts.readonly`, `contacts`, `drive.readonly`. Put the client id and secret in
 `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
@@ -76,7 +76,7 @@ taken from press coverage, not from OpenAI directly.
 ## 7. Mail and running it
 
 Set `MAIL_TRANSPORT=smtp` and `SMTP_URL`. Then set `RELAY_URL`,
-`PUBLIC_ORIGIN=https://heyjosi.com` and `PUBLIC_DOMAIN=heyjosi.com`.
+`PUBLIC_ORIGIN=https://accounts.heyjosi.com` and `PUBLIC_DOMAIN=heyjosi.com`.
 `CLIENT_IP_HEADER=cf-connecting-ip` makes rate limits see the real address behind
 Cloudflare. `apps/hosted/.env.example` lists everything.
 

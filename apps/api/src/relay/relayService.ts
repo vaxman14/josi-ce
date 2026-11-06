@@ -348,7 +348,7 @@ export class RelayService {
   /** Links this server to an account with a code from the account page. */
   async linkAccount(args: { code: string; actorUserId: string }): Promise<LinkRow> {
     if (await this.row()) throw new RelayError(409, 'This server is already linked. Unlink it first.');
-    const url = (this.opts.hostedUrl ?? 'https://heyjosi.com').replace(/\/$/, '');
+    const url = (this.opts.hostedUrl ?? 'https://accounts.heyjosi.com').replace(/\/$/, '');
     const hostedPublic = await this.hostedPublic(url);
     const keys = await this.keys();
     const reply = await rpcCall<LinkReply>({ url, key: keys.current, hostedPublic: fromB64url(hostedPublic),

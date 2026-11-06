@@ -62,7 +62,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const production = env.NODE_ENV === 'production';
   need('DATABASE_URL');
-  const publicOrigin = url('PUBLIC_ORIGIN', 'https://heyjosi.com');
+  const publicOrigin = url('PUBLIC_ORIGIN', 'https://accounts.heyjosi.com');
   const stripeKey = need('STRIPE_SECRET_KEY');
   if (stripeKey) try { assertTestKey(stripeKey); } catch (error) { problems.push((error as Error).message); }
   const webhookSecret = need('STRIPE_WEBHOOK_SECRET');

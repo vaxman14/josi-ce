@@ -167,7 +167,7 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     label: 'Hey Josi AI',
     wire: 'openai-chat',
     external: true,
-    defaultBaseUrl: 'https://heyjosi.com/ai/v1',
+    defaultBaseUrl: 'https://accounts.heyjosi.com/ai/v1',
     baseUrlMode: 'optional',
     fields: [API_KEY],
     discovery: 'endpoint',
