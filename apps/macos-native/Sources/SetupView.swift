@@ -68,7 +68,7 @@ struct SetupView: View {
                 }
             }.padding(32).frame(maxWidth: 900).frame(maxWidth: .infinity)
         }.textFieldStyle(JosiFieldStyle()).disabled(model.busy)
-            .onChange(of: step) { _, _ in clearFields() }
+            .onChange(of: step) { _, _ in clearFields(); model.setupCheck = .null }
             .onChange(of: provider) { _, _ in
                 values = [:]; discovered = []; externalAcknowledged = false
                 if !providerEntry["defaultBaseUrl"].text.isEmpty { values["baseUrl"] = providerEntry["defaultBaseUrl"].text }
@@ -162,6 +162,13 @@ struct SetupView: View {
     }
     private var providerForm: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if model.setupCheck != .null, model.setupCheck["status"].text != "passed" {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("The model did not pass its check", systemImage: "exclamationmark.triangle").font(JosiFont.headline).foregroundStyle(JosiTheme.error)
+                    Text(model.setupCheck["detail"].text.nonempty ?? "Nothing was activated. Check the key and model, then try again.").textSelection(.enabled)
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(JosiTheme.error.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
+            }
             Picker("Provider", selection: $provider) {
                 Text("Choose a provider").tag("")
                 ForEach(Array(model.setup["providerCatalog"].list.enumerated()), id: \.offset) { _, entry in

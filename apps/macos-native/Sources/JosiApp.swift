@@ -47,7 +47,7 @@ import SwiftUI
                     delegate.model = model; model.refreshLocal(); await model.resume()
                     model.ghost.set(.hello)
 #if !DEBUG
-                    model.update = await JosiUpdates.newer()
+                    await model.checkForUpdate()
 #endif
 #if DEBUG
                     JosiDriver.start(model)
@@ -64,6 +64,7 @@ import SwiftUI
             CommandGroup(after: .appInfo) {
                 if JosiFlags.serverApp { Button("Server Controls…") { model.openServerControls() } }
                 Button("Show \(JosiFlags.appName) in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) }
+                Button("Check for Updates…") { Task { await model.checkForUpdate(announce: true) } }
                 Divider()
                 Button("New Conversation") { model.run { try await model.newThread() } }
                     .keyboardShortcut("n").disabled(model.screen != .workspace || model.busy)

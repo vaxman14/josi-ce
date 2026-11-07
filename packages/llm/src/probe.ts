@@ -38,6 +38,10 @@ export interface ProbeResult {
   probedAt: string;
 }
 
+/** Room for a model that thinks before it answers. A tight limit spends it all on
+ * the thinking and comes back empty, which reads as a failed check. */
+const PROBE_MAX_TOKENS = 1024;
+
 const PROBE_TOOL = {
   name: 'record_number',
   description: 'Record a single number. Call this with the number 7.',
@@ -88,7 +92,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
   try {
     const res = await ask({
       messages: [{ role: 'user', content: 'Reply with the single word: ready' }],
-      maxTokens: 32,
+      maxTokens: PROBE_MAX_TOKENS,
       temperature: 0,
     });
     const passed = res.text.trim().length > 0;
@@ -127,7 +131,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
         content: 'Return a JSON object with exactly one key "ok" whose value is the boolean true. No other text.',
       }],
       jsonMode: true,
-      maxTokens: 64,
+      maxTokens: PROBE_MAX_TOKENS,
       temperature: 0,
     });
     let passed = false;
@@ -167,7 +171,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
       // flaps on phrasing measures the prompt, not the capability.
       messages: [{ role: 'user', content: 'Call the record_number tool with the number 7. You must use the tool; do not answer in text.' }],
       tools: [PROBE_TOOL],
-      maxTokens: 128,
+      maxTokens: PROBE_MAX_TOKENS,
       temperature: 0,
     });
     // Two ways a call can "come back in a response we read": an HTTP provider
@@ -217,7 +221,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
         content: 'What color is this image? Answer with one word.',
         images: [{ mediaType: 'image/png', base64: RED_SWATCH_PNG_BASE64 }],
       }],
-      maxTokens: 32,
+      maxTokens: PROBE_MAX_TOKENS,
       temperature: 0,
     });
     const passed = /\bred\b/i.test(res.text);
@@ -261,7 +265,7 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
         role: 'user',
         content: `${filler}\n\nIgnore the text above. Reply with the single word: ok`,
       }],
-      maxTokens: 32,
+      maxTokens: PROBE_MAX_TOKENS,
       temperature: 0,
     });
     const passed = res.text.trim().length > 0;

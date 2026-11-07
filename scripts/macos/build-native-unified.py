@@ -7,6 +7,7 @@ anything, touches server data, or submits a notarization.
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -195,6 +196,9 @@ def build(args):
         copy_file(REPO / name, resources / name)
     print('Bundling the current offline server runtime', flush=True)
     runtime = resources / 'runtime'; tree(runtime_input, runtime)
+    # The ChatGPT and Claude plans sign in through these two pinned command-line tools.
+    cli_spec = importlib.util.spec_from_file_location('subscription_cli', REPO / 'scripts/macos/bundle-subscription-cli.py')
+    cli = importlib.util.module_from_spec(cli_spec); cli_spec.loader.exec_module(cli); cli.bundle(runtime)
     for retired in ('automation-workspace.py', 'automation-workspace-guardian.py'):
         (runtime / 'app/native' / retired).unlink(missing_ok=True)
     baseline_version = json.loads((runtime / 'app/package.json').read_text())['version']

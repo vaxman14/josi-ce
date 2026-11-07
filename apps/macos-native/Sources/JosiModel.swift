@@ -37,6 +37,7 @@ import SwiftUI
     @Published var menuOpen = false
     @Published var historyOpen = false
     @Published var modelName = ""
+    @Published var setupCheck: Wire = .null
     @Published var settingsProposal: Wire = .null
     @Published var update: JosiUpdates.Release?
     let ghost = GhostController()
@@ -415,6 +416,22 @@ import SwiftUI
         self.pending = nil; pendingMessage = false
         try await reloadWorkspace()
     }
+    /// Once per launch, quietly; from the app menu it also says when Josi is current.
+    func checkForUpdate(announce: Bool = false) async {
+        let current = receipt.version.isEmpty ? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" : receipt.version
+        update = await JosiUpdates.newer(than: current)
+        guard announce else { return }
+        let alert = NSAlert()
+        if let update {
+            alert.messageText = "Josi \(update.version) is available"
+            alert.informativeText = "You have \(current). The installer updates Josi in place and keeps your data."
+            alert.addButton(withTitle: "Download Update"); alert.addButton(withTitle: "Later")
+            if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(update.url) }
+        } else {
+            alert.messageText = "Josi is up to date"; alert.informativeText = "You have \(current)."
+            alert.runModal()
+        }
+    }
     // ------------------------------------------ settings changes by talking
     /// A proposal this person can make live opens the approval popup, once. One
     /// approved for this person's own app is applied now.
@@ -587,8 +604,26 @@ import SwiftUI
         let value = try await api.request("/setup/steps/\(step)", method: "POST", body: body)
         guard self.api === api else { return }
         if value["vaultRecovery"] != .null { recovery = value["vaultRecovery"] }
-        if step == "llm" { _ = try await api.request("/setup/verify/llm", method: "POST", body: [:]) }
+        if step == "llm" { try await checkSetupModel(api) }
         guard self.api === api else { return }; try await loadSetup()
+    }
+    /// A failed check is an answer, not an error: the server says what went wrong
+    /// and the step stays open, so the setup page has to show it.
+    private func checkSetupModel(_ api: JosiAPI) async throws {
+        setupCheck = .null
+        activity = "Checking the model…"
+        let progress = Task { [weak self] in
+            let labels = ["chat": "Basic reply", "structuredOutput": "Structured output", "toolCalling": "Tool calling", "vision": "Image understanding", "context": "Usable context"]
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(700))
+                guard let report = try? await api.request("/setup/models/probe-progress"), let label = labels[report["current"].text] else { continue }
+                if !Task.isCancelled { self?.activity = "Checking the model: " + label }
+            }
+        }
+        defer { progress.cancel(); activity = "" }
+        let check = try await api.request("/setup/verify/llm", method: "POST", body: [:])
+        guard self.api === api else { return }
+        setupCheck = check
     }
     func confirmRecovery() async throws {
         guard let api else { return }

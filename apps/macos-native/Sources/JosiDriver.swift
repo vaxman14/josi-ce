@@ -45,6 +45,13 @@ import Foundation
             case "draft": model.draft = rest
             case "send": model.draft = rest; try await model.send()
             case "new": try await model.newThread()
+            case "setup":
+                let pair = rest.split(separator: " ", maxSplits: 1).map(String.init)
+                guard pair.count == 2 else { break }
+                try await model.setupStep(pair[0], body: try JSONDecoder().decode(Wire.self, from: Data(pair[1].utf8)))
+            case "update":
+                let found = await JosiUpdates.newer(than: rest)
+                log("update from \(rest): \(found?.version ?? "none") \(found?.url.absoluteString ?? "")")
             case "menu": model.showMenu(!model.menuOpen)
             case "history": model.showHistory(!model.historyOpen)
             case "server": model.openServerControls()

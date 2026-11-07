@@ -88,6 +88,10 @@ attached; the download page fills its Mac door from the latest final release.
   check again. `Uninstall Josi.app` with "keep data", then reinstall.
 - The native app's Models page lists the providers and a chat answers.
 
+## Updating
+
+The installer is the update: running a newer one over an installed Josi updates it in place and keeps the data. The app looks through the published GitHub releases, betas included, once per launch and from Josi > Check for Updates…, and offers the newest `Josi-<version>-macOS-arm64.pkg`. So every release has to keep that exact file name.
+
 ## Known gaps in 1.0
 
 - The app is Apple Silicon only (macOS 14.2+). Intel Macs are not covered.

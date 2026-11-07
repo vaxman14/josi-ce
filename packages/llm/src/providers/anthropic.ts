@@ -95,7 +95,8 @@ export function anthropicProvider(opts: AnthropicOptions): LlmProvider {
         }),
       };
       if (request.system) body.system = request.system;
-      if (request.temperature !== undefined) body.temperature = request.temperature;
+      // Never sent: current Claude models answer a request carrying temperature
+      // with a 400, which would fail every call on them.
       if (request.tools?.length) {
         body.tools = request.tools.map((t) => ({
           name: t.name,

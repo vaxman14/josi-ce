@@ -283,8 +283,12 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
     }
     func localSetupHandoff() async throws {
         guard origin.host == "localhost" else { throw JosiError(message: "Initial setup must be opened on the server Mac.") }
-        let handoff = try NativeFiles.json("/Library/Application Support/Josi CE Server/handoff/\(getuid())/bootstrap.json",
-                                           owner: getuid(), maximum: 4096, privateFile: true)
+        var bootstrap = "/Library/Application Support/Josi CE Server/handoff/\(getuid())/bootstrap.json"
+#if DEBUG
+        // An Xcode run against a development server uses that server's handoff.
+        if let path = ProcessInfo.processInfo.environment["JOSI_LOCAL_HANDOFF"] { bootstrap = path }
+#endif
+        let handoff = try NativeFiles.json(bootstrap, owner: getuid(), maximum: 4096, privateFile: true)
         guard handoff["port"].integer == origin.port, handoff["token"].text.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
             throw JosiError(message: "The setup handoff does not match this server.")
         }

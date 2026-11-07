@@ -123,6 +123,16 @@ describe('the Anthropic adapter', () => {
     expect(res.usage).toEqual({ inputTokens: 5, outputTokens: 2 });
   });
 
+  it('never sends temperature, which current Claude models refuse', async () => {
+    let body: any;
+    const provider = anthropicProvider({
+      model: 'claude-test', apiKey: 'k', resolve,
+      fetchImpl: stubFetch((_u, init) => { body = JSON.parse(String(init.body)); return oaiReply({ content: [{ type: 'text', text: 'ready' }] }); }),
+    });
+    await provider.chat({ messages: [{ role: 'user', content: 'x' }], temperature: 0 });
+    expect(body).not.toHaveProperty('temperature');
+  });
+
   it('pins the API version header', async () => {
     let headers: Record<string, string> = {};
     const provider = anthropicProvider({
