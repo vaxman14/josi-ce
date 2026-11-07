@@ -1,0 +1,29 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] OpenSSH                    ALLOW IN    Anywhere                  
+[ 2] 80,443/tcp                 ALLOW IN    173.245.48.0/20           
+[ 3] 80,443/tcp                 ALLOW IN    103.21.244.0/22           
+[ 4] 80,443/tcp                 ALLOW IN    103.22.200.0/22           
+[ 5] 80,443/tcp                 ALLOW IN    103.31.4.0/22             
+[ 6] 80,443/tcp                 ALLOW IN    141.101.64.0/18           
+[ 7] 80,443/tcp                 ALLOW IN    108.162.192.0/18          
+[ 8] 80,443/tcp                 ALLOW IN    190.93.240.0/20           
+[ 9] 80,443/tcp                 ALLOW IN    188.114.96.0/20           
+[10] 80,443/tcp                 ALLOW IN    197.234.240.0/22          
+[11] 80,443/tcp                 ALLOW IN    198.41.128.0/17           
+[12] 80,443/tcp                 ALLOW IN    162.158.0.0/15            
+[13] 80,443/tcp                 ALLOW IN    104.16.0.0/13             
+[14] 80,443/tcp                 ALLOW IN    104.24.0.0/14             
+[15] 80,443/tcp                 ALLOW IN    172.64.0.0/13             
+[16] 80,443/tcp                 ALLOW IN    131.0.72.0/22             
+[17] OpenSSH (v6)               ALLOW IN    Anywhere (v6)             
+[18] 80,443/tcp                 ALLOW IN    2400:cb00::/32            
+[19] 80,443/tcp                 ALLOW IN    2606:4700::/32            
+[20] 80,443/tcp                 ALLOW IN    2803:f800::/32            
+[21] 80,443/tcp                 ALLOW IN    2405:b500::/32            
+[22] 80,443/tcp                 ALLOW IN    2405:8100::/32            
+[23] 80,443/tcp                 ALLOW IN    2a06:98c0::/29            
+[24] 80,443/tcp                 ALLOW IN    2c0f:f248::/32            
+

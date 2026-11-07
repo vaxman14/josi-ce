@@ -1,0 +1,4 @@
+accounts.heyjosi.com {
+	encode gzip
+	reverse_proxy hosted:8080
+}
