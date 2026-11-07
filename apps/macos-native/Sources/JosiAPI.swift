@@ -78,7 +78,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil; config.urlCredentialStorage = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 180
+        config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 600
         config.httpAdditionalHeaders = ["User-Agent": "JosiNative/0.7", "Accept": "application/json"]
         session = URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
     }
@@ -193,7 +193,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         csrf = result["csrfToken"].text
     }
     func request(_ route: String, method: String = "GET", body: Wire? = nil,
-                 headers: [String: String] = [:], native: Bool = false) async throws -> Wire {
+                 headers: [String: String] = [:], native: Bool = false, timeout: TimeInterval? = nil) async throws -> Wire {
         guard !closed, route.hasPrefix("/"), !route.hasPrefix("//"),
               !route.contains("#"), !route.contains("\\"), route.utf8.count < 4096,
               let url = URL(string: origin.absoluteString + "/api" + route),
@@ -204,6 +204,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         if method != "GET", !tokenAuth, csrf == nil { try await primeCSRF() }
         var req = URLRequest(url: url)
         req.httpMethod = method
+        if let timeout { req.timeoutInterval = timeout }
         identify(&req, native: native)
         if method != "GET", !tokenAuth { req.setValue(csrf, forHTTPHeaderField: "x-josi-csrf") }
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }

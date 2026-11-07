@@ -144,7 +144,7 @@ struct NativeModelsView: View {
         guard let api = model.api, model.isAdministrator else { return }
         let user = model.user["id"]
         model.run {
-            _ = try await api.request(path, method: method, body: body)
+            _ = try await api.request(path, method: method, body: body, timeout: path.hasSuffix("/probe") ? 480 : nil)
             guard model.api === api, model.user["id"] == user else { return }
             note = "Server settings updated."
             try await load()

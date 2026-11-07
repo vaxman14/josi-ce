@@ -621,7 +621,8 @@ import SwiftUI
             }
         }
         defer { progress.cancel(); activity = "" }
-        let check = try await api.request("/setup/verify/llm", method: "POST", body: [:])
+        // Silent until all five questions are answered, so the usual limit is too short.
+        let check = try await api.request("/setup/verify/llm", method: "POST", body: [:], timeout: 480)
         guard self.api === api else { return }
         setupCheck = check
     }
