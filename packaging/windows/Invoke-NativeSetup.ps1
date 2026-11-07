@@ -49,7 +49,7 @@ if($LocalAcceptancePayloads){
     # Explicit, private, offline acceptance build. It is hash-bound to this EXE,
     # never fetches unsigned remote code and never claims publication approval.
     if(!$manifest.installable -or !$manifest.localUnsignedAcceptance -or $manifest.published -or
-        $Operation -cnotin @('install','upgrade','install-or-upgrade','uninstall')){throw 'Invalid private acceptance operation'}
+        $Operation -cnotin @('install','upgrade','repair','install-or-upgrade','uninstall')){throw 'Invalid private acceptance operation'}
     $LocalAcceptancePayloads=Assert-PlainNativePath $LocalAcceptancePayloads
 }else{
     if(!$manifest.installable -or !$manifest.licenseGatePassed -or !$manifest.unsignedAcceptancePassed){throw 'This engineering candidate has unfinished release gates; installation is blocked'}
@@ -60,7 +60,13 @@ if(!([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.P
 $product=Assert-PlainNativePath (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Josi CE Server')
 $data=Assert-PlainNativePath (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Josi CE Server')
 if($Operation -ceq 'install-or-upgrade'){
-    $Operation=if((Test-Path -LiteralPath $product) -or (Test-Path -LiteralPath $data)){'upgrade'}else{'install'}
+    # Nothing here: install. Another version: upgrade, keeping the data. This same
+    # version again: repair, which replaces only files that differ from the release.
+    $Operation='install'
+    if((Test-Path -LiteralPath $product) -or (Test-Path -LiteralPath $data)){
+        $Operation='upgrade'
+        try{if((Get-Content -LiteralPath (Join-Path $data 'config\runtime.json') -Raw | ConvertFrom-Json).version -ceq $Version){$Operation='repair'}}catch{}
+    }
 }
 $context=$null;$lock=$null;$directory=$null;$failureStage='preflight';$failureCategory='unknown';$failureService=$null
 function Run-Private([string]$Program,[string[]]$Arguments){
@@ -108,10 +114,11 @@ function Extract-VerifiedArchive($Component,[string]$Archive,[string]$Destinatio
             $seen[$entry.FullName]=$true;$total+=$entry.Length
             if($seen.Count -gt 100000 -or $total -gt 20GB){throw 'Expanded archive exceeds bounds'}
         }
+        $checked=@{}
         foreach($entry in $archiveStream.Entries){
-            $path=Assert-PlainNativePath (Join-Path $Destination $entry.FullName)
+            $path=Assert-PlainNativePath (Join-Path $Destination $entry.FullName) $checked
             if(!$path.StartsWith($Destination+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Archive traversal refused'}
-            $null=[IO.Directory]::CreateDirectory((Split-Path $path -Parent))
+            $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
             $input=$entry.Open();$output=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
             # No forced flush per file: this is a staging folder, and every file is
             # checked against its inventory hash before anything is installed.
@@ -182,7 +189,18 @@ try{
     $null=Read-NativeLifecycleInventory $inventory $hash
     Stop-IfCancelled;Step 57 'Checking every unpacked file'
     if(@(Get-ChildItem -LiteralPath $source -File -Recurse).Count -ne $entries.Count+$manifest.components.Count){throw 'Expanded payload contains unlisted files'}
-    foreach($entry in $entries){$path=Assert-PlainNativePath (Join-Path $source $entry.path);if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($path) -or (Get-Item -LiteralPath $path).Length -ne $entry.size -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.sha256){throw 'Expanded payload failed verification'}}
+    # Every file: a plain path, a single regular file, the listed size and the
+    # listed SHA-256. Direct .NET calls and one hasher, since this runs ~25,000 times.
+    $checked=@{};$sha=[Security.Cryptography.SHA256]::Create()
+    try{
+        foreach($entry in $entries){
+            $path=Assert-PlainNativePath (Join-Path $source $entry.path) $checked
+            if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($path) -or [IO.FileInfo]::new($path).Length -ne $entry.size){throw 'Expanded payload failed verification'}
+            $stream=[IO.File]::OpenRead($path)
+            try{$digest=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}finally{$stream.Dispose()}
+            if($digest -cne $entry.sha256){throw 'Expanded payload failed verification'}
+        }
+    }finally{$sha.Dispose()}
     foreach($component in $manifest.components){[IO.File]::Delete((Join-Path $source ('inventories\'+$component.id+'.json')))}
     [IO.Directory]::Delete((Join-Path $source 'inventories'),$false)
     $launcher=Join-Path $source 'JosiLauncher.exe'
@@ -216,7 +234,8 @@ try{
     $lock=Open-NativeTransactionLock (Join-Path $data 'transactions')
     $journal=New-NativeTransaction $lock $installationId $Operation $(if($prior){$prior.version}else{'none'}) $Version $ManifestHash;$directory=$journal.Directory
     $null=[IO.Directory]::CreateDirectory($program)
-    foreach($entry in $entries){$target=Assert-PlainNativePath (Join-Path $program $entry.path);$null=[IO.Directory]::CreateDirectory((Split-Path $target -Parent));[IO.File]::Copy((Join-Path $source $entry.path),$target,$false)}
+    $checked=@{}
+    foreach($entry in $entries){$target=Assert-PlainNativePath (Join-Path $program $entry.path) $checked;$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target));[IO.File]::Copy((Join-Path $source $entry.path),$target,$false)}
     $null=Set-NativeTransactionPhase $lock $directory 'verified';Step 66 'Creating Josi''s folders'
     if($Operation -ceq 'install'){
         $failureStage='initial-configuration';$failureCategory='permissions'

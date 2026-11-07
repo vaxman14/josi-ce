@@ -102,7 +102,7 @@ begin
   if VerifyOnly or not JosiIsInstalled then Exit;
   ActionPage := CreateInputOptionPage(wpWelcome, 'Josi CE is already on this PC', 'What would you like to do?',
     'Your accounts, conversations and settings are kept either way.', True, False);
-  ActionPage.Add('Update Josi CE to version {#CandidateVersion}');
+  ActionPage.Add('Update Josi CE to version {#CandidateVersion}. If this version is already installed, setup repairs it instead, replacing only files that changed.');
   ActionPage.Add('Remove Josi CE from this PC. Its services stop and its program files are deleted; your data stays in ProgramData\Josi CE Server, so installing again picks up where you left off.');
   ActionPage.Values[0] := not RemoveRequested;
   ActionPage.Values[1] := RemoveRequested;
