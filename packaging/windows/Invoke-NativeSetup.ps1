@@ -3,8 +3,31 @@
 param([Parameter(Mandatory=$true)][string]$KitRoot,[Parameter(Mandatory=$true)][string]$KitHash,
     [Parameter(Mandatory=$true)][string]$ManifestHash,[Parameter(Mandatory=$true)][string]$Version,
     [ValidateSet('install','upgrade','repair','diagnostics','uninstall','verify-only','install-or-upgrade')][string]$Operation='install',
-    [string]$LocalAcceptancePayloads)
+    [string]$LocalAcceptancePayloads,[string]$CancelPath)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest;$env:PSModulePath=''
+# Progress for the installer window, one line per step on stdout. Cancel is
+# honoured only until the first change to this PC; after that the host says so.
+$script:changing=$false;$script:cancelNoted=$false;$source=$null
+function Step([int]$Percent,[string]$Text){
+    [Console]::Out.WriteLine('JOSI-PROGRESS|'+$Percent+'|'+$Text);[Console]::Out.Flush()
+    if($CancelPath -and $script:changing -and !$script:cancelNoted -and (Test-Path -LiteralPath $CancelPath)){
+        $script:cancelNoted=$true;[Console]::Out.WriteLine('JOSI-NOCANCEL');[Console]::Out.Flush()
+    }
+}
+function Stop-IfCancelled{
+    if(!$CancelPath -or $script:changing){return}
+    # "<CancelPath>.hold" means the user is answering "Stop setting up Josi?". Wait
+    # here, at a safe point, for the answer (capped, so a lost window can't hang setup).
+    $hold=$CancelPath+'.hold';$until=[DateTime]::UtcNow.AddMinutes(15)
+    while((Test-Path -LiteralPath $hold) -and !(Test-Path -LiteralPath $CancelPath) -and [DateTime]::UtcNow -lt $until){Start-Sleep -Milliseconds 200}
+    if(!(Test-Path -LiteralPath $CancelPath)){return}
+    if($source -and (Test-Path -LiteralPath $source)){Remove-Item -LiteralPath $source -Recurse -Force -ErrorAction SilentlyContinue}
+    [Console]::Out.WriteLine('JOSI-CANCELLED');[Console]::Out.Flush();exit 3
+}
+function Name-Of([string]$Id){
+    switch($Id){'josi'{'Josi'}'node'{'Node.js'}'python'{'Python'}'postgresql'{'the database'}'caddy'{'the web server'}
+        'voice-models'{'the voice models'}'cli'{'the ChatGPT and Claude tools'}'ffmpeg'{'the audio tools'}default{$Id}}
+}
 $verified=& (Join-Path $KitRoot 'Initialize-NativeSetup.ps1') -Root $KitRoot -ExpectedKitHash $KitHash
 if(!$verified.verified){throw 'Private installer integrity failed'}
 # release-manifest.json and its catalog are outside the kit inventory, separately
@@ -12,6 +35,7 @@ if(!$verified.verified){throw 'Private installer integrity failed'}
 $manifestPath=Join-Path (Split-Path $KitRoot -Parent) 'release-manifest.json'
 $catalogPath=Join-Path (Split-Path $KitRoot -Parent) 'release-manifest.cat'
 $manifest=Read-NativeManifest $manifestPath $ManifestHash $Version
+Step 2 'Checking the installer'
 foreach($field in @('installable','licenseGatePassed','unsignedAcceptancePassed')){if($manifest.$field -isnot [bool]){throw 'Release gate record is missing or invalid'}}
 if($Operation -ceq 'verify-only'){
     $result=[pscustomobject]@{passed=$true;operation=$Operation;version=$Version;kitVerified=$true;manifestVerified=$true;installationModified=$false;installable=[bool]$manifest.installable}
@@ -25,7 +49,7 @@ if($LocalAcceptancePayloads){
     # Explicit, private, offline acceptance build. It is hash-bound to this EXE,
     # never fetches unsigned remote code and never claims publication approval.
     if(!$manifest.installable -or !$manifest.localUnsignedAcceptance -or $manifest.published -or
-        $Operation -cnotin @('install','upgrade','install-or-upgrade')){throw 'Invalid private acceptance operation'}
+        $Operation -cnotin @('install','upgrade','install-or-upgrade','uninstall')){throw 'Invalid private acceptance operation'}
     $LocalAcceptancePayloads=Assert-PlainNativePath $LocalAcceptancePayloads
 }else{
     if(!$manifest.installable -or !$manifest.licenseGatePassed -or !$manifest.unsignedAcceptancePassed){throw 'This engineering candidate has unfinished release gates; installation is blocked'}
@@ -89,7 +113,9 @@ function Extract-VerifiedArchive($Component,[string]$Archive,[string]$Destinatio
             if(!$path.StartsWith($Destination+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Archive traversal refused'}
             $null=[IO.Directory]::CreateDirectory((Split-Path $path -Parent))
             $input=$entry.Open();$output=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-            try{$input.CopyTo($output);$output.Flush($true)}finally{$output.Dispose();$input.Dispose()}
+            # No forced flush per file: this is a staging folder, and every file is
+            # checked against its inventory hash before anything is installed.
+            try{$input.CopyTo($output)}finally{$output.Dispose();$input.Dispose()}
         }
     }finally{$archiveStream.Dispose()}
 }
@@ -117,10 +143,14 @@ try{
         if($Operation -ceq 'uninstall'){
             $inventory=Join-Path $product ('installer\'+$prior.version+'\installed-inventory.json')
             $receipt=Get-Content -LiteralPath (Join-Path $product ('installer\'+$prior.version+'\installed-receipt.json')) -Raw | ConvertFrom-Json
-            Invoke-NativeUninstall $context $inventory $receipt.inventorySha256 | Out-Null;exit 0
+            Step 10 'Checking what to remove';Stop-IfCancelled
+            $script:changing=$true;[Console]::Out.WriteLine('JOSI-COMMITTING');[Console]::Out.Flush()
+            Step 30 'Removing Josi. Your data stays on this PC.'
+            Invoke-NativeUninstall $context $inventory $receipt.inventorySha256 | Out-Null;Step 100 'Done';exit 0
         }
         if(($Operation -ceq 'repair' -and $prior.version -cne $Version) -or ($Operation -ceq 'upgrade' -and $prior.version -ceq $Version)){throw 'Selected maintenance operation does not match the installed version'}
     }
+    Step 4 'Checking this PC';Stop-IfCancelled
     $drive=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($product));$required=3GB
     foreach($component in $manifest.components){$required+=3*$component.size}
     if($drive.AvailableFreeSpace -lt $required){throw 'Insufficient disk space; no installed files were changed'}
@@ -135,7 +165,9 @@ try{
         foreach($rule in $acl.Access){$sid=$rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($rule.AccessControlType -ne 'Allow' -or $sid -cnotin @('S-1-5-18','S-1-5-32-544')){throw 'Installer cache grants unexpected access'}}
     }
     $source=Assert-PlainNativePath (Join-Path $cache ('expanded-'+[Guid]::NewGuid().ToString('N')));$null=[IO.Directory]::CreateDirectory($source)
+    $unpacked=0;$count=@($manifest.components).Count
     foreach($component in $manifest.components){
+        Stop-IfCancelled;$unpacked++;Step (5+[int](50*$unpacked/$count)) ('Unpacking '+(Name-Of $component.id)+' ('+$unpacked+' of '+$count+')')
         $archive=if($LocalAcceptancePayloads){Get-NativeLocalPayload $component $LocalAcceptancePayloads $cache}else{Get-NativePayload $component $ManifestHash $cache (Join-Path $cache 'cancel')}
         Extract-VerifiedArchive $component $archive $source
     }
@@ -148,6 +180,7 @@ try{
     $inventory=Join-Path $cache ('runtime-inventory-'+[Guid]::NewGuid().ToString('N')+'.json')
     [IO.File]::WriteAllText($inventory,($entries.ToArray() | ConvertTo-Json -Depth 4));$hash=(Get-FileHash -LiteralPath $inventory -Algorithm SHA256).Hash.ToLowerInvariant()
     $null=Read-NativeLifecycleInventory $inventory $hash
+    Stop-IfCancelled;Step 57 'Checking every unpacked file'
     if(@(Get-ChildItem -LiteralPath $source -File -Recurse).Count -ne $entries.Count+$manifest.components.Count){throw 'Expanded payload contains unlisted files'}
     foreach($entry in $entries){$path=Assert-PlainNativePath (Join-Path $source $entry.path);if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($path) -or (Get-Item -LiteralPath $path).Length -ne $entry.size -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.sha256){throw 'Expanded payload failed verification'}}
     foreach($component in $manifest.components){[IO.File]::Delete((Join-Path $source ('inventories\'+$component.id+'.json')))}
@@ -169,6 +202,9 @@ try{
     }
     foreach($file in Get-ChildItem -LiteralPath (Join-Path $source 'services') -File -Recurse){$entries.Add([ordered]@{path=$file.FullName.Substring($source.Length+1).Replace('\','/');size=$file.Length;sha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()})}
     [IO.File]::WriteAllText($inventory,($entries.ToArray() | ConvertTo-Json -Depth 4));$hash=(Get-FileHash -LiteralPath $inventory -Algorithm SHA256).Hash.ToLowerInvariant()
+    # Last safe stop: everything so far was checks and the staging folder.
+    Stop-IfCancelled;$script:changing=$true;[Console]::Out.WriteLine('JOSI-COMMITTING');[Console]::Out.Flush()
+    Step 62 'Installing Josi. From here, setup finishes on its own.'
     if($Operation -ceq 'repair'){Invoke-NativeRepair $context $source $inventory $hash ${function:Ready} | Out-Null;exit 0}
     $installationId=if($context){$context.InstallationId}else{[Guid]::NewGuid().ToString('N')}
     if(!$context){
@@ -181,16 +217,16 @@ try{
     $journal=New-NativeTransaction $lock $installationId $Operation $(if($prior){$prior.version}else{'none'}) $Version $ManifestHash;$directory=$journal.Directory
     $null=[IO.Directory]::CreateDirectory($program)
     foreach($entry in $entries){$target=Assert-PlainNativePath (Join-Path $program $entry.path);$null=[IO.Directory]::CreateDirectory((Split-Path $target -Parent));[IO.File]::Copy((Join-Path $source $entry.path),$target,$false)}
-    $null=Set-NativeTransactionPhase $lock $directory 'verified'
+    $null=Set-NativeTransactionPhase $lock $directory 'verified';Step 66 'Creating Josi''s folders'
     if($Operation -ceq 'install'){
         $failureStage='initial-configuration';$failureCategory='permissions'
         $user=(Get-CimInstance Win32_ComputerSystem).UserName
         if(!$user){throw 'Original interactive Windows user could not be identified'}
         $sid=([Security.Principal.NTAccount]::new($user)).Translate([Security.Principal.SecurityIdentifier]).Value
         $null=New-NativeInitialConfiguration $program $data $Version $sid
-        $null=Set-NativeTransactionPhase $lock $directory 'data-created'
+        $null=Set-NativeTransactionPhase $lock $directory 'data-created';Step 72 'Setting up Josi''s Windows services'
         $null=Register-NativeServices $program $data
-        $null=Set-NativeTransactionPhase $lock $directory 'services-created'
+        $null=Set-NativeTransactionPhase $lock $directory 'services-created';Step 78 'Preparing the database'
         Invoke-NativeDatabaseInitialization $program $data $wrapper
         # Retain initializer files in the transaction rather than leaving
         # unlisted files in the immutable version used by repair/uninstall.
@@ -200,12 +236,12 @@ try{
         [IO.Directory]::Delete($init,$false)
         Start-Service JosiDatabase
         Run-Private $program @((Join-Path $program 'app\native\DatabaseBootstrap.mjs'),(Join-Path $data 'config\runtime.json'))
-        $null=Set-NativeTransactionPhase $lock $directory 'database-ready'
+        $null=Set-NativeTransactionPhase $lock $directory 'database-ready';Step 84 'Getting the database ready'
     }else{
         $failureStage='service-quiesce';$failureCategory='service'
         foreach($name in @('JosiProxy','JosiVoiceControl','JosiVoice','JosiWorker','JosiWeb')){$failureService=$name;Stop-NativeService $name}
         $failureService=$null
-        $null=Set-NativeTransactionPhase $lock $directory 'quiesced'
+        $null=Set-NativeTransactionPhase $lock $directory 'quiesced';Step 86 'Updating the database'
         $failureStage='snapshot';$failureCategory='backup'
         $backupContext=Get-NativeMaintenanceContext $installationId $prior.version $Version
         $null=New-NativeMaintenanceSnapshot $backupContext $lock $directory
@@ -214,7 +250,7 @@ try{
     }
     $failureStage='migration';$failureCategory='migration';$failureService=$null
     Run-Private $program @((Join-Path $program 'app\native\Runtime.mjs'),'migrate',(Join-Path $data 'config\runtime.json'))
-    $null=Set-NativeTransactionPhase $lock $directory 'migrated'
+    $null=Set-NativeTransactionPhase $lock $directory 'migrated';Step 90 'Switching to the new version'
     if($Operation -ceq 'upgrade'){
         $failureStage='service-activation';$failureCategory='service';$failureService='JosiDatabase'
         Stop-NativeService 'JosiDatabase'
@@ -228,18 +264,18 @@ try{
         [IO.File]::WriteAllText($pending,($prior | ConvertTo-Json -Compress));[IO.File]::SetAccessControl($pending,[IO.File]::GetAccessControl($configPath));[Josi.NativeSetup.DurableFile]::Replace($pending,$configPath)
         $null=Register-NativeServices $program $data;Start-Service JosiDatabase
     }
-    $null=Set-NativeTransactionPhase $lock $directory 'activated'
+    $null=Set-NativeTransactionPhase $lock $directory 'activated';Step 93 'Starting Josi and waiting until she''s ready. This can take a few minutes.'
     $failureStage='service-start';$failureCategory='service'
     foreach($name in @('JosiWeb','JosiWorker','JosiProxy','JosiVoiceControl')){$failureService=$name;Start-Service $name}
     $context=Get-NativeLifecycleContext $product $data $Version $installationId
     $failureStage='readiness';$failureCategory='health';$failureService=$null
     Ready $context
-    $null=Set-NativeTransactionPhase $lock $directory 'healthy'
+    $null=Set-NativeTransactionPhase $lock $directory 'healthy';Step 98 'Finishing up'
     Set-NativeServiceStartup $program $data
     $receiptRoot=Assert-PlainNativePath (Join-Path $product ('installer\'+$Version));$null=[IO.Directory]::CreateDirectory($receiptRoot)
     [IO.File]::Copy($inventory,(Join-Path $receiptRoot 'installed-inventory.json'),$false)
     [IO.File]::WriteAllText((Join-Path $receiptRoot 'installed-receipt.json'),(@{installationId=$installationId;version=$Version;inventorySha256=$hash;manifestSha256=$ManifestHash} | ConvertTo-Json))
-    $null=Set-NativeTransactionPhase $lock $directory 'committed'
+    $null=Set-NativeTransactionPhase $lock $directory 'committed';Step 100 'Done'
 }catch{
     $failure=$_
     if($lock -and $directory){
