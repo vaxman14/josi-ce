@@ -26,7 +26,7 @@ for (const page of pages) {
     return `${attribute}="${file}${suffix}"`;
   });
   html = html.replace('<div class="layout" id="top">', '<p role="note" class="offline-notice" style="max-width:1180px;margin:16px auto 0;padding:0 24px;color:var(--muted)">Offline copy — Help, installation, and legal notices are available without a connection. <a href="https://help.heyjosi.com/">Live online chat</a> requires a connection.</p>\n  <div class="layout" id="top">');
-  if (/help-chat|Ask Josi CE|\.netlify\/functions/i.test(html)) throw new Error(`Online chat leaked into ${page}`);
+  if (/help-chat|Ask Josi|\.netlify\/functions/i.test(html)) throw new Error(`Online chat leaked into ${page}`);
   const target = path.join(offlineDir, page);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, html);

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#1B0F20">
-  <title>Help | Josi CE</title>
-  <meta name="description" content="Josi CE help and links to installation and legal guides.">
+  <title>Help | Josi</title>
+  <meta name="description" content="Josi help and links to installation and legal guides.">
   <link rel="canonical" href="https://help.heyjosi.com/">
   <link rel="icon" type="image/png" href="brand/josi-mark.png">
   <script>
@@ -63,20 +63,24 @@
 </head>
 <body>
   <header class="top"><div class="top-inner">
-    <a class="brand" href=""><img src="brand/josi-mark.png" alt=""><span>Josi CE<small>Community Preview</small></span></a>
+    <a class="brand" href=""><img src="brand/josi-mark.png" alt=""><span>Josi<small>Beta</small></span></a>
     <nav class="top-links"><a href="#help">Help</a><a href="install/#installation">Install</a><a href="install/#troubleshooting">Troubleshooting</a><a href="legal/#terms-of-use">Terms</a><a href="legal/#privacy-notice">Privacy</a><a class="pill" href="install/#installation">Install Josi</a></nav>
   </div></header>
   <div class="layout" id="top">
     <aside class="side"><strong>On this page</strong><a class="level-2" href="#help">Help and current features</a>
+<a class="level-3" href="#choose-a-model-and-use-your-own-key">Choose a model and use your own key</a>
 <a class="level-3" href="#first-run-recovery-key">First-run recovery key</a>
 <a class="level-3" href="#backups-and-system-checkup">Backups and system checkup</a>
+<a class="level-3" href="#connect-google-and-microsoft-with-your-own-keys">Connect Google and Microsoft with your own keys</a>
 <a class="level-3" href="#integrations">Integrations</a>
 <a class="level-3" href="#family-parental-controls-beta">Family / Parental Controls BETA</a></aside>
     <main>
-      <section class="hero"><div class="eyebrow">Official Josi CE documentation</div><h1>Josi CE Help</h1><p>Choose a guide, or browse help for the current features.</p><div class="meta"><span>Community Preview</span><span>Docker Compose</span><span>AMD64 + ARM64</span><span>Self-hosted</span></div></section>
+      <section class="hero"><div class="eyebrow">Official Josi documentation</div><h1>Josi Help</h1><p>Choose a guide, or browse help for the current features.</p><div class="meta"><span>Beta</span><span>Docker Compose</span><span>AMD64 + ARM64</span><span>Self-hosted</span></div></section>
       <details class="mobile-index"><summary>On this page</summary><nav aria-label="Page sections"><a class="level-2" href="#help">Help and current features</a>
+<a class="level-3" href="#choose-a-model-and-use-your-own-key">Choose a model and use your own key</a>
 <a class="level-3" href="#first-run-recovery-key">First-run recovery key</a>
 <a class="level-3" href="#backups-and-system-checkup">Backups and system checkup</a>
+<a class="level-3" href="#connect-google-and-microsoft-with-your-own-keys">Connect Google and Microsoft with your own keys</a>
 <a class="level-3" href="#integrations">Integrations</a>
 <a class="level-3" href="#family-parental-controls-beta">Family / Parental Controls BETA</a></nav></details>
       <article><nav class="topic-index" aria-label="Documentation sections">
@@ -86,19 +90,29 @@
   <a href="legal/">Legal notices<span>Terms, privacy, cookies, and licences on their own page</span></a>
 </nav>
 <blockquote>
-<p><strong>Community Preview warning</strong></p>
-<p>Josi CE 0.1 is beta-quality software. Features may be incomplete, unavailable,
+<p><strong>Beta warning</strong></p>
+<p>Josi is beta-quality software. Features may be incomplete, unavailable,
 delayed, inaccurate or changed without notice. Do not use Josi as the sole
 system for emergencies, safety, healthcare, legal, financial, compliance,
 access control or backups. Review AI output and consequential actions yourself.</p>
 </blockquote>
 <h2 id="help">Help and current features</h2>
-<p>Josi CE provides one self-hosted workspace with conversations, tasks,
-approvals, contacts, memory, model providers, connected accounts, operational
-mail, documents, external messaging channels, backups, diagnostics, an
-installable web app, optional Voice Box, and integrations.</p>
+<p>Josi is one edition, and it is self-hosted. It gives you one workspace on a
+computer you own, with conversations, tasks, approvals, contacts, memory,
+connected accounts, operational mail, documents, Slack messaging, backups,
+diagnostics, an installable web app, optional Voice Box, and integrations.</p>
+<p>You choose the AI model and use your own key with it. Your apps reach your server by its address: a LAN IP, a hostname
+or a domain, with HTTPS for access from outside your network.</p>
 <p>Administrators configure the installation under <strong>Admin</strong>.
 Members use their own accounts under <strong>Workspace</strong>.</p>
+<h3 id="choose-a-model-and-use-your-own-key">Choose a model and use your own key</h3>
+<p>Open <strong>Admin → Model</strong> and select <strong>Change model</strong>.
+Pick a provider: a model on your own hardware, or a cloud provider such as
+OpenAI, Anthropic, Google Gemini, Mistral or OpenRouter. Enter the key that
+provider gave you, select <strong>Show me my models</strong> and choose one. For a
+provider outside your server, tick the box that confirms data leaves your server.
+Then select <strong>Save &amp; test</strong>. The key is encrypted with your
+installation's master key.</p>
 <h3 id="first-run-recovery-key">First-run recovery key</h3>
 <p>The setup wizard shows the recovery key once. Select <strong>Copy key</strong>
 or <strong>Download key</strong>, store it away from the Josi computer, and then
@@ -111,9 +125,38 @@ It also checks the stable release channel and applies an exactly approved update
 only after creating a backup.
 <strong>Admin → Backups</strong> creates backups and configures SMB or NFS storage.
 Keep the recovery key separately from the backup destination.</p>
+<h3 id="connect-google-and-microsoft-with-your-own-keys">Connect Google and Microsoft with your own keys</h3>
+<p>Josi ships with no Google or Microsoft application of its own. To let people
+connect Gmail, Google Calendar, Contacts and Drive, or Outlook, Microsoft
+Calendar, Contacts and OneDrive, you register Josi with each provider and give
+Josi the keys.</p>
+<ol>
+<li>Set a public address first. Google and Microsoft only accept an HTTPS
+redirect on a real domain name, so a LAN IP address or <code>localhost</code>
+cannot be registered. Set the domain under <strong>Admin → Network &amp;
+address</strong>. Until then, <strong>Connectors</strong> says
+<strong>A public address is needed first</strong>.</li>
+<li>Open <strong>Admin → Connectors</strong>, then <strong>Account providers</strong>,
+and open <strong>Google application</strong> or <strong>Microsoft 365
+application</strong>.</li>
+<li>Copy the redirect URL shown there into the provider's own console when you
+register the application. For Google, also register the extra URL listed for
+Sign in with Google, if one is shown.</li>
+<li>Enter the <strong>Client ID</strong> and <strong>Client secret</strong> from
+the provider and select <strong>Save</strong>. Josi encrypts the secret with the
+installation's master key and never shows it again.</li>
+</ol>
+<p>Registering the application connects nobody. Each person then connects their
+own account under <strong>Workspace → Connections</strong> and is asked for
+read-only access first. Anything that writes is a separate choice.
+<strong>Member permissions</strong> on the same page can switch a permission off for
+everyone, and <strong>Connection health</strong> shows whose connection works
+without showing what is inside the account.</p>
 <h3 id="integrations">Integrations</h3>
-<p><strong>Admin → Integrations</strong> connects model providers and external
-services. Credentials stay in the Master Vault. Consequential writes and deletes
+<p><strong>Admin → Integrations</strong> opens the <strong>Developer
+services</strong> view of <strong>Connectors</strong>, where you choose who may
+connect GitHub, Netlify, Vercel, Supabase and similar services with their own
+tokens. Credentials stay in the Master Vault. Consequential writes and deletes
 still require approval.</p>
 <h3 id="family-parental-controls-beta">Family / Parental Controls BETA</h3>
 <blockquote><p><strong>Do not rely on these controls for a child's safety.</strong>
@@ -124,15 +167,15 @@ or replace active adult supervision and proven device-level controls.</p></block
 </article>
     </main>
   </div>
-  <footer class="footer">Josi CE is created and published by SOCAL RECEPTIONIST LLC. <a href="legal/#terms-of-use">Terms</a> · <a href="legal/#privacy-notice">Privacy</a> · <a href="legal/#cookie-notice">Cookies</a> · <a href="legal/#software-and-paid-feature-licences">Licences</a>. Community Preview software carries no support entitlement or SLA.</footer>
-  <aside class="help-chat" aria-label="Josi CE Help chat">
+  <footer class="footer">Josi is created and published by SOCAL RECEPTIONIST LLC. <a href="legal/#terms-of-use">Terms</a> · <a href="legal/#privacy-notice">Privacy</a> · <a href="legal/#cookie-notice">Cookies</a> · <a href="legal/#software-and-paid-feature-licences">Licences</a>. Beta software carries no support entitlement or SLA.</footer>
+  <aside class="help-chat" aria-label="Josi Help chat">
     <section class="help-chat-panel" id="help-chat-panel" aria-label="AI Help assistant" hidden>
-      <div class="help-chat-head"><span>Ask Josi CE</span><button type="button" id="help-chat-close" aria-label="Close chat">×</button></div>
-      <div class="help-chat-log" id="help-chat-log" role="log" aria-live="polite"><div class="help-chat-msg">Hi! I can help with Josi CE guides, troubleshooting, and general marketing questions. What would you like to know?</div></div>
+      <div class="help-chat-head"><span>Ask Josi</span><button type="button" id="help-chat-close" aria-label="Close chat">×</button></div>
+      <div class="help-chat-log" id="help-chat-log" role="log" aria-live="polite"><div class="help-chat-msg">Hi! I can help with Josi guides, troubleshooting, and general marketing questions. What would you like to know?</div></div>
       <form class="help-chat-form" id="help-chat-form"><input id="help-chat-input" aria-label="Your question" placeholder="Ask a question…" maxlength="1200" required autocomplete="off"><button type="submit">Send</button></form>
       <p class="help-chat-disclosure">AI replies use public docs and Groq. Don't share private data or credentials. No human support or SLA.</p>
     </section>
-    <button type="button" class="help-chat-toggle" id="help-chat-toggle" aria-controls="help-chat-panel" aria-expanded="false">Ask Josi CE</button>
+    <button type="button" class="help-chat-toggle" id="help-chat-toggle" aria-controls="help-chat-panel" aria-expanded="false">Ask Josi</button>
   </aside>
   <script>
     document.querySelectorAll('pre').forEach(function(pre){var b=document.createElement('button');b.className='copy';b.textContent='Copy';b.addEventListener('click',function(){navigator.clipboard.writeText(pre.innerText.replace(/^Copy\n/,''));b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1200)});pre.prepend(b)});

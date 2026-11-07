@@ -6,7 +6,8 @@ const home = fs.readFileSync(new URL('public/index.html', root), 'utf8');
 const index = JSON.parse(fs.readFileSync(new URL('netlify/functions/help-index.json', root), 'utf8'));
 const { handler } = await import('../docs-site/netlify/functions/help-chat.mjs');
 
-assert.match(home, /Ask Josi CE/);
+assert.match(home, /Ask Josi/);
+assert.doesNotMatch(home, /Josi CE|Community Edition/);
 assert.match(home, /Groq/);
 assert.doesNotMatch(home, /socalreceptionist\.com\/widget/);
 assert.ok(index.some(x => x.url.endsWith('/install/#troubleshooting')));
@@ -26,14 +27,15 @@ try {
   assert.equal(bad.statusCode, 400);
   const tooLong = await handler({ httpMethod: 'POST', body: JSON.stringify({ message: 'x'.repeat(3000) }), headers: {} });
   assert.equal(tooLong.statusCode, 400);
-  const result = await handler({ httpMethod: 'POST', body: JSON.stringify({ message: 'Why is my Josi CE database unhealthy?' }), headers: { 'x-forwarded-for': 'test-client', host: 'josi-ce-docs.netlify.app' } });
+  const result = await handler({ httpMethod: 'POST', body: JSON.stringify({ message: 'Why is my Josi database unhealthy?' }), headers: { 'x-forwarded-for': 'test-client', host: 'josi-ce-docs.netlify.app' } });
   assert.equal(result.statusCode, 200);
   const answer = JSON.parse(result.body);
   assert.match(answer.reply, /database health/);
   assert.ok(answer.sources.some(s => s.url.includes('install/')));
   assert.ok(answer.sources.every(s => s.url.startsWith('https://josi-ce-docs.netlify.app/')), 'Old domain must retain working citation links until DNS is live');
   const system = request.messages[0].content;
-  assert.match(system, /Josi CE/);
+  assert.match(system, /Josi/);
+  assert.doesNotMatch(system, /Josi CE/);
   assert.match(system, /install\/#database-is-unhealthy/);
   assert.doesNotMatch(system, /CTF Designs|Landing Page \$299|roman@ctfdesigns/);
   const marketing = await handler({ httpMethod: 'POST', body: JSON.stringify({ message: 'How should a small business market itself online?' }), headers: { 'x-forwarded-for': 'different-client' } });

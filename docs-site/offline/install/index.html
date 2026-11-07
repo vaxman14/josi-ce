@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#1B0F20">
-  <title>Install Josi CE | Josi CE</title>
-  <meta name="description" content="Install Josi CE with Docker, then finish setup in your browser.">
+  <title>Install Josi | Josi</title>
+  <meta name="description" content="Install Josi with Docker, then finish setup in your browser.">
   <link rel="icon" type="image/png" href="../brand/josi-mark.png">
   <style>
     @font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:200 800;font-display:swap;src:url('/fonts/bricolage-grotesque-latin.woff2') format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
@@ -34,7 +34,7 @@
 </head>
 <body>
   <header class="top"><div class="top-inner">
-    <a class="brand" href="../index.html"><img src="../brand/josi-mark.png" alt=""><span>Josi CE<small>Community Preview</small></span></a>
+    <a class="brand" href="../index.html"><img src="../brand/josi-mark.png" alt=""><span>Josi<small>Beta</small></span></a>
     <nav class="top-links"><a href="../index.html#help">Help</a><a href="../install/index.html#installation">Install</a><a href="../install/index.html#troubleshooting">Troubleshooting</a><a href="../legal/index.html#terms-of-use">Terms</a><a href="../legal/index.html#privacy-notice">Privacy</a><a class="pill" href="../install/index.html#installation">Install Josi</a></nav>
   </div></header>
   <p role="note" class="offline-notice" style="max-width:1180px;margin:16px auto 0;padding:0 24px;color:var(--muted)">Offline copy — Help, installation, and legal notices are available without a connection. <a href="https://help.heyjosi.com/">Live online chat</a> requires a connection.</p>
@@ -58,7 +58,7 @@
 <a class="level-3" href="#josi-installed-but-does-not-open">Josi installed but does not open</a>
 <a class="level-2" href="#source-code-and-licence">Source code and licence</a></aside>
     <main>
-      <section class="hero"><div class="eyebrow">Official Josi CE documentation</div><h1>Install Josi CE</h1><p>One Docker command. The rest happens in your browser.</p><div class="meta"><span>Community Preview</span><span>Docker Compose</span><span>AMD64 + ARM64</span><span>Self-hosted</span></div></section>
+      <section class="hero"><div class="eyebrow">Official Josi documentation</div><h1>Install Josi</h1><p>One Docker command. The rest happens in your browser.</p><div class="meta"><span>Beta</span><span>Docker Compose</span><span>AMD64 + ARM64</span><span>Self-hosted</span></div></section>
       <details class="mobile-index"><summary>On this page</summary><nav aria-label="Page sections"><a class="level-2" href="#installation">1. Run the installer</a>
 <a class="level-3" href="#mac">Mac</a>
 <a class="level-3" href="#linux">Linux</a>
@@ -77,12 +77,12 @@
 <a class="level-3" href="#setup-was-interrupted">Setup was interrupted</a>
 <a class="level-3" href="#josi-installed-but-does-not-open">Josi installed but does not open</a>
 <a class="level-2" href="#source-code-and-licence">Source code and licence</a></nav></details>
-      <article><h1>Josi CE Help</h1>
-<p>Install Josi with Docker, finish setup in your browser, and manage the normal
+      <article><h1>Josi Help</h1>
+<p>Install Josi on a computer you own, finish setup in your browser, and manage the
 day-to-day work inside Josi.</p>
 <blockquote>
-<p><strong>Community Preview warning</strong></p>
-<p>Josi CE 0.1 is beta-quality software. Features may be incomplete, unavailable,
+<p><strong>Beta warning</strong></p>
+<p>Josi is beta-quality software. Features may be incomplete, unavailable,
 delayed, inaccurate or changed without notice. Do not use Josi as the sole
 system for emergencies, safety, healthcare, legal, financial, compliance,
 access control or backups. Review AI output and consequential actions yourself.</p>
@@ -155,7 +155,9 @@ inspect containers or call health endpoints.</p>
 <li><strong>System checkup</strong> explains problems, offers safe automatic repairs, and installs approved stable updates.</li>
 <li><strong>Network &amp; address</strong> changes local, LAN, domain, proxy, or tunnel access.</li>
 <li><strong>Backups</strong> creates backups and configures storage.</li>
-<li><strong>Integrations</strong> connects providers and services.</li>
+<li><strong>Model</strong> chooses the AI model and holds your key.</li>
+<li><strong>Connectors</strong> holds your own Google and Microsoft keys.</li>
+<li><strong>Integrations</strong> opens the developer services view of Connectors.</li>
 <li><strong>Users</strong> manages workspace access.</li>
 </ul>
 <p>Keep Docker running. On a dedicated Mac mini, enable Docker Desktop at login
@@ -165,15 +167,22 @@ so Josi returns after a restart.</p>
 <p>Your Josi server is the home for every client. The web app and native apps use
 the same account, workspace, conversations, memory, and tools.</p>
 <ul>
-<li><strong>Android:</strong> <a href="https://play.google.com/store/apps/details?id=com.socalreceptionist.josice">Install Josi CE from Google Play</a>.</li>
-<li><strong>iPhone and iPad:</strong> <a href="https://apps.apple.com/us/app/josi-ce/id6810549193">Install Josi CE from the App Store</a>.</li>
+<li><strong>Android:</strong> <a href="https://play.google.com/store/apps/details?id=com.socalreceptionist.josice">Install Josi from Google Play</a>.</li>
+<li><strong>iPhone and iPad:</strong> <a href="https://apps.apple.com/us/app/josi-ce/id6810549193">Install Josi from the App Store</a>.</li>
 <li><strong>Windows, Mac and Linux:</strong> the downloads at <a href="https://get.heyjosi.com">get.heyjosi.com</a>.</li>
 </ul>
-<p>Every app asks for the server's address once. There are three ways to reach
-the server, chosen on the server's <strong>Network &amp; address</strong> page
-(in the Josi app on the server PC, or the web app as a super admin):</p>
+<p>On a Mac there are two apps. <strong>Josi</strong> sets up and runs the server
+on that Mac and opens your workspace. <strong>Josi Client</strong> is for a Mac
+that uses a server running somewhere else: you give it the server's address and
+sign in.</p>
+<p>Every app asks for the server's address once. Type the address the server
+answers at: a LAN IP, a hostname or a domain. Remote access needs HTTPS. The
+apps accept plain <code>http://</code> only for <code>localhost</code> and
+addresses on your own network. The server's address is set on its
+<strong>Network &amp; address</strong> page (in the Josi app on the server PC, or
+the web app as a super admin). There are three common setups:</p>
 <ul>
-<li><strong>Your network.</strong> Set the public address to
+<li><strong>A LAN IP or hostname.</strong> Set the public address to
 <code>https://&lt;name or IP&gt;:8080</code>. Josi answers over HTTPS with a
 certificate it issues itself; the app shows the certificate fingerprint once
 and you compare it with the one on the Network page. Works at home or at the
@@ -192,7 +201,7 @@ through a tunnel or a reverse proxy you run, pointed at the server PC.</li>
 </ul>
 <p>To connect an app:</p>
 <ol>
-<li>Open Josi CE on the device.</li>
+<li>Open Josi on the device.</li>
 <li>Enter the server's address.</li>
 <li>If the app shows a certificate fingerprint, compare it with the Network
 page and accept it.</li>
@@ -239,7 +248,7 @@ worked, open <strong>Admin → Overview</strong> for the system checkup. Do not
 delete Docker volumes or the installation directory while troubleshooting.</p>
 
 <h2 id="source-code-and-licence">Source code and licence</h2>
-<p>Josi CE is licensed under GNU AGPL v3. The
+<p>Josi is licensed under GNU AGPL v3. The
 <a href="https://github.com/vaxman14/josi-ce">source code is available on GitHub</a>.
 Licence terms, security reporting, and developer documentation are kept
 separate from this end-user installation path.</p>
@@ -247,6 +256,6 @@ separate from this end-user installation path.</p>
 </article>
     </main>
   </div>
-  <footer class="footer">Josi CE is created and published by SOCAL RECEPTIONIST LLC. <a href="../legal/index.html#terms-of-use">Terms</a> · <a href="../legal/index.html#privacy-notice">Privacy</a> · <a href="../legal/index.html#cookie-notice">Cookies</a> · <a href="../legal/index.html#software-and-paid-feature-licences">Licences</a>. Community Preview software carries no support entitlement or SLA.</footer>
+  <footer class="footer">Josi is created and published by SOCAL RECEPTIONIST LLC. <a href="../legal/index.html#terms-of-use">Terms</a> · <a href="../legal/index.html#privacy-notice">Privacy</a> · <a href="../legal/index.html#cookie-notice">Cookies</a> · <a href="../legal/index.html#software-and-paid-feature-licences">Licences</a>. Beta software carries no support entitlement or SLA.</footer>
 </body>
 </html>

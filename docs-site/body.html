@@ -1,21 +1,31 @@
-<h1>Josi CE Help</h1>
-<p>Install Josi with Docker, finish setup in your browser, and manage the normal
+<h1>Josi Help</h1>
+<p>Install Josi on a computer you own, finish setup in your browser, and manage the
 day-to-day work inside Josi.</p>
 <blockquote>
-<p><strong>Community Preview warning</strong></p>
-<p>Josi CE 0.1 is beta-quality software. Features may be incomplete, unavailable,
+<p><strong>Beta warning</strong></p>
+<p>Josi is beta-quality software. Features may be incomplete, unavailable,
 delayed, inaccurate or changed without notice. Do not use Josi as the sole
 system for emergencies, safety, healthcare, legal, financial, compliance,
 access control or backups. Review AI output and consequential actions yourself.</p>
 </blockquote>
 
 <h2 id="help">Help and current features</h2>
-<p>Josi CE provides one self-hosted workspace with conversations, tasks,
-approvals, contacts, memory, model providers, connected accounts, operational
-mail, documents, external messaging channels, backups, diagnostics, an
-installable web app, optional Voice Box, and integrations.</p>
+<p>Josi is one edition, and it is self-hosted. It gives you one workspace on a
+computer you own, with conversations, tasks, approvals, contacts, memory,
+connected accounts, operational mail, documents, Slack messaging, backups,
+diagnostics, an installable web app, optional Voice Box, and integrations.</p>
+<p>You choose the AI model and use your own key with it. Your apps reach your server by its address: a LAN IP, a hostname
+or a domain, with HTTPS for access from outside your network.</p>
 <p>Administrators configure the installation under <strong>Admin</strong>.
 Members use their own accounts under <strong>Workspace</strong>.</p>
+<h3>Choose a model and use your own key</h3>
+<p>Open <strong>Admin → Model</strong> and select <strong>Change model</strong>.
+Pick a provider: a model on your own hardware, or a cloud provider such as
+OpenAI, Anthropic, Google Gemini, Mistral or OpenRouter. Enter the key that
+provider gave you, select <strong>Show me my models</strong> and choose one. For a
+provider outside your server, tick the box that confirms data leaves your server.
+Then select <strong>Save &amp; test</strong>. The key is encrypted with your
+installation's master key.</p>
 <h3>First-run recovery key</h3>
 <p>The setup wizard shows the recovery key once. Select <strong>Copy key</strong>
 or <strong>Download key</strong>, store it away from the Josi computer, and then
@@ -28,9 +38,38 @@ It also checks the stable release channel and applies an exactly approved update
 only after creating a backup.
 <strong>Admin → Backups</strong> creates backups and configures SMB or NFS storage.
 Keep the recovery key separately from the backup destination.</p>
+<h3>Connect Google and Microsoft with your own keys</h3>
+<p>Josi ships with no Google or Microsoft application of its own. To let people
+connect Gmail, Google Calendar, Contacts and Drive, or Outlook, Microsoft
+Calendar, Contacts and OneDrive, you register Josi with each provider and give
+Josi the keys.</p>
+<ol>
+<li>Set a public address first. Google and Microsoft only accept an HTTPS
+redirect on a real domain name, so a LAN IP address or <code>localhost</code>
+cannot be registered. Set the domain under <strong>Admin → Network &amp;
+address</strong>. Until then, <strong>Connectors</strong> says
+<strong>A public address is needed first</strong>.</li>
+<li>Open <strong>Admin → Connectors</strong>, then <strong>Account providers</strong>,
+and open <strong>Google application</strong> or <strong>Microsoft 365
+application</strong>.</li>
+<li>Copy the redirect URL shown there into the provider's own console when you
+register the application. For Google, also register the extra URL listed for
+Sign in with Google, if one is shown.</li>
+<li>Enter the <strong>Client ID</strong> and <strong>Client secret</strong> from
+the provider and select <strong>Save</strong>. Josi encrypts the secret with the
+installation's master key and never shows it again.</li>
+</ol>
+<p>Registering the application connects nobody. Each person then connects their
+own account under <strong>Workspace → Connections</strong> and is asked for
+read-only access first. Anything that writes is a separate choice.
+<strong>Member permissions</strong> on the same page can switch a permission off for
+everyone, and <strong>Connection health</strong> shows whose connection works
+without showing what is inside the account.</p>
 <h3>Integrations</h3>
-<p><strong>Admin → Integrations</strong> connects model providers and external
-services. Credentials stay in the Master Vault. Consequential writes and deletes
+<p><strong>Admin → Integrations</strong> opens the <strong>Developer
+services</strong> view of <strong>Connectors</strong>, where you choose who may
+connect GitHub, Netlify, Vercel, Supabase and similar services with their own
+tokens. Credentials stay in the Master Vault. Consequential writes and deletes
 still require approval.</p>
 <h3>Family / Parental Controls BETA</h3>
 <blockquote><p><strong>Do not rely on these controls for a child's safety.</strong>
@@ -105,7 +144,9 @@ inspect containers or call health endpoints.</p>
 <li><strong>System checkup</strong> explains problems, offers safe automatic repairs, and installs approved stable updates.</li>
 <li><strong>Network &amp; address</strong> changes local, LAN, domain, proxy, or tunnel access.</li>
 <li><strong>Backups</strong> creates backups and configures storage.</li>
-<li><strong>Integrations</strong> connects providers and services.</li>
+<li><strong>Model</strong> chooses the AI model and holds your key.</li>
+<li><strong>Connectors</strong> holds your own Google and Microsoft keys.</li>
+<li><strong>Integrations</strong> opens the developer services view of Connectors.</li>
 <li><strong>Users</strong> manages workspace access.</li>
 </ul>
 <p>Keep Docker running. On a dedicated Mac mini, enable Docker Desktop at login
@@ -115,15 +156,22 @@ so Josi returns after a restart.</p>
 <p>Your Josi server is the home for every client. The web app and native apps use
 the same account, workspace, conversations, memory, and tools.</p>
 <ul>
-<li><strong>Android:</strong> <a href="https://play.google.com/store/apps/details?id=com.socalreceptionist.josice">Install Josi CE from Google Play</a>.</li>
-<li><strong>iPhone and iPad:</strong> <a href="https://apps.apple.com/us/app/josi-ce/id6810549193">Install Josi CE from the App Store</a>.</li>
+<li><strong>Android:</strong> <a href="https://play.google.com/store/apps/details?id=com.socalreceptionist.josice">Install Josi from Google Play</a>.</li>
+<li><strong>iPhone and iPad:</strong> <a href="https://apps.apple.com/us/app/josi-ce/id6810549193">Install Josi from the App Store</a>.</li>
 <li><strong>Windows, Mac and Linux:</strong> the downloads at <a href="https://get.heyjosi.com">get.heyjosi.com</a>.</li>
 </ul>
-<p>Every app asks for the server's address once. There are three ways to reach
-the server, chosen on the server's <strong>Network &amp; address</strong> page
-(in the Josi app on the server PC, or the web app as a super admin):</p>
+<p>On a Mac there are two apps. <strong>Josi</strong> sets up and runs the server
+on that Mac and opens your workspace. <strong>Josi Client</strong> is for a Mac
+that uses a server running somewhere else: you give it the server's address and
+sign in.</p>
+<p>Every app asks for the server's address once. Type the address the server
+answers at: a LAN IP, a hostname or a domain. Remote access needs HTTPS. The
+apps accept plain <code>http://</code> only for <code>localhost</code> and
+addresses on your own network. The server's address is set on its
+<strong>Network &amp; address</strong> page (in the Josi app on the server PC, or
+the web app as a super admin). There are three common setups:</p>
 <ul>
-<li><strong>Your network.</strong> Set the public address to
+<li><strong>A LAN IP or hostname.</strong> Set the public address to
 <code>https://&lt;name or IP&gt;:8080</code>. Josi answers over HTTPS with a
 certificate it issues itself; the app shows the certificate fingerprint once
 and you compare it with the one on the Network page. Works at home or at the
@@ -142,7 +190,7 @@ through a tunnel or a reverse proxy you run, pointed at the server PC.</li>
 </ul>
 <p>To connect an app:</p>
 <ol>
-<li>Open Josi CE on the device.</li>
+<li>Open Josi on the device.</li>
 <li>Enter the server's address.</li>
 <li>If the app shows a certificate fingerprint, compare it with the Network
 page and accept it.</li>
@@ -189,19 +237,19 @@ worked, open <strong>Admin → Overview</strong> for the system checkup. Do not
 delete Docker volumes or the installation directory while troubleshooting.</p>
 
 <h2>Source code and licence</h2>
-<p>Josi CE is licensed under GNU AGPL v3. The
+<p>Josi is licensed under GNU AGPL v3. The
 <a href="https://github.com/vaxman14/josi-ce">source code is available on GitHub</a>.
 Licence terms, security reporting, and developer documentation are kept
 separate from this end-user installation path.</p>
 
 <h2 id="terms-of-use">Terms of Use</h2>
 <p><strong>Effective 14 September 2026.</strong> These Terms govern use of the
-official Josi CE application and publisher-supplied paid modules from SOCAL
+official Josi application and publisher-supplied paid modules from SOCAL
 RECEPTIONIST LLC. The GNU AGPL v3 separately governs copying, modification and
 distribution of the open-source code. If you do not agree, do not use the
 official application or paid modules.</p>
-<h3>Preview, AI and reliance</h3>
-<p>Josi CE 0.1 is beta-quality Community Preview software. Features and AI output
+<h3>Beta, AI and reliance</h3>
+<p>Josi is beta-quality software. Features and AI output
 may be incomplete, unavailable, delayed or wrong. Do not use Josi as the sole
 system for emergencies, safety, healthcare, legal, financial, employment,
 compliance, access control or backups. Review output and approve consequential
@@ -245,12 +293,12 @@ TO THE MAXIMUM EXTENT PERMITTED BY LAW, SOCAL RECEPTIONIST LLC WILL NOT BE
 LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY OR PUNITIVE
 DAMAGES, OR LOSS OF DATA, PROFITS, REVENUE, GOODWILL OR USE. Nothing excludes
 liability that applicable law does not permit excluding.</p>
-<p>Community Preview use carries no support entitlement, guaranteed response or
+<p>Use of the beta carries no support entitlement, guaranteed response or
 SLA. Updated Terms may be published prospectively with a new effective date.
 Questions and reports follow the repository's public Support and Security policies.</p>
 
 <h2 id="privacy-notice">Privacy Notice</h2>
-<p><strong>Effective 14 September 2026.</strong> Josi CE is self-hosted. The
+<p><strong>Effective 14 September 2026.</strong> Josi is self-hosted. The
 person or organization operating an installation is normally the controller of
 its data. SOCAL RECEPTIONIST LLC does not receive installation data merely
 because the software is running.</p>
@@ -272,7 +320,7 @@ records; ordinary conversation retention remains controlled by the installation.
 <h3>Who receives data</h3>
 <p>Data stays on the installation unless a user or operator enables or uses a
 destination. Necessary data may then go to the selected AI provider; Google or
-Microsoft; configured SMTP/mail services; Telegram, Slack, WhatsApp or Signal;
+Microsoft; configured SMTP/mail services; Slack or Signal;
 configured storage/backup providers; configured GitHub, Netlify, Vercel,
 Supabase or other developer services; an operator-selected telemetry or support
 gateway; recipients and shared users authorized by the user; and public
@@ -311,11 +359,11 @@ settings can clear cookies and the PWA cache. Operators are responsible for
 disclosing cookies introduced by modified builds.</p>
 
 <h2 id="software-and-paid-feature-licences">Software and paid-feature licences</h2>
-<p>The Josi CE source code is licensed under GNU AGPL v3. The Josi name, marks and
+<p>The Josi source code is licensed under GNU AGPL v3. The Josi name, marks and
 official product identity are governed separately by the trademark policy.
 Third-party notices remain applicable. A modified build must not imply publisher
 approval or support.</p>
 <p>A publisher-signed paid-feature key is a separate entitlement, not a software
 copyright licence. It activates only the feature, buyer, installation and term
-encoded in the key and is governed by the Terms above. Community Preview carries
+encoded in the key and is governed by the Terms above. The beta carries
 no support entitlement or SLA.</p>

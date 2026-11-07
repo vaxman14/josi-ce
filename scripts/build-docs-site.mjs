@@ -19,7 +19,7 @@ if (!(helpStart < installStart && installStart < legalStart)) {
 const prefix = source.slice(0, helpStart);
 const warningStart = prefix.indexOf('<blockquote>');
 const warningEnd = prefix.indexOf('</blockquote>', warningStart);
-if (warningStart < 0 || warningEnd < 0) throw new Error('Community Preview warning is missing');
+if (warningStart < 0 || warningEnd < 0) throw new Error('Beta warning is missing');
 const help = prefix.slice(warningStart, warningEnd + '</blockquote>'.length) + '\n' + source.slice(helpStart, installStart);
 const installation = source.slice(0, helpStart) + source.slice(installStart, legalStart);
 const legal = source.slice(legalStart);
@@ -74,10 +74,10 @@ function render({ content, root, title, description, hero, intro, canonicalPath,
 }
 
 const pages = [
-  ['index.html', render({ content: home, root: '', title: 'Help', description: 'Josi CE help and links to installation and legal guides.', hero: 'Josi CE Help', intro: 'Choose a guide, or browse help for the current features.', canonicalPath: '', legacyRedirect: redirectOldLinks })],
-  ['install/index.html', render({ content: installation, root: '../', title: 'Install Josi CE', description: 'Install Josi CE with Docker, then finish setup in your browser.', hero: 'Install Josi CE', intro: 'One Docker command. The rest happens in your browser.', canonicalPath: 'install/' })],
-  ['iphone/index.html', render({ content: iphone, root: '../', title: 'Josi on iPhone', description: 'Every screen and setting in the Josi CE iPhone app.', hero: 'Josi on iPhone', intro: 'Every screen and setting in the iPhone app, in the order you meet them.', canonicalPath: 'iphone/' })],
-  ['legal/index.html', render({ content: legal, root: '../', title: 'Legal notices', description: 'Josi CE terms of use, privacy notice, cookie notice, and licences.', hero: 'Legal notices', intro: 'Terms, privacy, cookies, and licences in one separate legal section.', canonicalPath: 'legal/' })],
+  ['index.html', render({ content: home, root: '', title: 'Help', description: 'Josi help and links to installation and legal guides.', hero: 'Josi Help', intro: 'Choose a guide, or browse help for the current features.', canonicalPath: '', legacyRedirect: redirectOldLinks })],
+  ['install/index.html', render({ content: installation, root: '../', title: 'Install Josi', description: 'Install Josi with Docker, then finish setup in your browser.', hero: 'Install Josi', intro: 'One Docker command. The rest happens in your browser.', canonicalPath: 'install/' })],
+  ['iphone/index.html', render({ content: iphone, root: '../', title: 'Josi on iPhone', description: 'Every screen and setting in the Josi iPhone app.', hero: 'Josi on iPhone', intro: 'Every screen and setting in the iPhone app, in the order you meet them.', canonicalPath: 'iphone/' })],
+  ['legal/index.html', render({ content: legal, root: '../', title: 'Legal notices', description: 'Josi terms of use, privacy notice, cookie notice, and licences.', hero: 'Legal notices', intro: 'Terms, privacy, cookies, and licences in one separate legal section.', canonicalPath: 'legal/' })],
 ];
 for (const [filename, html] of pages) {
   const output = path.join('docs-site/public', filename);

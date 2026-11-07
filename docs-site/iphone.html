@@ -12,7 +12,7 @@ server before the app can do anything. If you don't have one yet, start with
 <a href="../install/">Install Josi</a>.</p>
 
 <h3 id="install-the-app">Install the app</h3>
-<p><a href="https://apps.apple.com/us/app/josi-ce/id6810549193">Install Josi CE from the App Store</a>.
+<p><a href="https://apps.apple.com/us/app/josi-ce/id6810549193">Install Josi from the App Store</a>.
 If you were invited to the beta, install it from the TestFlight app instead.</p>
 
 <h3 id="choose-a-skin">Choose a skin</h3>
@@ -23,33 +23,32 @@ You can change this at any time under <a href="#personalization">Personalization
 <figure class="shot"><img src="img/skin-picker.jpg" alt="The Choose your Josi screen listing skins, with Plum and Gold selected" width="540" height="1174" loading="lazy"><figcaption>Choose your Josi, shown once on first launch.</figcaption></figure>
 </div>
 
-<h3 id="pair-with-your-server">Pair with your server</h3>
+<h3 id="connect-to-your-server">Connect to your server</h3>
+<p>The app connects straight to your server by its address. You need the address
+the server answers at: a LAN IP, a hostname or a domain. On your server, open
+<strong>Admin → Network &amp; address</strong> to see its <strong>Public address</strong>
+and its address on your network.</p>
 <ol>
-<li>On your server, open <strong>Devices</strong> and tap <strong>Make a pairing code</strong>.</li>
-<li>On your iPhone, tap <strong>Scan the QR code</strong> and point the camera at it.</li>
-<li>Or copy the code or link, tap <strong>Paste</strong> or type it into <strong>Pairing code or link</strong>, then tap <strong>Pair</strong>.</li>
+<li>Enter the server's address, for example <code>https://josi.example.com</code>.</li>
+<li>Tap <strong>Connect</strong>.</li>
 </ol>
-<p>Pairing makes an encrypted connection from this iPhone to your server. The relay
-that carries it can't read what passes through.</p>
-<p>If your server doesn't use the relay, tap <strong>Use a server address instead</strong>,
-enter its <code>https://</code> address and tap <strong>Connect</strong>. This only
-works where that address can be reached. Tap <strong>Pair with a code instead</strong>
-to go back.</p>
-<div class="shots">
-<figure class="shot"><img src="img/pair.jpg" alt="The Pair with your server screen with Scan the QR code, a code field, Paste and Pair" width="540" height="1174" loading="lazy"><figcaption>Pair with a QR code, a code or a link.</figcaption></figure>
-<figure class="shot"><img src="img/pair-address.jpg" alt="The server address field with a Connect button" width="540" height="1174" loading="lazy"><figcaption>Or connect straight to a server address.</figcaption></figure>
-</div>
+<p>Use <code>https://</code> for any address you reach from outside your own network.
+The app accepts plain <code>http://</code> only for <code>localhost</code>, <code>.local</code>
+names and addresses on your own network. If you leave out the scheme, the app adds
+<code>https://</code>. The address has to be reachable from where your iPhone is.
+<strong>Change server</strong> under <a href="#settings">Settings</a> lets you enter a
+different one later.</p>
 
 <h3 id="sign-in">Sign in</h3>
 <p>Use the same account you use on your server. You can sign in three ways:</p>
 <ul>
 <li><strong>Continue with Apple</strong>. The first time, Josi may ask for your workspace password once to link your Apple ID to your account.</li>
-<li><strong>Continue with Google</strong>. This only works when you connected with a server address. It can't reach a server over a paired connection yet, so use your password there.</li>
+<li><strong>Continue with Google</strong>, when your server has Google sign-in set up.</li>
 <li><strong>Username or email</strong> and <strong>Password</strong>, then <strong>Sign in</strong>. Tap <strong>Show</strong> to see the password as you type.</li>
 </ul>
 <p><strong>Keep me signed in on this device</strong> is on by default. Below the form,
 the app shows which server you're signing in to. <strong>Change server</strong> takes
-you back to pairing.</p>
+you back to the address screen.</p>
 <div class="shots">
 <figure class="shot"><img src="img/signin.jpg" alt="The sign-in screen with Apple, Google, username and password" width="540" height="1174" loading="lazy"><figcaption>Sign in. Your own server's address appears near the bottom.</figcaption></figure>
 </div>
@@ -152,7 +151,7 @@ only appear for owners.</p>
 <ul>
 <li><strong>Help</strong> opens your server's built-in help.</li>
 <li><strong>Live Help chat</strong> opens this site in your browser, where you can ask questions.</li>
-<li><strong>Sign out</strong> signs you out of this iPhone. It stays paired with your server.</li>
+<li><strong>Sign out</strong> signs you out of this iPhone. It keeps your server's address, so you can sign in again.</li>
 <li>Your name and role are shown at the very bottom.</li>
 </ul>
 <div class="shots">
@@ -292,7 +291,7 @@ There's nothing to change here.</p>
 <ul>
 <li>Plum &amp; Gold (dark, the default)</li>
 <li>Josi Warm (frosted bar)</li>
-<li>Josi CE Mocha Cloud (light)</li>
+<li>Mocha Cloud (light)</li>
 <li>Midnight Apricot (dark)</li>
 <li>Arctic Blue (light)</li>
 <li>Frosted versions of Mocha Cloud, Midnight Apricot, Plum &amp; Gold and Arctic Blue</li>
@@ -332,30 +331,20 @@ listed below, and links can be tapped. <strong>Delete</strong> removes one.</p>
 </div>
 
 <h3 id="channels">Channels</h3>
-<p>Reach the same private workspace from another messaging app.</p>
+<p>Reach the same private workspace from Slack.</p>
 <ul>
-<li><strong>Telegram</strong>: tap <strong>Set up Telegram</strong>.</li>
-<li><strong>WhatsApp</strong> and <strong>Slack</strong>: tap <strong>Create link code</strong> and follow the instruction. The code works once and lasts 10 minutes. If the channel shows <strong>Off</strong>, an administrator needs to turn it on under <a href="#admin-channels">Channels</a> in Admin.</li>
+<li><strong>Slack</strong>: tap <strong>Create link code</strong> and follow the instruction. The code works once and lasts 10 minutes. If the channel shows <strong>Off</strong>, an administrator needs to turn it on under <a href="#admin-channels">Channels</a> in Admin.</li>
 <li><strong>Your linked identities</strong> lists what you've linked. <strong>Disconnect</strong> removes one.</li>
 </ul>
-<div class="shots">
-<figure class="shot"><img src="img/channels.jpg" alt="Telegram, WhatsApp and Slack cards" width="540" height="1174" loading="lazy"><figcaption>Channels.</figcaption></figure>
-</div>
 
 <h3 id="apps">Apps</h3>
-<p>Links to the iPhone and Android apps, and how to connect one to your server. There's nothing to change here.</p>
-<div class="shots">
-<figure class="shot"><img src="img/apps.jpg" alt="The Companion apps page with store links" width="540" height="1174" loading="lazy"><figcaption>Apps.</figcaption></figure>
-</div>
+<p>Links to the iPhone and Android apps. There's nothing to change here.</p>
 
 <h3 id="family">Family</h3>
 <p>Coming soon.</p>
 
 <h2 id="settings">Settings</h2>
-<p>Settings holds your account and this iPhone.</p>
-<div class="shots">
-<figure class="shot"><img src="img/settings.jpg" alt="Settings with Account, Devices, This iPhone, Drive folders, Withdraw AI permission and Change server" width="540" height="1174" loading="lazy"><figcaption>Settings.</figcaption></figure>
-</div>
+<p>Settings holds your account, your Drive folders, your privacy choice and the server this iPhone uses.</p>
 
 <h3 id="account">Account</h3>
 <p>Your approval choices, your data and your sign-in security.</p>
@@ -383,31 +372,10 @@ then import it. Under <strong>Your import batches</strong> you can read a
 <p><strong>Multi-factor authentication.</strong></p>
 <ul>
 <li>To turn it on, tap <strong>Set up MFA</strong>, scan the QR code with your authenticator app or use the key shown, enter the code and tap <strong>Verify and enable</strong>. Save your recovery codes when they appear.</li>
-<li>If your server is linked to a Hey Josi account, you can tap <strong>Use my Hey Josi authenticator</strong> instead.</li>
 <li>To turn it off, enter your password and tap <strong>Disable MFA</strong>.</li>
 </ul>
 <div class="shots">
 <figure class="shot"><img src="img/account.jpg" alt="Account settings showing approval choices" width="540" height="1174" loading="lazy"><figcaption>Account.</figcaption></figure>
-</div>
-
-<h3 id="devices">Devices</h3>
-<p>Everything paired with your server.</p>
-<ul>
-<li><strong>Make a pairing code</strong> shows a QR code and a code for a new device. The code works once.</li>
-<li><strong>Your devices</strong> lists each one as <strong>Connected now</strong> or when it was last seen. <strong>Remove</strong> disconnects it after you confirm.</li>
-<li><strong>What the relay can and can't see</strong> explains what passes through the relay.</li>
-</ul>
-<div class="shots">
-<figure class="shot"><img src="img/devices.jpg" alt="The Devices page with a pairing button and two iPhones" width="540" height="1174" loading="lazy"><figcaption>Devices.</figcaption></figure>
-</div>
-
-<h3 id="this-iphone">This iPhone</h3>
-<p>Shows how this iPhone reaches your server: <strong>Connected directly on your
-network</strong>, or <strong>Connected through the relay</strong>. This only appears
-when the iPhone is paired.</p>
-<p><strong>Replace device key</strong> makes a new encryption key for this iPhone.</p>
-<div class="shots">
-<figure class="shot"><img src="img/device.jpg" alt="This iPhone showing the connection and Replace device key" width="540" height="1174" loading="lazy"><figcaption>This iPhone.</figcaption></figure>
 </div>
 
 <h3 id="drive-folders">Drive folders</h3>
@@ -423,9 +391,8 @@ then tap <strong>Withdraw</strong>. Chat stays blocked until you review the disc
 and allow it again.</p>
 
 <h3 id="change-server">Change server</h3>
-<p>Signs you out and forgets this server on this iPhone, so you can choose another.
-Tap it, then confirm. You'll need a new pairing code to come back. Your server keeps
-its record of this iPhone until someone removes it under <a href="#devices">Devices</a>.</p>
+<p>Signs you out and forgets this server's address on this iPhone, so you can enter
+another. Tap it, then confirm.</p>
 
 <h2 id="admin">Admin</h2>
 <p>These sections only appear for owners. They control the whole server, so changes
@@ -456,9 +423,6 @@ capabilities</strong> and <strong>Optional connections and devices</strong>. Eac
 has <strong>Do this</strong> and, unless it's critical, <strong>Skip</strong>.
 <strong>Put it back on the list</strong> undoes a skip. <strong>Done — go to my
 dashboard</strong> leaves the page.</p>
-<div class="shots">
-<figure class="shot"><img src="img/admin-launch.jpg" alt="The Getting started checklist" width="540" height="1174" loading="lazy"><figcaption>Getting started.</figcaption></figure>
-</div>
 
 <h3 id="admin-people">People</h3>
 <p><strong>Add someone</strong>: enter an <strong>Email</strong> and <strong>Username</strong>
@@ -477,8 +441,8 @@ it once to set a password.</p>
 <p>Choose the AI model Josi uses. <strong>Currently using</strong> shows it and whether it
 passed its test.</p>
 <ol>
-<li>Tap <strong>Change model</strong> and choose a <strong>Provider</strong>. This can be a model on your own hardware, a cloud provider such as OpenAI, Anthropic, Google Gemini, Mistral or OpenRouter, or Hey Josi AI. Some servers also offer your own ChatGPT or Claude plan.</li>
-<li>Enter what that provider needs, usually an <strong>API key</strong>, or an address for your own model server.</li>
+<li>Tap <strong>Change model</strong> and choose a <strong>Provider</strong>. This can be a model on your own hardware or a cloud provider such as OpenAI, Anthropic, Google Gemini, Mistral or OpenRouter. Some servers can also use your own ChatGPT or Claude sign-in.</li>
+<li>Enter what that provider needs, usually your own <strong>API key</strong>, or an address for your own model server.</li>
 <li>Tap <strong>Show me my models</strong> and pick one from <strong>Model</strong>, or type its name.</li>
 <li>For an outside provider, tick the box to confirm that data leaves your server.</li>
 <li>Tap <strong>Save &amp; test</strong>.</li>
@@ -537,7 +501,7 @@ Josi asks before each one whatever you choose.</p>
 <p>Decides what people may connect. It has two views, <strong>Account providers</strong> and
 <strong>Developer services</strong>.</p>
 <p><strong>Account providers.</strong> Google, Microsoft 365, Dropbox and Box each need an
-application registered with that company, which needs a public address for your server.
+application that you register with that company yourself, with your own keys. Josi ships with none. Registering needs a real domain name for your server, served over HTTPS; a LAN IP address can't be registered, and until you set one under <a href="#admin-network">Network &amp; address</a> the page says <strong>A public address is needed first</strong>.
 Copy the redirect URL into the provider's console, enter the <strong>Client ID</strong> and
 <strong>Client secret</strong> and tap <strong>Save</strong>. Nextcloud needs no application.</p>
 <p><strong>Member permissions</strong> switches each permission <strong>Allowed</strong> or
@@ -565,14 +529,10 @@ Josi</strong> on each one people may run. <strong>Remove from Josi</strong> take
 </div>
 
 <h3 id="admin-channels">Channels</h3>
-<p>Sets up messaging for your server. Choose <strong>Telegram</strong>,
-<strong>WhatsApp</strong> or <strong>Slack</strong>, fill in the details from that service,
-then tap <strong>Save</strong> and <strong>Test</strong>. <strong>Turn on</strong> is available
-after a passing test. <strong>Webhook URLs</strong> shows where each service should deliver
-messages.</p>
-<div class="shots">
-<figure class="shot"><img src="img/admin-channels.jpg" alt="The Messaging channels page" width="540" height="1174" loading="lazy"><figcaption>Channels, in Admin.</figcaption></figure>
-</div>
+<p>Sets up Slack for your server. Fill in the <strong>Signing secret</strong> and
+<strong>Bot token</strong> from Slack, then tap <strong>Save</strong> and <strong>Test</strong>.
+<strong>Turn on</strong> is available after a passing test. <strong>Webhook URLs</strong>
+shows where Slack should deliver messages.</p>
 
 <h3 id="admin-backups">Backups</h3>
 <ul>
@@ -607,7 +567,7 @@ messages.</p>
 
 <h3 id="admin-network">Network &amp; address</h3>
 <ul>
-<li><strong>Addresses</strong> shows your server's public address and its address on your network.</li>
+<li><strong>Addresses</strong> shows your server's public address and its address on your network. This is the address you enter in the app. It can be a LAN IP, a hostname or a domain, and it needs HTTPS for access from outside your network.</li>
 <li><strong>Tailscale</strong> lets you reach your server without a public domain. Once Tailscale is connected, tap <strong>Use the Tailscale address</strong>. Your server needs a restart afterwards.</li>
 <li><strong>Open protected maintenance</strong>: enter your <strong>Admin password</strong> and tap <strong>Continue</strong> to change network, domain and port settings. It opens a separate tool for a short time.</li>
 </ul>
@@ -625,15 +585,18 @@ licence and trademark.</p>
 
 <h2 id="troubleshooting">Troubleshooting</h2>
 <h3 id="could-not-reach-your-server">Josi couldn't reach your server</h3>
-<p>Check that your iPhone is online and that your server is running, then try again.
-If your iPhone is paired, its connection goes through the relay when you're away from
-your network, so your server needs internet access too.</p>
+<p>Check that your iPhone is online, that your server is running and that the address
+you entered is reachable from where you are. A LAN address only works on your own
+network. Away from home, use a hostname or domain over <code>https://</code>. You can
+check the address under <strong>Admin → Network &amp; address</strong> on your server.</p>
+<h3 id="enter-your-servers-https-address">Enter your server's https address</h3>
+<p>The app only accepts <code>https://</code> addresses, apart from <code>localhost</code>,
+<code>.local</code> names and addresses on your own network. Add <code>https://</code> and
+try again. If the app says the address is not a compatible Josi server, check that it
+points at your Josi server and not at another service or a proxy page.</p>
 <h3 id="that-code-is-wrong">That code is wrong, used, or expired</h3>
 <p>Authenticator codes change every 30 seconds and each one works once. Wait for a new
 code and enter it. Also check that the time on your iPhone is set automatically.</p>
-<h3 id="google-sign-in-cant-reach">Google sign-in can't reach a server through the encrypted connection yet</h3>
-<p>Google sign-in only works with a server address. On a paired iPhone, sign in with
-your password or Apple.</p>
 <h3 id="sign-in-isnt-set-up">Sign-in isn't set up on this server</h3>
 <p>Apple or Google sign-in hasn't been set up on your server. Use your password.</p>
 <h3 id="that-google-account-isnt-linked">That Google account isn't linked to anyone on this server</h3>
@@ -649,9 +612,6 @@ then tap <strong>Try again</strong>.</p>
 <h3 id="set-a-passcode">Set a passcode on this iPhone to decide approvals</h3>
 <p>Approvals need Face ID, Touch ID or a passcode. Set a passcode in the iPhone's
 Settings app.</p>
-<h3 id="this-iphone-was-removed">This iPhone was removed from your server</h3>
-<p>Someone removed it under Devices. <a href="#pair-with-your-server">Pair it again</a>
-with a new code.</p>
 <h3 id="offline-showing-saved">Offline, showing saved tasks, contacts or calendar</h3>
 <p>The app can't reach your server right now, so it's showing the last copy it saved.
 Open the page again once you're back online.</p>
