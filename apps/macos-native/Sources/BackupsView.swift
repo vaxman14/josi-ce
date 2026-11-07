@@ -53,12 +53,12 @@ struct NativeBackupsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack {
-                    Text("Backups").font(.largeTitle.bold())
+                    Text("Backups").font(JosiFont.largeTitle)
                     Spacer()
                     Button("Refresh") { model.run { try await load() } }.disabled(model.busy)
                 }
                 Text("A full backup is used for restoration. A portable export is for taking your data elsewhere and does not include recovery copies.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JosiTheme.lilac)
                 GroupBox("Keep your recovery material separately") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(view["masterKeyGuidance"].text.isEmpty
@@ -68,7 +68,7 @@ struct NativeBackupsView: View {
                     }.padding(10)
                 }
                 HStack {
-                    Button("Back Up Now") { create("full") }.buttonStyle(.borderedProminent)
+                    Button("Back Up Now") { create("full") }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
                     Button("Portable Export") { create("portable") }
                 }.disabled(model.busy || running || !model.isAdministrator || view == .null)
                 if downloading {
@@ -77,22 +77,22 @@ struct NativeBackupsView: View {
                         Button(cancelDownload ? "Cancelling…" : "Cancel Download") { cancelDownload = true }.disabled(cancelDownload)
                     }
                 }
-                if !note.isEmpty { Text(note).font(.callout).textSelection(.enabled) }
+                if !note.isEmpty { Text(note).font(JosiFont.callout).textSelection(.enabled) }
                 if view == .null { Text("Backup history is unavailable. Refresh to load the current server state.") }
                 else if view["backups"].list.isEmpty { Text("No backups have been recorded.") }
                 ForEach(view["backups"].list, id: \.identifier) { backup in
                     GroupBox(backup["kind"].text == "full" ? "Full backup" : "Portable export") {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(stateLabel(backup["state"].text)).font(.headline)
-                            Text(nativeDate(backup["created_at"].text) + " · " + byteLabel(backup["byte_size"])).font(.caption).foregroundStyle(.secondary)
+                            Text(stateLabel(backup["state"].text)).font(JosiFont.headline)
+                            Text(nativeDate(backup["created_at"].text) + " · " + byteLabel(backup["byte_size"])).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             if backup["state"].text == "running" {
                                 Text(backup["progress_phase"].text)
                                 ProgressView(value: Double(max(0, min(100, backup["progress_percent"].integer))), total: 100)
-                                Text("Step \(backup["progress_step"].integer) of \(backup["progress_steps"].integer)").font(.caption)
+                                Text("Step \(backup["progress_step"].integer) of \(backup["progress_steps"].integer)").font(JosiFont.caption)
                             } else if backup["state"].text == "complete" {
                                 Button("Save Archive…") { download(backup) }.disabled(model.busy)
                             } else if backup["state"].text == "failed" {
-                                Text(backup["error_category"].text).font(.caption).foregroundStyle(.orange)
+                                Text(backup["error_category"].text).font(JosiFont.caption).foregroundStyle(JosiTheme.error)
                             }
                         }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     }

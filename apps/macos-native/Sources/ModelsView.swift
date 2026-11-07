@@ -15,12 +15,12 @@ struct NativeModelsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack {
-                    Text("Models").font(.largeTitle.bold())
+                    Text("Model").font(JosiFont.largeTitle)
                     Spacer()
                     Button("Refresh") { model.run { try await load() } }.disabled(model.busy)
                 }
                 Text("Configure the models used by this Josi server. Saving a model requires a separate capability check before it becomes active.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JosiTheme.lilac)
                 if settings == .null {
                     Text("Current model settings are unavailable. Refresh to load them.")
                 } else {
@@ -30,7 +30,7 @@ struct NativeModelsView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             Toggle("Only use models running locally", isOn: $localOnly)
                             Text("External providers must be removed or replaced before enabling this setting. Turning it off does not configure or activate an external provider.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             Button("Save Local-Only Setting") {
                                 let value = localOnly
                                 request("/admin/llm/local-only", method: "PUT", body: ["enabled": .bool(value)])
@@ -42,7 +42,7 @@ struct NativeModelsView: View {
                             TextField("Spend cap (USD; blank for no cap)", text: $cost)
                             TextField("Token cap (blank for no cap)", text: $tokens)
                             Text("Use positive limits. Blank explicitly removes a cap. Usage separates provider-reported costs, estimates and subscription calls.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             Button("Save Limits") {
                                 do {
                                     let body: Wire = ["monthlyCostUsd": try cap(cost, whole: false),
@@ -59,17 +59,17 @@ struct NativeModelsView: View {
                                 Text("Reported: \(amount(usage["summary"]["reportedCostUsd"])) USD · Estimated: \(amount(usage["summary"]["estimatedCostUsd"])) USD")
                                 Text("\(usage["summary"]["subscriptionCalls"].integer) subscription calls · \(usage["summary"]["selfHostedCalls"].integer) local calls")
                                 ForEach(Array(usage["summary"]["notes"].list.enumerated()), id: \.offset) { _, item in
-                                    Text(item.text).font(.caption).foregroundStyle(.secondary)
+                                    Text(item.text).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                                 }
                             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                     ForEach(Array(settings["disabledFeatures"].list.enumerated()), id: \.offset) { _, feature in
-                        Text(feature["feature"].text + ": " + feature["reason"].text).font(.caption).foregroundStyle(.secondary)
+                        Text(feature["feature"].text + ": " + feature["reason"].text).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     }
                 }
-                if !note.isEmpty { Text(note).foregroundStyle(.secondary) }
-            }.padding(30).textFieldStyle(.roundedBorder).disabled(model.busy || loading)
+                if !note.isEmpty { Text(note).foregroundStyle(JosiTheme.lilac) }
+            }.padding(30).textFieldStyle(JosiFieldStyle()).disabled(model.busy || loading)
         }
         .task { do { try await load() } catch { model.error = error.localizedDescription } }
         .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
@@ -88,17 +88,17 @@ struct NativeModelsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if saved == .null { Text("Not configured") }
                 else {
-                    Text(settings["providerCatalog"].list.first { $0["kind"] == saved["provider"] }?["label"].text ?? saved["provider"].text).font(.headline)
+                    Text(settings["providerCatalog"].list.first { $0["kind"] == saved["provider"] }?["label"].text ?? saved["provider"].text).font(JosiFont.headline)
                     Text(saved["model"].text.isEmpty ? "Provider default model" : saved["model"].text)
                     Text(saved["active"].flag ? "Capability check passed · " + nativeDate(saved["probedAt"].text) : "Inactive · Run a capability check before use")
-                        .foregroundStyle(saved["active"].flag ? Color.secondary : Color.orange)
+                        .foregroundStyle(saved["active"].flag ? Color.secondary : JosiTheme.error)
                     if saved["provider"].text.hasSuffix("_subscription") {
                         Text("This is a saved test result. Open Change, then Check Status to check the current subscription connection.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     }
                     ForEach(Array(saved["probeSteps"].list.enumerated()), id: \.offset) { _, step in
                         Label(step["label"].text + ": " + step["detail"].text,
-                              systemImage: step["passed"].flag ? "checkmark.circle" : "exclamationmark.circle").font(.caption)
+                              systemImage: step["passed"].flag ? "checkmark.circle" : "exclamationmark.circle").font(JosiFont.caption)
                     }
                 }
                 HStack {
@@ -185,7 +185,7 @@ private struct NativeModelEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(role == "primary" ? "Primary Model" : "Fallback Model").font(.title2.bold())
+                Text(role == "primary" ? "Primary Model" : "Fallback Model").font(JosiFont.title2)
                 Spacer()
                 Button("Close") { clearSecrets(); dismiss() }.disabled(model.busy)
             }.padding()
@@ -202,11 +202,11 @@ private struct NativeModelEditor: View {
                         ForEach(Array(entry["fields"].list.enumerated()), id: \.offset) { _, field in
                             if field["secret"].flag { SecureField(field["label"].text, text: binding(field["key"].text)) }
                             else { TextField(field["label"].text, text: binding(field["key"].text)) }
-                            if !field["help"].text.isEmpty { Text(field["help"].text).font(.caption).foregroundStyle(.secondary) }
+                            if !field["help"].text.isEmpty { Text(field["help"].text).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac) }
                         }
                         if initial["provider"].text == selected && initial["apiKeySet"].flag {
                             Text("A credential is already stored in the Vault. Leave secret fields blank to retain it, or enter replacements.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         }
                         if entry["baseUrlMode"].text != "none" { TextField("Endpoint", text: binding("baseUrl")) }
                         if selected.hasSuffix("_subscription") {
@@ -224,18 +224,18 @@ private struct NativeModelEditor: View {
                                 }
                             }
                         }
-                        if !discoveryNote.isEmpty { Text(discoveryNote).font(.caption).foregroundStyle(.secondary) }
+                        if !discoveryNote.isEmpty { Text(discoveryNote).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac) }
                         TextField(selected.hasSuffix("_subscription") ? "Model (blank uses subscription default)" : "Model", text: binding("model"))
                         if entry["external"].flag {
                             Toggle("Allow required task content to be sent to this provider", isOn: $external)
                         }
                         Text("Saving deactivates this slot until you explicitly check its capabilities. Existing credentials are never displayed.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Button("Save Model") { save() }.buttonStyle(.borderedProminent)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
+                        Button("Save Model") { save() }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
                             .disabled(!current || entry["external"].flag && !external || !selected.hasSuffix("_subscription") && (values["model"] ?? "").isEmpty)
                     }
-                    if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).textSelection(.enabled) }
-                }.padding(22).textFieldStyle(.roundedBorder).disabled(model.busy || !current)
+                    if !model.error.isEmpty { Text(model.error).foregroundStyle(JosiTheme.error).textSelection(.enabled) }
+                }.padding(22).textFieldStyle(JosiFieldStyle()).disabled(model.busy || !current)
             }
         }.frame(width: 680, height: 700).interactiveDismissDisabled(model.busy)
         .onAppear {
@@ -306,7 +306,7 @@ struct NativeSubscriptionControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Sign in on the connected Josi server using your provider’s subscription. This is separate from an API key.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             HStack {
                 if !vaultClaude && (provider != "anthropic_subscription" || status != .null) {
                     Button("Start Sign-In") { action("/login", method: "POST", body: [:]) }
@@ -319,21 +319,21 @@ struct NativeSubscriptionControls: View {
             if status != .null {
                 Text(status["signedIn"].flag
                     ? (vaultClaude ? "Claude token saved in the Vault" : "Subscription login available")
-                    : "Subscription not connected").font(.headline)
+                    : "Subscription not connected").font(JosiFont.headline)
             }
             if !status["detail"].text.isEmpty {
-                Text(status["detail"].text).font(.caption).foregroundStyle(.secondary)
+                Text(status["detail"].text).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             }
             if !login["challenge"]["userCode"].text.isEmpty {
-                Text("One-time code: " + login["challenge"]["userCode"].text).font(.headline).textSelection(.enabled)
+                Text("One-time code: " + login["challenge"]["userCode"].text).font(JosiFont.headline).textSelection(.enabled)
             }
             if let url = signInURL {
                 Button("Open Provider Sign-In Page") { NSWorkspace.shared.open(url) }
-                Text(url.host ?? "").font(.caption).foregroundStyle(.secondary)
+                Text(url.host ?? "").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             }
             if vaultClaude {
                 Text("Run claude setup-token with Anthropic’s official CLI, complete its sign-in, then paste the subscription token here. An API key or one-time code will not work.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 Link("Anthropic’s setup-token instructions",
                      destination: URL(string: "https://code.claude.com/docs/en/authentication#generate-a-long-lived-token")!)
                 SecureField("Subscription setup token", text: $code)
@@ -344,7 +344,7 @@ struct NativeSubscriptionControls: View {
                 }.disabled(status["busy"].flag || !status["installed"].flag || status["credential"] == .null
                     || code.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count < 16 || code.utf8.count > 16384)
                 Text("Saving does not verify the account. Use Test Model to confirm it works. Everyone using this server shares the subscription limits. Expired tokens must be replaced.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             } else if provider == "anthropic_subscription", login["challenge"] != .null {
                 SecureField("Paste the one-time code from the provider", text: $code)
                 Button("Submit Sign-In Code") {
@@ -352,8 +352,8 @@ struct NativeSubscriptionControls: View {
                     action("/login/code", method: "POST", body: ["code": .string(value)])
                 }.disabled(code.isEmpty || code.utf8.count > 512)
             }
-            if !login["state"].text.isEmpty { Text(login["state"].text.replacingOccurrences(of: "_", with: " ")).font(.caption) }
-            if !login["message"].text.isEmpty { Text(login["message"].text).font(.caption).foregroundStyle(.secondary) }
+            if !login["state"].text.isEmpty { Text(login["state"].text.replacingOccurrences(of: "_", with: " ")).font(JosiFont.caption) }
+            if !login["message"].text.isEmpty { Text(login["message"].text).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac) }
             if prefix == "/admin/llm/subscription" && status["signedIn"].flag {
                 Button("Sign Out of This Subscription…") {
                     let alert = NSAlert(); alert.messageText = "Sign out of the server’s subscription?"

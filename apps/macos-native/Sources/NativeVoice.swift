@@ -189,7 +189,7 @@ struct NativeVoiceSettings: View {
     @State private var error = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            HStack { Text("Voice Box").font(.title2.bold()); Spacer(); Button("Done") { dismiss() } }
+            HStack { Text("Voice Box").font(JosiFont.title2); Spacer(); Button("Done") { dismiss() } }
             Text("Dictate into the message box, or talk with Josi and hear its replies. Audio is processed by Voice Box on your Josi server.").foregroundStyle(JosiTheme.muted)
             Label(voice.available ? "Speech models are ready" : "Voice Box needs setup", systemImage: voice.available ? "checkmark.circle" : "waveform")
             if model.isAdministrator {
@@ -204,7 +204,7 @@ struct NativeVoiceSettings: View {
                         .disabled(!voice.settings["helperAvailable"].flag || !voice.settings["releaseAvailable"].flag)
                 }
             } else { Text("Your server administrator manages the voice models.") }
-            if !error.isEmpty { Text(error).foregroundStyle(JosiTheme.orange) }
+            if !error.isEmpty { Text(error).foregroundStyle(JosiTheme.gold) }
             if working { ProgressView("Checking speech models…") }
         }.padding(28).frame(width: 480).background(JosiTheme.background).disabled(working)
             .task { await refresh() }

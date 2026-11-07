@@ -19,7 +19,7 @@ struct SetupView: View {
                 HStack {
                     ForEach(Array(model.setup["steps"].list.enumerated()), id: \.offset) { _, item in
                         Label(item["title"].text, systemImage: item["done"].flag ? "checkmark.circle.fill" : "circle")
-                            .font(.caption).foregroundStyle(item["id"].text == step ? Color.accentColor : Color.secondary)
+                            .font(JosiFont.caption).foregroundStyle(item["id"].text == step ? Color.accentColor : Color.secondary)
                     }
                 }
                 if model.recovery != .null {
@@ -28,7 +28,7 @@ struct SetupView: View {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 18) {
                             Text(model.setup["steps"].list.first { $0["id"].text == step }?["title"].text ?? "Finish setup")
-                                .font(.title2.bold())
+                                .font(JosiFont.title2)
                             stepForm
                         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -37,9 +37,9 @@ struct SetupView: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 ForEach(Array(model.setupReview["items"].list.enumerated()), id: \.offset) { _, item in
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(item["label"].text).font(.headline)
-                                        Text(item["statusLabel"].text).foregroundStyle(item["blocking"].flag ? Color.orange : Color.secondary)
-                                        if !item["verification"]["detail"].text.isEmpty { Text(item["verification"]["detail"].text).font(.caption) }
+                                        Text(item["label"].text).font(JosiFont.headline)
+                                        Text(item["statusLabel"].text).foregroundStyle(item["blocking"].flag ? JosiTheme.error : Color.secondary)
+                                        if !item["verification"]["detail"].text.isEmpty { Text(item["verification"]["detail"].text).font(JosiFont.caption) }
                                     }
                                 }
                             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -51,7 +51,7 @@ struct SetupView: View {
                     Button("Disconnect") { clearFields(); model.disconnect() }
                 }
             }.padding(32).frame(maxWidth: 900).frame(maxWidth: .infinity)
-        }.textFieldStyle(.roundedBorder).disabled(model.busy)
+        }.textFieldStyle(JosiFieldStyle()).disabled(model.busy)
             .onChange(of: step) { _, _ in clearFields() }
             .onChange(of: provider) { _, _ in
                 values = [:]; discovered = []; externalAcknowledged = false
@@ -72,14 +72,14 @@ struct SetupView: View {
                 field("Password", "password", secret: true)
                 Button("Sign In and Continue") {
                     submit(["resumeOwner": .bool(true), "identifier": value("identifier"), "password": value("password")])
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
             } else {
                 field("Your name", "displayName"); field("Email", "email"); field("Username", "username")
                 field("Password — at least 12 characters", "password", secret: true)
                 Button("Create Account") {
                     submit(["displayName": value("displayName"), "email": value("email"), "username": value("username"),
                             "password": value("password"), "timezone": .string(TimeZone.current.identifier)])
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
             }
         case "domain":
             field("Server address or domain", "domain")
@@ -100,7 +100,7 @@ struct SetupView: View {
             field("From name", "fromName", fallback: "Josi"); field("From address", "fromAddress")
             field("Send a test email to", "testTo")
             Text("Save and Test sends one email to the address above. Your mail password is saved in the server’s Vault.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             HStack {
                 Button("Save and Test") {
                     submit(["system": ["host": value("host"), "port": .number(Double(values["port"] ?? "587") ?? 587),
@@ -108,23 +108,23 @@ struct SetupView: View {
                                        "password": value("password"), "fromName": value("fromName", fallback: "Josi"), "fromAddress": value("fromAddress")],
                             "communications": ["copyFromSystem": .bool(true), "fromName": "Josi", "fromAddress": value("fromAddress")],
                             "testTo": value("testTo")])
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
                 Button("Skip for Now") { submit(["skip": .bool(true)]) }
             }
         case "security":
             Toggle("Allow people to choose folders for Josi to read", isOn: $enabled)
-            Text("Each person still needs to approve their own folders.").foregroundStyle(.secondary)
+            Text("Each person still needs to approve their own folders.").foregroundStyle(JosiTheme.lilac)
             next(["folderMappingEnabled": .bool(enabled)])
         case "telemetry":
             Toggle("Send anonymous usage counts", isOn: $enabled)
-            Text("Optional. Does not include conversations, credentials or business content.").foregroundStyle(.secondary)
+            Text("Optional. Does not include conversations, credentials or business content.").foregroundStyle(JosiTheme.lilac)
             next(["enabled": .bool(enabled)])
         case "review":
             Text("Review your saved settings below before continuing.")
             next([:])
         case "":
             Button("Finish Setup") { model.run { try await model.finishSetup() } }
-                .buttonStyle(.borderedProminent).disabled(!model.setupReview["canComplete"].flag)
+                .buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(!model.setupReview["canComplete"].flag)
         default:
             Text("This server requires a setup step this app does not yet support. Update Josi to continue.")
         }
@@ -172,7 +172,7 @@ struct SetupView: View {
                         body = .object(fields)
                     }
                     submit(body)
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
             }
         }
     }
@@ -182,7 +182,7 @@ struct SetupView: View {
                 Text("Keep this key somewhere safe outside Josi. It can recover your Vault if the installation key is lost.")
                 Toggle("Show recovery key", isOn: $showRecovery)
                 if showRecovery { Text(model.recovery["key"].text).font(.system(.body, design: .monospaced)).textSelection(.enabled) }
-                Text("Fingerprint: \(model.recovery["fingerprint"].text)").foregroundStyle(.secondary)
+                Text("Fingerprint: \(model.recovery["fingerprint"].text)").foregroundStyle(JosiTheme.lilac)
                 Button("Save Recovery Key…") {
                     do {
                         if try NativeRecoveryFile.save(key: model.recovery["key"].text,
@@ -192,7 +192,7 @@ struct SetupView: View {
                 Toggle("I have saved my recovery key", isOn: $recoverySaved)
                 Button("Continue") {
                     model.run { try await model.confirmRecovery(); showRecovery = false; recoverySaved = false }
-                }.buttonStyle(.borderedProminent).disabled(!recoverySaved)
+                }.buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(!recoverySaved)
             }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -201,13 +201,13 @@ struct SetupView: View {
     }
     private func field(_ title: String, _ key: String, secret: Bool = false, fallback: String = "") -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.callout)
+            Text(title).font(JosiFont.callout)
             if secret { SecureField(title, text: binding(key, fallback: fallback)).labelsHidden() }
             else { TextField(title, text: binding(key, fallback: fallback)).labelsHidden() }
         }
     }
     private func value(_ key: String, fallback: String = "") -> Wire { .string(values[key] ?? fallback) }
-    private func next(_ body: Wire) -> some View { Button("Continue") { submit(body) }.buttonStyle(.borderedProminent) }
+    private func next(_ body: Wire) -> some View { Button("Continue") { submit(body) }.buttonStyle(JosiGoldButtonStyle(fullWidth: false)) }
     private func submit(_ body: Wire) {
         let submittedStep = step
         // Clear credential fields before waiting on the request.

@@ -150,14 +150,18 @@ def build(args):
     app = output / 'payload/Applications/Josi.app'
     resources = app / 'Contents/Resources'; resources.mkdir(parents=True)
     executables = app / 'Contents/MacOS'; executables.mkdir()
-    run('compile-native-josi', ['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-O',
-                                '-target', 'arm64-apple-macos14.2', '-module-cache-path', output / 'module-cache',
-                                '-o', executables / 'Josi', *sorted(source.glob('*.swift')),
-                                REPO / 'packaging/macos/NativeAuthorization.swift',
-                                *[REPO / 'apps/automation-macos/Sources' / name for name in (
-                                    'GuestLinkWire.swift', 'CurrentDesktopEnvironment.swift', 'GuestDesktopEngine.swift',
-                                    'GuestExecutionAuthority.swift', 'GuestBrowserIPC.swift', 'GuestBrowserProfiles.swift',
-                                    'GuestBrowserProjection.swift', 'GuestBrowserSession.swift', 'GuestPhotoReader.swift')]])
+    # Xcode resolves the Masko player package and sets JOSI_SERVER_APP. Signing
+    # happens below with the rest of the bundle.
+    native_project = REPO / 'apps/macos-native'
+    run('compile-native-josi', ['xcrun', 'xcodebuild', '-project', native_project / 'Josi.xcodeproj', '-scheme', 'Josi',
+                                '-configuration', 'Release', '-derivedDataPath', output / 'xcode',
+                                'CODE_SIGNING_ALLOWED=NO', 'build'])
+    xcode_app = output / 'xcode/Build/Products/Release/Josi.app/Contents'
+    copy_file(xcode_app / 'MacOS/Josi', executables / 'Josi')
+    for item in (xcode_app / 'Resources').iterdir():
+        if item.name in ('Fonts', 'Mascot') or item.suffix == '.bundle':
+            tree(item, resources / item.name)
+    copy_file(native_project / 'Resources/JosiMark.png', resources / 'JosiMark.png')
     (output / 'native-app-entitlements.plist').write_bytes(plistlib.dumps({'com.apple.security.device.audio-input': True}))
     copy_file(REPO / 'packaging/macos/Josi.png', resources / 'Josi.png')
     icons = output / 'Josi.iconset'; icons.mkdir()

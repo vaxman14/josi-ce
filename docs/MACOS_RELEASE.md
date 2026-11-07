@@ -57,7 +57,8 @@ The full build folder with the evidence logs stays beside it as
 1. **Server and web build**: `npm ci`, `tsc -b`, the web app
    (`--skip-code` skips it).
 2. **Signed app and installer** (`scripts/macos/build-native-unified.py
-   --version <v> --sign --package`): compiles the SwiftUI app, the uninstaller
+   --version <v> --sign --package`): builds the SwiftUI app with `xcodebuild`
+   ([MACOS_LEAN_BETA.md](MACOS_LEAN_BETA.md)), compiles the uninstaller
    and the helpers, bundles the runtime, refreshes the inventories, signs
    everything with the Socal identities (hardened runtime, timestamps),
    builds `Install Josi.pkg`, signs it, then expands it again and compares

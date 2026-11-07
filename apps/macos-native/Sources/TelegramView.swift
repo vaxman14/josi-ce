@@ -22,14 +22,14 @@ struct NativeTelegramView: View {
             VStack(alignment: .leading, spacing: 22) {
                 JosiHeading(title: "Telegram", subtitle: "Use your Josi account from your own Telegram chat.")
                 if loading { ProgressView().controlSize(.small) }
-                if !notice.isEmpty { Text(notice).foregroundStyle(.secondary) }
+                if !notice.isEmpty { Text(notice).foregroundStyle(JosiTheme.lilac) }
                 if status != .null { ownLinks }
                 if model.isAdministrator, config != .null { administration }
                 Button("Refresh") { perform { api, owner, stamp in try await load(api, owner: owner, stamp: stamp) } }
                     .disabled(model.busy || loading)
             }.padding(28)
         }
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(JosiFieldStyle())
         .task(id: "\(model.api?.origin.absoluteString ?? ""):\(model.user["id"].text)") {
             let stamp = UUID(); generation = stamp
             status = .null; config = .null; minted = .null; token = ""; notice = ""
@@ -90,7 +90,7 @@ struct NativeTelegramView: View {
                          ? "Messages you send to the linked bot become your private Josi conversation. Work started there can show its saved progress in Telegram."
                          : "Telegram is off on this server. An administrator can configure and enable the bot below.")
                     Text(status["channel"]["attachmentsEnabled"].flag ? "Files are accepted within this server’s limits." : "This server does not accept files through Telegram.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     if status["channel"]["enabled"].flag && !status["links"].list.contains(where: { $0["status"].text == "active" }) {
                         Button(minted == .null ? "Create One-Time Link" : "Replace One-Time Link") { mint() }
                             .disabled(model.busy || loading)
@@ -104,8 +104,8 @@ struct NativeTelegramView: View {
                         }
                         Text("/start " + minted["code"].text).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                         Text("Send this to @" + status["channel"]["botUsername"].text + ". Expires " + nativeDate(minted["expiresAt"].text) + ".")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text("This code is shown once. A replacement invalidates the previous code.").font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
+                        Text("This code is shown once. A replacement invalidates the previous code.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         Button("Hide Code") { minted = .null; codeDeadline = nil }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
@@ -114,8 +114,8 @@ struct NativeTelegramView: View {
                 GroupBox {
                     HStack {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(link["telegramUsername"].text.isEmpty ? "Your chat " + link["chatId"].text : "@" + link["telegramUsername"].text).font(.headline)
-                            Text(link["status"].text == "active" ? "Linked " + nativeDate(link["linkedAt"].text) : "Disconnected").font(.caption).foregroundStyle(.secondary)
+                            Text(link["telegramUsername"].text.isEmpty ? "Your chat " + link["chatId"].text : "@" + link["telegramUsername"].text).font(JosiFont.headline)
+                            Text(link["status"].text == "active" ? "Linked " + nativeDate(link["linkedAt"].text) : "Disconnected").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         }
                         Spacer()
                         if link["status"].text == "active" {
@@ -130,10 +130,10 @@ struct NativeTelegramView: View {
     private var administration: some View {
         DisclosureGroup("Server bot settings") {
             VStack(alignment: .leading, spacing: 18) {
-                Text(config["enabled"].flag ? "Telegram is on." : "Telegram is off.").font(.headline)
+                Text(config["enabled"].flag ? "Telegram is on." : "Telegram is off.").font(JosiFont.headline)
                 if !config["botUsername"].text.isEmpty { Text("Bot: @" + config["botUsername"].text) }
                 Text("Use the bot token provided by Telegram’s BotFather. The token is saved in the Vault and never displayed again.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 SecureField(config["tokenSet"].flag ? "Replacement bot token" : "Bot token", text: $token)
                     .disabled(model.busy || loading)
                 Button("Save and Verify Bot") {
@@ -141,7 +141,7 @@ struct NativeTelegramView: View {
                     adminChange(path: "/token", body: ["token": .string(value)], message: "Bot verified and saved. Register delivery, then turn Telegram on.")
                 }.disabled(model.busy || loading || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 if config["tokenSet"].flag {
-                    if config["probeOk"] == .bool(false) { Text("The last bot verification failed. Check the token or server connection.").foregroundStyle(.orange) }
+                    if config["probeOk"] == .bool(false) { Text("The last bot verification failed. Check the token or server connection.").foregroundStyle(JosiTheme.error) }
                     HStack {
                         Button("Verify Bot Connection") { adminChange(path: "/probe", body: [:], message: "Bot connection checked.") }
                         Button(config["enabled"].flag ? "Turn Telegram Off" : "Turn Telegram On") {
@@ -149,9 +149,9 @@ struct NativeTelegramView: View {
                         }.disabled(!config["enabled"].flag && config["probeOk"] != .bool(true))
                     }.disabled(model.busy || loading)
                     Text(config["webhookUrl"].text.isEmpty ? "Incoming delivery is not registered." : "Incoming delivery: " + config["webhookUrl"].text)
-                        .font(.caption).textSelection(.enabled)
+                        .font(JosiFont.caption).textSelection(.enabled)
                     Text("Register delivery after this server’s public HTTPS address works. This tells Telegram where to deliver messages.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     Button("Register Incoming Delivery") { adminChange(path: "/webhook", body: [:], message: "Incoming delivery registered.") }
                         .disabled(model.busy || loading)
                 }
@@ -173,20 +173,20 @@ struct NativeTelegramView: View {
     private var healthAndLinks: some View {
         VStack(alignment: .leading, spacing: 12) {
             Divider()
-            Text("Delivery in the last seven days").font(.headline)
+            Text("Delivery in the last seven days").font(JosiFont.headline)
             Text("Sent \(health["outbound"]["sent"].integer) · Failed \(health["outbound"]["failed"].integer) · Pending \(health["outbound"]["pending"].integer)")
-                .font(.caption)
+                .font(JosiFont.caption)
             ForEach(Array(health["errors"].list.enumerated()), id: \.offset) { _, item in
-                Text(item["category"].text.replacingOccurrences(of: "_", with: " ") + ": \(item["count"].integer)").font(.caption)
+                Text(item["category"].text.replacingOccurrences(of: "_", with: " ") + ": \(item["count"].integer)").font(JosiFont.caption)
             }
             DisclosureGroup("Linked accounts (\(links.count))") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Administration shows link metadata only. Chat identifiers and messages are not shown here.").font(.caption).foregroundStyle(.secondary)
+                    Text("Administration shows link metadata only. Chat identifiers and messages are not shown here.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     ForEach(links, id: \.identifier) { link in
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Account " + link["owner_user_id"].text).font(.caption).textSelection(.enabled)
-                                Text(link["status"].text + " · " + nativeDate(link["linked_at"].text)).font(.caption).foregroundStyle(.secondary)
+                                Text("Account " + link["owner_user_id"].text).font(JosiFont.caption).textSelection(.enabled)
+                                Text(link["status"].text + " · " + nativeDate(link["linked_at"].text)).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             }
                             Spacer()
                             if link["status"].text == "active" {

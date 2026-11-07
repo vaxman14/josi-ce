@@ -43,19 +43,19 @@ struct NativeExternalChannelView: View {
             VStack(alignment: .leading, spacing: 22) {
                 JosiHeading(title: name, subtitle: "Message the same Josi account from " + name + ".")
                 if loading { ProgressView().controlSize(.small) }
-                if !notice.isEmpty { Text(notice).foregroundStyle(.secondary) }
+                if !notice.isEmpty { Text(notice).foregroundStyle(JosiTheme.lilac) }
                 if channel != .null {
                     GroupBox("Your connection") {
                         VStack(alignment: .leading, spacing: 12) {
                             Text(channel["enabled"].flag ? "This channel is available." : "This channel is off on the server.")
                             Text("Create a one-time code, then send the command below to Josi in \(name).")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             Button(code.isEmpty ? "Create One-Time Code" : "Replace One-Time Code") { mint() }
                                 .disabled(model.busy || loading || !channel["enabled"].flag)
                             if !code.isEmpty {
                                 Text("link " + code).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                                 Text("Expires " + nativeDate(expiresAt) + ". A replacement invalidates the previous code.")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                                 Button("Hide Code") { clearCode() }
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
@@ -64,8 +64,8 @@ struct NativeExternalChannelView: View {
                         GroupBox {
                             HStack {
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text(name + " · " + link["status"].text).font(.headline)
-                                    Text("Linked " + nativeDate(link["linkedAt"].text)).font(.caption).foregroundStyle(.secondary)
+                                    Text(name + " · " + link["status"].text).font(JosiFont.headline)
+                                    Text("Linked " + nativeDate(link["linkedAt"].text)).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                                 }
                                 Spacer()
                                 if link["status"].text == "active" {
@@ -80,7 +80,7 @@ struct NativeExternalChannelView: View {
                     .disabled(model.busy || loading)
             }.padding(28)
         }
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(JosiFieldStyle())
         .task(id: "\(provider):\(model.api?.origin.absoluteString ?? ""):\(model.user["id"].text)") {
             let stamp = UUID(); generation = stamp
             channel = .null; config = .null; credentials = [:]; links = []; clearCode(); notice = ""
@@ -135,9 +135,9 @@ struct NativeExternalChannelView: View {
     private var serverSettings: some View {
         DisclosureGroup("Server channel settings") {
             VStack(alignment: .leading, spacing: 16) {
-                Text(config["enabled"].flag ? "\(name) is on." : "\(name) is off.").font(.headline)
+                Text(config["enabled"].flag ? "\(name) is on." : "\(name) is off.").font(JosiFont.headline)
                 Text("Credentials are saved in the Vault and never returned to this page. Enter all fields to replace the configuration.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 ForEach(fields, id: \.key) { field in
                     let value = Binding(get: { credentials[field.key] ?? "" }, set: { credentials[field.key] = $0 })
                     if field.key == "phoneNumberId" {
@@ -154,7 +154,7 @@ struct NativeExternalChannelView: View {
                     change("config", body: body, message: "Configuration saved. Verify the provider connection before enabling it.")
                 }.disabled(model.busy || loading || fields.contains { (credentials[$0.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
                 if config["probeOk"] == .bool(false) {
-                    Text("The last provider check failed. Review the credentials and server connection.").foregroundStyle(.orange)
+                    Text("The last provider check failed. Review the credentials and server connection.").foregroundStyle(JosiTheme.error)
                 }
                 HStack {
                     Button("Verify Provider Connection") { change("probe", body: [:], message: "Provider connection verified.") }
@@ -164,10 +164,10 @@ struct NativeExternalChannelView: View {
                     }.disabled(!config["enabled"].flag && config["probeOk"] != .bool(true))
                 }.disabled(model.busy || loading)
                 Text("Set the provider’s incoming-message URL to this server’s public HTTPS address followed by:")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 Text("/channels/\(provider)/webhook").font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                 if provider == "whatsapp" {
-                    Text("Enter the same webhook verification token in Meta.").font(.caption).foregroundStyle(.secondary)
+                    Text("Enter the same webhook verification token in Meta.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 }
             }.padding(.top, 14)
         }

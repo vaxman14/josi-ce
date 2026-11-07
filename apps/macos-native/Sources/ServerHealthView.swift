@@ -20,33 +20,33 @@ struct NativeServerHealth: View {
                 HStack {
                     Text(available == false ? "Diagnostics unavailable"
                          : diagnosis == .null ? "No current diagnosis"
-                         : diagnosis["healthy"].flag ? "No failed checks" : "Needs attention").font(.headline)
+                         : diagnosis["healthy"].flag ? "No failed checks" : "Needs attention").font(JosiFont.headline)
                     Spacer()
                     Button("Run System Check") {
                         model.run { try await load(check: true) }
                     }.disabled(model.busy)
                 }
-                if !message.isEmpty { Text(message).foregroundStyle(.secondary) }
-                if !error.isEmpty { Text(error).foregroundStyle(.orange) }
+                if !message.isEmpty { Text(message).foregroundStyle(JosiTheme.lilac) }
+                if !error.isEmpty { Text(error).foregroundStyle(JosiTheme.error) }
                 if diagnosis != .null {
-                    Text("Checked " + nativeDate(diagnosis["checkedAt"].text)).font(.caption).foregroundStyle(.secondary)
+                    Text("Checked " + nativeDate(diagnosis["checkedAt"].text)).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     ForEach(Array(checks.enumerated()), id: \.offset) { _, check in
                         DisclosureGroup {
                             Text(check["detail"].text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
                         } label: {
                             HStack {
                                 Image(systemName: check["state"].text == "pass" ? "checkmark.circle" : "exclamationmark.triangle")
-                                    .foregroundStyle(check["state"].text == "pass" ? Color.green : Color.orange)
+                                    .foregroundStyle(check["state"].text == "pass" ? JosiTheme.success : JosiTheme.error)
                                 Text(check["label"].text)
                                 Spacer()
                                 Text(check["state"].text == "pass" ? "Working" : check["state"].text == "warn" ? "Attention" : "Needs repair")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             }
                         }
                     }
                 }
                 Text("Local service changes use the controls below. For a server on another Mac, use Josi’s local controls on that Mac.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             }.padding(12)
         }.task { try? await load() }.onDisappear { generation += 1; diagnosis = .null }
     }

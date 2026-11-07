@@ -100,10 +100,10 @@ struct NativeWorkspaceStorageView: View {
     var body: some View {
         GroupBox("Control this Mac") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Josi works in your current apps and attached browser tabs. Choose what it can use and approve control for this session.").foregroundStyle(.secondary)
+                Text("Josi works in your current apps and attached browser tabs. Choose what it can use and approve control for this session.").foregroundStyle(JosiTheme.lilac)
                 if desktop.requiresClosure {
-                    Text("\(desktop.label) · \(desktop.state)").font(.headline)
-                    Text(desktop.progress).font(.caption)
+                    Text("\(desktop.label) · \(desktop.state)").font(JosiFont.headline)
+                    Text(desktop.progress).font(JosiFont.caption)
                     if let connection = desktop.guest {
                         NativeGuestConnectionView(connection: connection)
                         NativeAutomationConsentControls(desktop: desktop, guest: connection)
@@ -115,7 +115,7 @@ struct NativeWorkspaceStorageView: View {
                         Button("Disconnect This Mac") { model.run { try await desktop.close() } }.disabled(model.busy)
                     }
                     Text("Press ⌘⇧Esc or use your keyboard or mouse to take over. A new approval is required to resume.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 } else {
                     TextField("Connection name", text: $label)
                     Picker("Enrolled Mac", selection: $device) {
@@ -128,9 +128,9 @@ struct NativeWorkspaceStorageView: View {
                         Button("Refresh Devices") { model.run { try await load() } }.disabled(model.busy)
                     }
                     if devices.isEmpty {
-                        Text("Enroll this Mac in Devices below to enable a hardware-backed approval.").font(.caption)
+                        Text("Enroll this Mac in Devices below to enable a hardware-backed approval.").font(JosiFont.caption)
                     }
-                    if !model.automationDevicesError.isEmpty { Text(model.automationDevicesError).foregroundStyle(.orange) }
+                    if !model.automationDevicesError.isEmpty { Text(model.automationDevicesError).foregroundStyle(JosiTheme.error) }
                 }
             }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
         }.task { do { try await load() } catch { model.error = error.localizedDescription } }

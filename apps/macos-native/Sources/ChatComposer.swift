@@ -26,9 +26,10 @@ struct JosiMessageEditor: NSViewRepresentable {
         scroll.autohidesScrollers = true; scroll.borderType = .noBorder
         let view = JosiMessageTextView()
         view.isRichText = false; view.importsGraphics = false; view.allowsUndo = true
+        if #available(macOS 15.0, *) { view.writingToolsBehavior = .none }
         view.drawsBackground = false; view.textColor = NSColor(JosiTheme.text)
-        view.insertionPointColor = NSColor(JosiTheme.orange)
-        view.font = .systemFont(ofSize: 15)
+        view.insertionPointColor = NSColor(JosiTheme.gold)
+        view.font = NSFont(name: "DM Sans", size: 14) ?? .systemFont(ofSize: 14)
         view.textContainerInset = NSSize(width: 3, height: 8)
         view.isVerticallyResizable = true; view.isHorizontallyResizable = false
         view.autoresizingMask = [.width]

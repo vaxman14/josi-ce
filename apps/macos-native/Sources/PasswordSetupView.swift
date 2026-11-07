@@ -17,33 +17,33 @@ struct NativePasswordSetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Invitation or password reset").font(.title2.bold())
-            Text(model.address).font(.caption).foregroundStyle(.secondary)
+            Text("Invitation or password reset").font(JosiFont.title2)
+            Text(model.address).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             if inspected == .null {
                 Text("Paste the one-time link or code you received for this server.")
                 SecureField("Invitation or reset link", text: $input)
                 Button("Check Link") { inspect() }.disabled(input.isEmpty || input.utf8.count > 4096)
                 Divider()
-                Text("Need a reset link?").font(.headline)
+                Text("Need a reset link?").font(JosiFont.headline)
                 TextField("Username or email", text: $identifier)
                 Button("Request Reset Email") { requestReset() }.disabled(identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || identifier.count > 254)
                 Text("Email delivery must be configured on the server. Your administrator can also issue a reset link in People.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             } else {
-                Text("Set a password for \(inspected["username"].text)").font(.headline)
-                Text(inspected["email"].text).foregroundStyle(.secondary)
+                Text("Set a password for \(inspected["username"].text)").font(JosiFont.headline)
+                Text(inspected["email"].text).foregroundStyle(JosiTheme.lilac)
                 SecureField("New password (at least 12 characters)", text: $password).textContentType(.newPassword)
                 SecureField("Repeat new password", text: $confirmation).textContentType(.newPassword)
                 Button("Save Password") { save() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(JosiGoldButtonStyle(fullWidth: false))
                     .disabled(password.utf16.count < 12 || password.utf16.count > 1024 || password != confirmation)
                 Text("Saving ends existing sign-ins. Sign in normally afterward; any enabled authenticator is still required.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 Button("Use Another Link") { clear() }
             }
-            if !note.isEmpty { Text(note).foregroundStyle(.secondary) }
+            if !note.isEmpty { Text(note).foregroundStyle(JosiTheme.lilac) }
             HStack { Spacer(); Button("Close") { clear(); dismiss() } }
-        }.padding(28).frame(width: 540).textFieldStyle(.roundedBorder).disabled(model.busy)
+        }.padding(28).frame(width: 540).textFieldStyle(JosiFieldStyle()).disabled(model.busy)
             .onAppear { visible = true }
             .onDisappear { visible = false; clear(); identifier = "" }
     }

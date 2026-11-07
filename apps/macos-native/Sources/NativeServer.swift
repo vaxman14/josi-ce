@@ -36,6 +36,12 @@ struct ServerReceipt: Sendable {
     var address = ""
     var stopped = false
     static func read() throws -> ServerReceipt {
+#if DEBUG
+        // An Xcode run can point at a development server instead of the installed one.
+        if let address = ProcessInfo.processInfo.environment["JOSI_LOCAL_SERVER"] {
+            return ServerReceipt(installed: true, version: "development", address: address)
+        }
+#endif
         let path = "/Library/Application Support/Josi CE Server/status.json"
         if !FileManager.default.fileExists(atPath: path) { return ServerReceipt() }
         let value = try NativeFiles.json(path, owner: 0)

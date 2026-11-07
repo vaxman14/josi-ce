@@ -15,13 +15,13 @@ struct NativeWorkChannelProgress: View {
                 if progress != .null {
                     Text(status)
                     if !progress["updatedAt"].text.isEmpty {
-                        Text("Last delivery update: " + nativeDate(progress["updatedAt"].text)).foregroundStyle(.secondary)
+                        Text("Last delivery update: " + nativeDate(progress["updatedAt"].text)).foregroundStyle(JosiTheme.lilac)
                     }
                 }
-                if !message.isEmpty { Text(message).foregroundStyle(.secondary) }
+                if !message.isEmpty { Text(message).foregroundStyle(JosiTheme.lilac) }
                 Text("The saved work above remains current even if its external chat update cannot be delivered.")
-                    .foregroundStyle(.secondary)
-            }.font(.caption).padding(.top, 8)
+                    .foregroundStyle(JosiTheme.lilac)
+            }.font(JosiFont.caption).padding(.top, 8)
         }
         .task(id: "\(expanded):\(goalId):\(model.api?.origin.absoluteString ?? ""):\(model.user["id"].text)") {
             progress = .null; message = ""; loading = false
@@ -87,41 +87,41 @@ struct NativeTaskReceipt: View {
             VStack(alignment: .leading, spacing: 10) {
                 if loading { ProgressView().controlSize(.small) }
                 if task != .null {
-                    Text("Task: " + task["state"].text.replacingOccurrences(of: "_", with: " ")).font(.subheadline.bold())
+                    Text("Task: " + task["state"].text.replacingOccurrences(of: "_", with: " ")).font(JosiFont.headline)
                     if !task["fail_reason"].text.isEmpty { Text(task["fail_reason"].text) }
                     if !task["next_wake_at"].text.isEmpty { Text("Next check: " + nativeDate(task["next_wake_at"].text)) }
                     if task["template_key"].text == "isolated_automation" {
                         Text("Separate-desktop work keeps its original task and plan step. An operation receipt alone does not verify the requested result.")
-                            .foregroundStyle(.secondary)
-                    } else if activity["attempts"].list.isEmpty { Text("No saved attempts.").foregroundStyle(.secondary) }
+                            .foregroundStyle(JosiTheme.lilac)
+                    } else if activity["attempts"].list.isEmpty { Text("No saved attempts.").foregroundStyle(JosiTheme.lilac) }
                     ForEach(Array(activity["attempts"].list.enumerated()), id: \.offset) { _, attempt in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(attempt["kind"].text.replacingOccurrences(of: "_", with: " ")).font(.subheadline.bold())
+                            Text(attempt["kind"].text.replacingOccurrences(of: "_", with: " ")).font(JosiFont.headline)
                             Text(attempt["outcome"].text.isEmpty ? "No confirmed outcome recorded." : attempt["outcome"].text)
-                            Text(nativeDate(attempt["started_at"].text)).foregroundStyle(.secondary)
+                            Text(nativeDate(attempt["started_at"].text)).foregroundStyle(JosiTheme.lilac)
                         }
                     }
-                    if !activity["approvals"].list.isEmpty { Text("Saved approvals").font(.subheadline.bold()) }
+                    if !activity["approvals"].list.isEmpty { Text("Saved approvals").font(JosiFont.headline) }
                     ForEach(Array(activity["approvals"].list.enumerated()), id: \.offset) { _, approval in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(approval["summary"].text)
-                            Text(approval["status"].text.replacingOccurrences(of: "_", with: " ")).foregroundStyle(.secondary)
-                            Text(nativeDate(approval["created_at"].text)).foregroundStyle(.secondary)
+                            Text(approval["status"].text.replacingOccurrences(of: "_", with: " ")).foregroundStyle(JosiTheme.lilac)
+                            Text(nativeDate(approval["created_at"].text)).foregroundStyle(JosiTheme.lilac)
                         }
                     }
                     if !automationEvents.isEmpty {
-                        Text("Saved automation activity").font(.subheadline.bold())
+                        Text("Saved automation activity").font(JosiFont.headline)
                         ForEach(automationEvents, id: \.identifier) { event in
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(automationStatus(event["kind"].text))
-                                Text(nativeDate(event["created_at"].text)).foregroundStyle(.secondary)
+                                Text(nativeDate(event["created_at"].text)).foregroundStyle(JosiTheme.lilac)
                             }
                         }
                     }
                     Button("Refresh Saved Activity") { refresh += 1 }.disabled(loading)
                 }
-                if !error.isEmpty { Text(error).foregroundStyle(.orange) }
-            }.font(.caption).textSelection(.enabled).padding(.top, 8)
+                if !error.isEmpty { Text(error).foregroundStyle(JosiTheme.error) }
+            }.font(JosiFont.caption).textSelection(.enabled).padding(.top, 8)
         }
         .task(id: "\(expanded):\(taskId):\(revision):\(updatedAt):\(refresh):\(model.api?.origin.absoluteString ?? ""):\(model.user["id"].text)") {
             task = .null; activity = .null; error = ""; loading = false
@@ -173,8 +173,8 @@ struct NativeTaskDesktopViewer: View {
             GroupBox {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(desktop.label).font(.headline)
-                        Text("Your separate desktop is " + desktop.state + ".").font(.caption).foregroundStyle(.secondary)
+                        Text(desktop.label).font(JosiFont.headline)
+                        Text("Your separate desktop is " + desktop.state + ".").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     }
                     Spacer()
                     Button("Open Desktop Viewer") { model.run { try desktop.show() } }.disabled(model.busy)
@@ -193,26 +193,26 @@ struct NativeAutomationConnections: View {
     var body: some View {
         DisclosureGroup("Automation desktops", isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 10) {
-                if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
+                if !message.isEmpty { Text(message).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac) }
                 if connections != .null {
                     if connections["workspaces"].list.isEmpty {
-                        Text("No separate desktop connection has been reported for your account.").font(.caption)
+                        Text("No separate desktop connection has been reported for your account.").font(JosiFont.caption)
                     }
                     ForEach(Array(connections["workspaces"].list.enumerated()), id: \.offset) { _, workspace in
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(workspace["label"].text).font(.headline)
-                            Text(state(workspace)).font(.caption).foregroundStyle(.secondary)
+                            Text(workspace["label"].text).font(JosiFont.headline)
+                            Text(state(workspace)).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         }
                     }
                     if connections["controlAvailable"] == .bool(false) {
                         Text(connections["inspectionAvailable"].flag
                              ? "App inspection needs local approval. Sharing a capture also needs permission for the current model. Input is not available yet."
                              : "Connection status is available. Browser and computer control are not connected yet.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     }
                 }
                 if let checked { Text("Last checked " + checked.formatted(date: .omitted, time: .standard))
-                    .font(.caption2).foregroundStyle(.secondary) }
+                    .font(.caption2).foregroundStyle(JosiTheme.lilac) }
             }.padding(.top, 8)
         }
         .task(id: "\(expanded):\(model.api?.origin.absoluteString ?? ""):\(model.user["id"].text)") {

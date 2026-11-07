@@ -24,12 +24,12 @@ struct NativePeopleView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack {
-                    Text("People").font(.largeTitle.bold())
+                    Text("People").font(JosiFont.largeTitle)
                     Spacer()
                     Button("Refresh") { model.run { try await load() } }
                 }
                 Text("Manage accounts on this server. Each person keeps their own conversations, tasks and connected files.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JosiTheme.lilac)
                 GroupBox("Add a member") {
                     VStack(alignment: .leading, spacing: 12) {
                         TextField("Email", text: $email)
@@ -37,7 +37,7 @@ struct NativePeopleView: View {
                         TextField("Display name (optional)", text: $name)
                         Button("Create Invitation") { invite() }.disabled(!validNewPerson)
                         Text("Creates a member account. Share the invitation yourself; this button does not send an email.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     }.padding(10)
                 }
                 if !link.isEmpty {
@@ -60,16 +60,16 @@ struct NativePeopleView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Button("Refresh Sign-ins") { model.run { try await loadSessions() } }
                         Text("The server returns up to 500 current sign-ins. Ending your own sign-in requires signing in again.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         ForEach(sessions, id: \.identifier) { session in
                             HStack(alignment: .top) {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(session["username"].text).font(.headline)
+                                    Text(session["username"].text).font(JosiFont.headline)
                                     Text(session["user_agent"].text.isEmpty ? "Unknown client" : session["user_agent"].text)
-                                        .font(.caption).lineLimit(3)
+                                        .font(JosiFont.caption).lineLimit(3)
                                     Text("Address: \(session["ip"].text.isEmpty ? "Unavailable" : session["ip"].text)")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    Text("Last active: \(session["last_seen_at"].text)").font(.caption).foregroundStyle(.secondary)
+                                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
+                                    Text("Last active: \(session["last_seen_at"].text)").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                                 }
                                 Spacer()
                                 Button("End Sign-in…") { revoke(session) }
@@ -80,8 +80,8 @@ struct NativePeopleView: View {
                 }.onChange(of: showSessions) { _, value in
                     if value { model.run { try await loadSessions() } } else { sessions = [] }
                 }
-                if !note.isEmpty { Text(note).foregroundStyle(.secondary) }
-            }.padding(30).textFieldStyle(.roundedBorder).disabled(model.busy || loading)
+                if !note.isEmpty { Text(note).foregroundStyle(JosiTheme.lilac) }
+            }.padding(30).textFieldStyle(JosiFieldStyle()).disabled(model.busy || loading)
         }
         .task { visible = true; do { try await load() } catch { model.error = error.localizedDescription } }
         .onDisappear { visible = false; generation += 1; link = ""; linkLabel = ""; sessions = []; email = ""; username = ""; name = "" }
@@ -243,15 +243,15 @@ private struct NativePersonCard: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text(person["display_name"].text.isEmpty ? person["username"].text : person["display_name"].text).font(.headline)
+                    Text(person["display_name"].text.isEmpty ? person["username"].text : person["display_name"].text).font(JosiFont.headline)
                     Spacer()
                     Text(person["role"].text == "super_admin" ? "Super administrator" : "Member")
-                    Text(person["status"].text.capitalized).foregroundStyle(.secondary)
+                    Text(person["status"].text.capitalized).foregroundStyle(JosiTheme.lilac)
                 }
-                Text(person["email"].text).foregroundStyle(.secondary)
+                Text(person["email"].text).foregroundStyle(JosiTheme.lilac)
                 DisclosureGroup("Account and folder access", isExpanded: $editing) {
                     VStack(alignment: .leading, spacing: 12) {
-                        if accountChanged { Text("The account changed. Close and reopen these controls to review the current values.").foregroundStyle(.orange) }
+                        if accountChanged { Text("The account changed. Close and reopen these controls to review the current values.").foregroundStyle(JosiTheme.error) }
                         TextField("Username", text: $username)
                         TextField("Email", text: $email)
                         TextField("Display name", text: $name)
@@ -267,17 +267,17 @@ private struct NativePersonCard: View {
                         }
                         if access != .null && person["status"].text == "active" {
                             Divider()
-                            Text("Folder access").font(.headline)
+                            Text("Folder access").font(JosiFont.headline)
                             Toggle("Map local folders", isOn: $local)
                             Toggle("Map cloud folders", isOn: $cloud)
                             Toggle("Index and search connected files", isOn: $index)
                             Text("\(grant["mappings"].integer) mapped folder(s). Removing indexing access purges derived searchable content.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             TextField("Storage override in GiB; blank uses server default", text: $bytes)
                             Text(defaultBytes == .null ? "Server storage default unavailable." : "Current server default: \(size(defaultBytes)) GiB")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             TextField("File-count override; blank uses server default", text: $files)
-                            if storageChanged { Text("Folder permissions changed. Close and reopen these controls before saving.").foregroundStyle(.orange) }
+                            if storageChanged { Text("Folder permissions changed. Close and reopen these controls before saving.").foregroundStyle(JosiTheme.error) }
                             Button("Save Folder Access") { saveAccess() }.disabled(storageChanged || limits == nil)
                         }
                     }.padding(.top, 12)

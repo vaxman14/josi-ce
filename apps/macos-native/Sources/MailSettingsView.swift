@@ -55,7 +55,7 @@ struct NativeMailSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack {
-                    Text("Email Delivery").font(.largeTitle.bold())
+                    Text("Email Delivery").font(JosiFont.largeTitle)
                     Spacer()
                     Button("Reload Saved Settings") {
                         guard !dirty || confirm("Discard unsaved email changes?", "Reloading replaces the form with the server’s saved settings.", "Reload") else { return }
@@ -63,16 +63,16 @@ struct NativeMailSettingsView: View {
                     }
                 }
                 Text("System email handles sign-in and password recovery. Communications email sends Josi’s work messages. Passwords are kept in the server’s Vault.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JosiTheme.lilac)
                 if saved == .null {
-                    Text("Email settings have not loaded.").foregroundStyle(.secondary)
+                    Text("Email settings have not loaded.").foregroundStyle(JosiTheme.lilac)
                 } else {
                     profile("System email", draft: $system, communicationProfile: false)
                     profile("Communications email", draft: $communications, communicationProfile: true)
                     Button("Save Both Email Profiles") { save() }
-                        .buttonStyle(.borderedProminent).disabled(!dirty || system.body == nil || communications.body == nil)
+                        .buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(!dirty || system.body == nil || communications.body == nil)
                     Text("Saving does not send email or report delivery as verified. Use the explicit test below after saving.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     GroupBox("Send a test message") {
                         VStack(alignment: .leading, spacing: 12) {
                             Picker("Saved profile", selection: $testKind) {
@@ -82,7 +82,7 @@ struct NativeMailSettingsView: View {
                             Button("Send One Test Email") { test() }
                                 .disabled(dirty || testProfile == .null || recipient.range(of: "^[^\\s@<>,;]+@[^\\s@<>,;]+$", options: .regularExpression) == nil || recipient.count > 254)
                             Text(dirty ? "Save or reload your changes before sending a test." : "Sends one fixed test message to this address. Check its inbox to confirm delivery.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         }.padding(10)
                     }
                     DisclosureGroup("Recent delivery status", isExpanded: $showDelivery) {
@@ -91,19 +91,19 @@ struct NativeMailSettingsView: View {
                             if delivery != .null {
                                 Text("\(delivery["counts"]["sent"].integer) sent · \(delivery["counts"]["failed"].integer) failed · \(delivery["counts"]["quarantined"].integer) quarantined")
                                 Text("Up to 200 work-message delivery records. Subjects and message contents are private. Test messages are reported above.")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                                 ForEach(delivery["deliveries"].list, id: \.identifier) { item in
                                     HStack(alignment: .top) {
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(item["recipient"].text)
-                                            Text("Requested by " + item["initiated_by"].text).font(.caption).foregroundStyle(.secondary)
+                                            Text("Requested by " + item["initiated_by"].text).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                                             Text(item["sent_at"].text.isEmpty ? item["queued_at"].text : item["sent_at"].text)
-                                                .font(.caption).foregroundStyle(.secondary)
+                                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                                         }
                                         Spacer()
                                         Text(item["status"].text.replacingOccurrences(of: "_", with: " ").capitalized)
                                         if !item["error_category"].text.isEmpty {
-                                            Text(item["error_category"].text.replacingOccurrences(of: "_", with: " ")).foregroundStyle(.secondary)
+                                            Text(item["error_category"].text.replacingOccurrences(of: "_", with: " ")).foregroundStyle(JosiTheme.lilac)
                                         }
                                     }
                                     Divider()
@@ -116,15 +116,15 @@ struct NativeMailSettingsView: View {
                     DisclosureGroup("Remove email configuration") {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Removing system email also removes communications email if it uses the system server. Previously saved messages and delivery history remain.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             ForEach(Array(saved["profiles"].list.enumerated()), id: \.offset) { _, row in
                                 Button("Remove " + row["kind"].text.capitalized + " Profile…") { remove(row["kind"].text) }.disabled(dirty)
                             }
                         }.padding(.top, 10)
                     }
                 }
-                if !note.isEmpty { Text(note).foregroundStyle(.secondary) }
-            }.padding(30).textFieldStyle(.roundedBorder).disabled(model.busy)
+                if !note.isEmpty { Text(note).foregroundStyle(JosiTheme.lilac) }
+            }.padding(30).textFieldStyle(JosiFieldStyle()).disabled(model.busy)
         }
         .task { visible = true; do { try await load() } catch { model.error = error.localizedDescription } }
         .onDisappear {
@@ -142,7 +142,7 @@ struct NativeMailSettingsView: View {
                         }
                     if draft.copy.wrappedValue {
                         Text("Uses the system credential directly from the Vault. Saving removes any separate communications password.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     }
                 }
                 if !draft.copy.wrappedValue {
@@ -159,7 +159,7 @@ struct NativeMailSettingsView: View {
                             if clear { draft.password.wrappedValue = "" }
                         }
                     Text("Changing the server or account requires entering its password again, or explicitly clearing it.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 }
                 TextField("From name", text: draft.fromName)
                 TextField("From email address", text: draft.fromAddress)

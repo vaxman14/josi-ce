@@ -11,16 +11,16 @@ struct NativeAuthoritySettings: View {
     @State private var permissionEdit: PermissionEditSnapshot?
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Automation Settings").font(.title2.bold())
+            Text("Automation Settings").font(JosiFont.title2)
             Text("The Vault holds the authoritative rules, permission policies and protected device records. Only the super admin can change them.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JosiTheme.lilac)
             Picker("Settings", selection: $tab) {
                 Text("Cardinal Rules").tag("rules")
                 Text("Permissions").tag("permissions")
                 Text("Devices").tag("devices")
             }.pickerStyle(.segmented).disabled(model.busy)
             if model.automationSettings == .null && tab != "devices" {
-                Text("Current Vault settings are unavailable. Refresh before making a change.").foregroundStyle(.orange)
+                Text("Current Vault settings are unavailable. Refresh before making a change.").foregroundStyle(JosiTheme.error)
             } else if tab == "rules" {
                 Text(model.automationCatalog["guidance"].text.isEmpty
                      ? "Specify the exact action, scope, restriction and what happens when required facts are unavailable."
@@ -29,9 +29,9 @@ struct NativeAuthoritySettings: View {
                 ForEach(Array(model.automationSettings["rules"]["document"]["rules"].list.enumerated()), id: \.offset) { _, item in
                     GroupBox("Permanent rule") {
                         VStack(alignment: .leading, spacing: 7) {
-                            Text(item["definition"]["label"].text).font(.headline)
+                            Text(item["definition"]["label"].text).font(JosiFont.headline)
                             Text(item["definition"]["wording"].text).textSelection(.enabled)
-                            Text("Definition version \(item["source"]["version"].integer)").font(.caption).foregroundStyle(.secondary)
+                            Text("Definition version \(item["source"]["version"].integer)").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             NativeProtectedChange(title: "Retire Rule…",
                                 change: ["kind": "cardinal.retire", "ruleId": item["ruleId"],
                                          "policy": model.automationSettings["rules"]["reference"]])
@@ -39,7 +39,7 @@ struct NativeAuthoritySettings: View {
                     }
                 }
                 HStack {
-                    Text("Saved drafts").font(.headline)
+                    Text("Saved drafts").font(JosiFont.headline)
                     Spacer()
                     Button("New Rule") { selected = .null; editing = true }
                         .disabled(model.busy || model.automationCatalog == .null)
@@ -47,8 +47,8 @@ struct NativeAuthoritySettings: View {
                 ForEach(Array(model.automationSettings["drafts"].list.enumerated()), id: \.offset) { _, draft in
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(draft["document"]["draft"]["label"].text).font(.headline)
-                            Text("Version \(draft["reference"]["version"].integer) · Inactive draft").font(.caption).foregroundStyle(.secondary)
+                            Text(draft["document"]["draft"]["label"].text).font(JosiFont.headline)
+                            Text("Version \(draft["reference"]["version"].integer) · Inactive draft").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         }
                         Spacer()
                         Button("Open Draft") {
@@ -70,7 +70,7 @@ struct NativeAuthoritySettings: View {
             } else if tab == "permissions" {
                 authorityWarning(model.automationSettings["permissions"])
                 Text("Every grant belongs to an exact person, server, device and separate workspace. Cardinal Rules restrict all grants.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JosiTheme.lilac)
                 let policies = model.automationSettings["permissions"]["document"]["policies"].list
                 if policies.isEmpty { Text("No automation grants are active.") }
                 let targets = model.automationSettings["targets"]
@@ -79,7 +79,7 @@ struct NativeAuthoritySettings: View {
                 let applications = targets["applications"].list
                 if applications.isEmpty {
                     Text("Open a separate desktop and choose an app in Josi Companion to register it for permission setup.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 }
                 let workspaces = applications.enumerated().filter { index, app in
                     !applications.prefix(index).contains(where: { $0["identity"] == app["identity"] })
@@ -105,14 +105,14 @@ struct NativeAuthoritySettings: View {
                             Text("Unmatched actions: " + (policy["unmatched"].text == "deny" ? "Deny" : "Ask for instructions"))
                             ForEach(policy["rules"].list, id: \.identifier) { rule in
                                 Divider()
-                                Text(rule["action"].text.replacingOccurrences(of: ".", with: " · ")).font(.headline)
+                                Text(rule["action"].text.replacingOccurrences(of: ".", with: " · ")).font(JosiFont.headline)
                                 Text(permissionScope(rule["scope"])).textSelection(.enabled)
-                                Text(permissionMode(rule["mode"])).foregroundStyle(.secondary)
+                                Text(permissionMode(rule["mode"])).foregroundStyle(JosiTheme.lilac)
                                 if rule["limits"] != .null {
                                     Text("Per task: \(limit(rule["limits"]["maxActionsPerTask"])) actions · \(limit(rule["limits"]["maxBytesPerTask"])) bytes")
-                                        .font(.caption)
+                                        .font(JosiFont.caption)
                                     Text(rule["limits"]["maxTaskDurationMs"] == .null ? "No duration limit in this grant"
-                                         : "Task duration limit: \(rule["limits"]["maxTaskDurationMs"].integer / 1000) seconds").font(.caption)
+                                         : "Task duration limit: \(rule["limits"]["maxTaskDurationMs"].integer / 1000) seconds").font(JosiFont.caption)
                                 }
                             }
                             Button("Edit Permissions…") {
@@ -144,25 +144,25 @@ struct NativeAuthoritySettings: View {
                     if model.automationDevicesLoading { ProgressView().controlSize(.small); Text("Reading saved devices…") }
                 }
                 if !model.automationDevicesError.isEmpty {
-                    Text(model.automationDevicesError).foregroundStyle(.orange)
-                    if devices != .null { Text("Showing the last verified list. Refresh before making changes.").font(.caption).foregroundStyle(.secondary) }
+                    Text(model.automationDevicesError).foregroundStyle(JosiTheme.error)
+                    if devices != .null { Text("Showing the last verified list. Refresh before making changes.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac) }
                 } else if devices == .null && !model.automationDevicesLoading {
-                    Text("Saved devices have not been loaded. Refresh Saved Devices to check this account.").foregroundStyle(.secondary)
+                    Text("Saved devices have not been loaded. Refresh Saved Devices to check this account.").foregroundStyle(JosiTheme.lilac)
                 }
-                if devices["reconciliationRequired"].flag { Text("Vault recovery must be reconciled before devices can approve changes.").foregroundStyle(.orange) }
+                if devices["reconciliationRequired"].flag { Text("Vault recovery must be reconciled before devices can approve changes.").foregroundStyle(JosiTheme.error) }
                 if model.automationDevicesReady && devices["devices"].list.isEmpty { Text("No protected confirmation devices are enrolled for this account.") }
                 ForEach(Array(devices["devices"].list.enumerated()), id: \.offset) { _, device in
                     GroupBox(device["label"].text) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(device["revokedAt"] == .null ? "Enrolled" : "Revoked").font(.headline)
+                            Text(device["revokedAt"] == .null ? "Enrolled" : "Revoked").font(JosiFont.headline)
                             Text(device["identity"]["serverOrigin"].text)
-                            Text("Enrolled " + nativeDate(device["enrolledAt"].text)).font(.caption)
+                            Text("Enrolled " + nativeDate(device["enrolledAt"].text)).font(JosiFont.caption)
                             DisclosureGroup("Verify device identity") {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text("Device: " + device["identity"]["deviceId"].text)
                                     Text("Signing key: " + device["signingFingerprint"].text)
                                     Text("Hardware key: " + device["wrappingFingerprint"].text)
-                                }.font(.caption).textSelection(.enabled)
+                                }.font(JosiFont.caption).textSelection(.enabled)
                             }
                             if device["revokedAt"] == .null {
                                 NativeProtectedChange(title: "Revoke Device…",
@@ -172,7 +172,7 @@ struct NativeAuthoritySettings: View {
                     }
                 }
                 Text("Enrollment alone grants no browser or computer access.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 NativeDeviceEnrollmentView()
             }
         }.sheet(item: $permissionEdit) { snapshot in
@@ -181,7 +181,7 @@ struct NativeAuthoritySettings: View {
     }
     @ViewBuilder private func authorityWarning(_ value: Wire) -> some View {
         if value != .null && (value["reconciliationRequired"].flag || !value["enforcementCurrent"].flag) {
-            Text("This policy needs recovery reconciliation or revalidation before it can authorize work.").foregroundStyle(.orange)
+            Text("This policy needs recovery reconciliation or revalidation before it can authorize work.").foregroundStyle(JosiTheme.error)
         }
     }
     private func limit(_ value: Wire) -> String {
@@ -343,9 +343,9 @@ struct NativeRuleEditor: View {
                             ForEach(Array(report["issues"].list.enumerated()), id: \.offset) { _, issue in Text(issue["message"].text) }
                             if checkedDraft == draft { Text(check["meaning"].text).textSelection(.enabled) }
                             Text("\(report["cases"].list.filter { $0["passed"].flag }.count)/\(report["cases"].list.count) simulations passed")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             Text("These checks do not guarantee every real-world action can be enforced. Unsupported actions remain blocked.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                     }
                 }
@@ -354,27 +354,27 @@ struct NativeRuleEditor: View {
                     GroupBox("Saved model advice") {
                         VStack(alignment: .leading, spacing: 8) {
                             if review["status"].text == "available" {
-                                Text(review["assessment"]["clarity"].text == "clear" ? "Meaning appears clear" : "Clarification suggested").font(.headline)
+                                Text(review["assessment"]["clarity"].text == "clear" ? "Meaning appears clear" : "Clarification suggested").font(JosiFont.headline)
                                 Text(review["assessment"]["summary"].text)
                                 ForEach(Array((review["assessment"]["concerns"].list + review["assessment"]["suggestions"].list).enumerated()), id: \.offset) { _, item in Text("• " + item.text) }
                             } else { Text(review["message"].text) }
-                            Text("The model advises you. It cannot approve or activate this rule.").font(.caption).foregroundStyle(.secondary)
+                            Text("The model advises you. It cannot approve or activate this rule.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8).textSelection(.enabled)
                     }
                 }
                 if previewedDraft == draft && preview != .null {
                     GroupBox("Exact content and destination for model review") {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(preview["reviewer"]["providerId"].text + " · " + preview["reviewer"]["model"].text).font(.headline)
-                            if preview["reviewer"]["external"].flag { Text("External provider").foregroundStyle(.orange) }
+                            Text(preview["reviewer"]["providerId"].text + " · " + preview["reviewer"]["model"].text).font(JosiFont.headline)
+                            if preview["reviewer"]["external"].flag { Text("External provider").foregroundStyle(JosiTheme.error) }
                             ForEach(["wording", "structuredMeaning", "guidance"], id: \.self) { key in Text(preview["input"][key].text) }
-                            Text(preview["reason"].text).foregroundStyle(.secondary)
-                            Text("Nothing has been sent to the model yet.").font(.caption).foregroundStyle(.secondary)
+                            Text(preview["reason"].text).foregroundStyle(JosiTheme.lilac)
+                            Text("Nothing has been sent to the model yet.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(8).textSelection(.enabled)
                     }
                 }
                 Divider()
-                Text("Verify this administrator action").font(.headline)
+                Text("Verify this administrator action").font(JosiFont.headline)
                 SecureField("Administrator password", text: $password).textContentType(.password)
                 SecureField("Authenticator code, if enabled", text: $mfa)
                 HStack {
@@ -385,14 +385,14 @@ struct NativeRuleEditor: View {
                     }
                 }
                 Text("Saving a draft or requesting model advice never makes a rule permanent. You must approve the exact change in Josi's protected confirmation window.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 if unchanged, initial["document"]["tested"]["report"]["status"].text == "passed",
                    initial["document"]["tested"]["review"]["status"].text == "available" {
                     NativeProtectedChange(title: "Make Permanent…",
                         change: ["kind": "cardinal.activate", "draft": initial["reference"],
                                  "policy": model.automationSettings["rules"]["reference"]])
                 }
-            }.textFieldStyle(.roundedBorder).padding(12).disabled(model.busy)
+            }.textFieldStyle(JosiFieldStyle()).padding(12).disabled(model.busy)
         }
         .onChange(of: draft) { _, _ in check = .null; preview = .null; checkedDraft = .null; previewedDraft = .null }
         .onDisappear { password = ""; mfa = ""; preview = .null; check = .null }

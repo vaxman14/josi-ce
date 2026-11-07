@@ -28,15 +28,15 @@ struct NativeAccountView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 HStack {
-                    Text("Your Settings").font(.largeTitle.bold())
+                    Text("Account").font(JosiFont.largeTitle)
                     Spacer()
                     Button("Refresh") { model.run { try await load() } }
                 }
-                Text(model.signedInName + " · " + model.address).foregroundStyle(.secondary)
+                Text(model.signedInName + " · " + model.address).foregroundStyle(JosiTheme.lilac)
                 GroupBox("Routine action approvals") {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("These choices apply to existing email, calendar, contact and task tools. Browser and computer access use the separate Automation permissions.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         ForEach(personalActions, id: \.0) { action, label in
                             if let current = levels[action] {
                                 let selected = current["managedPolicy"].flag ? current["level"].text : current["userChoice"].text
@@ -46,19 +46,19 @@ struct NativeAccountView: View {
                                     }
                                 }
                                 if current["managedPolicy"].flag {
-                                    Text("Administrator limit: " + levelName(current["adminCeiling"].text)).font(.caption).foregroundStyle(.secondary)
+                                    Text("Administrator limit: " + levelName(current["adminCeiling"].text)).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                                 }
-                            } else { Text(label + ": unavailable").foregroundStyle(.secondary) }
+                            } else { Text(label + ": unavailable").foregroundStyle(JosiTheme.lilac) }
                         }
                         Text("Existing mandatory approvals remain in effect. These preferences cannot override Cardinal Rules or administrator restrictions.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     }.padding(10)
                 }
                 GroupBox("Authenticator sign-in") {
                     VStack(alignment: .leading, spacing: 14) {
                         if status == .null { Text("Refresh to load authentication settings.") }
                         else if status["enabled"].flag {
-                            Text("Enabled · \(status["recoveryCodesRemaining"].integer) recovery codes remain").font(.headline)
+                            Text("Enabled · \(status["recoveryCodesRemaining"].integer) recovery codes remain").font(JosiFont.headline)
                             SecureField("Current password to disable the authenticator", text: $password).textContentType(.password)
                             Button("Disable Authenticator…") {
                                 let alert = NSAlert(); alert.messageText = "Disable authenticator sign-in?"
@@ -78,7 +78,7 @@ struct NativeAccountView: View {
                                 Button("Enable Authenticator") {
                                     let value = code; code = ""
                                     perform("/auth/mfa/enable", body: ["code": .string(value)])
-                                }.buttonStyle(.borderedProminent).disabled(code.count != 6 || !code.utf8.allSatisfy { (48...57).contains($0) })
+                                }.buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(code.count != 6 || !code.utf8.allSatisfy { (48...57).contains($0) })
                                 Button("Close Setup") { setup = .null; code = "" }
                             }
                         } else {
@@ -90,7 +90,7 @@ struct NativeAccountView: View {
                 GroupBox("Confirm your identity") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Some existing task and account operations require a recent password confirmation. Protected rule and permission changes still use their own exact review.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         SecureField("Current password", text: $confirmPassword).textContentType(.password)
                         Button("Confirm Password") {
                             let secret = confirmPassword; confirmPassword = ""
@@ -98,8 +98,8 @@ struct NativeAccountView: View {
                         }.disabled(confirmPassword.isEmpty)
                     }.padding(10)
                 }
-                if !note.isEmpty { Text(note).foregroundStyle(.secondary) }
-            }.padding(30).textFieldStyle(.roundedBorder).disabled(model.busy || loading)
+                if !note.isEmpty { Text(note).foregroundStyle(JosiTheme.lilac) }
+            }.padding(30).textFieldStyle(JosiFieldStyle()).disabled(model.busy || loading)
         }
         .task { visible = true; do { try await load() } catch { model.error = error.localizedDescription } }
         .onDisappear { visible = false; setup = .null; code = ""; password = ""; confirmPassword = "" }
@@ -176,7 +176,7 @@ struct NativeMfaRecovery: View {
     @State private var note = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Save your sign-in recovery codes").font(.title2.bold())
+            Text("Save your sign-in recovery codes").font(JosiFont.title2)
             Text("Each code works once if your authenticator is unavailable. Keep them in a safe place; Josi will not display them again.")
             Toggle("Show recovery codes", isOn: $shown)
             if shown {
@@ -185,8 +185,8 @@ struct NativeMfaRecovery: View {
             }
             Button("Save Private Recovery File…") { export() }
             Toggle("I have stored these recovery codes safely", isOn: $confirmed)
-            if !note.isEmpty { Text(note).font(.caption).foregroundStyle(.secondary) }
-            Button("Done") { model.mfaRecovery = .null }.buttonStyle(.borderedProminent).disabled(!confirmed)
+            if !note.isEmpty { Text(note).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac) }
+            Button("Done") { model.mfaRecovery = .null }.buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(!confirmed)
         }.padding(28).frame(width: 560).interactiveDismissDisabled()
     }
     private func export() {

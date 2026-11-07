@@ -120,15 +120,15 @@ struct NativeAutomationConsentControls: View {
     var body: some View {
         if desktop.localConsent != .null {
             Text("Control is approved for this session. Each action must pass your app, site and action permissions.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
         } else if guest.paired && guest.supportsExecution {
             Button("Approve This Desktop for Automation…") { model.run { try await desktop.approveAutomation() } }
                 .disabled(model.busy || desktop.state != "running" || (!guest.accessibility && !guest.browserConnected) || guest.applicationReadiness != "running")
             if (!guest.accessibility && !guest.browserConnected) || guest.applicationReadiness != "running" {
-                Text("Enable Accessibility for Josi and open the selected registered app before approving control.").font(.caption)
+                Text("Enable Accessibility for Josi and open the selected registered app before approving control.").font(JosiFont.caption)
             }
         } else if guest.paired {
-            Text("Select an app or attach a browser tab before approving automation.").font(.caption)
+            Text("Select an app or attach a browser tab before approving automation.").font(JosiFont.caption)
         }
     }
 }

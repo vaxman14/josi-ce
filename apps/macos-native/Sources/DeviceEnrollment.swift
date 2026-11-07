@@ -340,7 +340,7 @@ struct NativeDeviceEnrollmentView: View {
                 if !ready {
                     Text(!NativeProtectedApproval.provisioned ? "Protected enrollment is unavailable in this build. Install a build with protected-device signing configured."
                          : !model.automationDevicesReady ? "Refresh Saved Devices before enrolling another Mac."
-                         : "Use Touch ID and a server that supports enrollment.").font(.caption).foregroundStyle(.secondary)
+                         : "Use Touch ID and a server that supports enrollment.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 }
                 TextField("A name for this Mac", text: $label)
                 SecureField("Josi administrator password", text: $password)
@@ -375,8 +375,8 @@ struct NativeDeviceEnrollmentView: View {
                         }.disabled(model.busy || !ready)
                     }
                 }
-                if !result.isEmpty { Text(result).font(.callout).foregroundStyle(.secondary) }
-            }.textFieldStyle(.roundedBorder).padding(10).disabled(model.busy)
+                if !result.isEmpty { Text(result).font(JosiFont.callout).foregroundStyle(JosiTheme.lilac) }
+            }.textFieldStyle(JosiFieldStyle()).padding(10).disabled(model.busy)
         }.onDisappear { password = ""; mfa = ""; requests = [] }
     }
 }

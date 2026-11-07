@@ -36,17 +36,17 @@ struct NativeBrowserRegistrationView: View {
         if registry != .null, let change = try? connection.browserRegistration(registry: registry) {
             let candidate = change["candidate"]
             Divider()
-            Text(candidate["label"].text).font(.headline)
+            Text(candidate["label"].text).font(JosiFont.headline)
             if registry["browsers"].list.contains(where: { NativeBrowserTargetWire.matches(candidate, $0, identity: connection.identity) }) {
                 Text("This browser profile is registered. Choose its sites, operations and limits in Automation Settings.")
-                    .font(.caption)
+                    .font(JosiFont.caption)
                 Text(connection.browserConnected ? "Attached tab connected. Site and action permissions apply to every command."
                      : "Open the Josi extension on the tab you want to use and choose Attach This Tab.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             } else {
                 Text("Register this browser instance before adding site permissions. Reconnect this Mac after saving.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text(candidate["family"].text.capitalized + " · Extension " + candidate["extensionVersion"].text).font(.caption)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
+                Text(candidate["family"].text.capitalized + " · Extension " + candidate["extensionVersion"].text).font(JosiFont.caption)
                 NativeProtectedChange(title: "Register This Browser…", change: change,
                     checkSelection: { try connection.requireBrowserSelection(change, registry: model.automationSettings["targets"]) },
                     requiredDevice: change["identity"]["deviceId"].text)
@@ -63,12 +63,12 @@ struct NativeRegisteredBrowsersView: View {
             GroupBox("Registered browser profiles") {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(Array(browsers.enumerated()), id: \.offset) { _, target in
-                        Text(target["candidate"]["label"].text).font(.headline)
-                        Text(target["candidate"]["family"].text.capitalized + " · Extension " + target["candidate"]["extensionVersion"].text).font(.caption)
-                        Text("Workspace: " + target["identity"]["workspaceId"].text).font(.caption).textSelection(.enabled)
+                        Text(target["candidate"]["label"].text).font(JosiFont.headline)
+                        Text(target["candidate"]["family"].text.capitalized + " · Extension " + target["candidate"]["extensionVersion"].text).font(JosiFont.caption)
+                        Text("Workspace: " + target["identity"]["workspaceId"].text).font(JosiFont.caption).textSelection(.enabled)
                     }
                     Text("Each profile needs its own site permissions below. Browser and extension updates require a new registration.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
             }
         }

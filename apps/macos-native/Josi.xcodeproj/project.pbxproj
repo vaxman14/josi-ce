@@ -1,0 +1,120 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+/* Begin PBXBuildFile section */
+		F9D5C807D17BFA4DDC201C3D /* NativeAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D81E16C8EA69758C554888E; };
+		11C0260EC73D394F15CADC85 /* GuestLinkWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EE5CA66E20723B8265686AF; };
+		9313CDE9AEE369F2B9F4B2C2 /* CurrentDesktopEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5222C4343A407A84061B7F8; };
+		6E9DE60E19FEE03CB59BFF9B /* GuestDesktopEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C7F089F2B80E920F7E8208F; };
+		AE1F51029DD35204732C2A86 /* GuestExecutionAuthority.swift in Sources */ = {isa = PBXBuildFile; fileRef = 181AA3C4B9909CDAD9932AD5; };
+		8A87AD11C655563A8AF09B80 /* GuestBrowserIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4650FA990A9C43EB2AF9A8F5; };
+		57B452491089CC1C599E8D03 /* GuestBrowserProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = E867A5F8362550CF00C5B642; };
+		DFCE04BE7CE64FD718F7734D /* GuestBrowserProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A86C1FB4C189305FA0BDD43E; };
+		E3B3A4DAE909337DC5CE7F18 /* GuestBrowserSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D848B76E4AAB8B79F2142BC; };
+		0FF2F35421495A3EFD5A7AB9 /* GuestPhotoReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E0CADE55ABFF97307D079B; };
+		060DB5488A44CCFEC484AC36 /* Mascot in Resources */ = {isa = PBXBuildFile; fileRef = 772121F58BAA09CA2B27F44E; };
+		7433EB09977A3971E80DF8C3 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = C3934F85C072DAF4D1ACE813; };
+		24B15B3B10E3E34BE91361FD /* JosiMark.png in Resources */ = {isa = PBXBuildFile; fileRef = 7DFA265560E344B6DFC6E504; };
+		5E42CC072E4DEE64103BF607 /* Josi.icns in Resources */ = {isa = PBXBuildFile; fileRef = E6884EFEDA12730A5543435C; };
+		4FF10324187A2F0DACC9F9ED /* MaskoPlayer in Frameworks */ = {isa = PBXBuildFile; productRef = 562747BAE78506EDAB5B3E8F; };
+		67CC0C62797E4E4C87F3423E /* NativeAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D81E16C8EA69758C554888E; };
+		5FCE0F1DD42EADF37DCC3118 /* GuestLinkWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EE5CA66E20723B8265686AF; };
+		AC959BFEDAEF963042536032 /* CurrentDesktopEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5222C4343A407A84061B7F8; };
+		E31F88FCF64E6786A3139385 /* GuestDesktopEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C7F089F2B80E920F7E8208F; };
+		72C441FF57A91D66BF08DF6A /* GuestExecutionAuthority.swift in Sources */ = {isa = PBXBuildFile; fileRef = 181AA3C4B9909CDAD9932AD5; };
+		B5C8B2237C0915523C7FD81A /* GuestBrowserIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4650FA990A9C43EB2AF9A8F5; };
+		6B8190A64E04C464DEEE3C8E /* GuestBrowserProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = E867A5F8362550CF00C5B642; };
+		48A59C690A8BAC2C8AA3F99D /* GuestBrowserProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A86C1FB4C189305FA0BDD43E; };
+		B5E07B9237255578937D4CF7 /* GuestBrowserSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D848B76E4AAB8B79F2142BC; };
+		EC5442F8EAD8AC7DB938C6F1 /* GuestPhotoReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E0CADE55ABFF97307D079B; };
+		9BCFFF66B05FC5ECAA838EB8 /* Mascot in Resources */ = {isa = PBXBuildFile; fileRef = 772121F58BAA09CA2B27F44E; };
+		D451F6F9C9CC8D92BD9DBD95 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = C3934F85C072DAF4D1ACE813; };
+		0110FC30E40E196CC221AB87 /* JosiMark.png in Resources */ = {isa = PBXBuildFile; fileRef = 7DFA265560E344B6DFC6E504; };
+		9D96BE0107622AC04437CEBF /* Josi.icns in Resources */ = {isa = PBXBuildFile; fileRef = E6884EFEDA12730A5543435C; };
+		4EB8BBBB88587EB57160F36C /* MaskoPlayer in Frameworks */ = {isa = PBXBuildFile; productRef = A5F0A2E931FCCBFDAF3F1E2A; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		6D81E16C8EA69758C554888E /* NativeAuthorization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeAuthorization.swift; path = "../../packaging/macos/NativeAuthorization.swift"; sourceTree = "<group>"; };
+		0EE5CA66E20723B8265686AF /* GuestLinkWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GuestLinkWire.swift; path = "../automation-macos/Sources/GuestLinkWire.swift"; sourceTree = "<group>"; };
+		E5222C4343A407A84061B7F8 /* CurrentDesktopEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CurrentDesktopEnvironment.swift; path = "../automation-macos/Sources/CurrentDesktopEnvironment.swift"; sourceTree = "<group>"; };
+		1C7F089F2B80E920F7E8208F /* GuestDesktopEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GuestDesktopEngine.swift; path = "../automation-macos/Sources/GuestDesktopEngine.swift"; sourceTree = "<group>"; };
+		181AA3C4B9909CDAD9932AD5 /* GuestExecutionAuthority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GuestExecutionAuthority.swift; path = "../automation-macos/Sources/GuestExecutionAuthority.swift"; sourceTree = "<group>"; };
+		4650FA990A9C43EB2AF9A8F5 /* GuestBrowserIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GuestBrowserIPC.swift; path = "../automation-macos/Sources/GuestBrowserIPC.swift"; sourceTree = "<group>"; };
+		E867A5F8362550CF00C5B642 /* GuestBrowserProfiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GuestBrowserProfiles.swift; path = "../automation-macos/Sources/GuestBrowserProfiles.swift"; sourceTree = "<group>"; };
+		A86C1FB4C189305FA0BDD43E /* GuestBrowserProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GuestBrowserProjection.swift; path = "../automation-macos/Sources/GuestBrowserProjection.swift"; sourceTree = "<group>"; };
+		9D848B76E4AAB8B79F2142BC /* GuestBrowserSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GuestBrowserSession.swift; path = "../automation-macos/Sources/GuestBrowserSession.swift"; sourceTree = "<group>"; };
+		77E0CADE55ABFF97307D079B /* GuestPhotoReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GuestPhotoReader.swift; path = "../automation-macos/Sources/GuestPhotoReader.swift"; sourceTree = "<group>"; };
+		772121F58BAA09CA2B27F44E /* Mascot */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Mascot; path = "Resources/Mascot"; sourceTree = "<group>"; };
+		C3934F85C072DAF4D1ACE813 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fonts; path = "Resources/Fonts"; sourceTree = "<group>"; };
+		7DFA265560E344B6DFC6E504 /* JosiMark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = JosiMark.png; path = "Resources/JosiMark.png"; sourceTree = "<group>"; };
+		E6884EFEDA12730A5543435C /* Josi.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; name = Josi.icns; path = "Resources/Josi.icns"; sourceTree = "<group>"; };
+		982609185B2BAF62BB25A386 /* Josi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Josi.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD3FF523CAC5050F6F7E4180 /* Josi Client.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Josi Client.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		8B13BCADB249DBAF20C40681 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Sources; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		276BEE650F99641FDF1654E0 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (4FF10324187A2F0DACC9F9ED, ); runOnlyForDeploymentPostprocessing = 0; };
+		E83ADBEB0F9163D6E9A91160 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (4EB8BBBB88587EB57160F36C, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		FAD58DE7366495DB4650CFEF = {isa = PBXGroup; children = (8B13BCADB249DBAF20C40681, 9E81E7B963C71363E2FB3EEF, AA9D280544D7F28EE9CEBD06, D6E4A9B6646C62FC48BAA6DD, ); sourceTree = "<group>"; };
+		9E81E7B963C71363E2FB3EEF /* Shared */ = {isa = PBXGroup; children = (6D81E16C8EA69758C554888E, 0EE5CA66E20723B8265686AF, E5222C4343A407A84061B7F8, 1C7F089F2B80E920F7E8208F, 181AA3C4B9909CDAD9932AD5, 4650FA990A9C43EB2AF9A8F5, E867A5F8362550CF00C5B642, A86C1FB4C189305FA0BDD43E, 9D848B76E4AAB8B79F2142BC, 77E0CADE55ABFF97307D079B, ); name = Shared; sourceTree = "<group>"; };
+		AA9D280544D7F28EE9CEBD06 /* Resources */ = {isa = PBXGroup; children = (772121F58BAA09CA2B27F44E, C3934F85C072DAF4D1ACE813, 7DFA265560E344B6DFC6E504, E6884EFEDA12730A5543435C, ); name = Resources; sourceTree = "<group>"; };
+		D6E4A9B6646C62FC48BAA6DD /* Products */ = {isa = PBXGroup; children = (982609185B2BAF62BB25A386, AD3FF523CAC5050F6F7E4180, ); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		028F6D263DBEF9EBCB0F3372 /* Josi */ = {isa = PBXNativeTarget; buildConfigurationList = 9070DC4AF7049BC3CA5E1A6D; buildPhases = (F827F7438779B27C3902F015, 276BEE650F99641FDF1654E0, 6E53EBF546130F37BAEC27CB, ); buildRules = ( ); dependencies = ( ); fileSystemSynchronizedGroups = (8B13BCADB249DBAF20C40681, ); name = "Josi"; packageProductDependencies = (562747BAE78506EDAB5B3E8F, ); productName = "Josi"; productReference = 982609185B2BAF62BB25A386; productType = "com.apple.product-type.application"; };
+		654AF4C06F315036F0228B89 /* Josi Client */ = {isa = PBXNativeTarget; buildConfigurationList = FB967C979C61E56BD089B66A; buildPhases = (268DC9CF179BD8F078305A7F, E83ADBEB0F9163D6E9A91160, 92C2223AC68C64DA3FBA83AB, ); buildRules = ( ); dependencies = ( ); fileSystemSynchronizedGroups = (8B13BCADB249DBAF20C40681, ); name = "Josi Client"; packageProductDependencies = (A5F0A2E931FCCBFDAF3F1E2A, ); productName = "Josi Client"; productReference = AD3FF523CAC5050F6F7E4180; productType = "com.apple.product-type.application"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4DC844ABCCFC0D132D087C1C /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 2700; }; buildConfigurationList = 9873F885523C5B8D7C91F5AE; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = FAD58DE7366495DB4650CFEF; minimizedProjectReferenceProxies = 1; packageReferences = (A46A1BCE0B67C45BEC8F435B, ); preferredProjectObjectVersion = 77; productRefGroup = D6E4A9B6646C62FC48BAA6DD; projectDirPath = ""; projectRoot = ""; targets = (028F6D263DBEF9EBCB0F3372, 654AF4C06F315036F0228B89, ); };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		6E53EBF546130F37BAEC27CB /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (060DB5488A44CCFEC484AC36, 7433EB09977A3971E80DF8C3, 24B15B3B10E3E34BE91361FD, 5E42CC072E4DEE64103BF607, ); runOnlyForDeploymentPostprocessing = 0; };
+		92C2223AC68C64DA3FBA83AB /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (9BCFFF66B05FC5ECAA838EB8, D451F6F9C9CC8D92BD9DBD95, 0110FC30E40E196CC221AB87, 9D96BE0107622AC04437CEBF, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F827F7438779B27C3902F015 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F9D5C807D17BFA4DDC201C3D, 11C0260EC73D394F15CADC85, 9313CDE9AEE369F2B9F4B2C2, 6E9DE60E19FEE03CB59BFF9B, AE1F51029DD35204732C2A86, 8A87AD11C655563A8AF09B80, 57B452491089CC1C599E8D03, DFCE04BE7CE64FD718F7734D, E3B3A4DAE909337DC5CE7F18, 0FF2F35421495A3EFD5A7AB9, ); runOnlyForDeploymentPostprocessing = 0; };
+		268DC9CF179BD8F078305A7F /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (67CC0C62797E4E4C87F3423E, 5FCE0F1DD42EADF37DCC3118, AC959BFEDAEF963042536032, E31F88FCF64E6786A3139385, 72C441FF57A91D66BF08DF6A, B5C8B2237C0915523C7FD81A, 6B8190A64E04C464DEEE3C8E, 48A59C690A8BAC2C8AA3F99D, B5E07B9237255578937D4CF7, EC5442F8EAD8AC7DB938C6F1, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		FA9139DD8B03E3F922556BF8 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; ARCHS = arm64; CLANG_ENABLE_MODULES = YES; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COPY_PHASE_STRIP = NO; CURRENT_PROJECT_VERSION = 1; ENABLE_USER_SCRIPT_SANDBOXING = YES; MACOSX_DEPLOYMENT_TARGET = 14.2; MARKETING_VERSION = 1.2.0; ONLY_ACTIVE_ARCH = YES; SDKROOT = macosx; SWIFT_VERSION = 6.0; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_OPTIMIZATION_LEVEL = 0; SWIFT_OPTIMIZATION_LEVEL = "-Onone";}; name = Debug; };
+		FB2449396658CCCD280A9133 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO; CODE_SIGN_ENTITLEMENTS = Xcode/Josi.entitlements; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Xcode/Josi-Info.plist; LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = com.heyjosi.ce.unified; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG JOSI_SERVER_APP"; }; name = Debug; };
+		CFED0BEC9452E5A51B5D8F64 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO; CODE_SIGN_ENTITLEMENTS = Xcode/Josi.entitlements; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Xcode/JosiClient-Info.plist; LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = com.heyjosi.client; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG"; }; name = Debug; };
+		FFE2104CCFAB79205AC64460 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; ARCHS = arm64; CLANG_ENABLE_MODULES = YES; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; COPY_PHASE_STRIP = NO; CURRENT_PROJECT_VERSION = 1; ENABLE_USER_SCRIPT_SANDBOXING = YES; MACOSX_DEPLOYMENT_TARGET = 14.2; MARKETING_VERSION = 1.2.0; ONLY_ACTIVE_ARCH = YES; SDKROOT = macosx; SWIFT_VERSION = 6.0; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O";}; name = Release; };
+		B2B1E6AF167E23EE872C0132 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO; CODE_SIGN_ENTITLEMENTS = Xcode/Josi.entitlements; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Xcode/Josi-Info.plist; LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = com.heyjosi.ce.unified; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "JOSI_SERVER_APP"; }; name = Release; };
+		97E092838CD7E1D609B6A340 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO; CODE_SIGN_ENTITLEMENTS = Xcode/Josi.entitlements; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Xcode/JosiClient-Info.plist; LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = com.heyjosi.client; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = ""; }; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		9873F885523C5B8D7C91F5AE = {isa = XCConfigurationList; buildConfigurations = (FA9139DD8B03E3F922556BF8, FFE2104CCFAB79205AC64460, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		9070DC4AF7049BC3CA5E1A6D = {isa = XCConfigurationList; buildConfigurations = (FB2449396658CCCD280A9133, B2B1E6AF167E23EE872C0132, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		FB967C979C61E56BD089B66A = {isa = XCConfigurationList; buildConfigurations = (CFED0BEC9452E5A51B5D8F64, 97E092838CD7E1D609B6A340, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A46A1BCE0B67C45BEC8F435B /* masko-player */ = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/masko-ai/masko-player"; requirement = {kind = upToNextMajorVersion; minimumVersion = 0.1.12; }; };
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		562747BAE78506EDAB5B3E8F /* MaskoPlayer */ = {isa = XCSwiftPackageProductDependency; package = A46A1BCE0B67C45BEC8F435B; productName = MaskoPlayer; };
+		A5F0A2E931FCCBFDAF3F1E2A /* MaskoPlayer */ = {isa = XCSwiftPackageProductDependency; package = A46A1BCE0B67C45BEC8F435B; productName = MaskoPlayer; };
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4DC844ABCCFC0D132D087C1C /* Project object */;
+}

@@ -17,9 +17,9 @@ struct NativeMemoryView: View {
             LazyVStack(alignment: .leading, spacing: 20) {
                 JosiHeading(title: "Memory", subtitle: "Review what Josi remembers and the lessons it proposes.")
                 Text("Memories help future work. They cannot change permissions or Cardinal Rules. Keep credentials in the Vault.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(JosiFont.callout).foregroundStyle(JosiTheme.lilac)
                 if loading { ProgressView().controlSize(.small) }
-                if !notice.isEmpty { Text(notice).foregroundStyle(.secondary) }
+                if !notice.isEmpty { Text(notice).foregroundStyle(JosiTheme.lilac) }
                 GroupBox("Learning preferences") {
                     VStack(alignment: .leading, spacing: 12) {
                         Picker("New memories", selection: $mode) {
@@ -28,7 +28,7 @@ struct NativeMemoryView: View {
                             Text("Do not learn new memories").tag("off")
                         }.disabled(model.busy || loading)
                         Text("Lessons from completed work always require your review. These settings do not clear existing memories or unfinished work and its saved progress.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         Button("Save Learning Preference") {
                             let desired = mode, expected = savedMode
                             perform { api, owner, stamp in
@@ -43,7 +43,7 @@ struct NativeMemoryView: View {
                     }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if !suggestions.isEmpty {
-                    Text("Proposed memories and lessons").font(.title2.bold())
+                    Text("Proposed memories and lessons").font(JosiFont.title2)
                     ForEach(suggestions, id: \.identifier) { item in
                         NativeMemorySuggestion(item: item, busy: model.busy || loading,
                             source: { source = item }, decide: { accept, content, expected in
@@ -52,9 +52,9 @@ struct NativeMemoryView: View {
                             })
                     }
                 }
-                Text("Saved memories").font(.title2.bold())
+                Text("Saved memories").font(JosiFont.title2)
                 TextField("Something Josi should remember", text: $added, axis: .vertical).lineLimit(2...5)
-                    .textFieldStyle(.roundedBorder).disabled(model.busy || loading)
+                    .textFieldStyle(JosiFieldStyle()).disabled(model.busy || loading)
                 Button("Add Memory") {
                     let content = added.trimmingCharacters(in: .whitespacesAndNewlines)
                     perform { api, owner, stamp in
@@ -63,7 +63,7 @@ struct NativeMemoryView: View {
                         added = ""; notice = "Memory saved."; try await load(api, owner, stamp)
                     }
                 }.disabled(model.busy || loading || added.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || added.utf16.count > 2000)
-                if memories.isEmpty && !loading { Text("No saved memories.").foregroundStyle(.secondary) }
+                if memories.isEmpty && !loading { Text("No saved memories.").foregroundStyle(JosiTheme.lilac) }
                 ForEach(memories, id: \.identifier) { item in
                     NativeSavedMemory(item: item, busy: model.busy || loading,
                         source: { source = item }, remove: { deleting = item },
@@ -139,9 +139,9 @@ struct NativeMemorySuggestion: View {
     var body: some View {
         GroupBox(item["work_goal_id"] == .null ? "Proposed memory" : "Lesson from completed work") {
             VStack(alignment: .leading, spacing: 10) {
-                TextField("Review and correct this proposal", text: $draft, axis: .vertical).lineLimit(3...8).textFieldStyle(.roundedBorder)
+                TextField("Review and correct this proposal", text: $draft, axis: .vertical).lineLimit(3...8).textFieldStyle(JosiFieldStyle())
                 if reviewed != item {
-                    Text("The saved proposal changed. Your edit is still here. Review the current wording below.").foregroundStyle(.orange)
+                    Text("The saved proposal changed. Your edit is still here. Review the current wording below.").foregroundStyle(JosiTheme.error)
                     Text(item["content"].text).textSelection(.enabled)
                     Button("I Reviewed It — Keep My Edit") { reviewed = item }
                 }
@@ -151,7 +151,7 @@ struct NativeMemorySuggestion: View {
                         .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.utf16.count > 2000)
                     Button("Discard Proposal") { decide(false, "", reviewed) }
                 }.disabled(reviewed != item)
-                Text("Edits are saved only when you keep the memory.").font(.caption).foregroundStyle(.secondary)
+                Text("Edits are saved only when you keep the memory.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             }.padding(8).disabled(busy)
         }
         .onAppear { if reviewed == .null { reviewed = item; draft = item["content"].text } }
@@ -171,14 +171,14 @@ struct NativeSavedMemory: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 Text(item["content"].text).textSelection(.enabled)
-                Text(item["provenance"].text).font(.caption).foregroundStyle(.secondary)
+                Text(item["provenance"].text).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 if !item["confirmed_at"].text.isEmpty {
-                    Text("Confirmed " + nativeDate(item["confirmed_at"].text)).font(.caption).foregroundStyle(.secondary)
+                    Text("Confirmed " + nativeDate(item["confirmed_at"].text)).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 }
                 if editing {
-                    TextField("Correct memory", text: $draft, axis: .vertical).lineLimit(2...6).textFieldStyle(.roundedBorder)
+                    TextField("Correct memory", text: $draft, axis: .vertical).lineLimit(2...6).textFieldStyle(JosiFieldStyle())
                     if reviewed != item {
-                        Text("This memory changed. Review the current wording above before saving.").foregroundStyle(.orange)
+                        Text("This memory changed. Review the current wording above before saving.").foregroundStyle(JosiTheme.error)
                         Button("I Reviewed It — Keep My Edit") { reviewed = item }
                     }
                     HStack {
@@ -210,20 +210,20 @@ struct NativeMemorySource: View {
     @State private var error = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack { Text("Source work").font(.title2.bold()); Spacer(); Button("Close") { close() } }
-            if !error.isEmpty { Text(error).foregroundStyle(.orange) }
+            HStack { Text("Source work").font(JosiFont.title2); Spacer(); Button("Close") { close() } }
+            if !error.isEmpty { Text(error).foregroundStyle(JosiTheme.error) }
             if goal != .null {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(goal["title"].text).font(.headline)
+                        Text(goal["title"].text).font(JosiFont.headline)
                         Text("\(goal["verifiedSteps"].integer)/\(goal["totalSteps"].integer) steps verified · " + goal["state"].text)
-                        Text("Finished means").font(.headline)
+                        Text("Finished means").font(JosiFont.headline)
                         ForEach(Array(goal["criteria"].list.enumerated()), id: \.offset) { _, criterion in Text("• " + criterion.text) }
                         ForEach(goal["steps"].list, id: \.identifier) { step in
                             Text((step["state"].text == "verified" ? "✓ " : "• ") + step["title"].text)
                         }
                         Text("Lesson source revision: \(source["work_goal_revision"].integer) · Current saved revision: \(goal["revision"].integer)")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         Button("Open Original Conversation") {
                             model.run { try await model.selectThread(goal["threadId"].text); close() }
                         }.disabled(model.busy)

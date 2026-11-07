@@ -1,0 +1,15 @@
+{
+  "originHash" : "bb6f7b617b3600b0ab052fd08c260c5b7179a8fc13acf9fccc084b10fdeaeab8",
+  "pins" : [
+    {
+      "identity" : "masko-player",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/masko-ai/masko-player",
+      "state" : {
+        "revision" : "b45a94ea1103ac6ab03e3424b8b656d3b0490056",
+        "version" : "0.1.17"
+      }
+    }
+  ],
+  "version" : 3
+}

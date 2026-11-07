@@ -29,11 +29,11 @@ struct NativeModelTargetsView: View {
         GroupBox("Models allowed to receive automation content") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Register an exact model configuration here, then add its transmission permission and limits. App-viewing permission alone does not allow sending the app’s contents to a model.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 Button("Refresh Configured Models") { model.run { try await load() } }
                 if loaded && candidates.isEmpty {
                     Text("No eligible model is available. Activate a tested model with an explicit model name in Models. ChatGPT subscriptions are supported; Claude subscriptions cannot receive automation captures yet.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 }
                 if !candidates.isEmpty {
                     Picker("Configured model", selection: $selected) {
@@ -50,16 +50,16 @@ struct NativeModelTargetsView: View {
                         }
                     }
                     if workspaces.isEmpty {
-                        Text("Register an app from your separate desktop first to identify its workspace.").font(.caption)
+                        Text("Register an app from your separate desktop first to identify its workspace.").font(JosiFont.caption)
                     }
                 }
                 if let change = selection {
                     let candidate = change["candidate"]
                     Text(candidate["baseUrl"] == .null ? "Endpoint: provider default" : "Endpoint: " + candidate["baseUrl"].text)
-                        .font(.caption).textSelection(.enabled)
-                    Text("Saved model version: " + candidate["configurationVersion"].text).font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).textSelection(.enabled)
+                    Text("Saved model version: " + candidate["configurationVersion"].text).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     Text("Saving changes the Vault’s authority version and closes any open development desktop. Reopen it after configuring permissions.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     NativeProtectedChange(title: "Register This Model Destination…", change: change,
                         onSaved: { selected = "" },
                         checkSelection: {
@@ -67,16 +67,16 @@ struct NativeModelTargetsView: View {
                         }, requiredDevice: change["identity"]["deviceId"].text)
                 } else if !selected.isEmpty && !workspace.isEmpty {
                     Text("This configuration is already registered, or the selection changed. Use its saved target below or refresh the available models.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 }
                 ForEach(Array(registry["models"].list.enumerated()), id: \.offset) { _, target in
                     Divider()
-                    Text(target["candidate"]["providerId"].text + " / " + target["candidate"]["model"].text).font(.headline)
-                    Text("Workspace: " + target["identity"]["workspaceId"].text).font(.caption).textSelection(.enabled)
-                    Text("Saved model version: " + target["candidate"]["configurationVersion"].text).font(.caption)
+                    Text(target["candidate"]["providerId"].text + " / " + target["candidate"]["model"].text).font(JosiFont.headline)
+                    Text("Workspace: " + target["identity"]["workspaceId"].text).font(JosiFont.caption).textSelection(.enabled)
+                    Text("Saved model version: " + target["candidate"]["configurationVersion"].text).font(JosiFont.caption)
                 }
                 Text("Changing the saved model configuration requires registering its new destination. Existing grants do not move to it. A fallback needs its own permission.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             }.padding(10).disabled(model.busy)
         }
         .task { visible = true; do { try await load() } catch { model.error = error.localizedDescription } }

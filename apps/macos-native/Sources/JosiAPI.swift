@@ -54,13 +54,23 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
     private var csrf: String?
     private var closed = false
     private var workEventRequest: URLSessionTask?
+    /// The signed-in session. Once set, requests go as a native client with
+    /// this bearer and no Origin, so "Keep me signed in" survives a relaunch.
+    var bearer: String?
+    /// A bare LAN IP, hostname or domain means HTTPS; localhost means this Mac.
+    static func normalized(_ address: String) -> String {
+        let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !value.contains("://") else { return value }
+        let host = value.split(separator: ":").first.map { $0.lowercased() } ?? ""
+        return (["localhost", "127.0.0.1"].contains(host) ? "http://" : "https://") + value
+    }
     init(address: String) throws {
-        guard var url = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
+        guard var url = URLComponents(string: Self.normalized(address)),
               let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
               url.query == nil, url.fragment == nil, url.path.isEmpty || url.path == "/",
               url.scheme == "https" || (url.scheme == "http" && ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host.lowercased())),
               url.port == nil || (1...65535).contains(url.port!) else {
-            throw JosiError(message: "Use your server’s HTTPS address, or HTTP localhost for a server on this Mac.")
+            throw JosiError(message: "Use your server’s address or domain. Remote connections use HTTPS. Localhost is for a server on this Mac.")
         }
         url.path = ""
         guard let origin = url.url else { throw JosiError(message: "Enter a valid server address.") }
@@ -73,6 +83,11 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         session = URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
     }
     func close() { closed = true; csrf = nil; cancelWorkProgress(); session.invalidateAndCancel() }
+    private func identify(_ request: inout URLRequest, native: Bool = false) {
+        if native || bearer != nil { request.setValue("native", forHTTPHeaderField: "x-josi-client") }
+        else { request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin") }
+        if let bearer { request.setValue("Bearer " + bearer, forHTTPHeaderField: "Authorization") }
+    }
     func cancelWorkProgress() { workEventRequest?.cancel(); workEventRequest = nil }
 
     /// Owner-scoped invalidations only. Event contents never become goal text,
@@ -82,7 +97,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
               let url = URL(string: origin.absoluteString + "/api/assistant/work-goals/stream?all=1") else { throw CancellationError() }
         var request = URLRequest(url: url)
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
+        identify(&request)
         let (bytes, response) = try await session.bytes(for: request)
         guard !closed, !Task.isCancelled else { bytes.task.cancel(); throw CancellationError() }
         workEventRequest = bytes.task
@@ -178,18 +193,19 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         csrf = result["csrfToken"].text
     }
     func request(_ route: String, method: String = "GET", body: Wire? = nil,
-                 headers: [String: String] = [:]) async throws -> Wire {
+                 headers: [String: String] = [:], native: Bool = false) async throws -> Wire {
         guard !closed, route.hasPrefix("/"), !route.hasPrefix("//"),
               !route.contains("#"), !route.contains("\\"), route.utf8.count < 4096,
               let url = URL(string: origin.absoluteString + "/api" + route),
               url.host == origin.host, url.scheme == origin.scheme, url.port == origin.port else {
             throw JosiError(message: "Reconnect to your Josi server.")
         }
-        if method != "GET", csrf == nil { try await primeCSRF() }
+        let tokenAuth = native || bearer != nil
+        if method != "GET", !tokenAuth, csrf == nil { try await primeCSRF() }
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
-        if method != "GET" { req.setValue(csrf, forHTTPHeaderField: "x-josi-csrf") }
+        identify(&req, native: native)
+        if method != "GET", !tokenAuth { req.setValue(csrf, forHTTPHeaderField: "x-josi-csrf") }
         for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
         if let body {
             req.httpBody = try JSONEncoder().encode(body)
@@ -238,9 +254,9 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
     func voiceAudio(_ route: String, body: Wire) async throws -> Data {
         guard !closed, ["/voice/speech", "/admin/voice-box/preview"].contains(route),
               let url = URL(string: origin.absoluteString + "/api" + route) else { throw CancellationError() }
-        if csrf == nil { try await primeCSRF() }
+        if csrf == nil, bearer == nil { try await primeCSRF() }
         var request = URLRequest(url: url); request.httpMethod = "POST"
-        request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
+        identify(&request)
         request.setValue(csrf, forHTTPHeaderField: "x-josi-csrf")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
@@ -258,9 +274,9 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         let boundary = "Josi-" + UUID().uuidString
         var body = Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8)
         body.append(content); body.append(Data("\r\n--\(boundary)--\r\n".utf8))
-        if csrf == nil { try await primeCSRF() }
+        if csrf == nil, bearer == nil { try await primeCSRF() }
         var request = URLRequest(url: url); request.httpMethod = "POST"; request.httpBody = body
-        request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin")
+        identify(&request)
         request.setValue(csrf, forHTTPHeaderField: "x-josi-csrf")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         return try JSONDecoder().decode(Wire.self, from: await mediaResponse(request))["attachment"]

@@ -56,8 +56,10 @@ try:
                '-module-cache-path', str(scratch / 'module-cache'), '-o', str(scratch / 'check'),
                *[str(p) for p in sorted(source.glob('*.swift')) if p.name != 'JosiApp.swift'], str(app),
                str(repo / 'packaging/macos/NativeAuthorization.swift'),
-               str(repo / 'apps/automation-macos/Sources/WorkspaceMachine.swift'),
-               str(repo / 'apps/automation-macos/Sources/GuestLinkWire.swift'),
+               *[str(repo / 'apps/automation-macos/Sources' / name) for name in (
+                   'GuestLinkWire.swift', 'CurrentDesktopEnvironment.swift', 'GuestDesktopEngine.swift',
+                   'GuestExecutionAuthority.swift', 'GuestBrowserIPC.swift', 'GuestBrowserProfiles.swift',
+                   'GuestBrowserProjection.swift', 'GuestBrowserSession.swift', 'GuestPhotoReader.swift')],
                str(repo / 'scripts/macos/test-native-device-inventory.swift')]
     subprocess.run(command, check=True, timeout=300)
     subprocess.run([str(scratch / 'check'), origin, str(scratch / 'enrolled-mac.png')], check=True, timeout=40)

@@ -18,14 +18,14 @@ struct NativeWorkDetails: View {
     var body: some View {
         DisclosureGroup("Outcome, memory and activity") {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Finished means").font(.headline)
+                Text("Finished means").font(JosiFont.headline)
                 ForEach(Array(goal["criteria"].list.enumerated()), id: \.offset) { _, item in
                     Text("• " + item.text).textSelection(.enabled)
                 }
                 if goal["ownerCheckpoint"] != .null {
                     GroupBox("Your saved correction") {
                         WorkNotes(notes: goal["ownerCheckpoint"])
-                        Text("Josi keeps your correction separate from its own progress notes.").font(.caption).foregroundStyle(.secondary)
+                        Text("Josi keeps your correction separate from its own progress notes.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     }
                 }
                 GroupBox("Latest progress notes") { WorkNotes(notes: goal["checkpoint"]) }
@@ -50,7 +50,7 @@ struct WorkNotes: View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(["decisions", "facts", "assumptions"], id: \.self) { key in
                 if !notes[key].list.isEmpty {
-                    Text(key == "facts" ? "Reported facts" : key.capitalized).font(.subheadline.bold())
+                    Text(key == "facts" ? "Reported facts" : key.capitalized).font(JosiFont.headline)
                     ForEach(Array(notes[key].list.enumerated()), id: \.offset) { _, item in Text("• " + item.text).textSelection(.enabled) }
                 }
             }
@@ -67,7 +67,7 @@ struct RevisionNotice: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Work changed while you were editing. Your edit is still here. Review the latest saved work above.")
                 Button("I Reviewed the Change — Keep My Edit") { reviewed = current }
-            }.font(.callout).foregroundStyle(.orange)
+            }.font(JosiFont.callout).foregroundStyle(JosiTheme.error)
         }
     }
 }
@@ -84,9 +84,9 @@ struct WorkMemoryControls: View {
     @State private var nextAction = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Work memory").font(.headline)
+            Text("Work memory").font(JosiFont.headline)
             Text("Notes help Josi continue. They cannot change permissions or Cardinal Rules. Keep secrets in the Vault.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             HStack {
                 Button(goal["ownerCheckpoint"] == .null ? "Correct Notes" : "Edit Your Correction") { edit() }
                 Button(goal["checkpointPinned"].flag ? "Unpin" : "Pin for Future Work") {
@@ -100,14 +100,14 @@ struct WorkMemoryControls: View {
                 TextField("Reported facts — one per line", text: $facts, axis: .vertical).lineLimit(2...6)
                 TextField("Assumptions — one per line", text: $assumptions, axis: .vertical).lineLimit(2...6)
                 TextField("Next action", text: $nextAction, axis: .vertical).lineLimit(2...4)
-                Text("Up to 12 items per list.").font(.caption).foregroundStyle(.secondary)
+                Text("Up to 12 items per list.").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 HStack {
                     Button("Save Correction") { change("correct") }
                         .disabled(model.busy || revision != goal["revision"] || nextAction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Button("Cancel Edit") { editing = false }.disabled(model.busy)
                 }
             }
-        }.textFieldStyle(.roundedBorder)
+        }.textFieldStyle(JosiFieldStyle())
         .confirmationDialog("Clear saved work notes?", isPresented: $clearing) {
             Button("Clear Notes and Correction", role: .destructive) { change("forget") }
         } message: {
@@ -155,7 +155,7 @@ struct WorkOutcomeEditor: View {
                 TextField("What changed, and what should Josi do next?", text: $reason, axis: .vertical).lineLimit(2...5)
                 Toggle("Let Josi review the plan and continue within existing permissions", isOn: $continueWork)
                 Text("Completed work and original steps stay saved. Actions already sent may still finish.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 HStack {
                     Button(continueWork ? "Save and Continue" : "Save Paused") {
                         let snapshot = goal
@@ -166,7 +166,7 @@ struct WorkOutcomeEditor: View {
                     Button("Cancel Edit") { editing = false }.disabled(model.busy)
                 }
             }
-        }.textFieldStyle(.roundedBorder)
+        }.textFieldStyle(JosiFieldStyle())
     }
 }
 
@@ -195,7 +195,7 @@ struct WorkRetirementEditor: View {
                 TextField("Why is this step obsolete?", text: $reason, axis: .vertical).lineLimit(2...5)
                 Toggle("Let Josi review the plan and continue within existing permissions", isOn: $continueWork)
                 Text("The step stays in history and stops counting as required work. Uncertain actions must be resolved first.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                 HStack {
                     Button("Retire Step and Retain History") {
                         let snapshot = goal
@@ -205,7 +205,7 @@ struct WorkRetirementEditor: View {
                     Button("Cancel Edit") { editing = false }.disabled(model.busy)
                 }
             }
-        }.textFieldStyle(.roundedBorder)
+        }.textFieldStyle(JosiFieldStyle())
     }
 }
 
@@ -229,22 +229,22 @@ struct WorkHistory: View {
                         VStack(alignment: .leading, spacing: 7) {
                             Text(kind == "events" ? item["summary"].text : kind == "plans" ? item["reason"].text : item["outcome"].text)
                                 .textSelection(.enabled)
-                            Text(nativeDate(item["created_at"].text)).font(.caption).foregroundStyle(.secondary)
+                            Text(nativeDate(item["created_at"].text)).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             if kind == "plans" {
                                 ForEach(Array(item["steps"].list.enumerated()), id: \.offset) { _, step in
                                     Text("• " + step["title"].text).strikethrough(step["state"].text == "skipped")
                                 }
                             }
                             if kind == "outcomes" {
-                                Text(item["reason"].text).foregroundStyle(.secondary)
+                                Text(item["reason"].text).foregroundStyle(JosiTheme.lilac)
                                 ForEach(Array(item["criteria"].list.enumerated()), id: \.offset) { _, criterion in Text("• " + criterion.text) }
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(7)
                     }
                 }
                 if loading { ProgressView().controlSize(.small) }
-                if !error.isEmpty { Text(error).foregroundStyle(.orange) }
-                if !loading && records.isEmpty && error.isEmpty { Text("No saved entries.").foregroundStyle(.secondary) }
+                if !error.isEmpty { Text(error).foregroundStyle(JosiTheme.error) }
+                if !loading && records.isEmpty && error.isEmpty { Text("No saved entries.").foregroundStyle(JosiTheme.lilac) }
                 HStack {
                     Button("Older") { before = oldest }.disabled(loading || oldest <= 1)
                     Button("Latest") { before = 0 }.disabled(loading || before == 0)

@@ -310,14 +310,14 @@ struct ProtectedApprovalView: View {
     @ObservedObject var review: NativeApprovalWindow
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(title).font(.title2.bold())
-            Text(review.challenge["serverOrigin"].text).font(.headline).textSelection(.enabled)
+            Text(title).font(JosiFont.title2)
+            Text(review.challenge["serverOrigin"].text).font(JosiFont.headline).textSelection(.enabled)
             Text("Administrator: " + review.challenge["userId"].text + "\nDevice: " + review.challenge["deviceId"].text)
-                .font(.caption).textSelection(.enabled)
+                .font(JosiFont.caption).textSelection(.enabled)
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text(review.challenge["presentation"]["wording"].text).font(.headline)
+                    Text(review.challenge["presentation"]["wording"].text).font(JosiFont.headline)
                     Text(review.challenge["presentation"]["meaning"].text)
                     ForEach(Array(review.challenge["presentation"]["advisory"].list.enumerated()), id: \.offset) { _, advice in Text(advice.text) }
                 }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled).padding(8)
@@ -327,7 +327,7 @@ struct ProtectedApprovalView: View {
                 Button("Cancel") { review.cancel() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 if review.phase == "review" {
-                    Button("Approve This Exact Change") { review.approve() }.buttonStyle(.borderedProminent)
+                    Button("Approve This Exact Change") { review.approve() }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
                 } else {
                     ProgressView().controlSize(.small)
                     Text(review.phase == "returning-to-review" ? "Return to Josi to finish this approval…"
@@ -466,7 +466,7 @@ struct NativeProtectedChange: View {
             if !ready {
                 Text(!NativeProtectedApproval.provisioned ? "Protected approval is unavailable in this build. Install a build with protected-device signing configured."
                      : "Protected changes require Touch ID and an enrolled confirmation device for this server.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             }
             if open {
                 Picker("The enrolled Mac you are using", selection: $device) {
@@ -491,8 +491,8 @@ struct NativeProtectedChange: View {
                     }
                 }.disabled(model.busy || !ready || device.isEmpty || password.isEmpty)
             }
-            if !result.isEmpty { Text(result).font(.caption).foregroundStyle(.secondary) }
-        }.textFieldStyle(.roundedBorder)
+            if !result.isEmpty { Text(result).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac) }
+        }.textFieldStyle(JosiFieldStyle())
         .onChange(of: change) { _, _ in open = false; password = ""; mfa = ""; result = "" }
         .onDisappear { password = ""; mfa = "" }
     }

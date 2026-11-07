@@ -19,15 +19,15 @@ struct NativeWorkLimits: View {
                          + (saved["runLimit"] == .null ? "No goal-specific run limit" : "Total allowed: \(saved["runLimit"].integer)"))
                     Text(saved["deadline"] == .null ? "No goal-specific deadline." : "Deadline: " + nativeDate(saved["deadline"].text))
                     Text("Runs include queued and interrupted background work. Progress and Resume do not reset the count. These limits stop new background work; actions already sent may finish. Account limits and tool permissions still apply.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     if editing {
                         RevisionNotice(current: goal["revision"], reviewed: $revision)
                         Toggle("Set a total background-run limit", isOn: $limited)
-                        if limited { TextField("Total runs allowed — 0 to 10,000", text: $runs).textFieldStyle(.roundedBorder) }
+                        if limited { TextField("Total runs allowed — 0 to 10,000", text: $runs).textFieldStyle(JosiFieldStyle()) }
                         Toggle("Set a background-work deadline", isOn: $timed)
                         if timed { DatePicker("Deadline in your local time", selection: $deadline) }
                         Text("Saving keeps paused work paused. If a limit was reached, save a larger allowance, then resume with instructions.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         HStack {
                             Button("Save Limits") { save() }.disabled(model.busy || revision != goal["revision"] || !valid)
                             Button("Cancel Edit") { editing = false }.disabled(model.busy)

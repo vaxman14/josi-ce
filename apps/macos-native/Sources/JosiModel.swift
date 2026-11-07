@@ -31,6 +31,13 @@ import SwiftUI
     @Published var vaultRecovery: Wire = .null
     @Published var mfaRecovery: Wire = .null
     @Published var mfaChallenge = ""
+    @Published var appleLink = ""
+    @Published var appleMfa = false
+    @Published var signInMethods: Wire = .null
+    @Published var sidebarCollapsed = UserDefaults.standard.bool(forKey: "josi.sidebarCollapsed")
+    @Published var showServerControls = false
+    @Published var approvalsWaiting = 0
+    @Published var devicesConnected: Int?
     @Published var automation: Wire = .null
     @Published var automationSettings: Wire = .null
     @Published var automationCatalog: Wire = .null
@@ -44,6 +51,7 @@ import SwiftUI
     let desktop = NativeWorkspaceController()
     private(set) var api: JosiAPI?
     private var installAttempt: UUID?
+    private var keepSignedIn = true
     private var refreshing = false
     private var workStream: Task<Void, Never>?
     private var workRefresh: Task<Void, Never>?
@@ -68,9 +76,27 @@ import SwiftUI
         }
     }
     func refreshLocal() {
+        guard JosiFlags.serverApp else { return }
         do { receipt = try ServerReceipt.read() }
         catch { self.error = error.localizedDescription }
     }
+    func toggleSidebar() {
+        withAnimation(.easeInOut(duration: 0.25)) { sidebarCollapsed.toggle() }
+        UserDefaults.standard.set(sidebarCollapsed, forKey: "josi.sidebarCollapsed")
+    }
+    func openServerControls() {
+        guard JosiFlags.serverApp else { return }
+        refreshLocal(); showServerControls = true
+    }
+    /// Reconnects to the last server and restores a kept sign-in, if there is one.
+    func resume() async {
+        guard screen == .connect, api == nil, !busy else { return }
+        let last = JosiFlags.serverApp ? (receipt.installed ? receipt.address : "") : (UserDefaults.standard.string(forKey: Self.lastServerKey) ?? "")
+        address = JosiFlags.serverApp ? address : last
+        guard !last.isEmpty, JosiSession.token(for: last) != nil else { return }
+        do { try await connect(last, local: JosiFlags.serverApp) } catch { /* The welcome screen stays up. */ }
+    }
+    private static let lastServerKey = "josi.lastServer"
     func connect(_ address: String, local: Bool = false) async throws {
         guard mfaRecovery == .null else { throw JosiError(message: "Save your sign-in recovery codes before changing servers.") }
         if desktop.requiresClosure { try await desktop.close() }
@@ -79,10 +105,11 @@ import SwiftUI
         workStreamUnsupported = false; workAccessEnded = false
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; taskRuns = []
         pending = nil; pendingMessage = false; draftAttachments = []; draft = ""; selectedThread = nil
-        recovery = .null; setup = .null; setupReview = .null; mfaChallenge = ""
+        recovery = .null; setup = .null; setupReview = .null; mfaChallenge = ""; appleLink = ""; appleMfa = false; signInMethods = .null
         automation = .null; automationSettings = .null; automationCatalog = .null; resetAutomationDevices()
         self.address = next.origin.absoluteString
         try await next.primeCSRF()
+        if !JosiFlags.serverApp { UserDefaults.standard.set(self.address, forKey: Self.lastServerKey) }
         var incomplete = false
         do { incomplete = !(try await next.request("/onboarding/state"))["completed"].flag }
         catch let e as JosiError where e.status == 404 { /* CE servers without native bootstrap can still accept login. */ }
@@ -93,27 +120,89 @@ import SwiftUI
             guard api === next else { return }
             screen = .setup
             try await loadSetup()
-        } else { screen = .login }
+        } else {
+            if let kept = JosiSession.token(for: self.address) {
+                next.bearer = kept
+                if let me = try? await next.request("/auth/me"), self.api === next, me["user"] != .null {
+                    try await finishLogin(next, result: ["user": me["user"], "sessionToken": .string(kept)], remember: true); return
+                }
+                next.bearer = nil; JosiSession.forget(self.address)
+            }
+            screen = .login; await loadSignInMethods(next)
+        }
     }
-    func signIn(identifier: String, password: String) async throws {
+    private func loadSignInMethods(_ api: JosiAPI) async {
+        let value = (try? await api.request("/auth/native/config")) ?? .null
+        if self.api === api { signInMethods = value }
+    }
+    func signIn(identifier: String, password: String, remember: Bool) async throws {
         guard let api else { return }
-        let result = try await api.request("/auth/login", method: "POST",
-                                          body: ["identifier": .string(identifier), "password": .string(password), "rememberMe": .bool(false)])
+        keepSignedIn = remember
+        let result = try await api.request("/auth/login", method: "POST", body: ["identifier": .string(identifier), "password": .string(password),
+                                                                                 "rememberMe": .bool(remember)], native: true)
         guard self.api === api else { return }
         if result["mfaRequired"].flag { mfaChallenge = result["challenge"].text; return }
-        try await finishLogin(api, user: result["user"])
+        try await finishLogin(api, result: result, remember: remember)
     }
     func verifyMFA(_ code: String) async throws {
         guard let api else { return }
+        if appleMfa { try await completeApple(identifier: "", password: "", code: code); return }
         let result = try await api.request("/auth/mfa/verify-login", method: "POST",
-                                          body: ["challenge": .string(mfaChallenge), "code": .string(code)])
+                                          body: ["challenge": .string(mfaChallenge), "code": .string(code)], native: true)
         guard self.api === api else { return }
-        try await finishLogin(api, user: result["user"])
+        try await finishLogin(api, result: result, remember: keepSignedIn)
     }
-    private func finishLogin(_ api: JosiAPI, user: Wire) async throws {
-        try await api.primeCSRF()
+    /// Google and passkey run in the system's sign-in sheet on the server's own
+    /// page, which hands back a one-time code for a session here.
+    func signInThroughBrowser(_ start: URL, state: String? = nil, remember: Bool) async throws {
+        guard let api else { return }
+        let code = try await NativeSignIn.browser(start: start, state: state)
         guard self.api === api else { return }
-        self.user = user; mfaChallenge = ""; screen = .workspace
+        let result = try await api.request("/auth/native/exchange", method: "POST", body: ["code": .string(code)], native: true)
+        guard self.api === api else { return }
+        try await finishLogin(api, result: result, remember: remember)
+    }
+    func signInWithGoogle(remember: Bool) async throws {
+        guard signInMethods["googleSignIn"].flag, let url = URL(string: signInMethods["nativeGoogleStart"].text + "?redirect_uri=josi%3A%2F%2Fauth%2Fcallback") else {
+            throw JosiError(message: "Google sign-in isn’t set up on this server. The owner can add it under Connections.")
+        }
+        try await signInThroughBrowser(url, remember: remember)
+    }
+    func signInWithPasskey(remember: Bool) async throws {
+        let state = UUID().uuidString.lowercased()
+        guard signInMethods["passkeySignIn"].flag,
+              let url = URL(string: signInMethods["nativePasskeyStart"].text + "?redirect_uri=josi%3A%2F%2Fauth%2Fcallback&state=" + state) else {
+            throw JosiError(message: "Passkeys aren’t available on this server yet. Sign in with your password.")
+        }
+        try await signInThroughBrowser(url, state: state, remember: remember)
+    }
+    func signInWithApple(remember: Bool) async throws {
+        guard let api else { return }
+        guard signInMethods["appleSignIn"].flag else { throw JosiError(message: "Apple sign-in isn’t set up on this server.") }
+        let credential = try await NativeSignIn.apple()
+        guard self.api === api else { return }
+        keepSignedIn = remember
+        let result = try await api.request("/auth/apple/native/exchange", method: "POST",
+                                          body: ["identityToken": .string(credential.token), "nonce": .string(credential.nonce), "appleUser": .string(credential.user)], native: true)
+        guard self.api === api else { return }
+        if result["mfaRequired"].flag { mfaChallenge = result["challenge"].text; appleMfa = true; return }
+        if result["linkRequired"].flag { appleLink = result["challenge"].text; return }
+        try await finishLogin(api, result: result, remember: remember)
+    }
+    /// Finishes an Apple sign-in that needs a one-time password link or a code.
+    func completeApple(identifier: String, password: String, code: String) async throws {
+        guard let api else { return }
+        let result = try await api.request("/auth/apple/native/complete", method: "POST",
+                                          body: ["challenge": .string(appleLink.isEmpty ? mfaChallenge : appleLink), "identifier": .string(identifier),
+                                                 "password": .string(password), "mfaCode": .string(code)], native: true)
+        guard self.api === api else { return }
+        try await finishLogin(api, result: result, remember: keepSignedIn)
+    }
+    private func finishLogin(_ api: JosiAPI, result: Wire, remember: Bool) async throws {
+        if !result["sessionToken"].text.isEmpty { api.bearer = result["sessionToken"].text }
+        if remember, let token = api.bearer { JosiSession.keep(token, for: api.origin.absoluteString) }
+        guard self.api === api else { return }
+        self.user = result["user"]; mfaChallenge = ""; appleLink = ""; appleMfa = false; screen = .workspace
         try await reloadWorkspace()
     }
     func disconnect() {
@@ -130,6 +219,7 @@ import SwiftUI
         guard mfaRecovery == .null else { throw JosiError(message: "Save your sign-in recovery codes before signing out.") }
         if desktop.requiresClosure { try await desktop.close() }
         if let api {
+            JosiSession.forget(api.origin.absoluteString)
             do { _ = try await api.request("/auth/logout", method: "POST", body: [:]) }
             catch let error as JosiError where error.status == 401 { /* An already-ended session still clears locally. */ }
         }
@@ -152,7 +242,9 @@ import SwiftUI
     func poll() async {
         if let installAttempt { activity = NativeServer.progress(installAttempt) ?? activity }
         followWork()
-        guard screen == .workspace, !busy, !refreshing, NSApp.isActive else { return }
+        // A reply on its way keeps loading while Josi is in the background.
+        let waiting = turns.contains { ["queued", "running"].contains($0["status"].text) }
+        guard screen == .workspace, !busy, !refreshing, NSApp.isActive || waiting else { return }
         refreshing = true; defer { refreshing = false }
         do { try await reloadWorkspace(refreshGoals: workNeedsRefresh || (lastProgressSignal.map { $0.duration(to: .now) >= .seconds(20) } ?? true)) }
         catch is CancellationError {}
@@ -176,6 +268,10 @@ import SwiftUI
             guard self.api === api else { return }; taskRuns = runs["runs"].list
         }
         if let selectedThread { try await loadThread(selectedThread) }
+        if let waiting = try? await NativeApprovalsView.pendingCount(api: api), self.api === api { approvalsWaiting = waiting }
+        if JosiFlags.serverApp, isAdministrator, let value = try? await api.request("/admin/sessions"), self.api === api {
+            devicesConnected = value["sessions"].list.count
+        }
         if self.api === api { lastRefreshed = Date() }
     }
     private func adoptGoals(_ next: [Wire]) {

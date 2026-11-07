@@ -140,7 +140,7 @@ struct NativePermissionEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Edit Automation Permissions").font(.title2.bold())
+                Text("Edit Automation Permissions").font(JosiFont.title2)
                 Spacer()
                 Button("Close") { dismiss() }.disabled(model.busy)
             }.padding()
@@ -152,10 +152,10 @@ struct NativePermissionEditor: View {
                         ForEach(["userId", "serverId", "deviceId", "workspaceId"], id: \.self) { field in
                             Text(field.replacingOccurrences(of: "Id", with: "") + ": " + snapshot.policy["identity"][field].text)
                         }
-                    }.font(.caption).textSelection(.enabled)
+                    }.font(JosiFont.caption).textSelection(.enabled)
                     if !current {
                         Text("The saved permissions or connection changed. Close this editor and open the current settings before saving.")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(JosiTheme.error)
                     }
                     Toggle("Enable automation within these permissions", isOn: $enabled)
                     Picker("When no rule matches", selection: $unmatched) {
@@ -163,7 +163,7 @@ struct NativePermissionEditor: View {
                         Text("Ask for instructions").tag("ask")
                     }
                     Text("Deny and Ask take precedence over matching grants. Limits count the original task, including retries; editing a grant retains its previous usage.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     if !applications.isEmpty {
                         GroupBox("Add an app permission") {
                             VStack(alignment: .leading, spacing: 10) {
@@ -190,7 +190,7 @@ struct NativePermissionEditor: View {
                                     grants.append(PermissionGrantDraft(rule))
                                 }.disabled(!current || target.isEmpty || grants.filter({ !$0.removed }).count >= 100)
                                 Text("New rules start with Ask. Choose an allowance and explicit limits below. Saving permissions does not make an unfinished executor available.")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             }.padding(8)
                         }
                     }
@@ -204,7 +204,7 @@ struct NativePermissionEditor: View {
                                             .tag(profile["profileId"].text)
                                     }
                                 }
-                                TextField("Exact site, for example https://example.com", text: $browserOrigin).textFieldStyle(.roundedBorder)
+                                TextField("Exact site, for example https://example.com", text: $browserOrigin).textFieldStyle(JosiFieldStyle())
                                 Picker("Operation", selection: $browserAction) {
                                     Text("Observe").tag("browser.observe")
                                     Text("Navigate").tag("browser.navigate")
@@ -225,14 +225,14 @@ struct NativePermissionEditor: View {
                                     grants.append(PermissionGrantDraft(rule))
                                 }.disabled(!current || browserTarget.isEmpty || !exactOrigin(browserOrigin) || grants.filter({ !$0.removed }).count >= 100)
                                 Text("Use an exact site origin without a path or wildcard. New rules start with Ask. Network access, content sharing and unsupported operations need their own checks.")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             }.padding(8)
                         }
                     }
                     GroupBox("Add a network permission") {
                         VStack(alignment: .leading, spacing: 10) {
                             TextField("Exact destination, for example https://example.com", text: $networkOrigin)
-                                .textFieldStyle(.roundedBorder)
+                                .textFieldStyle(JosiFieldStyle())
                             Picker("Destination network", selection: $networkClass) {
                                 Text("Public internet").tag("public")
                                 Text("Private network").tag("private")
@@ -247,9 +247,9 @@ struct NativePermissionEditor: View {
                                 grants.append(PermissionGrantDraft(rule))
                             }.disabled(!current || !exactOrigin(networkOrigin) || grants.filter({ !$0.removed }).count >= 100)
                             Text("Use a destination without a path or wildcard. The connection must match both the destination and its actual network. New rules start with Ask; choose limits below.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             Text("Network permission does not grant browser input, file transfers, credentials or model sharing. Guest networking is still being connected; saving this rule does not turn it on.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                         }.padding(8)
                     }
                     if !modelTargets.isEmpty {
@@ -273,7 +273,7 @@ struct NativePermissionEditor: View {
                                     grants.append(PermissionGrantDraft(rule))
                                 }.disabled(!current || modelTarget.isEmpty || grants.filter({ !$0.removed }).count >= 100)
                                 Text("This rule starts with Ask. Choose explicit per-task limits below. Observation access and transmission access are checked separately.")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                             }.padding(8)
                         }
                     }
@@ -303,10 +303,10 @@ struct NativePermissionEditor: View {
                         }
                     } else {
                         Text("Enter whole nonnegative limits and choose a task for a task-only grant. Zero is an explicit limit; unlimited must be selected.")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(JosiTheme.error)
                     }
-                    if !validationMessage.isEmpty { Text(validationMessage).font(.callout).foregroundStyle(.secondary) }
-                    if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).textSelection(.enabled) }
+                    if !validationMessage.isEmpty { Text(validationMessage).font(JosiFont.callout).foregroundStyle(JosiTheme.lilac) }
+                    if !model.error.isEmpty { Text(model.error).foregroundStyle(JosiTheme.error).textSelection(.enabled) }
                 }.padding().disabled(model.busy)
             }
         }
@@ -319,22 +319,22 @@ struct NativePermissionEditor: View {
         GroupBox(grant.original["action"].text.replacingOccurrences(of: ".", with: " · ")) {
             VStack(alignment: .leading, spacing: 12) {
                 if let app = applications.first(where: { $0["applicationId"] == grant.original["scope"]["applicationId"] }) {
-                    Text(app["candidate"]["label"].text).font(.headline)
-                    Text(app["candidate"]["bundlePath"].text).font(.caption).textSelection(.enabled)
+                    Text(app["candidate"]["label"].text).font(JosiFont.headline)
+                    Text(app["candidate"]["bundlePath"].text).font(JosiFont.caption).textSelection(.enabled)
                 }
                 if let target = modelTargets.first(where: { $0["configurationId"] == grant.original["scope"]["configurationId"] }) {
-                    Text(target["candidate"]["providerId"].text + " / " + target["candidate"]["model"].text).font(.headline)
-                    Text("Saved configuration: " + target["candidate"]["configurationVersion"].text).font(.caption)
+                    Text(target["candidate"]["providerId"].text + " / " + target["candidate"]["model"].text).font(JosiFont.headline)
+                    Text("Saved configuration: " + target["candidate"]["configurationVersion"].text).font(JosiFont.caption)
                 }
                 if let profile = browserTargets.first(where: { $0["profileId"] == grant.original["scope"]["profileId"] }) {
-                    Text(profile["candidate"]["family"].text.capitalized + " · " + profile["candidate"]["label"].text).font(.headline)
-                    Text("Extension version: " + profile["candidate"]["extensionVersion"].text).font(.caption)
+                    Text(profile["candidate"]["family"].text.capitalized + " · " + profile["candidate"]["label"].text).font(JosiFont.headline)
+                    Text("Extension version: " + profile["candidate"]["extensionVersion"].text).font(JosiFont.caption)
                 }
                 Text(permissionScope(grant.original["scope"])).textSelection(.enabled)
                 Toggle("Remove this rule", isOn: binding.removed)
                 if grant.removed {
                     Text("Removing a denial can widen access. The exact before-and-after review will show this removal.")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.error)
                 } else {
                     Picker("Permission", selection: binding.mode) {
                         Text("Deny").tag("deny")
@@ -359,7 +359,7 @@ struct NativePermissionEditor: View {
                     if grant.mode == "until" {
                         DatePicker("Permission expires", selection: binding.expiry, displayedComponents: [.date, .hourAndMinute])
                         Text("The time is shown in this Mac’s time zone. An expired grant cannot authorize work.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
                     }
                     if ["standing", "task", "until"].contains(grant.mode) {
                         limitEditor("Task duration (milliseconds)", value: binding.duration, unlimited: binding.unlimitedDuration)
@@ -372,7 +372,7 @@ struct NativePermissionEditor: View {
     }
     private func limitEditor(_ label: String, value: Binding<String>, unlimited: Binding<Bool>) -> some View {
         HStack {
-            TextField(label, text: value).textFieldStyle(.roundedBorder).disabled(unlimited.wrappedValue)
+            TextField(label, text: value).textFieldStyle(JosiFieldStyle()).disabled(unlimited.wrappedValue)
             Toggle("Unlimited", isOn: unlimited).fixedSize()
         }
     }
