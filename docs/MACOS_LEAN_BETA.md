@@ -1,11 +1,10 @@
 # Josi for Mac: the lean beta
 
-`apps/macos-native/Josi.xcodeproj` builds two apps from one set of sources:
+`apps/macos-native/Josi.xcodeproj` builds one app, **Josi** (`JOSI_SERVER_APP`): the server with the client built in. "Run on this Mac", Server Controls, the menu bar item, Model and Network & address.
 
-- **Josi** (`JOSI_SERVER_APP`): server and client. "Run on this Mac", Server Controls, the menu bar item, Model and Network & address.
-- **Josi Client**: connects to an existing server by direct address. Nothing server-side shows.
+A standalone client is a later project. The `JOSI_SERVER_APP` checks stay in the sources for it, but nothing builds it.
 
-Open the project in Xcode, pick a scheme and run. Debug builds are signed to run locally. To point a Debug run of Josi at a development server, set `JOSI_LOCAL_SERVER` in the scheme's environment.
+Open the project in Xcode and run. Debug builds are signed to run locally. To point a Debug run of Josi at a development server, set `JOSI_LOCAL_SERVER` in the scheme's environment.
 
 ## Flags
 

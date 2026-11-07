@@ -90,7 +90,6 @@ attached; the download page fills its Mac door from the latest final release.
 
 ## Known gaps in 1.0
 
-- Josi Client has its own script, `scripts/macos/build-client-release.py`.
 - The app is Apple Silicon only (macOS 14.2+). Intel Macs are not covered.
 - The automation desktop and browser-control features assembled on the Mac
   branch are not functionally accepted; they stay in the build as they were
