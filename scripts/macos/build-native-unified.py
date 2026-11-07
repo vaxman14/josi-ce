@@ -162,8 +162,13 @@ def build(args):
         if item.name in ('Fonts', 'Mascot') or item.suffix == '.bundle':
             tree(item, resources / item.name)
     copy_file(native_project / 'Resources/JosiMark.png', resources / 'JosiMark.png')
+    # The Masko player is MIT and links dav1d; their notices ship with the app.
+    masko = output / 'xcode/SourcePackages/checkouts/masko-player'
+    (resources / 'third-party').mkdir()
+    copy_file(masko / 'LICENSE', resources / 'third-party/masko-player-LICENSE')
+    copy_file(masko / 'THIRD_PARTY_NOTICES.md', resources / 'third-party/masko-player-THIRD_PARTY_NOTICES.md')
     (output / 'native-app-entitlements.plist').write_bytes(plistlib.dumps({'com.apple.security.device.audio-input': True}))
-    copy_file(REPO / 'packaging/macos/Josi.png', resources / 'Josi.png')
+    copy_file(REPO / 'apps/macos-native/Resources/JosiIcon.png', resources / 'Josi.png')
     icons = output / 'Josi.iconset'; icons.mkdir()
     for size in (16, 32, 128, 256, 512):
         for scale in (1, 2):
@@ -270,6 +275,7 @@ def build(args):
     (uninstaller / 'Contents/Info.plist').write_bytes(plistlib.dumps(up))
     for name in ('Josi.png', 'Josi.icns', 'LICENSE', 'NOTICE'):
         copy_file(resources / name, ur / name)
+    tree(resources / 'Fonts', ur / 'Fonts')
     minimal = ur / 'runtime'
     (minimal / 'python/bin').mkdir(parents=True); (minimal / 'python/lib').mkdir()
     copy_file(runtime / 'python/bin/python3.11', minimal / 'python/bin/python3.11')

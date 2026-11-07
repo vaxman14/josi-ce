@@ -8,26 +8,30 @@ import Darwin
     let heading = NSTextField(labelWithString:"Uninstall Josi")
     let detail = NSTextField(wrappingLabelWithString:"")
     let progress = NSTextField(wrappingLabelWithString:"")
-    let button = NSButton(title:"Uninstall…",target:nil,action:nil)
-    let copy = NSButton(title:"Copy Diagnostics",target:nil,action:nil)
-    let privacy = NSButton(title:"Open Full Disk Access Settings…",target:nil,action:nil)
-    let reveal = NSButton(title:"Show This App in Finder",target:nil,action:nil)
+    let button = JosiButton("Uninstall…",gold:true)
+    let copy = JosiButton("Copy Diagnostics")
+    let privacy = JosiButton("Open Full Disk Access Settings…")
+    let reveal = JosiButton("Show This App in Finder")
     let spinner = NSProgressIndicator()
     var busy = false
     var output = ""
     var operation = UUID().uuidString
     var timer: Timer?
     func applicationDidFinishLaunching(_ notification: Notification) {
+        JosiLook.registerFonts();NSApp.appearance = NSAppearance(named:.darkAqua)
         let menu = NSMenu();let item = NSMenuItem();menu.addItem(item)
         let appMenu = NSMenu();item.submenu = appMenu
         let quit = NSMenuItem(title:"Quit Uninstall Josi",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q");quit.target = NSApp;appMenu.addItem(quit);NSApp.mainMenu = menu
-        window = NSWindow(contentRect:NSRect(x:0,y:0,width:600,height:500),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
+        window = NSWindow(contentRect:NSRect(x:0,y:0,width:600,height:500),styleMask:[.titled,.closable,.miniaturizable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
         window.title = "Uninstall Josi";window.contentMinSize = NSSize(width:600,height:500);window.delegate = self
+        window.titlebarAppearsTransparent = true;window.titleVisibility = .hidden;window.backgroundColor = JosiLook.deep;window.contentView = JosiBackdrop()
         let artwork = JosiArtworkView(logo:NSImage(named:"Josi") ?? NSImage())
-        heading.font = .boldSystemFont(ofSize:24)
+        heading.font = JosiLook.display(24);heading.textColor = JosiLook.text
         choice.addItems(withTitles:["Uninstall — keep my data","Complete removal — delete all Josi data"])
         choice.target = self;choice.action = #selector(updateChoice)
-        detail.font = .systemFont(ofSize:14)
+        choice.font = JosiLook.body(13)
+        detail.font = JosiLook.body(14);detail.textColor = JosiLook.lilac
+        progress.font = JosiLook.body(13);progress.textColor = JosiLook.lilac
         button.target = self;button.action = #selector(start)
         copy.target = self;copy.action = #selector(copyDiagnostics);copy.isEnabled = false
         privacy.target = self;privacy.action = #selector(openPrivacy);privacy.isHidden = true
@@ -38,7 +42,7 @@ import Darwin
         let permissions = NSStackView(views:[privacy,reveal]);permissions.spacing = 12
         let stack = NSStackView(views:[artwork,heading,choice,detail,status,permissions,actions]);stack.orientation = .vertical;stack.alignment = .leading;stack.spacing = 18;stack.translatesAutoresizingMaskIntoConstraints = false
         window.contentView!.addSubview(stack)
-        NSLayoutConstraint.activate([artwork.widthAnchor.constraint(equalTo:stack.widthAnchor),stack.leadingAnchor.constraint(equalTo:window.contentView!.leadingAnchor,constant:28),stack.trailingAnchor.constraint(equalTo:window.contentView!.trailingAnchor,constant:-28),stack.topAnchor.constraint(equalTo:window.contentView!.topAnchor,constant:28),stack.bottomAnchor.constraint(lessThanOrEqualTo:window.contentView!.bottomAnchor,constant:-24)])
+        NSLayoutConstraint.activate([artwork.widthAnchor.constraint(equalTo:stack.widthAnchor),stack.leadingAnchor.constraint(equalTo:window.contentView!.leadingAnchor,constant:28),stack.trailingAnchor.constraint(equalTo:window.contentView!.trailingAnchor,constant:-28),stack.topAnchor.constraint(equalTo:window.contentView!.topAnchor,constant:44),stack.bottomAnchor.constraint(lessThanOrEqualTo:window.contentView!.bottomAnchor,constant:-24)])
         updateChoice();window.center();window.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
         timer = Timer.scheduledTimer(withTimeInterval:0.4,repeats:true) { [weak self] _ in Task { @MainActor in self?.poll() } }
     }

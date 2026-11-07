@@ -142,11 +142,11 @@ def main():
     if release.exists():
         shutil.rmtree(release)
     release.mkdir(parents=True)
-    package_name = 'Josi-CE-' + args.version + '-macOS-arm64.pkg'
+    package_name = 'Josi-' + args.version + '-macOS-arm64.pkg'
     shutil.copyfile(package, release / package_name)
     sha256 = digest(release / package_name)
     (release / 'SHA256SUMS.txt').write_text(sha256 + '  ' + package_name + '\n')
-    notes = ['Josi CE ' + args.version + ' for Mac (Apple Silicon, macOS 14.2 or newer).', '',
+    notes = ['Josi ' + args.version + ' for Mac (Apple Silicon, macOS 14.2 or newer).', '',
              'Download ' + package_name + ', open it, and Josi opens when the installer is done. About 6 GB of disk.', '',
              'Check the file: its SHA-256 is in SHA256SUMS.txt, and the installer is signed by Socal Receptionist LLC'
              + (' and notarized by Apple.' if not args.skip_notarize else '. (This build is NOT notarized.)'), '',
