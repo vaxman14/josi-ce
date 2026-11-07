@@ -5,6 +5,7 @@ import SwiftUI
 struct JosiStage: View {
     var title: String
     var subtitle: String
+    @EnvironmentObject var model: JosiModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulsing = false
     var body: some View {
@@ -14,7 +15,7 @@ struct JosiStage: View {
                     .frame(width: 200, height: 200).scaleEffect(pulsing ? 1.15 : 1).opacity(pulsing ? 0.55 : 1)
                 Circle().stroke(JosiTheme.gold.opacity(0.45), lineWidth: 1).frame(width: 152, height: 152)
                     .scaleEffect(pulsing ? 1.06 : 1).opacity(pulsing ? 0.4 : 1)
-                JosiMark(size: 96).shadow(color: JosiTheme.gold.opacity(0.35), radius: 18)
+                JosiGhost(ghost: model.ghost, size: 200)
             }.frame(width: 180, height: 180)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: pulsing)
             Text(title).font(JosiFont.display(34)).multilineTextAlignment(.center)

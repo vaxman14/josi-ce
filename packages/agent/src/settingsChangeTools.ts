@@ -13,14 +13,36 @@ export interface SettingsArea {
   title: string;
   /** Who this changes: the proposer's own settings, or the installation. */
   scope: 'personal' | 'administrator';
-  /** A change the super-admin is told about by email when a member makes it. */
+  /** Approving it takes the approver's password, checked by the server. A member
+   * applying one is also reported to the super-admin by email. */
   sensitive: boolean;
   method: 'PUT' | 'PATCH' | 'POST' | 'DELETE';
   /** Path under /api, with {param} placeholders filled from `params`. */
   path: string;
   params?: string[];
+  /** The only body fields this area may carry. Without this a harmless-looking
+   * area could smuggle a sensitive field past the password. */
+  keys?: string[];
   /** For the model: what the body carries, in plain words. */
   fields: string;
+}
+
+/** Never in the catalogue. Credentials must not pass through a model, and Cardinal
+ * Rules, the Vault and device approval have their own protected human approval. */
+export const NEVER_BY_ASKING: readonly string[] = ['/vault', '/admin/vault', '/admin/automation', '/auth', '/setup', '/admin/licence', '/admin/mail/smtp', '/admin/connectors/clients'];
+
+const SECRET_KEY = /pass(word|phrase|code)|secret|api[_-]?key|credential|private[_-]?key|recovery|token$/i;
+const SECRET_VALUE = /^(sk-|ghp_|gho_|xox[abp]-|AIza)[A-Za-z0-9_-]{8,}/;
+/** The first field, at any depth, that looks like it carries a secret. */
+export function findSecret(value: unknown, path = 'body'): string | null {
+  if (typeof value === 'string') return SECRET_VALUE.test(value.trim()) ? path : null;
+  if (!value || typeof value !== 'object') return null;
+  for (const [key, child] of Object.entries(value)) {
+    if (SECRET_KEY.test(key)) return `${path}.${key}`;
+    const found = findSecret(child, `${path}.${key}`);
+    if (found) return found;
+  }
+  return null;
 }
 
 /** The catalogue is the allowlist: a proposal must name one of these areas,
@@ -28,60 +50,116 @@ export interface SettingsArea {
 export const SETTINGS_AREAS: readonly SettingsArea[] = [
   // ---- personal: changes only the person's own settings
   { area: 'approval_level', title: 'How much Josi may do without asking me', scope: 'personal', sensitive: true,
-    method: 'PUT', path: '/assistant/approval-levels/{actionClass}', params: ['actionClass'],
+    method: 'PUT', path: '/assistant/approval-levels/{actionClass}', params: ['actionClass'], keys: ['level'],
     fields: 'params.actionClass: email_send, calendar_write, contacts_write or task_management. body.level: "always_ask", "risky_only" or "automatic".' },
   { area: 'memory_learning', title: 'How Josi learns new memories', scope: 'personal', sensitive: false,
-    method: 'PUT', path: '/persona/settings',
+    method: 'PUT', path: '/persona/settings', keys: ['memoryMode'],
     fields: 'body.memoryMode: "manual" (review suggestions), "automatic" (remember conversation facts) or "off".' },
   { area: 'personality_profile', title: 'My assistant profile (soul, about me, working style)', scope: 'personal', sensitive: false,
-    method: 'PUT', path: '/persona/profiles/{kind}', params: ['kind'],
+    method: 'PUT', path: '/persona/profiles/{kind}', params: ['kind'], keys: ['content'],
     fields: 'params.kind: soul, user or agents_user. body.content: the full new text of that profile file.' },
   { area: 'connection_capability', title: 'What a connected account may be used for', scope: 'personal', sensitive: true,
-    method: 'PUT', path: '/connections/{id}/capabilities/{capability}', params: ['id', 'capability'],
+    method: 'PUT', path: '/connections/{id}/capabilities/{capability}', params: ['id', 'capability'], keys: ['enabled'],
     fields: 'params.id: the connection id from get_provider_status. params.capability: for example mail.read, mail.send, calendar.read, calendar.write, contacts.read, drive.read. body.enabled: true or false.' },
   { area: 'disconnect_account', title: 'Disconnect one of my accounts', scope: 'personal', sensitive: true,
-    method: 'DELETE', path: '/connections/{id}', params: ['id'],
+    method: 'DELETE', path: '/connections/{id}', params: ['id'], keys: [],
     fields: 'params.id: the connection id from get_provider_status. No body.' },
   // ---- administrator: changes the installation; the super-admin decides
   { area: 'workspace', title: 'Workspace name and time zone', scope: 'administrator', sensitive: false,
-    method: 'PATCH', path: '/admin/workspace',
+    method: 'PATCH', path: '/admin/workspace', keys: ['name', 'timezone'],
     fields: 'body.name: the workspace name. body.timezone: an IANA zone such as America/Los_Angeles. Send both.' },
   { area: 'approval_policy_ceiling', title: 'The loosest approval level anyone may choose', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/admin/assistant/approval-policy/{actionClass}', params: ['actionClass'],
+    method: 'PUT', path: '/admin/assistant/approval-policy/{actionClass}', params: ['actionClass'], keys: ['maxLevel', 'confirmRelaxation'],
     fields: 'params.actionClass: the class key, for example email_send. body.maxLevel: "always_ask", "risky_only" or "automatic". body.confirmRelaxation: true when loosening.' },
   { area: 'model_spending_caps', title: 'Monthly model spending caps', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/admin/llm/caps',
+    method: 'PUT', path: '/admin/llm/caps', keys: ['monthlyCostUsd', 'monthlyTokens'],
     fields: 'body.monthlyCostUsd: a positive number or null for no cap. body.monthlyTokens: a positive whole number or null.' },
   { area: 'member_model_caps', title: 'One person\'s monthly model allowance', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/admin/llm/caps/users/{userId}', params: ['userId'],
+    method: 'PUT', path: '/admin/llm/caps/users/{userId}', params: ['userId'], keys: ['monthlyCostUsd', 'monthlyTokens'],
     fields: 'params.userId: the person\'s user id. body.monthlyCostUsd and body.monthlyTokens as for model_spending_caps.' },
   { area: 'backup_schedule', title: 'When the server backs itself up', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/ops/admin/backups/schedule',
+    method: 'PUT', path: '/ops/admin/backups/schedule', keys: ['enabled', 'hour', 'keep', 'copyTo'],
     fields: 'body.enabled: true or false. body.hour: the hour of the day, 0 to 23, in the server\'s time zone. body.keep: how many backups to keep, 1 to 60. body.copyTo: a folder path to copy each backup into, or null. Send only the fields that change.' },
   { area: 'local_only_models', title: 'Local-only mode for models', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/admin/llm/local-only',
+    method: 'PUT', path: '/admin/llm/local-only', keys: ['enabled'],
     fields: 'body.enabled: true stops every request to external model providers.' },
   { area: 'pc_control_enabled', title: 'Allow Josi to control this PC', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/admin/pc-control/enabled',
+    method: 'PUT', path: '/admin/pc-control/enabled', keys: ['enabled'],
     fields: 'body.enabled: true or false.' },
   { area: 'pc_control_full_control', title: 'Full control on this PC', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/admin/pc-control/full-control',
+    method: 'PUT', path: '/admin/pc-control/full-control', keys: ['enabled'],
     fields: 'body.enabled: true or false. Turning it on asks the person for their password when they approve.' },
   { area: 'pc_control_scope', title: 'An exact PC Control permission', scope: 'administrator', sensitive: true,
     method: 'PUT', path: '/admin/pc-control/policies',
     fields: 'body.action: for example browser.view, browser.fill, browser.submit, folder.read. body.scope: for a browser {kind:"browser", target:"https://site", application:"C:\\\\...\\\\chrome.exe", profile:"Default"}; for a folder {kind:"folder", target:"C:\\\\Folder"}. body.mode: never, ask, task, temporary or always. body.expiresAt for temporary.' },
   { area: 'member_connector_permission', title: 'Whether members may use a connector capability', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/connections/policy/{capability}', params: ['capability'],
+    method: 'PUT', path: '/admin/connectors/policy/{capability}', params: ['capability'], keys: ['allowed', 'note'],
     fields: 'params.capability: the capability key. body.allowed: true or false. body.note: optional reason shown to members.' },
   { area: 'developer_service_access', title: 'Who may connect a developer service', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/admin/developer-services/{service}', params: ['service'],
+    method: 'PUT', path: '/admin/developer-services/{service}', params: ['service'], keys: ['mode', 'userIds', 'note'],
     fields: 'params.service: github, gitlab, vercel, netlify and so on. body.mode: not_allowed, everyone or specific_users. body.userIds: list for specific_users. body.note: optional.' },
   { area: 'storage_policy', title: 'Storage limits and file types', scope: 'administrator', sensitive: true,
     method: 'PUT', path: '/storage/admin/policy',
     fields: 'The storage policy fields as shown under Storage: maximum file size, storage per person, files per person, allowed file types, archive settings. Send only the fields to change.' },
   { area: 'member_account', title: 'A member\'s role or status', scope: 'administrator', sensitive: true,
-    method: 'PATCH', path: '/admin/users/{userId}', params: ['userId'],
+    method: 'PATCH', path: '/admin/users/{userId}', params: ['userId'], keys: ['status', 'role', 'displayName'],
     fields: 'params.userId: the person\'s user id. body.status: active or disabled; body.role: member or super_admin; body.displayName.' },
+  // ---- personal, added with the settings pages
+  { area: 'show_narration', title: 'Whether Josi narrates what she is doing', scope: 'personal', sensitive: false,
+    method: 'PUT', path: '/persona/settings', keys: ['showNarration'],
+    fields: 'body.showNarration: true or false.' },
+  { area: 'calendar_source', title: 'Which of my calendars Josi uses', scope: 'personal', sensitive: false,
+    method: 'PUT', path: '/calendar/sources/{id}', params: ['id'], keys: ['selected', 'writeDefault'],
+    fields: 'params.id: the calendar source id. body.selected: true or false. body.writeDefault: true makes it the calendar new events go to.' },
+  { area: 'contact_sync_mode', title: 'How one account syncs my contacts', scope: 'personal', sensitive: true,
+    method: 'PUT', path: '/contacts/sync/{connectionId}', params: ['connectionId'], keys: ['mode'],
+    fields: 'params.connectionId: the connection id from get_provider_status. body.mode: the sync mode shown under Contacts.' },
+  { area: 'contact_sync_interval', title: 'How often my contacts sync', scope: 'personal', sensitive: false,
+    method: 'PUT', path: '/contacts/sync/{originId}/interval', params: ['originId'], keys: ['seconds'],
+    fields: 'params.originId: the contact source id. body.seconds: the interval in seconds.' },
+  { area: 'folder_indexing', title: 'Whether Josi indexes a connected folder', scope: 'personal', sensitive: true,
+    method: 'PUT', path: '/storage/mappings/{id}/indexing', params: ['id'], keys: ['enabled'],
+    fields: 'params.id: the mapping id from list_workspace_mappings. body.enabled: true or false.' },
+  { area: 'folder_permissions', title: 'What Josi may do in a connected folder', scope: 'personal', sensitive: true,
+    method: 'PUT', path: '/storage/mappings/{id}/permissions', params: ['id'], keys: ['create', 'edit', 'move', 'delete'],
+    fields: 'params.id: the mapping id from list_workspace_mappings. body.create, body.edit, body.move, body.delete: true or false.' },
+  { area: 'parental_controls', title: 'A child\'s schedule and daily limit', scope: 'personal', sensitive: true,
+    method: 'PUT', path: '/parental/children/{childUserId}/controls', params: ['childUserId'], keys: ['timezone', 'dailyLimitMinutes', 'scheduleEnabled', 'windows'],
+    fields: 'params.childUserId: the child\'s user id. body.timezone, body.dailyLimitMinutes (a number or null), body.scheduleEnabled, body.windows as shown under Family. Send only the fields that change.' },
+  // ---- administrator, added with the settings pages
+  { area: 'model_provider', title: 'Which model Josi uses', scope: 'administrator', sensitive: true,
+    method: 'PUT', path: '/admin/llm/providers/{role}', params: ['role'], keys: ['provider', 'model', 'baseUrl', 'externalAcknowledged'],
+    fields: 'params.role: primary or fallback. body.provider and body.model. body.baseUrl for a self-hosted provider. body.externalAcknowledged: true when the person has agreed to an external provider. An API key is never part of this: the person adds it under Model.' },
+  { area: 'remove_fallback_model', title: 'Remove the fallback model', scope: 'administrator', sensitive: true,
+    method: 'DELETE', path: '/admin/llm/providers/fallback', keys: [],
+    fields: 'No body.' },
+  { area: 'network_address', title: 'The address this server is reached at', scope: 'administrator', sensitive: true,
+    method: 'PUT', path: '/admin/network', keys: ['publicUrl'],
+    fields: 'body.publicUrl: https://name-or-ip:port, or http://localhost:port for this PC only.' },
+  { area: 'telemetry', title: 'Anonymous telemetry', scope: 'administrator', sensitive: true,
+    method: 'PUT', path: '/ops/admin/telemetry', keys: ['enabled', 'endpoint'],
+    fields: 'body.enabled: true or false. body.endpoint: optional address to send to.' },
+  { area: 'member_storage_access', title: 'What one person may connect and index', scope: 'administrator', sensitive: true,
+    method: 'PUT', path: '/storage/admin/capabilities/{userId}', params: ['userId'], keys: ['mayMapLocal', 'mayMapCloud', 'mayIndex', 'maxFiles', 'maxBytes'],
+    fields: 'params.userId: the person\'s user id. body.mayMapLocal, body.mayMapCloud, body.mayIndex: true or false. body.maxFiles, body.maxBytes: whole numbers.' },
+  { area: 'member_coding_access', title: 'Whether one person may run coding work', scope: 'administrator', sensitive: true,
+    method: 'PUT', path: '/workspace/admin/coding/{userId}', params: ['userId'], keys: ['enabled'],
+    fields: 'params.userId: the person\'s user id. body.enabled: true or false.' },
+  { area: 'messaging_channel', title: 'Turn a messaging app on or off', scope: 'administrator', sensitive: true,
+    method: 'POST', path: '/admin/channels/{provider}/enabled', params: ['provider'], keys: ['enabled'],
+    fields: 'params.provider: whatsapp or slack. body.enabled: true or false. Telegram has its own area.' },
+  { area: 'telegram_channel', title: 'Turn Telegram on or off', scope: 'administrator', sensitive: true,
+    method: 'POST', path: '/admin/telegram/enabled', keys: ['enabled'],
+    fields: 'body.enabled: true or false.' },
+  { area: 'custom_api_enable', title: 'Switch on a custom API', scope: 'administrator', sensitive: true,
+    method: 'POST', path: '/admin/custom-apis/{id}/enable', params: ['id'], keys: [],
+    fields: 'params.id: the connection id. No body.' },
+  { area: 'custom_api_disable', title: 'Switch off a custom API', scope: 'administrator', sensitive: true,
+    method: 'POST', path: '/admin/custom-apis/{id}/disable', params: ['id'], keys: [],
+    fields: 'params.id: the connection id. No body.' },
+  { area: 'member_settings_policy', title: 'Whether members\' changes wait for the super-admin', scope: 'administrator', sensitive: true,
+    method: 'PUT', path: '/settings-changes/policy', keys: ['memberSettingsChanges'],
+    fields: 'body.memberSettingsChanges: "self" or "super_admin".' },
 ];
 const AREAS = new Map(SETTINGS_AREAS.map((a) => [a.area, a]));
 
@@ -101,6 +179,8 @@ export const SETTINGS_CHANGE_TOOLS: ToolSpec[] = [
 export const SETTINGS_CHANGE_TOOL_NAMES = new Set(SETTINGS_CHANGE_TOOLS.map((t) => t.def.name));
 export const SETTINGS_CHANGE_PROMPT = 'When the person asks to change a Josi setting (approvals, permissions, PC control, models, workspace, accounts), look it up with list_josi_settings and prepare it with propose_josi_setting_change. '
   + 'The change takes effect only after they approve it in the Josi app, so tell them it is waiting for their approval (or the administrator\'s) and never say it is done. '
+  + 'A sensitive change also asks them for their password in that popup, so say so. '
+  + 'Passwords, API keys and other secrets, two-factor sign-in, Cardinal Rules, the Vault and device approvals cannot be changed by asking: never prepare one, and tell them which screen to use. '
   + 'Preparing a setting change is one quick step: never turn it into a work goal and never use own_goal, checkpoint_goal or revise_goal_plan for it. Call list_josi_settings, then propose_josi_setting_change, then answer in one short sentence. '
   + 'Once the person approves, the app applies it and a note saying so is added to this conversation; if asked later what changed, rely on those notes, not on an earlier "waiting" message.';
 
@@ -128,7 +208,10 @@ export async function executeSettingsChangeTool(db: Db, userId: string, name: st
   if (summary.length < 8 || summary.length > 600) return { ok: false, code: 'summary_required', message: 'Write one or two plain sentences saying what will change.' };
   const params = input.params && typeof input.params === 'object' && !Array.isArray(input.params) ? input.params as Record<string, unknown> : {};
   const body = input.body && typeof input.body === 'object' && !Array.isArray(input.body) ? input.body as Record<string, unknown> : {};
-  if ('password' in body) return { ok: false, code: 'no_passwords', message: 'Never include a password. The person confirms it themselves when they approve.' };
+  const secret = findSecret(body);
+  if (secret) return { ok: false, code: 'no_secrets', message: `Never include a password, key or token (${secret}). The person enters those themselves.` };
+  const extra = area.keys ? Object.keys(body).filter((key) => !area.keys!.includes(key)) : [];
+  if (extra.length) return { ok: false, code: 'unsupported_field', message: `This area cannot change ${extra.join(', ')}.` };
   const encoded = JSON.stringify(body);
   if (encoded.length > 8192) return { ok: false, code: 'body_too_large', message: 'Keep the change under 8 KB.' };
   let path: string;
@@ -141,6 +224,6 @@ export async function executeSettingsChangeTool(db: Db, userId: string, name: st
     [userId, area.scope, area.area, area.sensitive, area.title, summary, area.method, path, json(body), threadId]);
   return { ok: true, proposalId: row.id, scope: area.scope, state: 'proposed',
     message: area.scope === 'administrator'
-      ? 'Prepared. It waits for the super-admin\'s approval under Approvals in the Josi app; nothing has changed yet.'
-      : 'Prepared. It waits for the person\'s approval under Approvals in the Josi app (a popup also asks them); nothing has changed yet.' };
+      ? `Prepared. It waits for the super-admin\'s approval under Approvals in the Josi app${area.sensitive ? ', with their password' : ''}; nothing has changed yet.`
+      : `Prepared. It waits for the person\'s approval under Approvals in the Josi app (a popup also asks them${area.sensitive ? ', with their password' : ''}); nothing has changed yet.` };
 }

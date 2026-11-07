@@ -109,7 +109,9 @@ struct NativeApprovalsView: View {
     @State private var error = ""
     @State private var note = ""
     @State private var generation = 0
-    private var nothing: Bool { approvals.isEmpty && calls.isEmpty }
+    @State private var changes: [Wire] = []
+    @State private var changeList: Wire = .null
+    private var nothing: Bool { approvals.isEmpty && calls.isEmpty && changes.isEmpty }
 
     /// Everything waiting on this person, for the sidebar badge. An older server
     /// with no approvals route has nothing waiting.
@@ -119,7 +121,8 @@ struct NativeApprovalsView: View {
         catch where nativeRouteMissing(error) { return 0 }
         let prepared = snapshot["count"] == .null ? snapshot["approvals"].list.count : snapshot["count"].integer
         let requests = (try? await api.request("/custom-apis/pending"))?["pending"].list.count ?? 0
-        return prepared + requests
+        let changes = (try? await api.request("/settings-changes"))?["proposals"].list.filter { $0["canApprove"].flag }.count ?? 0
+        return prepared + requests + changes
     }
 
     var body: some View {
@@ -141,6 +144,7 @@ struct NativeApprovalsView: View {
                         NativeLeanNote(text: "When Josi wants to do something it should ask about first, it will appear here.")
                     }
                 }
+                SettingsChangeList(changes: changes, policy: changeList) { await refresh(full: false) }
                 if !calls.isEmpty {
                     NativeLeanTitle(text: "Requests to a connected API")
                     NativeLeanNote(text: "These have not happened. Approving one sends it immediately, exactly as described.")
@@ -232,6 +236,7 @@ struct NativeApprovalsView: View {
         }
         guard full else { return }
         if let result = try? await api.request("/custom-apis/pending"), current() { calls = result["pending"].list }
+        if let result = try? await api.request("/settings-changes"), current() { changeList = result; changes = result["proposals"].list }
         do {
             let result = try await api.request("/assistant/approvals/history")
             guard current() else { return }

@@ -45,7 +45,8 @@ import Foundation
             case "draft": model.draft = rest
             case "send": model.draft = rest; try await model.send()
             case "new": try await model.newThread()
-            case "sidebar": model.toggleSidebar()
+            case "menu": model.showMenu(!model.menuOpen)
+            case "history": model.showHistory(!model.historyOpen)
             case "server": model.openServerControls()
             case "signout": try await model.signOut()
             case "activate": NSApp.activate(ignoringOtherApps: true); NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)

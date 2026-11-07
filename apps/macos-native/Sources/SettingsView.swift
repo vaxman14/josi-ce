@@ -11,6 +11,13 @@ struct NativeSettingsView: View {
     var body: some View {
         NativeLeanPage {
             JosiHeading(title: "Settings", subtitle: "Your account, how Josi works with you, and how the app looks.")
+            if let update = model.update {
+                JosiCard {
+                    Text("Josi \(update.version) is available").font(JosiFont.headline)
+                    NativeLeanNote(text: "Download the signed installer. It updates Josi in place and keeps your data.")
+                    Button("Download Update") { NSWorkspace.shared.open(update.url) }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
+                }
+            }
             NativeAccountView()
             NativePasskeysView()
             NativeLeanTitle(text: "Personalization")

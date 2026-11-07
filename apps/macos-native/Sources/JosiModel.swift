@@ -34,7 +34,14 @@ import SwiftUI
     @Published var appleLink = ""
     @Published var appleMfa = false
     @Published var signInMethods: Wire = .null
-    @Published var sidebarCollapsed = UserDefaults.standard.bool(forKey: "josi.sidebarCollapsed")
+    @Published var menuOpen = false
+    @Published var historyOpen = false
+    @Published var modelName = ""
+    @Published var settingsProposal: Wire = .null
+    @Published var update: JosiUpdates.Release?
+    let ghost = GhostController()
+    private var offeredChanges: Set<String> = []
+    private var applyingChanges: Set<String> = []
     @Published var showServerControls = false
     @Published var approvalsWaiting = 0
     @Published var devicesConnected: Int?
@@ -80,9 +87,13 @@ import SwiftUI
         do { receipt = try ServerReceipt.read() }
         catch { self.error = error.localizedDescription }
     }
-    func toggleSidebar() {
-        withAnimation(.easeInOut(duration: 0.25)) { sidebarCollapsed.toggle() }
-        UserDefaults.standard.set(sidebarCollapsed, forKey: "josi.sidebarCollapsed")
+    func showMenu(_ open: Bool) {
+        guard open != menuOpen else { return }
+        withAnimation(.easeOut(duration: JosiMotion.still ? 0 : 0.28)) { menuOpen = open }
+    }
+    func showHistory(_ open: Bool) {
+        guard open != historyOpen else { return }
+        withAnimation(.easeOut(duration: JosiMotion.still ? 0 : 0.34)) { historyOpen = open }
     }
     func openServerControls() {
         guard JosiFlags.serverApp else { return }
@@ -269,6 +280,7 @@ import SwiftUI
         }
         if let selectedThread { try await loadThread(selectedThread) }
         if let waiting = try? await NativeApprovalsView.pendingCount(api: api), self.api === api { approvalsWaiting = waiting }
+        await checkSettingsChanges(api)
         if JosiFlags.serverApp, isAdministrator, let value = try? await api.request("/admin/sessions"), self.api === api {
             devicesConnected = value["sessions"].list.count
         }
@@ -402,6 +414,58 @@ import SwiftUI
         lastAcceptedTurnId = accepted["turn"]["id"].text
         self.pending = nil; pendingMessage = false
         try await reloadWorkspace()
+    }
+    // ------------------------------------------ settings changes by talking
+    /// A proposal this person can make live opens the approval popup, once. One
+    /// approved for this person's own app is applied now.
+    private func checkSettingsChanges(_ api: JosiAPI) async {
+        guard let list = try? await api.request("/settings-changes"), self.api === api else { return }
+        for item in list["proposals"].list {
+            if item["state"].text == "approved", item["apply"] != .null {
+                if applyingChanges.insert(item.identifier).inserted { try? await applySettingsChange(item, item["apply"]) }
+            } else if item["state"].text == "proposed", item["canApprove"].flag, settingsProposal == .null,
+                      offeredChanges.insert(item.identifier).inserted {
+                settingsProposal = item
+            }
+        }
+    }
+    /// Approve or decline. Approving a change this app applies performs it now.
+    func decideSettingsChange(_ proposal: Wire, approve: Bool, password: String? = nil) async throws {
+        guard let api else { return }
+        var body: [String: Wire] = ["approve": .bool(approve)]
+        if let password { body["password"] = .string(password) }
+        let result = try await api.request("/settings-changes/\(try api.uuid(proposal.identifier))/decide", method: "POST", body: .object(body))
+        guard approve, result["apply"] != .null else { return }
+        applyingChanges.insert(proposal.identifier)
+        try await applySettingsChange(proposal, result["apply"], password: password)
+    }
+    /// Performs the stored request with this app's own session, so the setting's own
+    /// route decides. A route that needs the account password gets the one from the
+    /// popup; one that wants a session step-up gets that from the same password.
+    private func applySettingsChange(_ proposal: Wire, _ apply: Wire, password: String? = nil) async throws {
+        guard let api else { return }
+        let path = apply["path"].text, method = apply["method"].text
+        let body: Wire? = method == "DELETE" ? nil : apply["body"] == .null ? .object([:]) : apply["body"]
+        var failure: String?
+        do { _ = try await api.request(path, method: method, body: body) }
+        catch let e as JosiError where e.status == 401 && e.localizedDescription.localizedCaseInsensitiveContains("password") {
+            if let password {
+                do {
+                    var fields: [String: Wire] = ["password": .string(password)]
+                    if case .object(let given)? = body { fields.merge(given) { current, _ in current } }
+                    _ = try await api.request(path, method: method, body: .object(fields))
+                } catch let again as JosiError where again.status == 401 {
+                    do {
+                        _ = try await api.request("/assistant/step-up", method: "POST", body: ["password": .string(password)])
+                        _ = try await api.request(path, method: method, body: body)
+                    } catch { failure = error.localizedDescription }
+                } catch { failure = error.localizedDescription }
+            } else { failure = "This setting asks for your password. Approve it again from Approvals." }
+        } catch { failure = error.localizedDescription }
+        var report: [String: Wire] = ["ok": .bool(failure == nil)]
+        if let failure { report["error"] = .string(failure) }
+        _ = try? await api.request("/settings-changes/\(try api.uuid(proposal.identifier))/applied", method: "POST", body: .object(report))
+        if let failure { throw JosiError(message: "Not applied: " + failure) }
     }
     func control(_ goal: Wire, action: String, instruction: String = "") async throws {
         guard let api else { return }

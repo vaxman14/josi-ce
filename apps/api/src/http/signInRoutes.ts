@@ -229,7 +229,7 @@ export function signInRoutes(ctx: SignInRoutesCtx): Router {
       return res.status(429).json({ error: 'too many attempts, try again later', redirect: failed });
     }
     if ('refused' in proof) return res.status(401).json({ error: 'That passkey did not work here.', redirect: failed });
-    const code = await issueNativeCode(db, proof.user.id, 'auth.passkey_native_code_issued');
+    const code = await issueNativeCode(db, proof.user.id, 'auth.passkey_native_code_issued', true);
     return res.json({ redirect: nativeCallback(GOOGLE_NATIVE_RETURN_URI, { code, state }) });
   }));
 

@@ -12,7 +12,9 @@ Open the project in Xcode and run. Debug builds are signed to run locally. To po
 
 ## Mascot and type
 
-The ghost's clips are transparent HEVC in `Resources/Mascot` (`idle-wiggle`, `listening`, `thinking`, `gentle-float`), played by the Masko player package. A missing clip falls back to the gold J. `JosiMark` in `JosiTheme.swift` is the one place the J is drawn. Fonts and their licenses are in `Resources/Fonts`.
+The ghost's 14 clips are transparent HEVC in `Resources/Mascot`, played by the Masko player package. `GhostController` in `JosiGhost.swift` picks the clip from one state, the same states as `Ghost.cs` on Windows, and the status line and thinking chip follow it. A missing clip falls back to the gold J, and Reduce Motion shows `still.png`.
+
+Chat is the Ghost Stage: Josi big in the middle, the current line under her, the full conversation in a panel that rises over the stage, and the menu sliding in from the left (⌃⌘S).
 
 ## Sign-in
 

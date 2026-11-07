@@ -12,12 +12,14 @@ export function nativeCallback(returnUri: string, params: Record<string, string>
   return url.toString();
 }
 
-export async function issueNativeCode(db: Db, userId: string, eventKind: string): Promise<string> {
+/** `passkeyProved` is set only by the route that verified a passkey. The exchange
+ * skips the authenticator for such a code and for no other. */
+export async function issueNativeCode(db: Db, userId: string, eventKind: string, passkeyProved = false): Promise<string> {
   const code = randomBytes(32).toString('base64url');
   await db.query(
-    `insert into auth_native_codes (code_hash, user_id, expires_at)
-     values ($1, $2, now() + interval '2 minutes')`,
-    [createHash('sha256').update(code).digest('hex'), userId],
+    `insert into auth_native_codes (code_hash, user_id, expires_at, passkey_proved)
+     values ($1, $2, now() + interval '2 minutes', $3)`,
+    [createHash('sha256').update(code).digest('hex'), userId, passkeyProved],
   );
   await appendEvent(db, { actorUserId: userId, actor: 'user', kind: eventKind, subjectType: 'user', subjectId: userId });
   return code;

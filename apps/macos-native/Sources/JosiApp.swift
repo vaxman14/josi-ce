@@ -45,6 +45,10 @@ import SwiftUI
                 .frame(minWidth: 920, minHeight: 660)
                 .task {
                     delegate.model = model; model.refreshLocal(); await model.resume()
+                    model.ghost.set(.hello)
+#if !DEBUG
+                    model.update = await JosiUpdates.newer()
+#endif
 #if DEBUG
                     JosiDriver.start(model)
 #endif
@@ -66,7 +70,7 @@ import SwiftUI
             }
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .sidebar) {
-                Button(model.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar") { model.toggleSidebar() }
+                Button(model.menuOpen ? "Hide Menu" : "Show Menu") { model.showMenu(!model.menuOpen) }
                     .keyboardShortcut("s", modifiers: [.control, .command]).disabled(model.screen != .workspace)
             }
         }

@@ -1,46 +1,52 @@
 import AppKit
 import SwiftUI
 
+/// Chat is the whole window: Josi big in the middle, the current line under her,
+/// and the conversation in a panel that rises over the stage.
 struct ChatView: View {
     @EnvironmentObject var model: JosiModel
     @StateObject private var voice = NativeVoice()
     @State private var voiceSettings = false
-    @State private var modelName = ""
-    @State private var floating = false
-    @State private var settle: Task<Void, Never>?
+    /// True from a send until its outcome. Loading an old conversation brings in
+    /// replies and failures too, and those must not play as if they just happened.
+    @State private var waiting = false
+    @State private var followedThread: String?
+    @State private var followedReply: String?
+    @State private var followedFailure: String?
+    @State private var followedError = ""
+    @State private var followedGoals: [String: String] = [:]
+    @State private var freshReply: String?
+    private static let lineHeight: CGFloat = 200
+    private static let acknowledgements = ["I got you.", "Consider it handled. Well, almost.", "On it. Try to contain your excitement.", "Oh, I like this one. Give me a sec.", "Say less."]
+    private static let suggestions = ["What’s on my calendar today?", "Remind me to call Dana", "Draft a note to the team"]
     private var firstName: String { model.signedInName.split(separator: " ").first.map(String.init) ?? "" }
     private var thinking: Bool { (model.pendingMessage && model.busy) || model.turns.contains { ["queued", "running"].contains($0["status"].text) } }
     private var canSend: Bool { !model.busy && (model.pendingMessage || !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
-    /// Thinking wins while the model works. The float follows a reply for a few
-    /// seconds, then the ghost rests, unless someone is typing or the mic is on.
-    private var mood: GhostMood {
-        if thinking { return .thinking }
-        if floating { return .float }
-        if voice.mode != nil || !model.draft.isEmpty { return .listening }
-        return .idle
+    private var lastReply: Wire? { model.messages.last { $0["direction"].text != "in" } }
+    private var lastFailure: Wire? { model.turns.last { $0["status"].text == "failed" } }
+    /// Everything that can move the ghost.
+    private var followed: [String] {
+        [model.selectedThread ?? "", lastReply?.identifier ?? "", lastFailure?.identifier ?? "", model.error, String(thinking),
+         String(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty), String(voice.mode != nil)]
+            + model.chatGoals.map { $0["goalId"].text + $0["state"].text }
     }
-    private static let suggestions = ["What’s on my calendar today?", "Remind me to call Dana", "Draft a note to the team"]
+    /// The failure the stage shows: the latest message's, or one with no message of its own.
+    private var stageFailure: Wire? {
+        guard let failed = lastFailure else { return nil }
+        let inbound = failed["inbound_message_id"].text
+        return model.messages.last?.identifier == inbound || !model.messages.contains { $0.identifier == inbound } ? failed : nil
+    }
+    private var stageKey: String {
+        [model.selectedThread ?? "", model.messages.last?.identifier ?? "", String(thinking), stageFailure?.identifier ?? ""].joined(separator: "|")
+    }
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        if model.messages.isEmpty, !thinking { greeting }
-                        ForEach(model.messages, id: \.identifier) { message in
-                            messageRow(message).id(message.identifier)
-                            ForEach(model.turns.filter { $0["status"].text == "failed" && $0["inbound_message_id"].text == message.identifier }, id: \.identifier) { ChatTurnFailure(turn: $0) }
-                        }
-                        ForEach(model.chatGoals, id: \.identifier) { GoalCard(goal: $0, compact: true) }
-                        ForEach(model.turns.filter { turn in turn["status"].text == "failed" && !model.messages.contains { $0.identifier == turn["inbound_message_id"].text } }, id: \.identifier) { ChatTurnFailure(turn: $0) }
-                        if thinking || floating { ghostRow }
-                        Color.clear.frame(height: 1).id("latest")
-                    }.padding(.horizontal, 30).padding(.vertical, 24).frame(maxWidth: 900).frame(maxWidth: .infinity)
-                }
-                .onChange(of: model.messages.last?.identifier) { _, _ in withAnimation { proxy.scrollTo("latest", anchor: .bottom) } }
-                .onChange(of: thinking) { _, active in if active { withAnimation { proxy.scrollTo("latest", anchor: .bottom) } } }
+        ZStack {
+            VStack(spacing: 0) {
+                stage
+                composer.padding(.horizontal, 26).padding(.top, 8).padding(.bottom, 8).frame(maxWidth: 830)
+                Text(footer).font(JosiFont.caption).foregroundStyle(JosiTheme.muted).padding(.bottom, 14)
             }
-            composer.padding(.horizontal, 26).padding(.top, 8).padding(.bottom, 8).frame(maxWidth: 930)
-            Text(footer).font(JosiFont.caption).foregroundStyle(JosiTheme.muted).padding(.bottom, 14)
+            if model.historyOpen { history.transition(.move(edge: .bottom)) }
         }
         .sheet(isPresented: $voiceSettings) { NativeVoiceSettings(voice: voice).environmentObject(model).preferredColorScheme(.dark) }
         .task {
@@ -48,46 +54,123 @@ struct ChatView: View {
             await voice.refresh(api, administrator: model.isAdministrator)
             if model.isAdministrator, let primary = try? await api.request("/admin/llm") {
                 let value = primary["primary"]
-                modelName = value["provider"].text == "openai_subscription" ? "ChatGPT plan" : value["model"].text
+                model.modelName = value["provider"].text == "openai_subscription" ? "ChatGPT plan" : value["model"].text
             }
         }
-        .onChange(of: model.selectedThread) { _, _ in voice.stop(); settle?.cancel(); floating = false }
-#if DEBUG
-        .onChange(of: mood) { _, next in JosiDriver.log("mood \(next.rawValue)") }
-#endif
-        .onChange(of: thinking) { _, active in
-            settle?.cancel()
-            if active { floating = true; return }
-            guard model.messages.last?["direction"].text != "in" else { floating = false; return }
-            settle = Task { try? await Task.sleep(for: .seconds(4)); if !Task.isCancelled { floating = false } }
+        .onChange(of: model.selectedThread) { _, _ in voice.stop() }
+        .onChange(of: followed, initial: true) { _, _ in follow() }
+        .onDisappear { voice.stop(); model.showHistory(false) }
+    }
+    /// Tells the ghost what just changed. A thread's existing replies, goals and
+    /// errors are history, so opening it plays nothing.
+    private func follow() {
+        let ghost = model.ghost
+        let reply = lastReply, replyId = reply?.identifier, failureId = lastFailure?.identifier
+        if followedThread != model.selectedThread {
+            followedThread = model.selectedThread; followedReply = replyId; followedFailure = failureId; followedGoals = [:]
+            model.showHistory(false)
+            for goal in model.chatGoals { followedGoals[goal["goalId"].text] = goal["state"].text }
+        } else {
+            if thinking { waiting = true }
+            if replyId != followedReply {
+                followedReply = replyId
+                if let reply, waiting { waiting = false; freshReply = replyId; ghost.replied(reply["body"].text) }
+            }
+            if failureId != followedFailure {
+                followedFailure = failureId
+                if failureId != nil, waiting { waiting = false; ghost.set(.error) }
+            }
+            for goal in model.chatGoals {
+                let id = goal["goalId"].text, state = goal["state"].text
+                if state == "completed", let before = followedGoals[id], before != state { ghost.set(.taskDone) }
+                followedGoals[id] = state
+            }
         }
-        .onDisappear { voice.stop(); settle?.cancel() }
+        if !model.error.isEmpty, model.error != followedError { ghost.set(.error) }
+        followedError = model.error
+        ghost.set(voice.mode != nil ? .voice : thinking ? .waiting : !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .typing : .idle)
     }
     private var footer: String {
-        if model.pendingMessage { return "Delivery is unconfirmed. Retry keeps the same message and attachments." }
-        return "Enter to send · Shift + Enter for a new line" + (modelName.isEmpty ? "" : " · " + modelName)
+        model.pendingMessage ? "Delivery is unconfirmed. Retry keeps the same message and attachments." : "Enter to send · Shift + Enter for a new line"
+    }
+    private var stage: some View {
+        GeometryReader { room in
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                JosiGhost(ghost: model.ghost, size: max(170, min(480, room.size.height - Self.lineHeight - 4, room.size.width * 0.7)))
+                VStack(spacing: 12) {
+                    line.id(stageKey).transition(JosiMotion.still ? .identity : .opacity.combined(with: .offset(y: 18)))
+                    if model.ghost.state == .thinking { thinkingChip }
+                }.frame(maxWidth: 760).padding(.horizontal, 24).padding(.top, 10)
+                    .frame(height: Self.lineHeight, alignment: .top)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .animation(.easeOut(duration: 0.42), value: stageKey)
+        }
+    }
+    private var thinkingChip: some View {
+        Text("Josi is thinking").font(JosiFont.caption).foregroundStyle(JosiTheme.gold).padding(.horizontal, 12).padding(.vertical, 6)
+            .background(JosiTheme.gold.opacity(0.1), in: Capsule()).overlay(Capsule().stroke(JosiTheme.hairline, lineWidth: 1))
+    }
+    /// The one thing under the ghost: a short acknowledgement while Josi works, then her reply.
+    @ViewBuilder private var line: some View {
+        let last = model.messages.last
+        if let failed = stageFailure {
+            VStack(spacing: 8) { speaker; ChatTurnFailure(turn: failed) }
+        } else if last == nil, !thinking {
+            greeting
+        } else if last?["direction"].text == "in" || thinking {
+            let seed = (last?.identifier ?? "").unicodeScalars.reduce(0) { $0 + Int($1.value) }
+            VStack(spacing: 7) { speaker; sentence(Self.acknowledgements[seed % Self.acknowledgements.count]) }
+        } else if let last {
+            StageReply(message: last, animate: freshReply == last.identifier && !JosiMotion.still, open: { model.showHistory(true) })
+        }
+    }
+    private var speaker: some View { Text("JOSI").font(JosiFont.body(11, weight: .semibold)).foregroundStyle(JosiTheme.muted) }
+    private func sentence(_ text: String) -> some View {
+        Text(text).font(JosiFont.body(20, weight: .medium)).multilineTextAlignment(.center).lineLimit(4)
+            .contentShape(Rectangle()).onTapGesture { model.showHistory(true) }.help("Open the conversation")
     }
     private var greeting: some View {
         VStack(spacing: 6) {
-            JosiGhost(mood: mood, size: 220)
-            Text(firstName.isEmpty ? "Hi, I’m Josi." : "Hi \(firstName), I’m Josi.").font(JosiFont.display(24)).padding(.top, 14)
-            Text("Ask me anything. I’m right here.").foregroundStyle(JosiTheme.lilac)
+            Text(firstName.isEmpty ? "Hi, I’m Josi." : "Hi \(firstName), I’m Josi.").font(JosiFont.display(24))
+            Text("Go on, give me something good to do.").foregroundStyle(JosiTheme.lilac)
             HStack(spacing: 8) {
                 ForEach(Self.suggestions, id: \.self) { text in
                     Button(text) { model.draft = text; send() }.buttonStyle(JosiChipStyle()).disabled(model.busy)
                 }
             }.padding(.top, 12)
-        }.frame(maxWidth: .infinity).padding(.top, 40).padding(.bottom, 20)
+        }
     }
-    private var ghostRow: some View {
-        HStack(spacing: 10) {
-            JosiGhost(mood: mood, size: 56)
-            if thinking {
-                Text("Josi is thinking").font(JosiFont.caption).foregroundStyle(JosiTheme.gold).padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(JosiTheme.gold.opacity(0.1), in: Capsule()).overlay(Capsule().stroke(JosiTheme.hairline, lineWidth: 1))
+    /// The whole conversation, in a panel that rises over the stage.
+    private var history: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Chat history").font(JosiFont.display(20))
+                    Text(model.threads.first { $0.identifier == model.selectedThread }?["title"].text.nonempty ?? "Conversation")
+                        .font(JosiFont.caption).foregroundStyle(JosiTheme.muted).lineLimit(1)
+                }
+                Spacer()
+                Button { model.showHistory(false) } label: { Image(systemName: "xmark") }
+                    .buttonStyle(JosiIconButtonStyle()).help("Close chat history").accessibilityLabel("Close chat history")
+            }.padding(.horizontal, 28).padding(.top, 18).padding(.bottom, 14)
+            Rectangle().fill(JosiTheme.hairline).frame(height: 1)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        ForEach(model.messages, id: \.identifier) { message in
+                            messageRow(message).id(message.identifier)
+                            ForEach(model.turns.filter { $0["status"].text == "failed" && $0["inbound_message_id"].text == message.identifier }, id: \.identifier) { ChatTurnFailure(turn: $0) }
+                        }
+                        ForEach(model.chatGoals, id: \.identifier) { GoalCard(goal: $0, compact: true) }
+                        ForEach(model.turns.filter { turn in turn["status"].text == "failed" && !model.messages.contains { $0.identifier == turn["inbound_message_id"].text } }, id: \.identifier) { ChatTurnFailure(turn: $0) }
+                        Color.clear.frame(height: 1).id("latest")
+                    }.padding(.horizontal, 30).padding(.vertical, 24).frame(maxWidth: 900).frame(maxWidth: .infinity)
+                }
+                .onAppear { proxy.scrollTo("latest", anchor: .bottom) }
+                .onChange(of: model.messages.last?.identifier) { _, _ in withAnimation { proxy.scrollTo("latest", anchor: .bottom) } }
             }
-            Spacer()
-        }.accessibilityElement(children: .combine)
+        }.background(JosiTheme.deep).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     @ViewBuilder private func messageRow(_ message: Wire) -> some View {
         if message["direction"].text == "in" {
@@ -163,7 +246,10 @@ struct ChatView: View {
     }
     private func send() {
         guard canSend else { return }
-        voice.stop(); model.run { try await model.send() }
+        voice.stop()
+        model.ghost.set(.received)
+        waiting = true
+        model.run { try await model.send() }
     }
     private func attach() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
@@ -188,6 +274,67 @@ struct ChatView: View {
                     return nil
                 }
                 return try await model.voiceTurn(text)
+            }
+        }
+    }
+}
+/// Josi's reply under the ghost. A fresh one comes in word by word: every word is
+/// laid out from the start, unseen, so nothing jumps. Its list follows, one row at a time.
+private struct StageReply: View {
+    let message: Wire
+    let animate: Bool
+    let open: () -> Void
+    @State private var shown = 0
+    @State private var rows = 0
+    private var parts: JosiReply { JosiReply(message["body"].text) }
+    private var text: AttributedString {
+        let lead = parts.lead
+        return (try? AttributedString(markdown: lead, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(lead)
+    }
+    private func starts(_ text: AttributedString) -> [AttributedString.Index] {
+        var result: [AttributedString.Index] = []; var inWord = false
+        for index in text.characters.indices {
+            let space = text.characters[index].isWhitespace
+            if !space, !inWord { result.append(index) }
+            inWord = !space
+        }
+        return result
+    }
+    private var visible: AttributedString {
+        var value = text
+        let words = starts(value)
+        if animate, shown < words.count { value[words[shown]..<value.endIndex].foregroundColor = .clear }
+        return value
+    }
+    var body: some View {
+        let items = parts.items.prefix(5)
+        VStack(spacing: 8) {
+            Text("JOSI").font(JosiFont.body(11, weight: .semibold)).foregroundStyle(JosiTheme.muted)
+            if !parts.lead.isEmpty {
+                Text(visible).font(JosiFont.body(20, weight: .medium)).multilineTextAlignment(.center).lineLimit(4).truncationMode(.tail)
+                    .contentShape(Rectangle()).onTapGesture(perform: open).help("Open the conversation")
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(items.enumerated()), id: \.offset) { at, item in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("\(at + 1)").font(JosiFont.body(15, weight: .bold)).foregroundStyle(JosiTheme.gold)
+                        Text(.init(item)).font(JosiFont.body(15)).lineLimit(1)
+                    }.opacity(!animate || at < rows ? 1 : 0)
+                }
+                if parts.items.count > 5 { Text("And \(parts.items.count - 5) more").font(JosiFont.body(13)).foregroundStyle(JosiTheme.muted).opacity(!animate || rows >= 5 ? 1 : 0) }
+            }
+        }.task {
+            guard animate else { return }
+            let words = starts(text).count
+            for at in 0..<words {
+                try? await Task.sleep(for: .milliseconds(max(16, JosiReply.revealStep(words: words))))
+                if Task.isCancelled { return }
+                shown = at + 1
+            }
+            for at in 0..<min(5, parts.items.count) {
+                withAnimation(.easeOut(duration: 0.32)) { rows = at + 1 }
+                try? await Task.sleep(for: .milliseconds(180))
+                if Task.isCancelled { return }
             }
         }
     }
