@@ -55,8 +55,10 @@ namespace Josi.Native {
 
     public string Section {
       get { return section; }
-      set { if (section == value) return; section = value; var handler = SectionChanged; if (handler != null) handler(); FollowWork(); }
+      set { if (!Flags.Shows(value)) value = "chat"; if (section == value) return; section = value; var handler = SectionChanged; if (handler != null) handler(); FollowWork(); }
     }
+    /// The mascot's state, shared by every screen that shows it.
+    public readonly GhostController Ghost = new GhostController();
     public string SignedInName { get { var name = User["displayName"].Text; return name.Length == 0 ? User["username"].Text : name; } }
     public bool IsAdministrator { get { return User["role"].Text == "super_admin"; } }
     public bool RecoveryPending { get { return !VaultRecovery.IsNull || !Recovery.IsNull || !MfaRecovery.IsNull; } }
@@ -372,17 +374,19 @@ namespace Josi.Native {
       else Notifications.Show("Josi proposes a settings change", proposal["title"].Text + ": approve it under Approvals.");
     }
     /// Approve or deny; approving a change this app applies performs it now.
-    public async Task<string> DecideSettingsChange(Wire proposal, bool approve) {
+    public async Task<string> DecideSettingsChange(Wire proposal, bool approve, string password = null) {
       var api = Api; if (api == null) return "";
-      var result = await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/decide", "POST", Wires.O("approve", approve));
+      var result = await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/decide", "POST",
+        password == null ? Wires.O("approve", approve) : Wires.O("approve", approve, "password", password));
       if (!approve) return "Declined. Nothing changed.";
       if (result["apply"].IsNull) return "Approved. It is applied by " + (proposal["scope"].Text == "administrator" ? "the administrator's" : proposal["proposer"].Text + "'s") + " Josi.";
-      return await ApplySettingsChange(proposal, result["apply"]);
+      return await ApplySettingsChange(proposal, result["apply"], password);
     }
     /// Performs the stored request with this app's own session, so the
     /// setting's own route decides. A route that needs the account password
-    /// gets it from the person, once, through the usual dialog.
-    public async Task<string> ApplySettingsChange(Wire proposal, Wire apply) {
+    /// gets the one from the approval popup, or asks through the usual dialog.
+    /// A route that wants a session step-up instead gets that from the same password.
+    public async Task<string> ApplySettingsChange(Wire proposal, Wire apply, string approved = null) {
       var api = Api; if (api == null) return "";
       var path = apply["path"].Text; var method = apply["method"].Text;
       var body = apply["body"].IsNull ? Wires.O() : apply["body"].Raw;
@@ -390,7 +394,7 @@ namespace Josi.Native {
       try { await api.Request(path, method, method == "DELETE" ? null : body); }
       catch (JosiException e) {
         if (e.Status == 401 && e.Message.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 && window != null) {
-          var password = Dialogs.AskPassword(window, "Confirm to apply: " + proposal["title"].Text, proposal["summary"].Text + "\n\nThis setting asks for your account password.", "Apply");
+          var password = approved ?? Dialogs.AskPassword(window, "Confirm to apply: " + proposal["title"].Text, proposal["summary"].Text + "\n\nThis setting asks for your account password.", "Apply");
           if (password == null) error = "Not applied: the password prompt was cancelled.";
           else {
             try {
@@ -398,7 +402,13 @@ namespace Josi.Native {
               var map = body as IDictionary<string, object>;
               if (map != null) foreach (var pair in map) withPassword[pair.Key] = pair.Value;
               await api.Request(path, method, withPassword);
-            } catch (JosiException again) { error = again.Message; }
+            } catch (JosiException again) {
+              if (again.Status != 401) error = again.Message;
+              else try {
+                await api.Request("/assistant/step-up", "POST", Wires.O("password", password));
+                await api.Request(path, method, method == "DELETE" ? null : body);
+              } catch (JosiException last) { error = last.Message; }
+            }
           }
         } else error = e.Message;
       }
@@ -500,7 +510,9 @@ namespace Josi.Native {
     async Task Poll() {
       FollowWork();
       if (!refreshing && !Busy) { try { await Watch(); } catch (Exception) { } }
-      if (Screen != Screen.Workspace || Busy || refreshing || !Active) return;
+      // Away from the window nothing needs refreshing, except a reply still on its way.
+      var replying = Turns.Any(t => t["status"].Text == "queued" || t["status"].Text == "running");
+      if (Screen != Screen.Workspace || Busy || refreshing || (!Active && !replying)) return;
       refreshing = true;
       try {
         var stale = !lastProgressSignal.HasValue || (DateTime.UtcNow - lastProgressSignal.Value).TotalSeconds >= 20;

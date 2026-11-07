@@ -36,10 +36,7 @@ if (!$Exe) { $Exe = Join-Path (Split-Path $PSScriptRoot) 'bin\Release\net8.0-win
 $mock = Start-Process node -ArgumentList "`"$(Join-Path $PSScriptRoot 'mock-server.mjs')`" $Port" -PassThru -WindowStyle Hidden
 $app = $null
 $data = & (Join-Path $PSScriptRoot 'mock-local.ps1') -Port $Port; $env:JOSI_SERVER_DATA = $data; $env:JOSI_TEST_NO_BROWSER = '1'; $env:JOSI_TEST_INSTANCE = [Guid]::NewGuid().ToString('N')
-$sections = 'Approvals','Calendar','Contacts','Files','Reminders','Memory','Personalization','Email Templates','Workflows','Automation','Migrate',
-  'Connections','Vault','Messaging Apps','Usage','Your Settings','Family','Companion Apps','Overview','Getting Started','Models','People','Connectors',
-  'Integrations','Custom APIs','Workflow Providers','Approval Policy','Parental Controls','Storage','Email Delivery','Backups','Voice Box','PC Control','Workspace','Network',
-  'Maintenance','Audit Log','Server','Task Manager','Conversations'
+$sections = 'Approvals','Calendar','Contacts','Vault','Connections','Settings','Overview','People','Backups','Model','Network & address','Server','Tasks','Chat'
 try {
   Start-Sleep -Seconds 1
   $app = Start-Process $Exe -PassThru
@@ -47,11 +44,11 @@ try {
   $h = $app.MainWindowHandle; $main = $A::FromHandle($h)
   Click $main 'Open Josi'
   (Find $main 'Username or email' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('roman')
-  (Find $main 'Password' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('correct horse battery{ENTER}')
-  Find $main 'Sign out' $C::Button | Out-Null
+  (Find $main 'Password' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('correct horse battery'); Click $main 'Sign In'
+  Find $main 'Menu' $C::Button | Out-Null
   $failed = @()
   foreach ($name in $sections) {
-    try { Click $main $name } catch { $failed += "$name (not in sidebar)"; continue }
+    try { Click $main 'Menu'; Start-Sleep -Milliseconds 600; Click $main $name } catch { $failed += "$name (not in sidebar)"; continue }
     Start-Sleep -Milliseconds 1500
     if ($app.HasExited) { $failed += "$name (Josi exited)"; break }
     Capture $h ('s-' + ($name -replace '\W', ''))

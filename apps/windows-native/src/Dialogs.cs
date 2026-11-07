@@ -72,10 +72,32 @@ namespace Josi.Native {
       var sheet = new Sheet(owner, "Josi", 560, "settings-change");
       var administrator = proposal["scope"].Text == "administrator";
       var decision = "later";
-      var approve = Automation.Id(Ui.Pill(administrator ? "Approve and Apply" : "Approve", () => {
-        decision = "approved"; sheet.Close();
-        model.Run(async () => { var note = await model.DecideSettingsChange(proposal, true); if (note.Length > 0) Notifications.Show("Settings change", note); });
+      var sensitive = proposal["sensitive"].Flag;
+      var password = Automation.Id(Ui.Secret("Your account password"), "josi.settings-change.password");
+      var problem = Automation.Id(Ui.T("", 13, null, Ui.Error), "josi.settings-change.error");
+      problem.Visibility = Visibility.Collapsed;
+      Button approve = null;
+      Action say = null;
+      approve = Automation.Id(Ui.Pill(administrator ? "Approve and Apply" : "Approve", async () => {
+        if (!sensitive) {
+          decision = "approved"; sheet.Close();
+          model.Run(async () => { var note = await model.DecideSettingsChange(proposal, true); if (note.Length > 0) Notifications.Show("Settings change", note); });
+          return;
+        }
+        // A sensitive change stays open until the server accepts the password.
+        var secret = password.Password;
+        if (secret.Length == 0) { problem.Text = "Enter your password to approve this."; say(); return; }
+        approve.IsEnabled = false;
+        try {
+          var note = await model.DecideSettingsChange(proposal, true, secret);
+          decision = "approved"; password.Clear(); sheet.Close();
+          if (note.Length > 0) Notifications.Show("Settings change", note);
+        } catch (JosiException e) {
+          password.Clear(); problem.Text = e.Message; say(); approve.IsEnabled = true; password.Focus();
+        }
       }, true), "josi.settings-change.approve");
+      say = () => { problem.Visibility = Visibility.Visible; };
+      approve.IsDefault = sensitive;
       var decline = Automation.Id(Ui.Pill("Decline", () => { decision = "declined"; sheet.Close(); model.Run(async () => { await model.DecideSettingsChange(proposal, false); }); }), "josi.settings-change.decline");
       var later = Automation.Id(Ui.Pill("Decide Later", () => sheet.Close()), "josi.settings-change.later");
       later.IsCancel = true;
@@ -85,10 +107,12 @@ namespace Josi.Native {
         Automation.Id(Ui.T(proposal["title"].Text, 15, FontWeights.SemiBold), "josi.settings-change.title"),
         Automation.Id(Ui.Copyable(proposal["summary"].Text, 14), "josi.settings-change.summary"),
         Ui.Caption((administrator ? "An administrator setting for this installation." : "Your own setting.")
-          + (proposal["sensitive"].Flag ? " This is a sensitive change; the administrator is told by email when a member makes one." : "")
+          + (sensitive ? " This is a sensitive change; the administrator is told by email when a member makes one." : "")
           + " Nothing changes until you approve. You can also find it under Approvals."),
+        sensitive ? Ui.Field("Confirm your account password", password) : null,
+        sensitive ? problem : null,
         Ui.Spread(later, Ui.Row(8, decline, approve))));
-      sheet.Loaded += delegate { approve.Focus(); };
+      sheet.Loaded += delegate { if (sensitive) password.Focus(); else approve.Focus(); };
       sheet.ShowDialog();
     }
     /// Asks for the account password once, for a change the server protects
@@ -336,7 +360,7 @@ namespace Josi.Native {
           var thread = goal["threadId"].Text;
           Ui.Add(stack, Ui.Pill("Open Original Conversation", () => { sheet.Close(); model.Run(() => model.SelectThread(thread)); }), 10);
           body.Content = stack;
-        } catch (JosiException) { body.Content = Ui.T("The original work is unavailable on this server.", 14, null, Ui.Orange); }
+        } catch (JosiException) { body.Content = Ui.T("The original work is unavailable on this server.", 14, null, Ui.Accent); }
       };
       sheet.ShowDialog();
     }
@@ -372,7 +396,7 @@ namespace Josi.Native {
       render = () => {
         var stack = Ui.Stack(16,
           Ui.Secondary("Dictate into the message box, or talk with Josi and hear its replies. Audio is processed by Voice Box on your Josi server."),
-          Ui.Row(10, Ui.Icon(voice.Available ? Glyph.Check : Glyph.Wave, 18, voice.Available ? Ui.Green : Ui.Orange), Ui.Headline(voice.Available ? "Speech models are ready" : "Voice Box needs setup")));
+          Ui.Row(10, Ui.Icon(voice.Available ? Glyph.Check : Glyph.Wave, 18, voice.Available ? Ui.Green : Ui.Accent), Ui.Headline(voice.Available ? "Speech models are ready" : "Voice Box needs setup")));
         if (model.IsAdministrator) {
           if (voice.Settings["verified"].Flag) {
             var voices = Ui.Choice(Ui.Options("af_heart", "Kokoro · Heart", "af_bella", "Kokoro · Bella"), selected);
@@ -398,7 +422,7 @@ namespace Josi.Native {
             .ContinueWith(t => { if (t.Exception != null) error = AppModel.Friendly(t.Exception.InnerException); render(); }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
           render();
         }), 12);
-        if (error.Length > 0) Ui.Add(stack, Ui.T(error, 13, null, Ui.Orange), 12);
+        if (error.Length > 0) Ui.Add(stack, Ui.T(error, 13, null, Ui.Error), 12);
         if (working) Ui.Add(stack, Ui.Caption("Checking speech models…"), 12);
         stack.IsEnabled = !working;
         host.Content = stack;

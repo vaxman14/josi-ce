@@ -27,15 +27,15 @@ namespace Josi.Native {
         case "restricted": detail = "The current permissions do not allow Josi to answer this request."; break;
         default: detail = "The server could not finish this reply. Check server health for more information."; break;
       }
-      var stack = Ui.Stack(8, Ui.Row(8, Ui.Icon(Glyph.Warning, 15, Ui.Orange), Ui.T("Josi couldn't reply", 15, FontWeights.SemiBold, Ui.Orange)),
-        Ui.Copyable(detail, 14, Ui.Orange));
+      var stack = Ui.Stack(8, Ui.Row(8, Ui.Icon(Glyph.Warning, 15, Ui.Accent), Ui.T("Josi couldn't reply", 15, FontWeights.SemiBold, Ui.Accent)),
+        Ui.Copyable(detail, 14, Ui.Accent));
       if (model.IsAdministrator) {
         Ui.Add(stack, Ui.Pill(modelFailure ? "Open Models" : "Open Server", () => {
           model.Section = modelFailure ? "models" : "server";
           if (!modelFailure) model.RefreshLocal();
         }), 8);
-      } else if (modelFailure) Ui.Add(stack, Ui.T("Ask your server administrator to check Models.", 14, null, Ui.Orange), 8);
-      Content = new Border { Background = new SolidColorBrush(Color.FromArgb(0x14, 0xF6, 0x83, 0x1E)), CornerRadius = new CornerRadius(10), Padding = new Thickness(12), Child = stack };
+      } else if (modelFailure) Ui.Add(stack, Ui.T("Ask your server administrator to check Models.", 14, null, Ui.Error), 8);
+      Content = new Border { Background = Skin.Solid(Skin.Current.Error, 0x14), CornerRadius = new CornerRadius(10), Padding = new Thickness(12), Child = stack };
     }
   }
 
@@ -145,7 +145,7 @@ namespace Josi.Native {
       var continuation = goal["continuation"];
       if (continuation["kind"].Text == "question") {
         Ui.Add(stack, Ui.T(Recovery && !SetupBlocked ? "Josi stopped before saving the next step. Your original request is still saved. Continue to recheck the task." : continuation["text"].Text, 14, FontWeights.Medium), 12);
-        if (SetupBlocked || Recovery) Ui.Add(stack, Ui.Pill("Open Automation", () => { model.Section = "automation"; model.Run(() => model.LoadAutomation()); }), 8);
+        if (Flags.LocalWorkspace && (SetupBlocked || Recovery)) Ui.Add(stack, Ui.Pill("Open Automation", () => { model.Section = "automation"; model.Run(() => model.LoadAutomation()); }), 8);
       }
       if (continuation["kind"].Text == "wait") {
         Ui.Add(stack, Ui.Secondary(continuation["reason"].Text), 10);
@@ -361,7 +361,7 @@ namespace Josi.Native {
         }
         Ui.Add(list, Ui.CardBox(null, stack), 10);
       }
-      if (error != null) Ui.Add(list, Ui.T(error, 14, null, Ui.Orange), 8);
+      if (error != null) Ui.Add(list, Ui.T(error, 14, null, Ui.Error), 8);
       else if (records.Count == 0) Ui.Add(list, Ui.Secondary("No saved entries."), 8);
       var oldest = records.Select(r => r[RevisionKey].Integer).Where(n => n > 0).DefaultIfEmpty(0).Min();
       var older = Ui.Pill("Older", () => { before = oldest; Load(); }); older.IsEnabled = oldest > 1;
@@ -403,7 +403,7 @@ namespace Josi.Native {
         foreach (var approval in activity["approvals"].List)
           Ui.Add(body, Ui.Stack(3, Ui.T(approval["summary"].Text), Ui.Caption(Wires.Words(approval["status"].Text) + " · " + Wires.Date(approval["created_at"].Text))), 6);
       } catch (JosiException e) {
-        body.Children.Clear(); body.Children.Add(Ui.T(e.Message, 14, null, Ui.Orange));
+        body.Children.Clear(); body.Children.Add(Ui.T(e.Message, 14, null, Ui.Accent));
       }
     }
   }

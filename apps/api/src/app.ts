@@ -231,7 +231,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/auth', authRoutes({
     db, cookieSecure: cfg.cookieSecure, appUrl: cfg.appUrl,
     masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport, connectorFetch: cfg.connectorFetch,
-    appleNativeClientId: cfg.appleNativeClientId, appleFetch: cfg.appleFetch,
+    appleNativeClientId: cfg.appleNativeClientId, appleFetch: cfg.appleFetch, passkeysEnabled: cfg.passkeysEnabled,
   }));
   api.use('/auth', signInRoutes({
     db, cookieSecure: cfg.cookieSecure, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport,

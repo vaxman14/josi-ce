@@ -76,7 +76,7 @@ namespace Josi.Native {
         var list = Ui.Stack(8);
         foreach (var d in documents)
           list.Children.Add(Ui.Spread(Ui.Stack(2, Ui.T(d["filename"].Text, 14, FontWeights.Medium), Ui.Caption(d["folder"].Text),
-              d["skipReason"].Text.Length > 0 ? Ui.T("Skipped: " + Wires.Words(d["skipReason"].Text), 12, null, Ui.Orange) : null),
+              d["skipReason"].Text.Length > 0 ? Ui.T("Skipped: " + Wires.Words(d["skipReason"].Text), 12, null, Ui.Accent) : null),
             ModelText.Pill(Wires.Words(d["state"].Text), d["state"].Text == "indexed")));
         Ui.Add(page, Ui.CardBox("Files Josi can see", list), 12);
       }
@@ -94,7 +94,7 @@ namespace Josi.Native {
           Ui.Caption(connection["account"].Text.Length > 0 ? connection["account"].Text : connection["serverUrl"].Text)));
         if (connection["errorCategory"].Text.Length > 0) {
           string text; ErrorText.TryGetValue(connection["errorCategory"].Text, out text);
-          items.Add(Ui.T(text ?? "Something went wrong with this connection.", 13.5, null, Ui.Orange));
+          items.Add(Ui.T(text ?? "Something went wrong with this connection.", 13.5, null, Ui.Error));
         }
         if (connection["needsPermissionUpgrade"].Flag) {
           items.Add(Ui.Caption("This account was connected before Josi requested its current permission bundle. Upgrade once; afterwards every capability is controlled here."));
@@ -153,7 +153,7 @@ namespace Josi.Native {
       foreach (var mapping in mine) {
         var id = mapping.Id;
         var row = Ui.Stack(3, Ui.Spread(Ui.T(mapping["display_path"].Text, 14, FontWeights.Medium), ModelText.Pill(Wires.Words(mapping["status"].Text), mapping["status"].Text == "active")));
-        if (mapping["paused_reason"].Text.Length > 0) row.Children.Add(Ui.T("Paused: " + Wires.Words(mapping["paused_reason"].Text), 13, null, Ui.Orange));
+        if (mapping["paused_reason"].Text.Length > 0) row.Children.Add(Ui.T("Paused: " + Wires.Words(mapping["paused_reason"].Text), 13, null, Ui.Accent));
         Wire status;
         if (mappingStatus.TryGetValue(id, out status) && status["total"].Integer > 0) {
           row.Children.Add(Ui.Caption(status["byState"]["indexed"].Integer + " of " + status["total"].Integer + " file(s) indexed and searchable."));
@@ -170,7 +170,7 @@ namespace Josi.Native {
       stack.Children.Add(Ui.Row(10, Ui.Pill("Add a Folder…", () => {
         var receipt = FolderSheet.Show(owner, model, provider, connection.Id);
         if (receipt != null) { note = receipt; StartLoad(); }
-      }), Ui.Link("All your folders are under Files", () => model.Section = "files")));
+      }), Flags.Shows("files") ? Ui.Link("All your folders are under Files", () => model.Section = "files") : null));
       return stack;
     }
 
@@ -184,7 +184,7 @@ namespace Josi.Native {
         if (connection["lastCheckAt"].Text.Length > 0) line += " · checked " + Wires.Date(connection["lastCheckAt"].Text);
         if (connection["lastUsedAt"].Text.Length > 0) line += " · last used " + Wires.Date(connection["lastUsedAt"].Text);
         items.Add(Ui.Row(10, ModelText.Pill(ok ? "Connected" : "Needs attention", ok), Ui.Caption(line)));
-        if (!ok && connection["lastError"].Text.Length > 0) items.Add(Ui.T(connection["lastError"].Text, 13.5, null, Ui.Orange));
+        if (!ok && connection["lastError"].Text.Length > 0) items.Add(Ui.T(connection["lastError"].Text, 13.5, null, Ui.Error));
         items.Add(Ui.Wrap(
           Ui.Pill("Check It Still Works", () => Perform(async (api, stamp) => await api.Request("/connections/developer/" + Uri.EscapeDataString(service) + "/check", "POST", Wires.O()))),
           Ui.Pill("Disconnect…", () => { if (Dialogs.Confirm(owner, "Disconnect " + row["label"].Text + "?", "The saved token is removed.", "Disconnect")) Perform(async (api, stamp) => await api.Request("/connections/developer/" + Uri.EscapeDataString(service), "DELETE", null)); })));

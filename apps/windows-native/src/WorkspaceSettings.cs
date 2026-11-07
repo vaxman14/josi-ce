@@ -165,7 +165,7 @@ namespace Josi.Native {
       var items = new List<UIElement> {
         Ui.Spread(Ui.Stack(2, Ui.Headline("Public address"), Ui.Caption(mode == "local" ? "Only this PC reaches Josi." : mode == "lan" ? "This PC and your network, over HTTPS with Josi's own certificate." : mode == "tailscale" ? "Your devices over Tailscale, over HTTPS with Josi's own certificate." : "A public domain, served through your tunnel or reverse proxy.")),
           Ui.Copyable(network["publicUrl"].Text, 14, null, true)) };
-      if (network["restartNeeded"].Flag) items.Add(Ui.T("The saved address (" + network["configuredUrl"].Text + ") differs from the running one. Restart the server to apply it.", 13.5, null, Ui.Orange));
+      if (network["restartNeeded"].Flag) items.Add(Ui.T("The saved address (" + network["configuredUrl"].Text + ") differs from the running one. Restart the server to apply it.", 13.5, null, Ui.Accent));
       var lan = network["lan"].List;
       if (lan.Count > 0) {
         var rows = Ui.Stack(4);

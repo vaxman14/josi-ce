@@ -104,7 +104,7 @@ Remove-Item $probeFile
 if ("$probe" -ne 'True') { throw 'The precompiled setup bridge did not load in Windows PowerShell 5.1' }
 $helper.testedInOsPowerShell = $true; $helper | ConvertTo-Json | Set-Content $helperFile -Encoding UTF8
 Script 'Build-OnboardingLauncher.ps1' | Out-Null
-Script 'Build-NativeApp.ps1' | Out-Null
+Script 'Build-NativeApp.ps1' @('-Version', $Version) | Out-Null
 
 $signing = $null
 if ($Sign) {
@@ -156,9 +156,16 @@ $null = New-Item -ItemType Directory -Force $release
 Copy-Item -LiteralPath $installer.path -Destination $release
 $exeName = Split-Path $installer.path -Leaf
 Set-Content -LiteralPath (Join-Path $release 'SHA256SUMS.txt') -Value ((Sha (Join-Path $release $exeName)) + '  ' + $exeName) -Encoding ascii
+Step 'Josi Client installer'
+$clientArguments = @('-Version', $Version, '-Output', $release)
+if ($Sign) { $clientArguments += '-Sign'; if ($SigningConfig) { $clientArguments += @('-SigningConfig', $SigningConfig) } }
+Script 'Build-ClientInstaller.ps1' $clientArguments | Out-Null
+$clientName = "Josi-Client-$Version-Windows-x64.exe"
+$clientExe = Join-Path $release $clientName
+Add-Content -LiteralPath (Join-Path $release 'SHA256SUMS.txt') -Value ((Sha $clientExe) + '  ' + $clientName) -Encoding ascii
 $notes = @("Josi CE $Version for Windows.", '',
   "Download $exeName, run it, and Josi opens when it is done. Windows 10 or 11, 64-bit, about 4 GB of disk.", '',
-  'Check the file: its SHA-256 is in SHA256SUMS.txt, and the signer shown under Properties > Digital Signatures is SOCAL RECEPTIONIST LLC.' + $(if (!$Sign) { ' (This build is NOT signed.)' } else { '' }), '',
+  'Check the file: its SHA-256 is in SHA256SUMS.txt, and the signer shown under Properties > Digital Signatures is SoCal Receptionist.' + $(if (!$Sign) { ' (This build is NOT signed.)' } else { '' }), '',
   'Source and help: https://github.com/vaxman14/josi-ce and https://get.heyjosi.com')
 Set-Content -LiteralPath (Join-Path $release 'RELEASE-NOTES.md') -Value ($notes -join "`n") -Encoding UTF8
 Write-Host ("Installer: {0} ({1} MB, sha256 {2}, signed: {3})" -f (Join-Path $release $exeName), [Math]::Round($installer.size / 1MB), $installer.sha256, $Sign.IsPresent)
@@ -181,11 +188,11 @@ if ($Publish) {
       if ($parts.Count -eq 2 -and -not $lines.ContainsKey($parts[1])) { $lines[$parts[1]] = $line }
     }
     Set-Content -LiteralPath (Join-Path $merged 'SHA256SUMS.txt') -Value (($lines.Keys | Sort-Object | ForEach-Object { $lines[$_] }) -join "`n") -Encoding ascii
-    & gh release upload $tag --repo vaxman14/josi-ce --clobber (Join-Path $release $exeName) (Join-Path $merged 'SHA256SUMS.txt')
+    & gh release upload $tag --repo vaxman14/josi-ce --clobber (Join-Path $release $exeName) $clientExe (Join-Path $merged 'SHA256SUMS.txt')
     if ($LASTEXITCODE) { throw 'gh release upload failed' }
     Write-Host "Attached to the existing release $tag (still a draft if it was one)."
   } else {
-    & gh release create $tag --repo vaxman14/josi-ce --draft --title ("Josi CE $Version") --notes-file (Join-Path $release 'RELEASE-NOTES.md') (Join-Path $release $exeName) (Join-Path $release 'SHA256SUMS.txt')
+    & gh release create $tag --repo vaxman14/josi-ce --draft --title ("Josi CE $Version") --notes-file (Join-Path $release 'RELEASE-NOTES.md') (Join-Path $release $exeName) $clientExe (Join-Path $release 'SHA256SUMS.txt')
     if ($LASTEXITCODE) { throw 'gh release create failed' }
     Write-Host "Draft release $tag created. Attach the Mac and Linux files, then press Publish on GitHub."
   }

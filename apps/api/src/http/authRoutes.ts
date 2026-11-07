@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import {
   SESSION_TTL_SECONDS, consumeAuthToken, createSession, issueAuthToken, login, peekAuthToken,
-  revokeSession, setPassword, verifyPassword, startGoogleLogin, consumeGoogleLogin, GOOGLE_NATIVE_RETURN_URI,
+  revokeSession, setPassword, verifyPassword, startGoogleLogin, consumeGoogleLogin, GOOGLE_NATIVE_RETURN_URI, relyingParty,
   MfaError, adoptMfa, assertCanAdoptMfa, beginMfaSetup, enableMfa, disableMfa, completeMfaLogin, verifyMfaFactor,
 } from '@josi-ce/auth';
 import { appendEvent, loadMasterKey, VaultError, VaultLockedError, type Db, type LoadOptions } from '@josi-ce/core';
@@ -18,6 +18,7 @@ import {
 import type { CookieSecurePolicy } from './cookies.js';
 import { requireAuth } from './authz.js';
 import { verifyAppleIdentityToken } from './appleIdentity.js';
+import { issueNativeCode, nativeCallback } from './nativeCodes.js';
 
 export interface AuthRoutesCtx {
   db: Db;
@@ -28,6 +29,7 @@ export interface AuthRoutesCtx {
   connectorFetch?: typeof fetch;
   appleNativeClientId?: string | null;
   appleFetch?: typeof fetch;
+  passkeysEnabled?: boolean;
 }
 
 const mfaRoute = (fn: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
@@ -69,12 +71,6 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
   }
 
   const NATIVE_GOOGLE_RETURN_URI = GOOGLE_NATIVE_RETURN_URI;
-
-  function nativeCallback(returnUri: string, params: Record<string, string>): string {
-    const url = new URL(returnUri);
-    for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
-    return url.toString();
-  }
 
   async function startGoogle(returnUri: string | null, req: Request, res: Response) {
     if (returnUri !== null && returnUri !== NATIVE_GOOGLE_RETURN_URI) {
@@ -241,6 +237,8 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       googleSignIn,
       appleSignIn: !!ctx.appleNativeClientId,
       nativeGoogleStart: `${appUrl}/api/auth/google/native/start`,
+      passkeySignIn: ctx.passkeysEnabled !== false && !!relyingParty(ctx.appUrl),
+      nativePasskeyStart: `${appUrl}/api/auth/passkey/native/start`,
       enrollmentDeepLink,
     });
   }));
@@ -268,7 +266,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     const key = mfaKey();
     if (!key) throw new MfaError(503, 'This installation cannot store MFA secrets.');
     const secret = await beginMfaSetup(db, key, req.user!.id);
-    const uri = generateURI({ issuer: 'Josi CE', label: req.user!.email, secret });
+    const uri = generateURI({ issuer: 'Josi', label: req.user!.email, secret });
     return res.json({ secret, qrDataUrl: await QRCode.toDataURL(uri) });
   }));
 
@@ -353,13 +351,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         : res.redirect('/login?error=google_not_linked');
     }
     if (pending.nativeReturnUri) {
-      const nativeCode = randomBytes(32).toString('base64url');
-      await db.query(
-        `insert into auth_native_codes (code_hash, user_id, expires_at)
-         values ($1, $2, now() + interval '2 minutes')`,
-        [createHash('sha256').update(nativeCode).digest('hex'), user.id],
-      );
-      await appendEvent(db, { actorUserId: user.id, actor: 'user', kind: 'auth.google_native_code_issued', subjectType: 'user', subjectId: user.id });
+      const nativeCode = await issueNativeCode(db, user.id, 'auth.google_native_code_issued');
       return res.redirect(nativeCallback(pending.nativeReturnUri, { code: nativeCode, state }));
     }
     // Google answers for the first factor only, like an emailed code.
@@ -376,34 +368,40 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return res.redirect('/app');
   }));
 
-  r.post('/google/native/exchange', asyncRoute(async (req, res) => {
+  /** Redeems a code from any browser sign-in. The code does not record how it was
+   * earned, so the route says what to write in the audit log: a passkey sign-in
+   * goes through the neutral route and is never logged as a Google one. */
+  const exchangeNativeCode = (loginEvent: string) => asyncRoute(async (req, res) => {
     if (!isNativeClient(req)) return res.status(403).json({ error: 'native client required' });
     const code = typeof req.body?.code === 'string' ? req.body.code : '';
     if (!code) return res.status(400).json({ error: 'code required' });
     const [redeemed] = await db.query<{
-      user_id: string; id: string; email: string; username: string; role: string; display_name: string | null; mfa_enabled_at: string | null;
+      user_id: string; id: string; email: string; username: string; role: string; display_name: string | null; mfa_enabled_at: string | null; passkey_proved: boolean;
     }>(
       `with claimed as (
          update auth_native_codes set used_at = now()
          where code_hash = $1 and used_at is null and expires_at > now()
-         returning user_id
+         returning user_id, passkey_proved
        )
-       select c.user_id, u.id, u.email, u.username, u.role, u.display_name, u.mfa_enabled_at
+       select c.user_id, c.passkey_proved, u.id, u.email, u.username, u.role, u.display_name, u.mfa_enabled_at
        from claimed c join users u on u.id = c.user_id
        where u.status = 'active'`,
       [createHash('sha256').update(code).digest('hex')],
     );
     if (!redeemed) return res.status(401).json({ error: 'invalid or expired code' });
     // The same answer /auth/login gives. The app finishes at /auth/mfa/verify-login.
-    if (redeemed.mfa_enabled_at) {
+    // A passkey already verified the person, as it does on the web sign-in.
+    if (redeemed.mfa_enabled_at && !redeemed.passkey_proved) {
       return res.status(202).json({ mfaRequired: true, challenge: await issueMfaChallenge(req, redeemed.user_id, true) });
     }
     const { token } = await createSession(db, {
       userId: redeemed.user_id, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds: SESSION_TTL_SECONDS,
     });
-    await appendEvent(db, { actorUserId: redeemed.user_id, actor: 'user', kind: 'auth.google_native_login', subjectType: 'user', subjectId: redeemed.user_id });
+    await appendEvent(db, { actorUserId: redeemed.user_id, actor: 'user', kind: loginEvent, subjectType: 'user', subjectId: redeemed.user_id });
     return res.json({ user: publicUser(redeemed), sessionToken: token });
-  }));
+  });
+  r.post('/google/native/exchange', exchangeNativeCode('auth.google_native_login'));
+  r.post('/native/exchange', exchangeNativeCode('auth.native_login'));
 
   r.post('/apple/native/exchange', asyncRoute(async (req, res) => {
     if (!isNativeClient(req)) return res.status(403).json({ error: 'native client required' });

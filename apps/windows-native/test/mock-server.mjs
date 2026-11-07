@@ -6,7 +6,12 @@ import { randomUUID } from 'node:crypto';
 
 const port = Number(process.argv[2] || 8787);
 // `node mock-server.mjs <port> setup`: an unfinished first-run setup.
-const setupMode = process.argv[3] === 'setup';
+const setupMode = process.argv[3] === 'setup' || process.argv[3] === 'fresh';
+// `... fresh`: no owner yet, so the whole of onboarding can be driven.
+const fresh = process.argv[3] === 'fresh';
+const freshSteps = [['host_checks', 'Check this machine'], ['owner', 'Your account'], ['domain', 'Address and HTTPS'], ['llm', 'Language model'], ['review', 'Review and finish']];
+const freshDone = ['host_checks'];
+const setupLog = {};
 // Native sessions, and the fixed values a test uses to finish Google sign-in
 // by opening josi://auth/callback?code=…&state=… itself.
 const sessions = new Set();
@@ -22,6 +27,7 @@ const messages = { [threadId]: [
   { id: randomUUID(), direction: 'out', body: 'Yes. I will start with the **first photo with an empty description**, describe only what is visible, and stop so you can review it before anything is saved. See [the uploads page](https://romansgaragesale.com/uploads).' },
 ] };
 const turns = { [threadId]: [] };
+const proposals = [];
 const goalId = randomUUID();
 const goals = [{
   goalId, threadId, title: 'Describe the first garage-sale photo', state: 'needs_instruction', revision: 3,
@@ -95,6 +101,14 @@ http.createServer(async (req, res) => {
     // way the server reports a subscription that is not signed in.
     if (path === '/onboarding/launch' && method === 'POST') return send(res, 200, { token: 'b'.repeat(64) });
     if (path === '/onboarding/consume' && method === 'POST') return send(res, 200, {});
+    if (fresh && path === '/mock/setup-log') return send(res, 200, setupLog);
+    if (fresh && path === '/setup/state') return send(res, 200, {
+      completed: false, recoveryPending: false, ownerExists: freshDone.includes('owner'), completedSteps: freshDone, nextStep: freshSteps.map(s => s[0]).find(s => !freshDone.includes(s)),
+      steps: freshSteps.map(([id, title]) => ({ id, title, done: freshDone.includes(id) })), providerCatalog });
+    if (fresh && (m = path.match(/^\/setup\/steps\/(owner|domain)$/)) && method === 'POST') {
+      setupLog[m[1]] = { ...body, password: body.password ? 'set' : undefined }; freshDone.push(m[1]);
+      return send(res, 200, { ok: true, completedSteps: freshDone, nextStep: freshSteps.map(s => s[0]).find(s => !freshDone.includes(s)) });
+    }
     if (path === '/setup/state') return send(res, 200, {
       completed: false, recoveryPending: false, ownerExists: true, completedSteps: ['host_checks', 'owner', 'domain'], nextStep: 'llm',
       steps: [['host_checks', 'Check this machine'], ['owner', 'Your account'], ['domain', 'Address and HTTPS'], ['llm', 'Language model'], ['review', 'Review and finish']]
@@ -133,17 +147,33 @@ http.createServer(async (req, res) => {
     return send(res, 200, { thread: { id } });
   }
   if ((m = path.match(/^\/assistant\/threads\/([0-9a-f-]{36})$/))) return send(res, 200, { messages: messages[m[1]] || [] });
+  if (path === '/settings-changes' && method === 'GET') return send(res, 200, { proposals: proposals.filter(p => p.state === 'proposed'), policy: 'self', superAdmin: true });
+  if ((m = path.match(/^\/settings-changes\/([0-9a-f-]{36})\/decide$/))) {
+    const p = proposals.find(x => x.id === m[1]);
+    if (!body.approve) { p.state = 'denied'; return send(res, 200, { ok: true, state: 'denied' }); }
+    if (p.sensitive && body.password !== 'correct horse battery') return send(res, 401, { error: 'That password did not match.' });
+    p.state = 'approved';
+    return send(res, 200, { ok: true, state: 'approved', apply: { method: 'PUT', path: '/mock-setting', body: { value: 1 } } });
+  }
+  if ((m = path.match(/^\/settings-changes\/([0-9a-f-]{36})\/applied$/))) { proposals.find(x => x.id === m[1]).state = 'applied'; return send(res, 200, { ok: true }); }
+  if (path === '/mock-setting') return send(res, 200, { ok: true });
   if ((m = path.match(/^\/assistant\/threads\/([0-9a-f-]{36})\/turns$/))) {
     const id = m[1];
     if (method === 'GET') return send(res, 200, { turns: turns[id] || [] });
     const inbound = { id: randomUUID(), direction: 'in', body: body.message, attachments: [] };
     messages[id].push(inbound);
     const thread = threads.find(t => t.id === id); if (thread && !thread.title) thread.title = body.message.slice(0, 40);
+    if (/change a setting/i.test(body.message)) proposals.push({ id: randomUUID(), proposer: 'roman', mine: true, scope: 'administrator', area: 'local_only_models', sensitive: !/plain/i.test(body.message),
+      title: /plain/i.test(body.message) ? 'Workspace name and time zone' : 'Local-only mode for models', summary: 'Stop every request to external model providers.', state: 'proposed', canApprove: true, canDeny: true, createdAt: now(), expiresAt: now() });
     const turn = { id: randomUUID(), status: 'running', inbound_message_id: inbound.id, client_message_id: body.client_message_id };
     turns[id].push(turn);
     setTimeout(() => {
       if (/fail/i.test(body.message)) { turn.status = 'failed'; turn.error = { code: 'provider_error' }; return; }
-      const reply = { id: randomUUID(), direction: 'out', body: `Got it — you said: *${body.message}*` };
+      const text = /link/i.test(body.message) ? "Found it. Here's [the uploads page](https://romansgaragesale.com/uploads), and the **first photo** is `IMG_0412`."
+        : /list/i.test(body.message) ? "Here's the plan, and yes, it's a good one:\n- Check the photo\n- Draft the description\n- Stop for your review"
+        : /finish/i.test(body.message) ? "Done, and honestly? Flawless. The description is in place." : "Leave it with me. I'll make it look easy.";
+      if (/finish/i.test(body.message)) { goals[0].state = 'completed'; goals[0].revision++; }
+      const reply = { id: randomUUID(), direction: 'out', body: text };
       messages[id].push(reply); turn.status = 'completed'; turn.assistant_message_id = reply.id;
     }, 4000);
     return send(res, 200, { turn: { id: turn.id } });

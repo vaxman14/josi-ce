@@ -53,7 +53,7 @@ try {
   $main = $A::FromHandle($app.MainWindowHandle)
   Click $main 'Open Josi'
   (Find $main 'Username or email' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('roman')
-  (Find $main 'Password' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('hunter2-secret')
+  (Find $main 'Password' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('hunter2-secret')
   Click $main 'Show password'
   $shown = Find $main 'Password' $C::Edit
   Write-Host ("shown value matches typed: " + ($shown.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq 'hunter2-secret'))

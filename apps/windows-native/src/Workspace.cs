@@ -3,6 +3,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 
 namespace Josi.Native {
   public sealed class WorkspaceView : UserControl, IRefresh {
@@ -12,6 +13,16 @@ namespace Josi.Native {
     readonly ContentControl detail = new ContentControl { Focusable = false };
     readonly Border footer = new Border();
     readonly TextBox threadSearch = Ui.Input("Search conversations");
+    const double MenuWidth = 340;
+    readonly Grid overlay = new Grid { Visibility = Visibility.Collapsed };
+    readonly Border menuPanel = new Border { Width = MenuWidth, HorizontalAlignment = HorizontalAlignment.Left, Background = Ui.Sheet, BorderBrush = Ui.Hairline, BorderThickness = new Thickness(0, 0, 1, 0) };
+    readonly TranslateTransform menuSlide = new TranslateTransform(-MenuWidth, 0);
+    readonly TextBlock barTitle = Ui.T("Josi", 18, FontWeights.Bold);
+    readonly TextBlock barStatus = Ui.T("online", 12, null, Ui.Muted);
+    readonly ContentControl barRight = new ContentControl { Focusable = false, VerticalAlignment = VerticalAlignment.Center };
+    readonly ScrollViewer menuScroller;
+    Button menuButton;
+    bool menuOpen;
     ChatView chat;
     TaskManagerView tasks;
     string shownSection;
@@ -27,12 +38,13 @@ namespace Josi.Native {
     public WorkspaceView(AppModel model, Window owner) {
       this.model = model; this.owner = owner;
       var grid = new Grid();
-      grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(250) });
-      grid.ColumnDefinitions.Add(new ColumnDefinition());
+      grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+      grid.RowDefinitions.Add(new RowDefinition());
 
       Automation.BeginScope("sidebar");
-      var header = Ui.Spread(Ui.Row(10, Ui.JosiMark(38), Ui.T("Josi", 25, FontWeights.SemiBold)),
-        Automation.Id(Ui.IconButton(Glyph.Compose, "New conversation", () => model.Run(() => model.NewThread()), 18), "josi.sidebar.new-conversation"));
+      var closeMenu = Automation.Id(Ui.RoundButton(Glyph.Close, "Close menu", () => ShowMenu(false), 40), "josi.menu.close");
+      var header = Ui.Spread(Ui.Row(10, closeMenu, Ui.JosiMark(38), Ui.T("Josi", 25, FontWeights.SemiBold)),
+        Automation.Id(Ui.IconButton(Glyph.Compose, "New conversation", () => { ShowMenu(false); model.Run(() => model.NewThread()); }, 18), "josi.sidebar.new-conversation"));
       header.Margin = new Thickness(18, 24, 14, 18);
       var list = new StackPanel { Margin = new Thickness(12, 0, 12, 12) };
       list.Children.Add(nav);
@@ -44,21 +56,73 @@ namespace Josi.Native {
       threadSearch.TextChanged += delegate { RenderThreads(); };
       list.Children.Add(threadSearch);
       list.Children.Add(threads);
-      var scroller = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
-      var sidebar = new DockPanel { Background = Ui.Sidebar };
+      menuScroller = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+      var sidebar = new DockPanel();
       DockPanel.SetDock(header, Dock.Top); DockPanel.SetDock(footer, Dock.Bottom);
-      footer.BorderBrush = Ui.Border; footer.BorderThickness = new Thickness(0, 1, 0, 0); footer.Padding = new Thickness(16);
-      sidebar.Children.Add(header); sidebar.Children.Add(footer); sidebar.Children.Add(scroller);
-      grid.Children.Add(sidebar);
-      Grid.SetColumn(detail, 1); grid.Children.Add(detail);
+      footer.BorderBrush = Ui.Hairline; footer.BorderThickness = new Thickness(0, 1, 0, 0); footer.Padding = new Thickness(16);
+      sidebar.Children.Add(header); sidebar.Children.Add(footer); sidebar.Children.Add(menuScroller);
+      menuPanel.Child = sidebar; menuPanel.RenderTransform = menuSlide;
+      Automation.Id(menuPanel, "josi.menu", "Josi menu");
+
+      menuButton = Automation.Id(Ui.RoundButton(Glyph.Menu, "Menu", () => ShowMenu(true)), "josi.menu.open");
+      var mark = Ui.JosiMark(38);
+      var bar = new DockPanel { Margin = new Thickness(16, 12, 16, 8), LastChildFill = false };
+      var brand = Ui.Row(12, menuButton, mark, Ui.Stack(1, barTitle, barStatus));
+      DockPanel.SetDock(brand, Dock.Left); DockPanel.SetDock(barRight, Dock.Right);
+      Automation.Id(barStatus, "josi.status.line");
+      bar.Children.Add(brand); bar.Children.Add(barRight);
+      grid.Children.Add(bar);
+      Grid.SetRow(detail, 1); grid.Children.Add(detail);
+
+      var scrim = new Border { Background = Ui.Scrim };
+      scrim.MouseLeftButtonDown += (s, e) => { e.Handled = true; ShowMenu(false); };
+      overlay.Children.Add(scrim); overlay.Children.Add(menuPanel);
+      Grid.SetRowSpan(overlay, 2); grid.Children.Add(overlay);
       Content = grid;
+
+      owner.PreviewKeyDown += OnEscape;
+      model.Ghost.StateChanged += ShowStatus;
+      Updates.NotifyIfNewer();
 
       model.WorkspaceChanged += OnWorkspace;
       model.SectionChanged += OnSection;
       Refresh();
       OnSection();
     }
+    /// Slides the menu in over the stage. Esc, a click outside it, or picking an item closes it.
+    void ShowMenu(bool open) {
+      if (open == menuOpen) return;
+      menuOpen = open;
+      var quick = GhostView.Still;
+      var time = TimeSpan.FromMilliseconds(quick ? 0 : 280);
+      var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+      if (open) { overlay.Visibility = Visibility.Visible; menuScroller.ScrollToTop(); }
+      var slide = new DoubleAnimation(open ? 0 : -MenuWidth, time) { EasingFunction = ease };
+      slide.Completed += delegate {
+        if (menuOpen) {
+          Button first;
+          if (navButtons.TryGetValue(model.Section, out first) || navButtons.TryGetValue("chat", out first)) first.Focus();
+          return;
+        }
+        overlay.Visibility = Visibility.Collapsed;
+        menuButton.Focus();
+      };
+      menuSlide.BeginAnimation(TranslateTransform.XProperty, slide);
+      overlay.Children[0].BeginAnimation(OpacityProperty, new DoubleAnimation(open ? 0 : 1, open ? 1 : 0, time));
+    }
+    void ShowStatus() {
+      var state = model.Ghost.State;
+      barStatus.Text = state == JosiState.Listening ? "listening…" : state == JosiState.Thinking ? "thinking…" : state == JosiState.Speaking ? "speaking…" : "online";
+      barStatus.Foreground = state == JosiState.Online ? Ui.Muted : Ui.Accent;
+    }
+    void OnEscape(object sender, System.Windows.Input.KeyEventArgs e) {
+      if (e.Key != System.Windows.Input.Key.Escape) return;
+      if (menuOpen) { ShowMenu(false); e.Handled = true; }
+      else if (chat != null && chat.CloseHistory()) e.Handled = true;
+    }
     public void Detach() {
+      owner.PreviewKeyDown -= OnEscape;
+      model.Ghost.StateChanged -= ShowStatus;
       model.WorkspaceChanged -= OnWorkspace; model.SectionChanged -= OnSection;
       if (chat != null) chat.Detach();
     }
@@ -78,34 +142,35 @@ namespace Josi.Native {
       if (nav.Children.Count > 0 && navAdmin == model.IsAdministrator) { SyncNav(); return; }
       navAdmin = model.IsAdministrator;
       nav.Children.Clear(); navButtons.Clear(); navLabels.Clear();
-      Item("Conversations", Glyph.Chat, "chat");
-      Item("Task Manager", Glyph.Checklist, "tasks");
+      Group("Workspace");
+      Item("Chat", Glyph.Chat, "chat");
+      Item("Tasks", Glyph.Checklist, "tasks");
       Item("Approvals", Glyph.Approve, "approvals");
       Item("Calendar", Glyph.Calendar, "calendar");
       Item("Contacts", Glyph.Contact, "contacts");
+      Item("Vault", Glyph.Vault, "vault");
+      Item("Connections", Glyph.Link, "connections");
+      Item("Settings", Glyph.Person, "account");
       Item("Files", Glyph.Folder, "files");
       Item("Reminders", Glyph.Clock, "reminders");
-      Group("Your assistant");
       Item("Memory", Glyph.Memory, "memory");
       Item("Personalization", Glyph.Emoji, "personalization");
       Item("Email Templates", Glyph.Document, "templates");
       Item("Workflows", Glyph.Flow, "workflows");
       Item("Automation", Glyph.Automation, "automation");
       Item("Migrate", Glyph.Import, "migration");
-      Group("Account");
-      Item("Connections", Glyph.Link, "connections");
-      Item("Vault", Glyph.Vault, "vault");
       Item("Messaging Apps", Glyph.Send, "channels");
       Item("Usage", Glyph.Chart, "usage");
-      Item("Your Settings", Glyph.Person, "account");
       Item("Family", Glyph.Home, "family");
       Item("Companion Apps", Glyph.Phone, "apps");
       if (model.IsAdministrator) {
-        Group("Administration");
+        Group("Admin");
         Item("Overview", Glyph.Health, "overview");
-        Item("Getting Started", Glyph.List, "checklist");
-        Item("Models", Glyph.Layers, "models");
         Item("People", Glyph.People, "people");
+        Item("Backups", Glyph.Backups, "backups");
+        Item("Model", Glyph.Layers, "models");
+        Item("Network & address", Glyph.Globe, "network");
+        Item("Getting Started", Glyph.List, "checklist");
         Item("Connectors", Glyph.Plug, "connectors");
         Item("Custom APIs", Glyph.Code, "custom-apis");
         Item("Workflow Providers", Glyph.Flow, "workflow-providers");
@@ -113,12 +178,10 @@ namespace Josi.Native {
         Item("Parental Controls", Glyph.Home, "parental");
         Item("Storage", Glyph.Folder, "storage");
         Item("Email Delivery", Glyph.Mail, "mail-settings");
-        Item("Backups", Glyph.Backups, "backups");
         Item("Voice Box", Glyph.Speaker, "voice-box");
         Item("PC Control", Glyph.Desktop, "pc-control");
         Item("Improvements", Glyph.Chart, "improvements");
         Item("Workspace", Glyph.Settings, "workspace");
-        Item("Network", Glyph.Globe, "network");
         Item("Maintenance", Glyph.Repair, "maintenance");
         Item("Audit Log", Glyph.History, "audit");
       }
@@ -130,8 +193,8 @@ namespace Josi.Native {
       foreach (var pair in navButtons) {
         var on = model.Section == pair.Key || (pair.Key == "connectors" && model.Section == "integrations");
         var button = pair.Value;
-        if (!ReferenceEquals(button.Foreground, on ? Ui.Orange : Ui.Muted)) button.Foreground = on ? Ui.Orange : Ui.Muted;
-        var back = on ? Ui.OrangeSoft : Brushes.Transparent;
+        if (!ReferenceEquals(button.Foreground, on ? Ui.Accent : Ui.Muted)) button.Foreground = on ? Ui.Accent : Ui.Muted;
+        var back = on ? Ui.AccentSoft : Brushes.Transparent;
         if (!ReferenceEquals(button.Background, back)) button.Background = back;
         System.Windows.Automation.AutomationProperties.SetItemStatus(button, on ? "selected" : "");
         var weight = on ? FontWeights.Medium : FontWeights.Normal;
@@ -145,13 +208,14 @@ namespace Josi.Native {
       nav.Children.Add(label);
     }
     void Item(string title, string glyph, string section) {
+      if (!Flags.Shows(section)) return;
       var on = model.Section == section;
       var label = Ui.T(title, 14, on ? FontWeights.Medium : FontWeights.Normal, null); label.ClearValue(TextBlock.ForegroundProperty);
       label.TextWrapping = TextWrapping.NoWrap; label.TextTrimming = TextTrimming.CharacterEllipsis;
       var icon = Ui.Icon(glyph, 17); icon.Width = 23; icon.TextAlignment = TextAlignment.Center;
       var row = Ui.Row(12, icon, label);
       var button = new Button { Content = row, Style = (Style)Ui.Resources["Plain"], Padding = new Thickness(12, 10, 12, 10),
-        Foreground = on ? Ui.Orange : Ui.Muted, Background = on ? Ui.OrangeSoft : Brushes.Transparent, Margin = new Thickness(0, 0, 0, 3) };
+        Foreground = on ? Ui.Accent : Ui.Muted, Background = on ? Ui.AccentSoft : Brushes.Transparent, Margin = new Thickness(0, 0, 0, 3) };
       Ui.Name(button, title, null);
       Automation.Id(button, "josi.sidebar.item." + section);
       button.IsEnabled = !model.Busy;
@@ -161,6 +225,7 @@ namespace Josi.Native {
     }
     /// Opens a sidebar section, as a click on it would.
     public void Go(string section) {
+      ShowMenu(false);
       model.Section = section;
       if (section == "automation") model.Run(() => model.LoadAutomation());
       else if (section == "server") model.RefreshLocal();
@@ -198,7 +263,7 @@ namespace Josi.Native {
         Automation.Id(button, "josi.sidebar.thread." + position);
         System.Windows.Automation.AutomationProperties.SetHelpText(button, id);
         button.IsEnabled = !model.Busy;
-        button.Click += delegate { model.Run(() => model.SelectThread(id)); };
+        button.Click += delegate { ShowMenu(false); model.Run(() => model.SelectThread(id)); };
         threads.Children.Add(button);
         threadButtons.Add(new System.Collections.Generic.KeyValuePair<string, Button>(id, button));
       }
@@ -224,10 +289,15 @@ namespace Josi.Native {
       if (shownSection == model.Section && detail.Content != null) return;
       if (shownSection == "chat" && chat != null) chat.Pause();
       shownSection = model.Section;
+      TextBlock heading;
+      barTitle.Text = model.Section != "chat" && navLabels.TryGetValue(model.Section, out heading) ? heading.Text : "Josi";
+      barStatus.Visibility = model.Section == "chat" ? Visibility.Visible : Visibility.Collapsed;
+      barRight.Content = null;
       // A page already built is shown again as it was; its own Loaded handler
       // refreshes the data behind it without a blank page in between.
       UIElement view;
       if (views.TryGetValue(model.Section, out view)) { detail.Content = view; return; }
+      if (model.Section == "chat" && chat != null) barRight.Content = chat.BarActions;
       Automation.BeginScope(model.Section);
       switch (model.Section) {
         case "tasks": tasks = tasks ?? new TaskManagerView(model, owner); tasks.Refresh(); view = tasks; break;
@@ -272,7 +342,7 @@ namespace Josi.Native {
         case "network": view = model.IsAdministrator ? new NetworkView(model, owner) : null; break;
         case "maintenance": view = model.IsAdministrator ? new MaintenanceView(model, owner) : null; break;
         case "audit": view = model.IsAdministrator ? new AuditView(model, owner) : null; break;
-        default: chat = chat ?? new ChatView(model, owner); chat.Refresh(); view = chat; break;
+        default: chat = chat ?? new ChatView(model, owner); chat.Refresh(); view = chat; barRight.Content = chat.BarActions; break;
       }
       if (view != null && model.Section != "chat" && model.Section != "tasks") views[model.Section] = view;
       // A section page derives its control ids from the sidebar key it was opened under.

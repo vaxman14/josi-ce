@@ -128,6 +128,32 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
 export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
+
+  /** The one thing here that works without a session. The browser in a native
+   * app's sign-in sheet has no Josi cookie, because the app's session is a bearer
+   * the sheet never sees. So a live handshake the app started as native is passed
+   * on to the app, and nothing else is let through.
+   *
+   * This redeems nothing: it sends state and code to the app, and who is
+   * connecting stays in the stored handshake. /native/complete still needs the
+   * session that started it, and the PKCE verifier never leaves this server. */
+  r.get('/:provider/callback', (req, res, next) => {
+    void (async () => {
+      const provider = param(req, 'provider'), state = req.query.state;
+      if (!isOAuthRouteProvider(provider) || typeof state !== 'string' || !state || state.length > 512) return next();
+      const [pending] = await db.query<{ id: string }>(
+        `select id from oauth_states where id = $1 and provider = $2 and return_path = $3 and consumed_at is null and expires_at > now()`,
+        [state, provider, NATIVE_CONNECTION_RETURN]);
+      if (!pending) return next();
+      const back = new URL(NATIVE_CONNECTION_URI);
+      back.searchParams.set('provider', provider);
+      back.searchParams.set('state', state);
+      if (typeof req.query.error === 'string') back.searchParams.set('error', 'declined');
+      else back.searchParams.set('code', String(req.query.code ?? '').slice(0, 4096));
+      return res.redirect(back.toString());
+    })().catch(next);
+  });
+
   r.use(requireAuth);
 
   /** What I have connected, and what each connection may do. */
@@ -343,19 +369,6 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
       if (!isOAuthRouteProvider(provider)) throw new RouteError(404, 'no such provider');
 
       const state = String(req.query.state ?? '');
-      // A native-app handshake is finished by the app, not here.
-      if (state && state.length <= 512) {
-        const [pending] = await db.query<{ return_path: string; provider: string }>(
-          'select return_path, provider from oauth_states where id = $1 and consumed_at is null', [state]);
-        if (pending?.return_path === NATIVE_CONNECTION_RETURN && pending.provider === provider) {
-          const back = new URL(NATIVE_CONNECTION_URI);
-          back.searchParams.set('provider', provider);
-          back.searchParams.set('state', state);
-          if (typeof req.query.error === 'string') back.searchParams.set('error', 'declined');
-          else back.searchParams.set('code', String(req.query.code ?? '').slice(0, 4096));
-          return res.redirect(back.toString());
-        }
-      }
       return finishHandshake(req, res, provider, state, typeof req.query.error === 'string', String(req.query.code ?? ''),
         req.user?.session_id ?? null, null);
     }),

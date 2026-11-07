@@ -56,8 +56,8 @@ try {
   $main = $A::FromHandle($app.MainWindowHandle)
   Click $main 'Open Josi'
   TypeInto $main 'Username or email' 'roman'
-  (Find $main 'Password' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('correct horse battery{ENTER}')
-  Click $main 'Models'
+  (Find $main 'Password' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('correct horse battery'); Click $main 'Sign In'
+  Click $main 'Menu'; Start-Sleep -Milliseconds 600; Click $main 'Model'
   Start-Sleep -Seconds 3
   Capture $main 'm01-models-page'
 
@@ -84,14 +84,14 @@ try {
   # No Claude Code next to a test build, so this is the paste-a-token path;
   # the save runs while the app is busy, and Continue must enable afterwards.
   Click $wizard 'Sign In with Claude'
-  (Find $wizard 'Claude subscription token' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('sk-ant-oat01-mock-token-for-the-test-only')
+  (Find $wizard 'Claude subscription token' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('sk-ant-oat01-mock-token-for-the-test-only')
   Click $wizard 'Save Token in Vault'
   Start-Sleep -Seconds 3
   Write-Host ("claude continue after connect: enabled=" + (Find $wizard 'Continue' $C::Button).Current.IsEnabled)
   Capture $wizard 'm05b-claude-connected'
   Click $wizard '1  Choose'
   Click $wizard 'Anthropic API'
-  (Find $wizard 'API key' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('sk-ant-test-key')
+  (Find $wizard 'API key' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('sk-ant-test-key')
   Capture $wizard 'm06-api-connect'
   Click $wizard 'Continue'
   Start-Sleep -Seconds 2

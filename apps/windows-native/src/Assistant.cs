@@ -34,12 +34,12 @@ namespace Josi.Native {
         foreach (var p in changes) {
           var proposal = p; var id = p.Id; var administrator = p["scope"].Text == "administrator";
           var items = new List<UIElement> {
-            Ui.Row(10, ModelText.Pill(p["state"].Text == "approved" ? "Approved, applying" : administrator ? "Administrator setting" : p["mine"].Flag ? "Your setting" : p["proposer"].Text + "'s setting", p["state"].Text == "approved" ? Ui.Green : Ui.Orange),
+            Ui.Row(10, ModelText.Pill(p["state"].Text == "approved" ? "Approved, applying" : administrator ? "Administrator setting" : p["mine"].Flag ? "Your setting" : p["proposer"].Text + "'s setting", p["state"].Text == "approved" ? Ui.Green : Ui.Accent),
               p["sensitive"].Flag ? ModelText.Pill("Sensitive", Ui.Muted) : null),
             Ui.Copyable(p["summary"].Text),
             Ui.Caption("Proposed " + Wires.Date(p["createdAt"].Text) + (p["mine"].Flag ? "" : " by " + p["proposer"].Text) + " · expires " + Wires.Date(p["expiresAt"].Text)) };
           var actions = Ui.Wrap();
-          if (p["canApprove"].Flag) actions.Children.Add(Ui.Pill(administrator || p["mine"].Flag ? "Approve and Apply" : "Approve", () => Perform(async (api, stamp) => { note = await model.DecideSettingsChange(proposal, true); }), true));
+          if (p["canApprove"].Flag) actions.Children.Add(Ui.Pill(administrator || p["mine"].Flag ? "Approve and Apply" : "Approve", () => Perform(async (api, stamp) => { string secret = null; if (proposal["sensitive"].Flag) { secret = Dialogs.AskPassword(owner, "Confirm to approve: " + proposal["title"].Text, proposal["summary"].Text, "Approve"); if (secret == null) return; } note = await model.DecideSettingsChange(proposal, true, secret); }), true));
           if (p["canDeny"].Flag) actions.Children.Add(Ui.Pill("Decline", () => Perform(async (api, stamp) => { note = await model.DecideSettingsChange(proposal, false); })));
           if (!p["canApprove"].Flag && p["state"].Text == "proposed") items.Add(Ui.Caption(administrator ? "Waiting for the super-admin." : "Waiting for the super-admin's consent; your Josi applies it after that."));
           items.Add(actions);
@@ -96,9 +96,9 @@ namespace Josi.Native {
         foreach (var h in changeHistory) {
           if (list.Children.Count > 0) list.Children.Add(Ui.Divider());
           var good = h["state"].Text == "applied";
-          var row = Ui.Stack(3, Ui.Spread(Ui.T(h["title"].Text, 14, FontWeights.Medium), ModelText.Pill(Wires.Words(h["state"].Text), good ? Ui.Green : h["state"].Text == "failed" ? Ui.Orange : Ui.Muted)),
+          var row = Ui.Stack(3, Ui.Spread(Ui.T(h["title"].Text, 14, FontWeights.Medium), ModelText.Pill(Wires.Words(h["state"].Text), good ? Ui.Green : h["state"].Text == "failed" ? Ui.Error : Ui.Muted)),
             Ui.Caption((h["mine"].Flag ? "You" : h["proposer"].Text) + " · " + Wires.Date(h["appliedAt"].Text.Length > 0 ? h["appliedAt"].Text : h["approvedAt"].Text.Length > 0 ? h["approvedAt"].Text : h["createdAt"].Text)),
-            Ui.Copyable(h["summary"].Text, 13, Ui.Muted), h["error"].Text.Length > 0 ? Ui.T(h["error"].Text, 12.5, null, Ui.Orange) : null);
+            Ui.Copyable(h["summary"].Text, 13, Ui.Muted), h["error"].Text.Length > 0 ? Ui.T(h["error"].Text, 12.5, null, Ui.Error) : null);
           row.Margin = new Thickness(0, 8, 0, 8);
           list.Children.Add(row);
         }
@@ -205,7 +205,7 @@ namespace Josi.Native {
         previewText = r["available"].Flag ? "Josi would say: " + r["reply"].Text : r["reason"].Text;
       }, false)));
       if (previewText.Length > 0) items.Add(Ui.Copyable(previewText));
-      if (notice.Length > 0) items.Add(Ui.T(notice, 13.5, null, Ui.Orange));
+      if (notice.Length > 0) items.Add(Ui.T(notice, 13.5, null, Ui.Accent));
       if (attempts.Count > 0) { items.Add(Ui.Headline("Lines that read like instructions")); foreach (var a in attempts) items.Add(Ui.Caption("· “" + a["phrase"].Text + "”: kept as personality, changed nothing.")); }
       if (ignored.Count > 0) { items.Add(Ui.Headline("Lines that did nothing")); foreach (var i in ignored) items.Add(Ui.Caption("· " + i["field"].Text + ": " + i["explanation"].Text)); }
       Ui.Add(page, Ui.CardBox(info[1], items.ToArray()), 0);

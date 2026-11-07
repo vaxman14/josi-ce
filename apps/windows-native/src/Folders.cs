@@ -39,7 +39,7 @@ namespace Josi.Native {
 
       // One error line, shared by every page, so a failed request is shown on
       // the page it came from with everything the person typed still there.
-      var error = Automation.Id(Ui.T("", 13.5, null, Ui.Orange), "josi.add-folder.error"); error.Visibility = Visibility.Collapsed;
+      var error = Automation.Id(Ui.T("", 13.5, null, Ui.Error), "josi.add-folder.error"); error.Visibility = Visibility.Collapsed;
       Action<string> fail = text => { error.Text = text ?? ""; error.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible; };
       Func<UIElement> slot = () => { Ui.Detach(error); return error; };
       Action<UIElement, string> show = (content, problem) => { fail(problem); host.Content = content; };

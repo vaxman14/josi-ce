@@ -6,6 +6,11 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
 Add-Type @'
 using System; using System.Runtime.InteropServices;
+public static class Post {
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static void Key(IntPtr h, int key) { PostMessage(h, 0x100, (IntPtr)key, (IntPtr)1); PostMessage(h, 0x101, (IntPtr)key, (IntPtr)1); }
+  public static void Click(IntPtr h, int x, int y) { var at = (IntPtr)((y << 16) | x); PostMessage(h, 0x201, (IntPtr)1, at); PostMessage(h, 0x202, IntPtr.Zero, at); }
+}
 public static class Shot {
   [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Ri, B; }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);
@@ -67,21 +72,19 @@ try {
   Capture $h '02-sign-in'
 
   TypeInto $window 'Username or email' 'roman'
-  # PasswordBox has no ValuePattern; focus it and type.
-  Add-Type -AssemblyName System.Windows.Forms
-  $password = Find $window 'Password' ([System.Windows.Automation.ControlType]::Edit)
-  $password.SetFocus()
-  [System.Windows.Forms.SendKeys]::SendWait('wrong password{ENTER}')
+  # Everything goes to Josi's own controls. Never SendKeys: it types into
+  # whatever window has focus, which may not be this one.
+  TypeInto $window 'Password' 'wrong password'
+  Click $window 'Sign In'
   Start-Sleep -Seconds 1.5
   Capture $h '03-sign-in-error'
-  $password = Find $window 'Password' ([System.Windows.Automation.ControlType]::Edit)
-  $password.SetFocus()
-  [System.Windows.Forms.SendKeys]::SendWait('correct horse battery{ENTER}')
-  Find $window 'Task Manager' | Out-Null
+  TypeInto $window 'Password' 'correct horse battery'
+  Click $window 'Sign In'
+  Find $window 'Menu' | Out-Null
   Start-Sleep -Seconds 1
   Capture $h '04-workspace-empty'
 
-  Click $window 'Garage sale photo descriptions'
+  Click $window 'Menu'; Start-Sleep -Milliseconds 600; Click $window 'Garage sale photo descriptions'
   Start-Sleep -Seconds 2
   Capture $h '05-conversation'
 
@@ -90,14 +93,54 @@ try {
   Start-Sleep -Seconds 1.5
   Capture $h '06-thinking'
   Start-Sleep -Seconds 6
-  Capture $h '07-reply'
+  Capture $h '07-stage'
 
-  Click $window 'Task Manager'
+  Click $window 'Menu'
+  Start-Sleep -Seconds 1
+  Capture $h '07-menu'
+  # Posted to Josi's window, so this can't reach anything else.
+  [Shot]::SetForegroundWindow($h) | Out-Null; $window.SetFocus(); Start-Sleep -Milliseconds 300
+  [Post]::Key($h, 0x1B); Start-Sleep -Seconds 1
+  Write-Host ('Esc closes the menu: ' + !$window.FindFirst($T::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Close menu'))))
+  $still = $window.FindFirst($T::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Close menu')))
+  if ($still) { Click $window 'Close menu'; Start-Sleep -Seconds 1 }
+  Click $window 'History'
+  Start-Sleep -Seconds 1
+  Capture $h '07-history'
+  [Shot]::SetForegroundWindow($h) | Out-Null; $window.SetFocus(); Start-Sleep -Milliseconds 300
+  [Post]::Key($h, 0x1B); Start-Sleep -Seconds 1
+  Write-Host ('Esc closes history: ' + !$window.FindFirst($T::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Close chat history'))))
+  $close = $window.FindFirst($T::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, 'Close chat history')))
+  if ($close) { Click $window 'Close chat history'; Start-Sleep -Seconds 1 }
+
+  TypeInto $window 'Message Josi' 'Show me the link please'
+  Click $window 'Send message'
+  Start-Sleep -Seconds 1.5
+  $named = { param($n) [bool]$window.FindFirst($T::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $n))) }
+  $header = { $window.FindFirst($T::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::AutomationIdProperty, 'josi.status.line'))).Current.Name }
+  Write-Host ('while thinking, header: ' + (& $header) + ', chip shown: ' + (& $named 'Josi is thinking'))
+  Capture $h '10-thinking'
+  $deadline = (Get-Date).AddSeconds(20)
+  while (!(& $named 'the uploads page') -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+  Start-Sleep -Seconds 2.5
+  Write-Host ('after the reply, chip hidden: ' + !(& $named 'Josi is thinking') + ', header: ' + (& $header))
+  Capture $h '11-link-reply'
+  $raw = $window.FindFirst($T::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::AutomationIdProperty, 'josi.chat.stage.text')))
+  Write-Host ('stage text: ' + $raw.Current.Name)
+  $hyper = $window.FindFirst($T::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Hyperlink)))
+  Write-Host ('stage link found: ' + [bool]$hyper + ' (' + $(if ($hyper) { $hyper.Current.Name }) + ')')
+  if ($hyper) { $hyper.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 500 }
+  Write-Host ('history stayed closed after the link: ' + !(& $named 'Close chat history'))
+  Click $window 'History'; Start-Sleep -Seconds 1
+  Capture $h '12-link-history'
+  Click $window 'Close chat history'; Start-Sleep -Seconds 1
+
+  Click $window 'Menu'; Start-Sleep -Milliseconds 600; Click $window 'Tasks'
   Start-Sleep -Seconds 2
   Capture $h '08-task-manager'
 
-  foreach ($section in 'Memory', 'Automation', 'Vault', 'Your Settings', 'Models', 'Server') {
-    Click $window $section
+  foreach ($section in 'Vault', 'Settings', 'Model', 'Server') {
+    Click $window 'Menu'; Start-Sleep -Milliseconds 600; Click $window $section
     Start-Sleep -Seconds 2
     Capture $h ('09-' + ($section -replace ' ', '-').ToLower())
   }

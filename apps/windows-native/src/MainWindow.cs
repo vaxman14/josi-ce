@@ -50,7 +50,7 @@ namespace Josi.Native {
         AppLinks.Register();
         Notifications.Register();
         SendTo.Register();
-        BrowserHost.Register();
+        if (Flags.LocalWorkspace) BrowserHost.Register();
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         Ui.Load();
         app.Resources.MergedDictionaries.Add(Ui.Resources);
@@ -64,7 +64,7 @@ namespace Josi.Native {
         var main = new MainWindow();
         app.MainWindow = main;
         AppLinks.Listen(value => app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(value))));
-        BrowserBridge.Current.Start(main.Model, app.Dispatcher);
+        if (Flags.LocalWorkspace) BrowserBridge.Current.Start(main.Model, app.Dispatcher);
         main.Show();
         if (link != null) app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(link)));
         return app.Run();
@@ -126,11 +126,11 @@ namespace Josi.Native {
       UIElement status; var actions = Ui.Wrap(); string sentence;
       if (paused) {
         sentence = "Josi is paused on this PC.";
-        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Orange), Ui.T(sentence, 13.5, FontWeights.Medium));
+        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
         actions.Children.Add(Automation.Id(Ui.Pill("Resume", resume, true), "josi.pc-control.resume"));
       } else if (left > 0) {
         sentence = "You took over. Josi waits " + left + " s before using this PC again.";
-        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Orange), Ui.T(sentence, 13.5, FontWeights.Medium));
+        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
         actions.Children.Add(Automation.Id(Ui.Pill("Let Josi Continue", resume), "josi.pc-control.continue"));
         actions.Children.Add(Automation.Id(Ui.Pill("Pause Josi", pause), "josi.pc-control.pause"));
       } else {
@@ -145,8 +145,8 @@ namespace Josi.Native {
         Model.Run(async () => { var api = Model.Api; if (api != null) await api.Request("/admin/pc-control/stop", "POST", Wires.O()); });
       }), "josi.pc-control.stop"));
       controlBar.Child = Automation.Group("josi.pc-control.banner", sentence, Ui.Spread(status, actions));
-      controlBar.Padding = new Thickness(16, 8, 16, 8); controlBar.Background = Ui.OrangeFaint;
-      controlBar.BorderBrush = Ui.Orange; controlBar.BorderThickness = new Thickness(0, 0, 0, 1);
+      controlBar.Padding = new Thickness(16, 8, 16, 8); controlBar.Background = Ui.AccentFaint;
+      controlBar.BorderBrush = Ui.Accent; controlBar.BorderThickness = new Thickness(0, 0, 0, 1);
       controlBar.Visibility = Visibility.Visible;
     }
 
@@ -154,7 +154,7 @@ namespace Josi.Native {
       Title = "Josi";
       Width = 1160; Height = 800; MinWidth = 920; MinHeight = 660;
       WindowStartupLocation = WindowStartupLocation.CenterScreen;
-      Background = Ui.Background; Foreground = Ui.Text;
+      Background = Ui.Backdrop; Foreground = Ui.Text;
       FontFamily = Ui.Font; FontSize = 14;
       UseLayoutRounding = true;
       TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
@@ -169,8 +169,10 @@ namespace Josi.Native {
       var dock = new DockPanel { LastChildFill = true };
       DockPanel.SetDock(busyBar, Dock.Bottom); DockPanel.SetDock(errorBar, Dock.Bottom); DockPanel.SetDock(controlBar, Dock.Top); DockPanel.SetDock(statusLine, Dock.Bottom);
       dock.Children.Add(controlBar); dock.Children.Add(busyBar); dock.Children.Add(errorBar); dock.Children.Add(statusLine); dock.Children.Add(content);
-      Content = dock;
-      DesktopExecutor.Current.Start(Dispatcher);
+      var root = new Grid();
+      root.Children.Add(new Stars()); root.Children.Add(dock);
+      Content = root;
+      if (Flags.LocalWorkspace) DesktopExecutor.Current.Start(Dispatcher);
       DesktopExecutor.Current.Changed += RenderControlBar;
       controlTick.Tick += delegate { RenderControlBar(); };
       Automation.Changed += () => { statusLine.Text = Automation.Summary; System.Windows.Automation.AutomationProperties.SetName(statusLine, Automation.Summary); };
@@ -187,15 +189,16 @@ namespace Josi.Native {
         if (Model.Screen == Screen.Workspace && !Model.Busy) Model.Run(() => Model.NewThread());
       }), Key.N, ModifierKeys.Control));
       SourceInitialized += delegate { DarkTitleBar(); };
+      Loaded += delegate { Model.Ghost.Set(GhostState.Hello); };
       Model.RefreshLocal();
       Render();
       // A remembered sign-in opens the server on this PC straight away, once
       // the window runs (requests must resume on its thread).
       var r = Model.Receipt;
       if (Automation.Demo) Loaded += delegate { StartDemo(); };
-      else if (r.Installed && r.Running && r.Address.Length > 0 && SessionStore.Load(r.Address) != null)
+      else if (Flags.ServerApp && r.Installed && r.Running && r.Address.Length > 0 && SessionStore.Load(r.Address) != null)
         Loaded += delegate { if (Model.Screen == Screen.Connect) Model.Run(() => Model.Connect(r.Address, true)); };
-      else {
+      else if (Flags.Relay) {
         var paired = TunnelStore.Current.All().FirstOrDefault(p => SessionStore.Load(p.Origin) != null);
         if (paired != null) Loaded += delegate { if (Model.Screen == Screen.Connect) Model.Run(() => Model.ConnectPaired(paired)); };
       }
@@ -380,9 +383,9 @@ namespace Josi.Native {
         Automation.BeginScope("error");
         var close = Automation.Id(Ui.IconButton(Glyph.Close, "Dismiss", () => { Model.Error = ""; RenderBars(); UpdateStatus(); }, 12), "josi.error.dismiss");
         var text = Automation.Id(Ui.Copyable(Model.Error), "josi.error.text");
-        var row = Automation.Group("josi.error", Model.Error, Ui.Spread(Ui.Row(10, Ui.Icon(Glyph.Warning, 15, Ui.Orange), text), close));
+        var row = Automation.Group("josi.error", Model.Error, Ui.Spread(Ui.Row(10, Ui.Icon(Glyph.Warning, 15, Ui.Error), text), close));
         errorBar.Child = row; errorBar.Padding = new Thickness(14, 10, 14, 10);
-        errorBar.Background = new SolidColorBrush(Color.FromArgb(0x24, 0xF6, 0x83, 0x1E));
+        errorBar.Background = Skin.Solid(Skin.Current.Error, 0x24);
         errorBar.Visibility = Visibility.Visible;
         System.Windows.Automation.AutomationProperties.SetLiveSetting(errorBar, System.Windows.Automation.AutomationLiveSetting.Assertive);
       } else errorBar.Visibility = Visibility.Collapsed;
@@ -418,9 +421,9 @@ namespace Josi.Native {
       var handle = new WindowInteropHelper(this).Handle;
       var on = 1;
       DwmSetWindowAttribute(handle, 20, ref on, sizeof(int));        // immersive dark mode
-      var caption = 0x001E110B;                                       // #0B111E as COLORREF (BGR)
+      var caption = Skin.ColorRef(Skin.Current.Deep);
       DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int));    // caption color (Windows 11)
-      var text = 0x00EAF6FD;
+      var text = Skin.ColorRef(Skin.Current.Text);
       DwmSetWindowAttribute(handle, 36, ref text, sizeof(int));       // caption text color
     }
   }

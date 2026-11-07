@@ -9,12 +9,15 @@
 // stored request with its own session and reports the outcome here, so the
 // route's own checks decide, and the proposal is a truthful receipt. A
 // sensitive change applied by a member is emailed to every super-admin at
-// once when mail is set up.
+// once when mail is set up. Approving a sensitive change takes the approver's
+// password, here on the server, every time: a recent step-up does not count.
 import { Router, type Request, type Response } from 'express';
+import { checkLoginRate, recordLoginAttempt, verifyPassword } from '@josi-ce/auth';
 import { addMessage, json, loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
+import { clientIp } from './cookies.js';
 
 interface Ctx { db: Db; masterKey?: LoadOptions | false; mailTransport?: SmtpTransport }
 type Policy = 'self' | 'super_admin';
@@ -40,6 +43,18 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     }
   });
 
+  /** Throws unless this request carries the approver's password. On one limit
+   * per person, so the popup can't be used to guess it. */
+  async function confirmPassword(req: Request, res: Response, userId: string) {
+    const ip = clientIp(req), identifier = `settings-change:${userId}`;
+    const verdict = await checkLoginRate(db, identifier, ip);
+    if (verdict.blocked) { res.set('Retry-After', String(verdict.retryAfterSeconds)); throw fail(429, 'Too many wrong passwords. Wait a little and try again.'); }
+    const [row] = await db.query<{ password_hash: string | null }>(`select password_hash from users where id = $1`, [userId]);
+    if (!row?.password_hash) throw fail(403, 'This change needs your password, and your account does not have one yet. Set a password under Settings, then approve it.');
+    const matched = await verifyPassword(row.password_hash, typeof req.body?.password === 'string' ? req.body.password : '');
+    await recordLoginAttempt(db, { identifier, ip, success: matched });
+    if (!matched) throw fail(401, 'That password did not match.');
+  }
   async function policy(): Promise<Policy> {
     const [row] = await db.query<{ settings: Record<string, unknown> }>(`select settings from workspace where id = true`);
     return row?.settings?.memberSettingsChanges === 'super_admin' ? 'super_admin' : 'self';
@@ -125,6 +140,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
       : rule === 'super_admin' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
     if (!allowed) throw fail(403, row.scope === 'administrator' ? 'Only the super-admin can approve an administrator setting.'
       : 'Changes by members wait for the super-admin on this installation.');
+    if (row.sensitive) await confirmPassword(req, res, user.id);
     await db.query(`update settings_change_proposals set state = 'approved', approved_by = $2, approved_at = now() where id = $1`, [row.id, user.id]);
     return res.json({ ok: true, state: 'approved', apply: applier(row, user) ? change(row) : null });
   }));

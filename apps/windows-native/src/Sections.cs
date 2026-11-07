@@ -370,6 +370,24 @@ namespace Josi.Native {
       return ceiling >= 0 && rank >= 0 && rank <= ceiling;
     }
     static void Detach(FrameworkElement element) { var panel = element.Parent as Panel; if (panel != null) panel.Children.Remove(element); }
+    Updates.Release newer; string updateNote = "";
+    UIElement UpdateCard() {
+      var stack = new StackPanel();
+      Ui.Add(stack, Ui.Caption((Flags.AppName) + " " + Updates.Current), 0);
+      if (newer != null) {
+        var release = newer;
+        Ui.Add(stack, Ui.Headline("Version " + release.Version + " is available"), 10);
+        Ui.Add(stack, Ui.Caption("Download it and run it. It updates " + Flags.AppName + " in place and keeps your data."), 6);
+        Ui.Add(stack, Automation.Id(Ui.Pill("Download Update", () => ModelText.Open(release.Url), true), "josi.updates.download"), 10);
+      } else {
+        if (updateNote.Length > 0) Ui.Add(stack, Ui.Caption(updateNote), 8);
+        Ui.Add(stack, Automation.Id(Ui.Pill("Check for Updates", () => Perform(async (api, stamp) => {
+          try { newer = await Updates.Newer(); updateNote = newer == null ? "You're on the newest version." : ""; }
+          catch (Exception) { updateNote = "Couldn't reach the update page. Try again later."; }
+        })), "josi.updates.check"), 10);
+      }
+      return Ui.CardBox("Updates", stack);
+    }
     protected override UIElement Build() {
       var page = Page(Ui.HeadingWith("Your Settings", null, Ui.Pill("Refresh", StartLoad)), Ui.Secondary(model.SignedInName + " · " + model.Address));
       var approvals = new List<UIElement> { Ui.Caption("These choices apply to existing email, calendar, contact and task tools. Browser and computer access use the separate Automation permissions.") };
@@ -412,7 +430,7 @@ namespace Josi.Native {
           Post("/auth/mfa/enable", Wires.O("code", value));
         }, true), Ui.Pill("Close Setup", () => { setup = Wire.Null; code.Clear(); Render(); })));
       } else {
-        if (status["heyJosiLinked"].Flag) {
+        if (Flags.Relay && status["heyJosiLinked"].Flag) {
           mfa.Add(Ui.T("Use the authenticator on your Hey Josi account, so one app covers your whole platform."));
           mfa.Add(Ui.Field("Your password on this server", password));
           mfa.Add(Ui.Field("Six-digit code from your Hey Josi authenticator", code));
@@ -432,6 +450,7 @@ namespace Josi.Native {
         Ui.Field("Current password", confirmPassword),
         Ui.Pill("Confirm Password", () => { var secret = confirmPassword.Password; confirmPassword.Clear(); if (secret.Length > 0) Post("/assistant/step-up", Wires.O("password", secret)); })), 20);
       Ui.Add(page, Note(), 20);
+      Ui.Add(page, UpdateCard(), Ui.PageSpacing);
       return page;
     }
     UIElement QrImage() {
@@ -514,13 +533,13 @@ namespace Josi.Native {
             Ui.Pill("Run System Check", () => model.Run(async () => { await LoadHealth(true); Render(); })))
         };
         if (message.Length > 0) items.Add(Ui.Secondary(message));
-        if (error.Length > 0) items.Add(Ui.T(error, 14, null, Ui.Orange));
+        if (error.Length > 0) items.Add(Ui.T(error, 14, null, Ui.Error));
         if (!diagnosis.IsNull) {
           items.Add(Ui.Caption("Checked " + Wires.Date(diagnosis["checkedAt"].Text)));
           foreach (var check in ordered) {
             var pass = check["state"].Text == "pass";
             var detail = check["detail"].Text;
-            var header = Ui.Row(8, Ui.Icon(pass ? Glyph.Check : Glyph.Warning, 14, pass ? Ui.Green : Ui.Orange), Ui.T(check["label"].Text),
+            var header = Ui.Row(8, Ui.Icon(pass ? Glyph.Check : Glyph.Warning, 14, pass ? Ui.Green : Ui.Error), Ui.T(check["label"].Text),
               Ui.Caption(pass ? "Working" : check["state"].Text == "warn" ? "Attention" : "Needs repair"));
             items.Add(header);
             if (!pass && detail.Length > 0) items.Add(Ui.Copyable(detail, 13, Ui.Muted));
@@ -545,7 +564,7 @@ namespace Josi.Native {
       var page = Ui.Stack(20, Ui.Heading("Automation", "This PC, attached browser tabs, connected devices and current authority."));
       if (model.AutomationLoading) Ui.Add(page, Ui.Caption("Checking automation and Vault settings…"), 20);
       if (model.AutomationError.Length > 0)
-        Ui.Add(page, Ui.CardBox("Connection check needs attention", Ui.Copyable(model.AutomationError, 14, Ui.Orange),
+        Ui.Add(page, Ui.CardBox("Connection check needs attention", Ui.Copyable(model.AutomationError, 14, Ui.Error),
           Ui.Row(8, Ui.Pill("Open Vault", () => model.Section = "vault"), Ui.Pill("Check Server", () => model.Section = "server"))), 20);
       var automation = model.Automation;
       if (!automation.IsNull) {
@@ -589,7 +608,7 @@ namespace Josi.Native {
         Ui.Caption(canApprove ? "Changes to Cardinal Rules and protected devices are approved here: the exact change is shown, then Windows Hello. Permissions are edited in the web app for now."
           : "Changes to Cardinal Rules, permissions and protected devices need an exact preview and an independent approval with Windows Hello on an enrolled PC. Enroll this PC below to approve changes here.")
       };
-      if (settings.IsNull) items.Add(Ui.T("Current Vault settings are unavailable. Refresh before reviewing them.", 14, null, Ui.Orange));
+      if (settings.IsNull) items.Add(Ui.T("Current Vault settings are unavailable. Refresh before reviewing them.", 14, null, Ui.Accent));
       else {
         items.Add(Ui.T("Cardinal Rules", 15, FontWeights.SemiBold));
         var rules = settings["rules"]["document"]["rules"].List;
@@ -611,7 +630,7 @@ namespace Josi.Native {
             Ui.Copyable(draft["document"]["draft"]["wording"].Text), Ui.Caption(tested.IsNull ? "Not yet reviewed by the model." : "Reviewed " + Wires.Date(tested["testedAt"].Text))));
         }
         items.Add(Ui.T("Permissions", 15, FontWeights.SemiBold));
-        if (settings["permissions"]["reconciliationRequired"].Flag) items.Add(Ui.T("Vault recovery must be reconciled before permissions can be enforced.", 14, null, Ui.Orange));
+        if (settings["permissions"]["reconciliationRequired"].Flag) items.Add(Ui.T("Vault recovery must be reconciled before permissions can be enforced.", 14, null, Ui.Accent));
         var policies = settings["permissions"]["document"]["policies"].List;
         if (policies.Count == 0) items.Add(Ui.Secondary("No permission policies. Josi asks before automation actions."));
         foreach (var policy in policies) {
@@ -627,10 +646,10 @@ namespace Josi.Native {
       items.Add(Ui.Caption(capabilities["deviceEnrollment"].Flag
         ? "Enrolling this PC makes a key in Windows' protected key store, tied to Windows Hello. The computer that runs the server approves the enrollment in a window of its own."
         : "Enrollment is approved in a window on the computer that runs the server, so that computer needs the Josi app and a signed-in screen. This server reports it cannot show one right now."));
-      if (model.AutomationDevicesError.Length > 0) items.Add(Ui.T(model.AutomationDevicesError, 14, null, Ui.Orange));
+      if (model.AutomationDevicesError.Length > 0) items.Add(Ui.T(model.AutomationDevicesError, 14, null, Ui.Error));
       var devices = model.AutomationDevices;
       if (devices.IsNull && model.AutomationDevicesError.Length == 0) items.Add(Ui.Secondary("Saved devices have not been loaded. Refresh Automation to check this account."));
-      if (devices["reconciliationRequired"].Flag) items.Add(Ui.T("Vault recovery must be reconciled before devices can approve changes.", 14, null, Ui.Orange));
+      if (devices["reconciliationRequired"].Flag) items.Add(Ui.T("Vault recovery must be reconciled before devices can approve changes.", 14, null, Ui.Accent));
       if (!devices.IsNull && devices["devices"].List.Count == 0) items.Add(Ui.Secondary("No protected confirmation devices are enrolled for this account."));
       foreach (var device in devices["devices"].List) {
         var enrollmentId = device["enrollmentId"].Text; var expected = devices["reference"]; var label = device["label"].Text;
@@ -716,7 +735,7 @@ namespace Josi.Native {
           var buttons = Ui.Wrap(Ui.Pill("Save a Copy…", () => Download(item)));
           if (backup["kind"].Text == "full") buttons.Children.Add(Ui.Danger("Restore This One…", () => RestoreStored(item)));
           row.Children.Add(buttons);
-        } else if (backup["state"].Text == "failed") row.Children.Add(Ui.T(Wires.Words(backup["error_category"].Text), 12, null, Ui.Orange));
+        } else if (backup["state"].Text == "failed") row.Children.Add(Ui.T(Wires.Words(backup["error_category"].Text), 12, null, Ui.Error));
         history.Add(new Border { BorderBrush = Ui.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12), Child = row });
       }
       Ui.Add(page, Ui.CardBox("On this server", history.ToArray()), 20);
@@ -738,7 +757,7 @@ namespace Josi.Native {
         if (newest != null && s["copy_to"].Text.Length == 0) {
           DateTime made;
           if (DateTime.TryParse(newest["created_at"].Text, null, System.Globalization.DateTimeStyles.RoundtripKind, out made) && (DateTime.UtcNow - made.ToUniversalTime()).TotalDays >= 7)
-            items.Add(Ui.T("The newest backup on this server is " + (int)(DateTime.UtcNow - made.ToUniversalTime()).TotalDays + " days old and lives only on this PC. Save a copy somewhere else.", 13.5, null, Ui.Orange));
+            items.Add(Ui.T("The newest backup on this server is " + (int)(DateTime.UtcNow - made.ToUniversalTime()).TotalDays + " days old and lives only on this PC. Save a copy somewhere else.", 13.5, null, Ui.Accent));
         }
       }
       return Ui.CardBox("Daily backup", items.ToArray());

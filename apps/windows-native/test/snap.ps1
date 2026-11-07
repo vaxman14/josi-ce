@@ -29,7 +29,7 @@ foreach ($name in $Click) {
   $found.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
   Start-Sleep -Seconds $Wait
 }
-foreach ($entry in $Type) { $name, $text = $entry -split '=', 2; $e = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition((New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $name)), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit))))); if ($e) { $e.SetFocus(); Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait($text) } else { Write-Host "not found: $name" } }
+foreach ($entry in $Type) { $name, $text = $entry -split '=', 2; $e = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition((New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $name)), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit))))); if ($e) { $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($text) } else { Write-Host "not found: $name" } }
 Start-Sleep -Milliseconds 800
 $r = New-Object SnapWin+R; [SnapWin]::GetWindowRect($h, [ref]$r) | Out-Null
 $bmp = New-Object System.Drawing.Bitmap ($r.Ri - $r.L), ($r.B - $r.T)

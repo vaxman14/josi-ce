@@ -220,6 +220,7 @@ export function requireCsrf(req: Request, res: Response, next: NextFunction): vo
   const nativeLogin = req.path === '/auth/login'
     || req.path === '/auth/mfa/verify-login'
     || req.path === '/auth/google/native/exchange'
+    || req.path === '/auth/native/exchange'
     || req.path === '/auth/apple/native/exchange'
     || req.path === '/auth/apple/native/complete';
   const nativeBearer = /^Bearer\s+[^\s]+$/i.test(req.header('authorization') ?? '');

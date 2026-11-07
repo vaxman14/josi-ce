@@ -75,7 +75,7 @@ namespace Josi.Native {
       }
       public void Finish(string text, bool ok) {
         timer.Stop(); sheet.Locked = false; clock.Text = "";
-        status.Visibility = Visibility.Visible; status.Text = text; status.Foreground = ok ? Ui.Muted : Ui.Orange;
+        status.Visibility = Visibility.Visible; status.Text = text; status.Foreground = ok ? Ui.Muted : Ui.Accent;
         actions.Children.Clear(); actions.Children.Add(Ui.Pill("Close", () => sheet.Close(), true)); actions.Visibility = Visibility.Visible;
       }
       public void Close() { if (!Closed) { sheet.Locked = false; sheet.Close(); } }

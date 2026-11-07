@@ -17,22 +17,28 @@ namespace Josi.Native {
   /// navy surfaces, cream text, orange accents, rounded cards and pill buttons.
   public static class Ui {
     public static ResourceDictionary Resources;
-    public static Brush Background, Sidebar, Card, Raised, Border, Orange, Text, Muted, OrangeSoft, OrangeFaint, Green, Warning;
-    public static FontFamily Font, Icons, Mono;
+    public static Brush Background, Sidebar, Card, Raised, Border, Accent, Text, Muted, AccentSoft, AccentFaint, Green, Warning;
+    public static Brush Error, OnGold, GoldGradient, Backdrop, Frost, Hairline, Sheet, Scrim, SendFill;
+    public static FontFamily Font, Display, Icons, Mono;
     static BitmapImage mark;
 
     public static void Load() {
       using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Theme.xaml"))
-        Resources = (ResourceDictionary)XamlReader.Load(stream);
+      using (var reader = new System.IO.StreamReader(stream))
+        Resources = (ResourceDictionary)XamlReader.Parse(Skin.Apply(reader.ReadToEnd()));
       Background = (Brush)Resources["Background"]; Sidebar = (Brush)Resources["Sidebar"]; Card = (Brush)Resources["Card"];
-      Raised = (Brush)Resources["Raised"]; Border = (Brush)Resources["BorderBrush"]; Orange = (Brush)Resources["Orange"];
-      Text = (Brush)Resources["Text"]; Muted = (Brush)Resources["Muted"]; OrangeSoft = (Brush)Resources["OrangeSoft"];
-      OrangeFaint = (Brush)Resources["OrangeFaint"];
-      Green = Freeze(new SolidColorBrush(Color.FromRgb(0x5C, 0xC9, 0x7B)));
-      Warning = Orange;
+      Raised = (Brush)Resources["Raised"]; Border = (Brush)Resources["BorderBrush"]; Accent = (Brush)Resources["Accent"];
+      Text = (Brush)Resources["Text"]; Muted = (Brush)Resources["Muted"]; AccentSoft = (Brush)Resources["AccentSoft"];
+      AccentFaint = (Brush)Resources["AccentFaint"];
+      var skin = Skin.Current;
+      Green = Skin.Solid(skin.Success); Error = Skin.Solid(skin.Error); OnGold = Skin.Solid(skin.OnGold);
+      Warning = Accent;
+      GoldGradient = Skin.GoldGradient(); Backdrop = Skin.Backdrop();
+      Frost = Skin.Solid(skin.Panel, 0xB8); Hairline = Skin.Solid(skin.Gold2, 0x40);
+      Sheet = Skin.Solid(skin.Deep); Scrim = Skin.Solid(skin.Bottom, 0xA6); SendFill = Skin.SendFill();
       Font = (FontFamily)Resources["Font"]; Icons = (FontFamily)Resources["Icons"]; Mono = (FontFamily)Resources["Mono"];
+      Display = new FontFamily("pack://application:,,,/Josi;component/assets/fonts/#Bricolage Grotesque, Segoe UI");
     }
-    static Brush Freeze(SolidColorBrush brush) { brush.Freeze(); return brush; }
 
     public static BitmapImage Mark {
       get {
@@ -50,12 +56,14 @@ namespace Josi.Native {
 
     /// White J on navy, from the approved master asset.
     public static FrameworkElement JosiMark(double size) {
-      var image = new Image { Source = Mark, Width = size, Height = size, Stretch = Stretch.UniformToFill };
-      RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
-      var radius = size * 0.22;
-      image.Clip = new RectangleGeometry(new Rect(0, 0, size, size), radius, radius);
-      AutomationHidden(image);
-      return image;
+      // The gold J on its tile, as JosiMarkTile draws it on the Mac.
+      var glyph = new System.Windows.Shapes.Rectangle { Width = size * 0.6, Height = size * 0.6, Fill = GoldGradient,
+        OpacityMask = new ImageBrush(Mark) { Stretch = Stretch.Uniform } };
+      var tile = new Border { Width = size, Height = size, CornerRadius = new CornerRadius(size * 0.27), Child = glyph,
+        BorderBrush = Hairline, BorderThickness = new Thickness(1),
+        Background = new LinearGradientBrush(Skin.Hex(Skin.Current.TileTop), Skin.Hex(Skin.Current.Panel), 90) };
+      AutomationHidden(tile);
+      return tile;
     }
     static void AutomationHidden(UIElement element) {
       // Decorative: no name, no focus, no hit testing, so screen readers skip it.
@@ -64,7 +72,7 @@ namespace Josi.Native {
 
     public static TextBlock T(string text, double size = 14, FontWeight? weight = null, Brush brush = null) {
       return new TextBlock {
-        Text = text ?? "", FontSize = size, FontFamily = Font, FontWeight = weight ?? FontWeights.Normal,
+        Text = text ?? "", FontSize = size, FontFamily = size >= 17 && weight >= FontWeights.SemiBold ? Display : Font, FontWeight = weight ?? FontWeights.Normal,
         Foreground = brush ?? Text, TextWrapping = TextWrapping.Wrap
       };
     }
@@ -176,7 +184,7 @@ namespace Josi.Native {
       if (!string.IsNullOrEmpty(title)) Add(stack, Headline(title), 0);
       foreach (var child in content) Add(stack, child, 12);
       return new Border {
-        Background = Card, BorderBrush = Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14),
+        Background = Card, BorderBrush = Hairline, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14),
         Padding = new Thickness(18), Child = stack, HorizontalAlignment = HorizontalAlignment.Stretch
       };
     }
@@ -219,6 +227,15 @@ namespace Josi.Native {
       var button = new Button { Content = content, Style = (Style)Resources[prominent ? "PillProminent" : "Pill"] };
       Name(button, label ?? tip, tip);
       Automation.Derive(button, "button", label ?? tip);
+      if (click != null) button.Click += delegate { click(); };
+      return button;
+    }
+    /// A round icon button; `fill` replaces the panel colour, as on send.
+    public static Button RoundButton(string glyph, string label, Action click, double size = 44, Brush icon = null, Brush fill = null) {
+      var button = new Button { Content = Icon(glyph, size * 0.4, icon ?? Accent), Style = (Style)Resources["Round"], Width = size, Height = size };
+      if (fill != null) { button.Background = fill; button.BorderBrush = Brushes.Transparent; }
+      Name(button, label, label);
+      Automation.Derive(button, "button", label);
       if (click != null) button.Click += delegate { click(); };
       return button;
     }
@@ -313,17 +330,17 @@ namespace Josi.Native {
       foreach (var option in options) {
         var key = option.Key;
         var on = key == selected;
-        var label = T(option.Value, 13.5, FontWeights.Medium, on ? Orange : Muted);
+        var label = T(option.Value, 13.5, FontWeights.Medium, on ? Accent : Muted);
         label.TextAlignment = TextAlignment.Center; label.HorizontalAlignment = HorizontalAlignment.Center;
         var button = new Button { Content = label, Style = (Style)Resources["Plain"], Padding = new Thickness(12, 9, 12, 9),
-          Background = on ? (Brush)Resources["OrangeSoft"] : Brushes.Transparent, Margin = new Thickness(2) };
+          Background = on ? (Brush)Resources["AccentSoft"] : Brushes.Transparent, Margin = new Thickness(2) };
         if (idPrefix != null) Automation.Id(button, idPrefix + key, option.Value);
         else Automation.Derive(button, "segment", "segment " + key);
         System.Windows.Automation.AutomationProperties.SetItemStatus(button, on ? "selected" : "");
         button.Click += delegate { pick(key); };
         grid.Children.Add(button);
       }
-      return new Border { Background = new SolidColorBrush(Color.FromArgb(0x80, 0x1F, 0x28, 0x3D)), CornerRadius = new CornerRadius(11),
+      return new Border { Background = Frost, CornerRadius = new CornerRadius(11),
         Padding = new Thickness(3), Child = grid, MaxWidth = 620, HorizontalAlignment = HorizontalAlignment.Left };
     }
 
@@ -345,9 +362,9 @@ namespace Josi.Native {
       };
       string text;
       if (!labels.TryGetValue(state, out text)) text = Wires.Capitalize(state);
-      var color = state == "completed" ? Green : Orange;
+      var color = state == "completed" ? Green : Accent;
       var row = Row(6, new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = color }, T(text, 12, FontWeights.SemiBold, color));
-      return new Border { Background = OrangeFaint, CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 5, 10, 5), Child = row, VerticalAlignment = VerticalAlignment.Center };
+      return new Border { Background = AccentFaint, CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 5, 10, 5), Child = row, VerticalAlignment = VerticalAlignment.Center };
     }
 
     /// The J mark, gently rocking and bobbing; still when Windows animations are off.
@@ -367,13 +384,15 @@ namespace Josi.Native {
       }
       return markElement;
     }
-    /// The animated J thinking indicator in the chat.
-    public static FrameworkElement Thinking(string activity = null) {
-      var text = string.IsNullOrEmpty(activity) ? "Josi is thinking…" : activity;
-      var row = Row(14, AnimatedMark(38), Automation.Id(T(text, 14, null, Muted), "josi.chat.thinking.text"));
+    /// The capsule beside the ghost while Josi is working on a reply.
+    public static FrameworkElement Thinking(string activity, out TextBlock label) {
+      var text = string.IsNullOrEmpty(activity) ? "Josi is thinking" : activity;
+      label = T(text, 12.5, null, Accent);
+      var pill = new Border { Background = AccentFaint, BorderBrush = Hairline, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14),
+        Padding = new Thickness(12, 6, 12, 6), Child = Automation.Id(label, "josi.chat.thinking.text") };
       // A panel has no automation peer; the group makes the indicator findable.
-      var group = Automation.Group("josi.chat.thinking", "Josi is thinking", row);
-      group.Margin = new Thickness(0, 12, 0, 12);
+      var group = Automation.Group("josi.chat.thinking", "Josi is thinking", pill);
+      group.VerticalAlignment = VerticalAlignment.Center;
       return group;
     }
     /// A small animated J with a sentence, for any wait: "Checking…",
@@ -428,7 +447,7 @@ namespace Josi.Native {
       // Segoe Fluent Icons for the sections added with the full build list.
       Calendar = "\uE787", Contact = "\uE77B", Folder = "\uE8B7", Clock = "\uE823", Link = "\uE71B", Shield = "\uE83D",
       Approve = "\uE8FB", Emoji = "\uE76E", Flow = "\uE9D5", Chart = "\uE9D9", Settings = "\uE713", Globe = "\uE774",
-      History = "\uE81C", Code = "\uE943", Plug = "\uE703", Import = "\uE8B5", Document = "\uE8A5", Health = "\uE95E",
+      History = "\uE81C", Menu = "\uE700", Code = "\uE943", Plug = "\uE703", Import = "\uE8B5", Document = "\uE8A5", Health = "\uE95E",
       Repair = "\uE90F", List = "\uE8FD", Phone = "\uE8EA", Home = "\uE80F";
   }
 }

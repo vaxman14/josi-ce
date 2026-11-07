@@ -3,7 +3,7 @@
 # kit builder verifies. Local developer build only; nothing is published.
 #   powershell -ExecutionPolicy Bypass -File scripts\windows\Build-NativeApp.ps1
 [CmdletBinding()]
-param()
+param([string]$Version = '')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -12,8 +12,9 @@ $base = Join-Path $repo 'artifacts\windows-native'
 $out = Join-Path $base ('staging\native-app-' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Force $out, (Join-Path $base 'evidence')
 
+$stamp = if ($Version) { @("-p:Version=$(($Version -split '-')[0])", "-p:InformationalVersion=$Version") } else { @() }
 & dotnet publish $project -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-  -p:DebugType=None -p:GenerateDocumentationFile=false -o $out -nologo -v q
+  -p:DebugType=None -p:GenerateDocumentationFile=false @stamp -o $out -nologo -v q
 if ($LASTEXITCODE) { throw 'The native app did not build' }
 $binary = Join-Path $out 'Josi.exe'
 if (!(Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'Josi.exe was not produced' }

@@ -90,7 +90,7 @@ namespace Josi.Native {
           status.Text = "Approved. The enrolling PC finishes the enrollment.";
           actions.Children.Clear(); actions.Children.Add(Ui.Pill("Close", () => window.Close(), true));
         } catch (Exception e) {
-          status.Text = AppModel.Friendly(e); status.Foreground = Ui.Orange; approve.IsEnabled = true; cancel.IsEnabled = true;
+          status.Text = AppModel.Friendly(e); status.Foreground = Ui.Accent; approve.IsEnabled = true; cancel.IsEnabled = true;
         }
       };
       var items = new List<UIElement> {

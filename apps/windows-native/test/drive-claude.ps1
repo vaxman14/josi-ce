@@ -42,8 +42,9 @@ try {
   $main = $A::FromHandle($app.MainWindowHandle)
   (Find $main 'Open Josi' $C::Button).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
   (Find $main 'Username or email' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('roman')
-  (Find $main 'Password' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('correct horse battery{ENTER}')
-  (Find $main 'Models' $C::Button).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+  (Find $main 'Password' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('correct horse battery'); Click $main 'Sign In'
+  (Find $main 'Menu' $C::Button).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 600
+  (Find $main 'Model' $C::Button).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
   Start-Sleep -Seconds 3
   (Find $main 'Sign In with Claude' $C::Button).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
   $code = Find $main "Paste the code from Claude's page" $C::Edit 60
