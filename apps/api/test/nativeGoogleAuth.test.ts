@@ -81,6 +81,8 @@ describe('native Google authentication', () => {
       googleSignIn: true,
       appleSignIn: false,
       nativeGoogleStart: 'https://native.ce.test/api/auth/google/native/start',
+      passkeySignIn: true,
+      nativePasskeyStart: 'https://native.ce.test/api/auth/passkey/native/start',
       enrollmentDeepLink: 'josi://enroll?server=https%3A%2F%2Fnative.ce.test',
     });
     expect(JSON.stringify(body)).not.toContain('client-secret');

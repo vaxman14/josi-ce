@@ -6,3 +6,7 @@ export * from './users.js';
 export * from './googleState.js';
 export { MFA_VAULT_SERVICE, MfaError, beginMfaSetup, enableMfa, disableMfa, verifyMfaFactor, completeMfaLogin } from './mfa.js';
 export * from './protectedAdmin.js';
+export { WebAuthnError } from './webauthn.js';
+export * from './passkeys.js';
+export * from './passkeyTickets.js';
+export * from './emailCodes.js';

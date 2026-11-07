@@ -12,6 +12,7 @@ import { attachUser } from './http/authz.js';
 import { requireCsrf } from './http/cookies.js';
 import type { CookieSecurePolicy } from './http/cookies.js';
 import { authRoutes } from './http/authRoutes.js';
+import { signInRoutes } from './http/signInRoutes.js';
 import { adminRoutes } from './http/adminRoutes.js';
 import { checklistRoutes } from './http/checklistRoutes.js';
 import { adminConnectionRoutes, connectionRoutes } from './http/connectionRoutes.js';
@@ -91,6 +92,11 @@ export interface AppConfig {
   /** Native Sign in with Apple audience. Unset disables the endpoint and keeps
    * installations that do not own an Apple App ID from advertising it. */
   appleNativeClientId?: string | null;
+  /** Passkey and email-code sign-in. On unless turned off. */
+  passkeysEnabled?: boolean;
+  emailCodesEnabled?: boolean;
+  /** Where "Continue with Apple" goes on the web. Unset hides the button. */
+  appleWebSignInUrl?: string | null;
   /** Apple JWKS HTTP, injected so tests never contact Apple. */
   appleFetch?: typeof fetch;
   /** SMTP, injected by the tests so no suite ever contacts a mail server. */
@@ -218,7 +224,11 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/auth', authRoutes({
     db, cookieSecure: cfg.cookieSecure, appUrl: cfg.appUrl,
     masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport, connectorFetch: cfg.connectorFetch,
-    appleNativeClientId: cfg.appleNativeClientId, appleFetch: cfg.appleFetch,
+    appleNativeClientId: cfg.appleNativeClientId, appleFetch: cfg.appleFetch, passkeysEnabled: cfg.passkeysEnabled,
+  }));
+  api.use('/auth', signInRoutes({
+    db, cookieSecure: cfg.cookieSecure, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport,
+    passkeysEnabled: cfg.passkeysEnabled, emailCodesEnabled: cfg.emailCodesEnabled, appleWebSignInUrl: cfg.appleWebSignInUrl,
   }));
   // Phase 7 owns /connections now: the Phase 1 router proved the ownership
   // shape against a real table; this one actually connects accounts.
