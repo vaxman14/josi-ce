@@ -55,7 +55,12 @@ class HeadlessInstallerTests(unittest.TestCase):
     def test_one_root_command_and_one_line_of_output(self):
         self.assertIn('[ "$(id -u)" = 0 ]', TEXT)
         self.assertEqual(TEXT.count('/usr/bin/josi-ce-server-install'), 1)
-        self.assertEqual(len(re.findall(r"^printf '%s\\n' \"\$url\"$", TEXT, re.M)), 1)
+        # stdout gets the address and nothing else; the progress screen is on stderr.
+        self.assertEqual(len(re.findall(r"^\s*printf '%s\\n' \"\$url\"$", TEXT, re.M)), 1)
+        self.assertEqual(len(re.findall(r"^\s*printf '  %s%s%s\\n' \"\$BOLD\$GOLD\" \"\$url\" \"\$RST\"$", TEXT, re.M)), 1)
+        for line in TEXT.splitlines():
+            if re.match(r'^\s*printf ', line) and '$url' not in line and 'printf -v' not in line and ' | ' not in line:
+                self.assertTrue('>&2' in line or '>&3' in line or line.rstrip().endswith('\\'), line)
         self.assertNotIn('sudo ', TEXT.replace('| sudo bash', ''))
         self.assertNotIn('git ', TEXT)
         self.assertNotIn('docker', TEXT.lower())
@@ -63,7 +68,7 @@ class HeadlessInstallerTests(unittest.TestCase):
     def test_checksum_is_verified_before_the_package_manager_runs(self):
         verify = TEXT.index('[ "$actual" = "$expected" ]')
         self.assertLess(verify, TEXT.index('pacman -U'))
-        self.assertLess(verify, TEXT.index('apt-get install -y -q "$work/$package"'))
+        self.assertLess(verify, TEXT.index('apt_get install -y -q "$work/$package"'))
 
     def test_detects_both_families_and_processors(self):
         for text in ('command -v pacman', 'command -v apt-get', 'aarch64|arm64) processor=aarch64', 'x86_64|amd64) processor=x86_64'):

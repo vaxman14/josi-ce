@@ -60,6 +60,8 @@ step 'Packages: Arch (pacman) and Debian/Ubuntu'
 rm -f "$out/SHA256SUMS.txt" "$out"/josi*.deb "$out"/josi*.pkg.tar.zst "$out"/josi-root-*.tar.zst
 python3 -B scripts/linux/build-arch.py
 python3 -B scripts/linux/build-deb.py
+# The Ghost Stage needs all 14 clips in both formats and the still.
+python3 -B scripts/linux/check-ghost-assets.py
 
 step 'One-command installer (linux) and update feed (linux-latest.json)'
 python3 -B scripts/linux/build-headless-installer.py
