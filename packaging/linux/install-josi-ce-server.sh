@@ -167,7 +167,12 @@ init_screen() {
   local tty_size osname
   [ -t 2 ] || return 0
   [ "${JOSI_QUIET:-0}" != 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ] || return 0
-  tty_size=$(stty size </dev/tty 2>/dev/null || true)
+  # sudo-rs (Ubuntu 26.04) runs this script outside the terminal's foreground
+  # process group, where the kernel stops anything that touches the terminal
+  # settings. Ignoring SIGTTOU and SIGTTIN, which children inherit, keeps the
+  # size query and the screen from freezing; the timeout is a second guard.
+  trap '' TTOU TTIN
+  tty_size=$(timeout -s KILL 2 stty size <&2 2>/dev/null || true)
   case $tty_size in *' '*) rows=${tty_size% *} cols=${tty_size#* } ;; esac
   case $rows in '' | *[!0-9]*) rows=24 ;; esac
   case $cols in '' | *[!0-9]*) cols=80 ;; esac
