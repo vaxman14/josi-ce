@@ -11,6 +11,11 @@ struct SetupView: View {
     @State private var showRecovery = false
     @State private var discovered: [Wire] = []
     @State private var place = "mac"
+    /// An earlier step the person went Back to, or nil for the server's step.
+    @State private var viewing: String?
+    /// The server lets only these finished steps be submitted again
+    /// (REVISABLE_STEPS in apps/api/src/setup/steps.ts); the rest show as saved.
+    private static let revisable: Set<String> = ["llm", "smtp"]
     private static let words: [String: (String, String)] = [
         "host_checks": ("Checking this Mac", "A quick look to make sure everything Josi needs is here."),
         "owner": ("First, who are you?", "This is the account that runs this Josi. You can invite other people later."),
@@ -27,7 +32,15 @@ struct SetupView: View {
         guard let at = steps.firstIndex(where: { $0["id"].text == step }) else { return "" }
         return "Step \(at + 1) of \(steps.count)"
     }
-    var step: String { model.setup["nextStep"].text }
+    /// The step the server expects next.
+    var serverStep: String { model.setup["nextStep"].text }
+    /// The step on screen: an earlier finished one the person went Back to, or
+    /// the server's. A step the server no longer lists as done ends the look back.
+    var step: String {
+        if let viewing, viewing != serverStep, done(viewing) { return viewing }
+        return serverStep
+    }
+    private func done(_ id: String) -> Bool { model.setup["steps"].list.contains { $0["id"].text == id && $0["done"].flag } }
     var providerEntry: Wire { model.setup["providerCatalog"].list.first { $0["kind"].text == provider } ?? .null }
     var body: some View {
         ScrollView {
@@ -40,6 +53,7 @@ struct SetupView: View {
                             .font(JosiFont.caption).foregroundStyle(item["id"].text == step ? Color.accentColor : Color.secondary)
                     }
                 }
+                if model.recovery == .null { stepNavigation }
                 if model.recovery != .null {
                     recoveryView
                 } else {
@@ -74,7 +88,35 @@ struct SetupView: View {
                 if !providerEntry["defaultBaseUrl"].text.isEmpty { values["baseUrl"] = providerEntry["defaultBaseUrl"].text }
             }
     }
+    /// Back and Next between steps. Next only walks forward to the server's step.
+    private var stepNavigation: some View {
+        let all = model.setup["steps"].list.map { $0["id"].text }
+        let index = all.firstIndex(of: step) ?? all.count
+        return HStack(spacing: 10) {
+            Button { viewing = all[index - 1] } label: { Label("Back", systemImage: "chevron.left") }
+                .disabled(index == 0)
+            if step != serverStep {
+                Button {
+                    let next = index + 1 < all.count ? all[index + 1] : nil
+                    viewing = (next == nil || next == serverStep || !done(next!)) ? nil : next
+                } label: { Label("Next Step", systemImage: "chevron.right") }
+            }
+        }
+    }
     @ViewBuilder private var stepForm: some View {
+        if step != serverStep && !Self.revisable.contains(step) {
+            // The server keeps these once saved: the owner account and the consent
+            // choices can't be replayed. They change in Settings after setup.
+            Text("You’ve already done this step, and it’s saved.")
+            Text(step == "owner" ? "Your account is set. You can change your name, email and password in Settings once setup is finished."
+                 : step == "host_checks" ? "Everything Josi needs was here."
+                 : "You can change this in Settings once setup is finished.").foregroundStyle(JosiTheme.lilac)
+            Button("Continue Where I Left Off") { viewing = nil }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
+        } else {
+            currentForm
+        }
+    }
+    @ViewBuilder private var currentForm: some View {
         switch step {
         case "host_checks":
             ForEach(Array(model.hostChecks.enumerated()), id: \.offset) { _, check in
@@ -270,7 +312,12 @@ struct SetupView: View {
         for key in ["password", "apiKey"] + providerEntry["fields"].list.filter({ $0["secret"].flag }).map({ $0["key"].text }) {
             values[key] = nil
         }
-        model.run { try await model.setupStep(submittedStep, body: body) }
+        model.run {
+            try await model.setupStep(submittedStep, body: body)
+            // A changed earlier step returns to where setup left off once it's
+            // saved; a model that failed its check stays open to show why.
+            if submittedStep != "llm" || model.setupCheck["status"].text == "passed" { viewing = nil }
+        }
     }
     private func credentials() -> Wire {
         var fields: [String: Wire] = ["provider": .string(provider), "baseUrl": value("baseUrl")]
