@@ -27,6 +27,10 @@ namespace Josi.Native {
       switch ((name ?? "").ToLowerInvariant()) {
         case "powershell": return Path.Combine(system, @"WindowsPowerShell\v1.0\powershell.exe");
         case "cmd": return Path.Combine(system, "cmd.exe");
+        case "pwsh": {
+          var candidate = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"PowerShell\7\pwsh.exe");
+          return File.Exists(candidate) ? candidate : null;
+        }
         default: return null;
       }
     }
@@ -55,44 +59,22 @@ namespace Josi.Native {
         RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
         StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
       };
-      string scriptFile = null;
       if (payload["shell"].Text == "cmd") info.Arguments = "/d /s /c \"" + command.Replace("\r", "").Replace("\n", " & ") + "\"";
       else {
-        // The command runs as a private script file, so quotes and newlines need no
-        // escaping and errors name a line, not the whole command. PowerShell is told
-        // to write UTF-8 so non-ASCII output survives the pipe.
-        scriptFile = Path.Combine(Path.GetTempPath(), "josi-command-" + Guid.NewGuid().ToString("N") + ".ps1");
-        File.WriteAllText(scriptFile, "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8; $ProgressPreference='SilentlyContinue'\n" + command + "\n", new UTF8Encoding(true));
-        info.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + scriptFile + "\"";
+        // EncodedCommand preserves quotes/newlines without leaving an executable
+        // script on disk. UTF-8 keeps non-ASCII output intact through the pipe.
+        var script = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8; $ProgressPreference='SilentlyContinue'\n" + command + "\n";
+        info.Arguments = "-NoLogo -NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
       }
       info.Environment["JOSI_PC_CONTROL"] = "1";
       info.Environment["TERM"] = "dumb"; info.Environment["NO_COLOR"] = "1"; info.Environment["CI"] = "1";
       var stdout = new Capture(StdoutHead, StdoutTail); var stderr = new Capture(StderrKeep, 0);
       var watch = Stopwatch.StartNew(); bool timedOut = false, cancelled = false; int exit;
-      try { exit = RunProcess(info, stdout, stderr, seconds, cancel, out timedOut, out cancelled); }
-      finally { if (scriptFile != null) { try { File.Delete(scriptFile); } catch (IOException) { } catch (UnauthorizedAccessException) { } } }
+      exit = PcOwnedProcess.Run(info, stdout.Add, stderr.Add, seconds, cancel, out timedOut, out cancelled);
       watch.Stop();
       if (cancelled) cancel.ThrowIfCancellationRequested();
       return Tuple.Create(true, (object)Wires.O("kind", "desktop_command", "shell", payload["shell"].Text, "cwd", cwd, "exitCode", exit, "timedOut", timedOut,
         "durationMs", (int)watch.ElapsedMilliseconds, "stdout", stdout.Text(), "stderr", PlainErrors(stderr.Text()), "truncated", stdout.Truncated || stderr.Truncated, "untrustedContent", true));
-    }
-    static int RunProcess(ProcessStartInfo info, Capture stdout, Capture stderr, int seconds, CancellationToken cancel, out bool timedOut, out bool cancelled) {
-      timedOut = false; cancelled = false;
-      using (var process = new Process { StartInfo = info }) {
-        process.OutputDataReceived += (_, e) => { if (e.Data != null) stdout.Add(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data != null) stderr.Add(e.Data); };
-        process.Start();
-        process.StandardInput.Close();
-        process.BeginOutputReadLine(); process.BeginErrorReadLine();
-        var deadline = DateTime.UtcNow.AddSeconds(seconds);
-        while (!process.WaitForExit(250)) {
-          if (cancel.IsCancellationRequested) { cancelled = true; break; }
-          if (DateTime.UtcNow >= deadline) { timedOut = true; break; }
-        }
-        if (timedOut || cancelled) { try { process.Kill(true); } catch (InvalidOperationException) { } catch (Win32Exception) { } process.WaitForExit(5000); }
-        else process.WaitForExit(); // lets the output readers drain
-        return process.HasExited ? process.ExitCode : -1;
-      }
     }
     /// powershell.exe writes its error stream as CLIXML when stderr is a pipe.
     /// Keep the error, warning and verbose text; drop progress records and markup.
@@ -107,26 +89,26 @@ namespace Josi.Native {
       }
       return lines.ToString();
     }
-    /// Keeps the first and last part of a stream of lines, dropping the middle.
+    /// Keeps the first and last part of a character stream, dropping the middle.
     sealed class Capture {
-      readonly int head, tail; readonly StringBuilder first = new StringBuilder(); readonly LinkedList<string> last = new LinkedList<string>();
-      int lastSize; long dropped;
+      readonly int head, tail; readonly StringBuilder first = new StringBuilder(); readonly StringBuilder last = new StringBuilder();
+      long dropped;
       public Capture(int head, int tail) { this.head = head; this.tail = tail; }
       public bool Truncated { get { return dropped > 0; } }
       public void Add(string line) {
         lock (first) {
-          if (first.Length + line.Length + 1 <= head) { first.Append(line).Append('\n'); return; }
-          if (tail == 0) { dropped += line.Length + 1; return; }
-          last.AddLast(line); lastSize += line.Length + 1;
-          while (lastSize > tail && last.Count > 0) { dropped += last.First.Value.Length + 1; lastSize -= last.First.Value.Length + 1; last.RemoveFirst(); }
+          var keep = Math.Min(head - first.Length, line.Length);
+          first.Append(line, 0, keep);
+          last.Append(line, keep, line.Length - keep);
+          if (last.Length > tail) { var omit = last.Length - tail; dropped += omit; last.Remove(0, omit); }
         }
       }
       public string Text() {
         lock (first) {
-          if (dropped == 0 && last.Count == 0) return first.ToString();
+          if (dropped == 0 && last.Length == 0) return first.ToString();
           var text = new StringBuilder(first.ToString());
           if (dropped > 0) text.Append("\n[... ").Append(dropped).Append(" characters omitted ...]\n\n");
-          foreach (var line in last) text.Append(line).Append('\n');
+          text.Append(last);
           return text.ToString();
         }
       }
@@ -236,6 +218,7 @@ namespace Josi.Native {
       var folder = payload["folder"].Text;
       if (folder.Length == 0 || !SamePath(folder, scope["target"].Text)) return refuse("folder_outside_scope");
       if (!Directory.Exists(folder)) return refuse("folder_missing");
+      using var heldFolder = new PcFileGuard(folder);
       var entries = new List<object>(); var partial = false;
       foreach (var entry in new DirectoryInfo(folder).EnumerateFileSystemInfos()) {
         if (entries.Count >= MaxEntries) { partial = true; break; }
@@ -253,9 +236,12 @@ namespace Josi.Native {
       var file = payload["path"].Text; string why = null;
       if (file.Length == 0 || !InScopeFolder(file, scope, out why)) return refuse(why ?? "file_outside_scope");
       if (!File.Exists(file)) return refuse("file_missing");
-      var length = new FileInfo(file).Length;
+      long length;
+      using var heldFolder = new PcFileGuard(Path.GetDirectoryName(Path.GetFullPath(file)));
       byte[] bytes;
-      using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
+      using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+        PcFileGuard.Verify(stream.SafeFileHandle,file);
+        length = stream.Length;
         bytes = new byte[Math.Min(length, ReadBytes)]; var read = 0;
         while (read < bytes.Length) { var n = stream.Read(bytes, read, bytes.Length - read); if (n <= 0) break; read += n; }
         if (read < bytes.Length) Array.Resize(ref bytes, read);
@@ -265,7 +251,7 @@ namespace Josi.Native {
       var text = new UTF8Encoding(false, false).GetString(bytes);
       var cut = text.Length > ReadChars || bytes.Length < length;
       if (text.Length > ReadChars) text = text.Substring(0, ReadChars);
-      return Tuple.Create(true, (object)Wires.O("kind", "desktop_file", "path", Path.GetFullPath(file), "bytes", length, "text", text, "truncated", cut, "untrustedContent", true));
+      return Tuple.Create(true, (object)Wires.O("kind", "desktop_file", "path", Path.GetFullPath(file), "bytes", length, "text", text, "truncated", cut, "sha256", bytes.Length == length ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant() : null, "untrustedContent", true));
     }
     public static Tuple<bool, object> WriteFile(Wire payload, Wire scope) {
       Func<string, Tuple<bool, object>> refuse = code => Tuple.Create(false, (object)Wires.O("code", code));
@@ -273,12 +259,27 @@ namespace Josi.Native {
       var folder = file.Length == 0 ? null : Path.GetDirectoryName(Path.GetFullPath(file));
       if (folder == null || !SamePath(folder, scope["target"].Text)) return refuse("file_outside_scope");
       // The approved folder may be created; nothing above it is touched.
-      if (!Directory.Exists(folder)) { var parent = Path.GetDirectoryName(folder); if (parent == null || !Directory.Exists(parent)) return refuse("folder_missing"); Directory.CreateDirectory(folder); }
+      if (!Directory.Exists(folder)) {
+        var parent = Path.GetDirectoryName(folder);
+        if (parent == null || !Directory.Exists(parent)) return refuse("folder_missing");
+        using var heldParent = new PcFileGuard(parent);
+        Directory.CreateDirectory(folder);
+      }
       if (!InScopeFolder(file, scope, out why)) return refuse(why);
       var content = payload["content"].Text; var append = payload["append"].Flag;
       var existed = File.Exists(file);
-      using (var stream = new FileStream(file, append ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.Read))
-      using (var writer = new StreamWriter(stream, new UTF8Encoding(false))) writer.Write(content);
+      var expected = payload["expectedSha256"].Text;
+      if (!existed && expected.Length > 0) return refuse("file_changed_read_again");
+      using var heldFolder = new PcFileGuard(folder);
+      using (var stream = new FileStream(file, existed ? FileMode.Open : FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None)) {
+        PcFileGuard.Verify(stream.SafeFileHandle,file);
+        if (existed && expected.Length > 0) {
+          var actual = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)).ToLowerInvariant();
+          if (actual != expected) return refuse("file_changed_read_again");
+        }
+        if (append) stream.Seek(0,SeekOrigin.End); else {stream.Position=0;stream.SetLength(0);}
+        using (var writer = new StreamWriter(stream,new UTF8Encoding(false))) writer.Write(content);
+      }
       return Tuple.Create(true, (object)Wires.O("kind", "desktop_file_written", "path", Path.GetFullPath(file), "bytes", new FileInfo(file).Length, "appended", append, "created", !existed));
     }
   }

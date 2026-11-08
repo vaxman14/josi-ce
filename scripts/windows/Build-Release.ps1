@@ -26,9 +26,11 @@ param(
   [switch]$Sign,
   [string]$SigningConfig = '',
   [switch]$Publish,
-  [switch]$SkipProvision
+  [switch]$SkipProvision,
+  [switch]$SkipRuntimeChecks
 )
 $ErrorActionPreference = 'Stop'; Set-StrictMode -Version Latest
+if ($SkipRuntimeChecks -and $Publish) { throw 'An untested build cannot be published by this script.' }
 if ($Version -notmatch '^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$') { throw 'Version must look like 1.0.0 or 1.0.0-rc.1' }
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $base = Join-Path $repo 'artifacts\windows-native'
@@ -106,12 +108,15 @@ if (!$SkipProvision) {
 Step 'Setup bridge, launcher and app'
 Script 'Build-NativeSetupHelper.ps1' | Out-Null
 $helperFile = Join-Path $base 'evidence\native-setup-helper.json'; $helper = Get-Content $helperFile -Raw | ConvertFrom-Json
+if (!$SkipRuntimeChecks) {
 $probeFile = Join-Path $env:TEMP ('josi-probe-' + [Guid]::NewGuid().ToString('N')); Set-Content $probeFile 'x'
 $probe = & $osPowerShell -NoProfile -NonInteractive -Command "Add-Type -Path '$($helper.binary)'; [Josi.NativeSetup.FileAttributes]::IsSingleRegularFile('$probeFile')"
 Remove-Item $probeFile
 if ("$probe" -ne 'True') { throw 'The precompiled setup bridge did not load in Windows PowerShell 5.1' }
 $helper.testedInOsPowerShell = $true; $helper | ConvertTo-Json | Set-Content $helperFile -Encoding UTF8
-Script 'Build-OnboardingLauncher.ps1' | Out-Null
+} else { Write-Host 'Runtime checks omitted at the owner request; this package has not been tested.' }
+$checkArguments = @(); if ($SkipRuntimeChecks) { $checkArguments = @('-SkipRuntimeChecks') }
+Script 'Build-OnboardingLauncher.ps1' $checkArguments | Out-Null
 Script 'Build-NativeApp.ps1' @('-Version', $Version) | Out-Null
 
 $signing = $null
@@ -136,7 +141,7 @@ if ($Sign) {
 }
 
 Step 'Installer kit'
-Script 'Build-InstallerKit.ps1' | Out-Null
+Script 'Build-InstallerKit.ps1' $checkArguments | Out-Null
 
 Step "Application payload $Version (isolated source snapshot; several minutes)"
 Run 'application' { & $node (Join-Path $scripts 'Build-Application.mjs') $Version | Out-Null }
@@ -174,6 +179,7 @@ $notes = @("Josi CE $Version for Windows.", '',
   'Check the file: its SHA-256 is in SHA256SUMS.txt, and the signer shown under Properties > Digital Signatures is SoCal Receptionist.' + $(if (!$Sign) { ' (This build is NOT signed.)' } else { '' }), '',
   'Source and help: https://github.com/vaxman14/josi-ce and https://get.heyjosi.com')
 Set-Content -LiteralPath (Join-Path $release 'RELEASE-NOTES.md') -Value ($notes -join "`n") -Encoding UTF8
+if ($SkipRuntimeChecks) { Add-Content -LiteralPath (Join-Path $release 'RELEASE-NOTES.md') -Value "`nBuild only: runtime tests and desktop acceptance were deliberately omitted at the owner's request. Not approved for release." }
 Write-Host ("Installer: {0} ({1} MB, sha256 {2}, signed: {3})" -f (Join-Path $release $exeName), [Math]::Round($installer.size / 1MB), $installer.sha256, $Sign.IsPresent)
 
 if ($Publish) {

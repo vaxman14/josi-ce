@@ -90,7 +90,10 @@ export const SETTINGS_AREAS: readonly SettingsArea[] = [
   { area: 'pc_control_full_control', title: 'Full control on this PC', scope: 'administrator', sensitive: true,
     method: 'PUT', path: '/admin/pc-control/full-control', keys: ['enabled'],
     fields: 'Read pc_get_permissions first. params.pcId selects the computer. body.enabled: true or false. This is the existing everyday-control preset, not unrestricted terminal or administrator access. Approval uses a protected password popup.' },
-  { area: 'pc_control_scope', title: 'An exact PC Control permission', scope: 'administrator', sensitive: true,
+  { area: 'pc_control_preset', title: 'Apps, terminals or full PC access', scope: 'administrator', sensitive: true,
+    method: 'PUT', path: '/admin/pc-control/preset', keys: ['access','administrator','mode','expiresAt','taskId'],
+    fields: 'Read pc_get_permissions first and set params.pcId. body.access: apps (all apps), terminal (all supported shells), or full (all supported operations except credentials). body.administrator: true or false; apps requires false. body.mode: always, temporary or task; expiresAt for temporary (within 24 hours), taskId for task. For once, use pc_control_decide on a waiting action. Existing exact permissions and Never/Ask rules remain. A host shell is not a filesystem or app sandbox.' },
+  { area: 'pc_control_scope', title: 'A PC Control permission', scope: 'administrator', sensitive: true,
     method: 'PUT', path: '/admin/pc-control/policies', keys: ['action', 'scope', 'mode', 'expiresAt', 'taskId', 'approveRequestId'],
     fields: 'body.action: for example browser.view, browser.fill, browser.submit, folder.read. body.scope: for a browser {kind:"browser", target:"https://site", application:"C:\\\\...\\\\chrome.exe", profile:"Default"}; for a folder {kind:"folder", target:"C:\\\\Folder"}. body.mode: never, ask, task, temporary or always. body.expiresAt for temporary.' },
   { area: 'pc_control_revoke', title: 'Revoke a saved PC permission', scope: 'administrator', sensitive: true,
@@ -185,9 +188,9 @@ export const SETTINGS_CHANGE_TOOLS: ToolSpec[] = [
 ];
 export const SETTINGS_CHANGE_TOOL_NAMES = new Set(SETTINGS_CHANGE_TOOLS.map((t) => t.def.name));
 export const SETTINGS_CHANGE_PROMPT = 'When the person asks to change a Josi setting (approvals, permissions, PC control, models, workspace, accounts), look it up with list_josi_settings and prepare it with propose_josi_setting_change. '
-  + 'For PC control, read pc_get_permissions first, name the selected computer, and pass params.pcId. If several computers are listed and the person has not identified one, ask which. The server generates the exact permission summary; never claim an unimplemented restriction or choose a different device. For pc_control_scope use body.action and body.scope from the actual catalog, mode never/ask/task/temporary/always, expiresAt for temporary, taskId for task, and optional approveRequestId to save a grant and approve its matching pending action atomically. A command working folder is not a sandbox. '
+  + 'For PC control, read pc_get_permissions first, name the selected computer, and pass params.pcId. If several computers are listed and the person has not identified one, ask which. The server generates the exact permission summary; never claim an unimplemented restriction or choose a different device. Use pc_control_preset for all apps, all terminals, or full access, with explicit administrator choice and task/timed/saved duration. Use pc_control_decide for once. For pc_control_scope use body.action and body.scope from the actual catalog, mode never/ask/task/temporary/always, expiresAt for temporary, taskId for task, and optional approveRequestId to save a grant and approve its matching pending action atomically. An explicit target "*" grants all targets; browser/command scopes can also use application "*", and browser profile "*", when target is "*". A command working folder is not a sandbox. '
   + 'The change takes effect only after they approve it in the Josi app, so tell them it is waiting for their approval (or the administrator\'s) and never say it is done. '
-  + 'A sensitive change also asks them for their password in that popup, so say so. '
+  + 'A sensitive change asks for secure owner approval. PC permission cards on the web support a passkey or protected password form. Never ask for credentials in chat. '
   + 'Passwords, API keys and other secrets, two-factor sign-in, Cardinal Rules, the Vault and device approvals cannot be changed by asking: never prepare one, and tell them which screen to use. '
   + 'Preparing a setting change is one quick step: never turn it into a work goal and never use own_goal, checkpoint_goal or revise_goal_plan for it. Call list_josi_settings, then propose_josi_setting_change, then answer in one short sentence. '
   + 'Once the person approves, the app applies it and a note saying so is added to this conversation; if asked later what changed, rely on those notes, not on an earlier "waiting" message.';
@@ -229,12 +232,13 @@ export async function executeSettingsChangeTool(db: Db, userId: string, name: st
     try { ({path,body,summary}=await preparePcPermissionChange(db,userId,key,area.area,body,params,path)); }
     catch (error) { return { ok: false, code: 'invalid_pc_permission', message: error instanceof PcControlError ? error.message : 'PC permissions could not be read. Nothing changed.' }; }
   }
+  const sensitive=area.sensitive&&!(PC_SETTING_AREAS.has(area.area)&&(area.area==='pc_control_revoke'||body.enabled===false||body.approve===false||body.mode==='never'||body.mode==='ask'));
   const [row] = await db.query<{ id: string }>(
     `insert into settings_change_proposals(proposer_user_id, scope, area, sensitive, title, summary, method, path, body, thread_id)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
     // json(), not the encoded text: a text parameter cast to jsonb lands as a
     // JSON string scalar, and the app would send it on double-encoded.
-    [userId, area.scope, area.area, area.sensitive, area.title, summary, area.method, path, json(body), threadId]);
+    [userId, area.scope, area.area, sensitive, area.title, summary, area.method, path, json(body), threadId]);
   return { ok: true, proposalId: row.id, scope: area.scope, state: 'proposed',
     message: area.scope === 'administrator'
       ? `Prepared. It waits for the super-admin\'s approval under Approvals in the Josi app${area.sensitive ? ', with their password' : ''}; nothing has changed yet.`

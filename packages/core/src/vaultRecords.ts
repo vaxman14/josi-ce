@@ -20,6 +20,7 @@ import { nativeBrowserPin } from './nativeBrowserObservation.js';
 import { describeAutomationModel, requireCurrentAutomationModel } from './automationModelTargets.js';
 import { AutomationConsentStore, readAutomationConsentRecord, type AutomationConsentAuthority } from './automationConsent.js';
 import { NativeAutomationTransport, type NativeTransportAuthority } from './nativeAutomationTransport.js';
+import { readComputerPolicy, unavailableComputerPolicy, type ComputerPolicySnapshot } from './computerPolicy.js';
 
 export type VaultRecordKind = 'cardinal_draft' | 'cardinal_review' | 'cardinal_test' | 'cardinal_policy' | 'automation_policy' | 'protected_devices' | 'workspace_storage' | 'automation_targets' | 'automation_consent';
 export interface VaultRecordReference { recordId: string; version: number; digest: string; epoch: number }
@@ -51,6 +52,25 @@ interface Envelope {
  * establishes an ordering with lock/recovery; it is not a dispatch lease. */
 export class VaultRecordStore {
   constructor(private readonly db: Db, private readonly key: (tx: Db) => Promise<MasterKey>, private readonly access?: VaultRecordAccessCheck) {}
+
+  /** Internal Mac adapter snapshot. Lock Vault BEFORE adapter state; never
+   * export a wrapped/private key or copy the policies into a second store. */
+  async computerPolicy(actor: string, tx: Db): Promise<ComputerPolicySnapshot> {
+    const [state] = await tx.query<State & { initialized_at: string | null; locked: boolean }>(
+      'select authority_epoch,authority_reconciliation_required,initialized_at,locked from vault_state where id=true for share');
+    const heads = await tx.query<Head>("select id,kind,version,digest from vault_record_heads where kind in ('automation_policy','cardinal_policy','protected_devices','workspace_storage','automation_targets') order by id");
+    const required = heads.some(h => h.kind === 'automation_policy' || h.kind === 'cardinal_policy');
+    if (!required && !state?.initialized_at) return unavailableComputerPolicy('', false);
+    if (!state || state.locked || state.authority_reconciliation_required) return unavailableComputerPolicy('Unlock and reconcile the existing Vault before computer control.');
+    try {
+      await this.state(tx, actor, false);
+      await this.requireOwnerAutomationVault(tx, actor);
+      const key = await this.key(tx);
+      const records: VaultRecordValue[] = [];
+      for (const head of heads) records.push(await this.open(tx, key, head, state));
+      return readComputerPolicy(records, actor, Number(state.authority_epoch));
+    } catch { return unavailableComputerPolicy('The saved Vault permissions could not be verified.'); }
+  }
 
   private transaction<T>(work: (tx: Db) => Promise<T>): Promise<T> {
     if (!this.db.transaction) throw new VaultRecordError('Protected Vault records require database transactions');

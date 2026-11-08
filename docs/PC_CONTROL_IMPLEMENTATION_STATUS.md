@@ -1,4 +1,10 @@
-# Windows computer control preview — November 8, 2026
+# Windows computer control status — November 8, 2026
+
+**Current work:** read [WINDOWS_PC_CONTROL_BUILD_NOTES.md](WINDOWS_PC_CONTROL_BUILD_NOTES.md) for preview.2 source changes, build-only instructions and remaining limits. The owner requires explicit approval before any tests, application launches, overlays or desktop takeover. Continue only in the approved workspace below.
+
+## Historical preview.1 record
+
+Everything below describes preview.1. Its test results do **not** validate the newer source or preview.2 installer.
 
 Read [PC_CONTROL_PLAN.md](PC_CONTROL_PLAN.md) for the approved direction. This preview implements the chat permission foundation and native takeover controls. It does **not** complete the full Windows plan.
 

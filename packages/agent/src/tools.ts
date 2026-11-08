@@ -16,6 +16,7 @@ import { DEVELOPER_INTEGRATION_TOOLS, OBSIDIAN_TOOLS } from './developerIntegrat
 import { PC_BROWSER_TOOLS } from './pcBrowserTools.js';
 import { SETTINGS_CHANGE_TOOLS } from './settingsChangeTools.js';
 import { PC_DESKTOP_TOOLS } from './pcDesktopTools.js';
+import { COMPUTER_TOOLS } from './computerControlTools.js';
 
 /** Everything the assistant can do that changes something.
  *
@@ -235,6 +236,7 @@ export const ALL_TOOLS: ToolSpec[] = [
   ...OBSIDIAN_TOOLS,
   ...PC_BROWSER_TOOLS,
   ...PC_DESKTOP_TOOLS,
+  ...COMPUTER_TOOLS,
 ];
 
 /** Names that map to the step-up gate. The gate keys on the tool name, so

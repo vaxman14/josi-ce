@@ -1,3 +1,4 @@
+import { executeComputerTool, COMPUTER_TOOL_NAMES } from './computerControlTools.js';
 import { EmailTemplateError, freezeEmailTemplate } from '@josi-ce/mail';
 // Executing one assistant tool call, wherever it was asked for.
 //
@@ -73,6 +74,7 @@ export interface ToolExecutionContext {
   durableTurnId?: string;
   durableLeaseToken?: string;
   workMemoryVersion?: number;
+  workGoalId?: string;
   /** How the connected-data tools reach sealed tokens. Absent for callers
    * that cannot open secrets; those tools then refuse honestly rather than
    * crash. The task and reminder tools never touch it. */
@@ -90,9 +92,10 @@ export async function executeAssistantTool(
   input: Record<string, unknown>,
 ): Promise<unknown> {
   const { userId } = ctx;
+  if (COMPUTER_TOOL_NAMES.has(name)) return executeComputerTool(db, ctx, ctx.connectors?.masterKey() ?? null, name, input);
   if (AUTOMATION_TOOL_NAMES.has(name)) return executeAutomationTool(ctx, name, input, db);
   if (PC_BROWSER_TOOL_NAMES.has(name)) return executePcBrowserTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input);
-  if (PC_DESKTOP_TOOL_NAMES.has(name)) return executePcDesktopTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input);
+  if (PC_DESKTOP_TOOL_NAMES.has(name)) return executePcDesktopTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input, ctx.workGoalId);
   if (MEMORY_TOOL_NAMES.has(name)) return executeMemoryTool(db, userId, ctx.threadId, name, input);
   if (SETTINGS_CHANGE_TOOL_NAMES.has(name)) return executeSettingsChangeTool(db, userId, name, input, ctx.threadId, ctx.connectors?.masterKey() ?? null);
   if (WORK_GOAL_TOOL_NAMES.has(name)) return executeWorkGoalTool(db, ctx, name, input);

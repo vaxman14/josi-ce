@@ -17,7 +17,8 @@ import { promisify } from 'node:util';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const run = promisify(execFile);
+const execFileAsync = promisify(execFile);
+const run = (command, args, options = {}) => execFileAsync(command, args, { ...options, windowsHide: true });
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const base = join(repo, 'artifacts/windows-native');
 const args = process.argv.slice(2);

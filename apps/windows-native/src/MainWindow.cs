@@ -13,6 +13,7 @@ namespace Josi.Native {
   public static class Program {
     [STAThread]
     public static int Main(string[] args) {
+      if (PcAdministrator.IsLaunch(args)) return PcAdministrator.Run(args);
       // Chrome starting Josi as the browser extension's native host.
       if (BrowserHost.IsLaunch(args)) return BrowserHost.Run();
       // The server starting the device-consent window on its own screen (item 29).
@@ -112,12 +113,12 @@ namespace Josi.Native {
       var takenOver = executor.TakenOver;
       var scripted = Automation.Demo ? demoPc : null;
       var paused = scripted != null ? scripted == "paused" : executor.Paused;
-      var working = scripted != null ? scripted == "working" : executor.Busy;
+      var working = scripted != null ? scripted == "working" : executor.Busy || PcTerminals.Count > 0;
       if (scripted != null) takenOver = scripted == "takeover";
       if (executor.Busy) pcStopped = false;
-      var show = working || paused || takenOver;
+      var show = working || paused || takenOver || controlOverlay?.IsShowing == true;
       Automation.Pc = !show ? (pcStopped ? "stopped" : "off") : paused ? "paused" : takenOver ? "takeover" : "working";
-      controlOverlay?.Update(show, working, paused, takenOver, scripted != null || executor.ScreenControl, executor.Activity);
+      controlOverlay?.Update(show, working, paused, takenOver, scripted != null || executor.ScreenControl, executor.Busy ? executor.Activity : PcTerminals.Count > 0 ? PcTerminals.Count + " terminal session(s) running" : executor.Activity);
       if (!show) { controlBar.Visibility = Visibility.Collapsed; controlBar.Child = null; return; }
       Action pause = () => { if (scripted != null) { demoPc = "paused"; RenderControlBar(); } else executor.Pause(); };
       Action resume = () => { if (scripted != null) { demoPc = "working"; RenderControlBar(); } else executor.Resume(); };
@@ -150,8 +151,8 @@ namespace Josi.Native {
       pcStopped = true;
       if (Automation.Demo && demoPc != null) { demoPc = null; RenderControlBar(); return; }
       // Local cancellation is synchronous and never waits for the network.
-      DesktopExecutor.Current.Pause();
-      Model.Run(async () => { var api = Model.Api; if (api != null) await api.Request("/admin/pc-control/stop", "POST", Wires.O()); });
+      DesktopExecutor.Current.Stop();
+      Model.Run(async () => { var api = Model.Api; if (api != null) { await api.Request("/admin/pc-control/stop", "POST", Wires.O()); DesktopExecutor.Current.StopAcknowledged(); } });
     }
 
     public MainWindow() {
@@ -178,6 +179,7 @@ namespace Josi.Native {
       Content = root;
       if (Flags.LocalWorkspace) DesktopExecutor.Current.Start(Dispatcher);
       DesktopExecutor.Current.Changed += RenderControlBar;
+      PcTerminals.Changed += () => Dispatcher.BeginInvoke(new Action(RenderControlBar));
       if (Flags.LocalWorkspace) controlOverlay = new PcControlOverlay(
         () => { if (Automation.Demo && demoPc != null) { demoPc = "takeover"; RenderControlBar(); } else DesktopExecutor.Current.TakeOver(); },
         () => { if (Automation.Demo && demoPc != null) { demoPc = "paused"; RenderControlBar(); } else DesktopExecutor.Current.Pause(); },

@@ -4,9 +4,8 @@ import type { Db } from './db.js';
 import type { MasterKey } from './masterKey.js';
 import { openSealed, seal } from './sealing.js';
 
-// These are separate capabilities, never a hierarchy. Generic application
-// control and shell execution can perform hidden writes, so they also need an
-// exact-action decision even with an enduring application/folder policy.
+// These are separate capabilities. Broad application and shell grants include
+// their indirect effects; mediated folder rules do not sandbox a host shell.
 export const PC_ACTIONS = [
   ['browser.view','Browser viewing and navigation','browser',false,true],
   ['browser.fill','Browser form filling','browser',false,false],
@@ -21,6 +20,7 @@ export const PC_ACTIONS = [
   ['file.move','Moving files','folder',false,false],
   ['file.delete','Deleting files','folder',true,false],
   ['app.launch','Launching an approved application','application',false,false],
+  ['app.view','Reading and capturing an approved application','application',false,true],
   ['app.control','Controlling an approved application','application',true,false],
   ['app.close','Closing an application','application',true,false],
   ['app.terminate','Terminating an application','application',true,false],
@@ -41,6 +41,7 @@ export type PcRequirement = { action:PcAction; scope:PcScope };
 export type PcPlan = { requirements:PcRequirement[]; description:string; taskId?:string; payload:unknown };
 export type PcPolicy = PcRequirement & { mode:PcMode; taskId?:string; expiresAt?:string };
 export type PcPolicyUpdate = { expectedRevision?:number; approveRequestId?:string };
+export type PcPreset = {access:'apps'|'terminal'|'full';administrator:boolean;mode:'always'|'temporary'|'task';expiresAt?:string;taskId?:string};
 export class PcControlError extends Error { constructor(readonly status:number, message:string){super(message);} }
 const fail = (message:string):never => {throw new PcControlError(400,message);};
 const uuid = (value:string) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
@@ -60,6 +61,7 @@ export function normalizePcRequirement(input:PcRequirement):PcRequirement {
   const spec=PC_ACTIONS.find(s=>s[0]===input?.action) ?? fail('Unknown PC action.');
   const s=input.scope; if(!s || s.kind!==spec[2]) fail('This action requires its own exact scope.');
   let scope:PcScope;
+  if(s.target==='*')return {action:input.action,scope:{kind:s.kind,target:'*',...(['browser','command'].includes(s.kind)?{application:s.application==='*'?'*':localPath(s.application)}:{}),...(s.kind==='browser'?{profile:s.profile==='*'?'*':text(s.profile,120)}:{})}};
   if(s.kind==='browser') {
     let url:URL;try{url=new URL(text(s.target));}catch{ return fail('Choose one exact HTTP or HTTPS origin.'); }
     if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.pathname!=='/'||url.search||url.hash) fail('Choose one exact origin without credentials, paths or wildcards.');
@@ -88,15 +90,13 @@ const readOnly = (r:PcRequirement) => PC_ACTIONS.find(s=>s[0]===r.action)![4];
  * commands and elevation are deliberately outside it and still ask. An exact
  * "Never" scope still wins. */
 export const PC_FULL_CONTROL_ACTIONS:readonly PcAction[] = ['browser.view','browser.fill','browser.submit','browser.download','browser.upload',
-  'desktop.view','explorer.view','folder.read','folder.write','file.rename','file.move','app.launch','app.control','app.close'];
+  'desktop.view','explorer.view','folder.read','folder.write','file.rename','file.move','app.view','app.launch','app.control','app.close'];
 export const PC_FULL_CONTROL_ASKS:readonly PcAction[] = PC_ACTIONS.map(s=>s[0]).filter(a=>!PC_FULL_CONTROL_ACTIONS.includes(a));
 const fullControlCovers = (r:PcRequirement) => PC_FULL_CONTROL_ACTIONS.includes(r.action);
-/** High-risk actions the owner may pre-approve with a saved exact scope
- * (always, temporary or task). Commands are one: a grant for one shell in one
- * starting folder tree authorizes a host shell, not filesystem isolation. Saving such a
- * grant takes the account password (the route checks). Every other high-risk
- * action still asks before each exact action, whatever is saved. */
-export const PC_GRANTABLE_HIGH_RISK:readonly PcAction[] = ['command.run'];
+/** Actions that support an enduring or duration-limited grant. A shell grant
+ * authorizes host execution; its starting folder is not an isolation boundary.
+ * Protected credentials remain outside all presets and saved allowances. */
+export const PC_GRANTABLE_HIGH_RISK:readonly PcAction[] = ['command.run','app.control','app.close','app.terminate','file.delete','browser.submit','browser.purchase','browser.upload','software.install','software.uninstall','system.settings','security.settings','administrator.elevate'];
 export const pcActionIsHighRisk = (action:PcAction) => !!PC_ACTIONS.find(s=>s[0]===action)?.[3];
 const grantable = (r:PcRequirement) => PC_GRANTABLE_HIGH_RISK.includes(r.action);
 type Settings = {enabled:boolean;epoch:number|string;full_control:boolean};
@@ -120,6 +120,14 @@ export function normalizePcPolicy(input:PcPolicy,now=Date.now()):PcPolicy {
     value.taskId=input.taskId;
   }
   return value;
+}
+
+export function normalizePcPreset(input:PcPreset,now=Date.now()):PcPreset {
+  if(!input||!['apps','terminal','full'].includes(input.access)||typeof input.administrator!=='boolean'||!['always','temporary','task'].includes(input.mode))fail('Choose apps, terminal or full access, administrator on/off, and saved, timed or task duration.');
+  if(input.access==='apps'&&input.administrator)fail('Administrator commands require terminal or full access.');
+  if(input.taskId!==undefined&&input.mode!=='task'||input.expiresAt!==undefined&&!['temporary','task'].includes(input.mode))fail('Choose a matching duration for the task or expiry.');
+  const duration=normalizePcPolicy({action:'app.launch',scope:{kind:'application',target:'*'},mode:input.mode,expiresAt:input.expiresAt,taskId:input.taskId},now);
+  return {access:input.access,administrator:input.administrator,mode:input.mode,...(duration.expiresAt?{expiresAt:duration.expiresAt}:{}),...(duration.taskId?{taskId:duration.taskId}:{})};
 }
 
 /** Fail-safe emergency state change works even if the encryption key cannot be
@@ -197,7 +205,32 @@ export class PcControl {
   }
   private async liveTask(db:Db,owner:string,taskId?:string){
     if(!taskId||!uuid(taskId))return false;
-    return (await db.query(`select id from tasks where id=$1 and owner_user_id=$2 and state not in ('confirmed','failed','cancelled','closed')`,[taskId,owner])).length===1;
+    return (await db.query(`select id from tasks where id=$1 and owner_user_id=$2 and state not in ('confirmed','failed','cancelled','closed')
+      union all select id from work_goals where id=$1 and owner_user_id=$2 and state in ('planning','working','waiting')`,[taskId,owner])).length===1;
+  }
+  async applyPreset(owner:string,input:PcPreset,expectedRevision?:number){
+    const preset=normalizePcPreset(input,this.now());
+    return this.locked(owner,async(db,s)=>{
+      if(!s.enabled)throw new PcControlError(409,'Enable PC control first.');
+      if(preset.mode==='task'&&!await this.liveTask(db,owner,preset.taskId))fail('Choose an active task belonging to you.');
+      const actions:readonly PcAction[]=preset.access==='apps'?['desktop.view','app.view','app.launch','app.control','app.close','app.terminate']:preset.access==='terminal'?['command.run']:PC_ACTIONS.map(a=>a[0]).filter(a=>!['secret.access','administrator.elevate'].includes(a));
+      await this.invalidate(db,owner);
+      // The older everyday toggle must not outlive this preset's duration.
+      if(preset.access==='full')await db.query('update pc_control_settings set full_control=false where owner_user_id=$1 and pc_id=$2',[owner,this.pcId]);
+      for(const action of [...actions,'administrator.elevate' as const]){
+        const kind=PC_ACTIONS.find(a=>a[0]===action)![2];
+        const requirement:PcRequirement={action,scope:{kind,target:'*',...(['browser','command'].includes(kind)?{application:'*'}:{}),...(kind==='browser'?{profile:'*'}:{})}};
+        const value:PcPolicy={...requirement,mode:action==='administrator.elevate'&&!preset.administrator?'never':preset.mode,...(preset.expiresAt?{expiresAt:preset.expiresAt}:{}),...(preset.taskId?{taskId:preset.taskId}:{})};
+        // Keep explicit Never/Ask rules. The reviewed administrator switch
+        // replaces only the broad administrator rule, not exact exclusions.
+        await db.query(`insert into pc_control_policies(owner_user_id,pc_id,scope_hash,mode,policy_enc) values($1,$2,$3,$4,$5)
+          on conflict(owner_user_id,pc_id,scope_hash) do update set mode=excluded.mode,policy_enc=excluded.policy_enc
+          where pc_control_policies.mode not in ('never','ask') or $6`,[owner,this.pcId,this.hash(owner,requirement),value.mode,this.pack(owner,value),action==='administrator.elevate']);
+      }
+      await this.log(db,owner,'Access preset applied',{description:preset.access+' access; administrator '+(preset.administrator?'allowed with Windows UAC':'blocked')+'; '+preset.mode,requirements:[],...(preset.taskId?{taskId:preset.taskId}:{})});
+      this.cancel(owner);
+      return preset;
+    },expectedRevision);
   }
   async savePolicy(owner:string,input:PcPolicy,options:PcPolicyUpdate={}){
     const value=normalizePcPolicy(input,this.now());
@@ -248,20 +281,32 @@ export class PcControl {
   private async verdict(db:Db,owner:string,s:Settings,plan:PcPlan):Promise<'denied'|'pending'|'approved'> {
     if(!s.enabled)return 'denied';
     if(plan.taskId && !await this.liveTask(db,owner,plan.taskId))return 'denied';
+    const terminal=plan.payload as {kind?:string;sessionId?:string};
+    if(['desktop.terminal.input','desktop.terminal.read','desktop.terminal.close'].includes(terminal?.kind??'')){
+      const parent=await this.request(db,owner,terminal.sessionId??'');
+      if((parent.plan.payload as {kind?:string})?.kind!=='desktop.terminal.open'||!['executing','succeeded'].includes(parent.row.state)||Number(parent.row.epoch)!==Number(s.epoch)||Date.parse(parent.row.expires_at)<=this.now()||canonical(parent.plan.requirements)!==canonical(plan.requirements))return 'denied';
+      const decision=await this.verdict(db,owner,s,parent.plan);
+      return decision==='denied'?'denied':parent.row.human_approved||decision==='approved'?'approved':'pending';
+    }
     // Under full control an everyday action is granted even when high-risk
     // (a click can submit); actions outside full control keep asking.
     const covered=(r:PcRequirement)=>s.full_control&&fullControlCovers(r);
     // A grantable high-risk action (commands) is decided by its saved exact
     // scope below, like an everyday action; without one it asks.
     let ask=plan.requirements.some(r=>highRisk(r)&&!covered(r)&&!grantable(r));
+    const saved=(await db.query<{policy_enc:string}>('select policy_enc from pc_control_policies where owner_user_id=$1 and pc_id=$2',[owner,this.pcId])).map(row=>this.unpack<PcPolicy>(owner,row.policy_enc));
+    const active=(p:PcPolicy)=>!['temporary','task'].includes(p.mode)||Date.parse(p.expiresAt??'')>this.now()&&(p.mode!=='task'||p.taskId===plan.taskId);
+    // An unrestricted host interpreter cannot honor app, file, site or system
+    // exclusions. Refuse that combination; mediated tools remain usable.
+    if(plan.requirements.some(r=>r.action==='command.run')&&saved.some(p=>p.mode==='never'&&p.action!=='administrator.elevate'&&p.action!=='command.run'))return 'denied';
     for(const requirement of plan.requirements){
-      const [row]=await db.query<{policy_enc:string}>(`select policy_enc from pc_control_policies where owner_user_id=$1 and pc_id=$2 and scope_hash=$3`,[owner,this.pcId,this.hash(owner,requirement)]);
-      const p=row?this.unpack<PcPolicy>(owner,row.policy_enc):undefined;
-      if(p && this.hash(owner,{action:p.action,scope:p.scope})!==this.hash(owner,requirement))throw new PcControlError(409,'Permission integrity check failed.');
-      if(p?.mode==='never')return 'denied';
-      if(covered(requirement))continue;
-      if(!p||p.mode==='ask'||(p.mode==='task'&&p.taskId!==plan.taskId)||
-        (['temporary','task'].includes(p.mode)&&Date.parse(p.expiresAt??'')<=this.now()))ask=true;
+      const matches=saved.filter(p=>p.action===requirement.action&&p.scope.kind===requirement.scope.kind
+        &&(p.scope.target==='*'||p.scope.target===requirement.scope.target||['folder','command'].includes(p.scope.kind)&&requirement.scope.target.startsWith(p.scope.target.replace(/\\$/,'')+'\\'))
+        &&(p.scope.application==='*'||p.scope.application===requirement.scope.application)&&(p.scope.profile==='*'||p.scope.profile===requirement.scope.profile));
+      if(matches.some(p=>p.mode==='never'))return 'denied';
+      if(matches.some(p=>p.mode==='ask')){ask=true;continue;}
+      if(matches.some(p=>active(p)&&['always','temporary','task'].includes(p.mode)))continue;
+      if(!covered(requirement))ask=true;
     }
     return ask?'pending':'approved';
   }
@@ -269,7 +314,9 @@ export class PcControl {
     const plan=this.normalize(input);
     return this.locked(owner,async(db,s)=>{
       const state=await this.verdict(db,owner,s,plan);
-      const [row]=await db.query<{id:string}>(`insert into pc_control_requests(owner_user_id,pc_id,epoch,request_hash,request_enc,state,expires_at) values($1,$2,$3,$4,$5,$6,$7) returning id`,[owner,this.pcId,s.epoch,this.hash(owner,plan),this.pack(owner,plan),state,new Date(this.now()+ASK_TTL).toISOString()]);
+      const payload=plan.payload as {kind?:string;timeoutSeconds?:number};
+      const lifetime=payload?.kind==='desktop.terminal.open'?Math.max(ASK_TTL,Math.min(28800,Number(payload.timeoutSeconds)||1800)*1000):ASK_TTL;
+      const [row]=await db.query<{id:string}>(`insert into pc_control_requests(owner_user_id,pc_id,epoch,request_hash,request_enc,state,expires_at) values($1,$2,$3,$4,$5,$6,$7) returning id`,[owner,this.pcId,s.epoch,this.hash(owner,plan),this.pack(owner,plan),state,new Date(this.now()+lifetime).toISOString()]);
       await this.log(db,owner,state==='denied'?'Attempt blocked':state==='pending'?'Exact action awaiting approval':'Exact action authorized',plan);
       return {id:row.id,state};
     });
@@ -331,12 +378,24 @@ export class PcControl {
       return verdict!=='denied'&&(row.human_approved||verdict==='approved');
     });
   }
+  /** A persistent session remains bound to the immutable opening request,
+   * owner, device, revision, task and original deadline after its open receipt. */
+  async terminalAuthorization(owner:string,id:string):Promise<{authorized:boolean;scope?:PcScope}>{
+    return this.locked(owner,async(db,s)=>{
+      const {row,plan}=await this.request(db,owner,id);
+      const payload=plan.payload as {kind?:string;timeoutSeconds?:number};
+      if(payload?.kind!=='desktop.terminal.open'||!s.enabled||!['executing','succeeded'].includes(row.state)||Number(row.epoch)!==Number(s.epoch)||Date.parse(row.expires_at)<=this.now())return {authorized:false};
+      const verdict=await this.verdict(db,owner,s,plan);
+      return {authorized:verdict!=='denied'&&(row.human_approved||verdict==='approved'),scope:plan.requirements.find(r=>r.action==='command.run')?.scope};
+    });
+  }
   async snapshot(owner:string){
     return this.locked(owner,async(db,s)=>{
       const policies=await db.query<{id:string;policy_enc:string}>(`select id,policy_enc from pc_control_policies where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);
       const requests=await db.query<RequestRow>(`select * from pc_control_requests where owner_user_id=$1 and pc_id=$2 and state='pending' and expires_at>$3 order by created_at desc limit 100`,[owner,this.pcId,new Date(this.now()).toISOString()]);
       const logs=await db.query<{id:string;created_at:string;kind:string;detail_enc:string|null}>(`select id,created_at,kind,detail_enc from pc_control_activity where owner_user_id=$1 and pc_id=$2 order by created_at desc,id desc limit 100`,[owner,this.pcId]);
-      const tasks=await db.query<{id:string;name:string;created_at:string}>(`select t.id,tt.name,t.created_at from tasks t join task_templates tt on tt.key=t.template_key where t.owner_user_id=$1 and t.state not in ('confirmed','failed','cancelled','closed') order by t.created_at desc limit 100`,[owner]);
+      const tasks=await db.query<{id:string;name:string;created_at:string}>(`select t.id,tt.name,t.created_at from tasks t join task_templates tt on tt.key=t.template_key where t.owner_user_id=$1 and t.state not in ('confirmed','failed','cancelled','closed')
+        union all select id,outcome as name,created_at from work_goals where owner_user_id=$1 and state in ('planning','working','waiting') order by created_at desc limit 100`,[owner]);
       const label=(a:PcAction)=>PC_ACTIONS.find(x=>x[0]===a)![1];
       return {enabled:s.enabled,fullControl:s.full_control,pcId:this.pcId,revision:Number(s.epoch),
         fullControlCovers:PC_FULL_CONTROL_ACTIONS.map(label),fullControlAsks:PC_FULL_CONTROL_ASKS.map(label),

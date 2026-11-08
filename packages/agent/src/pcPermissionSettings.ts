@@ -1,9 +1,9 @@
 // Chat reads the actual device policy, then prepares a human-approved change.
 // The target, owner and policy revision are fixed before any client applies it.
-import { normalizePcPolicy, PcControl, PcControlError, type Db, type MasterKey, type PcPolicy } from '@josi-ce/core';
+import { normalizePcPolicy, normalizePcPreset, PcControl, PcControlError, type Db, type MasterKey, type PcPolicy, type PcPreset } from '@josi-ce/core';
 
-export const PC_CHAT_PERMISSION_SEMANTICS = 'pc-control-chat.1';
-export const PC_SETTING_AREAS = new Set(['pc_control_enabled', 'pc_control_full_control', 'pc_control_scope', 'pc_control_revoke', 'pc_control_decide']);
+export const PC_CHAT_PERMISSION_SEMANTICS = 'pc-control-chat.2';
+export const PC_SETTING_AREAS = new Set(['pc_control_enabled', 'pc_control_full_control', 'pc_control_preset', 'pc_control_scope', 'pc_control_revoke', 'pc_control_decide']);
 
 export async function pcPermissionState(db:Db,owner:string,key:MasterKey,requested?:unknown) {
   const [user]=await db.query<{role:string}>(`select role from users where id=$1`,[owner]);
@@ -35,6 +35,14 @@ export async function preparePcPermissionChange(db:Db,owner:string,key:MasterKey
       ? body.enabled?'Enable PC control. This alone does not grant access to applications, files, or commands.':'Disable PC control and revoke temporary and task grants. Completed work is not undone.'
       : body.enabled?'Enable everyday control for browsers, folders and applications. Commands, deletion, purchases, credentials, installs, security changes and elevation still ask. Existing Never rules remain blocked.'
         :'Disable everyday full control. Exact saved permissions still apply.';
+  } else if(area==='pc_control_preset'){
+    const preset=normalizePcPreset(body as PcPreset);
+    if(preset.mode==='task'&&!current.tasks.some(t=>t.id===preset.taskId))throw new PcControlError(400,'Choose an active task belonging to you.');
+    normalized={...preset};
+    const duration=preset.mode==='always'?'until revoked':preset.mode==='task'?`for task ${preset.taskId}, until ${preset.expiresAt}`:`until ${preset.expiresAt}`;
+    detail=`Allow ${preset.access==='apps'?'all applications':preset.access==='terminal'?'all supported terminals in any starting folder':'all supported application, file, browser and terminal operations'} ${duration}.\nAdministrator commands: ${preset.administrator?'allowed for this duration, with Windows UAC still required':'blocked until you change this administrator rule'}.\nExisting exact permissions and Never/Ask rules remain. Protected credentials are excluded.`;
+    if(preset.access!=='apps')detail+='\nHost commands can access files and launch programs with your Windows account authority. Starting folders do not sandbox commands; incompatible Never rules block host commands.';
+    if(preset.access==='full')detail+='\nThe older everyday-control toggle is disabled so it cannot outlive this duration. Other existing exact grants keep their own durations.';
   } else if(area==='pc_control_decide'){
     if(typeof body.approve!=='boolean')throw new PcControlError(400,'Choose approve or deny.');
     const waiting=current.requests.find(r=>r.id===params.id);

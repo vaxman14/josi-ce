@@ -46,7 +46,7 @@ namespace Josi.Native {
     string Scope(Wire s) { return (s["application"].Text.Length > 0 ? s["application"].Text + " · " : "") + (s["profile"].Text.Length > 0 ? "Profile " + s["profile"].Text + " · " : "") + s["target"].Text; }
     string LabelOf(string a) { return state["catalog"].List.Where(c => c["action"].Text == a).Select(c => c["label"].Text).FirstOrDefault() ?? a; }
     protected override UIElement Build() {
-      var page = Page(Ui.HeadingWith("PC Control", null, Ui.Pill("Refresh", StartLoad)));
+      var page = Page(Ui.HeadingWith("PC Control", null, Ui.Row(8,Ui.Pill("Show Control Bar",()=>PcControlOverlay.Current?.ShowControls()),Ui.Pill("Terminals",()=>PcTerminalView.Show(owner)),Ui.Pill("Refresh", StartLoad))));
       if (state.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading PC permissions…" : "PC permissions have not loaded."), 0); return page; }
       var enabled = state["enabled"].Flag; var full = state["fullControl"].Flag;
       var master = Automation.Id(Ui.Toggle("Allow Josi to control this PC", enabled), "josi.pc-control.enabled");
@@ -80,7 +80,7 @@ namespace Josi.Native {
       if (mode == "task") { form.Add(Ui.Field("Exact active Josi task", taskPick)); form.Add(Ui.Caption("Expires when the task ends, or after 24 hours, whichever comes first.")); }
       if (mode == "temporary") form.Add(Ui.Field("Expires at (your local time, within 24 hours)", expires));
       form.Add(Automation.Id(Ui.Pill("Save Exact-Scope Permission", Save, true), "josi.pc-control.save-scope"));
-      form.Add(Ui.Caption("Deleting, submissions and messages, financial actions, credential access, installs, security changes and elevation always ask separately. Commands ask unless you allow a shell in a folder here."));
+      form.Add(Ui.Caption("Ask, Never, task, timed and saved permissions are available through chat. An asterisk selects all targets for this action. Never rules override broader allowances. Broad host shells cannot enforce app, folder or website exclusions; use mediated tools for restricted work. Windows still owns elevation prompts."));
       Ui.Add(page, Ui.CardBox("Choose one exact scope", form.ToArray()), 0);
       var policies = Ui.Stack(10);
       if (state["policies"].List.Count == 0) policies.Children.Add(Ui.Caption("No scopes granted. Unlisted scopes ask before each action while control is on."));

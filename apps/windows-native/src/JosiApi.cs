@@ -26,6 +26,11 @@ namespace Josi.Native {
     readonly HttpClient streaming;
     readonly CancellationTokenSource closing = new CancellationTokenSource();
     string csrf, session;
+    internal PcAuthority PcAuthority { get; private set; }
+    string pcOwner;
+    internal void BindPc(string owner) {
+      if (owner != pcOwner) { if (!Wires.IsUuid(owner)) throw new JosiException("Sign in before pairing this PC."); pcOwner = owner; PcAuthority = new PcAuthority(OriginText, owner); }
+    }
     bool closed, native;
     CancellationTokenSource progress;
 
@@ -211,7 +216,12 @@ namespace Josi.Native {
       using (var bounded = CancellationTokenSource.CreateLinkedTokenSource(closing.Token, cancellation))
       using (var message = Message(method, url)) {
         if (headers != null) foreach (var pair in headers) message.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
-        if (body != null) message.Content = new StringContent(Wires.Serialize(body), Encoding.UTF8, "application/json");
+        var serialized = body == null ? null : Wires.Serialize(body);
+        if (serialized != null) message.Content = new StringContent(serialized, Encoding.UTF8, "application/json");
+        if (route.StartsWith("/admin/pc-control/executor", StringComparison.Ordinal) || route == "/admin/pc-control/identity" && method == "POST") {
+          if (PcAuthority == null) throw new JosiException("Pair this PC before using its executor.");
+          foreach (var proof in PcAuthority.Proof(method, url, serialized)) message.Headers.TryAddWithoutValidation(proof.Key, proof.Value);
+        }
         HttpResponseMessage response;
         try { response = await http.SendAsync(message, bounded.Token); }
         catch (OperationCanceledException) { if (closed) throw; throw new JosiException("The server did not answer in time. Check the connection and try again."); }

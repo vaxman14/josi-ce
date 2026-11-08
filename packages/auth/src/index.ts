@@ -8,5 +8,6 @@ export { MFA_VAULT_SERVICE, MfaError, adoptMfa, assertCanAdoptMfa, beginMfaSetup
 export * from './protectedAdmin.js';
 export { WebAuthnError } from './webauthn.js';
 export * from './passkeys.js';
+export * from './pcPasskeys.js';
 export * from './passkeyTickets.js';
 export * from './emailCodes.js';

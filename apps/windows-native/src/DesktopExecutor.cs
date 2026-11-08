@@ -27,14 +27,18 @@ namespace Josi.Native {
 
     sealed class Observation {
       public IntPtr Window; public string Application; public DateTime At;
+      public long Tick; public Rect Bounds; public uint Process, Dpi;
       public readonly Dictionary<string, AutomationElement> Elements = new Dictionary<string, AutomationElement>();
     }
     readonly object gate = new object();
+    readonly object persistenceGate = new object();
     readonly Dictionary<string, Observation> observations = new Dictionary<string, Observation>();
     Dispatcher ui;
     CancellationTokenSource running; bool runningOnScreen;
     bool takenOver;
     bool paused;
+    bool pendingStop;
+    public bool PendingStop { get { lock (gate) return pendingStop; } }
     string stateFile;
 
     // --------------------------------------------------------------- state
@@ -53,26 +57,32 @@ namespace Josi.Native {
       try {
         if (File.Exists(stateFile)) {
           var stored = Wires.Parse(File.ReadAllText(stateFile));
-          lock (gate) { paused = !stored["paused"].IsBool || stored["paused"].Flag; takenOver = !stored["takenOver"].IsBool || stored["takenOver"].Flag; }
+          lock (gate) { paused = !stored["paused"].IsBool || stored["paused"].Flag; takenOver = !stored["takenOver"].IsBool || stored["takenOver"].Flag; pendingStop = stored["pendingStop"].Flag; }
         }
       } catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is System.Text.Json.JsonException) { paused = true; }
       Raise();
+      Microsoft.Win32.SystemEvents.SessionSwitch += (_, e) => { if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionLock || e.Reason == Microsoft.Win32.SessionSwitchReason.RemoteDisconnect || e.Reason == Microsoft.Win32.SessionSwitchReason.ConsoleDisconnect) Pause(); };
     }
     void SavePause() {
       if (stateFile == null) return;
+      lock (persistenceGate) {
       string json;
-      lock (gate) json = Wires.Serialize(Wires.O("paused", paused, "takenOver", takenOver));
+      lock (gate) json = Wires.Serialize(Wires.O("paused", paused, "takenOver", takenOver, "pendingStop", pendingStop));
       Directory.CreateDirectory(Path.GetDirectoryName(stateFile));
       var temporary = stateFile + ".tmp";
       File.WriteAllText(temporary, json);
       File.Move(temporary, stateFile, true);
+      }
     }
-    public void Pause() { lock (gate) paused = true; CancelCurrent("paused"); Raise(); SavePause(); }
+    public void Pause() { lock (gate) { paused = true; observations.Clear(); } CancelCurrent("paused"); PcTerminals.StopAll(); Raise(); SavePause(); }
     public void Resume() {
+      if (PendingStop) { Raise(); return; }
       lock (gate) { paused = false; takenOver = false; }
       try { SavePause(); } catch { lock (gate) paused = true; Raise(); throw; }
       Raise();
     }
+    public void Stop() { lock (gate) pendingStop = true; Pause(); }
+    public void StopAcknowledged() { lock (gate) pendingStop = false; SavePause(); Raise(); }
     /// True when Josi may not act on the desktop at this moment.
     public bool Blocked { get { lock (gate) return paused || takenOver; } }
 
@@ -168,7 +178,7 @@ namespace Josi.Native {
         if (screen) { Interlocked.Increment(ref engaged); hooked = true; Engage(); }
         if (Paused || (screen && Blocked)) return refuse(Paused ? "paused" : "human_control");
         cancel.Token.ThrowIfCancellationRequested();
-        var result = await Task.Run(() => Perform(kind, requestId, payload, scope, cancel.Token));
+        var result = kind == "desktop.admin.command" ? await PcAdministrator.Execute(request, cancel.Token) : await Task.Run(() => Perform(kind, requestId, payload, scope, cancel.Token));
         return result;
       } catch (OperationCanceledException) { return refuse(Paused ? "paused" : "human_control"); }
       catch (ElementNotAvailableException) { return refuse("element_gone"); }
@@ -185,7 +195,7 @@ namespace Josi.Native {
     /// Work that moves the mouse, types or changes windows, and so must yield to you.
     static bool TouchesScreen(string kind) {
       switch (kind) {
-        case "desktop.click": case "desktop.clickpoint": case "desktop.type": case "desktop.keys": case "desktop.close": case "desktop.launch": case "desktop.screenshot": case "desktop.read": return true;
+        case "desktop.scroll": case "desktop.drag": case "desktop.click": case "desktop.clickpoint": case "desktop.type": case "desktop.keys": case "desktop.close": case "desktop.launch": case "desktop.screenshot": case "desktop.read": return true;
         default: return false;
       }
     }
@@ -203,6 +213,11 @@ namespace Josi.Native {
         case "desktop.environment": return "Looking at this PC";
         case "desktop.apps": return "Looking for a program";
         case "desktop.command": return "Running a command in " + payload["cwd"].Text;
+        case "desktop.admin.command": return "Requesting administrator execution through Windows UAC";
+        case "desktop.terminal.open": return "Opening a terminal in " + payload["cwd"].Text;
+        case "desktop.terminal.input": return "Sending input to an owned terminal";
+        case "desktop.terminal.read": return "Reading terminal output";
+        case "desktop.terminal.close": return "Closing an owned terminal";
         case "desktop.folder": return "Looking in " + payload["folder"].Text;
         case "desktop.readfile": return "Reading " + payload["path"].Text;
         case "desktop.writefile": return "Writing " + payload["path"].Text;
@@ -214,11 +229,13 @@ namespace Josi.Native {
       Func<string, Tuple<bool, object>> refuse = code => Tuple.Create(false, (object)Wires.O("code", code));
       Func<object, Tuple<bool, object>> ok = value => Tuple.Create(true, value);
       cancel.ThrowIfCancellationRequested();
+      if (PcAdministrator.Elevated) return refuse("main_app_must_be_unelevated");
       if (kind == "desktop.windows") return ok(Wires.O("kind", "desktop_windows", "windows", Windows().Cast<object>().ToList(), "untrustedContent", true));
       // Beyond the screen: this PC, its programs, a shell, and files. Each
       // re-checks its exact scope inside PcWork before doing anything.
       if (kind == "desktop.environment") return PcWork.Environment_();
       if (kind == "desktop.apps") return PcWork.FindApps(payload["query"].Text);
+      if (kind.StartsWith("desktop.terminal.", StringComparison.Ordinal)) return PcTerminals.Execute(requestId, payload, scope);
       if (kind == "desktop.command") { if (scope["kind"].Text != "command") return refuse("scope_mismatch"); return PcWork.Command(payload, scope, cancel); }
       if (kind == "desktop.folder") { if (scope["kind"].Text != "folder") return refuse("scope_mismatch"); return PcWork.ListFolder(payload, scope); }
       if (kind == "desktop.readfile") { if (scope["kind"].Text != "folder") return refuse("scope_mismatch"); return PcWork.ReadFile(payload, scope); }
@@ -237,7 +254,14 @@ namespace Josi.Native {
         IntPtr window = IntPtr.Zero;
         if (payload["windowId"].Text.Length > 0) { window = WindowHandle(payload["windowId"].Text); if (window == IntPtr.Zero || !IsWindow(window)) return refuse("window_gone"); }
         if (ProtectedWindow(window == IntPtr.Zero ? GetForegroundWindow() : window)) return refuse("protected_surface");
-        return ok(Screenshot(window));
+        if (window == IntPtr.Zero) return refuse("choose_target_window");
+        if (scope["kind"].Text != "application" || !string.Equals(ApplicationOf(window), scope["target"].Text, StringComparison.OrdinalIgnoreCase)) return refuse("application_changed");
+        var captured = NewObservation(window, ApplicationOf(window));
+        var image = Screenshot(window);
+        if (!captured.Bounds.Equals(NewObservation(window, ApplicationOf(window)).Bounds)) return refuse("window_moved");
+        Remember(requestId, captured);
+        image["observationId"] = requestId;
+        return ok(image);
       }
       // Everything else needs a live window of the exact program the request was decided for.
       var handle = WindowHandle(payload["windowId"].Text);
@@ -245,17 +269,41 @@ namespace Josi.Native {
       if (ProtectedWindow(handle)) return refuse("protected_surface");
       var owner = ApplicationOf(handle);
       if (kind == "desktop.read") {
-        if (owner == null) return refuse("window_unreadable");
+        if (owner == null || scope["kind"].Text != "application" || !string.Equals(owner, scope["target"].Text, StringComparison.OrdinalIgnoreCase)) return refuse("application_changed");
         return ok(Observe(requestId, handle, owner, null, cancel));
       }
       if (owner == null || !string.Equals(owner, scope["target"].Text, StringComparison.OrdinalIgnoreCase)) return refuse("application_changed");
+      Observation current;
+      lock (gate) { observations.TryGetValue(payload["observationId"].Text, out current); observations.Remove(payload["observationId"].Text); }
+      Rect bounds; GetWindowRect(handle, out bounds); uint pid; GetWindowThreadProcessId(handle, out pid);
+      if (current == null || current.Window != handle || current.Application != owner || current.Process != pid || current.Dpi != GetDpiForWindow(handle)
+          || !current.Bounds.Equals(bounds) || Stopwatch.GetElapsedTime(current.Tick).TotalSeconds > 60) return refuse("observation_stale_read_again");
+      inputTarget = handle;
       if (kind == "desktop.close") {
         PostMessage(handle, 0x0010, IntPtr.Zero, IntPtr.Zero);
         Thread.Sleep(800);
         return ok(Wires.O("kind", "desktop_closed", "windowId", payload["windowId"].Text, "stillOpen", IsWindow(handle), "untrustedContent", true));
       }
       string method;
-      if (kind == "desktop.clickpoint") {
+      if (kind == "desktop.scroll") {
+        var delta = Math.Clamp((int)payload["amount"].Integer, -20, 20) * 120;
+        var x = bounds.Left + (bounds.Right - bounds.Left) / 2; var y = bounds.Top + (bounds.Bottom - bounds.Top) / 2;
+        cancel.ThrowIfCancellationRequested();
+        if (!PostMessage(handle, payload["horizontal"].Flag ? 0x020Eu : 0x020Au, new IntPtr((long)(unchecked((uint)delta) << 16)), new IntPtr((y << 16) | (x & 0xffff)))) throw new Win32Exception();
+        method = "targeted_scroll";
+      } else if (kind == "desktop.drag") {
+        var scale = Convert.ToDouble(payload["scale"].Raw);
+        if (!(scale > 0)) return refuse("invalid_geometry");
+        var x1 = bounds.Left + (int)Math.Round(payload["x"].Integer / scale); var y1 = bounds.Top + (int)Math.Round(payload["y"].Integer / scale);
+        var x2 = bounds.Left + (int)Math.Round(payload["endX"].Integer / scale); var y2 = bounds.Top + (int)Math.Round(payload["endY"].Integer / scale);
+        if (x1 < bounds.Left || x1 >= bounds.Right || x2 < bounds.Left || x2 >= bounds.Right || y1 < bounds.Top || y1 >= bounds.Bottom || y2 < bounds.Top || y2 >= bounds.Bottom) return refuse("point_outside");
+        Foreground(handle); MouseMove(x1, y1);
+        if (GetAncestor(WindowFromPoint(new Point(x1, y1)), 2) != handle) return refuse("another_window_under_point");
+        Send(new Input { Type = 0, U = new InputUnion { Mouse = new MouseInput { Flags = 2 } } });
+        try { for (var step = 1; step <= 24; step++) { cancel.ThrowIfCancellationRequested(); CheckInputTarget(); MouseMove(x1 + (x2-x1)*step/24, y1 + (y2-y1)*step/24); Thread.Sleep(20); } }
+        finally { Send(new Input { Type = 0, U = new InputUnion { Mouse = new MouseInput { Flags = 4 } } }); }
+        method = "drag";
+      } else if (kind == "desktop.clickpoint") {
         // A point in a screenshot of this window: mapped back through the
         // picture's scale and origin, and only clicked if the window still sits
         // where it was pictured and the program under the point is the same one.
@@ -267,12 +315,11 @@ namespace Josi.Native {
         Foreground(handle);
         cancel.ThrowIfCancellationRequested();
         var under = WindowFromPoint(new Point(screenX, screenY));
-        if (under == IntPtr.Zero || !string.Equals(ApplicationOf(GetAncestor(under, 2)), owner, StringComparison.OrdinalIgnoreCase)) return refuse("another_program_under_point");
+        if (under == IntPtr.Zero || GetAncestor(under, 2) != handle) return refuse("another_window_under_point");
         MouseClick(screenX, screenY);
         method = "point";
       } else {
-        Observation observation; AutomationElement element = null;
-        lock (gate) observations.TryGetValue(payload["observationId"].Text, out observation);
+        Observation observation = current; AutomationElement element = null;
         // Keys and focused typing may follow a screenshot (no element ids); the
         // server already tied that observation id to this window and program.
         if (observation != null && observation.Window != handle) return refuse("observation_changed");
@@ -336,11 +383,30 @@ namespace Josi.Native {
       if (IsIconic(handle)) ShowWindow(handle, 9);
       SetForegroundWindow(handle);
       Thread.Sleep(120);
+      if (GetForegroundWindow() != handle) throw new InvalidOperationException("The target window did not receive focus.");
+    }
+
+    [ThreadStatic] static IntPtr inputTarget;
+    static void CheckInputTarget() {
+      if (inputTarget == IntPtr.Zero || GetForegroundWindow() != inputTarget || ProtectedWindow(inputTarget)) throw new InvalidOperationException("The input target changed.");
+      var focused = AutomationElement.FocusedElement;
+      if (focused == null || focused.Current.IsPassword) throw new InvalidOperationException("The input field is protected.");
+    }
+    Observation NewObservation(IntPtr window, string application) {
+      Rect rect; GetWindowRect(window, out rect); uint pid; GetWindowThreadProcessId(window, out pid);
+      return new Observation { Window = window, Application = application, At = DateTime.UtcNow, Tick = Stopwatch.GetTimestamp(), Bounds = rect, Process = pid, Dpi = GetDpiForWindow(window) };
+    }
+    void Remember(string id, Observation observation) {
+      lock (gate) {
+        observations[id] = observation;
+        foreach (var stale in observations.Where(o => Stopwatch.GetElapsedTime(o.Value.Tick).TotalSeconds > 60).Select(o => o.Key).ToList()) observations.Remove(stale);
+        while (observations.Count > 32) observations.Remove(observations.OrderBy(o => o.Value.Tick).First().Key);
+      }
     }
 
     // ----------------------------------------------------- UI Automation
     Dictionary<string, object> Observe(string requestId, IntPtr handle, string application, Dictionary<string, object> action, CancellationToken cancel) {
-      var observation = new Observation { Window = handle, Application = application, At = DateTime.UtcNow };
+      var observation = NewObservation(handle, application);
       var root = AutomationElement.FromHandle(handle);
       var elements = new List<object>(); var text = new StringBuilder(); var partial = false;
       var queue = new Queue<Tuple<AutomationElement, int>>(); queue.Enqueue(Tuple.Create(root, 0));
@@ -379,10 +445,7 @@ namespace Josi.Native {
           for (var child = walker.GetFirstChild(element); child != null; child = walker.GetNextSibling(child)) queue.Enqueue(Tuple.Create(child, depth + 1));
         } catch (ElementNotAvailableException) { }
       }
-      lock (gate) {
-        observations[requestId] = observation;
-        foreach (var stale in observations.Where(o => (DateTime.UtcNow - o.Value.At).TotalMinutes > 10).Select(o => o.Key).ToList()) observations.Remove(stale);
-      }
+      Remember(requestId, observation);
       var result = Wires.O("kind", "desktop_observation", "observationId", requestId, "windowId", handle.ToInt64().ToString(), "title", Title(handle),
         "application", application, "text", text.ToString().Trim(), "elements", elements, "partial", partial, "untrustedContent", true);
       if (action != null) result["action"] = action;
@@ -421,6 +484,7 @@ namespace Josi.Native {
     static string TypeKeystrokes(string text, CancellationToken cancel) {
       foreach (var character in text) {
         cancel.ThrowIfCancellationRequested();
+        CheckInputTarget();
         if (character == '\n') { KeyTap(0x0D, 0); continue; }
         if (character == '\r') continue;
         SendUnicode(character);
@@ -446,9 +510,10 @@ namespace Josi.Native {
       }
       if (key == 0 && !unicode) throw new InvalidOperationException("No key in: " + combination);
       cancel.ThrowIfCancellationRequested();
+      CheckInputTarget();
       foreach (var modifier in modifiers) KeyDown(modifier, 0);
-      if (unicode) SendUnicode(character); else KeyTap(key, 0);
-      foreach (var modifier in Enumerable.Reverse(modifiers)) KeyUp(modifier, 0);
+      try { if (unicode) SendUnicode(character); else KeyTap(key, 0); }
+      finally { foreach (var modifier in Enumerable.Reverse(modifiers)) KeyUp(modifier, 0); }
       return "keys";
     }
     static readonly Dictionary<string, ushort> KeyCodes = new Dictionary<string, ushort> {
@@ -460,11 +525,15 @@ namespace Josi.Native {
     // ---------------------------------------------------------- screenshot
     Dictionary<string, object> Screenshot(IntPtr window) {
       Rectangle area;
-      if (window != IntPtr.Zero) { Rect r; GetWindowRect(window, out r); area = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom); Foreground(window); Thread.Sleep(150); }
-      else area = new Rectangle(GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79));
-      if (area.Width < 8 || area.Height < 8) throw new InvalidOperationException("Nothing to capture.");
+      if (window == IntPtr.Zero || IsIconic(window)) throw new InvalidOperationException("Choose a visible target window.");
+      Rect r; GetWindowRect(window, out r); area = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+      if (area.Width < 8 || area.Height < 8 || area.Width > 16384 || area.Height > 16384 || (long)area.Width * area.Height > 64000000) throw new InvalidOperationException("Nothing to capture.");
       using (var bitmap = new Bitmap(area.Width, area.Height)) {
-        using (var graphics = Graphics.FromImage(bitmap)) graphics.CopyFromScreen(area.Left, area.Top, 0, 0, area.Size);
+        using (var graphics = Graphics.FromImage(bitmap)) {
+          var dc = graphics.GetHdc();
+          try { if (!PrintWindow(window, dc, 2)) throw new InvalidOperationException("This application cannot provide a targeted capture. Use its accessibility controls."); }
+          finally { graphics.ReleaseHdc(dc); }
+        }
         var scale = Math.Min(1.0, 1280.0 / Math.Max(bitmap.Width, bitmap.Height));
         var encoder = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
         foreach (var longest in new[] { 1280, 1024, 800 }) {
@@ -501,12 +570,18 @@ namespace Josi.Native {
     [StructLayout(LayoutKind.Sequential)] struct KeyInput { public ushort Key, Scan; public uint Flags, Time; public IntPtr Extra; }
     static void Send(params Input[] inputs) { if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) != inputs.Length) throw new Win32Exception(); }
     static void MouseClick(int x, int y) {
+      CheckInputTarget();
       var left = GetSystemMetrics(76); var top = GetSystemMetrics(77); var width = GetSystemMetrics(78); var height = GetSystemMetrics(79);
       var nx = (int)((x - left) * 65535.0 / Math.Max(1, width - 1)); var ny = (int)((y - top) * 65535.0 / Math.Max(1, height - 1));
       Send(new Input { Type = 0, U = new InputUnion { Mouse = new MouseInput { X = nx, Y = ny, Flags = 0x0001 | 0x8000 | 0x4000 } } });
       Thread.Sleep(40);
       Send(new Input { Type = 0, U = new InputUnion { Mouse = new MouseInput { X = nx, Y = ny, Flags = 0x0002 | 0x8000 | 0x4000 } } },
         new Input { Type = 0, U = new InputUnion { Mouse = new MouseInput { X = nx, Y = ny, Flags = 0x0004 | 0x8000 | 0x4000 } } });
+    }
+    static void MouseMove(int x, int y) {
+      var nx = (int)((x - GetSystemMetrics(76)) * 65535.0 / Math.Max(1, GetSystemMetrics(78) - 1));
+      var ny = (int)((y - GetSystemMetrics(77)) * 65535.0 / Math.Max(1, GetSystemMetrics(79) - 1));
+      Send(new Input { Type = 0, U = new InputUnion { Mouse = new MouseInput { X = nx, Y = ny, Flags = 0xC001 } } });
     }
     static void KeyDown(ushort key, uint flags) { Send(new Input { Type = 1, U = new InputUnion { Key = new KeyInput { Key = key, Flags = flags } } }); }
     static void KeyUp(ushort key, uint flags) { Send(new Input { Type = 1, U = new InputUnion { Key = new KeyInput { Key = key, Flags = flags | 0x0002 } } }); }
@@ -523,6 +598,8 @@ namespace Josi.Native {
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr handle);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr handle);
+    [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr handle);
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr handle, IntPtr dc, uint flags);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr handle);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr handle, int command);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr handle);
