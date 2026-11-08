@@ -300,6 +300,12 @@ struct NativeSubscriptionControls: View {
     @State private var status: Wire = .null
     @State private var code = ""
     @State private var generation = 0
+    /// Claude plan sign-in run on this Mac (ClaudeSignIn.swift).
+    @State private var claude: ClaudeSetupToken?
+    @State private var claudePage: URL?
+    @State private var claudeStage = ""
+    @State private var submitting = false
+    @State private var manual = false
     private var base: String { prefix + (provider == "anthropic_subscription" ? "/claude" : "") }
     private var supported: Bool { ["openai_subscription", "anthropic_subscription"].contains(provider) }
     private var vaultClaude: Bool { provider == "anthropic_subscription" && status["connectionMethod"].text == "vault_setup_token" }
@@ -318,10 +324,10 @@ struct NativeSubscriptionControls: View {
             }
             if status != .null {
                 Text(status["signedIn"].flag
-                    ? (vaultClaude ? "Claude token saved in the Vault" : "Subscription login available")
+                    ? (vaultClaude ? "Connected to your Claude plan" : "Subscription login available")
                     : "Subscription not connected").font(JosiFont.headline)
             }
-            if !status["detail"].text.isEmpty {
+            if !status["detail"].text.isEmpty && !vaultClaude {
                 Text(status["detail"].text).font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             }
             if !login["challenge"]["userCode"].text.isEmpty {
@@ -332,19 +338,7 @@ struct NativeSubscriptionControls: View {
                 Text(url.host ?? "").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
             }
             if vaultClaude {
-                Text("Run claude setup-token with Anthropic’s official CLI, complete its sign-in, then paste the subscription token here. An API key or one-time code will not work.")
-                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
-                Link("Anthropic’s setup-token instructions",
-                     destination: URL(string: "https://code.claude.com/docs/en/authentication#generate-a-long-lived-token")!)
-                SecureField("Subscription setup token", text: $code)
-                    .disabled(status["busy"].flag)
-                Button(status["signedIn"].flag ? "Replace Saved Token" : "Save Token in Vault") {
-                    let value = code.trimmingCharacters(in: .whitespacesAndNewlines); code = ""
-                    action("/connect", method: "POST", body: ["token": .string(value)])
-                }.disabled(status["busy"].flag || !status["installed"].flag || status["credential"] == .null
-                    || code.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count < 16 || code.utf8.count > 16384)
-                Text("Saving does not verify the account. Use Test Model to confirm it works. Everyone using this server shares the subscription limits. Expired tokens must be replaced.")
-                    .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
+                claudeSignIn
             } else if provider == "anthropic_subscription", login["challenge"] != .null {
                 SecureField("Paste the one-time code from the provider", text: $code)
                 Button("Submit Sign-In Code") {
@@ -388,7 +382,107 @@ struct NativeSubscriptionControls: View {
                 }
             }
         }
-        .onDisappear { generation += 1; code = ""; login = .null; status = .null }
+        .onDisappear { generation += 1; code = ""; login = .null; status = .null; cancelClaude() }
+    }
+    /// Sign In with Claude: Anthropic's own Claude Code program on this Mac makes
+    /// a one-year plan token and Josi saves it straight to the server's Vault.
+    /// Pasting a token by hand is only for a Mac without that program.
+    @ViewBuilder private var claudeSignIn: some View {
+        if let page = claudePage, claude != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("1. Sign in to Claude on Anthropic’s page in your browser and approve access.")
+                Text("2. Anthropic then shows a code. Copy it and paste it here:")
+                TextField("Code from Claude’s page", text: $code).disabled(submitting)
+                    .onSubmit { submitClaudeCode() }
+                HStack(spacing: 10) {
+                    Button("Continue") { submitClaudeCode() }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
+                        .disabled(submitting || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Open Claude’s Page Again") { NSWorkspace.shared.open(page) }
+                    Text(page.host ?? "").font(JosiFont.caption).foregroundStyle(JosiTheme.muted)
+                }
+                if submitting { Text("Waiting for Claude…").font(JosiFont.caption).foregroundStyle(JosiTheme.lilac) }
+            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                .background(JosiTheme.lilac.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            Button("Cancel Sign-In") { cancelClaude() }
+        } else if !claudeStage.isEmpty {
+            HStack(spacing: 8) { ProgressView().controlSize(.small); Text(claudeStage).font(JosiFont.caption) }
+        } else if status != .null && status["credential"] == .null {
+            Text("The server’s Vault isn’t available for a plan token yet. Unlock or set up the Vault, then use Check Status.")
+                .font(JosiFont.caption).foregroundStyle(JosiTheme.error)
+        } else if manual {
+            Text("This Mac doesn’t have Anthropic’s Claude Code program, so Josi can’t run the sign-in here. Paste a token made with Claude Code’s setup-token command on any computer.")
+                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
+            SecureField("Claude plan token", text: $code).disabled(status["busy"].flag)
+            HStack {
+                Button(status["signedIn"].flag ? "Replace Saved Token" : "Save Token in Vault") {
+                    let value = code.trimmingCharacters(in: .whitespacesAndNewlines); code = ""
+                    action("/connect", method: "POST", body: ["token": .string(value)])
+                }.disabled(status["busy"].flag || !status["installed"].flag
+                    || code.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count < 16 || code.utf8.count > 16384)
+                Button("Cancel") { manual = false; code = "" }
+            }
+        } else if status != .null {
+            Button(status["signedIn"].flag ? "Replace with a New Sign-In" : "Sign In with Claude") { startClaude() }
+                .buttonStyle(JosiGoldButtonStyle(fullWidth: false))
+                .disabled(status["busy"].flag || !status["installed"].flag)
+            Text("Josi runs Anthropic’s own Claude Code program on this Mac to make a one-year plan token. You sign in only on Anthropic’s page. The token goes straight to the server’s Vault and is never shown or saved on this Mac. Everyone using this server shares the plan’s limits.")
+                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac)
+        }
+    }
+    private func startClaude() {
+        cancelClaude(); code = ""
+        claudeStage = "Checking Anthropic’s Claude Code program…"
+        Task { @MainActor in
+            var session: ClaudeSetupToken?
+            do {
+                guard let executable = try ClaudeCLI.locate() else { manual = true; claudeStage = ""; return }
+                claudeStage = "Starting Claude’s sign-in…"
+                let started = try ClaudeSetupToken(executable: executable)
+                session = started; claude = started
+                Task { try? await Task.sleep(for: .seconds(45)); started.cancel(reason: "Claude Code didn’t show a sign-in page. Check this Mac’s internet connection and try again.", onlyBeforePage: true) }
+                let page = try await started.signInPage()
+                guard claude === started else { return }
+                claudePage = page; claudeStage = ""
+                #if DEBUG
+                if ProcessInfo.processInfo.environment["JOSI_NO_BROWSER"] == nil { NSWorkspace.shared.open(page) }
+                #else
+                NSWorkspace.shared.open(page)
+                #endif
+                Task { try? await Task.sleep(for: .seconds(900)); started.cancel(reason: "Claude’s sign-in timed out. Start it again.") }
+                let token = try await started.result()
+                guard claude === started else { return }
+                claude = nil; claudePage = nil; code = ""
+                action("/connect", method: "POST", body: ["token": .string(token)])
+            } catch {
+                // A sign-in the person cancelled, or one replaced by a newer one, says nothing.
+                guard session == nil || claude === session else { return }
+                claude = nil; claudePage = nil; claudeStage = ""; code = ""
+                model.error = error.localizedDescription
+            }
+        }
+    }
+    private func submitClaudeCode() {
+        guard let session = claude, !submitting else { return }
+        let value = code; submitting = true
+        Task { @MainActor in
+            defer { submitting = false }
+            do {
+                try await session.submit(code: value)
+                code = ""
+                // A good code finishes within seconds; otherwise say what Claude Code showed.
+                for _ in 0..<40 where !session.isFinished { try await Task.sleep(for: .milliseconds(500)) }
+                if !session.isFinished, claude === session {
+                    let reply = session.replySinceSubmit()
+                    model.error = "Claude didn’t accept the code" + (reply.isEmpty ? "." : ": " + reply)
+                        + " Copy the whole code from Claude’s page (use its Copy button) and paste it again, or open the page again for a new code."
+                }
+            } catch { if claude === session { model.error = error.localizedDescription } }
+        }
+    }
+    private func cancelClaude() {
+        let session = claude
+        claude = nil; claudePage = nil; claudeStage = ""; submitting = false
+        session?.cancel()
     }
     private var signInURL: URL? {
         guard let url = URL(string: login["challenge"]["verificationUrl"].text), url.scheme == "https",

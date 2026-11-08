@@ -110,7 +110,7 @@ class Journal:
             if self.identity is None:self.identity=r['identity']
             if r['identity']!=self.identity:raise ValueError('Journal identity')
             if set(self.identity)!={'from','to','manifest'} or not re.fullmatch('[a-f0-9]{64}',self.identity['manifest']):raise ValueError('Journal payload identity')
-            if any(v is not None and not re.fullmatch(r'\d+\.\d+\.\d+-[a-z0-9.]+',v) for v in (self.identity['from'],self.identity['to'])):raise ValueError('Journal version identity')
+            if any(v is not None and not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?',v) for v in (self.identity['from'],self.identity['to'])):raise ValueError('Journal version identity')
             if self.records and r['phase'] not in TRANSITIONS.get(self.records[-1]['phase'],set()):raise ValueError('Journal transition')
             if not self.records and r['phase']!='prepared':raise ValueError('Journal start')
             self.records.append(r);previous=hashed(p)
@@ -134,7 +134,7 @@ class Lifecycle:
                 if not LOCAL_TESTS.is_dir() or LOCAL_TESTS.stat().st_mode&0o777!=0o700:raise ValueError('Unprotected isolated test base')
         elif os.getuid()!=0 or self.root!=PRODUCT:raise PermissionError('Administrator authorization required')
         self.data=self.root/'data';self.children={};self.version=json.loads((runtime/'app/package.json').read_text())['version']
-        if not re.fullmatch(r'\d+\.\d+\.\d+-[a-z0-9.]+',self.version):raise ValueError('Invalid version identity')
+        if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?',self.version):raise ValueError('Invalid version identity')
         self.installed=self.root/'versions'/self.version
         self.plan=None;self.journal=None
     def run(self,args,role=None,timeout=180,**kw):
@@ -474,7 +474,7 @@ class Lifecycle:
             os.lchown(p,0,0)
             if not p.is_symlink():os.chmod(p,0o755 if p.is_dir() or p.stat().st_mode&0o111 else 0o644)
     def retained_program(self,version):
-        if not re.fullmatch(r'\d+\.\d+\.\d+-[a-z0-9.]+',version):raise ValueError('Invalid retained version')
+        if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?',version):raise ValueError('Invalid retained version')
         program=plain(self.root/'versions'/version,os.getuid())
         if not program.is_dir():raise ValueError('Retained program missing')
         if not self.isolated:

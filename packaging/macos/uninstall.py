@@ -218,9 +218,9 @@ def uninstall(obj,mode,system,operation):
         if intent['phase']=='planned':
             progress('Stopping Josi')
             obj.installed=obj.root/'versions'/cfg['version']
-            if not re.fullmatch(r'\d+\.\d+\.\d+-[a-z0-9.]+',cfg['version']):raise ValueError('Invalid active version')
+            if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?',cfg['version']):raise ValueError('Invalid active version')
             if not obj.isolated:
-                alternatives=[p for p in (obj.root/'versions').iterdir() if p!=obj.installed and re.fullmatch(r'\d+\.\d+\.\d+-[a-z0-9.]+',p.name)]
+                alternatives=[p for p in (obj.root/'versions').iterdir() if p!=obj.installed and re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?',p.name)]
                 obj.check_owned(obj.installed,alternatives,configuration=cfg)
             obj.stop();system.absent_jobs();system.finish_processes(records)
             progress('Disconnecting folder access');workspace_access.revoke(obj.root)
