@@ -14,6 +14,21 @@ Release scripts default to `artifacts/windows-native/tools/subscription-cli/node
 
 Existing 1.2.4 installer bytes were preserved. Release builds now refuse to overwrite an existing version folder. Installed 1.2.3 services remain unchanged. No release was published by this session.
 
+## Signed local installer preview
+
+`1.2.5-preview.1` built successfully from clean source commit `f346d5cae0ef7704f900d99449f354b1e93794d2`. Both installers have valid timestamped SoCal Receptionist Authenticode signatures, and both SHA-256 checksums match `SHA256SUMS.txt`.
+
+Files are under `artifacts/windows-native/releases/1.2.5-preview.1/` in the approved workspace:
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `Josi-CE-1.2.5-preview.1-Windows-x64.exe` | 1017965720 | `e30e4ad00a37916f86bd2885653565b80fff1cc67cb7c7f27e18c7ebf4f9be07` |
+| `Josi-Client-1.2.5-preview.1-Windows-x64.exe` | 80349280 | `0abdbe83d4c74d86add51c24a9fad1468859e1975b553819419689b0fa686c69` |
+
+`BUILD-VERIFICATION.json` records the source commit, signatures, checksums and verification limits. The installer kit passed its loading check and all four tamper-rejection checks. The fresh source snapshot contains no generated probe binaries. Build log: `artifacts/windows-native/evidence/build-1.2.5-preview.1.log`.
+
+This is a foundation preview. It has not been installed or published. Real-chat, upgrade, physical takeover/mixed-DPI and the remaining functionality below are not verified by the package build. Later documentation commits do not change the binary's recorded source commit.
+
 ## What works in this preview
 
 - Chat inspects registered PCs and actual permissions even when control is off. Multiple devices require explicit selection for a permission proposal.
