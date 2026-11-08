@@ -52,7 +52,20 @@ The release scripts now support `-SkipRuntimeChecks`. It omits launcher tests an
 node scripts/windows/run-background.mjs powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows/Build-Release.ps1 -Version 1.2.5-preview.2 -Sign -SkipProvision -SkipRuntimeChecks
 ```
 
-This runner hides console windows and keeps temporary files/npm cache under the approved workspace. Package hash/signature inspection is metadata inspection; do not execute the installers. The intended output folder is `artifacts/windows-native/releases/1.2.5-preview.2/`. A completed build receipt will name the exact source commit and artifact hashes.
+This runner hides console windows and keeps temporary files/npm and NuGet caches under the approved workspace. Package hash/signature inspection is metadata inspection; do not execute the installers. It explicitly supplies OS PowerShell modules: the initial packaging attempt stopped at `Get-FileHash : The term 'Get-FileHash' is not recognized`; setting the child module path fixed the build environment.
+
+## Completed local installers
+
+Both signed installers were built from clean source commit `8be39dc0f176cf307ca84014d13287a922599bb4`. Output is under `artifacts/windows-native/releases/1.2.5-preview.2/` in the approved workspace.
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `Josi-CE-1.2.5-preview.2-Windows-x64.exe` | 1019145064 | `1ad3b44bc97014ca4794f0f748b1a2b0973722b4668766294e5978ddb3646a78` |
+| `Josi-Client-1.2.5-preview.2-Windows-x64.exe` | 80383968 | `adad0c18d81e09d146e72d6ce906da7cd6d6aa1140f74446d27f4ca995d90044` |
+
+Both have valid timestamped SoCal Receptionist Authenticode signatures. Their hashes match `SHA256SUMS.txt`. `BUILD-RECEIPT.json` records the source, metadata and explicit `testsRun:false`, `desktopAcceptanceRun:false`, `installed:false`, and `published:false`. Build log: `artifacts/windows-native/evidence/build-1.2.5-preview.2-retry.log`. Documentation-only commits after the source commit do not change these binary bytes.
+
+These are local, untested previews. Neither installer was executed; the generated Josi app and control bar were not launched for acceptance. No release was published and installed services were not changed.
 
 ## Remaining limits and owner-approved acceptance
 
