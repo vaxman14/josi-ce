@@ -245,6 +245,11 @@ See the end of this file; the section "Done so far" is updated as work lands.
   with `Build-Release.ps1 -Version 1.2.4 -Sign -SkipProvision`. Output in
   `artifacts\windows-native\releases\1.2.4`: `Josi-CE-1.2.4-Windows-x64.exe`
   (971 MB, SHA-256 `6b4d4e90…ac88`, Authenticode valid, CN=SoCal Receptionist)
-  and `Josi-Client-1.2.4-Windows-x64.exe`. **Not installed and not published
-  to GitHub**; the owner decides both (install needs a UAC click; publishing
-  is `gh release create v1.2.4 --draft` plus the two files and SHA256SUMS.txt).
+  and `Josi-Client-1.2.4-Windows-x64.exe`. Both installers and SHA256SUMS.txt
+  are on GitHub as the **draft** release `v1.2.4` (release id 438148762,
+  target `c81188b`), created November 8, 2026 on the owner's say-so. Still a
+  draft: the owner publishes it from the GitHub releases page when ready.
+  **Not installed on this PC** (needs the owner's UAC click).
+  Note: `gh release create` hangs on a prompt in this environment; create
+  releases with `gh api --method POST repos/vaxman14/josi-ce/releases --input
+  body.json` and upload with `gh release upload`.
