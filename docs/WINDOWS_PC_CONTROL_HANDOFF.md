@@ -241,4 +241,10 @@ See the end of this file; the section "Done so far" is updated as work lands.
 - The web page's shell picker hard-codes `C:\Windows\System32\...`; PcWork
   compares against the real system folder, so a non-standard Windows folder
   would refuse. Rare.
-- Release 1.2.4: see the end of this file for whether it was built.
+- Release 1.2.4: **built and signed** on November 8, 2026 from `c81188b`
+  with `Build-Release.ps1 -Version 1.2.4 -Sign -SkipProvision`. Output in
+  `artifacts\windows-native\releases\1.2.4`: `Josi-CE-1.2.4-Windows-x64.exe`
+  (971 MB, SHA-256 `6b4d4e90…ac88`, Authenticode valid, CN=SoCal Receptionist)
+  and `Josi-Client-1.2.4-Windows-x64.exe`. **Not installed and not published
+  to GitHub**; the owner decides both (install needs a UAC click; publishing
+  is `gh release create v1.2.4 --draft` plus the two files and SHA256SUMS.txt).
