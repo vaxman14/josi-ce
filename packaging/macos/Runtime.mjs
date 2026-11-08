@@ -24,7 +24,7 @@ try {
   const cfg=JSON.parse(readFileSync(configFile)),meta=JSON.parse(readFileSync(join(PROGRAM,'app/package.json')));
   const keys=['schemaVersion','version','databasePort','apiPort','publicPort','voicePort','controlPort','setupTokenSha256','scannerSocket'];
   if(Object.hasOwn(cfg,'workspace')) keys.push('workspace');
-  if(Object.keys(cfg).sort().join()!==keys.sort().join()||cfg.schemaVersion!==1||!/^\d+\.\d+\.\d+-[a-z0-9.]+$/.test(cfg.version)||!/^[a-f0-9]{64}$/.test(cfg.setupTokenSha256))throw Error();
+  if(Object.keys(cfg).sort().join()!==keys.sort().join()||cfg.schemaVersion!==1||!/^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$/.test(cfg.version)||!/^[a-f0-9]{64}$/.test(cfg.setupTokenSha256))throw Error();
   const ports=['databasePort','apiPort','publicPort','voicePort','controlPort'].map(k=>cfg[k]);
   if(ports.some(p=>!Number.isInteger(p)||p<1024||p>65535)||new Set(ports).size!==5)throw Error();
   if(typeof cfg.scannerSocket!=='string'||(cfg.scannerSocket&&!cfg.scannerSocket.startsWith('/')))throw Error();
