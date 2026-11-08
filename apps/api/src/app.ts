@@ -1,3 +1,4 @@
+import { computerControlRoutes } from './http/computerControlRoutes.js';
 // The HTTP surface, assembled in one place so the guard order is visible.
 //
 // Order matters and is deliberate:
@@ -308,6 +309,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/improvements', improvementRoutes(db));
   api.use('/settings-changes', settingsChangeRoutes({ db, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport }));
   api.use('/admin/network', networkRoutes({ db }));
+  api.use('/computer-control', computerControlRoutes({db,masterKey:cfg.masterKeyCheck}));
   api.use('/admin/pc-control', pcControlRoutes({db,masterKey:cfg.masterKeyCheck,
     windows:cfg.nativeWindowsPermissions ?? (process.platform==='win32' && process.env.JOSI_NATIVE_RUNTIME==='1')}));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));

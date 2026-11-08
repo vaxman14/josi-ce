@@ -69,9 +69,9 @@ struct ProtectedKeyHost {
         let base: Set<String> = ["schemaVersion", "id", "identity", "operation"]
         let additional: Set<String>
         switch operation {
-        case "hello", "create", "cancel": additional = []
+        case "hello", "create", "cancel", "computerFingerprint": additional = []
         case "authenticate", "sign": additional = ["message", "material"]
-        case "proveHost", "proveCurrentDesktop", "proveWorkspaceStorage", "proveAutomationConsent": additional = ["message"]
+        case "proveHost", "proveCurrentDesktop", "proveWorkspaceStorage", "proveAutomationConsent", "proveComputerControlLink": additional = ["message"]
         case "authenticateEnrollment", "signEnrollment": additional = ["commandDigest", "material", "attemptId", "expiresAtMs"]
         default: throw HostFailure.invalid
         }
@@ -127,6 +127,10 @@ struct ProtectedKeyHost {
                 switch input.operation {
                 case "hello":
                     result = ["available": true, "protocol": 1]
+                case "computerFingerprint":
+                    result = ["fingerprint": try projection.computerFingerprint()]
+                case "proveComputerControlLink":
+                    result = ["signature": urlBase64(try await projection.proveComputerControlLink(message: message(input.message)))]
                 case "create":
                     let context = LAContext()
                     context.localizedFallbackTitle = ""

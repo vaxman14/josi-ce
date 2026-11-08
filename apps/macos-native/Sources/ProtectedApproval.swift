@@ -197,7 +197,7 @@ enum ProtectedWire {
     }
     func request(_ operation: String, fields: [String: Wire]) async throws -> Wire {
         guard !closed, process.isRunning, !pending,
-              ["create", "proveHost", "proveWorkspaceStorage", "proveAutomationConsent", "authenticate", "sign", "authenticateEnrollment", "signEnrollment"].contains(operation)
+              ["create", "proveHost", "proveWorkspaceStorage", "proveAutomationConsent", "computerFingerprint", "proveComputerControlLink", "authenticate", "sign", "authenticateEnrollment", "signEnrollment"].contains(operation)
         else { throw approvalUnavailable() }
         pending = true; defer { pending = false }
         let id = UUID().uuidString.lowercased()

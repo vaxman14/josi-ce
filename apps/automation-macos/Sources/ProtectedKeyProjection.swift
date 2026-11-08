@@ -304,13 +304,21 @@ final class ProtectedKeyProjection {
     func proveAutomationConsent(message: Data) async throws -> Data {
         try await proveBoundHost(message: message, domain: "consent")
     }
+    func computerFingerprint() throws -> String {
+        let context = LAContext(); context.interactionNotAllowed = true
+        defer { context.invalidate() }
+        return try SHA256.hash(data: publicBytes(loadRoot(context: context))).map { String(format: "%02x", $0) }.joined()
+    }
+    func proveComputerControlLink(message: Data) async throws -> Data {
+        try await proveBoundHost(message: message, domain: "computer")
+    }
     private func proveBoundHost(message: Data, domain: String) async throws -> Data {
         guard pending == nil, hostAuthentication == nil, !hostProofUsed else { throw ProtectedKeyError.busy }
-        let prefix = Data((domain == "desktop" ? "josi-current-desktop.1\n" : domain == "storage" ? "josi-workspace-storage.1\n"
+        let prefix = Data((domain == "computer" ? "josi-computer-control-link.1\n" : domain == "desktop" ? "josi-current-desktop.1\n" : domain == "storage" ? "josi-workspace-storage.1\n"
             : domain == "consent" ? "josi-automation-consent.1\n" : "josi-protected-host-auth.1\n").utf8)
         guard message.count <= 4096, message.starts(with: prefix),
               let fields = try JSONSerialization.jsonObject(with: message.dropFirst(prefix.count)) as? [Any],
-              fields.count == (["storage", "desktop"].contains(domain) ? 15 : domain == "consent" ? 19 : 11) else { throw ProtectedKeyError.invalid }
+              fields.count == (domain == "computer" ? 14 : ["storage", "desktop"].contains(domain) ? 15 : domain == "consent" ? 19 : 11) else { throw ProtectedKeyError.invalid }
         func integer(_ value: Any) -> Int64? {
             guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
                   number.doubleValue.isFinite, number.doubleValue >= 0, number.doubleValue <= 9_007_199_254_740_991,
@@ -334,6 +342,14 @@ final class ProtectedKeyProjection {
               let epoch = integer(reference[3]), epoch > 0, let expectedFingerprint = digest(fields[8]),
               let issued = integer(fields[9]), let expires = integer(fields[10]),
               issued <= now, expires > now, expires > issued, expires - issued <= 60_000 else { throw ProtectedKeyError.invalid }
+        if domain == "computer" {
+            guard let device = fields[11] as? String, let encoded = fields[12] as? String,
+                  let publicKey = Data(base64Encoded: encoded), publicKey.count == 32,
+                  publicKey.base64EncodedString() == encoded,
+                  device == "mac-" + SHA256.hash(data: publicKey).map({ String(format: "%02x", $0) }).joined().prefix(40),
+                  let workspace = fields[13] as? String, UUID(uuidString: workspace)?.uuidString.lowercased() == workspace
+            else { throw ProtectedKeyError.invalid }
+        }
         if ["storage", "desktop"].contains(domain) {
             guard let operation = fields[11] as? String, (domain == "desktop" ? operation == "connect" : ["provision", "open"].contains(operation)),
                   let workspace = fields[12] as? String, UUID(uuidString: workspace)?.uuidString.lowercased() == workspace,
@@ -376,7 +392,9 @@ final class ProtectedKeyProjection {
             guard wall >= now, wall < expires, ContinuousClock.now < deadline,
                   generation == ownGeneration, hostAuthentication === context, !Task.isCancelled else { throw ProtectedKeyError.expired }
         }
-        let reason = domain == "storage"
+        let reason = domain == "computer"
+            ? "Connect this Mac’s existing Josi permissions to native computer control. Your saved restrictions remain in effect."
+            : domain == "storage"
             ? "Authorize the separate Josi workspace storage operation you reviewed, using its key from \(identity.serverOrigin)."
             : domain == "consent"
             ? "Allow Josi to automate the separate desktop you reviewed under its existing rules on \(identity.serverOrigin)."

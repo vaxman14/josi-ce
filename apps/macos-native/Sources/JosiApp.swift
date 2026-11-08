@@ -27,6 +27,7 @@ import SwiftUI
             }
             return .terminateLater
         }
+        model?.computer.disconnect()
         return .terminateNow
     }
     // Closing the window never stops the server: it runs as a system service.
@@ -42,9 +43,18 @@ import SwiftUI
     var body: some Scene {
         Window(JosiFlags.appName, id: "josi") {
             RootView().environmentObject(model)
+                .background(ComputerPanelPresenter(controller: model.computer).environmentObject(model))
                 .frame(minWidth: 920, minHeight: 660)
                 .task {
-                    delegate.model = model; model.refreshLocal(); await model.resume()
+                    delegate.model = model
+#if DEBUG
+                    if ProcessInfo.processInfo.environment["JOSI_CONTROL_PREVIEW"] == "1" {
+                        model.computer.overlay.start(monitor: false)
+                        model.computer.showPanel = true
+                        return // Visual acceptance only: no saved sessions, server connection or OS permission requests.
+                    }
+#endif
+                    model.computer.attach(model); model.refreshLocal(); await model.resume()
                     model.ghost.set(.hello)
 #if !DEBUG
                     await model.checkForUpdate()
@@ -63,8 +73,12 @@ import SwiftUI
         .commands {
             CommandGroup(after: .appInfo) {
                 if JosiFlags.serverApp { Button("Server Controls…") { model.openServerControls() } }
+                Button("Computer Control…") { model.computer.showPanel = true }
+                Button("Show Control Bar") { model.computer.overlay.present() }
+                Button("Check Computer Control…") { ComputerDiagnostics.shared.present() }
                 Button("Show \(JosiFlags.appName) in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL]) }
                 Button("Check for Updates…") { Task { await model.checkForUpdate(announce: true) } }
+                Button("Install Downloaded Update…") { Task { await model.installDownloadedUpdate() } }
                 Divider()
                 Button("New Conversation") { model.run { try await model.newThread() } }
                     .keyboardShortcut("n").disabled(model.screen != .workspace || model.busy)
@@ -432,4 +446,10 @@ struct AutomationView: View {
             }.padding(30)
         }
     }
+}
+
+private struct ComputerPanelPresenter: View {
+    @EnvironmentObject var model: JosiModel
+    @ObservedObject var controller: ComputerController
+    var body: some View { Color.clear.sheet(isPresented: $controller.showPanel) { ComputerControlPanel(controller: controller).environmentObject(model) } }
 }

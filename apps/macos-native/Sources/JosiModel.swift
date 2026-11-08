@@ -38,6 +38,7 @@ import SwiftUI
     @Published var historyOpen = false
     @Published var modelName = ""
     @Published var setupCheck: Wire = .null
+    let computer = ComputerController()
     @Published var settingsProposal: Wire = .null
     @Published var update: JosiUpdates.Release?
     let ghost = GhostController()
@@ -221,6 +222,7 @@ import SwiftUI
         guard !busy else { return }
         guard mfaRecovery == .null else { error = "Save your sign-in recovery codes before disconnecting."; return }
         guard !desktop.requiresClosure else { error = "Close the separate desktop before disconnecting."; return }
+        computer.disconnect()
         stopWorkStream(); api?.close(); api = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; taskRuns = []; setup = .null
         setupReview = .null; recovery = .null; mfaChallenge = ""; draft = ""; draftAttachments = []; pending = nil; pendingMessage = false
@@ -237,6 +239,7 @@ import SwiftUI
         }
         // run() keeps busy set until this completes; disconnect's UI guard
         // must not prevent clearing the revoked session.
+        computer.disconnect()
         stopWorkStream(); api?.close(); api = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; taskRuns = []
         draft = ""; draftAttachments = []; pending = nil; pendingMessage = false; selectedThread = nil
@@ -418,8 +421,10 @@ import SwiftUI
     }
     /// Once per launch, quietly; from the app menu it also says when Josi is current.
     func checkForUpdate(announce: Bool = false) async {
-        let current = receipt.version.isEmpty ? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "" : receipt.version
-        update = await JosiUpdates.newer(than: current)
+        let current = Bundle.main.object(forInfoDictionaryKey: "JosiReleaseVersion") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? receipt.version
+        let result = await JosiUpdates.check(than: current)
+        if case .available(let release) = result { update = release } else { update = nil }
         guard announce else { return }
         let alert = NSAlert()
         if let update {
@@ -428,9 +433,28 @@ import SwiftUI
             alert.addButton(withTitle: "Download Update"); alert.addButton(withTitle: "Later")
             if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(update.url) }
         } else {
-            alert.messageText = "Josi is up to date"; alert.informativeText = "You have \(current)."
-            alert.runModal()
+            if case .unavailable = result {
+                alert.messageText = "Could not check for updates"
+                alert.informativeText = "The release service may be unavailable or require GitHub sign-in. You have \(current). You can choose an installer you already downloaded."
+            } else { alert.messageText = "Josi is up to date"; alert.informativeText = "You have \(current)." }
+            alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Choose Downloaded Installer…")
+            if alert.runModal() == .alertSecondButtonReturn { await installDownloadedUpdate() }
         }
+    }
+    func installDownloadedUpdate() async {
+        let panel = NSOpenPanel(); panel.title = "Choose a Josi update installer"
+        panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let selected = panel.url, selected.pathExtension.lowercased() == "pkg" else { return }
+        do {
+            let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+            let candidate = try await JosiInstaller.prepare(selected, current: current)
+            let alert = NSAlert(); alert.messageText = "Open Josi \(candidate.version) Installer?"
+            alert.informativeText = "The Socal Receptionist signature is verified. The installer updates Josi in place and retains your conversations, settings and permissions. macOS will ask you to close Josi before replacement. Installation begins only when you confirm it in Installer."
+            alert.addButton(withTitle: "Open Installer"); alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { try? FileManager.default.removeItem(at: candidate.url.deletingLastPathComponent()); return }
+            computer.gate.stop("Preparing the requested update")
+            guard NSWorkspace.shared.open(candidate.url) else { throw JosiError(message: "macOS could not open Installer.") }
+        } catch { self.error = error.localizedDescription }
     }
     // ------------------------------------------ settings changes by talking
     /// A proposal this person can make live opens the approval popup, once. One

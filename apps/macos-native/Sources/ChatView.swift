@@ -43,6 +43,8 @@ struct ChatView: View {
         ZStack {
             VStack(spacing: 0) {
                 stage
+                ComputerChatCards(controller: model.computer, taskIds: Set(model.turns.map(\.identifier) + model.chatGoals.map { $0["goalId"].text }))
+                    .padding(.horizontal, 26).frame(maxWidth: 830)
                 composer.padding(.horizontal, 26).padding(.top, 8).padding(.bottom, 8).frame(maxWidth: 830)
                 Text(footer).font(JosiFont.caption).foregroundStyle(JosiTheme.muted).padding(.bottom, 14)
             }

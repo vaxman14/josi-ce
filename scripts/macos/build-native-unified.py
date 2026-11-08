@@ -154,17 +154,19 @@ def build(args):
     # Xcode resolves the Masko player package and sets JOSI_SERVER_APP. Signing
     # happens below with the rest of the bundle.
     native_project = REPO / 'apps/macos-native'
+    derived_data = args.derived_data.expanduser().resolve() if args.derived_data else output / 'xcode'
+    package_cache = ['-clonedSourcePackagesDirPath', args.source_packages.resolve(strict=True), '-disableAutomaticPackageResolution'] if args.source_packages else []
     run('compile-native-josi', ['xcrun', 'xcodebuild', '-project', native_project / 'Josi.xcodeproj', '-scheme', 'Josi',
-                                '-configuration', 'Release', '-derivedDataPath', output / 'xcode',
-                                'CODE_SIGNING_ALLOWED=NO', 'build'])
-    xcode_app = output / 'xcode/Build/Products/Release/Josi.app/Contents'
+                                '-configuration', 'Release', '-derivedDataPath', derived_data,
+                                *package_cache, 'CODE_SIGNING_ALLOWED=NO', 'build'])
+    xcode_app = derived_data / 'Build/Products/Release/Josi.app/Contents'
     copy_file(xcode_app / 'MacOS/Josi', executables / 'Josi')
     for item in (xcode_app / 'Resources').iterdir():
         if item.name in ('Fonts', 'Mascot') or item.suffix == '.bundle':
             tree(item, resources / item.name)
     copy_file(native_project / 'Resources/JosiMark.png', resources / 'JosiMark.png')
     # The Masko player is MIT and links dav1d; their notices ship with the app.
-    masko = output / 'xcode/SourcePackages/checkouts/masko-player'
+    masko = (args.source_packages.resolve(strict=True) if args.source_packages else derived_data / 'SourcePackages') / 'checkouts/masko-player'
     (resources / 'third-party').mkdir()
     copy_file(masko / 'LICENSE', resources / 'third-party/masko-player-LICENSE')
     copy_file(masko / 'THIRD_PARTY_NOTICES.md', resources / 'third-party/masko-player-THIRD_PARTY_NOTICES.md')
@@ -187,6 +189,8 @@ def build(args):
         'NSAccessibilityUsageDescription': 'Josi controls only the apps you select and approve for this desktop session.',
         'NSScreenCaptureUsageDescription': 'Josi captures permitted app windows during an approved desktop task.',
         'JosiNativeClientProtocol': 1, 'JosiProtectedHostProtocol': 1,
+        'JosiReleaseVersion': VERSION,
+        'JosiComputerControlProtocol': 'computer-control.2',
         'JosiProtectedKeyProvisioned': bool(profile),
         'NSSystemAdministrationUsageDescription': 'Josi manages its local server when you request installation, updates or service changes.',
         'NSHumanReadableCopyright': 'Copyright SOCAL RECEPTIONIST LLC. AGPL-3.0-or-later; bundled notices apply.',
@@ -195,7 +199,7 @@ def build(args):
     for name in ('LICENSE', 'NOTICE'):
         copy_file(REPO / name, resources / name)
     print('Bundling the current offline server runtime', flush=True)
-    runtime = resources / 'runtime'; tree(runtime_input, runtime)
+    runtime = resources / 'runtime'; tree(runtime_input, runtime, ignore=('subscription-cli',))
     # The ChatGPT and Claude plans sign in through these two pinned command-line tools.
     cli_spec = importlib.util.spec_from_file_location('subscription_cli', REPO / 'scripts/macos/bundle-subscription-cli.py')
     cli = importlib.util.module_from_spec(cli_spec); cli_spec.loader.exec_module(cli); cli.bundle(runtime)
@@ -361,6 +365,10 @@ def build(args):
              'BundleIsVersionChecked': False, 'BundleHasStrictIdentifier': True, 'BundleOverwriteAction': 'upgrade'}
             for name in ('Josi.app', 'Uninstall Josi.app')]))
         scripts = output / 'installer-scripts'; scripts.mkdir()
+        preinstall = scripts / 'preinstall'
+        preinstall.write_text((REPO / 'packaging/macos/unified-preinstall.sh').read_text()
+                              .replace('@VERSION@', PACKAGE_VERSION).replace('@BUILD@', bundle_version))
+        preinstall.chmod(0o755)
         postinstall = scripts / 'postinstall'
         postinstall.write_text('#!/bin/sh\nset -eu\nexec "/Applications/Josi.app/Contents/Resources/runtime/python/bin/python3.11" -I -B "/Applications/Josi.app/Contents/Resources/runtime/app/native/unified-postinstall.py"\n')
         postinstall.chmod(0o755)
@@ -368,19 +376,29 @@ def build(args):
                                 '--identifier', APP_ID + '.pkg', '--version', PACKAGE_VERSION, '--install-location', '/',
                                 '--scripts', scripts, output / 'application.pkg'])
         distribution = output / 'Distribution.xml'
+        package_resources = output / 'installer-resources'; package_resources.mkdir()
+        (package_resources / 'Upgrade.html').write_text('''<!doctype html><html><body>
+<h2>Install or update Josi</h2>
+<p>This installer updates Josi in place. Your conversations, settings, device identities and saved permissions are retained.</p>
+<p>Close Josi when Installer asks. An existing local server is upgraded through its normal backup, migration and recovery process. A new installation does not start a server until you choose to set one up.</p>
+<p>Updates do not grant new computer access. Existing restrictions remain in effect.</p>
+<p>Signed by Socal Receptionist LLC. This locally supplied installer has not been notarized or published.</p>
+</body></html>''')
         distribution.write_text(f'''<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
  <title>Josi</title>
  <options customize="never" require-scripts="true" hostArchitectures="arm64" rootVolumeOnly="true"/>
  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
  <allowed-os-versions><os-version min="14.2"/></allowed-os-versions>
+ <readme file="Upgrade.html" mime-type="text/html"/>
  <choices-outline><line choice="josi"/></choices-outline>
  <choice id="josi" title="Josi" visible="false" start_selected="true" start_enabled="false"><pkg-ref id="com.heyjosi.ce.unified.pkg"/></choice>
  <pkg-ref id="com.heyjosi.ce.unified.pkg" version="{PACKAGE_VERSION}" onConclusion="none">application.pkg</pkg-ref>
+ <pkg-ref id="com.heyjosi.ce.unified.pkg"><must-close><app id="com.heyjosi.ce.unified"/></must-close></pkg-ref>
 </installer-gui-script>
 ''')
         package = output / 'Install Josi.pkg'
-        run('sign-installer', ['/usr/bin/productbuild', '--distribution', distribution, '--package-path', output,
+        run('sign-installer', ['/usr/bin/productbuild', '--distribution', distribution, '--package-path', output, '--resources', package_resources,
                                '--sign', INSTALLER_IDENTITY, '--keychain', KEYCHAIN, '--timestamp', package])
         verdict = run('verify-installer-signature', ['/usr/sbin/pkgutil', '--check-signature', package])
         if INSTALLER_IDENTITY not in verdict:
@@ -415,6 +433,8 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--sign', action='store_true')
     parser.add_argument('--package', action='store_true')
+    parser.add_argument('--source-packages', type=Path, help='Use an existing pinned Xcode package cache without resolving newer dependencies')
+    parser.add_argument('--derived-data', type=Path, help='Reuse a local Xcode build cache; the current sources are still built and checked')
     parser.add_argument('--chrome-app', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--protected-profile', type=Path,
                         help='Apple-issued Socal Developer ID provisioning profile for the private biometric key helper')
