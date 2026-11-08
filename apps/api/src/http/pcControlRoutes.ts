@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { verifyPassword } from '@josi-ce/auth';
-import { disablePcControl, loadMasterKey, PcControl, PcControlError, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcBrowserPresence } from '@josi-ce/core';
+import { disablePcControl, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcBrowserPresence } from '@josi-ce/core';
 import { requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
@@ -9,7 +9,7 @@ interface Ctx { db:Db; windows?:boolean; masterKey?:LoadOptions|false }
 // app without one is the hosting PC of the single-PC form. Permissions,
 // requests and presence are kept per PC. No execution/proposal endpoint is
 // exposed to the browser.
-const EXECUTOR_WAIT=60_000;
+const EXECUTOR_WAIT=60_000, EXECUTOR_WAIT_MAX=660_000;
 export function pcControlRoutes(ctx:Ctx):Router {
   const r=Router();const services=new Map<string,PcControl>();
   r.use(requireSuperAdmin);
@@ -52,7 +52,16 @@ export function pcControlRoutes(ctx:Ctx):Router {
     await control(req).setFullControl(req.user!.id,req.body.enabled);
     return res.json({ok:true,fullControl:req.body.enabled});
   }));
-  r.put('/policies',handle(async(req,res)=>res.json(await control(req).savePolicy(req.user!.id,req.body as PcPolicy))));
+  // A standing grant for a high-risk action (commands in a shell and folder)
+  // takes the account password once, like full control. Never and Ask do not.
+  r.put('/policies',handle(async(req,res)=>{
+    const {password,...policy}=(req.body??{}) as PcPolicy&{password?:unknown};
+    if(pcActionIsHighRisk(policy.action)&&['always','temporary','task'].includes(policy.mode)){
+      const [u]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
+      if(!await verifyPassword(u?.password_hash??null,typeof password==='string'?password:''))throw new PcControlError(401,'Confirm your account password to let Josi do this without asking each time.');
+    }
+    return res.json(await control(req).savePolicy(req.user!.id,policy as PcPolicy));
+  }));
   r.delete('/policies/:id',handle(async(req,res)=>{await control(req).revoke(req.user!.id,param(req,'id'));return res.json({ok:true});}));
   r.post('/requests/:id/decision',handle(async(req,res)=>{
     if(typeof req.body?.approve!=='boolean')throw new PcControlError(400,'Choose approve or deny.');
@@ -79,8 +88,11 @@ export function pcControlRoutes(ctx:Ctx):Router {
     for(const {id,plan} of await service.approved(owner)){
       if(running.has(id))continue;
       let claimed!:()=>void;const started=new Promise<boolean>(resolve=>{claimed=()=>resolve(true);});
+      // A command may run for as long as its own timeout; everything else gets the minute.
+      const declared=Number((plan.payload as {timeoutSeconds?:unknown}|null)?.timeoutSeconds);
+      const wait=Number.isFinite(declared)&&declared>0?Math.min(EXECUTOR_WAIT_MAX,Math.max(EXECUTOR_WAIT,declared*1000+30_000)):EXECUTOR_WAIT;
       const done=service.execute(owner,id,plan,(_plan,signal)=>new Promise<void>((resolve,reject)=>{
-        const timer=setTimeout(()=>{running.delete(id);void service.saveResult(owner,id,{ok:false,code:'executor_timeout'}).finally(()=>reject(new Error('timeout')));},EXECUTOR_WAIT);
+        const timer=setTimeout(()=>{running.delete(id);void service.saveResult(owner,id,{ok:false,code:'executor_timeout'}).finally(()=>reject(new Error('timeout')));},wait);
         signal.addEventListener('abort',()=>{clearTimeout(timer);running.delete(id);reject(new Error('stopped'));},{once:true});
         running.set(id,async(ok,result)=>{
           clearTimeout(timer);running.delete(id);

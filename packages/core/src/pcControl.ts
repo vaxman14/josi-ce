@@ -90,6 +90,14 @@ export const PC_FULL_CONTROL_ACTIONS:readonly PcAction[] = ['browser.view','brow
   'desktop.view','explorer.view','folder.read','folder.write','file.rename','file.move','app.launch','app.control','app.close'];
 export const PC_FULL_CONTROL_ASKS:readonly PcAction[] = PC_ACTIONS.map(s=>s[0]).filter(a=>!PC_FULL_CONTROL_ACTIONS.includes(a));
 const fullControlCovers = (r:PcRequirement) => PC_FULL_CONTROL_ACTIONS.includes(r.action);
+/** High-risk actions the owner may pre-approve with a saved exact scope
+ * (always, temporary or task). Commands are one: a grant for one shell in one
+ * folder tree lets Josi work there the way a coding agent does. Saving such a
+ * grant takes the account password (the route checks). Every other high-risk
+ * action still asks before each exact action, whatever is saved. */
+export const PC_GRANTABLE_HIGH_RISK:readonly PcAction[] = ['command.run'];
+export const pcActionIsHighRisk = (action:PcAction) => !!PC_ACTIONS.find(s=>s[0]===action)?.[3];
+const grantable = (r:PcRequirement) => PC_GRANTABLE_HIGH_RISK.includes(r.action);
 type Settings = {enabled:boolean;epoch:number|string;full_control:boolean};
 type RequestRow = {id:string;state:string;epoch:number|string;request_enc:string;request_hash:string;expires_at:string;human_approved:boolean};
 type Bound<T> = {owner:string;pc:string;value:T};
@@ -213,7 +221,9 @@ export class PcControl {
     // Under full control an everyday action is granted even when high-risk
     // (a click can submit); actions outside full control keep asking.
     const covered=(r:PcRequirement)=>s.full_control&&fullControlCovers(r);
-    let ask=plan.requirements.some(r=>highRisk(r)&&!covered(r));
+    // A grantable high-risk action (commands) is decided by its saved exact
+    // scope below, like an everyday action; without one it asks.
+    let ask=plan.requirements.some(r=>highRisk(r)&&!covered(r)&&!grantable(r));
     for(const requirement of plan.requirements){
       const [row]=await db.query<{policy_enc:string}>(`select policy_enc from pc_control_policies where owner_user_id=$1 and pc_id=$2 and scope_hash=$3`,[owner,this.pcId,this.hash(owner,requirement)]);
       const p=row?this.unpack<PcPolicy>(owner,row.policy_enc):undefined;
@@ -290,7 +300,7 @@ export class PcControl {
       const label=(a:PcAction)=>PC_ACTIONS.find(x=>x[0]===a)![1];
       return {enabled:s.enabled,fullControl:s.full_control,pcId:this.pcId,
         fullControlCovers:PC_FULL_CONTROL_ACTIONS.map(label),fullControlAsks:PC_FULL_CONTROL_ASKS.map(label),
-        catalog:PC_ACTIONS.map(([action,label,kind,risk,read])=>({action,label,kind,highRisk:risk,access:read?'Read-only':'Read/write'})),
+        catalog:PC_ACTIONS.map(([action,label,kind,risk,read])=>({action,label,kind,highRisk:risk,grantable:!risk||PC_GRANTABLE_HIGH_RISK.includes(action),access:read?'Read-only':'Read/write'})),
         tasks,policies:await Promise.all(policies.map(async p=>{const value=this.unpack<PcPolicy>(owner,p.policy_enc);return{id:p.id,...value,active:value.mode==='temporary'?Date.parse(value.expiresAt??'')>this.now():value.mode==='task'?Date.parse(value.expiresAt??'')>this.now()&&await this.liveTask(db,owner,value.taskId):true};})),
         requests:requests.map(row=>{const {payload,...visible}=this.unpack<PcPlan>(owner,row.request_enc);return{id:row.id,...visible,expiresAt:row.expires_at,highRisk:visible.requirements.some(highRisk),access:visible.requirements.every(readOnly)?'Read-only':'Read/write'};}),
         activity:logs.map(row=>({id:row.id,at:row.created_at,...(row.detail_enc?this.unpack<Record<string,unknown>>(owner,row.detail_enc):{kind:row.kind})}))};

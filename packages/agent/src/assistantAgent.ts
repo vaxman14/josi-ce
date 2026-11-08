@@ -278,7 +278,9 @@ function toolActivity(name: string): string {
     browser_open_page: 'Opening the page', browser_read_page: 'Reading the page', browser_click: 'Clicking in the browser', browser_fill: 'Typing in the browser',
     browser_view_photo: 'Looking at the photo', desktop_list_windows: 'Looking at the open windows', desktop_read_window: 'Reading the window',
     desktop_screenshot: 'Taking a screenshot', desktop_click: 'Clicking', desktop_click_point: 'Clicking', desktop_type: 'Typing', desktop_keys: 'Pressing keys',
-    desktop_launch: 'Opening the program', own_goal: 'Planning the work', checkpoint_goal: 'Saving progress', verify_goal: 'Checking the results',
+    desktop_launch: 'Opening the program', desktop_close_window: 'Closing the window', pc_environment: 'Looking at this PC', pc_find_app: 'Looking for the program',
+    pc_run_command: 'Running a command on this PC', pc_list_folder: 'Looking in the folder', pc_read_file: 'Reading the file', pc_write_file: 'Writing the file',
+    own_goal: 'Planning the work', checkpoint_goal: 'Saving progress', verify_goal: 'Checking the results',
     revise_goal_plan: 'Updating the plan', schedule_reminder: 'Setting the reminder', create_task: 'Preparing the task', list_josi_settings: 'Reading settings',
     propose_josi_setting_change: 'Preparing the settings change', remember: 'Saving a memory',
   };

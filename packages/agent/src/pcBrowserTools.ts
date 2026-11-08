@@ -86,7 +86,7 @@ function compact(result: unknown) {
 }
 /** Waits for a PC Control request to finish, or reports that it is waiting
  * for the owner. Shared with the desktop tools. */
-export async function settle(control: PcControl, owner: string, requestId: string, waitMs: number) {
+export async function settle(control: PcControl, owner: string, requestId: string, waitMs: number, checkTool = 'browser_check_request') {
   const deadline = Date.now() + waitMs;
   for (;;) {
     const outcome = await control.outcome(owner, requestId);
@@ -107,8 +107,8 @@ export async function settle(control: PcControl, owner: string, requestId: strin
     }
     if (Date.now() >= deadline) {
       return { ok: false, requestId, state: outcome.state, code: outcome.state === 'pending' ? 'awaiting_approval' : 'still_running',
-        message: outcome.state === 'pending' ? 'Waiting for the owner to approve this in Josi (PC Control). Tell them, then check it with browser_check_request.'
-          : 'Still running. Check it with browser_check_request.' };
+        message: outcome.state === 'pending' ? `Waiting for the owner to approve this in Josi (PC Control). Tell them, then check it with ${checkTool}.`
+          : `Still running. Check it with ${checkTool}.` };
     }
     await new Promise(resolve => setTimeout(resolve, 500));
   }

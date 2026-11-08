@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { testDb } from './helpers.js';
 import { createUser } from '../../auth/src/users.js';
-import { MasterKey, PcControl, PC_ACTIONS, normalizePcRequirement, disablePcControl, type Db, type PcPlan, type PcRequirement, type PcAction, type PcScope } from '../src/index.js';
+import { MasterKey, PcControl, PC_ACTIONS, PC_GRANTABLE_HIGH_RISK, normalizePcRequirement, disablePcControl, type Db, type PcPlan, type PcRequirement, type PcAction, type PcScope } from '../src/index.js';
 
 let db:Db,owner:string,other:string,control:PcControl,clock:number,index=0;
 const key=new MasterKey(Buffer.alloc(32,31));
@@ -42,6 +42,26 @@ describe('Windows exact PC scope authorization',()=>{
     const disabled=new PcControl(db,key,'pc-three',()=>clock);
     await expect(disabled.setFullControl(owner,true)).rejects.toThrow(/Allow Josi to control this PC/);
   });
+  it('commands ask until the owner saves a grant for that shell and folder, which full control never gives',async()=>{
+    await enable();
+    const shell={kind:'command',target:'C:\\Users\\Roman',application:'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'} as PcScope;
+    const run=requirement('command.run',shell);
+    expect((await control.propose(owner,plan(run))).state).toBe('pending');
+    await control.setFullControl(owner,true);
+    expect((await control.propose(owner,plan(run))).state).toBe('pending');
+    await allow(run,'always');
+    expect((await control.propose(owner,plan(run))).state).toBe('approved');
+    // The grant is exact: another shell or another folder asks again.
+    expect((await control.propose(owner,plan(requirement('command.run',{...shell,application:'C:\\Windows\\System32\\cmd.exe'})))).state).toBe('pending');
+    expect((await control.propose(owner,plan(requirement('command.run',{...shell,target:'C:\\Users\\Roman\\Desktop'})))).state).toBe('pending');
+    // Other high-risk actions cannot be pre-approved this way.
+    const remove=requirement('file.delete',folder);await allow(remove,'always');
+    expect((await control.propose(owner,plan(remove))).state).toBe('pending');
+    await allow(run,'never');
+    expect((await control.propose(owner,plan(run))).state).toBe('denied');
+    expect((await control.snapshot(owner)).catalog.find(c=>c.action==='command.run')?.grantable).toBe(true);
+    expect((await control.snapshot(owner)).catalog.find(c=>c.action==='file.delete')?.grantable).toBe(false);
+  });
   it('matches browser executable, profile AND exact origin independently',async()=>{
     const view=requirement('browser.view',browser);await allow(view);await enable();
     expect((await control.propose(owner,plan(view))).state).toBe('approved');
@@ -75,7 +95,8 @@ describe('Windows exact PC scope authorization',()=>{
     await enable();const proposed=await control.propose(owner,plan());await allow(read,'never');
     await expect(control.decide(owner,proposed.id,true)).rejects.toThrow();expect((await control.propose(owner,plan())).state).toBe('denied');
   });
-  for(const [action,,kind,high] of PC_ACTIONS.filter(s=>s[3]))it(`${action} always requires a separate single-action approval`,async()=>{
+  // Commands are the one high-risk action a saved grant may pre-approve (tested above).
+  for(const [action,,kind,high] of PC_ACTIONS.filter(s=>s[3]&&!PC_GRANTABLE_HIGH_RISK.includes(s[0])))it(`${action} always requires a separate single-action approval`,async()=>{
     const scope:PcScope=kind==='browser'?browser:kind==='folder'?folder:kind==='application'?{kind,target:'C:\\Apps\\Editor.exe'}:kind==='command'?{kind,target:'C:\\Work',application:'C:\\Tools\\Runner.exe'}:{kind,target:'exact-item'};
     const r=requirement(action,scope);await allow(r);await enable();const input=plan(r),q=await control.propose(owner,input),run=vi.fn(async()=>{});
     expect(high).toBe(true);expect(q.state).toBe('pending');await expect(control.execute(owner,q.id,input,run)).rejects.toThrow();

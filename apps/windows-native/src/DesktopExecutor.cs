@@ -32,7 +32,7 @@ namespace Josi.Native {
     readonly object gate = new object();
     readonly Dictionary<string, Observation> observations = new Dictionary<string, Observation>();
     Dispatcher ui;
-    CancellationTokenSource running;
+    CancellationTokenSource running; bool runningOnScreen;
     DateTime takenOverUntil = DateTime.MinValue;
     bool paused;
 
@@ -102,7 +102,13 @@ namespace Josi.Native {
       CancelCurrent("human_control");
       if (fresh) Raise();
     }
-    void CancelCurrent(string reason) { var current = running; if (current != null) { try { current.Cancel(); } catch (ObjectDisposedException) { } } }
+    void CancelCurrent(string reason) {
+      CancellationTokenSource current; bool onScreen;
+      lock (gate) { current = running; onScreen = runningOnScreen; }
+      // A takeover (your mouse or keyboard) only interrupts work on the screen; Pause ends anything.
+      if (current == null || (reason == "human_control" && !onScreen)) return;
+      try { current.Cancel(); } catch (ObjectDisposedException) { }
+    }
 
     // ------------------------------------------------------------ requests
     /// One approved PC Control request whose payload kind starts with "desktop.".
@@ -110,27 +116,37 @@ namespace Josi.Native {
       var payload = request["payload"]; var scope = request["requirements"].List.Select(r => r["scope"]).FirstOrDefault() ?? Wire.Null;
       var kind = payload["kind"].Text; var requestId = request.Id;
       Func<string, Tuple<bool, object>> refuse = code => Tuple.Create(false, (object)Wires.O("code", code));
-      if (Blocked) return refuse(Paused ? "paused" : "human_control");
+      // Your mouse and keyboard only stop work on the screen. A command, a file
+      // or a lookup keeps going while you use the PC; Pause and Stop end those too.
+      var screen = TouchesScreen(kind);
+      if (Paused || (screen && Blocked)) return refuse(Paused ? "paused" : "human_control");
       var cancel = new CancellationTokenSource();
-      lock (gate) running = cancel;
-      Busy = true; Activity = Describe(kind, scope); Raise();
-      if (Interlocked.Increment(ref engaged) == 1) Engage();
+      lock (gate) { running = cancel; runningOnScreen = screen; }
+      Busy = true; Activity = Describe(kind, scope, payload); Raise();
+      if (screen && Interlocked.Increment(ref engaged) == 1) Engage();
       try {
         var result = await Task.Run(() => Perform(kind, requestId, payload, scope, cancel.Token));
         return result;
       } catch (OperationCanceledException) { return refuse(Paused ? "paused" : "human_control"); }
       catch (ElementNotAvailableException) { return refuse("element_gone"); }
-      catch (Exception e) when (e is InvalidOperationException || e is COMException || e is Win32Exception || e is IOException || e is UnauthorizedAccessException) {
+      catch (Exception e) when (e is InvalidOperationException || e is COMException || e is Win32Exception || e is IOException || e is UnauthorizedAccessException || e is NotSupportedException || e is System.Security.SecurityException) {
         return Tuple.Create(false, (object)Wires.O("code", "desktop_action_failed", "detail", e.GetType().Name));
       } finally {
-        lock (gate) if (running == cancel) running = null;
+        lock (gate) if (running == cancel) { running = null; runningOnScreen = false; }
         cancel.Dispose();
         Busy = false; Activity = ""; Raise();
         // Keep the hooks a moment longer: the next request usually follows at once.
-        _ = Task.Delay(45000).ContinueWith(_ => { if (Interlocked.Decrement(ref engaged) == 0) Disengage(); });
+        if (screen) _ = Task.Delay(45000).ContinueWith(_ => { if (Interlocked.Decrement(ref engaged) == 0) Disengage(); });
       }
     }
-    static string Describe(string kind, Wire scope) {
+    /// Work that moves the mouse, types or changes windows, and so must yield to you.
+    static bool TouchesScreen(string kind) {
+      switch (kind) {
+        case "desktop.click": case "desktop.clickpoint": case "desktop.type": case "desktop.keys": case "desktop.close": case "desktop.launch": case "desktop.screenshot": case "desktop.read": return true;
+        default: return false;
+      }
+    }
+    static string Describe(string kind, Wire scope, Wire payload) {
       var program = scope["kind"].Text == "application" ? Path.GetFileNameWithoutExtension(scope["target"].Text) : "";
       switch (kind) {
         case "desktop.windows": return "Looking at the open windows";
@@ -141,6 +157,12 @@ namespace Josi.Native {
         case "desktop.keys": return "Pressing keys in " + program;
         case "desktop.launch": return "Opening " + program;
         case "desktop.close": return "Closing " + program;
+        case "desktop.environment": return "Looking at this PC";
+        case "desktop.apps": return "Looking for a program";
+        case "desktop.command": return "Running a command in " + payload["cwd"].Text;
+        case "desktop.folder": return "Looking in " + payload["folder"].Text;
+        case "desktop.readfile": return "Reading " + payload["path"].Text;
+        case "desktop.writefile": return "Writing " + payload["path"].Text;
         default: return "Working on the desktop";
       }
     }
@@ -150,13 +172,22 @@ namespace Josi.Native {
       Func<object, Tuple<bool, object>> ok = value => Tuple.Create(true, value);
       cancel.ThrowIfCancellationRequested();
       if (kind == "desktop.windows") return ok(Wires.O("kind", "desktop_windows", "windows", Windows().Cast<object>().ToList(), "untrustedContent", true));
+      // Beyond the screen: this PC, its programs, a shell, and files. Each
+      // re-checks its exact scope inside PcWork before doing anything.
+      if (kind == "desktop.environment") return PcWork.Environment_();
+      if (kind == "desktop.apps") return PcWork.FindApps(payload["query"].Text);
+      if (kind == "desktop.command") { if (scope["kind"].Text != "command") return refuse("scope_mismatch"); return PcWork.Command(payload, scope, cancel); }
+      if (kind == "desktop.folder") { if (scope["kind"].Text != "folder") return refuse("scope_mismatch"); return PcWork.ListFolder(payload, scope); }
+      if (kind == "desktop.readfile") { if (scope["kind"].Text != "folder") return refuse("scope_mismatch"); return PcWork.ReadFile(payload, scope); }
+      if (kind == "desktop.writefile") { if (scope["kind"].Text != "folder") return refuse("scope_mismatch"); return PcWork.WriteFile(payload, scope); }
       if (kind == "desktop.launch") {
         var application = scope["target"].Text;
-        if (!string.Equals(payload["application"].Text, application, StringComparison.OrdinalIgnoreCase) || !File.Exists(application)) return refuse("application_missing");
-        var started = Process.Start(new ProcessStartInfo(application) { UseShellExecute = true });
+        if (scope["kind"].Text != "application" || !string.Equals(payload["application"].Text, application, StringComparison.OrdinalIgnoreCase) || !File.Exists(application)) return refuse("application_missing");
+        var arguments = payload["arguments"].Text;
+        var started = Process.Start(new ProcessStartInfo(application) { UseShellExecute = true, Arguments = arguments, WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) });
         Thread.Sleep(1500);
-        return ok(Wires.O("kind", "desktop_launched", "application", application, "processId", started == null ? 0 : started.Id,
-          "windows", Windows().Where(w => string.Equals((string)w["application"], application, StringComparison.OrdinalIgnoreCase)).Cast<object>().ToList()));
+        return ok(Wires.O("kind", "desktop_launched", "application", application, "arguments", arguments, "processId", started == null ? 0 : started.Id,
+          "windows", Windows().Where(w => string.Equals((string)w["application"], application, StringComparison.OrdinalIgnoreCase)).Cast<object>().ToList(), "untrustedContent", true));
       }
       if (kind == "desktop.screenshot") {
         IntPtr window = IntPtr.Zero;
