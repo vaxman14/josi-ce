@@ -41,3 +41,5 @@ apps/windows-native/test/shots/
 .wrangler/
 apps/windows-native/test/tunnel-console/obj/
 apps/windows-native/test/tunnel-console/bin/
+apps/windows-native/test/pccontrol-probe/bin/
+apps/windows-native/test/pccontrol-probe/obj/

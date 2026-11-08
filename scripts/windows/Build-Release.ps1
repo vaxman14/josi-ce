@@ -36,6 +36,9 @@ $release = [IO.Path]::GetFullPath((Join-Path $base ('releases\' + $Version)))
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $base 'releases')) + '\'
 if (!$release.StartsWith($releaseRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Release output must stay inside this workspace.' }
 if (Test-Path -LiteralPath $release) { throw "Release folder already exists: $release. Choose a new version to preserve its artifacts." }
+$sourceChanges = & git -C $repo status --porcelain
+if ($LASTEXITCODE) { throw 'Could not verify the release source checkout.' }
+if ($sourceChanges) { throw 'Commit the release sources and exclude generated output before building an installer.' }
 if (!$CliRoot) { $CliRoot = Join-Path $base 'tools\subscription-cli\node_modules' }
 $scripts = $PSScriptRoot
 $node = Join-Path $base 'tools\node-v24.21.0-win-x64\node.exe'
