@@ -6,10 +6,10 @@ class LinuxCliContract(unittest.TestCase):
     def test_production_runtime_uses_the_data_directory(self):
         javascript = Path(__file__).with_name('Runtime.mjs').read_text()
         python = Path(__file__).with_name('PythonRuntime.py').read_text()
-        self.assertIn("data !== '/var/lib/josi-ce-server/data'", javascript)
-        self.assertNotIn("data !== '/var/lib/josi-ce-server'", javascript)
-        self.assertIn("str(data) != '/var/lib/josi-ce-server/data'", python)
-        self.assertNotIn("str(data) != '/var/lib/josi-ce-server'", python)
+        self.assertIn("data !== '/var/lib/josi/data'", javascript)
+        self.assertNotIn("data !== '/var/lib/josi'", javascript)
+        self.assertIn("str(data) != '/var/lib/josi/data'", python)
+        self.assertNotIn("str(data) != '/var/lib/josi'", python)
 
     def test_cli_surfaces_redacted_failure_cause(self):
         source = Path(__file__).with_name('install_cli.py').read_text()
@@ -36,7 +36,7 @@ class LinuxCliContract(unittest.TestCase):
         self.assertIn('install_cli.py', source)
         self.assertNotIn("packaging/linux/setup.py', root", source)
         installer = repo.joinpath('packaging/linux/install-josi-ce-server.sh').read_text()
-        self.assertIn('josi-ce-server-install --interactive-uid', installer)
+        self.assertIn('/usr/bin/josi-ce-server-install 2>&3', installer)
 
     def test_portable_voice_runtime_bundles_openblas_compiler_libraries(self):
         source = Path(__file__).resolve().parents[2].joinpath('scripts/linux/build-voice.py').read_text()

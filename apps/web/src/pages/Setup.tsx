@@ -130,7 +130,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
     }
   }
 
-  useEffect(() => { void primeCsrf().then(load).catch(() => setError('Could not reach the server')); }, [load]);
+  useEffect(() => { void primeCsrf().then(load).catch((err) => setError(err instanceof ApiError ? err.message : 'Could not reach the server')); }, [load]);
 
   async function submit(step: string, body: Record<string, unknown>) {
     setBusy(true);

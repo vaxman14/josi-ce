@@ -1,21 +1,14 @@
-JOSI CE SERVER - NATIVE LINUX ACCEPTANCE
+JOSI SERVER FOR LINUX - ACCEPTANCE
 
-For x86_64 machines running Arch, Debian 12+/Ubuntu 22.04+, or RHEL 9+/Fedora.
-The packages are not signed with a distribution key; the one-command installer
-verifies each package by SHA-256.
+For x86_64 machines running Arch, or Debian 12+ / Ubuntu 22.04+. The packages
+are not signed with a distribution key; the one-command installer verifies
+each package by SHA-256.
 
-Before installation:
-  1. Compare the package SHA-256 with SHA256SUMS.txt.
-  2. Back up any existing /var/lib/josi-ce-server directory independently.
-  3. Confirm no unrelated josi-ce-*.service units exist.
+  1. Run: curl -fsSL https://<install host>/linux | sudo bash
+  2. It prints one line, the address to open. Open it from another computer
+     within ten minutes (rerun the command for a fresh one) and finish setup.
+  3. Restart the machine. Run: systemctl status josi 'josi-ce-*'
+  4. Sign in with the authenticator code, choose a model, send a message.
+  5. sudo josi-uninstall, then the install command again: the data is back.
 
-Acceptance:
-  1. Run the single documented curl-to-shell command as a normal user.
-  2. Enter the sudo password when prompted; do not run any second setup command.
-  3. Confirm the command prints the machine IP and one-use browser setup URL only after health passes.
-  4. Finish setup and restart the machine.
-  5. Run: systemctl status 'josi-ce-*.service'
-  6. Verify browser setup, workspace mapping, attachments and speech. No scanner is needed.
-
-If setup fails, do not delete data or transaction folders. Copy the private log
-path shown by Setup and preserve /var/lib/josi-ce-server/transactions for review.
+If something fails, keep /var/lib/josi/transactions and /var/log/josi-install.log.

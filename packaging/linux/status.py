@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-ROOT=Path('/var/lib/josi-ce-server');ROLES=('database','voice','voice-control','web','worker','proxy')
+ROOT=Path('/var/lib/josi');ROLES=('database','voice','voice-control','web','worker','proxy')
 def main():
     config=json.loads((ROOT/'data/config/runtime.json').read_text())
     result=[];failed=False

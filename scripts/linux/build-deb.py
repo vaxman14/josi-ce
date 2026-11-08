@@ -1,31 +1,40 @@
-"""Build an unsigned Debian/Ubuntu x86_64 acceptance package without installing it."""
+"""Build the unsigned Debian/Ubuntu package `josi` without installing it."""
 import json
 import os
 import subprocess
 
-from package_common import BASE, OUT, SOURCE_DATE_EPOCH, VERSION, populate_root, record_checksum
+from package_common import (BASE, DEBIAN_ARCH, OUT, PACKAGE, SOURCE_DATE_EPOCH, VERSION, package_names,
+    populate_root, record_checksum, staged_architecture)
 
 
 BUILD_IMAGE = 'local/josi-ce-linux-package-build:debian12'
 
 
 def main() -> None:
+    processor = staged_architecture()
     root = BASE / 'deb-root'
-    populate_root(root, root / 'usr/share/doc/josi-ce-server-setup/copyright')
+    populate_root(root, root / f'usr/share/doc/{PACKAGE}/copyright')
     size = sum(path.stat().st_size for path in root.rglob('*') if path.is_file()) // 1024
     control = root / 'DEBIAN'
     control.mkdir(mode=0o755)
     control.joinpath('control').write_text(
-        "Package: josi-ce-server-setup\n"
-        f"Version: {VERSION}\nArchitecture: amd64\n"
+        f"Package: {PACKAGE}\n"
+        f"Version: {VERSION}\nArchitecture: {DEBIAN_ARCH[processor]}\n"
         "Maintainer: SOCAL RECEPTIONIST LLC <vaxman14@users.noreply.github.com>\n"
-        "Depends: python3 (>= 3.10), systemd, rsync, acl, iproute2, libstdc++6\n"
+        "Depends: python3 (>= 3.10), systemd, rsync, acl, iproute2, libstdc++6, ca-certificates\n"
+        "Conflicts: josi-ce-server-setup\nReplaces: josi-ce-server-setup\n"
         "Section: admin\nPriority: optional\n"
         f"Installed-Size: {size}\n"
-        "Description: Native offline Josi CE Server runtime and CLI installer\n"
-        " Installs Josi's private PostgreSQL, Node, Python, Caddy and CPU Voice Box runtime.\n"
+        "Description: Josi server, headless, run by systemd as josi.service\n"
+        " Josi's private PostgreSQL, Node, Python, Caddy and CPU speech runtime. Setup,\n"
+        " sign-in, chat, settings and updates all happen in the browser.\n"
     )
-    package = OUT / f'josi-ce-server-setup_{VERSION}_amd64.deb'
+    # A removal stops Josi first; its data stays unless josi-uninstall --purge is used.
+    prerm = control / 'prerm'
+    prerm.write_text('#!/bin/sh\nset -e\nif [ "$1" = remove ] && [ -d /run/systemd/system ]; then\n'
+        '  systemctl stop josi.service josi-update.path josi-update.timer >/dev/null 2>&1 || true\nfi\n')
+    prerm.chmod(0o755)
+    package = OUT / package_names()['debian-' + processor]
     package.unlink(missing_ok=True)
     environment = {**os.environ, 'SOURCE_DATE_EPOCH': SOURCE_DATE_EPOCH}
     if subprocess.run(['sh', '-c', 'command -v dpkg-deb'], capture_output=True).returncode == 0:
@@ -38,7 +47,7 @@ def main() -> None:
     subprocess.run(command, env=environment, check=True)
     digest = record_checksum(package)
     print(json.dumps({'package': str(package), 'bytes': package.stat().st_size,
-        'sha256': digest, 'signed': False, 'target': 'Debian/Ubuntu x86_64'}))
+        'sha256': digest, 'signed': False, 'target': 'Debian/Ubuntu ' + processor}))
 
 
 if __name__ == '__main__':

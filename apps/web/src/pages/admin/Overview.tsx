@@ -30,11 +30,15 @@ export function AdminOverview() {
   }, [assistantResource.state, assistantResource.data]);
   const runChecks = useCallback(async () => {
     setLoading(true); setError('');
-    const [assistant, launch, model, storage, backups, channels, voice, vault] = await Promise.allSettled([
+    const [assistant, launch, model, storage, backups, channels, voice, vault, update] = await Promise.allSettled([
       api.get<AdminAssistant>('/admin/assistant'), api.get<Checklist>('/admin/launch-checklist'), api.get<Model>('/admin/llm'),
       api.get<{ policy: unknown }>('/storage/admin/policy'), api.get<Backups>('/ops/admin/backups'),
       api.get<Channels>('/admin/channels'), api.get<Voice>('/admin/voice-box'),api.get<VaultHealth>('/admin/vault'),
+      api.get<{ updateAvailable: boolean; availableVersion: string | null }>('/admin/doctor/update'),
     ]);
+    // A new version shows here as soon as the updater has seen it, with the
+    // one-click Update in System checkup.
+    const newVersion = update.status === 'fulfilled' && update.value.updateAvailable ? update.value.availableVersion : null;
     if (assistant.status === 'fulfilled') setData(assistant.value);
     else setError('The API or database did not answer. Other checks may also be incomplete.');
     const channelList = channels.status === 'fulfilled' ? channels.value.channels : [];
@@ -48,6 +52,7 @@ export function AdminOverview() {
       { label: 'Channels and connections', state: channels.status !== 'fulfilled' ? 'unavailable' : channelList.some((item) => item.enabled && item.probeOk) ? 'working' : channelList.some((item) => item.configured) ? 'attention' : 'unconfigured', detail: channels.status !== 'fulfilled' ? 'Channel status could not be read.' : channelList.some((item) => item.enabled && item.probeOk) ? 'At least one channel is enabled and tested.' : channelList.some((item) => item.configured) ? 'A configured channel still needs a successful test or enabling.' : 'No optional external messaging channel is configured.', href: '/admin/channels' },
       { label: 'Voice Box', state: voice.status !== 'fulfilled' ? 'unavailable' : !voice.value.helperAvailable || voice.value.phase === 'absent' ? 'unconfigured' : voice.value.healthy && voice.value.verified ? 'working' : 'attention', detail: voice.status !== 'fulfilled' ? 'Voice Box status could not be read.' : voice.value.healthy && voice.value.verified ? 'Voice Box is installed, verified, and healthy.' : !voice.value.helperAvailable || voice.value.phase === 'absent' ? 'Voice Box is optional and is not installed.' : 'Voice Box is installed but not ready.', href: '/admin/voice-box' },
       { label: 'Security and setup', state: launch.status !== 'fulfilled' ? 'unavailable' : launch.value.complete ? 'working' : launch.value.reminders.length ? 'attention' : 'unconfigured', detail: launch.status !== 'fulfilled' ? 'Setup requirements could not be read.' : launch.value.complete ? 'The launch checklist is complete.' : `${launch.value.progress.done} of ${launch.value.progress.total} launch items are settled.`, href: '/admin/launch' },
+      ...(newVersion ? [{ label: 'Josi update', state: 'attention' as const, detail: `Version ${newVersion} is available. Open System checkup and click Update.`, href: '/admin/diagnostics' }] : []),
     ]);
     setCheckedAt(new Date()); setLoading(false);
   }, []);

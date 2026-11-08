@@ -20,7 +20,7 @@ try {
     if (process.getuid() === 0 || !data.startsWith('/home/roman/JosiDrive/') || st.uid !== process.getuid()
       || (st.mode & 0o077) || marker.purpose !== 'disposable-native-acceptance') throw Error();
     process.env.JOSI_NATIVE_ISOLATED_ROOT = data;
-  } else if (data !== '/var/lib/josi-ce-server/data') throw Error();
+  } else if (data !== '/var/lib/josi/data') throw Error();
   const info = lstatSync(configFile);
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 8192
     || info.uid !== (isolated ? process.getuid() : 0) || (info.mode & 0o022)) throw Error();
@@ -43,7 +43,16 @@ try {
   for (const key of Object.keys(process.env)) delete process.env[key];
   const secret = join(data, 'secrets', role);
   Object.assign(process.env, {
-    PATH: `${join(PROGRAM, 'node/bin')}:/usr/bin:/bin`, TMPDIR: join(data, 'temp', role),
+    // Josi's own Node and the bundled Codex and Claude Code CLIs (with Codex's
+    // ripgrep); packaging/linux/subscription-cli.lock.json.
+    PATH: `${join(PROGRAM, 'node/bin')}:${join(PROGRAM, 'cli/bin')}:/usr/bin:/bin`, TMPDIR: join(data, 'temp', role),
+    HOME: join(data, 'profiles', role),
+    // Josi's tool server for the Claude Code and Codex harnesses. Without it
+    // they fall back to the container path and every tool is switched off.
+    JOSI_MCP_SERVER: join(PROGRAM, 'app/packages/agent/dist/mcp/server.js'),
+    // Shared by web and worker (the codex folder is group-writable for both),
+    // so a Claude sign-in made in the browser is used by background work too.
+    CLAUDE_CONFIG_DIR: join(data, 'codex', 'claude-code'),
     NODE_ENV: 'production', JOSI_NATIVE_RUNTIME: '1', JOSI_VERSION: cfg.version, JOSI_DATA_DIR: data,
     JOSI_STORAGE_ROOT_BASE: join(data, 'roots'), JOSI_UPLOAD_DIR: join(data, 'chat-attachments'),
     MASTER_KEY_FILE: join(secret, 'master-key'), PGPASSWORD_FILE: join(secret, 'database-password'),

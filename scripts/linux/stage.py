@@ -23,6 +23,43 @@ def extract(archive,target,strip=False):
     if strip:command.extend(['--strip-components=1'])
     subprocess.run(command,check=True)
 
+def bundle_cli(architecture):
+    """The pinned, unmodified Codex and Claude Code CLIs, as on the Mac and Windows.
+
+    The subscription providers run them; without them "Sign in with ChatGPT"
+    and "Sign in with Claude" have nothing to start. Each npm tarball is checked
+    against packaging/linux/subscription-cli.lock.json before it is unpacked.
+    """
+    import base64,tarfile
+    rows={row['id']:row for row in json.loads((REPO/'packaging/linux/subscription-cli.lock.json').read_text())}
+    target=RUNTIME/'cli'
+    if target.exists():shutil.rmtree(target)
+    (target/'bin').mkdir(parents=True)
+    for name in ('codex','claude'):
+        row=rows[name+'-'+architecture];path=CACHE/'subscription-cli'/row['filename']
+        if not path.is_file():
+            path.parent.mkdir(parents=True,exist_ok=True)
+            subprocess.run(['curl','-fsSL','--proto','=https','-o',str(path),row['url']],check=True)
+        data=path.read_bytes()
+        if hashlib.sha256(data).hexdigest()!=row['sha256'] or 'sha512-'+base64.b64encode(hashlib.sha512(data).digest()).decode()!=row['integrity']:
+            raise ValueError('CLI artifact pin mismatch: '+row['id'])
+        destination=target/name;destination.mkdir()
+        with tarfile.open(path) as archive:
+            for entry in archive:
+                parts=Path(entry.name).parts
+                if not parts or parts[0]!='package' or '..' in parts or Path(entry.name).is_absolute() or not (entry.isfile() or entry.isdir()):
+                    raise ValueError('Unsafe vendor artifact entry')
+                output=destination.joinpath(*parts[1:])
+                if entry.isdir():output.mkdir(parents=True,exist_ok=True);continue
+                output.parent.mkdir(parents=True,exist_ok=True)
+                with archive.extractfile(entry) as source,output.open('xb') as stream:shutil.copyfileobj(source,stream)
+                output.chmod(0o755 if entry.mode&0o111 else 0o644)
+    triple=rows['codex-'+architecture]['triple']
+    (target/'bin/codex').symlink_to('../codex/vendor/'+triple+'/bin/codex')
+    (target/'bin/rg').symlink_to('../codex/vendor/'+triple+'/codex-path/rg')
+    (target/'bin/claude').symlink_to('../claude/claude')
+    copy(REPO/'packaging/linux/subscription-cli.lock.json',target/'inputs.lock.json')
+
 def main():
     architecture={'x86_64':'x86_64','aarch64':'aarch64'}[platform.machine()]
     if RUNTIME.exists():shutil.rmtree(RUNTIME)
@@ -44,6 +81,7 @@ def main():
     for name in ('node','caddy'):
         if (RUNTIME/name).exists():shutil.rmtree(RUNTIME/name)
     extract(CACHE/node_name,RUNTIME/'node',True)
+    bundle_cli(architecture)
     copy(BASE/'prefix/portable/postgresql',RUNTIME/'postgresql');copy(BASE/'prefix/python',RUNTIME/'python')
     caddy_name='caddy-'+('amd64' if architecture=='x86_64' else 'arm64')+'.tar.gz'
     extract(CACHE/caddy_name,RUNTIME/'caddy')

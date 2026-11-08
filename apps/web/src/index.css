@@ -57,7 +57,9 @@
     --badge-foreground: 282 36% 9%;
     --success: 143 51% 67%;
     --warning: 38 87% 69%;
-    --paper: 0 0% 100%;              /* QR codes and email previews need real white */
+    --paper: 0 0% 100%;
+    --teal: 182 41% 73%;             /* #9ED6D8, the ghost's listening glow */
+    --stage-bg: radial-gradient(120% 80% at 50% 0%, #43264A 0%, #150B19 72%);              /* QR codes and email previews need real white */
     --app-bg: radial-gradient(ellipse at 25% 10%, #43264A 0%, #150B19 70%);
     --bar-bg: rgba(27, 15, 32, .72);
     --scrim: rgba(13, 7, 16, .66);
@@ -97,6 +99,8 @@
     --badge-foreground: 221 46% 8%;
     --success: 158 64% 52%;
     --warning: 43 96% 56%;
+    --teal: 182 50% 62%;
+    --stage-bg: hsl(221 46% 8%);
     --app-bg: hsl(221 46% 8%);
     --bar-bg: rgba(20, 30, 48, .78);
     --scrim: rgba(5, 8, 15, .66);
@@ -228,6 +232,56 @@
   .menu-sheet { animation: josi-menu-in .22s cubic-bezier(.2, .8, .2, 1) both; }
   @keyframes josi-menu-in { from { opacity: 0; transform: translateY(-8px) scale(.985); } }
 
+  /* The Ghost Stage: the chat's home screen. The ghost big in the middle, one
+     line under it, the conversation behind the History button. */
+  .ghost-stage { background: var(--stage-bg); container-type: size; }
+  .ghost-figure { position: relative; flex: none; width: min(46vh, 480px, 86vw); height: min(46vh, 480px, 86vw); }
+  @supports (height: 1cqh) {
+    .ghost-figure { width: min(46cqh, 480px, 86cqw); height: min(46cqh, 480px, 86cqw); }
+  }
+  .ghost-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .26s ease; pointer-events: none; }
+  .ghost-layer-on { opacity: 1; }
+  .ghost-glow { position: absolute; left: 18%; right: 18%; bottom: 2%; height: 16%; border-radius: 50%; filter: blur(6px); transition: background .5s;
+    background: radial-gradient(closest-side, hsl(var(--gold-2) / .38), hsl(var(--lilac) / .12) 60%, transparent); animation: ghost-breathe 2.4s ease-in-out infinite; }
+  .ghost-glow-listen { background: radial-gradient(closest-side, hsl(var(--teal) / .55), hsl(var(--lilac) / .15) 60%, transparent); }
+  .ghost-glow-think { background: radial-gradient(closest-side, hsl(var(--gold-2) / .7), hsl(var(--gold-2) / .15) 60%, transparent); animation-duration: 1.2s; }
+  .ghost-glow-oops { background: radial-gradient(closest-side, hsl(var(--badge) / .55), transparent); }
+  .ghost-glow-yay { background: radial-gradient(closest-side, hsl(var(--gold-sheen) / .85), transparent); animation-duration: .8s; }
+  @keyframes ghost-breathe { 50% { transform: scaleX(.82); opacity: .7; } }
+
+  .stage-dot-listening { background: hsl(var(--teal)); }
+  .stage-label { font-size: .66rem; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: hsl(var(--text-muted)); }
+  .stage-text { font-size: 1.125rem; line-height: 1.4; font-weight: 500; text-wrap: balance; overflow-wrap: anywhere; }
+  .stage-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
+  .stage-clamp-2 { -webkit-line-clamp: 2; }
+  .stage-word { display: inline-block; white-space: pre; }
+  .stage-word-in { opacity: 0; transform: translateY(7px); filter: blur(3px); animation: stage-word-in .45s forwards; }
+  @keyframes stage-word-in { to { opacity: 1; transform: none; filter: none; } }
+  .stage-text a { color: hsl(var(--primary)); text-underline-offset: 2px; }
+  .stage-text a:hover { text-decoration: underline; }
+  .stage-text code { font-size: .9em; border-radius: .3rem; padding: 0 .3em; background: hsl(var(--secondary)); }
+  .stage-items { margin: .4rem 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .25rem; font-size: .95rem; text-align: left; }
+  .stage-items b { color: hsl(var(--primary)); margin-right: .45rem; font-variant-numeric: tabular-nums; }
+  .stage-thinking { display: inline-flex; align-items: center; gap: .45rem; border-radius: 999px; padding: .35rem .75rem; font-size: .75rem;
+    color: hsl(var(--primary)); background: hsl(var(--gold-2) / .1); border: 1px solid hsl(var(--gold-2) / .25); transition: opacity .3s; }
+  .stage-thinking i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: stage-hop .9s infinite; }
+  .stage-thinking i:nth-child(2) { animation-delay: .15s; }
+  .stage-thinking i:nth-child(3) { animation-delay: .3s; }
+  @keyframes stage-hop { 30% { transform: translateY(-4px); } }
+  .stage-chip { border: 1px solid var(--hairline-strong); background: hsl(var(--card) / .7); color: hsl(var(--foreground)); border-radius: 999px;
+    padding: .5rem .85rem; font-size: .8rem; min-height: 2.75rem; transition: background .2s, border-color .2s; }
+  .stage-chip:hover:not(:disabled) { background: hsl(var(--secondary)); border-color: hsl(var(--gold-2)); }
+  .stage-round { position: relative; display: flex; height: 2.75rem; width: 2.75rem; align-items: center; justify-content: center; border-radius: 999px;
+    border: 1px solid var(--hairline-strong); background: hsl(var(--card) / .6); color: hsl(var(--primary)); }
+  .stage-round:hover { background: hsl(var(--card)); }
+  .history-panel { background: hsl(var(--background) / .95); -webkit-backdrop-filter: blur(22px) saturate(140%); backdrop-filter: blur(22px) saturate(140%);
+    transform: translateY(102%); transition: transform .55s cubic-bezier(.7, 0, .2, 1); }
+  /* Closed, the panel is `inert` (no focus, out of the accessibility tree) but
+     stays laid out, so the newest bubble is already in place when it opens. */
+  .history-panel-open { transform: none; }
+  .ghost-composer { border-radius: 29px; background: hsl(var(--card) / .72); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+    border: 1px solid hsl(var(--gold-2) / .25); box-shadow: 0 12px 30px -12px rgb(0 0 0 / .6); }
+
   /* No motion means no motion: the J, the glow and the stars hold still, and the
      check simply appears. */
   @media (prefers-reduced-motion: reduce) {
@@ -237,6 +291,9 @@
     .josi-mark-success img { animation: none; opacity: 0; }
     .josi-mark-check { animation: none; }
     .menu-tile { transition: none; }
+    .ghost-glow, .stage-thinking i { animation: none; }
+    .stage-word-in { animation: none; opacity: 1; transform: none; filter: none; }
+    .ghost-layer, .history-panel, .history-panel-open { transition: none; }
     .menu-tile:hover { transform: none; }
   }
 }

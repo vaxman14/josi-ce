@@ -122,4 +122,21 @@ class LinuxLifecycleTests(unittest.TestCase):
         self.assertEqual((transactions/'fresh'/'failed-data'/'partial').read_text(),'preserve me')
         self.assertEqual(lifecycle.Journal(transactions/'fresh').records[-1]['phase'],'rolled-back')
 
+    def test_codex_scratch_links_are_removed_before_a_snapshot(self):
+        # The bundled Codex CLI links helper names to its binary on every start.
+        # A cold snapshot refuses links, so an update after any Codex use failed.
+        obj=object.__new__(lifecycle.Lifecycle);obj.data=self.root/'data'
+        program=self.root/'versions/1.1.1/cli/codex';program.mkdir(parents=True);(program/'codex').write_text('binary')
+        kept=obj.data/'profiles/web/.codex/sessions';kept.mkdir(parents=True);(kept/'keep.json').write_text('{}')
+        for home in (obj.data/'profiles/web/.codex',obj.data/'profiles/worker/.codex',obj.data/'codex'):
+            scratch=home/'tmp/arg0/codex-arg0AbCdEf';scratch.mkdir(parents=True)
+            (scratch/'apply_patch').symlink_to(program/'codex')
+        (obj.data/'codex/auth-like.json').write_text('kept')
+        with self.assertRaises(ValueError):lifecycle.Lifecycle.snapshot_inventory(obj,obj.data)
+        obj.prune_cli_scratch()
+        lifecycle.Lifecycle.snapshot_inventory(obj,obj.data)
+        self.assertEqual((program/'codex').read_text(),'binary')
+        self.assertTrue((kept/'keep.json').exists());self.assertTrue((obj.data/'codex/auth-like.json').exists())
+        self.assertFalse((obj.data/'profiles/web/.codex/tmp/arg0').exists())
+
 if __name__=='__main__':unittest.main()

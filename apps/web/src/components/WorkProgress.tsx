@@ -267,7 +267,11 @@ function WorkActivity({ goal }: { goal: WorkGoalSnapshot }) {
 }
 
 export function ChatWorkProgress({ threadId }: { threadId: string }) {
-  const { goals, error, refresh, connection } = useWorkGoals(threadId, true);
+  return <ChatWorkProgressList {...useWorkGoals(threadId, true)} />;
+}
+
+/** The chat's work cards, from a `useWorkGoals` the page already holds. */
+export function ChatWorkProgressList({ goals, error, refresh, connection }: Pick<ReturnType<typeof useWorkGoals>, 'goals' | 'error' | 'refresh' | 'connection'>) {
   if (!goals.length && !error) return null;
   return <div className="space-y-3" aria-label="Current work progress">
     {error ? <p className="text-xs text-muted-foreground">Progress is offline. Showing the last saved update.</p> : null}

@@ -180,10 +180,14 @@ export function codexArgs(model: string, harness?: HarnessSession | null, imageP
     '-c', 'features.shell_tool=false',
     '-c', 'features.view_image=false',
     '-c', 'features.multi_agent=false',
+    // ChatGPT apps and plugins are a second, unsupervised tool channel (with a
+    // ChatGPT sign-in Codex connects to OpenAI's apps service on its own), and
+    // `codex exec` can never answer a user-input request. Off on every turn,
+    // not only structured ones.
+    '-c', 'features.apps=false', '-c', 'features.plugins=false',
+    '-c', 'tools.experimental_request_user_input.enabled=false',
     ...(schemaPath ? ['--ephemeral', '--output-schema', schemaPath,
-      '-c', 'web_search="disabled"', '-c', 'tools.update_plan.enabled=false',
-      '-c', 'tools.experimental_request_user_input.enabled=false',
-      '-c', 'features.apps=false', '-c', 'features.plugins=false'] : []),
+      '-c', 'web_search="disabled"', '-c', 'tools.update_plan.enabled=false'] : []),
     ...mcp,
     // An empty model means 'the plan's own default': the CLI chooses, exactly
     // as it does for its interactive users. Passing --model '' would instead

@@ -23,14 +23,41 @@
 //
 // The e2e suite taps this button in WebKit with touch emulation, which is the
 // closest thing to Safari on an iPhone that runs unattended.
-import { Fragment, useEffect, useRef, useState } from 'react';
+//
+// THE GHOST STAGE. The page is the Josi ghost, big in the middle, and one line
+// under it: an acknowledgement while Josi works, then her latest reply coming
+// in word by word. There is no bubble list on the stage; the whole
+// conversation, with its work cards and approvals, is the History panel that
+// slides up over it. The header's status, the thinking chip and the ghost all
+// follow one state (src/lib/ghost.ts). The panel is `inert` while closed but
+// stays laid out, so the transcript keeps its scroll position and every
+// bubble is in the DOM the moment it is sent.
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type Approval, type Message, type Thread, type TurnResult } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { JosiMark } from '@/components/brand/JosiMark';
 import type { ShellOutlet } from '@/components/layout/Shell';
 import { VoiceChat } from '@/components/VoiceChat';
-import { ChatWorkProgress } from '@/components/WorkProgress';
+import { ChatWorkProgressList } from '@/components/WorkProgress';
+import { GhostFigure, StageReply, useReducedMotion } from '@/components/ghost/Ghost';
+import { useWorkGoals } from '@/lib/workGoals';
+import {
+  firstName, GhostController, isListReply, loopFor, nextAcknowledgement, stageMood, type GhostSnapshot,
+} from '@/lib/ghost';
+
+const SUGGESTIONS = ["What's on my calendar today?", 'Remind me to call Dana', 'Draft a note to the team'];
+
+type ThreadWork = Pick<ReturnType<typeof useWorkGoals>, 'goals' | 'error' | 'refresh' | 'connection'>;
+
+/** Follows the work this conversation started. Mounted only once there is a
+ * thread, so the hook never asks for everybody's work. */
+function ThreadWorkWatcher({ threadId, onChange }: { threadId: string; onChange: (work: ThreadWork) => void }) {
+  const { goals, error, refresh, connection } = useWorkGoals(threadId, true);
+  useEffect(() => { onChange({ goals, error, refresh, connection }); }, [goals, error, refresh, connection, onChange]);
+  return null;
+}
 
 /** "Today", "Yesterday", or the date — the label WhatsApp taught everyone. */
 function dayLabel(at: Date): string {
@@ -92,16 +119,76 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState('');
   const end = useRef<HTMLDivElement>(null);
-  const transcript = useRef<HTMLElement>(null);
+  const transcript = useRef<HTMLDivElement>(null);
   const inputElement = useRef<HTMLTextAreaElement>(null);
   const sendLock = useRef(false);
   const sendGeneration = useRef(0);
   const followLatest = useRef(true);
   const [backgroundOffline, setBackgroundOffline] = useState(false);
-  const { approvals } = useOutletContext<ShellOutlet>();
+  const { approvals, setChatStatus, chatBarSlot } = useOutletContext<ShellOutlet>();
   // Answered here, or put away with "Not now". The poll catches up on its own.
   const [settled, setSettled] = useState<string[]>([]);
   const pendingApprovals = approvals.filter(approval => !settled.includes(approval.id));
+
+  // ---- the stage
+  const reduced = useReducedMotion();
+  const ghostRef = useRef<GhostController | null>(null);
+  if (!ghostRef.current) ghostRef.current = new GhostController();
+  const ghost = ghostRef.current;
+  const [ghostView, setGhostView] = useState<GhostSnapshot>(() => ghost.snapshot());
+  const [focused, setFocused] = useState(false);
+  const [ack, setAck] = useState('');
+  // The reply still coming in word by word, by its text: the background poll
+  // swaps a reply's client id for the server's, and that must not restart it.
+  const [revealing, setRevealing] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const historyPanel = useRef<HTMLElement>(null);
+  const historyButton = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const [work, setWork] = useState<ThreadWork>({ goals: [], error: '', refresh: async () => {}, connection: 'connecting' });
+  const goalStates = useRef<Map<string, string> | null>(null);
+  const typing = focused && input.trim().length > 0;
+  const speaking = ghostView.speaking || revealing !== null;
+  const mood = stageMood({ waiting: sending, speaking, voice: voiceActive, typing });
+  const activeTasks = work.goals.filter(goal => goal.state !== 'completed' && goal.state !== 'cancelled').length;
+  const lastReply = [...messages].reverse().find(message => message.direction === 'out');
+
+  // Hello when the page opens. The controller lives as long as the page.
+  useEffect(() => {
+    const unsubscribe = ghost.subscribe(setGhostView);
+    ghost.set('Hello');
+    return () => { unsubscribe(); ghost.dispose(); };
+  }, [ghost]);
+
+  useEffect(() => { ghost.set(loopFor({ waiting: sending, voice: voiceActive, typing })); }, [ghost, sending, voiceActive, typing]);
+
+  useEffect(() => { setChatStatus(mood); }, [mood, setChatStatus]);
+  useEffect(() => () => setChatStatus('online'), [setChatStatus]);
+
+  // A task this chat follows finishing is worth a celebration. The first
+  // snapshot only records where things stand.
+  useEffect(() => {
+    const before = goalStates.current;
+    if (before && work.goals.some(goal => goal.state === 'completed' && before.has(goal.goalId) && before.get(goal.goalId) !== 'completed')) ghost.set('TaskDone');
+    goalStates.current = new Map(work.goals.map(goal => [goal.goalId, goal.state]));
+  }, [ghost, work.goals]);
+
+  const openHistory = useCallback(() => setHistoryOpen(true), []);
+  const closeHistory = useCallback(() => { setHistoryOpen(false); historyButton.current?.focus(); }, []);
+
+  useEffect(() => {
+    const panel = historyPanel.current;
+    if (panel) panel.inert = !historyOpen;
+    if (!historyOpen) return;
+    if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
+    const frame = window.requestAnimationFrame(() => closeButton.current?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      // The menu, when it is open on top, takes Escape for itself.
+      if (event.key === 'Escape' && !document.getElementById('app-menu')) { event.preventDefault(); closeHistory(); }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => { window.cancelAnimationFrame(frame); document.removeEventListener('keydown', onKeyDown); };
+  }, [historyOpen, closeHistory]);
 
   // The most recent thread, or a new one. A member always has somewhere to talk.
   useEffect(() => {
@@ -205,7 +292,9 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
     field.style.height = `${field.scrollHeight}px`;
   }, [input]);
 
-  async function send(spoken?: string): Promise<string | undefined> {
+  // `spoken` is a voice turn, or with `suggested` a suggestion chip: either way
+  // the words did not come from the field and attachments stay put.
+  async function send(spoken?: string, suggested = false): Promise<string | undefined> {
     if (spoken === undefined && voiceActive) return;
     // Read the DOM value as well as React state: iOS can display composition
     // text before a controlled component catches up.
@@ -224,6 +313,9 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
     if (spoken === undefined) setInput('');
     setSending(true);
     setError('');
+    setAck(nextAcknowledgement());
+    setRevealing(null);
+    ghost.set('Received');
 
     try {
       const attachmentIds: string[] = [];
@@ -240,6 +332,10 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       const result = await api.post<TurnResult>(`/assistant/threads/${thread.id}/talk`, { message: body, attachmentIds });
       if (spoken === undefined) setFiles([]);
       if (result.reply !== undefined) {
+        // Only a reply somebody was waiting on gets the moment and the reveal;
+        // opening a conversation that already has replies never does.
+        if (!reduced) setRevealing(result.reply);
+        ghost.replied(isListReply(result.reply));
         setMessages((current) => [...current, {
           id: `reply-${Math.random().toString(36).slice(2)}`,
           thread_id: thread.id, direction: 'out', channel: 'web', body: result.reply!,
@@ -260,116 +356,197 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       // recorded; only a transport failure (nothing stored) takes the bubble back.
       if (!refusal) {
         setMessages((current) => current.filter((m) => m.id !== optimistic.id));
-        if (spoken === undefined) setInput(body);
+        if (spoken === undefined || suggested) setInput(body);
       }
       setError(message);
+      ghost.set('Error');
     } finally {
       sendLock.current = false;
       setSending(false);
     }
   }
 
+  const greeting = firstName(user);
+  const busy = sending || loading || !thread;
+  const stageApproval = !sending ? pendingApprovals[0] : undefined;
+  const approve = (approval: Approval) => async () => {
+    await api.post(`/assistant/approvals/${approval.id}/decide`, { approve: true });
+    setSettled(ids => [...ids, approval.id]);
+  };
+
   return (
     <div
       // The chat sizes itself with plain 100dvh and lives in normal flow: a
-      // flex column of header / scrolling list / composer. When the iOS
-      // keyboard opens, Safari pans the visual viewport to keep the focused
-      // composer visible — native behaviour, no JS. The previous release drove
-      // this height from a VisualViewport handler and the composer ended up
-      // rendered at the TOP of the screen with the history invisible (round-2
-      // item 25). data-viewport-managed opts out of the global focus helper.
+      // flex column of stage / composer. When the iOS keyboard opens, Safari
+      // pans the visual viewport to keep the focused composer visible —
+      // native behaviour, no JS. The previous release drove this height from
+      // a VisualViewport handler and the composer ended up rendered at the TOP
+      // of the screen with the history invisible (round-2 item 25).
+      // data-viewport-managed opts out of the global focus helper.
       data-viewport-managed
       className="flex w-full min-w-0 flex-col overflow-hidden"
       style={{ height: '100%' }}
     >
       <h1 className="sr-only">Chat with Josi</h1>
-      <section ref={transcript} onScroll={event => {
-        const view = event.currentTarget; followLatest.current = view.scrollHeight - view.clientHeight - view.scrollTop < 100;
-      }} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6" aria-live="polite">
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-2">
-        {backgroundOffline ? <p className="text-xs text-text-muted" role="status">Chat updates are offline. Showing the last saved conversation.</p> : null}
-        {messages.length >= 200 ? <p className="text-xs text-text-muted">Showing the most recent 200 messages.</p> : null}
-        {loading ? <Working text="Opening…" /> : null}
-        {!loading && messages.length === 0 ? (
-          <div className="m-auto flex flex-col items-center text-center">
-            <div className="relative grid h-24 w-24 place-items-center">
-              <span aria-hidden className="josi-glow" />
-              <JosiMark variant="bare" size={72} />
-            </div>
-            <h2 className="mt-5 text-xl">What can I do for you?</h2>
-          </div>
+      {thread ? <ThreadWorkWatcher key={thread.id} threadId={thread.id} onChange={setWork} /> : null}
+
+      {chatBarSlot ? createPortal(<>
+        {activeTasks ? (
+          <button type="button" onClick={openHistory} className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[color:var(--hairline-strong)] bg-card/60 px-3 text-xs font-semibold text-primary hover:bg-card">
+            {activeTasks} {activeTasks === 1 ? 'task' : 'tasks'}
+          </button>
         ) : null}
-        {messages.map((message, index) => {
-          const mine = message.direction === 'in';
-          const at = new Date(message.created_at);
-          const before = index > 0 ? messages[index - 1] : null;
-          const prev = before ? new Date(before.created_at) : null;
-          const newDay = !prev || prev.toDateString() !== at.toDateString();
-          // The J sits on the first bubble of a run of Josi's, not on every one.
-          const firstOfRun = !mine && (newDay || before?.direction === 'in');
-          return (
-            <Fragment key={message.id}>
-              {newDay ? (
-                <div className="flex justify-center py-1">
-                  <span className="text-[0.7rem] uppercase tracking-[0.12em] text-text-muted">
-                    {dayLabel(at)}
-                  </span>
+        <button
+          ref={historyButton}
+          type="button"
+          onClick={() => historyOpen ? closeHistory() : openHistory()}
+          aria-expanded={historyOpen}
+          aria-controls="chat-history"
+          aria-label={historyOpen ? 'Close chat history' : messages.length >= 2 ? `Open chat history, ${messages.length} messages` : 'Open chat history'}
+          className="stage-round shrink-0"
+        >
+          <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 8v4.5l3 2" /></svg>
+          {messages.length >= 2 ? <span className="btn-gold absolute -right-1 -top-1 flex h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full px-1 text-[0.65rem] font-bold leading-none">{messages.length > 99 ? '99+' : messages.length}</span> : null}
+        </button>
+      </>, chatBarSlot) : null}
+
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div className="ghost-stage absolute inset-0 overflow-hidden">
+          <div className="mx-auto flex h-full w-full max-w-2xl flex-col items-center justify-center gap-3 px-4 pb-2 pt-3">
+            <GhostFigure clip={ghostView.clip} beat={ghostView.beat} reduced={reduced} />
+            <div className="flex min-h-[10rem] w-full flex-col items-center gap-2 text-center" aria-live="polite">
+              {backgroundOffline ? <p className="text-xs text-text-muted" role="status">Chat updates are offline. Showing the last saved conversation.</p> : null}
+              {loading ? <Working text="Opening…" /> : sending ? <>
+                <span className="stage-label">Josi</span>
+                <p className="stage-text stage-clamp">{ack}</p>
+              </> : lastReply ? <>
+                <span className="stage-label">Josi</span>
+                <div
+                  className="w-full cursor-pointer"
+                  title="Open chat history"
+                  onClick={event => { if (!(event.target as Element).closest('a')) openHistory(); }}
+                >
+                  <StageReply
+                    key={lastReply.body}
+                    text={lastReply.body}
+                    animate={!reduced && revealing === lastReply.body}
+                    onDone={() => setRevealing(current => current === lastReply.body ? null : current)}
+                  />
+                </div>
+              </> : <>
+                <h2 className="text-[1.375rem] font-bold">{greeting ? `Hi ${greeting}, I'm Josi.` : "Hi, I'm Josi."}</h2>
+                <p className="text-sm text-lilac">Go on, give me something good to do.</p>
+                <div className="mt-2 flex flex-wrap justify-center gap-2">
+                  {SUGGESTIONS.map(suggestion => (
+                    <button key={suggestion} type="button" className="stage-chip" disabled={busy || voiceActive} onClick={() => void send(suggestion, true)}>{suggestion}</button>
+                  ))}
+                </div>
+              </>}
+              <span className="stage-thinking" style={{ opacity: mood === 'thinking' ? 1 : 0 }} aria-hidden={mood !== 'thinking'}>
+                <i /><i /><i />Josi is thinking
+              </span>
+              {stageApproval ? (
+                <div className="flex w-full flex-col items-center gap-1 text-left">
+                  <ApprovalCard approval={stageApproval} onLater={() => setSettled(ids => [...ids, stageApproval.id])} onApprove={approve(stageApproval)} />
+                  {pendingApprovals.length > 1 ? <button type="button" onClick={openHistory} className="link min-h-11 text-xs">{pendingApprovals.length - 1} more waiting in History</button> : null}
                 </div>
               ) : null}
-              <div className={`flex items-start gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
-                {!mine ? firstOfRun ? <JosiMark size={28} className="mt-0.5" /> : <span aria-hidden className="w-7 shrink-0" /> : null}
-                <div className={`flex min-w-0 max-w-[82%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
-                <div className={`whitespace-pre-wrap break-words rounded-[1.1rem] px-3.5 py-2.5 text-[0.95rem] leading-6 ${mine ? 'bubble-mine rounded-tr-[0.375rem]' : 'bubble-josi rounded-tl-[0.375rem]'}`}>
-                  {message.meta?.attachments?.length ? (
-                    <div className="mb-1 space-y-1 text-xs opacity-80">
-                      {message.meta.attachments.map((attachment) => attachment.contentType.startsWith('image/') ? (
-                        <a key={attachment.id} href={`/api/assistant/attachments/${attachment.id}`} target="_blank" rel="noreferrer">
-                          <img src={`/api/assistant/attachments/${attachment.id}`} alt={attachment.filename}
-                               className="max-h-64 max-w-full rounded-lg object-contain" />
-                        </a>
-                      ) : (
-                        <a key={attachment.id} className="block underline" href={`/api/assistant/attachments/${attachment.id}`} target="_blank" rel="noreferrer">
-                          📎 {attachment.filename}
-                        </a>
-                      ))}
+            </div>
+          </div>
+        </div>
+
+        <section
+          id="chat-history"
+          ref={historyPanel}
+          aria-label="Chat history"
+          className={`history-panel absolute inset-0 z-20 flex flex-col ${historyOpen ? 'history-panel-open' : ''}`}
+        >
+          <div className="hairline-b flex shrink-0 items-center gap-3 px-4 py-2.5">
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold">Chat history</h2>
+              <p className="text-xs text-lilac">{messages.length ? `${messages.length} ${messages.length === 1 ? 'message' : 'messages'}` : 'Nothing yet'}</p>
+            </div>
+            <button ref={closeButton} type="button" onClick={closeHistory} aria-label="Close chat history" className="stage-round ml-auto text-xl leading-none">×</button>
+          </div>
+          <div ref={transcript} onScroll={event => {
+            const view = event.currentTarget; followLatest.current = view.scrollHeight - view.clientHeight - view.scrollTop < 100;
+          }} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6">
+            <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-2">
+            {messages.length >= 200 ? <p className="text-xs text-text-muted">Showing the most recent 200 messages.</p> : null}
+            {!loading && messages.length === 0 ? <p className="m-auto max-w-[24ch] text-center text-sm text-lilac">Your conversation with Josi shows up here.</p> : null}
+            {messages.map((message, index) => {
+              const mine = message.direction === 'in';
+              const at = new Date(message.created_at);
+              const before = index > 0 ? messages[index - 1] : null;
+              const prev = before ? new Date(before.created_at) : null;
+              const newDay = !prev || prev.toDateString() !== at.toDateString();
+              // The J sits on the first bubble of a run of Josi's, not on every one.
+              const firstOfRun = !mine && (newDay || before?.direction === 'in');
+              return (
+                <Fragment key={message.id}>
+                  {newDay ? (
+                    <div className="flex justify-center py-1">
+                      <span className="text-[0.7rem] uppercase tracking-[0.12em] text-text-muted">
+                        {dayLabel(at)}
+                      </span>
                     </div>
                   ) : null}
-                  {message.body}
-                </div>
-                <span className="mt-1 px-1.5 text-xs text-text-muted">{at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}{mine ? <span className="ml-1.5 text-primary" aria-label="Sent">✓✓</span> : null}</span>
-                </div>
-              </div>
-            </Fragment>
-          );
-        })}
-        {pendingApprovals.length ? (
-          <ul className="flex flex-col gap-2 pl-9" aria-label="Waiting for your approval">
-            {pendingApprovals.map(approval => (
-              <li key={approval.id}>
-                <ApprovalCard
-                  approval={approval}
-                  onLater={() => setSettled(ids => [...ids, approval.id])}
-                  onApprove={async () => {
-                    await api.post(`/assistant/approvals/${approval.id}/decide`, { approve: true });
-                    setSettled(ids => [...ids, approval.id]);
-                  }}
-                />
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {thread ? <ChatWorkProgress key={thread.id} threadId={thread.id} /> : null}
-        {sending ? <Working text="Josi is thinking" elapsed size={28} className="py-2 pl-1" /> : null}
-        <div ref={end} />
-        </div>
-      </section>
+                  <div className={`flex items-start gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
+                    {!mine ? firstOfRun ? <JosiMark size={28} className="mt-0.5" /> : <span aria-hidden className="w-7 shrink-0" /> : null}
+                    <div className={`flex min-w-0 max-w-[82%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                    <div className={`whitespace-pre-wrap break-words rounded-[1.1rem] px-3.5 py-2.5 text-[0.95rem] leading-6 ${mine ? 'bubble-mine rounded-tr-[0.375rem]' : 'bubble-josi rounded-tl-[0.375rem]'}`}>
+                      {message.meta?.attachments?.length ? (
+                        <div className="mb-1 space-y-1 text-xs opacity-80">
+                          {message.meta.attachments.map((attachment) => attachment.contentType.startsWith('image/') ? (
+                            <a key={attachment.id} href={`/api/assistant/attachments/${attachment.id}`} target="_blank" rel="noreferrer">
+                              <img src={`/api/assistant/attachments/${attachment.id}`} alt={attachment.filename}
+                                   className="max-h-64 max-w-full rounded-lg object-contain" />
+                            </a>
+                          ) : (
+                            <a key={attachment.id} className="block underline" href={`/api/assistant/attachments/${attachment.id}`} target="_blank" rel="noreferrer">
+                              📎 {attachment.filename}
+                            </a>
+                          ))}
+                        </div>
+                      ) : null}
+                      {message.body}
+                    </div>
+                    <span className="mt-1 px-1.5 text-xs text-text-muted">{at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}{mine ? <span className="ml-1.5 text-primary" aria-label="Sent">✓✓</span> : null}</span>
+                    </div>
+                  </div>
+                </Fragment>
+              );
+            })}
+            {pendingApprovals.length ? (
+              <ul className="flex flex-col gap-2 sm:pl-9" aria-label="Waiting for your approval">
+                {pendingApprovals.map(approval => (
+                  <li key={approval.id}>
+                    <ApprovalCard
+                      approval={approval}
+                      onLater={() => setSettled(ids => [...ids, approval.id])}
+                      onApprove={async () => {
+                        await api.post(`/assistant/approvals/${approval.id}/decide`, { approve: true });
+                        setSettled(ids => [...ids, approval.id]);
+                      }}
+                    />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <ChatWorkProgressList {...work} />
+            {sending ? <Working text="Josi is thinking" elapsed size={28} className="py-2 pl-1" /> : null}
+            <div ref={end} />
+            </div>
+          </div>
+        </section>
+      </div>
 
-      <footer className="frost hairline-t z-10 w-full min-w-0 max-w-full shrink-0 overflow-x-clip px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
+      <footer className="z-10 w-full min-w-0 max-w-full shrink-0 overflow-x-clip px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
         <div className="mx-auto w-full max-w-3xl">
         {error ? <div className="mb-2 px-2"><ErrorNote>{error}</ErrorNote></div> : null}
         <form
           onSubmit={(event) => { event.preventDefault(); void send(); }}
-          className="talk-composer flex min-h-14 w-full min-w-0 max-w-full items-end gap-0.5 overflow-hidden rounded-[1.75rem] border border-[color:var(--hairline-strong)] bg-card/70 p-1.5"
+          className="talk-composer ghost-composer flex min-h-[58px] w-full min-w-0 max-w-full items-end gap-0.5 overflow-hidden p-1.5"
         >
           <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-lilac/15 text-foreground hover:bg-lilac/25" aria-label="Attach pictures or files">
             <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -382,6 +559,8 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
             ref={inputElement}
             value={input}
             onChange={(event) => setInput(event.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); }
             }}
@@ -390,10 +569,11 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
             enterKeyHint="send"
             placeholder="Message Josi…"
             className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-2.5 text-base outline-none placeholder:text-text-muted sm:text-sm"
+            style={{ backgroundColor: 'transparent' }}
             aria-label="Message Josi"
           />
           <VoiceChat onTurn={send} disabled={sending || loading || !thread} onActiveChange={setVoiceActive} />
-          <button type="submit" className="btn-gold inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-opacity disabled:cursor-not-allowed disabled:opacity-50" disabled={sending || voiceActive} aria-label="Send message">
+          <button type="submit" className="btn-sheen inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-opacity disabled:cursor-not-allowed disabled:opacity-50" disabled={sending || voiceActive} aria-label="Send message">
             <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5 -rotate-12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
           </button>
         </form>

@@ -23,7 +23,10 @@ import subprocess
 import sys
 import time
 
-PRODUCT = Path('/var/lib/josi-ce-server')
+PRODUCT = Path('/var/lib/josi')
+# josi.service is the one unit an administrator starts, stops or enables. The
+# six isolated services below are PartOf it, so they follow it.
+PARENT_UNIT = 'josi.service'
 UNIT_DIR = Path('/etc/systemd/system')
 UNIT_PREFIX = 'josi-ce-'
 ROLES = ('database', 'voice', 'voice-control', 'web', 'worker', 'proxy')
@@ -157,8 +160,14 @@ def available_ports(preferred=DEFAULT_PORTS):
                 if port in selected:
                     continue
                 probe = socket.socket()
+                # As the services themselves bind: a port with only closed
+                # connections in TIME_WAIT is free, a listening one is not.
+                # Without this a reinstall right after an uninstall moved
+                # every port up by one.
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
                     probe.bind((address, port))
+                    probe.listen(1)
                 except OSError:
                     probe.close()
                     continue
@@ -388,6 +397,22 @@ class Lifecycle:
             path = self.data/folder; plain(path, 0)
             os.chown(path, 0, shared_gid); os.chmod(path, 0o2770)
 
+    def prune_cli_scratch(self):
+        """Remove the bundled Codex CLI's per-run trampolines before a snapshot.
+
+        Codex links helper names (apply_patch, codex-linux-sandbox, ...) to its
+        own binary in <home>/tmp/arg0/codex-arg0XXXX on every start. They are
+        scratch it recreates, they point into versions/, and the cold snapshot
+        refuses links. Only folders exactly at .../tmp/arg0 under the services'
+        homes and the shared Codex home are removed, and only with the services
+        stopped; nothing they contain is followed.
+        """
+        for home in [self.data/'codex', *(self.data/'profiles').glob('*/.codex'), *(self.data/'codex').glob('*/.codex')]:
+            scratch = home/'tmp'/'arg0'
+            if scratch.is_dir() and not scratch.is_symlink():
+                plain(scratch)
+                shutil.rmtree(scratch)
+
     def seal_traversal_permissions(self):
         if self.isolated: return
         for path in (self.root, self.data, self.data/'secrets'):
@@ -466,7 +491,7 @@ class Lifecycle:
         if any(re.search(r'[\s"\'\\]', str(value)) for value in self.arguments(role, program)):
             raise ValueError('Unsafe systemd argument')
         command = ' '.join(str(value) for value in self.arguments(role, program))
-        lines = ['[Unit]','Description=Josi CE Server '+role,'After=network.target',
+        lines = ['[Unit]','Description=Josi CE Server '+role,'After=network.target','PartOf='+PARENT_UNIT,
                  *(['After=josi-ce-database.service','Requires=josi-ce-database.service'] if role in ('web','worker') else []),
                  '[Service]','Type=simple','User='+ACCOUNTS[role],'Group='+ACCOUNTS[role],
                  *(['SupplementaryGroups='+supplemental] if supplemental else []),
@@ -585,7 +610,9 @@ class Lifecycle:
             if not path.is_symlink(): os.chmod(path,0o755 if path.is_dir() or path.stat().st_mode&0o111 else 0o644)
 
     def install(self, ports=None, fail_at=None, interactive_uid=None, repair=False):
-        if not self.isolated and (interactive_uid is None or interactive_uid < 1000 or not pwd.getpwuid(interactive_uid).pw_dir):
+        # 0 is root itself: the one-command installer run from a root shell,
+        # or the web updater. Any other account must be a real login account.
+        if not self.isolated and (interactive_uid is None or (interactive_uid != 0 and interactive_uid < 1000) or not pwd.getpwuid(interactive_uid).pw_dir):
             raise ValueError('Logged-in installer user required')
         if fail_at and not self.isolated: raise ValueError('Fault injection is isolated only')
         if self.root.exists() and not (self.root/'installation.json').exists() and any(self.root.iterdir()):
@@ -633,6 +660,7 @@ class Lifecycle:
             if not fresh: self.stop()
             phase('quiesced')
             if not fresh:
+                self.prune_cli_scratch()
                 before=self.snapshot_inventory(self.data); self.copy(self.data,folder/'snapshot')
                 if self.snapshot_inventory(folder/'snapshot') != before: raise ValueError('Cold snapshot verification failed')
                 durable(folder/'snapshot-inventory',before)
@@ -732,8 +760,9 @@ if __name__ == '__main__':
             obj=object.__new__(Lifecycle); obj.runtime=runtime
             obj.version=json.loads((runtime/'app/package.json').read_text())['version']
             emit({'verified':obj.verify(),'architecture':os.uname().machine})
-        elif len(sys.argv)==3 and sys.argv[1]=='install' and sys.argv[2].isascii() and sys.argv[2].isdecimal():
-            Lifecycle(runtime).install(interactive_uid=int(sys.argv[2]))
+        elif len(sys.argv)==3 and sys.argv[1] in ('install','repair') and sys.argv[2].isascii() and sys.argv[2].isdecimal():
+            # repair puts the same version back over data an uninstall kept.
+            Lifecycle(runtime).install(interactive_uid=int(sys.argv[2]), repair=sys.argv[1]=='repair')
         else: raise ValueError('Unsupported lifecycle command')
     except Exception as error:
         emit({'phase':'Stopped',**diagnostic(error)})

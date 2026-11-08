@@ -25,8 +25,17 @@ import { HELP_URL, LIVE_HELP_URL, LegalLinks } from '@/components/LegalLinks';
 import { Icon } from './Icon';
 import { ADMIN_MENU, WORKSPACE_MENU, itemIsCurrent, pageTitleFor, type MenuItem } from './mobileNavigation';
 
-/** What the shell hands the page inside it, so there is one approvals poll. */
-export interface ShellOutlet { approvals: Approval[] }
+/** What the chat's status line says. Talk owns it; the bar only shows it. */
+export type ChatStatus = 'online' | 'listening' | 'thinking' | 'speaking';
+
+/** What the shell hands the page inside it, so there is one approvals poll.
+ * The chat also gets its status line and a slot in the bar, beside the menu,
+ * for the History button and the task pill. */
+export interface ShellOutlet {
+  approvals: Approval[];
+  setChatStatus: (status: ChatStatus) => void;
+  chatBarSlot: HTMLElement | null;
+}
 
 const roleLabel = (role?: string) => role === 'super_admin' ? 'Owner' : 'Member';
 
@@ -135,6 +144,8 @@ export function Shell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [counts, setCounts] = useState({ tasks: 0, approvals: 0 });
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [chatStatus, setChatStatus] = useState<ChatStatus>('online');
+  const [chatBarSlot, setChatBarSlot] = useState<HTMLElement | null>(null);
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeMenu = useRef(() => { setMenuOpen(false); menuButton.current?.focus(); }).current;
 
@@ -160,7 +171,10 @@ export function Shell() {
           <div className="flex min-h-11 min-w-0 items-center gap-2.5">
             <JosiMark size={28} />
             <span className="truncate font-display text-lg font-bold">Josi</span>
-            <span className="flex shrink-0 items-center gap-1 text-xs text-lilac"><span aria-hidden className="h-2 w-2 rounded-full bg-success" />online</span>
+            <span className={`flex shrink-0 items-center gap-1 text-xs transition-colors ${chatStatus === 'online' ? 'text-lilac' : 'text-primary'}`}>
+              <span aria-hidden className={`h-2 w-2 rounded-full ${chatStatus === 'online' ? 'bg-success' : chatStatus === 'listening' ? 'stage-dot-listening' : 'bg-primary'}`} />
+              {chatStatus === 'online' ? 'online' : `${chatStatus}…`}
+            </span>
           </div>
         ) : (
           <div className="flex min-h-11 min-w-0 items-center gap-1">
@@ -178,6 +192,7 @@ export function Shell() {
           {status?.localOnly ? (
             <span className="shrink-0 rounded-full bg-lilac/15 px-2.5 py-0.5 text-xs font-medium text-lilac" title="Only self-hosted models are permitted on this installation.">Local-only</span>
           ) : null}
+          {isChat ? <span ref={setChatBarSlot} className="flex shrink-0 items-center gap-2" /> : null}
           <button
             ref={menuButton}
             type="button"
@@ -200,7 +215,7 @@ export function Shell() {
         {/* Keyed on the path so a failure on one page does not wedge every
             page behind it. */}
         <ErrorBoundary key={location.pathname}>
-          <Outlet context={{ approvals } satisfies ShellOutlet} />
+          <Outlet context={{ approvals, setChatStatus, chatBarSlot } satisfies ShellOutlet} />
         </ErrorBoundary>
       </main>
 

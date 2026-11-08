@@ -1,0 +1,7 @@
+# Removing the package stops Josi first. Its data in /var/lib/josi stays;
+# `sudo josi-uninstall --purge` deletes it.
+pre_remove() {
+  if [ -d /run/systemd/system ]; then
+    systemctl stop josi.service josi-update.path josi-update.timer >/dev/null 2>&1 || true
+  fi
+}
