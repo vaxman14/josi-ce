@@ -279,7 +279,7 @@ function toolActivity(name: string): string {
     browser_view_photo: 'Looking at the photo', desktop_list_windows: 'Looking at the open windows', desktop_read_window: 'Reading the window',
     desktop_screenshot: 'Taking a screenshot', desktop_click: 'Clicking', desktop_click_point: 'Clicking', desktop_type: 'Typing', desktop_keys: 'Pressing keys',
     desktop_launch: 'Opening the program', desktop_close_window: 'Closing the window', pc_environment: 'Looking at this PC', pc_find_app: 'Looking for the program',
-    pc_run_command: 'Running a command on this PC', pc_list_folder: 'Looking in the folder', pc_read_file: 'Reading the file', pc_write_file: 'Writing the file',
+    pc_run_command: 'Running a command on this PC', pc_get_permissions: 'Checking PC permissions', pc_list_folder: 'Looking in the folder', pc_read_file: 'Reading the file', pc_write_file: 'Writing the file',
     own_goal: 'Planning the work', checkpoint_goal: 'Saving progress', verify_goal: 'Checking the results',
     revise_goal_plan: 'Updating the plan', schedule_reminder: 'Setting the reminder', create_task: 'Preparing the task', list_josi_settings: 'Reading settings',
     propose_josi_setting_change: 'Preparing the settings change', remember: 'Saving a memory',
@@ -491,7 +491,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   // are reached through those tools. The automation-workspace tools describe
   // a different runtime with no desktop here; offered alongside, a model
   // mistakes the attached tab for a workspace and reports "not connected".
-  if (pcBrowserTools.length || pcDesktopTools.length) {
+  if (pcBrowserTools.length || pcDesktopTools.some(t=>t.def.name!=='pc_get_permissions')) {
     const workspaceTools = new Set(['get_automation_workspaces', 'connect_automation_workspace', 'start_automation_task',
       'open_automation_browser', 'observe_automation_workspace', 'browser_control', 'computer_control']);
     tools = tools?.filter(tool => !workspaceTools.has(tool.name));
@@ -528,7 +528,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     imagesAttached,
     temporalContext: temporal.prompt,
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '')
-    + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : pcDesktopTools.length ? `\n\n${PC_BROWSER_ABSENT_PROMPT}` : '')
+    + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : pcDesktopTools.some(t=>t.def.name!=='pc_get_permissions') ? `\n\n${PC_BROWSER_ABSENT_PROMPT}` : '')
     + (pcDesktopTools.length ? `\n\n${PC_DESKTOP_PROMPT}` : '')
     + (capabilities.toolCalling ? `\n\n${SETTINGS_CHANGE_PROMPT}` : '');
 

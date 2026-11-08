@@ -162,12 +162,12 @@ namespace Josi.Native {
               if (!link.Origins.Contains(origin) && link.Origins.Count < 128) link.Origins.Add(origin);
             }
             object command = null;
-            if (link.Queued != null && link.Sent == null) { link.Sent = link.Queued; link.Queued = null; command = link.Sent.Command; }
+            if (!DesktopExecutor.Current.Blocked && link.Queued != null && link.Sent == null) { link.Sent = link.Queued; link.Queued = null; command = link.Sent.Command; }
             return Reply(id, true, Wires.O("session", Session(), "command", command));
           }
           if (operation == "browser.authorize") {
             var sent = link.Sent; var command = payload["command"]; var actual = payload["actual"];
-            var allowed = sent != null && command["id"].Text == sent.CommandId && command["kind"].Text == (string)sent.Command["kind"]
+            var allowed = !DesktopExecutor.Current.Blocked && sent != null && command["id"].Text == sent.CommandId && command["kind"].Text == (string)sent.Command["kind"]
               && command["sessionId"].Text == link.SessionId
               && (actual.IsNull || actual["tabId"].Integer == link.TabId);
             if (!allowed) return Reply(id, false, null);
@@ -230,11 +230,22 @@ namespace Josi.Native {
           if (DesktopExecutor.Current.Blocked) continue;
           var next = (await api.Request("/admin/pc-control/executor/next", "POST", Wires.O()))["request"];
           if (next.IsNull) continue;
-          var outcome = next["payload"]["kind"].Text.StartsWith("desktop.", StringComparison.Ordinal) ? await DesktopExecutor.Current.Run(next) : await Dispatch(next);
+          var outcome = await ExecuteWithLease(model, api, next);
           await api.Request("/admin/pc-control/executor/" + api.Uuid(next.Id) + "/result", "POST", Wires.O("ok", outcome.Item1, "result", outcome.Item2));
         } catch (JosiException) { }
         catch (Exception e) when (e is IOException || e is TaskCanceledException || e is System.Net.Http.HttpRequestException) { }
       }
+    }
+
+    Task<Tuple<bool, object>> ExecuteWithLease(AppModel model, JosiApi api, Wire request) {
+      var desktop = request["payload"]["kind"].Text.StartsWith("desktop.", StringComparison.Ordinal);
+      var route = "/admin/pc-control/executor/" + api.Uuid(request.Id) + "/lease";
+      return PcExecutionLease.Run(async cancellation => (await api.Request(route, "GET", null, null, cancellation))["authorized"].Flag,
+        () => model.Api == api && model.Screen == Screen.Workspace && model.IsAdministrator && !DesktopExecutor.Current.Paused,
+        () => desktop ? DesktopExecutor.Current.Run(request) : Dispatch(request), () => {
+        DesktopExecutor.Current.Pause();
+        lock (gate) { if (link != null) { Fail(link.Queued, "control_stopped"); Fail(link.Sent, "control_stopped"); link.Queued = link.Sent = null; } }
+      });
     }
 
     async Task<Tuple<bool, object>> Dispatch(Wire request) {

@@ -16,6 +16,89 @@ async function allow(r=read,mode:'never'|'ask'|'task'|'temporary'|'always'='alwa
 async function enable(){await control.setEnabled(owner,true);}
 async function task(who=owner){return (await db.query<{id:string}>(`insert into tasks(owner_user_id,template_key,state) values($1,'follow_up','ready') returning id`,[who]))[0].id;}
 
+describe('PC permission revisions and atomic approval',()=>{
+  it('does not let atomic once approval outlive its saved temporary allowance',async()=>{
+    await enable();const input=plan(),q=await control.propose(owner,input);
+    await control.savePolicy(owner,{...read,mode:'temporary',expiresAt:new Date(clock+10000).toISOString()},{approveRequestId:q.id});
+    await control.execute(owner,q.id,input,async()=>{
+      expect(await control.executionAuthorized(owner,q.id)).toBe(true);
+      clock+=11000;
+      expect(await control.executionAuthorized(owner,q.id)).toBe(false);
+    });
+  });
+  it('ends a running lease when its temporary grant expires',async()=>{
+    await enable();await allow(read,'temporary',{expiresAt:new Date(clock+30000).toISOString()});
+    const input=plan(),q=await control.propose(owner,input);
+    await control.execute(owner,q.id,input,async()=>{
+      expect(await control.executionAuthorized(owner,q.id)).toBe(true);
+      clock+=31000;
+      expect(await control.executionAuthorized(owner,q.id)).toBe(false);
+    });
+    expect(await control.executionAuthorized(owner,q.id)).toBe(false);
+  });
+  const command:PcRequirement={action:'command.run',scope:{kind:'command',target:'C:\\Work',application:'C:\\Windows\\System32\\cmd.exe'}};
+  it('saves a grant and preserves the exact waiting request for one execution',async()=>{
+    await enable();
+    const input=plan(command),q=await control.propose(owner,input),otherRequest=await control.propose(owner,plan());
+    const before=await control.snapshot(owner);
+    await control.savePolicy(owner,{...command,mode:'always'},{approveRequestId:q.id,expectedRevision:before.revision});
+    expect((await control.snapshot(owner)).revision).toBe(before.revision+1);
+    expect((await control.outcome(owner,q.id))?.state).toBe('approved');
+    expect((await control.outcome(owner,otherRequest.id))?.state).toBe('revoked');
+    const adapter=vi.fn(async()=>{});
+    await control.execute(owner,q.id,input,adapter);
+    await expect(control.execute(owner,q.id,input,adapter)).rejects.toThrow();
+    await expect(control.savePolicy(owner,{...command,mode:'always'},{approveRequestId:q.id})).rejects.toThrow(/no longer active/);
+    expect(adapter).toHaveBeenCalledTimes(1);
+  });
+  it('refuses a mismatched scope without saving a grant or revoking the request',async()=>{
+    await enable();const q=await control.propose(owner,plan(command));
+    const before=await control.snapshot(owner);
+    await expect(control.savePolicy(owner,{...command,scope:{...command.scope,target:'C:\\Other'},mode:'always'},{approveRequestId:q.id})).rejects.toThrow(/match a scope/);
+    const after=await control.snapshot(owner);
+    expect(after.revision).toBe(before.revision);expect(after.policies).toEqual([]);
+    expect((await control.outcome(owner,q.id))?.state).toBe('pending');
+  });
+  it('rolls back the grant if another effect is denied',async()=>{
+    await enable();const remove=requirement('file.delete',folder);
+    await allow(remove,'never');
+    // A pending request cannot normally contain a denied scope. Simulate a
+    // stale/tampered state and still require the full verdict in the transaction.
+    const q=await control.propose(owner,plan(command,{requirements:[command,remove]}));
+    await db.query(`update pc_control_requests set state='pending' where id=$1`,[q.id]);
+    const before=await control.snapshot(owner);
+    await expect(control.savePolicy(owner,{...command,mode:'always'},{approveRequestId:q.id})).rejects.toThrow(/disabled/);
+    expect((await control.snapshot(owner)).revision).toBe(before.revision);
+    expect((await control.snapshot(owner)).policies.some(p=>p.action==='command.run')).toBe(false);
+  });
+  it('rejects expired, foreign and nongrantable requests',async()=>{
+    await enable();const q=await control.propose(owner,plan(command));clock+=11*60*1000;
+    await expect(control.savePolicy(owner,{...command,mode:'always'},{approveRequestId:q.id})).rejects.toThrow(/no longer active/);
+    clock-=11*60*1000;
+    await expect(new PcControl(db,key,'pc-two',()=>clock).savePolicy(owner,{...command,mode:'always'},{approveRequestId:q.id})).rejects.toThrow(/not found/);
+    const remove=requirement('file.delete',folder),deletion=await control.propose(owner,plan(remove));
+    await expect(control.savePolicy(owner,{...remove,mode:'always'},{approveRequestId:deletion.id})).rejects.toThrow(/cannot be approved/);
+    expect((await control.snapshot(owner)).policies).toEqual([]);
+  });
+  it('checks the revision under the write lock and does not cancel running work for a stale proposal',async()=>{
+    await enable();await allow();const before=await control.snapshot(owner);
+    const q=await control.propose(owner,plan());let started!:()=>void,finish!:()=>void,signal!:AbortSignal;
+    const ready=new Promise<void>(r=>started=r),done=new Promise<void>(r=>finish=r);
+    const work=control.execute(owner,q.id,plan(),async(_p,s)=>{signal=s;started();await done;});
+    await ready;
+    await expect(control.setFullControl(owner,true,before.revision-1)).rejects.toThrow(/permissions changed/);
+    await expect(control.savePolicy(owner,{...read,mode:'never'},{expectedRevision:before.revision-1})).rejects.toThrow(/permissions changed/);
+    expect(signal.aborted).toBe(false);finish();await work;
+  });
+  it('permits task grants only for the task of the exact waiting action',async()=>{
+    await enable();const taskId=await task(),otherTask=await task();
+    const input=plan(command,{taskId}),q=await control.propose(owner,input);
+    await expect(control.savePolicy(owner,{...command,mode:'task',taskId:otherTask},{approveRequestId:q.id})).rejects.toThrow(/request's task/);
+    await control.savePolicy(owner,{...command,mode:'task',taskId},{approveRequestId:q.id});
+    await control.execute(owner,q.id,input,async()=>{});
+  });
+});
+
 describe('Windows exact PC scope authorization',()=>{
   it('defaults off and never infers permission from the master toggle',async()=>{
     await allow();expect((await control.snapshot(owner)).enabled).toBe(false);

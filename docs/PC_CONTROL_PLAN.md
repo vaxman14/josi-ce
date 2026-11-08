@@ -1,5 +1,7 @@
 # Josi computer control plan
 
+Implementation progress and platform handoff: [PC_CONTROL_IMPLEMENTATION_STATUS.md](PC_CONTROL_IMPLEMENTATION_STATUS.md). The plan below remains the target; the status document distinguishes implemented work from pending acceptance checks.
+
 Updated November 8, 2026. The owner authorized committing and pushing this plan, then starting the Windows implementation and build. Prepare the installer toolchain as part of that work. macOS and Linux implementation proceeds in separate owner-started sessions. Installation, service or administrator changes on the development machine, and release publication still require explicit approval.
 
 Josi will operate the computer where its native app is running: terminals, PowerShell, files, browsers, and desktop applications. The owner chooses how much access to give it and changes those permissions by talking to Josi in chat. Screen control has a visible blue takeover overlay and immediate local controls for taking back the computer.

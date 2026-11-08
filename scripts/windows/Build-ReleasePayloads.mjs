@@ -21,7 +21,7 @@ const run = promisify(execFile);
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const base = join(repo, 'artifacts/windows-native');
 const args = process.argv.slice(2);
-const cliRoot = resolve(args.includes('--cli-root') ? args[args.indexOf('--cli-root') + 1] : 'C:/Dev/josi-dev/cli/node_modules');
+const cliRoot = resolve(args.includes('--cli-root') ? args[args.indexOf('--cli-root') + 1] : join(base, 'tools/subscription-cli/node_modules'));
 const json = async path => JSON.parse(await readFile(path, 'utf8'));
 const sha256 = async path => createHash('sha256').update(await readFile(path)).digest('hex');
 const row = async (root, path) => ({ path: relative(root, path).replaceAll('\\', '/'), size: (await lstat(path)).size, sha256: await sha256(path) });

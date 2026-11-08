@@ -5,8 +5,9 @@
 // The person makes it live from the app: their own client performs the
 // request with their own session, so every route's own checks (role, password
 // step-up, ownership) still run, and the proposal is the receipt either way.
-import { json, type Db } from '@josi-ce/core';
+import { json, PcControlError, type Db, type MasterKey } from '@josi-ce/core';
 import type { ToolSpec } from './tools.js';
+import { PC_SETTING_AREAS, preparePcPermissionChange } from './pcPermissionSettings.js';
 
 export interface SettingsArea {
   area: string;
@@ -85,13 +86,19 @@ export const SETTINGS_AREAS: readonly SettingsArea[] = [
     fields: 'body.enabled: true stops every request to external model providers.' },
   { area: 'pc_control_enabled', title: 'Allow Josi to control this PC', scope: 'administrator', sensitive: true,
     method: 'PUT', path: '/admin/pc-control/enabled', keys: ['enabled'],
-    fields: 'body.enabled: true or false.' },
+    fields: 'Read pc_get_permissions first. params.pcId: the selected computer id. body.enabled: true or false. This alone grants no app, file or command access.' },
   { area: 'pc_control_full_control', title: 'Full control on this PC', scope: 'administrator', sensitive: true,
     method: 'PUT', path: '/admin/pc-control/full-control', keys: ['enabled'],
-    fields: 'body.enabled: true or false. Turning it on asks the person for their password when they approve.' },
+    fields: 'Read pc_get_permissions first. params.pcId selects the computer. body.enabled: true or false. This is the existing everyday-control preset, not unrestricted terminal or administrator access. Approval uses a protected password popup.' },
   { area: 'pc_control_scope', title: 'An exact PC Control permission', scope: 'administrator', sensitive: true,
-    method: 'PUT', path: '/admin/pc-control/policies',
+    method: 'PUT', path: '/admin/pc-control/policies', keys: ['action', 'scope', 'mode', 'expiresAt', 'taskId', 'approveRequestId'],
     fields: 'body.action: for example browser.view, browser.fill, browser.submit, folder.read. body.scope: for a browser {kind:"browser", target:"https://site", application:"C:\\\\...\\\\chrome.exe", profile:"Default"}; for a folder {kind:"folder", target:"C:\\\\Folder"}. body.mode: never, ask, task, temporary or always. body.expiresAt for temporary.' },
+  { area: 'pc_control_revoke', title: 'Revoke a saved PC permission', scope: 'administrator', sensitive: true,
+    method: 'DELETE', path: '/admin/pc-control/policies/{id}', params: ['id'], keys: [],
+    fields: 'Read pc_get_permissions first. params.pcId selects the computer; params.id is one of its saved permission ids. No body.' },
+  { area: 'pc_control_decide', title: 'Allow one exact PC action', scope: 'administrator', sensitive: true,
+    method: 'POST', path: '/admin/pc-control/requests/{id}/decision', params: ['id'], keys: ['approve'],
+    fields: 'Read pc_get_permissions first. params.pcId selects the computer; params.id is a pending request id. body.approve: true allows that exact immutable operation once, false denies it. Nothing is saved for future work.' },
   { area: 'member_connector_permission', title: 'Whether members may use a connector capability', scope: 'administrator', sensitive: true,
     method: 'PUT', path: '/admin/connectors/policy/{capability}', params: ['capability'], keys: ['allowed', 'note'],
     fields: 'params.capability: the capability key. body.allowed: true or false. body.note: optional reason shown to members.' },
@@ -178,6 +185,7 @@ export const SETTINGS_CHANGE_TOOLS: ToolSpec[] = [
 ];
 export const SETTINGS_CHANGE_TOOL_NAMES = new Set(SETTINGS_CHANGE_TOOLS.map((t) => t.def.name));
 export const SETTINGS_CHANGE_PROMPT = 'When the person asks to change a Josi setting (approvals, permissions, PC control, models, workspace, accounts), look it up with list_josi_settings and prepare it with propose_josi_setting_change. '
+  + 'For PC control, read pc_get_permissions first, name the selected computer, and pass params.pcId. If several computers are listed and the person has not identified one, ask which. The server generates the exact permission summary; never claim an unimplemented restriction or choose a different device. For pc_control_scope use body.action and body.scope from the actual catalog, mode never/ask/task/temporary/always, expiresAt for temporary, taskId for task, and optional approveRequestId to save a grant and approve its matching pending action atomically. A command working folder is not a sandbox. '
   + 'The change takes effect only after they approve it in the Josi app, so tell them it is waiting for their approval (or the administrator\'s) and never say it is done. '
   + 'A sensitive change also asks them for their password in that popup, so say so. '
   + 'Passwords, API keys and other secrets, two-factor sign-in, Cardinal Rules, the Vault and device approvals cannot be changed by asking: never prepare one, and tell them which screen to use. '
@@ -196,7 +204,7 @@ export function buildPath(area: SettingsArea, params: Record<string, unknown>): 
   return path;
 }
 
-export async function executeSettingsChangeTool(db: Db, userId: string, name: string, input: Record<string, unknown>, threadId: string | null = null) {
+export async function executeSettingsChangeTool(db: Db, userId: string, name: string, input: Record<string, unknown>, threadId: string | null = null, key: MasterKey | null = null) {
   if (name === 'list_josi_settings') {
     return { settings: SETTINGS_AREAS.map(({ area, title, scope, sensitive, params, fields }) => ({ area, title, scope, sensitive, params: params ?? [], fields })),
       note: 'Personal settings change only the person asking. Administrator settings wait for the super-admin. Every change is approved in the Josi app before it applies.' };
@@ -204,10 +212,10 @@ export async function executeSettingsChangeTool(db: Db, userId: string, name: st
   if (name !== 'propose_josi_setting_change') return { ok: false, code: 'unknown_tool' };
   const area = AREAS.get(String(input.area ?? ''));
   if (!area) return { ok: false, code: 'unknown_area', message: 'Choose an area from list_josi_settings.' };
-  const summary = String(input.summary ?? '').trim();
+  let summary = String(input.summary ?? '').trim();
   if (summary.length < 8 || summary.length > 600) return { ok: false, code: 'summary_required', message: 'Write one or two plain sentences saying what will change.' };
   const params = input.params && typeof input.params === 'object' && !Array.isArray(input.params) ? input.params as Record<string, unknown> : {};
-  const body = input.body && typeof input.body === 'object' && !Array.isArray(input.body) ? input.body as Record<string, unknown> : {};
+  let body = input.body && typeof input.body === 'object' && !Array.isArray(input.body) ? input.body as Record<string, unknown> : {};
   const secret = findSecret(body);
   if (secret) return { ok: false, code: 'no_secrets', message: `Never include a password, key or token (${secret}). The person enters those themselves.` };
   const extra = area.keys ? Object.keys(body).filter((key) => !area.keys!.includes(key)) : [];
@@ -216,6 +224,11 @@ export async function executeSettingsChangeTool(db: Db, userId: string, name: st
   if (encoded.length > 8192) return { ok: false, code: 'body_too_large', message: 'Keep the change under 8 KB.' };
   let path: string;
   try { path = buildPath(area, params); } catch (error) { return { ok: false, code: 'bad_params', message: (error as Error).message }; }
+  if (PC_SETTING_AREAS.has(area.area)) {
+    if (!key) return { ok: false, code: 'pc_permissions_unavailable', message: 'Encrypted PC permission storage is unavailable.' };
+    try { ({path,body,summary}=await preparePcPermissionChange(db,userId,key,area.area,body,params,path)); }
+    catch (error) { return { ok: false, code: 'invalid_pc_permission', message: error instanceof PcControlError ? error.message : 'PC permissions could not be read. Nothing changed.' }; }
+  }
   const [row] = await db.query<{ id: string }>(
     `insert into settings_change_proposals(proposer_user_id, scope, area, sensitive, title, summary, method, path, body, thread_id)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,

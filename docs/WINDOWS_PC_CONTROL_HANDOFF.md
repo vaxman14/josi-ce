@@ -1,5 +1,7 @@
 # Josi controls the PC it runs on: Windows handoff (November 8, 2026)
 
+> For the current code, approved workspace, verification and remaining work, read [PC_CONTROL_IMPLEMENTATION_STATUS.md](PC_CONTROL_IMPLEMENTATION_STATUS.md). The implementation below is historical.
+
 > Current direction, November 8, 2026: read the [Josi computer control plan](PC_CONTROL_PLAN.md). It replaces the next-step plan below with chat-managed granular permissions, full computer control, a blue takeover overlay, and independent Windows, macOS, and Linux implementation tracks. This handoff remains the historical Windows implementation record. The owner has now authorized the Windows implementation and build; installation, service changes, and release publication still require explicit approval.
 
 For whoever continues this (Codex, Claude, or Roman): what the owner asked for,

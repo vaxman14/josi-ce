@@ -68,6 +68,14 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     return row;
   }
   const visible = (row: Row, user: { id: string; role: string }) => row.proposer_user_id === user.id || user.role === 'super_admin';
+  const isPcChange = (row: Row) => row.area.startsWith('pc_control_');
+  function checkPcChange(row: Row, user: { id: string }) {
+    if (!isPcChange(row)) return;
+    if (row.proposer_user_id !== user.id) throw fail(403, 'Only the owner of this PC permission proposal can apply it.');
+    const target = new URL(row.path, 'http://josi.invalid');
+    if (target.searchParams.get('ownerId') !== row.proposer_user_id || !/^[a-z0-9-]{1,80}$/.test(target.searchParams.get('pcId') ?? '')
+      || !/^\d+$/.test(target.searchParams.get('revision') ?? '')) throw fail(409, 'Ask Josi to prepare this PC permission again with its target computer.');
+  }
   /** Whether this user is the one whose app applies the change. */
   // The outcome goes back into the conversation that prepared the change, so
   // the thread says what happened instead of "waiting for approval" forever.
@@ -78,7 +86,8 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     catch { /* the thread may be gone */ }
   };
   const applier = (row: Row, user: { id: string; role: string }) =>
-    row.scope === 'administrator' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
+    isPcChange(row) ? row.proposer_user_id === user.id && user.role === 'super_admin'
+      : row.scope === 'administrator' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
   // The stored body is JSON text; the app sends it on as the request body, so
   // it must travel as an object. As text it would arrive double-encoded and
   // the setting's route would reject it with a 400 (the October 22 memory
@@ -94,7 +103,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     title: row.title, summary: row.summary, state: row.state, createdAt: row.created_at, expiresAt: row.expires_at,
     approvedAt: row.approved_at, appliedAt: row.applied_at, error: row.error,
     // What this viewer can do with it right now.
-    canApprove: row.state === 'proposed' && (row.scope === 'administrator' ? user.role === 'super_admin'
+    canApprove: row.state === 'proposed' && (!isPcChange(row) || row.proposer_user_id === user.id) && (row.scope === 'administrator' ? user.role === 'super_admin'
       : rule === 'super_admin' ? user.role === 'super_admin' : row.proposer_user_id === user.id),
     canDeny: ['proposed', 'approved'].includes(row.state) && visible(row, user),
     // Approved by the super-admin for a member: that member's app applies it.
@@ -136,12 +145,14 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
       return res.json({ ok: true, state: 'denied' });
     }
     if (row.state !== 'proposed') throw fail(409, `That proposal is already ${row.state}.`);
+    checkPcChange(row, user);
     const allowed = row.scope === 'administrator' ? user.role === 'super_admin'
       : rule === 'super_admin' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
     if (!allowed) throw fail(403, row.scope === 'administrator' ? 'Only the super-admin can approve an administrator setting.'
       : 'Changes by members wait for the super-admin on this installation.');
     if (row.sensitive) await confirmPassword(req, res, user.id);
-    await db.query(`update settings_change_proposals set state = 'approved', approved_by = $2, approved_at = now() where id = $1`, [row.id, user.id]);
+    const claimed = await db.query(`update settings_change_proposals set state = 'approved', approved_by = $2, approved_at = now() where id = $1 and state = 'proposed' and expires_at > now() returning id`, [row.id, user.id]);
+    if (!claimed.length) throw fail(409, 'That proposal was already decided or expired.');
     return res.json({ ok: true, state: 'approved', apply: applier(row, user) ? change(row) : null });
   }));
 

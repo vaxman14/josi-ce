@@ -18,11 +18,11 @@
 #   - Prepare the private Python with the voice packages: scripts\windows\Prepare-VoiceSpike.ps1
 #     (it pins everything it downloads). Its result lives in artifacts\windows-native\tools\python-3.12.15.
 #   - Have the pinned subscription CLIs in a node_modules folder (-CliRoot): the dev server's
-#     C:\Dev\josi-dev\cli after "npm ci" there.
+#     artifacts\windows-native\tools\subscription-cli after "npm ci" there.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$Version,
-  [string]$CliRoot = 'C:\Dev\josi-dev\cli\node_modules',
+  [string]$CliRoot = '',
   [switch]$Sign,
   [string]$SigningConfig = '',
   [switch]$Publish,
@@ -32,6 +32,11 @@ $ErrorActionPreference = 'Stop'; Set-StrictMode -Version Latest
 if ($Version -notmatch '^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$') { throw 'Version must look like 1.0.0 or 1.0.0-rc.1' }
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $base = Join-Path $repo 'artifacts\windows-native'
+$release = [IO.Path]::GetFullPath((Join-Path $base ('releases\' + $Version)))
+$releaseRoot = [IO.Path]::GetFullPath((Join-Path $base 'releases')) + '\'
+if (!$release.StartsWith($releaseRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Release output must stay inside this workspace.' }
+if (Test-Path -LiteralPath $release) { throw "Release folder already exists: $release. Choose a new version to preserve its artifacts." }
+if (!$CliRoot) { $CliRoot = Join-Path $base 'tools\subscription-cli\node_modules' }
 $scripts = $PSScriptRoot
 $node = Join-Path $base 'tools\node-v24.21.0-win-x64\node.exe'
 $python = Join-Path $base 'tools\python-3.12.15\python\python.exe'
@@ -150,8 +155,6 @@ if ($Sign) {
 }
 
 Step 'Release folder'
-$release = Join-Path $base ('releases\' + $Version)
-if (Test-Path $release) { Remove-Item $release -Recurse -Force }
 $null = New-Item -ItemType Directory -Force $release
 Copy-Item -LiteralPath $installer.path -Destination $release
 $exeName = Split-Path $installer.path -Leaf

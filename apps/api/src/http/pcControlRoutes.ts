@@ -14,8 +14,21 @@ export function pcControlRoutes(ctx:Ctx):Router {
   const r=Router();const services=new Map<string,PcControl>();
   r.use(requireSuperAdmin);
   r.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
+  function targetPc(req:Request){
+    if(req.query.ownerId!==undefined&&req.query.ownerId!==req.user!.id)throw new PcControlError(403,'This PC permission change belongs to another account.');
+    if(req.query.pcId===undefined)return pcIdFrom(req.get('x-josi-pc'));
+    if(req.path.startsWith('/executor')||typeof req.query.pcId!=='string'||!/^[a-z0-9-]{1,80}$/.test(req.query.pcId))
+      throw new PcControlError(400,'Choose a valid target PC.');
+    return req.query.pcId;
+  }
+  function revision(req:Request){
+    const value=req.query.revision;
+    if(value===undefined)return undefined;
+    if(typeof value!=='string'||!/^\d+$/.test(value)||!Number.isSafeInteger(Number(value)))throw new PcControlError(400,'Invalid PC permission revision.');
+    return Number(value);
+  }
   function control(req:Request){
-    const pcId=pcIdFrom(req.get('x-josi-pc'));
+    const pcId=targetPc(req);
     const known=services.get(pcId);if(known)return known;
     if(ctx.masterKey===false)throw new PcControlError(503,'Encrypted permission storage is unavailable.');
     try{const service=new PcControl(ctx.db,loadMasterKey(ctx.masterKey??{}),pcId);services.set(pcId,service);return service;}
@@ -35,10 +48,11 @@ export function pcControlRoutes(ctx:Ctx):Router {
         :'Permissions can be saved here. Browser control starts when the Josi app is open and a tab is attached with the Josi browser extension.',
       uac:'Windows UAC always requires its own approval. Josi cannot approve future prompts.'});
   }));
-  r.put('/enabled',handle(async(req,res)=>{await control(req).setEnabled(req.user!.id,req.body?.enabled);return res.json({ok:true});}));
+  r.put('/enabled',handle(async(req,res)=>{await control(req).setEnabled(req.user!.id,req.body?.enabled,revision(req));return res.json({ok:true});}));
   r.post('/stop',handle(async(req,res)=>{
     // Stop works even when the sealed store cannot be opened: the plain rows are enough to revoke.
-    try{await control(req).stop(req.user!.id);}catch{await disablePcControl(ctx.db,req.user!.id,pcIdFrom(req.get('x-josi-pc')));}
+    const pcId=targetPc(req);
+    try{await control(req).stop(req.user!.id);}catch{await disablePcControl(ctx.db,req.user!.id,pcId);}
     return res.json({ok:true,enabled:false,note:'Control disabled and temporary/task access revoked. Already completed changes cannot be undone.'});
   }));
   // Turning full control ON is a standing grant for everyday actions, so it
@@ -49,20 +63,20 @@ export function pcControlRoutes(ctx:Ctx):Router {
       const [u]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
       if(!await verifyPassword(u?.password_hash??null,typeof req.body?.password==='string'?req.body.password:''))throw new PcControlError(401,'Confirm your account password to turn on full control.');
     }
-    await control(req).setFullControl(req.user!.id,req.body.enabled);
+    await control(req).setFullControl(req.user!.id,req.body.enabled,revision(req));
     return res.json({ok:true,fullControl:req.body.enabled});
   }));
   // A standing grant for a high-risk action (commands in a shell and folder)
   // takes the account password once, like full control. Never and Ask do not.
   r.put('/policies',handle(async(req,res)=>{
-    const {password,...policy}=(req.body??{}) as PcPolicy&{password?:unknown};
-    if(pcActionIsHighRisk(policy.action)&&['always','temporary','task'].includes(policy.mode)){
+    const {password,approveRequestId,...policy}=(req.body??{}) as PcPolicy&{password?:unknown;approveRequestId?:string};
+    if(approveRequestId!==undefined||(pcActionIsHighRisk(policy.action)&&['always','temporary','task'].includes(policy.mode))){
       const [u]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
       if(!await verifyPassword(u?.password_hash??null,typeof password==='string'?password:''))throw new PcControlError(401,'Confirm your account password to let Josi do this without asking each time.');
     }
-    return res.json(await control(req).savePolicy(req.user!.id,policy as PcPolicy));
+    return res.json(await control(req).savePolicy(req.user!.id,policy as PcPolicy,{expectedRevision:revision(req),approveRequestId}));
   }));
-  r.delete('/policies/:id',handle(async(req,res)=>{await control(req).revoke(req.user!.id,param(req,'id'));return res.json({ok:true});}));
+  r.delete('/policies/:id',handle(async(req,res)=>{await control(req).revoke(req.user!.id,param(req,'id'),revision(req));return res.json({ok:true});}));
   r.post('/requests/:id/decision',handle(async(req,res)=>{
     if(typeof req.body?.approve!=='boolean')throw new PcControlError(400,'Choose approve or deny.');
     if(req.body.approve){
@@ -73,12 +87,12 @@ export function pcControlRoutes(ctx:Ctx):Router {
         if(!await verifyPassword(u?.password_hash??null,typeof req.body?.password==='string'?req.body.password:''))throw new PcControlError(401,'Confirm your account password to approve this high-risk action.');
       }
     }
-    await control(req).decide(req.user!.id,param(req,'id'),req.body.approve);return res.json({ok:true});
+    await control(req).decide(req.user!.id,param(req,'id'),req.body.approve,revision(req));return res.json({ok:true});
   }));
   // The Windows app is the executor. It reports its attached browser, claims
   // approved work one request at a time and reports what happened. A claim
   // goes through execute(), so every policy check runs again at that moment.
-  const running=new Map<string,(ok:boolean,result:unknown)=>Promise<void>>();
+  const running=new Map<string,{owner:string;pcId:string;finish:(ok:boolean,result:unknown)=>Promise<void>}>();
   r.put('/executor/presence',handle(async(req,res)=>{
     await control(req).setPresence(req.user!.id,req.body?.connected===true?req.body.browser as PcBrowserPresence:null);
     return res.json({ok:true});
@@ -94,11 +108,11 @@ export function pcControlRoutes(ctx:Ctx):Router {
       const done=service.execute(owner,id,plan,(_plan,signal)=>new Promise<void>((resolve,reject)=>{
         const timer=setTimeout(()=>{running.delete(id);void service.saveResult(owner,id,{ok:false,code:'executor_timeout'}).finally(()=>reject(new Error('timeout')));},wait);
         signal.addEventListener('abort',()=>{clearTimeout(timer);running.delete(id);reject(new Error('stopped'));},{once:true});
-        running.set(id,async(ok,result)=>{
+        running.set(id,{owner,pcId:service.pcId,finish:async(ok,result)=>{
           clearTimeout(timer);running.delete(id);
           await service.saveResult(owner,id,{ok,result});
           if(ok)resolve();else reject(new Error('failed'));
-        });
+        }});
         claimed();
       }));
       done.catch(()=>undefined);
@@ -107,11 +121,17 @@ export function pcControlRoutes(ctx:Ctx):Router {
     }
     return res.json({request:null});
   }));
+  r.get('/executor/:id/lease',handle(async(req,res)=>{
+    const active=running.get(param(req,'id')),service=control(req);
+    if(!active||active.owner!==req.user!.id||active.pcId!==service.pcId)throw new PcControlError(404,'This request is not running on this PC.');
+    const authorized=await service.executionAuthorized(req.user!.id,param(req,'id'));
+    return res.json({authorized,leaseMilliseconds:5000});
+  }));
   r.post('/executor/:id/result',handle(async(req,res)=>{
-    const finish=running.get(param(req,'id'));
-    if(!finish)throw new PcControlError(404,'This request is not running.');
+    const active=running.get(param(req,'id'));
+    if(!active||active.owner!==req.user!.id||active.pcId!==control(req).pcId)throw new PcControlError(404,'This request is not running on this PC.');
     if(typeof req.body?.ok!=='boolean')throw new PcControlError(400,'Report success or failure.');
-    await finish(req.body.ok,req.body.result??null);
+    await active.finish(req.body.ok,req.body.result??null);
     return res.json({ok:true});
   }));
   return r;

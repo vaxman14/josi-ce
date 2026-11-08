@@ -34,6 +34,8 @@ namespace Josi.Native {
         KeyDown += (s, e) => { if (e.Key == Key.Escape && !Locked) Close(); };
         SourceInitialized += delegate {
           var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+          // Protected approvals/recovery stay out of public capture APIs.
+          SetWindowDisplayAffinity(handle, 0x11);
           var on = 1; NativeDark(handle, 20, ref on);
           var caption = 0x00301E14; NativeDark(handle, 35, ref caption);
         };
@@ -44,6 +46,7 @@ namespace Josi.Native {
       }
     }
     [System.Runtime.InteropServices.DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr window, uint affinity);
     static void NativeDark(IntPtr handle, int attribute, ref int value) { try { DwmSetWindowAttribute(handle, attribute, ref value, sizeof(int)); } catch (Exception) { } }
 
     public static bool Confirm(Window owner, string title, string detail, string action) {

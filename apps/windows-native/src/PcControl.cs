@@ -70,7 +70,7 @@ namespace Josi.Native {
       var form = new List<UIElement> { Ui.Caption("Each browser executable, profile and origin needs its own permission. Folder choices apply to that exact folder; application choices to that exact executable. No wildcard or inherited grants."),
         Ui.Field("Action", actionPick) };
       if (!spec.IsNull) form.Add(Ui.Caption(spec["access"].Text + (spec["highRisk"].Flag && !spec["grantable"].Flag ? " · Each exact action needs separate approval in every mode."
-        : kind == "command" ? " · High risk. Allowing a shell here lets Josi run commands in this folder and every folder under it without asking; your password confirms it." : "")));
+        : kind == "command" ? " · High risk. This chooses a starting folder, not a sandbox. Commands can access other files and start programs with your Windows account's authority. Your password confirms the grant." : "")));
       form.Add(Ui.Field(kind == "browser" ? "Exact website origin (for example https://example.com)" : kind == "application" ? "Exact application .exe path" : kind == "command" ? "Folder Josi may run commands in (and its subfolders)" : kind == "folder" ? "Exact local folder path" : kind == "secret" ? "Exact credential or item identifier" : "Exact software or settings scope", target));
       if (kind == "command" && application.Text.Trim().Length == 0) application.Text = Shells[0].Value;
       if (kind == "browser") form.Add(Ui.Field("Exact browser .exe path", application));
@@ -117,11 +117,9 @@ namespace Josi.Native {
             if (box.Password.Length == 0) { model.Error = "Enter your password to allow commands here from now on."; model.Notify(); return; }
             var password = box.Password; box.Clear();
             var scope = command["scope"];
-            Perform(async (api, stamp) => {
-              await api.Request("/admin/pc-control/policies", "PUT", Wires.O("action", "command.run", "scope", Wires.O("kind", "command", "target", scope["target"].Text, "application", scope["application"].Text), "mode", "always", "password", password));
-              // Saving a permission re-decides pending work, so this request is approved explicitly as well.
-              try { await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", true, "password", password)); } catch (JosiException) { }
-            });
+            Perform(async (api, stamp) => await api.Request("/admin/pc-control/policies", "PUT",
+              Wires.O("action", "command.run", "scope", Wires.O("kind", "command", "target", scope["target"].Text, "application", scope["application"].Text),
+                "mode", "always", "password", password, "approveRequestId", id)));
           }), requestId + ".allow-always"));
         }
         buttons.Children.Add(Automation.Id(Ui.Pill("Deny", () => Perform(async (api, stamp) => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", false)))), requestId + ".deny"));
@@ -204,7 +202,7 @@ namespace Josi.Native {
       if (spec["highRisk"].Flag && mode != "never" && mode != "ask") {
         var password = Dialogs.AskPassword(owner, kind == "command" ? "Let Josi run commands here without asking?" : "Allow this without asking?",
           kind == "command" ? "Josi will run commands, scripts, builds and tests in " + (string)scope["target"] + " and every folder under it, in " + (Shells.FirstOrDefault(s => s.Key.Equals((string)scope["application"], StringComparison.OrdinalIgnoreCase)).Value ?? "this shell")
-            + ", as you, whenever a conversation or task calls for it. Each command is logged under PC Control; Stop ends it. Confirm your account password to allow this."
+            + ", as you, whenever a conversation or task calls for it. This is a starting folder, not a sandbox: commands can access other files and start programs. Stop ends active work. Confirm your account password to allow this."
             : "Confirm your account password to let Josi do this without asking each time.", "Allow");
         if (password == null) return;
         body["password"] = password;

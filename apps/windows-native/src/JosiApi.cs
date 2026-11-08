@@ -205,14 +205,15 @@ namespace Josi.Native {
 
     public Task<Wire> Request(string route) { return Request(route, "GET", null, null); }
     public Task<Wire> Request(string route, string method, object body) { return Request(route, method, body, null); }
-    public async Task<Wire> Request(string route, string method, object body, IDictionary<string, string> headers) {
+    public async Task<Wire> Request(string route, string method, object body, IDictionary<string, string> headers, CancellationToken cancellation = default) {
       var url = Route(route);
       if (method != "GET" && (tunnel != null ? session == null : csrf == null && !native)) await PrimeCsrf();
+      using (var bounded = CancellationTokenSource.CreateLinkedTokenSource(closing.Token, cancellation))
       using (var message = Message(method, url)) {
         if (headers != null) foreach (var pair in headers) message.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
         if (body != null) message.Content = new StringContent(Wires.Serialize(body), Encoding.UTF8, "application/json");
         HttpResponseMessage response;
-        try { response = await http.SendAsync(message, closing.Token); }
+        try { response = await http.SendAsync(message, bounded.Token); }
         catch (OperationCanceledException) { if (closed) throw; throw new JosiException("The server did not answer in time. Check the connection and try again."); }
         catch (HttpRequestException e) { throw new JosiException(Unreachable(e)); }
         using (response) {

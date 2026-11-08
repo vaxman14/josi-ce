@@ -96,7 +96,7 @@ namespace Josi.Native {
     readonly Border errorBar = new Border();
     readonly Border busyBar = new Border();
     readonly Border controlBar = new Border { Visibility = Visibility.Collapsed };
-    readonly System.Windows.Threading.DispatcherTimer controlTick = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+    PcControlOverlay controlOverlay;
     // One line of machine-readable state for automation (AUTOMATION.md):
     // invisible to a person, readable through UI Automation as josi.status.
     readonly TextBlock statusLine = new TextBlock { FontSize = 1, Height = 1, Foreground = Brushes.Transparent, IsHitTestVisible = false, Focusable = false };
@@ -106,19 +106,18 @@ namespace Josi.Native {
     string demoPc; bool pcStopped;
 
     /// Who is in control of this desktop: Josi working (with Pause and Stop),
-    /// paused, or you after touching the mouse or keyboard (with a countdown
-    /// and Resume). Hidden when nothing is happening.
+    /// paused, or you after touching the mouse or keyboard (until Resume). Hidden when nothing is happening.
     void RenderControlBar() {
       var executor = DesktopExecutor.Current;
-      var left = executor.TakenOverSecondsLeft;
+      var takenOver = executor.TakenOver;
       var scripted = Automation.Demo ? demoPc : null;
       var paused = scripted != null ? scripted == "paused" : executor.Paused;
       var working = scripted != null ? scripted == "working" : executor.Busy;
-      if (scripted != null) left = scripted == "takeover" ? 20 : 0;
+      if (scripted != null) takenOver = scripted == "takeover";
       if (executor.Busy) pcStopped = false;
-      var show = working || paused || left > 0;
-      controlTick.IsEnabled = show && scripted == null;
-      Automation.Pc = !show ? (pcStopped ? "stopped" : "off") : paused ? "paused" : left > 0 ? "takeover" : "working";
+      var show = working || paused || takenOver;
+      Automation.Pc = !show ? (pcStopped ? "stopped" : "off") : paused ? "paused" : takenOver ? "takeover" : "working";
+      controlOverlay?.Update(show, working, paused, takenOver, scripted != null || executor.ScreenControl, executor.Activity);
       if (!show) { controlBar.Visibility = Visibility.Collapsed; controlBar.Child = null; return; }
       Action pause = () => { if (scripted != null) { demoPc = "paused"; RenderControlBar(); } else executor.Pause(); };
       Action resume = () => { if (scripted != null) { demoPc = "working"; RenderControlBar(); } else executor.Resume(); };
@@ -128,10 +127,10 @@ namespace Josi.Native {
         sentence = "Josi is paused on this PC.";
         status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
         actions.Children.Add(Automation.Id(Ui.Pill("Resume", resume, true), "josi.pc-control.resume"));
-      } else if (left > 0) {
-        sentence = "You took over. Josi waits " + left + " s before using this PC again.";
+      } else if (takenOver) {
+        sentence = "You are in control. Josi waits until you choose Resume.";
         status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
-        actions.Children.Add(Automation.Id(Ui.Pill("Let Josi Continue", resume), "josi.pc-control.continue"));
+        actions.Children.Add(Automation.Id(Ui.Pill("Resume", resume), "josi.pc-control.continue"));
         actions.Children.Add(Automation.Id(Ui.Pill("Pause Josi", pause), "josi.pc-control.pause"));
       } else {
         sentence = "Josi is using this PC: " + (scripted != null ? "demo activity" : executor.Activity) + ". Move the mouse or type to take over.";
@@ -139,15 +138,20 @@ namespace Josi.Native {
         actions.Children.Add(Automation.Id(Ui.Pill("Pause", pause), "josi.pc-control.pause"));
       }
       actions.Children.Add(Automation.Id(Ui.Danger("Stop Josi", () => {
-        pcStopped = true;
-        if (scripted != null) { demoPc = null; RenderControlBar(); return; }
-        executor.Pause();
-        Model.Run(async () => { var api = Model.Api; if (api != null) await api.Request("/admin/pc-control/stop", "POST", Wires.O()); });
+        StopPcControl();
       }), "josi.pc-control.stop"));
       controlBar.Child = Automation.Group("josi.pc-control.banner", sentence, Ui.Spread(status, actions));
       controlBar.Padding = new Thickness(16, 8, 16, 8); controlBar.Background = Ui.AccentFaint;
       controlBar.BorderBrush = Ui.Accent; controlBar.BorderThickness = new Thickness(0, 0, 0, 1);
       controlBar.Visibility = Visibility.Visible;
+    }
+
+    void StopPcControl() {
+      pcStopped = true;
+      if (Automation.Demo && demoPc != null) { demoPc = null; RenderControlBar(); return; }
+      // Local cancellation is synchronous and never waits for the network.
+      DesktopExecutor.Current.Pause();
+      Model.Run(async () => { var api = Model.Api; if (api != null) await api.Request("/admin/pc-control/stop", "POST", Wires.O()); });
     }
 
     public MainWindow() {
@@ -174,7 +178,11 @@ namespace Josi.Native {
       Content = root;
       if (Flags.LocalWorkspace) DesktopExecutor.Current.Start(Dispatcher);
       DesktopExecutor.Current.Changed += RenderControlBar;
-      controlTick.Tick += delegate { RenderControlBar(); };
+      if (Flags.LocalWorkspace) controlOverlay = new PcControlOverlay(
+        () => { if (Automation.Demo && demoPc != null) { demoPc = "takeover"; RenderControlBar(); } else DesktopExecutor.Current.TakeOver(); },
+        () => { if (Automation.Demo && demoPc != null) { demoPc = "paused"; RenderControlBar(); } else DesktopExecutor.Current.Pause(); },
+        () => { if (Automation.Demo && demoPc != null) { demoPc = "working"; RenderControlBar(); } else DesktopExecutor.Current.Resume(); },
+        StopPcControl, () => { Show(); WindowState = WindowState.Normal; Activate(); Model.Section = "chat"; workspace?.Go("chat"); });
       Automation.Changed += () => { statusLine.Text = Automation.Summary; System.Windows.Automation.AutomationProperties.SetName(statusLine, Automation.Summary); };
 
       Model.Attach(this);
@@ -411,6 +419,9 @@ namespace Josi.Native {
       }
       // Closing the window never stops a server on this PC; it keeps serving
       // other devices until stopped from Server.
+      DesktopExecutor.Current.Pause();
+      DesktopExecutor.Current.Changed -= RenderControlBar;
+      controlOverlay?.Dispose();
       if (workspace != null) workspace.Detach();
       if (Model.Api != null) Model.Api.Dispose();
       base.OnClosing(e);

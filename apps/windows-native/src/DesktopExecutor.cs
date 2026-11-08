@@ -20,10 +20,10 @@ namespace Josi.Native {
   /// decided by the server's PC Control (your permissions or your approval),
   /// scoped to one exact program; this executor re-checks that the window
   /// still belongs to that program before touching it. Your own mouse or
-  /// keyboard stops Josi at once and keeps it stopped for a short while.
+  /// keyboard stops screen control until the person explicitly resumes.
   sealed class DesktopExecutor {
     public static readonly DesktopExecutor Current = new DesktopExecutor();
-    const int MaxElements = 400, MaxDepth = 16, TakeoverSeconds = 20, ScreenshotBase64Limit = 131072;
+    const int MaxElements = 400, MaxDepth = 16, ScreenshotBase64Limit = 131072;
 
     sealed class Observation {
       public IntPtr Window; public string Application; public DateTime At;
@@ -33,41 +33,72 @@ namespace Josi.Native {
     readonly Dictionary<string, Observation> observations = new Dictionary<string, Observation>();
     Dispatcher ui;
     CancellationTokenSource running; bool runningOnScreen;
-    DateTime takenOverUntil = DateTime.MinValue;
+    bool takenOver;
     bool paused;
+    string stateFile;
 
     // --------------------------------------------------------------- state
     /// What Josi is doing on the desktop right now, for the control banner.
     public bool Busy { get; private set; }
     public string Activity { get; private set; } = "";
     public bool Paused { get { lock (gate) return paused; } }
-    public int TakenOverSecondsLeft { get { lock (gate) { var left = (takenOverUntil - DateTime.UtcNow).TotalSeconds; return left > 0 ? (int)Math.Ceiling(left) : 0; } } }
+    public bool TakenOver { get { lock (gate) return takenOver; } }
+    public bool ScreenControl { get { lock (gate) return runningOnScreen && !paused && !takenOver; } }
     public event Action Changed;
     void Raise() { var u = ui; if (u != null) u.BeginInvoke(new Action(() => Changed?.Invoke())); }
 
-    public void Start(Dispatcher dispatcher) { ui = dispatcher; }
-    public void Pause() { lock (gate) paused = true; CancelCurrent("paused"); Raise(); }
-    public void Resume() { lock (gate) { paused = false; takenOverUntil = DateTime.MinValue; } Raise(); }
+    public void Start(Dispatcher dispatcher, string localStateFile = null) {
+      ui = dispatcher;
+      stateFile = localStateFile ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi", "pc-control-pause" + AppLinks.Instance + ".json");
+      try {
+        if (File.Exists(stateFile)) {
+          var stored = Wires.Parse(File.ReadAllText(stateFile));
+          lock (gate) { paused = !stored["paused"].IsBool || stored["paused"].Flag; takenOver = !stored["takenOver"].IsBool || stored["takenOver"].Flag; }
+        }
+      } catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is System.Text.Json.JsonException) { paused = true; }
+      Raise();
+    }
+    void SavePause() {
+      if (stateFile == null) return;
+      string json;
+      lock (gate) json = Wires.Serialize(Wires.O("paused", paused, "takenOver", takenOver));
+      Directory.CreateDirectory(Path.GetDirectoryName(stateFile));
+      var temporary = stateFile + ".tmp";
+      File.WriteAllText(temporary, json);
+      File.Move(temporary, stateFile, true);
+    }
+    public void Pause() { lock (gate) paused = true; CancelCurrent("paused"); Raise(); SavePause(); }
+    public void Resume() {
+      lock (gate) { paused = false; takenOver = false; }
+      try { SavePause(); } catch { lock (gate) paused = true; Raise(); throw; }
+      Raise();
+    }
     /// True when Josi may not act on the desktop at this moment.
-    public bool Blocked { get { lock (gate) return paused || DateTime.UtcNow < takenOverUntil; } }
+    public bool Blocked { get { lock (gate) return paused || takenOver; } }
 
     // ---------------------------------------------------- human takeover
     // Low-level hooks see every mouse and keyboard event before the programs
     // do, and flag events Josi itself injected, so a real person moving the
     // mouse or typing is unmistakable: the current action is cancelled and
-    // the desktop stays Josi-free for a short while.
+    // the desktop stays under human control until an explicit Resume.
     delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
     HookProc keyboardHook, mouseHook; IntPtr keyboardHandle, mouseHandle; int engaged;
     Point lastMouse;
     void Engage() {
       var u = ui; if (u == null) return;
       u.Invoke(new Action(() => {
-        if (keyboardHandle != IntPtr.Zero) return;
+        if (keyboardHandle != IntPtr.Zero && mouseHandle != IntPtr.Zero) return;
         keyboardHook = KeyboardProc; mouseHook = MouseProc;
         var module = GetModuleHandle(null);
         keyboardHandle = SetWindowsHookEx(13, keyboardHook, module, 0);
         mouseHandle = SetWindowsHookEx(14, mouseHook, module, 0);
         GetCursorPos(out lastMouse);
+        if (keyboardHandle == IntPtr.Zero || mouseHandle == IntPtr.Zero) {
+          if (keyboardHandle != IntPtr.Zero) UnhookWindowsHookEx(keyboardHandle);
+          if (mouseHandle != IntPtr.Zero) UnhookWindowsHookEx(mouseHandle);
+          keyboardHandle = mouseHandle = IntPtr.Zero;
+          throw new InvalidOperationException("Human takeover hooks are unavailable.");
+        }
       }));
     }
     void Disengage() {
@@ -78,7 +109,7 @@ namespace Josi.Native {
       }));
     }
     IntPtr KeyboardProc(int code, IntPtr wParam, IntPtr lParam) {
-      if (code >= 0) {
+      if (code >= 0 && (wParam.ToInt64() == 0x100 || wParam.ToInt64() == 0x104)) {
         var flags = Marshal.ReadInt32(lParam, 8);
         if ((flags & 0x10) == 0) Takeover("keyboard");
       }
@@ -90,17 +121,23 @@ namespace Josi.Native {
         var message = wParam.ToInt64();
         if ((flags & 0x1) == 0) {
           var moved = Math.Abs(x - lastMouse.X) + Math.Abs(y - lastMouse.Y) > 8;
-          if (message != 0x200 || moved) Takeover("mouse");
+          // Ignore button release: releasing Resume must not pause it again.
+          if ((message == 0x200 && moved) || message == 0x201 || message == 0x204 || message == 0x207 || message == 0x20B || message == 0x20A || message == 0x20E) Takeover("mouse");
         }
         lastMouse = new Point(x, y);
       }
       return CallNextHookEx(mouseHandle, code, wParam, lParam);
     }
+    public void TakeOver() { Takeover("button"); }
     void Takeover(string by) {
       bool fresh;
-      lock (gate) { fresh = DateTime.UtcNow >= takenOverUntil; takenOverUntil = DateTime.UtcNow.AddSeconds(TakeoverSeconds); }
+      lock (gate) { fresh = !takenOver; takenOver = true; }
       CancelCurrent("human_control");
-      if (fresh) Raise();
+      if (fresh) {
+        Raise();
+        // Never do disk I/O inside the low-level input hook.
+        var u = ui; if (u != null) u.BeginInvoke(new Action(SavePause));
+      }
     }
     void CancelCurrent(string reason) {
       CancellationTokenSource current; bool onScreen;
@@ -122,9 +159,15 @@ namespace Josi.Native {
       if (Paused || (screen && Blocked)) return refuse(Paused ? "paused" : "human_control");
       var cancel = new CancellationTokenSource();
       lock (gate) { running = cancel; runningOnScreen = screen; }
-      Busy = true; Activity = Describe(kind, scope, payload); Raise();
-      if (screen && Interlocked.Increment(ref engaged) == 1) Engage();
+      Busy = true; Activity = Describe(kind, scope, payload);
+      var hooked = false;
       try {
+        if (ui == null || ui.HasShutdownStarted) return refuse("control_surface_unavailable");
+        // The native status and local Stop must be visible before input starts.
+        ui.Invoke(new Action(() => Changed?.Invoke()));
+        if (screen) { Interlocked.Increment(ref engaged); hooked = true; Engage(); }
+        if (Paused || (screen && Blocked)) return refuse(Paused ? "paused" : "human_control");
+        cancel.Token.ThrowIfCancellationRequested();
         var result = await Task.Run(() => Perform(kind, requestId, payload, scope, cancel.Token));
         return result;
       } catch (OperationCanceledException) { return refuse(Paused ? "paused" : "human_control"); }
@@ -136,7 +179,7 @@ namespace Josi.Native {
         cancel.Dispose();
         Busy = false; Activity = ""; Raise();
         // Keep the hooks a moment longer: the next request usually follows at once.
-        if (screen) _ = Task.Delay(45000).ContinueWith(_ => { if (Interlocked.Decrement(ref engaged) == 0) Disengage(); });
+        if (hooked) _ = Task.Delay(45000).ContinueWith(_ => { if (Interlocked.Decrement(ref engaged) == 0) Disengage(); });
       }
     }
     /// Work that moves the mouse, types or changes windows, and so must yield to you.
@@ -183,6 +226,7 @@ namespace Josi.Native {
       if (kind == "desktop.launch") {
         var application = scope["target"].Text;
         if (scope["kind"].Text != "application" || !string.Equals(payload["application"].Text, application, StringComparison.OrdinalIgnoreCase) || !File.Exists(application)) return refuse("application_missing");
+        if (ProtectedApplication(application)) return refuse("protected_surface");
         var arguments = payload["arguments"].Text;
         var started = Process.Start(new ProcessStartInfo(application) { UseShellExecute = true, Arguments = arguments, WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) });
         Thread.Sleep(1500);
@@ -192,11 +236,13 @@ namespace Josi.Native {
       if (kind == "desktop.screenshot") {
         IntPtr window = IntPtr.Zero;
         if (payload["windowId"].Text.Length > 0) { window = WindowHandle(payload["windowId"].Text); if (window == IntPtr.Zero || !IsWindow(window)) return refuse("window_gone"); }
+        if (ProtectedWindow(window == IntPtr.Zero ? GetForegroundWindow() : window)) return refuse("protected_surface");
         return ok(Screenshot(window));
       }
       // Everything else needs a live window of the exact program the request was decided for.
       var handle = WindowHandle(payload["windowId"].Text);
       if (handle == IntPtr.Zero || !IsWindow(handle)) return refuse("window_gone");
+      if (ProtectedWindow(handle)) return refuse("protected_surface");
       var owner = ApplicationOf(handle);
       if (kind == "desktop.read") {
         if (owner == null) return refuse("window_unreadable");
@@ -233,8 +279,11 @@ namespace Josi.Native {
         var needsElement = kind == "desktop.click" || (kind == "desktop.type" && payload["elementId"].Text.Length > 0);
         if (needsElement && observation == null) return refuse("observation_changed");
         if (needsElement && !observation.Elements.TryGetValue(payload["elementId"].Text, out element)) return refuse("element_unknown");
+        if (element != null && element.Current.IsPassword) return refuse("protected_field");
         Foreground(handle);
         cancel.ThrowIfCancellationRequested();
+        var focused = AutomationElement.FocusedElement;
+        if (focused != null && focused.Current.IsPassword) return refuse("protected_field");
         if (kind == "desktop.click") method = Click(element);
         else if (kind == "desktop.type") method = element == null ? TypeKeystrokes(payload["text"].Text, cancel) : TypeText(element, payload["text"].Text, cancel);
         else method = Keys(payload["keys"].Text, cancel);
@@ -259,6 +308,17 @@ namespace Josi.Native {
         return list.Count < 200;
       }, IntPtr.Zero);
       return list;
+    }
+    static bool ProtectedApplication(string path) {
+      if (string.IsNullOrEmpty(path)) return false;
+      return string.Equals(path, Environment.ProcessPath, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Path.GetFileName(path), "consent.exe", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Path.GetFileName(path), "CredentialUIBroker.exe", StringComparison.OrdinalIgnoreCase);
+    }
+    static bool ProtectedWindow(IntPtr handle) {
+      if (handle == IntPtr.Zero) return false;
+      uint pid; GetWindowThreadProcessId(handle, out pid);
+      return pid == Environment.ProcessId || ProtectedApplication(ApplicationOf(handle));
     }
     static IntPtr WindowHandle(string id) { long value; return long.TryParse(id, out value) ? new IntPtr(value) : IntPtr.Zero; }
     static string Title(IntPtr handle) {
@@ -291,6 +351,8 @@ namespace Josi.Native {
         if (observation.Elements.Count >= MaxElements) { partial = true; break; }
         AutomationElement.AutomationElementInformation info;
         try { info = element.Current; } catch (ElementNotAvailableException) { continue; }
+        // Never return password values or a target that can fill one.
+        if (info.IsPassword) continue;
         var role = info.ControlType.ProgrammaticName.Replace("ControlType.", "").ToLowerInvariant();
         var name = (info.Name ?? "").Trim(); if (name.Length > 200) name = name.Substring(0, 200);
         string value = null;
@@ -342,6 +404,7 @@ namespace Josi.Native {
       return "mouse";
     }
     static string TypeText(AutomationElement element, string text, CancellationToken cancel) {
+      if (element.Current.IsPassword) throw new UnauthorizedAccessException("Protected field.");
       object pattern;
       if (element.TryGetCurrentPattern(ValuePattern.Pattern, out pattern) && !((ValuePattern)pattern).Current.IsReadOnly) {
         try { element.SetFocus(); } catch (InvalidOperationException) { }
@@ -463,6 +526,7 @@ namespace Josi.Native {
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr handle);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr handle, int command);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr handle);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr handle, StringBuilder text, int max);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr handle, out Rect rect);

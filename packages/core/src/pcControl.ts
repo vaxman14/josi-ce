@@ -40,6 +40,7 @@ export type PcScope = { kind:'browser'|'folder'|'application'|'command'|'system'
 export type PcRequirement = { action:PcAction; scope:PcScope };
 export type PcPlan = { requirements:PcRequirement[]; description:string; taskId?:string; payload:unknown };
 export type PcPolicy = PcRequirement & { mode:PcMode; taskId?:string; expiresAt?:string };
+export type PcPolicyUpdate = { expectedRevision?:number; approveRequestId?:string };
 export class PcControlError extends Error { constructor(readonly status:number, message:string){super(message);} }
 const fail = (message:string):never => {throw new PcControlError(400,message);};
 const uuid = (value:string) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
@@ -92,7 +93,7 @@ export const PC_FULL_CONTROL_ASKS:readonly PcAction[] = PC_ACTIONS.map(s=>s[0]).
 const fullControlCovers = (r:PcRequirement) => PC_FULL_CONTROL_ACTIONS.includes(r.action);
 /** High-risk actions the owner may pre-approve with a saved exact scope
  * (always, temporary or task). Commands are one: a grant for one shell in one
- * folder tree lets Josi work there the way a coding agent does. Saving such a
+ * starting folder tree authorizes a host shell, not filesystem isolation. Saving such a
  * grant takes the account password (the route checks). Every other high-risk
  * action still asks before each exact action, whatever is saved. */
 export const PC_GRANTABLE_HIGH_RISK:readonly PcAction[] = ['command.run'];
@@ -103,6 +104,23 @@ type RequestRow = {id:string;state:string;epoch:number|string;request_enc:string
 type Bound<T> = {owner:string;pc:string;value:T};
 const ASK_TTL=10*60*1000;
 export const PC_TEMP_MAX=24*60*60*1000;
+
+/** Canonical policy input, shared by chat previews and the actual writer. */
+export function normalizePcPolicy(input:PcPolicy,now=Date.now()):PcPolicy {
+  const requirement=normalizePcRequirement(input);
+  if(!PC_MODES.includes(input.mode))fail('Choose a valid approval mode.');
+  const value:PcPolicy={...requirement,mode:input.mode};
+  if(input.mode==='temporary'||input.mode==='task'){
+    const expiry=Date.parse(input.expiresAt??(input.mode==='task'?new Date(now+PC_TEMP_MAX).toISOString():''));
+    if(!Number.isFinite(expiry)||expiry<=now||expiry>now+PC_TEMP_MAX)fail('Temporary access must expire within 24 hours.');
+    value.expiresAt=new Date(expiry).toISOString();
+  }
+  if(input.mode==='task'){
+    if(!input.taskId||!uuid(input.taskId))fail('Choose an active task belonging to you.');
+    value.taskId=input.taskId;
+  }
+  return value;
+}
 
 /** Fail-safe emergency state change works even if the encryption key cannot be
  * loaded. Permanent policies are preserved but the master switch is disabled. */
@@ -136,12 +154,14 @@ export class PcControl {
     if(bound.owner!==owner||bound.pc!==this.pcId)throw new PcControlError(409,'Permission integrity check failed.');
     return bound.value;
   }
-  private async locked<T>(owner:string,fn:(db:Db,s:Settings)=>Promise<T>):Promise<T>{
+  private async locked<T>(owner:string,fn:(db:Db,s:Settings)=>Promise<T>,expectedRevision?:number):Promise<T>{
     if(!uuid(owner))fail('Invalid owner.');
     if(!this.db.transaction)throw new PcControlError(503,'Transactional permission storage is unavailable.');
     return this.db.transaction(async db=>{
       await db.query(`insert into pc_control_settings(owner_user_id,pc_id) values($1,$2) on conflict do nothing`,[owner,this.pcId]);
       const [s]=await db.query<Settings>(`select enabled,epoch,full_control from pc_control_settings where owner_user_id=$1 and pc_id=$2 for update`,[owner,this.pcId]);
+      if(expectedRevision!==undefined&&(!Number.isSafeInteger(expectedRevision)||expectedRevision<0||expectedRevision!==Number(s.epoch)))
+        throw new PcControlError(409,'PC permissions changed. Review a fresh proposal before applying it.');
       return fn(db,s);
     });
   }
@@ -154,11 +174,10 @@ export class PcControl {
     await db.query(`update pc_control_settings set epoch=epoch+1 where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);
     await db.query(`update pc_control_requests set state='revoked' where owner_user_id=$1 and pc_id=$2 and state in ('pending','approved')`,[owner,this.pcId]);
   }
-  async setEnabled(owner:string,enabled:boolean){
+  async setEnabled(owner:string,enabled:boolean,expectedRevision?:number){
     if(typeof enabled!=='boolean')fail('Choose on or off.');
     if(!enabled)return this.stop(owner);
-    this.cancel(owner);
-    return this.locked(owner,async(db)=>{await this.invalidate(db,owner);await db.query(`update pc_control_settings set enabled=true where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);await this.log(db,owner,'Control enabled; exact scopes still required');});
+    return this.locked(owner,async(db)=>{await this.invalidate(db,owner);await db.query(`update pc_control_settings set enabled=true where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);await this.log(db,owner,'Control enabled; exact scopes still required');this.cancel(owner);},expectedRevision);
   }
   async stop(owner:string){
     this.cancel(owner);
@@ -166,45 +185,56 @@ export class PcControl {
   }
   /** Full control is a standing grant, so turning it on or off re-decides
    * everything already prepared: nothing approved under the old rules runs. */
-  async setFullControl(owner:string,on:boolean){
+  async setFullControl(owner:string,on:boolean,expectedRevision?:number){
     if(typeof on!=='boolean')fail('Choose on or off.');
-    this.cancel(owner);
     return this.locked(owner,async(db,s)=>{
       if(on&&!s.enabled)throw new PcControlError(409,'Turn on "Allow Josi to control this PC" first.');
       await this.invalidate(db,owner);
       await db.query(`update pc_control_settings set full_control=$3 where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId,on]);
       await this.log(db,owner,on?'Full control turned on: everyday browser, folder and application actions no longer ask':'Full control turned off: exact scopes apply again');
-    });
+      this.cancel(owner);
+    },expectedRevision);
   }
   private async liveTask(db:Db,owner:string,taskId?:string){
     if(!taskId||!uuid(taskId))return false;
     return (await db.query(`select id from tasks where id=$1 and owner_user_id=$2 and state not in ('confirmed','failed','cancelled','closed')`,[taskId,owner])).length===1;
   }
-  async savePolicy(owner:string,input:PcPolicy){
-    const requirement=normalizePcRequirement(input);
-    if(!PC_MODES.includes(input.mode))fail('Choose a valid approval mode.');
-    const value:PcPolicy={...requirement,mode:input.mode};
-    if(input.mode==='temporary'||input.mode==='task'){
-      const expiry=Date.parse(input.expiresAt??(input.mode==='task'?new Date(this.now()+PC_TEMP_MAX).toISOString():'')); if(!Number.isFinite(expiry)||expiry<=this.now()||expiry>this.now()+PC_TEMP_MAX)fail('Temporary access must expire within 24 hours.');
-      value.expiresAt=new Date(expiry).toISOString();
-    }
-    if(input.mode==='task')value.taskId=input.taskId;
-    this.cancel(owner);
-    return this.locked(owner,async db=>{
+  async savePolicy(owner:string,input:PcPolicy,options:PcPolicyUpdate={}){
+    const value=normalizePcPolicy(input,this.now());
+    const requirement:PcRequirement={action:value.action,scope:value.scope};
+    return this.locked(owner,async(db,s)=>{
       if(value.mode==='task' && !await this.liveTask(db,owner,value.taskId))fail('Choose an active task belonging to you.');
+      let approved:Awaited<ReturnType<PcControl['request']>>|undefined;
+      if(options.approveRequestId!==undefined){
+        approved=await this.request(db,owner,options.approveRequestId);
+        if(!s.enabled||approved.row.state!=='pending'||Number(approved.row.epoch)!==Number(s.epoch)||Date.parse(approved.row.expires_at)<=this.now())
+          throw new PcControlError(409,'This request is no longer active.');
+        if(!['always','temporary','task'].includes(value.mode)||(highRisk(requirement)&&!grantable(requirement)))
+          fail('This action cannot be approved with a saved grant.');
+        if(!approved.plan.requirements.some(r=>this.hash(owner,r)===this.hash(owner,requirement)))
+          fail('The grant must match a scope in this exact request.');
+        if(value.mode==='task'&&value.taskId!==approved.plan.taskId)fail('The grant must belong to this request\'s task.');
+      }
       await this.invalidate(db,owner);
       const [row]=await db.query<{id:string}>(`insert into pc_control_policies(owner_user_id,pc_id,scope_hash,mode,policy_enc) values($1,$2,$3,$4,$5) on conflict(owner_user_id,pc_id,scope_hash) do update set mode=excluded.mode,policy_enc=excluded.policy_enc returning id`,[owner,this.pcId,this.hash(owner,requirement),value.mode,this.pack(owner,value)]);
+      if(approved){
+        if(await this.verdict(db,owner,s,approved.plan)==='denied')throw new PcControlError(409,'Control or this scope is disabled.');
+        await db.query(`update pc_control_requests set state='approved',human_approved=true,epoch=$2,expires_at=least(expires_at,$3::timestamptz) where id=$1`,[approved.row.id,Number(s.epoch)+1,value.expiresAt??approved.row.expires_at]);
+        await this.log(db,owner,'Exact action approved with saved permission',approved.plan);
+      }
       await this.log(db,owner,'Exact-scope permission changed',{description:PC_ACTIONS.find(s=>s[0]===value.action)![1],requirements:[requirement],...(value.taskId?{taskId:value.taskId}:{})});
+      this.cancel(owner);
       return {id:row.id,...value};
-    });
+    },options.expectedRevision);
   }
-  async revoke(owner:string,id:string){
-    if(!uuid(id))fail('Invalid permission.');this.cancel(owner);
+  async revoke(owner:string,id:string,expectedRevision?:number){
+    if(!uuid(id))fail('Invalid permission.');
     return this.locked(owner,async db=>{
       const rows=await db.query(`delete from pc_control_policies where id=$1 and owner_user_id=$2 and pc_id=$3 returning id`,[id,owner,this.pcId]);
       if(!rows.length)throw new PcControlError(404,'Permission not found.');
       await this.invalidate(db,owner);await this.log(db,owner,'Permission revoked');
-    });
+      this.cancel(owner);
+    },expectedRevision);
   }
   private normalize(plan:PcPlan):PcPlan {
     if(!Array.isArray(plan?.requirements)||!plan.requirements.length||plan.requirements.length>12)fail('Declare every exact scope required by this action.');
@@ -252,7 +282,7 @@ export class PcControl {
     if(this.hash(owner,plan)!==row.request_hash)throw new PcControlError(409,'Action integrity check failed.');
     return {row,plan};
   }
-  async decide(owner:string,id:string,approve:boolean){
+  async decide(owner:string,id:string,approve:boolean,expectedRevision?:number){
     if(typeof approve!=='boolean')fail('Choose approve or deny.');
     return this.locked(owner,async(db,s)=>{
       const {row,plan}=await this.request(db,owner,id);
@@ -260,7 +290,7 @@ export class PcControl {
       if(approve && await this.verdict(db,owner,s,plan)==='denied')throw new PcControlError(409,'Control or this scope is disabled.');
       await db.query(`update pc_control_requests set state=$2,human_approved=$3 where id=$1`,[id,approve?'approved':'denied',approve]);
       await this.log(db,owner,approve?'Exact action approved once':'Exact action denied',plan);
-    });
+    },expectedRevision);
   }
   /** The caller is trusted code with a narrow adapter, never request.body.
    * Single-use claim is committed before executing. No retries on failure.
@@ -291,6 +321,16 @@ export class PcControl {
   private async finish(db:Db,owner:string,id:string,state:string,plan:PcPlan){
     await db.query(`update pc_control_requests set state=$2 where id=$1 and state='executing'`,[id,state]);await this.log(db,owner,'Action '+state,plan);
   }
+  /** A short native execution lease. Rechecks durable state even when the
+   * policy change came through a different server/service instance. */
+  async executionAuthorized(owner:string,id:string):Promise<boolean>{
+    return this.locked(owner,async(db,s)=>{
+      const {row,plan}=await this.request(db,owner,id);
+      if(!s.enabled||row.state!=='executing'||Number(row.epoch)!==Number(s.epoch)||Date.parse(row.expires_at)<=this.now())return false;
+      const verdict=await this.verdict(db,owner,s,plan);
+      return verdict!=='denied'&&(row.human_approved||verdict==='approved');
+    });
+  }
   async snapshot(owner:string){
     return this.locked(owner,async(db,s)=>{
       const policies=await db.query<{id:string;policy_enc:string}>(`select id,policy_enc from pc_control_policies where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);
@@ -298,7 +338,7 @@ export class PcControl {
       const logs=await db.query<{id:string;created_at:string;kind:string;detail_enc:string|null}>(`select id,created_at,kind,detail_enc from pc_control_activity where owner_user_id=$1 and pc_id=$2 order by created_at desc,id desc limit 100`,[owner,this.pcId]);
       const tasks=await db.query<{id:string;name:string;created_at:string}>(`select t.id,tt.name,t.created_at from tasks t join task_templates tt on tt.key=t.template_key where t.owner_user_id=$1 and t.state not in ('confirmed','failed','cancelled','closed') order by t.created_at desc limit 100`,[owner]);
       const label=(a:PcAction)=>PC_ACTIONS.find(x=>x[0]===a)![1];
-      return {enabled:s.enabled,fullControl:s.full_control,pcId:this.pcId,
+      return {enabled:s.enabled,fullControl:s.full_control,pcId:this.pcId,revision:Number(s.epoch),
         fullControlCovers:PC_FULL_CONTROL_ACTIONS.map(label),fullControlAsks:PC_FULL_CONTROL_ASKS.map(label),
         catalog:PC_ACTIONS.map(([action,label,kind,risk,read])=>({action,label,kind,highRisk:risk,grantable:!risk||PC_GRANTABLE_HIGH_RISK.includes(action),access:read?'Read-only':'Read/write'})),
         tasks,policies:await Promise.all(policies.map(async p=>{const value=this.unpack<PcPolicy>(owner,p.policy_enc);return{id:p.id,...value,active:value.mode==='temporary'?Date.parse(value.expiresAt??'')>this.now():value.mode==='task'?Date.parse(value.expiresAt??'')>this.now()&&await this.liveTask(db,owner,value.taskId):true};})),
