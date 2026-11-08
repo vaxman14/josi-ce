@@ -42,7 +42,9 @@ enum ClaudeCLI {
 /// the person copies from it, and receives the long-lived subscription token,
 /// which goes only to the server's Vault. The token is never shown or saved here.
 @MainActor final class ClaudeSetupToken {
-    private static let tokenPattern = /sk-ant-oat01-[A-Za-z0-9_\-]{40,}/
+    /// The token ends at the first character that can't be part of it, or where
+    /// Claude Code's next words ("Store this token…") begin without a space.
+    private static let tokenPattern = /sk-ant-oat01-[A-Za-z0-9_\-]{40,}?(?=Store|[^A-Za-z0-9_\-]|$)/
     private let process = Process()
     private let master: FileHandle
     private let profile: URL
@@ -144,14 +146,22 @@ enum ClaudeCLI {
             pageWaiters.forEach { $0.resume(returning: url) }; pageWaiters = []
         }
         // Done once the line after the token is drawn, so the token is whole.
-        let shown = Self.screen(raw).filter { !$0.isWhitespace }
-        if let found = shown.firstMatch(of: Self.tokenPattern), shown[found.range.upperBound...].contains("Storethistoken") {
-            finish(.success(String(found.output)))
-        }
+        if let token = Self.token(in: raw, requireNextLine: true) { finish(.success(token)) }
+    }
+
+    /// The token on Claude Code's screen. Spacing is kept, so the token can't run
+    /// into the words after it.
+    private static func token(in text: String, requireNextLine: Bool) -> String? {
+        let shown = screen(text)
+        guard let found = shown.firstMatch(of: tokenPattern) else { return nil }
+        if requireNextLine && !shown[found.range.upperBound...].filter({ !$0.isWhitespace }).contains("Storethistoken") { return nil }
+        return String(found.output)
     }
 
     private func exited() {
         guard !finished else { return }
+        // Claude Code exits right after printing the token: take it if it's there.
+        if let token = Self.token(in: raw, requireNextLine: false) { finish(.success(token)); return }
         let reason = Self.lastLines(Self.screen(raw))
         fail(JosiError(message: reason.isEmpty
             ? "Claude Code stopped before it issued a token. Start the sign-in again."
@@ -193,6 +203,9 @@ enum ClaudeCLI {
     /// control sequences are dropped.
     private static func screen(_ text: String) -> String {
         var plain = text.replacing(/\u{1b}\[(\d*)C/) { String(repeating: " ", count: max(1, Int($0.output.1) ?? 1)) }
+        // A move along the line separates words; a move to another line breaks it.
+        plain = plain.replacing(/\u{1b}\[\d*G/, with: " ")
+        plain = plain.replacing(/\u{1b}\[[0-9;]*[ABEFHfd]/, with: "\n")
         plain = plain.replacing(/\u{1b}\][^\u{07}\u{1b}]*(\u{07}|\u{1b}\\)/, with: "")
         plain = plain.replacing(/\u{1b}\[[0-9;?<>=]*[ -\/]*[@-~]/, with: "")
         plain = plain.replacing(/\u{1b}[()][0-9A-Za-z]|\u{1b}[=>78]/, with: "")
