@@ -203,7 +203,7 @@ namespace Josi.Native {
         items.Add(Ui.Secondary("This is the public address now. On your phone, install Tailscale, sign in to the same account, and give the Josi app this address. The app shows the certificate fingerprint once; compare it with the one above."));
       } else {
         var use = Ui.Pill("Use the Tailscale Address", () => {
-          Perform(async (api, stamp) => { var r = await api.Request("/admin/network", "PUT", Wires.O("publicUrl", url)); if (Current(stamp)) { urlLoaded = false; note = r["note"].Text; } });
+          SaveAddress(url);
         }, true);
         use.IsEnabled = network["editable"].Flag;
         items.Add(use);
@@ -211,15 +211,29 @@ namespace Josi.Native {
       }
       return Ui.CardBox("Tailscale", items.ToArray());
     }
+    void SaveAddress(string value) {
+      Perform(async (api, stamp) => {
+        Wire r;
+        try { r = await api.Request("/admin/network", "PUT", Wires.O("publicUrl", value)); }
+        catch (JosiException e) {
+          // 409: the installed Windows server may only read its settings. The
+          // server has checked the address; on this PC the app writes it with
+          // Windows administrator approval and restarts Josi.
+          if (e.Status != 409 || !await Task.Run(() => LocalServer.IsThisPc(api.Origin))) throw;
+          var origin = new Uri(value.TrimEnd('/')).GetLeftPart(UriPartial.Authority);
+          await LocalServer.SetAddress(origin);
+          if (Current(stamp)) { urlLoaded = false; note = "Saved. Josi restarted and now uses " + origin + "."; }
+          return;
+        }
+        if (Current(stamp)) { urlLoaded = false; note = r["note"].Text; }
+      });
+    }
     UIElement ChangeAddress() {
       Ui.Detach(publicUrl);
       var items = new List<UIElement> {
         Ui.Caption("https://name-or-ip:port for your network (Josi issues the certificate), https://name.ts.net:port for Tailscale, http://localhost:port for this PC only, or https://your.domain for a public address served through a tunnel or reverse proxy."),
         Ui.Field("Public address", publicUrl) };
-      var save = Ui.Pill("Save Address", () => {
-        var value = publicUrl.Text.Trim();
-        Perform(async (api, stamp) => { var r = await api.Request("/admin/network", "PUT", Wires.O("publicUrl", value)); if (Current(stamp)) { urlLoaded = false; note = r["note"].Text; } });
-      }, true);
+      var save = Ui.Pill("Save Address", () => SaveAddress(publicUrl.Text.Trim()), true);
       save.IsEnabled = !network.IsNull && network["editable"].Flag;
       items.Add(save);
       if (!network.IsNull && !network["editable"].Flag) items.Add(Ui.Caption("This server takes its address from where it is started, not from a settings file."));

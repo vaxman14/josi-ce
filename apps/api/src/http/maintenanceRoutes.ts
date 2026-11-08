@@ -23,7 +23,9 @@ export function maintenanceRoutes(ctx:{db:Db;launch?:(host:string)=>Promise<Laun
     const [user]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
     if(!password)return res.status(400).json({error:'Enter your current administrator password.'});
     if(!user?.password_hash||!(await verifyPassword(user.password_hash,password)))return res.status(401).json({error:'The administrator password was incorrect. No maintenance controller was started.'});
-    const launch=ctx.launch??supervisor();if(!launch)return res.status(503).json({error:'Maintenance controller is unavailable. Rerun the installer once to provision it.'});
+    const launch=ctx.launch??supervisor();if(!launch)return res.status(503).json({error:process.platform==='win32'
+      ?'Protected maintenance is not available on Windows. Change the address with Save Address above; Windows asks for administrator approval and Josi restarts with it.'
+      :'Maintenance controller is unavailable. Rerun the installer once to provision it.'});
     const host=String(req.body?.host??'').trim();if(!/^[A-Za-z0-9.-]{1,253}$/.test(host))return res.status(400).json({error:'Browser host is invalid.'});
     try{return res.status(201).json(await launch(host));}
     catch{return res.status(503).json({error:'The protected maintenance controller could not start or pass its readiness check. Check that port 8080 is available, then try again.'});}
