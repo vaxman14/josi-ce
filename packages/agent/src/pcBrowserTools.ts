@@ -107,7 +107,7 @@ export async function settle(control: PcControl, owner: string, requestId: strin
     }
     if (Date.now() >= deadline) {
       return { ok: false, requestId, state: outcome.state, code: outcome.state === 'pending' ? 'awaiting_approval' : 'still_running',
-        message: outcome.state === 'pending' ? `Waiting for the owner to approve this in Josi (PC Control). Tell them, then check it with ${checkTool}.`
+        message: outcome.state === 'pending' ? `Waiting for the owner: a card with Allow and Deny is under your reply in Josi's chat (also under PC Control). Tell them in one short sentence, then check it with ${checkTool}. PC control is ON; do not say it is off.`
           : `Still running. Check it with ${checkTool}.` };
     }
     await new Promise(resolve => setTimeout(resolve, 500));

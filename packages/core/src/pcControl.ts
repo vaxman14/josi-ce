@@ -178,9 +178,34 @@ export class PcControl {
     await db.query(`insert into pc_control_activity(owner_user_id,pc_id,kind,detail_enc) values($1,$2,$3,$4)`,[owner,this.pcId,kind,this.pack(owner,{kind,...(plan?{description:plan.description,requirements:plan.requirements,taskId:plan.taskId??null}:{})})]);
   }
   private cancel(owner:string){for(const controller of this.active.get(owner)??[])controller.abort();}
-  private async invalidate(db:Db,owner:string){
+  /** Every prepared request is re-decided after a permission change: nothing
+   * approved under the old rules runs. The ids of the requests that were
+   * still waiting come back so the change can re-decide them under the new
+   * rules (see reconsider) instead of leaving the owner to ask again. */
+  private async invalidate(db:Db,owner:string):Promise<string[]>{
+    const waiting=await db.query<{id:string}>(`select id from pc_control_requests where owner_user_id=$1 and pc_id=$2 and state='pending' and expires_at>$3`,[owner,this.pcId,new Date(this.now()).toISOString()]);
     await db.query(`update pc_control_settings set epoch=epoch+1 where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);
     await db.query(`update pc_control_requests set state='revoked' where owner_user_id=$1 and pc_id=$2 and state in ('pending','approved')`,[owner,this.pcId]);
+    return waiting.map(w=>w.id);
+  }
+  /** After the owner widened their permissions (control on, everyday
+   * allowances, a saved grant), a request that was waiting for exactly that
+   * is approved under the new rules rather than cancelled: "open Notepad"
+   * followed by "yes, let Josi use this PC" opens Notepad. A request the new
+   * rules still do not cover stays revoked; the model asks again. */
+  private async reconsider(db:Db,owner:string,ids:string[]){
+    if(!ids.length)return;
+    const [s]=await db.query<Settings>(`select enabled,epoch,full_control from pc_control_settings where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);
+    if(!s?.enabled)return;
+    for(const id of ids){
+      const [row]=await db.query<RequestRow>(`select * from pc_control_requests where id=$1 and owner_user_id=$2 and pc_id=$3 and state='revoked'`,[id,owner,this.pcId]);
+      if(!row||Date.parse(row.expires_at)<=this.now())continue;
+      let plan:PcPlan;
+      try{plan=this.unpack<PcPlan>(owner,row.request_enc);if(this.hash(owner,plan)!==row.request_hash)continue;}catch{continue;}
+      if(await this.verdict(db,owner,s,plan)!=='approved')continue;
+      await db.query(`update pc_control_requests set state='approved',human_approved=false,epoch=$2 where id=$1`,[id,s.epoch]);
+      await this.log(db,owner,'Exact action authorized by the new permission',plan);
+    }
   }
   /** Makes this PC known to the account before it is paired or enabled, so
    * chat can list it and prepare "turn on PC control" for it. Grants nothing. */
@@ -191,7 +216,7 @@ export class PcControl {
   async setEnabled(owner:string,enabled:boolean,expectedRevision?:number){
     if(typeof enabled!=='boolean')fail('Choose on or off.');
     if(!enabled)return this.stop(owner);
-    return this.locked(owner,async(db)=>{await this.invalidate(db,owner);await db.query(`update pc_control_settings set enabled=true where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);await this.log(db,owner,'Control enabled; exact scopes still required');this.cancel(owner);},expectedRevision);
+    return this.locked(owner,async(db)=>{const waiting=await this.invalidate(db,owner);await db.query(`update pc_control_settings set enabled=true where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);await this.log(db,owner,'Control enabled; exact scopes still required');this.cancel(owner);await this.reconsider(db,owner,waiting);},expectedRevision);
   }
   async stop(owner:string){
     this.cancel(owner);
@@ -203,10 +228,11 @@ export class PcControl {
     if(typeof on!=='boolean')fail('Choose on or off.');
     return this.locked(owner,async(db,s)=>{
       if(on&&!s.enabled)throw new PcControlError(409,'Turn on "Allow Josi to control this PC" first.');
-      await this.invalidate(db,owner);
+      const waiting=await this.invalidate(db,owner);
       await db.query(`update pc_control_settings set full_control=$3 where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId,on]);
       await this.log(db,owner,on?'Full control turned on: everyday browser, folder and application actions no longer ask':'Full control turned off: exact scopes apply again');
       this.cancel(owner);
+      if(on)await this.reconsider(db,owner,waiting);
     },expectedRevision);
   }
   private async liveTask(db:Db,owner:string,taskId?:string){
@@ -220,7 +246,7 @@ export class PcControl {
       if(!s.enabled)throw new PcControlError(409,'Enable PC control first.');
       if(preset.mode==='task'&&!await this.liveTask(db,owner,preset.taskId))fail('Choose an active task belonging to you.');
       const actions:readonly PcAction[]=preset.access==='apps'?['desktop.view','app.view','app.launch','app.control','app.close','app.terminate']:preset.access==='terminal'?['command.run']:PC_ACTIONS.map(a=>a[0]).filter(a=>!['secret.access','administrator.elevate'].includes(a));
-      await this.invalidate(db,owner);
+      const waiting=await this.invalidate(db,owner);
       // The older everyday toggle must not outlive this preset's duration.
       if(preset.access==='full')await db.query('update pc_control_settings set full_control=false where owner_user_id=$1 and pc_id=$2',[owner,this.pcId]);
       for(const action of [...actions,'administrator.elevate' as const]){
@@ -235,6 +261,7 @@ export class PcControl {
       }
       await this.log(db,owner,'Access preset applied',{description:preset.access+' access; administrator '+(preset.administrator?'allowed with Windows UAC':'blocked')+'; '+preset.mode,requirements:[],...(preset.taskId?{taskId:preset.taskId}:{})});
       this.cancel(owner);
+      await this.reconsider(db,owner,waiting);
       return preset;
     },expectedRevision);
   }
@@ -254,8 +281,9 @@ export class PcControl {
           fail('The grant must match a scope in this exact request.');
         if(value.mode==='task'&&value.taskId!==approved.plan.taskId)fail('The grant must belong to this request\'s task.');
       }
-      await this.invalidate(db,owner);
+      const waiting=(await this.invalidate(db,owner)).filter(id=>id!==options.approveRequestId);
       const [row]=await db.query<{id:string}>(`insert into pc_control_policies(owner_user_id,pc_id,scope_hash,mode,policy_enc) values($1,$2,$3,$4,$5) on conflict(owner_user_id,pc_id,scope_hash) do update set mode=excluded.mode,policy_enc=excluded.policy_enc returning id`,[owner,this.pcId,this.hash(owner,requirement),value.mode,this.pack(owner,value)]);
+      if(['always','temporary','task'].includes(value.mode))await this.reconsider(db,owner,waiting);
       if(approved){
         if(await this.verdict(db,owner,s,approved.plan)==='denied')throw new PcControlError(409,'Control or this scope is disabled.');
         await db.query(`update pc_control_requests set state='approved',human_approved=true,epoch=$2,expires_at=least(expires_at,$3::timestamptz) where id=$1`,[approved.row.id,Number(s.epoch)+1,value.expiresAt??approved.row.expires_at]);

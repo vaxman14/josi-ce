@@ -125,7 +125,7 @@ namespace Josi.Native {
       var stopped = pcStopped || executor.PendingStop;
       // Only while something is happening on the screen: a paused or stopped
       // Josi takes no room. Resume lives in PC Control, the chat cards and the tray.
-      var show = working || takenOver || controlOverlay?.IsShowing == true;
+      var show = working || takenOver;
       tray?.Update(paused, working);
       Automation.Pc = stopped ? "stopped" : !show ? "off" : paused ? "paused" : takenOver ? "takeover" : working ? "working" : "ready";
       if (controlOverlay != null) controlOverlay.Stopped = stopped;
@@ -216,7 +216,17 @@ namespace Josi.Native {
       InputBindings.Add(new KeyBinding(new Command(() => {
         if (Model.Screen == Screen.Workspace && !Model.Busy) Model.Run(() => Model.NewThread());
       }), Key.N, ModifierKeys.Control));
-      SourceInitialized += delegate { DarkTitleBar(); };
+      SourceInitialized += delegate {
+        DarkTitleBar();
+        // A second launch (or anything else) that shows the hidden window through
+        // Win32 would leave WPF believing it is hidden: an unpainted black frame.
+        // Reopen it the WPF way as soon as such a show arrives.
+        var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+        if (source != null) source.AddHook((IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) => {
+          if (msg == 0x0018 && wParam != IntPtr.Zero && Visibility != Visibility.Visible) Dispatcher.BeginInvoke(new Action(Reopen));
+          return IntPtr.Zero;
+        });
+      };
       Loaded += delegate { Model.Ghost.Set(GhostState.Hello); };
       Model.RefreshLocal();
       Render();

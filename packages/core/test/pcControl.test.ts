@@ -166,6 +166,23 @@ describe('Windows exact PC scope authorization',()=>{
     expect((await control.snapshot(owner)).catalog.find(c=>c.action==='command.run')?.grantable).toBe(true);
     expect((await control.snapshot(owner)).catalog.find(c=>c.action==='file.delete')?.grantable).toBe(true);
   });
+  it('a widening change approves the request that was waiting for it instead of cancelling it',async()=>{
+    await enable();
+    const launch=requirement('app.launch',{kind:'application',target:'C:\\Windows\\System32\\notepad.exe'});
+    const q=await control.propose(owner,plan(launch));expect(q.state).toBe('pending');
+    await control.setFullControl(owner,true);
+    expect((await control.outcome(owner,q.id))?.state).toBe('approved');
+    expect((await control.approved(owner)).map(a=>a.id)).toContain(q.id);
+    // Still outside the new rules: stays revoked, the model asks again.
+    const shell={kind:'command',target:'C:\\Work',application:'C:\\Windows\\System32\\cmd.exe'} as PcScope;
+    const run=await control.propose(owner,plan(requirement('command.run',shell)));expect(run.state).toBe('pending');
+    await control.setFullControl(owner,false);
+    expect((await control.outcome(owner,run.id))?.state).toBe('revoked');
+    // A saved grant covers the waiting command.
+    const again=await control.propose(owner,plan(requirement('command.run',shell)));expect(again.state).toBe('pending');
+    await allow(requirement('command.run',shell),'always');
+    expect((await control.outcome(owner,again.id))?.state).toBe('approved');
+  });
   it('matches browser executable, profile AND exact origin independently',async()=>{
     const view=requirement('browser.view',browser);await allow(view);await enable();
     expect((await control.propose(owner,plan(view))).state).toBe('approved');
