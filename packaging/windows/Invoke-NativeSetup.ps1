@@ -10,6 +10,11 @@ $ErrorActionPreference='Stop';Set-StrictMode -Version Latest;$env:PSModulePath='
 $script:changing=$false;$script:cancelNoted=$false;$source=$null
 function Step([int]$Percent,[string]$Text){
     [Console]::Out.WriteLine('JOSI-PROGRESS|'+$Percent+'|'+$Text);[Console]::Out.Flush()
+    # Phase timing for the owner and the next build: readable, no private values.
+    try{
+        $log=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) ('Josi CE Server\installer\setup-timing-'+$Version+'.log')
+        if(Test-Path -LiteralPath (Split-Path $log)){[IO.File]::AppendAllText($log,([DateTime]::Now.ToString('HH:mm:ss.fff')+' '+$Percent.ToString().PadLeft(3)+'% '+$Text+"`r`n"))}
+    }catch{}
     if($CancelPath -and $script:changing -and !$script:cancelNoted -and (Test-Path -LiteralPath $CancelPath)){
         $script:cancelNoted=$true;[Console]::Out.WriteLine('JOSI-NOCANCEL');[Console]::Out.Flush()
     }
@@ -202,7 +207,10 @@ try{
         $priorProgram=Join-Path $product ('versions'+$prior.version)
         $recorded=Join-Path $product ('installer'+$prior.version+'\installed-components.json')
         if((Test-Path -LiteralPath $recorded) -and (Test-Path -LiteralPath $priorProgram)){
-            foreach($item in @(Get-Content -LiteralPath $recorded -Raw | ConvertFrom-Json)){$reusable[$item.id]=$item}
+            # ConvertFrom-Json hands a JSON array to the pipeline as one object in
+            # Windows PowerShell; enumerate the parsed value, not the pipeline.
+            $parsedRecord=Get-Content -LiteralPath $recorded -Raw | ConvertFrom-Json
+            foreach($item in [array]$parsedRecord){if($item -and $item.id -is [string]){$reusable[$item.id]=$item}}
         }
     }
     $unpacked=0;$count=@($manifest.components).Count
